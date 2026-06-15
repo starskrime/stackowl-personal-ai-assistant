@@ -42,6 +42,22 @@ def _extract_error_class(error: str | None) -> str:
     return match.group(1) if match else "tool_error"
 
 
+def match_and_log(*, tool_name: str, tool_result: ToolResult) -> None:
+    """Honest, no-IO demote of the dead ``tool.heuristic_match`` emit (F038).
+
+    The per-call ``match_and_emit`` did a DB ``find_for_tool`` lookup and emitted an
+    EventBus event that had ZERO production subscribers — pure hot-path latency.
+    This replacement just logs the tool-call outcome at info level: no DB, no bus,
+    never raises. Re-introducing a learned-hint consumer is a separate future story
+    with its own brainstorm + journey (it must not steer a weak model on low
+    evidence — the amplification the reliability arc fought)."""
+    failure_label = "succeeded" if tool_result.success else _extract_error_class(tool_result.error)
+    log.tool.info(
+        "[heuristic] tool outcome",
+        extra={"_fields": {"tool_name": tool_name, "outcome": failure_label or "tool_error"}},
+    )
+
+
 async def match_and_emit(
     *,
     tool_name: str,

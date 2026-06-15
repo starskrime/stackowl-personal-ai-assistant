@@ -370,6 +370,15 @@ class MemorySettings(BaseModel):
     # Settle window: only mine/promote staged data older than this many minutes,
     # so in-flight conversation turns aren't consolidated prematurely.
     dream_worker_settle_minutes: int = Field(default=15, ge=0)
+    # F063 — incremental contradiction scan tuning.
+    # ANN candidate count per new fact (the RIGHT side of each comparison). MUST
+    # be >= 32 so the >=0.85 cross-source contradiction band isn't truncated by
+    # same-source near-duplicates at ~0.99. Host-scalable upward.
+    contradiction_ann_k: int = Field(default=32, ge=32)
+    # Below this committed-corpus size the brute-force O(n^2) scan is used (cheap
+    # at small N, behaviour-identical to the legacy path). At/above it the
+    # incremental watermark + ANN-candidate path takes over.
+    contradiction_ann_threshold: int = Field(default=200, ge=2)
 
 
 class SchedulerSettings(BaseModel):

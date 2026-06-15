@@ -6,6 +6,7 @@ Adding a new compatible provider requires only a new stackowl.yaml entry — zer
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal
@@ -14,7 +15,7 @@ import openai
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.exceptions import ProviderError
+from stackowl.exceptions import ProviderError, TurnStopped
 from stackowl.infra.observability import log
 from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
@@ -102,18 +103,38 @@ class OpenAIProvider(ModelProvider):
         )
         resolved_model = model or self._config.default_model
         oai_msgs = [{"role": m.role, "content": m.content} for m in messages]
+        _t0 = time.monotonic()
+        # F119 — request the trailing usage chunk so the streamed round records cost
+        # via the single recording site (was unrecorded → a budget bypass on cheap
+        # conversational turns). Ollama/compatible endpoints may ignore/omit it →
+        # tolerated below (record nothing, debug log, never break the stream).
+        final_usage: Any = None
+        final_model: str = resolved_model
         try:
-            stream_resp = await self._client.chat.completions.create(
+            stream_resp = await self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=resolved_model,
-                messages=oai_msgs,  # type: ignore[arg-type]
+                messages=oai_msgs,
                 max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
                 stream=True,
+                stream_options={"include_usage": True},
                 **self._ollama_extra_body(resolved_model),
             )
-            async for chunk in stream_resp:  # type: ignore[union-attr]
-                delta = chunk.choices[0].delta.content if chunk.choices else None
-                if delta:
-                    yield delta
+            try:
+                async for chunk in stream_resp:
+                    # The trailing empty-choices chunk carries .usage (include_usage).
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage is not None:
+                        final_usage = chunk_usage
+                        final_model = getattr(chunk, "model", resolved_model) or resolved_model
+                    delta = chunk.choices[0].delta.content if chunk.choices else None
+                    if delta:
+                        yield delta
+            finally:
+                # B5/F119 — record consumed spend even if the consumer abandoned the
+                # stream early (OwlTimeout/disconnect): best-effort, fail-open.
+                await self._record_stream_usage_safe(
+                    final_usage, final_model, (time.monotonic() - _t0) * 1000
+                )
         except openai.APIError as exc:
             log.engine.error(
                 "[openai] stream: API error",
@@ -122,6 +143,34 @@ class OpenAIProvider(ModelProvider):
             )
             raise ProviderError(self._name, exc) from exc
         log.engine.debug("[openai] stream: exit", extra={"_fields": {"provider": self._name}})
+
+    async def _record_stream_usage_safe(
+        self, usage: Any, model: str, duration_ms: float
+    ) -> None:
+        """Record one streamed round's cost from the trailing usage chunk (F119).
+
+        Ollama-tolerant: a missing usage chunk (``usage`` is None) or an unexpected
+        shape records NOTHING and logs at DEBUG (NOT error) — the streamed reply
+        already happened and must never be broken by cost accounting (B5).
+        """
+        if usage is None:
+            log.engine.debug(
+                "[openai] stream: no usage chunk — recording nothing (ollama/compatible)",
+                extra={"_fields": {"provider": self._name}},
+            )
+            return
+        try:
+            in_tok = int(getattr(usage, "prompt_tokens", 0) or 0)
+            out_tok = int(getattr(usage, "completion_tokens", 0) or 0)
+        except Exception as exc:  # B5 — usage shape varies; never break the stream.
+            log.engine.debug(
+                "[openai] stream: usage extraction skipped",
+                extra={"_fields": {"provider": self._name, "err": str(exc)}},
+            )
+            return
+        await self._record_cost(
+            model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+        )
 
     async def complete_with_tools(
         self,
@@ -135,6 +184,7 @@ class OpenAIProvider(ModelProvider):
         on_iteration_complete: IterationCallback | None = None,
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
+        wrapup_deadline_s: float | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop."""
         import json
@@ -260,14 +310,20 @@ class OpenAIProvider(ModelProvider):
             # if the accumulated history would overflow the model's window.
             messages = trim_messages_to_budget(messages, budget)
             _t_call = time.monotonic()
-            try:
-                response = await self._client.chat.completions.create(
+
+            async def _round(_msgs: list[dict[str, Any]] = messages) -> Any:
+                return await self._client.chat.completions.create(
                     model=resolved_model,
-                    messages=messages,  # type: ignore[arg-type]
+                    messages=_msgs,  # type: ignore[arg-type]
                     max_tokens=self._config.max_output_tokens,
                     tools=tool_schemas,  # type: ignore[arg-type]
                     **self._ollama_extra_body(resolved_model),
                 )
+
+            try:
+                # F115 — per-round breaker/limiter site (NOT a wrap of the whole loop,
+                # which floors and would feed the breaker a false success).
+                response = await self._resilient_round(_round)
             except openai.APIError as exc:
                 log.engine.error(
                     "[openai] complete_with_tools: API error",
@@ -474,22 +530,61 @@ class OpenAIProvider(ModelProvider):
             messages = trim_messages_to_budget(messages, budget)
             messages.append({"role": "user", "content": WRAPUP_DIRECTIVE})
             _t_wrap = time.monotonic()
-            wrapup = await self._client.chat.completions.create(
-                model=resolved_model,
-                messages=messages,  # type: ignore[arg-type]
-                max_tokens=self._config.max_output_tokens,
-                **self._ollama_extra_body(resolved_model),
-            )
+
+            async def _wrap_round() -> Any:
+                return await self._client.chat.completions.create(
+                    model=resolved_model,
+                    messages=messages,  # type: ignore[arg-type]
+                    max_tokens=self._config.max_output_tokens,
+                    **self._ollama_extra_body(resolved_model),
+                )
+
+            # F027 — bound the terminal wrap-up by the governor's residual budget so
+            # a hung wrap-up cannot exceed the promised turn ceiling. None → today's
+            # behavior, byte-identical (no wait_for). The bound is a wall-clock
+            # wait_for around the await (a post-hoc check cannot bound a hang).
+            if wrapup_deadline_s is not None:
+                wrapup = await asyncio.wait_for(
+                    self._resilient_round(_wrap_round), timeout=wrapup_deadline_s,
+                )
+            else:
+                wrapup = await self._resilient_round(_wrap_round)
             await self._record_usage_safe(wrapup, (time.monotonic() - _t_wrap) * 1000)
             if not wrapup.choices:
                 raise ProviderError(self._name, ValueError("empty choices"))
             text = wrapup.choices[0].message.content or ""
             if text.strip():
+                # F026 — the terminal wrap-up bypasses the in-loop judge/veto. Apply
+                # the SAME structural give-up gate here: at max-out there is no loop
+                # to continue (so NO nudge) and no extra network call (so NO LLM
+                # judge) — the pure, synchronous predicate decides. On a dishonest
+                # give-up (a consequential action failed with no success), REPLACE
+                # the dressed-up prose with the honest floor. The pipeline floor band
+                # (SP-1) remains the canonical replacer for pipeline callers; this
+                # veto protects non-pipeline consumers (durable/A2A/parliament).
+                if is_consequential_giveup_now():
+                    floored = synthesize_from_calls(user_text, all_calls, text)
+                    log.engine.info(
+                        "[openai] complete_with_tools: wrap-up vetoed as give-up — flooring honest answer",
+                        extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+                    )
+                    return floored, all_calls
                 log.engine.debug(
                     "[openai] complete_with_tools: wrap-up answer delivered at max-out",
                     extra={"_fields": {"provider": self._name, "len": len(text)}},
                 )
                 return text, all_calls
+        except TurnStopped:
+            # A user-stop / budget-kill is NOT a give-up — propagate, never floor it.
+            raise
+        except TimeoutError as exc:
+            # F027 — the wrap-up exceeded its residual deadline. Route to the EXISTING
+            # fail-open floor below (partial → synthesize_from_calls), bounded.
+            log.engine.warning(
+                "[openai] complete_with_tools: wrap-up exceeded deadline — flooring",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name, "deadline_s": wrapup_deadline_s}},
+            )
         except Exception as exc:  # fail-open — never surface silence on a wrap-up error
             log.engine.error(
                 "[openai] complete_with_tools: wrap-up call failed — falling back",
@@ -560,13 +655,19 @@ class OpenAIProvider(ModelProvider):
             else {"role": m.role, "content": m.content}
             for m in messages
         ]
-        try:
-            response = await self._client.chat.completions.create(
+        async def _round() -> Any:
+            return await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
                 max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
                 **self._ollama_extra_body(resolved_model),
             )
+
+        try:
+            # F115 — record the per-round HTTP outcome onto the registry-owned breaker
+            # the cascade reads; a classified APIError (wrapped below as ProviderError)
+            # is the fault. resilient_round re-raises the original APIError unchanged.
+            response = await self._resilient_round(_round)
         except openai.APIError as exc:
             log.engine.error(
                 "[openai] complete: API error",

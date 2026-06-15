@@ -121,7 +121,7 @@ class MemoryAssembly:
         # 1b) LanceDB adapter — HARD-FAIL per operator choice (Commit B vote).
         # No try/except: if LanceDB can't start, startup must fail so we
         # don't silently lose the vector-recall layer.
-        lancedb = LanceDBAdapter()
+        lancedb = LanceDBAdapter(embedding_registry=embedding_registry)
         log.memory.info("[memory] assembly: lancedb adapter ready")
 
         # 2) Bridge — primary hot-path read/write surface, now with semantic
@@ -209,6 +209,8 @@ class MemoryAssembly:
             kuzu_handler=kuzu_sync_handler,
             detector=detector,
             miner=conversation_miner,
+            ann_k=mem.contradiction_ann_k,
+            ann_threshold=mem.contradiction_ann_threshold,
         )
         await seed_dream_worker_schedule(
             db, interval_minutes=mem.dream_worker_interval_minutes

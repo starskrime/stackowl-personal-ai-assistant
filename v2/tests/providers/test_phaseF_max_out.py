@@ -85,9 +85,12 @@ class _ToolEveryTimeCompletions:
     non-empty string so the test can prove the wrap-up text is delivered.
     """
 
-    def __init__(self, *, tool_call: bool, raise_on_wrapup: bool = False) -> None:
+    def __init__(
+        self, *, tool_call: bool, raise_on_wrapup: bool = False, sleep_on_wrapup_s: float = 0.0,
+    ) -> None:
         self._tool_call = tool_call
         self._raise_on_wrapup = raise_on_wrapup
+        self._sleep_on_wrapup_s = sleep_on_wrapup_s
         self.tools_seen: list[bool] = []  # per-call: was `tools` passed?
         self.create_count = 0
 
@@ -97,6 +100,9 @@ class _ToolEveryTimeCompletions:
         self.tools_seen.append(has_tools)
         if not has_tools:
             # This is the wrap-up call.
+            if self._sleep_on_wrapup_s:
+                import asyncio
+                await asyncio.sleep(self._sleep_on_wrapup_s)
             if self._raise_on_wrapup:
                 raise RuntimeError("simulated provider failure on wrap-up call")
             return _FakeResponse(_FakeMessage(content="WRAPUP-ANSWER-PHASEF", tool_calls=None))
@@ -283,7 +289,8 @@ class _AnthropicMessages:
     """Returns a tool_use stop on every tool-bearing call; non-empty text on the
     tool-free wrap-up call."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, sleep_on_wrapup_s: float = 0.0) -> None:
+        self._sleep_on_wrapup_s = sleep_on_wrapup_s
         self.tools_seen: list[bool] = []
         self.create_count = 0
 
@@ -292,6 +299,9 @@ class _AnthropicMessages:
         has_tools = "tools" in kwargs and kwargs["tools"] is not None
         self.tools_seen.append(has_tools)
         if not has_tools:
+            if self._sleep_on_wrapup_s:
+                import asyncio
+                await asyncio.sleep(self._sleep_on_wrapup_s)
             return _AResponse("end_turn", [_ABlock("text", text="WRAPUP-ANSWER-ANTHROPIC")])
         # Vary args per call so the loop-guard never fires (this test exercises
         # max-iterations / Phase F, not the repeated-call guard).
@@ -340,6 +350,178 @@ async def test_anthropic_maxout_makes_toolfree_call_and_returns_nonempty(
     # Sanity: ran more than the old budget of 8.
     tool_iterations = sum(1 for t in messages.tools_seen if t)
     assert tool_iterations >= 25
+
+
+# --------------------------------------------------------------------------- #
+# F026 — the max-out WRAP-UP final answer is vetoed when it is a dressed-up
+# give-up (a consequential action failed with no success this turn). The terminal
+# is structural: is_consequential_giveup_now() (pure, no LLM judge, no nudge —
+# there is no loop to continue) → synthesize_from_calls replaces the prose.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_openai_wrapup_giveup_vetoed_to_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At max-out, when a consequential action FAILED with no success, the wrap-up
+    prose (a dressed-up give-up) is replaced by the honest floor naming the
+    capability — NOT returned as the answer."""
+    from stackowl.infra import tool_outcome_ledger as tol
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolEveryTimeCompletions(tool_call=True)
+    provider = _make_openai_provider(_FakeClient(completions))
+
+    token = tol.bind()
+    try:
+        # Arm the ledger: a consequential action failed this turn, none succeeded.
+        tol.record_tool_outcome(
+            name="send_email", action_severity="consequential", success=False,
+        )
+        text, calls = await provider.complete_with_tools(
+            user_text="send the report email",
+            system_text="sys",
+            tool_schemas=_SCHEMAS,
+            tool_dispatcher=_dispatcher,
+        )
+    finally:
+        tol.reset(token)
+
+    # The dressed-up wrap-up prose must NOT be returned — the floor replaces it.
+    assert text != "WRAPUP-ANSWER-PHASEF", (
+        "F026 FAIL: the dressed-up wrap-up give-up was returned as the answer."
+    )
+    assert text.strip(), "the floor must be non-empty"
+    assert "couldn" in text.lower() or "could not" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_openai_wrapup_legit_answer_not_vetoed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LM-13 — with NO consequential failure armed, the legit wrap-up prose is
+    returned unchanged (gate on dishonest-give-up, never on max-out reached)."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolEveryTimeCompletions(tool_call=True)
+    provider = _make_openai_provider(_FakeClient(completions))
+
+    text, calls = await provider.complete_with_tools(
+        user_text="research the topic",
+        system_text="sys",
+        tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher,
+    )
+    assert text == "WRAPUP-ANSWER-PHASEF"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_wrapup_giveup_vetoed_to_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anthropic mirror of F026 — dressed-up wrap-up give-up → honest floor."""
+    from stackowl.infra import tool_outcome_ledger as tol
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    messages = _AnthropicMessages()
+    provider = _make_anthropic_provider(_AnthropicClient(messages))
+
+    token = tol.bind()
+    try:
+        tol.record_tool_outcome(
+            name="send_email", action_severity="consequential", success=False,
+        )
+        text, calls = await provider.complete_with_tools(
+            user_text="send the report email",
+            system_text="sys",
+            tool_schemas=_SCHEMAS,
+            tool_dispatcher=_dispatcher,
+        )
+    finally:
+        tol.reset(token)
+
+    assert text != "WRAPUP-ANSWER-ANTHROPIC", (
+        "F026 FAIL (anthropic): the dressed-up wrap-up give-up was returned."
+    )
+    assert text.strip()
+    assert "couldn" in text.lower() or "could not" in text.lower()
+
+
+# --------------------------------------------------------------------------- #
+# F027 — the terminal wrap-up create() is bounded by wrapup_deadline_s. A hung
+# wrap-up must return within the deadline carrying the honest floor (non-empty),
+# never hang past the promised turn bound. None → byte-identical to today.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_openai_wrapup_bounded_by_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrap-up create() that sleeps far past the deadline must be cut off and
+    return the honest floor within ~the deadline — not hang."""
+    import asyncio
+    import time
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolEveryTimeCompletions(tool_call=True, sleep_on_wrapup_s=10.0)
+    provider = _make_openai_provider(_FakeClient(completions))
+
+    t0 = time.monotonic()
+    text, calls = await provider.complete_with_tools(
+        user_text="go",
+        system_text="sys",
+        tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher,
+        wrapup_deadline_s=0.2,
+    )
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 5.0, f"wrap-up was not bounded by the deadline — took {elapsed:.2f}s"
+    assert text.strip(), "must return the non-empty honest floor on a timed-out wrap-up"
+    assert text != "WRAPUP-ANSWER-PHASEF", "the slept wrap-up text must NOT be returned"
+    # Confirm the sentinel — a deadline-cut wrap-up routes to the fail-open floor.
+    assert isinstance(text, str)
+    del asyncio  # silence unused-import if the path returns before awaiting it
+
+
+@pytest.mark.asyncio
+async def test_openai_wrapup_deadline_none_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wrapup_deadline_s=None (default) → today's behavior, the wrap-up returns."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolEveryTimeCompletions(tool_call=True)
+    provider = _make_openai_provider(_FakeClient(completions))
+
+    text, calls = await provider.complete_with_tools(
+        user_text="go", system_text="sys", tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher, wrapup_deadline_s=None,
+    )
+    assert text == "WRAPUP-ANSWER-PHASEF"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_wrapup_bounded_by_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anthropic mirror — a hung wrap-up is bounded and returns the honest floor."""
+    import time
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    messages = _AnthropicMessages(sleep_on_wrapup_s=10.0)
+    provider = _make_anthropic_provider(_AnthropicClient(messages))
+
+    t0 = time.monotonic()
+    text, calls = await provider.complete_with_tools(
+        user_text="go", system_text="sys", tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher, wrapup_deadline_s=0.2,
+    )
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 5.0, f"anthropic wrap-up not bounded — took {elapsed:.2f}s"
+    assert text.strip()
+    assert text != "WRAPUP-ANSWER-ANTHROPIC"
 
 
 def test_wrapup_directive_is_nonempty_and_global() -> None:

@@ -109,6 +109,14 @@ class BrowserSessionRegistry:
         self._runtime = runtime
         self._settings = settings
         self._sessions: dict[str, BrowserSession] = {}
+        # F155 — in-flight reservations counted toward the cap under
+        # ``_registry_lock`` to close the open() check-then-act (TOCTOU) window:
+        # reserve a slot BEFORE the awaited open_context, commit or roll back on
+        # EVERY exit. ``_recycle_gen`` bumps on each runtime recycle; an open that
+        # captures a stale generation at reserve time refuses to register the now-
+        # dead context at commit time (recycle-during-open guard).
+        self._reserved: int = 0
+        self._recycle_gen: int = 0
         # Strong refs to fire-and-forget background tasks (oldest-dialog dismiss),
         # so they are not GC'd mid-flight. Discarded on completion.
         self._bg_tasks: set[asyncio.Task[None]] = set()
@@ -133,6 +141,10 @@ class BrowserSessionRegistry:
         The underlying BrowserContext refs are dead — awaiting close() on
         them would hang or raise. We just drop them and let GC reap.
         """
+        # Bump the recycle generation FIRST so any open() in flight (parked at the
+        # awaited open_context) sees the mismatch at commit time and refuses to
+        # register its now-dead context (F155 recycle-during-open guard).
+        self._recycle_gen += 1
         if not self._sessions:
             return
         count = len(self._sessions)
@@ -197,39 +209,86 @@ class BrowserSessionRegistry:
         profile_name: str | None = None,
         proxy: ProxyConfig | None = None,
     ) -> str:
-        """Allocate a new BrowserSession; returns the session_id."""
+        """Allocate a new BrowserSession; returns the session_id.
+
+        The reservation lifetime is strictly within this call: a slot is reserved
+        under the lock (counting live sessions + in-flight reservations, so
+        concurrent opens cannot all pass the cap-read), the heavy ``open_context``
+        runs outside the lock, then the session is committed (or the reservation
+        rolled back) under the lock. ``evict_idle``/``close`` only remove COMMITTED
+        sessions — never reservations.
+        """
         log.engine.debug(
             "[browser] sessions.open: entry",
             extra={"_fields": {"owner_key": owner_key, "profile_name": profile_name}},
         )
+        # Check-and-RESERVE atomically (F155 TOCTOU close). Capture the recycle
+        # generation so a runtime recycle mid-open is detected at commit time.
         async with self._registry_lock:
-            if len(self._sessions) >= self._settings.max_concurrent_sessions:
+            if len(self._sessions) + self._reserved >= self._settings.max_concurrent_sessions:
                 raise BrowserSessionLimitError(
                     f"max concurrent browser sessions reached ({self._settings.max_concurrent_sessions})"
                 )
-
-        ctx = await self._runtime.open_context(
-            owner_key=owner_key, profile_name=profile_name, proxy=proxy,
-        )
-        session_id = uuid.uuid4().hex
-        sess = BrowserSession(
-            session_id=session_id,
-            owner_key=owner_key,
-            profile_name=profile_name,
-            context=ctx,
-        )
-        async with self._registry_lock:
-            self._sessions[session_id] = sess
-        log.engine.info(
-            "[browser] sessions.open: exit",
-            extra={"_fields": {
-                "session_id": session_id,
-                "owner_key": owner_key,
-                "profile_name": profile_name,
-                "active_sessions": len(self._sessions),
-            }},
-        )
-        return session_id
+            self._reserved += 1
+            gen = self._recycle_gen
+            log.engine.debug(
+                "[browser] sessions.open: slot reserved",
+                extra={"_fields": {"reserved": self._reserved, "gen": gen}},
+            )
+        # The reservation MUST release on EVERY exit (commit / open-fail / recycle /
+        # cancel) or the cap shrinks into refuse-everything (leak-DOWN).
+        committed = False
+        try:
+            ctx = await self._runtime.open_context(
+                owner_key=owner_key, profile_name=profile_name, proxy=proxy,
+            )
+            session_id = uuid.uuid4().hex
+            sess = BrowserSession(
+                session_id=session_id,
+                owner_key=owner_key,
+                profile_name=profile_name,
+                context=ctx,
+            )
+            # COMMIT under the lock, re-validating the recycle generation.
+            async with self._registry_lock:
+                if self._recycle_gen != gen:
+                    # The runtime was recycled mid-open: this context is already
+                    # dead. Do NOT register it; close it and surface loudly (no
+                    # silent swallow, no fake session).
+                    log.engine.warning(
+                        "[browser] sessions.open: runtime recycled mid-open — discarding context",
+                        extra={"_fields": {"owner_key": owner_key,
+                                           "captured_gen": gen, "now_gen": self._recycle_gen}},
+                    )
+                    with contextlib.suppress(Exception):
+                        await ctx.close()
+                    raise BrowserSessionLimitError(
+                        "browser runtime recycled during session open; retry"
+                    )
+                self._sessions[session_id] = sess
+                self._reserved -= 1
+                committed = True
+            log.engine.info(
+                "[browser] sessions.open: exit",
+                extra={"_fields": {
+                    "session_id": session_id,
+                    "owner_key": owner_key,
+                    "profile_name": profile_name,
+                    "active_sessions": len(self._sessions),
+                }},
+            )
+            return session_id
+        finally:
+            if not committed:
+                # Roll back on open-fail / recycle-discard / cancel. The
+                # open_context exception itself propagates (it is not caught here).
+                async with self._registry_lock:
+                    self._reserved -= 1
+                    rolled = self._reserved
+                log.engine.debug(
+                    "[browser] sessions.open: reservation rolled back",
+                    extra={"_fields": {"reserved": rolled}},
+                )
 
     async def get(self, session_id: str) -> BrowserSession:
         sess = self._sessions.get(session_id)

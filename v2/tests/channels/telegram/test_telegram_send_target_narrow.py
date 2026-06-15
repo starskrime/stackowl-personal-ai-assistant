@@ -21,6 +21,7 @@ import pytest
 
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.exceptions import DeliveryError
 from stackowl.pipeline.streaming import ResponseChunk
 
 
@@ -63,19 +64,25 @@ async def test_send_int_target_delivers_to_that_chat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_str_target_narrows_to_none_and_warns() -> None:
-    """A stray str target (Slack) does NOT crash; it logs a warning and falls back.
+async def test_send_str_target_narrows_to_none_and_raises() -> None:
+    """A stray str target (Slack) narrows to None and, on the on-turn path with no
+    ``_last_chat_id``, FAILS LOUD (C6 / C-1) — a turn's answer is never silently
+    dropped. (Intentional contract change from the old silent-drop behaviour.)
 
-    With ``_last_chat_id`` unset, the fallback target resolves to None, so
-    ``send_text`` drops the message rather than delivering to a wrong/str chat.
+    The unexpected str is still warned; then send_text raises DeliveryError
+    because the explicit on-turn target is unresolvable. No str chat_id is ever
+    passed to send_message.
     """
     adapter, bot = _adapter_with_bot()
     assert adapter._last_chat_id is None  # no fallback chat available
     with patch("stackowl.channels.telegram.adapter.log") as mock_log:
-        await adapter.send(_chunks(_chunk("hi", "C123")))
+        with pytest.raises(DeliveryError) as ei:
+            await adapter.send(_chunks(_chunk("hi", "C123")))
         # Loud, not silent: the unexpected str target is warned.
         mock_log.telegram.warning.assert_called()
-    # None target + no _last_chat_id → message dropped, never a str chat_id sent.
+    assert ei.value.channel == "telegram"
+    assert ei.value.reason == "no_target"
+    # Never a str chat_id sent.
     bot.send_message.assert_not_awaited()
 
 

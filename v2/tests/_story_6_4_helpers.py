@@ -70,6 +70,14 @@ class StubEmbeddingRegistry:
     def get(self) -> StubEmbeddingProvider:
         return self._provider
 
+    @property
+    def active_model(self) -> str:
+        return self._provider.model_name
+
+    @property
+    def active_dim(self) -> int:
+        return self._provider.dimension
+
 
 class FakeLanceDB:
     """In-memory stand-in for :class:`LanceDBAdapter`."""
@@ -78,12 +86,20 @@ class FakeLanceDB:
         self,
         search_results: list[SearchResult] | None = None,
         raise_on_search: Exception | None = None,
+        corpus_identity: tuple[str | None, int | None] = ("stub-embed", 4),
     ) -> None:
         self.upserts: list[tuple[str, list[float], dict[str, Any]]] = []
         self.deletes: list[str] = []
         self.searches: list[tuple[list[float], int]] = []
         self._search_results = search_results or []
         self._raise_on_search = raise_on_search
+        # F062 — the corpus-identity seam recall now reads BEFORE the semantic
+        # path. Defaults to the stub embedder's identity so these tests exercise
+        # the semantic path (matched corpus); override to force a mismatch.
+        self._corpus_identity = corpus_identity
+
+    async def corpus_identity(self) -> tuple[str | None, int | None]:
+        return self._corpus_identity
 
     async def upsert(
         self, fact_id: str, embedding: list[float], metadata: dict[str, Any]

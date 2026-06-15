@@ -95,6 +95,7 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
             attempts=None,
             partial=None,
             failed_capability=failed_name,
+            lang=state.language,  # F089/F098 — localize the provider-down floor
         )
         log.engine.info(
             "[giveup_floor] consequential outcome not achieved — replacing draft with honest floor",
@@ -106,6 +107,11 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
             chunk_index=0,
             trace_id=state.trace_id,
             owl_name=state.owl_name,
+            # SP-1 — floor-origin marker. Lets persist (F088) skip the floor prose
+            # as a promotable fact, keeps the critical-failure cascade from treating
+            # this honest floor as a genuine answer, and lets the pipeline floor band
+            # recognize a provider floor as replaceable (no double floor).
+            is_floor=True,
         )
         # 4. EXIT — REPLACE the untrusted draft; never append
         return state.evolve(responses=(chunk,))

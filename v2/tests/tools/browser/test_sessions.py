@@ -136,6 +136,81 @@ class TestHardCap:
             await reg.open("carol")
 
 
+class _BarrierRuntime(_FakeRuntime):
+    """open_context awaits a barrier so concurrent opens overlap inside the
+    check-then-act window (F155 TOCTOU). ``fail_on`` raises for the Nth open."""
+
+    def __init__(self, gate: asyncio.Event | None = None, fail_on: int = 0) -> None:
+        super().__init__()
+        self._gate = gate
+        self._fail_on = fail_on
+        self._n = 0
+
+    async def open_context(self, **kwargs: Any) -> _FakeContext:
+        self._n += 1
+        n = self._n
+        if self._gate is not None:
+            await self._gate.wait()
+        if n == self._fail_on:
+            raise RuntimeError(f"injected open failure #{n}")
+        self.opens.append(kwargs)
+        return _FakeContext()
+
+
+class TestConcurrencyCapTOCTOU:
+    """F155 — the RACE merge-gate. Serial test_over_cap_raises passes the buggy
+    code; only overlapping opens that all clear the cap-read before any insert
+    expose it."""
+
+    async def test_concurrent_opens_respect_cap(self, settings: BrowserSettings) -> None:
+        gate = asyncio.Event()
+        runtime = _BarrierRuntime(gate=gate)
+        reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
+
+        async def _open(i: int) -> str:
+            try:
+                await reg.open(f"u{i}")
+                return "ok"
+            except BrowserSessionLimitError:
+                return "refused"
+
+        tasks = [asyncio.create_task(_open(i)) for i in range(8)]  # cap=3
+        await asyncio.sleep(0.05)  # let all enter the reserve critical section
+        gate.set()
+        results = await asyncio.gather(*tasks)
+
+        assert results.count("ok") == 3, f"cap breached: {results}"
+        assert results.count("refused") == 5
+        assert reg._reserved == 0  # no reservation leak
+        assert len(reg._sessions) == 3
+
+    async def test_failed_open_rolls_back_reservation(self, settings: BrowserSettings) -> None:
+        runtime = _BarrierRuntime(fail_on=1)
+        reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
+        with pytest.raises(RuntimeError):
+            await reg.open("alice")  # open_context raises → must propagate, not fake-succeed
+        assert reg._reserved == 0  # rolled back — cap not permanently shrunk
+        # A subsequent open still succeeds (no leak-DOWN).
+        sid = await reg.open("alice")
+        assert sid in reg._sessions
+
+    async def test_recycle_during_open_does_not_insert_dead_session(
+        self, settings: BrowserSettings,
+    ) -> None:
+        gate = asyncio.Event()
+        runtime = _BarrierRuntime(gate=gate)
+        reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
+
+        task = asyncio.create_task(reg.open("alice"))
+        await asyncio.sleep(0.02)  # parked at the barrier, reservation held, gen captured
+        runtime.fire_recycle()  # bumps _recycle_gen mid-open
+        gate.set()
+        with pytest.raises(BrowserSessionLimitError):  # commit-time gen mismatch → raise loudly
+            await task
+        assert reg._reserved == 0  # rolled back
+        assert len(reg._sessions) == 0  # the dead context was NOT registered
+
+
 class TestPerOwnerIsolation:
     async def test_list_for_owner_filters(self, settings: BrowserSettings) -> None:
         runtime = _FakeRuntime()

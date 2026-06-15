@@ -14,6 +14,8 @@ are inert).
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import shlex
 import time
 from pathlib import Path
@@ -53,6 +55,9 @@ def _resolve_timeout(raw: object) -> float:
 # System / home roots whose recursive deletion is catastrophic. A normal project
 # path (``./build``, ``/tmp/scratch``, ``node_modules``) is NOT in here — the
 # detector targets only well-known system-destroying shapes, never normal writes.
+# NOTE (F156, documented cut): this denylist is POSIX-rooted. Windows roots
+# (``C:\``, ``C:\Windows``, UNC ``\\host\share``) are out of scope for this slice;
+# catastrophic-detection on Windows is a separate follow-up, not a silent gap.
 _SYSTEM_ROOTS: frozenset[str] = frozenset(
     {
         "/",
@@ -79,6 +84,67 @@ _SYSTEM_ROOTS: frozenset[str] = frozenset(
         "/dev",
     }
 )
+
+
+# Absolute, lexically-normalized forms of the protected roots, built once. These
+# back the path-normalized ancestor/descendant predicate (F156). Non-absolute /
+# shell-shape entries (``~``, ``$HOME``, ``/*``, ``/home/*``) are intentionally
+# excluded here — they are covered by the literal-token membership predicate, since
+# they do NOT survive normpath/expanduser as themselves on a CI box.
+_ABSOLUTE_ROOTS: frozenset[str] = frozenset(
+    os.path.normpath(r) for r in _SYSTEM_ROOTS if r.startswith("/") and "*" not in r
+)
+
+
+def _norm_target(op: str) -> str:
+    """Return the lexical canonical form of a path operand (no FS I/O).
+
+    Strips a trailing ``/`` and a trailing glob ``*`` (and any ``/`` it left),
+    expands ``~`` and ``$VAR``, then collapses ``.``/``..``/duplicate separators
+    via ``os.path.normpath``. Pure-lexical: NO ``Path.resolve()`` (would hit the
+    filesystem / follow symlinks / can raise — this gate runs before EVERY spawn).
+    Never raises (F156 invariant): any failure falls back to the raw operand.
+    """
+    try:
+        stripped = op.rstrip("/").rstrip("*").rstrip("/") or "/"
+        # Collapse a leading run of 2+ slashes to one BEFORE normpath. POSIX.1
+        # §4.13 lets normpath PRESERVE exactly two leading slashes ("//etc" stays
+        # "//etc"), which would evade the absolute-root predicates (F156 residual).
+        stripped = re.sub(r"^/{2,}", "/", stripped)
+        return os.path.normpath(os.path.expanduser(os.path.expandvars(stripped)))
+    except (ValueError, TypeError):  # pragma: no cover — defensive, never raise
+        return op
+
+
+def _hits_system_root(op: str) -> bool:
+    """True if an operand targets a protected system/home root (two predicates).
+
+    (1) Literal-token membership — preserves un-resolvable shell shapes
+        (``~``, ``~/``, ``$HOME``, ``/*``, ``/home/*``) that normalization would
+        otherwise mangle, so the existing assertions keep flagging.
+    (2) Path-normalized ancestor/descendant — a normalized absolute operand
+        matches when it EQUALS a root, is a SUBPATH of a root (``/usr/lib`` under
+        ``/usr``, ``/etc/`` after strip), or is itself an ANCESTOR of a root
+        (``/`` ancestors everything). Relative paths (``./build``) never match.
+    Conservative: any match blocks. Pure-lexical, never raises.
+    """
+    if op in _SYSTEM_ROOTS:  # predicate 1
+        return True
+    n = _norm_target(op)  # predicate 2
+    if not os.path.isabs(n):
+        return False
+    if n == "/":  # bare filesystem root — only the literal "/" / "/*" is catastrophic
+        return True
+    for r in _ABSOLUTE_ROOTS:
+        if r == "/":  # "/" is an ancestor of EVERYTHING — handled above; skip here
+            continue  # so /tmp/x is not mis-flagged as a "subpath of /"
+        if n == r:
+            return True
+        if n.startswith(r + "/"):  # operand is a subpath of a root (/usr/lib ⊂ /usr)
+            return True
+        if r.startswith(n + "/"):  # operand is an ancestor of a root (/home ⊃ /home/x)
+            return True
+    return False
 
 
 def _is_recursive_force(flags: list[str]) -> bool:
@@ -163,8 +229,8 @@ def is_catastrophic(args: list[str]) -> tuple[bool, str]:
     # rm -rf <system/home root>
     if base == "rm":
         flags, operands = _split_flags_and_operands(rest)
-        if _is_recursive_force(flags) and any(op in _SYSTEM_ROOTS for op in operands):
-            target = next(op for op in operands if op in _SYSTEM_ROOTS)
+        if _is_recursive_force(flags) and any(_hits_system_root(op) for op in operands):
+            target = next(op for op in operands if _hits_system_root(op))
             return (True, f"recursive force-delete of a system root: {target}")
 
     # dd of=/dev/... — overwriting a block device
@@ -183,8 +249,8 @@ def is_catastrophic(args: list[str]) -> tuple[bool, str]:
     # chmod/chown -R on a system root
     if base in ("chmod", "chown"):
         flags, operands = _split_flags_and_operands(rest)
-        if _is_recursive(flags) and any(op in _SYSTEM_ROOTS for op in operands):
-            target = next(op for op in operands if op in _SYSTEM_ROOTS)
+        if _is_recursive(flags) and any(_hits_system_root(op) for op in operands):
+            target = next(op for op in operands if _hits_system_root(op))
             return (True, f"recursive {base} on a system root: {target}")
 
     return (False, "")

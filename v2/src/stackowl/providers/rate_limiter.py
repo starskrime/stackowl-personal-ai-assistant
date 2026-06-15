@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 
@@ -40,6 +42,12 @@ class RateLimiter:
         self._clock: Clock = clock
         self._tokens: float = float(capacity) if capacity is not None else 0.0
         self._last_refill: float = clock.monotonic()
+        # F118 — per-instance lock guards refill+check+deduct as ONE critical
+        # section so two concurrent acquirers cannot both pass the ``>=`` check on
+        # the same tokens and over-draw the bucket. The sleep happens OUTSIDE the
+        # lock (re-loop + re-check after), so a slow back-pressure wait never
+        # serializes the whole process. No fairness promise (documented).
+        self._lock = asyncio.Lock()
         log.engine.debug(
             "[rate_limiter] init: exit",
             extra={
@@ -111,47 +119,51 @@ class RateLimiter:
         total_waited = 0.0
 
         while True:
-            self._refill()
-            if self._tokens >= tokens:
-                self._tokens -= tokens
-                if total_waited >= _SLOW_WAIT_THRESHOLD_SECONDS:
-                    log.engine.warning(
-                        "[rate_limiter] acquire: slow back-pressure (>%.0fs wait)",
-                        _SLOW_WAIT_THRESHOLD_SECONDS,
+            # Critical section: refill + check + deduct atomically under the lock so
+            # no two coroutines both pass the ``>=`` check on the same tokens (F118).
+            # The sleep is computed here but performed OUTSIDE the lock below.
+            async with self._lock:
+                self._refill()
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    if total_waited >= _SLOW_WAIT_THRESHOLD_SECONDS:
+                        log.engine.warning(
+                            "[rate_limiter] acquire: slow back-pressure (>%.0fs wait)",
+                            _SLOW_WAIT_THRESHOLD_SECONDS,
+                            extra={
+                                "_fields": {
+                                    "provider": self._provider_name,
+                                    "waited_seconds": total_waited,
+                                }
+                            },
+                        )
+                    log.engine.debug(
+                        "[rate_limiter] acquire: exit — tokens granted",
                         extra={
                             "_fields": {
                                 "provider": self._provider_name,
+                                "remaining_tokens": self._tokens,
                                 "waited_seconds": total_waited,
                             }
                         },
                     )
-                log.engine.debug(
-                    "[rate_limiter] acquire: exit — tokens granted",
-                    extra={
-                        "_fields": {
-                            "provider": self._provider_name,
-                            "remaining_tokens": self._tokens,
-                            "waited_seconds": total_waited,
-                        }
-                    },
-                )
-                return
+                    return
 
-            if self._refill_rate <= 0.0:
-                log.engine.error(
-                    "[rate_limiter] acquire: refill_rate is zero — cannot grant tokens",
-                    extra={
-                        "_fields": {
-                            "provider": self._provider_name,
-                            "requested_tokens": tokens,
-                            "capacity": self._capacity,
-                        }
-                    },
-                )
-                return
+                if self._refill_rate <= 0.0:
+                    log.engine.error(
+                        "[rate_limiter] acquire: refill_rate is zero — cannot grant tokens",
+                        extra={
+                            "_fields": {
+                                "provider": self._provider_name,
+                                "requested_tokens": tokens,
+                                "capacity": self._capacity,
+                            }
+                        },
+                    )
+                    return
 
-            deficit = tokens - self._tokens
-            sleep_seconds = max(deficit / self._refill_rate, 0.01)
+                deficit = tokens - self._tokens
+                sleep_seconds = max(deficit / self._refill_rate, 0.01)
             log.engine.debug(
                 "[rate_limiter] acquire: step — sleeping for tokens",
                 extra={
@@ -162,6 +174,8 @@ class RateLimiter:
                     }
                 },
             )
+            # OUTSIDE the lock — never hold it across an await sleep (would
+            # serialize the whole process and risk deadlock). Re-loop & re-check.
             await self._clock.async_sleep(sleep_seconds)
             total_waited = self._clock.monotonic() - wait_started
 

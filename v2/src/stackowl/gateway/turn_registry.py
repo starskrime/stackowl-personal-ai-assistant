@@ -5,6 +5,7 @@ import enum
 import os
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from stackowl.infra.observability import log
@@ -34,6 +35,21 @@ def default_global_running_max() -> int:
     """
     cpus = os.cpu_count() or 1
     return max(4, min(cpus * 4, 64))
+
+
+def default_turn_ttl_seconds() -> float:
+    """Host-scaled backstop TTL for the turn sweeper (F050), no Jetson pin.
+
+    A GENEROUS backstop — the common wedge (a turn whose task is ``done()`` but
+    status never reached ``DONE``) is caught by the done-leg of ``sweep`` within
+    one sweep interval regardless of this value; the TTL only bounds the
+    pathological case of a turn that never completes at all. Floored high (order of
+    an hour) so a slow box never reaps a turn that is merely taking a long time,
+    and the floor scales nothing down on small hardware (all-hardware rule). The
+    expired leg NEVER reaps a still-running (``not task.done()``) turn — TTL only
+    tightens *when* a done-stuck turn is reaped.
+    """
+    return 3600.0
 
 
 class TurnStatus(enum.Enum):
@@ -102,6 +118,15 @@ class TurnRegistry:
         # is untouched. Holding across the LLM await is correct: same-session
         # intake is serialized BY DESIGN (≤1 running turn per session).
         self._intake_locks: dict[str, asyncio.Lock] = {}
+        # F050 — drain hook fired by ``sweep`` after a reap frees a _running slot,
+        # so a reaped-but-stranded session (queued intake, no running turn) is
+        # surfaced to the global-cap drain seam (no fake success: reaped AND
+        # surfaced). Wired by the orchestrator at startup; None in unit tests.
+        self._on_stranded: Callable[[], Awaitable[None]] | None = None
+
+    def set_stranded_drainer(self, cb: Callable[[], Awaitable[None]] | None) -> None:
+        """Register the post-reap drain callback (F050 stranded-session surfacing)."""
+        self._on_stranded = cb
 
     @property
     def per_session_queue_max(self) -> int:
@@ -297,7 +322,8 @@ class TurnRegistry:
         §9 invariant 1 (lost-steer guard) — the enqueue side. A steer must NEVER
         land in a dead turn's mailbox. Under the turn's per-turn ``lock`` (so the
         status-read and the put are ONE atomic critical section vs.
-        ``finalize_if_drained`` which holds the same lock):
+        ``finalize_and_drain`` — the SOLE completion-seam guard — which takes the
+        same lock):
 
           * status ``RUNNING`` → fold the steer onto ``steering_mailbox`` with
             supersede-oldest backpressure (``_put_steer_superseding``) and return
@@ -337,8 +363,8 @@ class TurnRegistry:
                 # §5.4 supersede-oldest: on a FULL mailbox drop the OLDEST pending
                 # steer and accept the newest (bounded + newest-always-lands), NOT a
                 # NEW turn. Atomic with the status-read above (we hold turn.lock and
-                # _put_steer_superseding does no await), so the Task 11 lost-steer
-                # atomicity vs. finalize_if_drained/finalize_and_drain is preserved.
+                # _put_steer_superseding does no await), so the lost-steer atomicity
+                # vs. finalize_and_drain (the sole completion-seam guard) is preserved.
                 self._put_steer_superseding(turn, text)
                 log.gateway.debug(
                     "[turn] try_steer: accepted by RUNNING turn (supersede-oldest if full)",
@@ -359,42 +385,6 @@ class TurnRegistry:
             )
             return "NEW"
 
-    async def finalize_if_drained(self, request_id: str) -> bool:
-        """Re-check the mailbox under lock, then CAS RUNNING→FINALIZING if empty.
-
-        §9 invariant 1 (lost-steer guard) — the finalize side. Under the SAME
-        per-turn ``lock`` ``try_steer`` takes (so a steer arriving concurrently is
-        serialized against this check):
-
-          * mailbox non-empty → return ``False`` (a last-moment steer is pending;
-            the caller MUST loop again and fold it before finalizing — never go
-            FINALIZING with pending steers).
-          * mailbox empty → CAS ``RUNNING→FINALIZING`` and return ``True``.
-
-        An unknown ``request_id`` (already deregistered) is already past its
-        finalization line → return ``True`` (the caller stops looping; nothing to
-        finalize).
-        """
-        turn = self._turns.get(request_id)
-        if turn is None:
-            return True
-        async with turn.lock:
-            if not turn.steering_mailbox.empty():
-                log.gateway.debug(
-                    "[turn] finalize_if_drained: pending steer — not finalizing",
-                    extra={"_fields": {"request_id": request_id}},
-                )
-                return False
-            # Empty under the lock → safe to advance. Inline CAS (we already hold
-            # the lock; cas_status would re-acquire it → not re-entrant).
-            if turn.status is TurnStatus.RUNNING:
-                turn.status = TurnStatus.FINALIZING
-            log.gateway.debug(
-                "[turn] finalize_if_drained: drained — FINALIZING",
-                extra={"_fields": {"request_id": request_id, "status": turn.status.value}},
-            )
-            return True
-
     def _reroute_survivors_locked(self, turn: Turn, survivors: list[str]) -> None:
         """Re-route already-drained mailbox survivors as queued-new turns.
 
@@ -402,9 +392,10 @@ class TurnRegistry:
         of the same atomic teardown critical section). Each survivor becomes a
         queued-new turn (FIFO, inheriting the turn's ``session_id``/``target``) with
         a fresh request id derived from the turn id + ordinal so the orchestrator's
-        queued-new dispatch keys them uniquely. Shared by ``drain_survivors`` and
-        ``finalize_and_drain`` so the enqueue-as-queued-new logic lives in ONE
-        place. A full intake queue is loud-but-non-fatal (logged, never raised) —
+        queued-new dispatch keys them uniquely. Used by ``finalize_and_drain`` (the
+        SOLE lost-steer completion-seam guard) so the enqueue-as-queued-new logic
+        lives in ONE place. A full intake queue is loud-but-non-fatal (logged, never
+        raised) —
         the survivor stays in the caller's returned list so it is still visible.
         """
         for i, text in enumerate(survivors):
@@ -446,28 +437,6 @@ class TurnRegistry:
                 survivors.append(turn.steering_mailbox.get_nowait())
             except asyncio.QueueEmpty:
                 break
-        return survivors
-
-    async def drain_survivors(self, request_id: str) -> list[str]:
-        """On teardown, drain remaining mailbox items and re-route each as new.
-
-        §9 invariant 1 (lost-steer guard) — the teardown side. A steer accepted by
-        a RUNNING turn but never folded (e.g. it arrived after the loop's last
-        iteration boundary) would otherwise be GC'd with the turn — a LOST
-        instruction. Drain all remaining items under the lock and ``enqueue`` each
-        as a queued-new turn (FIFO, inheriting the turn's ``target``/``session_id``),
-        returning the drained texts so the caller can also act on them.
-
-        Each re-routed survivor gets a fresh request id derived from the turn id +
-        ordinal (``"{request_id}-survivor-{i}"``) so the orchestrator's queued-new
-        dispatch keys them uniquely. An unknown ``request_id`` → ``[]``.
-        """
-        turn = self._turns.get(request_id)
-        if turn is None:
-            return []
-        async with turn.lock:
-            survivors = self._drain_mailbox_locked(turn)
-            self._reroute_survivors_locked(turn, survivors)
         return survivors
 
     async def finalize_and_drain(self, request_id: str) -> list[str]:
@@ -594,23 +563,53 @@ class TurnRegistry:
         )
 
     async def sweep(self, *, ttl_seconds: float) -> list[str]:
-        """Backstop: reap turns whose task is done but status not terminal, or past TTL.
+        """Backstop: reap a turn whose TASK IS DONE but status never reached DONE.
 
-        Snapshot keys THEN act — never iterate-and-mutate (dict changed size).
+        F050: the reap predicate is gated behind ``task.done()`` — the expired-TTL
+        clause only tightens *when* a done-stuck turn is reaped, it MUST NEVER reap
+        a still-RUNNING (``not task.done()``) turn. Reaping a live turn would free
+        its ``_running`` slot and let a concurrent same-session message start a
+        SECOND running turn (two writers to one chat history — the race
+        ``project_concurrent_message_handling`` deleted by construction).
+
+        Snapshot keys THEN act — never iterate-and-mutate (dict changed size). After
+        a reap that freed a ``_running`` slot, surface stranded sessions to the
+        drain seam (self-healing: a failing drainer is logged, never raised).
         """
         now = time.monotonic()
         reaped: list[str] = []
+        freed_running = False
         for rid in list(self._turns.keys()):  # snapshot
             turn = self._turns.get(rid)
             if turn is None:
                 continue
             done = turn.task is not None and turn.task.done()
             expired = (now - turn.started_at) >= ttl_seconds
-            if (done and turn.status is not TurnStatus.DONE) or expired:
+            # done AND not-yet-DONE → the wedge; expired only ever NARROWS the
+            # done-set, never reaps a not-done turn (the bare-expired foot-gun).
+            if done and (turn.status is not TurnStatus.DONE or expired):
+                was_running = self._running.get(turn.session_id) == rid
                 await self.deregister(rid)
+                if was_running:
+                    freed_running = True
                 reaped.append(rid)
                 log.gateway.warning(
                     "[turn] sweeper reaped",
-                    extra={"_fields": {"request_id": rid}},
+                    extra={"_fields": {
+                        "request_id": rid,
+                        "session_id": turn.session_id,
+                        "reason": "done_not_DONE" if turn.status is not TurnStatus.DONE
+                        else "expired_done",
+                    }},
+                )
+        # Stranded-session drain: a reaped session may have a queued intake and no
+        # running turn — only ANOTHER turn finishing would otherwise wake it (silent
+        # unresponsiveness). Surface it to the global-cap drain seam.
+        if freed_running and self._on_stranded is not None:
+            try:
+                await self._on_stranded()
+            except Exception as exc:  # B5 — never crash the scheduler loop
+                log.gateway.error(
+                    "[turn] sweeper stranded-drain failed — continuing", exc_info=exc
                 )
         return reaped

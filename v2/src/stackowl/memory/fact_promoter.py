@@ -281,6 +281,11 @@ class FactPromoter:
                         "source_ref": fact.source_ref,
                         "content": fact.content,
                         "trust": fact.trust,
+                        # F062 — tag every vector with the model it was embedded
+                        # under so recall can corpus-match and F063 can ANN-scope.
+                        # Value already on the fact; never inferred. (dim authority
+                        # is the corpus-identity sidecar, never read back here.)
+                        "embedding_model": fact.embedding_model or "",
                     },
                 )
             except Exception as exc:

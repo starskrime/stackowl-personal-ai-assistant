@@ -67,6 +67,20 @@ class BudgetGovernor:
                 return BudgetBreach("cost", self._max_cost_usd, spent)
         return None
 
+    def remaining_seconds(self) -> float | None:
+        """Residual wall-clock budget for THIS run, or None when no time cap is set.
+
+        F027/SP-4 — the governor is the single budget owner; the execute step reads
+        this value and threads it into the provider's terminal wrap-up as
+        ``wrapup_deadline_s`` so a hung wrap-up cannot exceed the promised ceiling.
+        Floors at 0.0 (never negative). Reuses the private cap/start/clock fields so
+        the provider never reaches into the governor object.
+        """
+        if self._max_time_s is None:
+            return None
+        elapsed = self._clock.monotonic() - self._t0
+        return max(0.0, self._max_time_s - elapsed)
+
     def raise_caps(self, cap: str) -> None:
         """In-memory raise of the breached cap (interactive Raise).
 

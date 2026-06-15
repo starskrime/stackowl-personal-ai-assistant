@@ -1,9 +1,10 @@
 """Lost-steer finalization — the completion-window race (concurrent-msg §9 inv.1).
 
-The loop/completion HALF of the lost-steer invariant. Task 11 proved the
-registry primitives (``try_steer`` / ``finalize_if_drained`` / ``drain_survivors``)
-in isolation; this proves the COMPLETION SEAM that the orchestrator's
-``_drain_next`` runs at turn teardown.
+The loop/completion HALF of the lost-steer invariant. This proves the COMPLETION
+SEAM that the orchestrator's ``_drain_next`` runs at turn teardown: the enqueue side
+(``try_steer``) raced against the SOLE completion-seam guard ``finalize_and_drain``.
+(The redundant finalize-side primitives ``finalize_if_drained``/``drain_survivors``
+were dead code and were removed in F051; this seam is the live guard.)
 
 The window (the bug this fixes):
 

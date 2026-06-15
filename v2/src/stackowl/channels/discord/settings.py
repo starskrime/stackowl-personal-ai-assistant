@@ -28,3 +28,7 @@ class DiscordSettings(BaseModel):
     guild_id: int | None = None
     socket_mode: bool = True
     suppress_evolution_events: bool = False
+    # Gate for orchestrator startup wiring (F004-part2). Defaults False so the
+    # channel is never accidentally started before its send path + consent
+    # prompter are wired — documents the gap rather than hiding it.
+    enabled: bool = False

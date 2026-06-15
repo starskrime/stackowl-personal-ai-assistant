@@ -551,3 +551,140 @@ async def test_all_open_floors_without_recovery_line(
         f"FR5 HONESTY DEFECT: full recovery template text appeared on a floored turn. "
         f"Got: {delivered!r}"
     )
+
+
+# =========================================================================== #
+# F115 MERGE GATE — real upstream faults open the breaker via the REAL call
+# path (NOT the _record_failure shortcut), then the cascade SKIPS that provider.
+# =========================================================================== #
+
+
+class _FakeCompletions:
+    """``chat.completions`` stub: raises an SDK APIError N times, then succeeds."""
+
+    def __init__(self, fail_times: int) -> None:
+        self._remaining = fail_times
+        self.calls = 0
+
+    async def create(self, **_kwargs: Any) -> Any:
+        import httpx
+        import openai
+
+        self.calls += 1
+        if self._remaining > 0:
+            self._remaining -= 1
+            # A connection error is a classified transport fault (no numeric status
+            # → an outage). This is the REAL openai.APIError path the provider's
+            # except-clause catches, so resilient_round records ok=False.
+            raise openai.APIConnectionError(request=httpx.Request("POST", "http://x/v1"))
+
+        class _Msg:
+            content = "live answer from the recovered provider"
+            tool_calls = None
+
+        class _Choice:
+            message = _Msg()
+
+        class _Usage:
+            prompt_tokens = 1
+            completion_tokens = 1
+
+        class _Resp:
+            choices = [_Choice()]
+            usage = _Usage()
+            model = "fake-openai-model"
+
+        return _Resp()
+
+
+class _FakeOpenAIClient:
+    """Minimal AsyncOpenAI stand-in exposing ``chat.completions.create``."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.completions = _FakeCompletions(fail_times)
+
+        class _Chat:
+            def __init__(self, comp: _FakeCompletions) -> None:
+                self.completions = comp
+
+        self.chat = _Chat(self.completions)
+
+
+def _real_openai_provider(name: str, fail_times: int) -> Any:
+    """A REAL OpenAIProvider whose SDK client is the fault-injecting fake."""
+    from stackowl.config.provider import ProviderConfig
+    from stackowl.providers.openai_provider import OpenAIProvider
+
+    cfg = ProviderConfig(
+        name=name,
+        protocol="openai",
+        enabled=True,
+        base_url="http://localhost:9/v1",
+        default_model="fake-openai-model",
+        tier="powerful",
+    )
+    provider = OpenAIProvider(cfg, api_key="test-key")
+    provider._client = _FakeOpenAIClient(fail_times)  # type: ignore[assignment]
+    return provider
+
+
+@pytest.mark.asyncio
+async def test_real_upstream_faults_open_breaker_then_cascade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F115 MERGE GATE: classified upstream faults on the REAL provider call path
+    open the registry-owned breaker, and the circuit-aware cascade then SKIPS the
+    dead provider in favour of a healthy backup — proving the write side is wired.
+
+    Mocks ONLY the transport (the SDK client); everything else is real
+    (OpenAIProvider.complete → _resilient_round → registry breaker → cascade).
+    """
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    from stackowl.providers.circuit_breaker import CircuitState
+
+    # failure_threshold defaults to 3 → fail exactly 3 times.
+    powerful = _real_openai_provider(_POWERFUL_NAME, fail_times=3)
+    backup = _ScriptedProvider(_FAST_NAME, ["healthy backup answer"])
+
+    preg = ProviderRegistry()
+    preg.register_mock(_POWERFUL_NAME, powerful, tier="powerful")
+    preg.register_mock(_FAST_NAME, backup, tier="fast")
+
+    breaker = preg.get_circuit_breaker(_POWERFUL_NAME)
+    assert breaker is not None
+    assert breaker.state is CircuitState.CLOSED  # dead path today: would STAY closed
+
+    # Drive the REAL per-round write path 3 times (each raises a classified fault).
+    msgs = [Message(role="user", content="hi")]
+    for _ in range(3):
+        with pytest.raises(Exception):  # noqa: B017,PT011 — ProviderError wraps the APIError
+            await powerful.complete(msgs, model="")
+
+    # (1) The breaker OPENED via the real call path (NOT _record_failure).
+    assert breaker.state is CircuitState.OPEN, (
+        "breaker did not open via the real provider call path — the write side is dead"
+    )
+    assert powerful._client.completions.calls == 3  # type: ignore[attr-defined]
+
+    # (2) The cascade now SKIPS the open powerful provider and admits the backup.
+    chosen, degraded_from = preg.resolve_tier_with_fallback("powerful")
+    assert chosen is backup, "cascade did not skip the OPEN provider"
+    assert degraded_from == _POWERFUL_NAME
+
+    # (3) A recovered/half-open probe is admitted after the window elapses. The
+    # registry mock breaker uses the registry clock (WallClock); drive recovery by
+    # forcing the OPEN→HALF_OPEN promotion through the public record seam instead.
+    # Re-close it via a successful round and confirm selection prefers it again.
+    await breaker.record(ok=False)  # keep state machinery exercised
+    # Simulate the half-open window having elapsed by clearing opened_at far back.
+    breaker._opened_at = breaker._clock.monotonic() - 10_000.0
+    assert breaker.state is CircuitState.HALF_OPEN
+    # A successful probe round through the real path closes the breaker.
+    powerful._client = _FakeOpenAIClient(fail_times=0)  # type: ignore[assignment]
+    await powerful.complete(msgs, model="")
+    assert breaker.state is CircuitState.CLOSED
+    chosen2, degraded2 = preg.resolve_tier_with_fallback("powerful")
+    assert chosen2 is powerful and degraded2 is None, (
+        "recovered provider was not re-admitted by the cascade"
+    )

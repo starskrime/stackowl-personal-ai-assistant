@@ -19,11 +19,16 @@ from stackowl.infra.observability import log
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.config.webhook_settings import WebhookSourceConfig
     from stackowl.db.pool import DbPool
+    from stackowl.infra.clock import Clock
 
 
-_INSERT_EVENT_SQL = (
+# Reuses the C1 CAS idiom (execute_returning_rowcount over INSERT..ON CONFLICT
+# DO NOTHING): rowcount==1 → THIS request won the claim (fresh), ==0 → the
+# event_id row already exists (replay). webhook_events_log.event_id is the PK
+# (migration 0020) — no new table, no new migration.
+_CLAIM_EVENT_SQL = (
     "INSERT INTO webhook_events_log (event_id, source, received_at, status) "
-    "VALUES (?, ?, ?, ?)"
+    "VALUES (?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING"
 )
 
 
@@ -69,24 +74,104 @@ def validate_hmac_signature(secret: str, body: bytes, provided_sig: str) -> bool
 
 
 def make_event_id() -> str:
-    """Return a new opaque event id (uuid4 hex)."""
+    """Return a new opaque event id (uuid4 hex). Retained as a public trace id."""
     return uuid.uuid4().hex
+
+
+def derive_event_id(source: str, signed_timestamp: str, body: bytes) -> str:
+    """Server-derived, attacker-immutable dedup key = sha256(source||ts||body) (R5).
+
+    Unlike a fresh uuid4 (which makes every byte-identical replay look unique) or
+    a sender delivery-id (attacker-controlled on replay), this key is derived
+    from the SIGNED timestamp + body, so a captured request always derives the
+    SAME id and the dedup row collides. Returns a 64-char hex digest.
+    """
+    h = hashlib.sha256()
+    h.update(source.encode("utf-8"))
+    h.update(b"\x1f")
+    h.update(signed_timestamp.encode("utf-8"))
+    h.update(b"\x1f")
+    h.update(body)
+    return h.hexdigest()
+
+
+def validate_signed_timestamp(
+    secret: str,
+    timestamp: str,
+    body: bytes,
+    provided_sig: str,
+    tolerance_s: int,
+    clock: Clock,
+) -> bool:
+    """Verify a Stripe-style signed timestamp: HMAC over ``f"{ts}.".encode()+body``.
+
+    Binds the timestamp INTO the signature so it cannot be tampered independently
+    of the body (a forged ts fails the constant-time HMAC check). Also rejects a
+    ts whose absolute age exceeds ``tolerance_s`` — using the injected
+    :class:`Clock` (never raw time), so the window is testable and cross-platform.
+    Never logs ``secret`` / ``body``.
+    """
+    if not provided_sig or not timestamp:
+        return False
+    # Freshness window first (cheap), via the injected clock.
+    try:
+        ts_dt = datetime.fromisoformat(timestamp)
+    except (ValueError, TypeError) as exc:  # B5 — never silent
+        log.webhook.warning(
+            "[webhook] receiver_helpers.validate_signed_timestamp: unparseable timestamp",
+            exc_info=exc,
+        )
+        return False
+    if ts_dt.tzinfo is None:
+        ts_dt = ts_dt.replace(tzinfo=UTC)
+    age = abs((clock.now() - ts_dt).total_seconds())
+    if age > tolerance_s:
+        log.webhook.warning(
+            "[webhook] receiver_helpers.validate_signed_timestamp: stale timestamp",
+            extra={"_fields": {"age_s": int(age), "tolerance_s": tolerance_s}},
+        )
+        return False
+    # Constant-time HMAC over the signed payload (ts bound into the signature).
+    raw_sig = provided_sig
+    if raw_sig.startswith("sha256="):
+        raw_sig = raw_sig[len("sha256=") :]
+    signed_payload = f"{timestamp}.".encode() + body
+    expected = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, raw_sig)
+
+
+async def claim_delivery(
+    db: DbPool, event_id: str, source: str, received_at: str
+) -> bool:
+    """Atomically claim ``event_id`` for THIS request; True iff it is fresh.
+
+    Reuses the C1 CAS primitive (``execute_returning_rowcount`` over INSERT..
+    ON CONFLICT DO NOTHING). rowcount==1 → won (fresh, proceed to enqueue);
+    rowcount==0 → the id already exists (replay, suppress). Fail-closed: a write
+    failure PROPAGATES (R7) — a gate that swallows its own write is not a gate.
+    """
+    # 1. ENTRY
+    log.webhook.debug(
+        "[webhook] receiver_helpers.claim_delivery: entry",
+        extra={"_fields": {"source": source}},
+    )
+    rows = await db.execute_returning_rowcount(
+        _CLAIM_EVENT_SQL, (event_id, source, received_at, "enqueued")
+    )
+    won = rows == 1
+    # 4. EXIT
+    log.webhook.debug(
+        "[webhook] receiver_helpers.claim_delivery: exit",
+        extra={"_fields": {"source": source, "won": won}},
+    )
+    if not won:
+        log.webhook.info(
+            "[webhook] receiver_helpers.claim_delivery: replay suppressed",
+            extra={"_fields": {"source": source}},
+        )
+    return won
 
 
 def now_iso() -> str:
     """Return current UTC time as an ISO8601 string."""
     return datetime.now(UTC).isoformat()
-
-
-async def persist_event_log(
-    db: DbPool, event_id: str, source: str, received_at: str, status: str = "enqueued"
-) -> None:
-    """Best-effort append into ``webhook_events_log``; warn-and-continue on failure."""
-    try:
-        await db.execute(_INSERT_EVENT_SQL, (event_id, source, received_at, status))
-    except Exception as exc:  # B5 — never silent
-        log.webhook.warning(
-            "[webhook] receiver_helpers.persist_event_log: insert failed",
-            exc_info=exc,
-            extra={"_fields": {"event_id": event_id, "source": source, "status": status}},
-        )

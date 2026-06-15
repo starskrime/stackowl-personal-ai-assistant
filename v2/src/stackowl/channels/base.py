@@ -47,8 +47,50 @@ class ChannelAdapter(ABC):
 
     @abstractmethod
     async def send_text(self, text: str) -> None:
-        """Send a plain text message to the user."""
+        """Send a plain text message to the user.
+
+        No-target contract (C6 / C-1) — applied identically by every rich
+        channel (Telegram, Slack, Discord, WhatsApp) that overrides this with an
+        explicit keyword target (``chat_id=`` / ``target=``):
+
+        * An EXPLICIT keyword target was passed (the on-turn path: ``send()``
+          captures ``chunk.target`` and forwards it) but it does NOT resolve to a
+          live destination ⇒ log at ``error`` and raise
+          :class:`~stackowl.exceptions.DeliveryError` — an answer to a turn must
+          never be silently dropped (no-hidden-errors).
+        * NO explicit target was passed AND the adapter's shared ``_last_*`` is
+          ``None`` (the proactive / best-effort path) ⇒ stay a loud ``error``-level
+          LOGGED NO-OP, surfaced via the ``DeliveryLedger`` — NEVER a raise, so
+          the proactive deliverer's never-raises contract is preserved and no
+          false ``failed`` ledger row triggers a retry storm.
+
+        A "fallback chat" is NEVER fabricated (that re-creates the cross-deliver
+        bug): the honest behaviour is loud-failure on-turn, visible-status
+        best-effort.
+        """
         ...
+
+    def resolve_target(self, session_id: str) -> str | int | None:
+        """Resolve THIS channel's native send destination for ``session_id``.
+
+        The ``session_id`` is NOT itself a send target on every channel (the
+        session_id != send-target asymmetry): a Slack ``slack:{hash}`` session
+        is not a channel id, while a Telegram private chat's session_id IS the
+        numeric chat id. Resolution therefore lives in the adapter that OWNS the
+        destination map for its channel.
+
+        Default behaviour: ``None`` — text-only / single-terminal channels (CLI,
+        SMS) have no per-session destination, so a proactive send falls back to
+        the adapter's shared ``_last_*`` recipient (logged loudly upstream, never
+        a silent guess). Channels with a real recipient map (Telegram, Slack)
+        override this to return their channel-native token (telegram ``int``
+        chat id, slack ``str`` channel id).
+        """
+        log.gateway.debug(
+            "[channel] resolve_target: default None (no per-session destination)",
+            extra={"_fields": {"channel": self.channel_name}},
+        )
+        return None
 
     async def send_inline_keyboard(
         self,

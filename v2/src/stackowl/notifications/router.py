@@ -14,7 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
@@ -53,7 +53,7 @@ _COUNT_QUEUE_SQL = "SELECT COUNT(*) AS n FROM notification_queue"
 class Notification(BaseModel):
     """A single notification request handed to :class:`NotificationRouter`."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     message: str
     urgency: Literal["critical", "normal", "low"]
@@ -66,17 +66,28 @@ class Notification(BaseModel):
     # the text path, using ``message`` as the (optional) caption. None preserves
     # the pure-text behaviour for every existing caller.
     file_path: str | None = None
-    # Explicit recipient chat id for this send (concurrent-msg backlog fix). A
-    # proactive/heartbeat send with no recipient would ride the channel adapter's
-    # shared mutable ``_last_chat_id`` and could cross-deliver to whoever messaged
-    # last. When the originating session resolves to a concrete chat (telegram
-    # private chat: session_id == str(user_id) == chat_id), the proactive source
-    # stamps it here and the ProactiveDeliverer threads it through to
-    # ``send_text(chat_id=...)`` so the message reaches THAT chat. None keeps the
-    # back-compat ``_last_chat_id`` fallback for text-only / single-terminal
-    # channels. CAVEAT: only valid where session_id == chat_id (telegram private
-    # chats); a group chat's chat_id != user_id, so it is left None there.
-    target_chat_id: int | None = None
+    # Explicit channel-native recipient for this send (C1/F104). Carries the
+    # destination in the channel's OWN type: a telegram ``int`` chat_id or a
+    # slack ``str`` channel id. A proactive/heartbeat send with no recipient
+    # would ride the channel adapter's shared mutable ``_last_*`` and could
+    # cross-deliver to whoever messaged last; the proactive source stamps the
+    # resolved destination here and the ProactiveDeliverer threads it through to
+    # the adapter so the message reaches THAT recipient. None keeps the
+    # back-compat ``_last_*`` fallback for text-only / single-terminal channels.
+    #
+    # ``target_chat_id`` is the DEPRECATED former name — kept for one release as a
+    # construction alias (``Notification(target_chat_id=...)`` still works) and as
+    # a read property below, per the minimal-change / no-break rule. New callers
+    # should use ``target``.
+    target: str | int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("target", "target_chat_id"),
+    )
+
+    @property
+    def target_chat_id(self) -> str | int | None:
+        """Deprecated read alias for :attr:`target` (kept one release, no-break)."""
+        return self.target
 
 
 class NotificationRouter:

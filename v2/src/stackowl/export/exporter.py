@@ -18,6 +18,34 @@ if TYPE_CHECKING:
     from stackowl.db.pool import DbPool
     from stackowl.memory.sqlite_bridge import MemoryBridge
 
+# Per-table export registry (C7 / F131). Every exported table declares a
+# sanitization STRATEGY so the default for any table is "scrubbed", never "leak":
+#   flat      — sanitize_dict per row (key-redaction + value-regex). committed_facts
+#               stays byte-identical because it carries no secret-shaped content.
+#   json_text — JSON-decode structured TEXT columns first so structural
+#               key-redaction actually fires, then value-sanitize + re-serialize.
+#   free_text — sanitize_text over every string field (transcripts). The
+#               generic-40 may corrupt benign 40-char tokens — an ACCEPTED,
+#               documented trade-off for a security export.
+#   audit     — like json_text over audit_log.details, but stamps `_redacted`
+#               on any changed row and leaves integrity_hash/chain_version intact.
+#               (R3) The exported audit_log is a REDACTED DERIVATIVE: it is NOT
+#               chain-verifiable by design — the live DB remains source of truth.
+# (filename, table, limit_or_None, strategy)
+_EXPORTED_TABLES: tuple[tuple[str, str, int | None, str], ...] = (
+    ("committed_facts.json", "committed_facts", None, "flat"),
+    ("staged_facts.json", "staged_facts", None, "free_text"),
+    ("owl_dna.json", "owl_dna", None, "flat"),
+    ("parliament_sessions.json", "parliament_sessions", 100, "free_text"),
+    ("audit_log.json", "audit_log", None, "audit"),
+)
+
+# Keys in a JSON-TEXT / audit row that must survive value-sanitization untouched
+# (forensic metadata, not secret carriers). They do not match the sensitive-key
+# denylist so they already survive sanitize_dict; listed here for the audit
+# strategy's change-detection so flipping them never spuriously stamps _redacted.
+_AUDIT_PRESERVE_KEYS = frozenset({"integrity_hash", "chain_version", "audit_id"})
+
 try:
     import zstandard  # type: ignore[import-untyped]
 
@@ -80,36 +108,30 @@ class Exporter:
             tmp = Path(tmp_raw)
             members: dict[str, Path] = {}
 
-            # committed_facts
-            committed = await self._fetch_table_safe("committed_facts")
-            committed_clean = [self._sanitizer.sanitize_dict(r) for r in committed]
-            _write_json(tmp / "committed_facts.json", committed_clean)
-            members["committed_facts.json"] = tmp / "committed_facts.json"
+            # Table-driven sanitize loop — every exported table goes through a
+            # declared strategy so the default for any table is "scrubbed".
+            for filename, table, limit, strategy in _EXPORTED_TABLES:
+                if limit is None:
+                    rows = await self._fetch_table_safe(table)
+                else:
+                    rows = await self._fetch_table_limited(table, limit)
+                cleaned = self._sanitize_rows(table, rows, strategy)
+                path = tmp / filename
+                _write_json(path, cleaned)
+                members[filename] = path
 
-            # staged_facts
-            staged = await self._fetch_table_safe("staged_facts")
-            _write_json(tmp / "staged_facts.json", staged)
-            members["staged_facts.json"] = tmp / "staged_facts.json"
-
-            # owl_dna
-            owl_dna = await self._fetch_table_safe("owl_dna")
-            _write_json(tmp / "owl_dna.json", owl_dna)
-            members["owl_dna.json"] = tmp / "owl_dna.json"
-
-            # parliament_sessions (last 100)
-            sessions = await self._fetch_table_limited("parliament_sessions", 100)
-            _write_json(tmp / "parliament_sessions.json", sessions)
-            members["parliament_sessions.json"] = tmp / "parliament_sessions.json"
-
-            # audit_log
-            audit = await self._fetch_table_safe("audit_log")
-            _write_json(tmp / "audit_log.json", audit)
-            members["audit_log.json"] = tmp / "audit_log.json"
-
-            # stackowl.yaml config (sensitive fields replaced with keychain refs)
+            # stackowl.yaml config (sensitive fields replaced with keychain refs).
+            # NOT routed through sanitize_dict — _read_config_sanitized already
+            # swaps secrets for keychain: refs and must keep round-trip-restore.
             config_data = self._read_config_sanitized()
             _write_json(tmp / "stackowl.yaml", config_data)
             members["stackowl.yaml"] = tmp / "stackowl.yaml"
+
+            # Fail-closed tripwire (R4): scan every serialized member for a
+            # still-matching named-vendor secret BEFORE writing the archive. A
+            # hit raises SecurityError(export_sanitization_failed) — no half-
+            # sanitized tar is ever produced.
+            self._tripwire_scan(members)
 
             # build manifest
             manifest = {
@@ -159,6 +181,133 @@ class Exporter:
                 exc,
             )
             return []
+
+    def _sanitize_rows(
+        self, table: str, rows: list[dict], strategy: str  # type: ignore[type-arg]
+    ) -> list[dict]:  # type: ignore[type-arg]
+        """Sanitize ``rows`` per ``strategy``; the F131 leak-stop chokepoint.
+
+        4-point logging: entry (table + row_count + strategy), exit (rows out).
+        """
+        # 1. ENTRY + 2. DECISION
+        log.infra.debug(
+            "[export] exporter._sanitize_rows: entry",
+            extra={"_fields": {"table": table, "rows": len(rows), "strategy": strategy}},
+        )
+        if strategy == "flat":
+            cleaned = [self._sanitizer.sanitize_dict(r) for r in rows]
+        elif strategy == "free_text":
+            cleaned = [self._sanitize_free_text_row(r) for r in rows]
+        elif strategy == "audit":
+            cleaned = [self._sanitize_audit_row(r) for r in rows]
+        else:  # B5 — an unknown strategy must fail loud, never silent-leak.
+            log.infra.error(
+                "[export] exporter._sanitize_rows: unknown strategy — refusing to leak",
+                extra={"_fields": {"table": table, "strategy": strategy}},
+            )
+            raise ValueError(f"unknown export sanitize strategy: {strategy!r}")
+        # 4. EXIT
+        log.infra.debug(
+            "[export] exporter._sanitize_rows: exit",
+            extra={"_fields": {"table": table, "rows_out": len(cleaned)}},
+        )
+        return cleaned
+
+    def _sanitize_free_text_row(self, row: dict) -> dict:  # type: ignore[type-arg]
+        """Sanitize every string field of a transcript-bearing row.
+
+        JSON-TEXT structural columns (e.g. parliament ``rounds``) are decoded so
+        structural key-redaction fires, then re-serialized; plain strings get
+        ``sanitize_text``. Generic-40 corruption of benign tokens is the accepted,
+        documented trade-off for a security export.
+        """
+        out: dict = {}  # type: ignore[type-arg]
+        for key, value in row.items():
+            if isinstance(value, str):
+                out[key] = self._sanitize_maybe_json_text(value)
+            else:
+                out[key] = value
+        return out
+
+    def _sanitize_maybe_json_text(self, value: str) -> str:
+        """If ``value`` is a JSON object/array string, decode→sanitize→re-encode.
+
+        Falls back to plain ``sanitize_text`` for non-JSON strings. This is what
+        makes structural ``_key_is_sensitive`` redaction fire on JSON-as-TEXT
+        columns (R4 trap-b) instead of relying on the value-regex alone.
+        """
+        stripped = value.strip()
+        if stripped[:1] in ("{", "["):
+            try:
+                decoded = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return self._sanitizer.sanitize_text(value)
+            cleaned = self._sanitize_structure(decoded)
+            return json.dumps(cleaned, ensure_ascii=False, default=str)
+        return self._sanitizer.sanitize_text(value)
+
+    def _sanitize_structure(self, obj: object) -> object:
+        """Recursively sanitize a decoded JSON structure (dict / list / str)."""
+        if isinstance(obj, dict):
+            return self._sanitizer.sanitize_dict(obj)
+        if isinstance(obj, list):
+            return [self._sanitize_structure(item) for item in obj]
+        if isinstance(obj, str):
+            return self._sanitizer.sanitize_text(obj)
+        return obj
+
+    def _sanitize_audit_row(self, row: dict) -> dict:  # type: ignore[type-arg]
+        """Value-sanitize ``audit_log.details``; stamp ``_redacted`` on change.
+
+        (R3) The exported audit_log is a REDACTED DERIVATIVE: a secret pasted into
+        an audited detail MUST NOT leak, even though value-sanitizing the row
+        makes the EXPORTED copy's hash chain non-verifiable. ``integrity_hash`` /
+        ``chain_version`` keys are preserved for human forensics; the live DB
+        stays the chain-verifiable source of truth.
+        """
+        out: dict = {}  # type: ignore[type-arg]
+        changed = False
+        for key, value in row.items():
+            if key in _AUDIT_PRESERVE_KEYS or not isinstance(value, str):
+                out[key] = value
+                continue
+            sanitized = self._sanitize_maybe_json_text(value)
+            if sanitized != value:
+                changed = True
+            out[key] = sanitized
+        if changed:
+            out["_redacted"] = True
+        return out
+
+    def _tripwire_scan(self, members: dict[str, Path]) -> None:
+        """Fail-closed post-sanitization gate (R4) over every serialized member.
+
+        Raises ``SecurityError(export_sanitization_failed)`` if a NAMED vendor
+        secret (or key-scoped entropy hit) survived sanitization, BEFORE the
+        archive is written. The config file is excluded (keychain-ref path).
+        """
+        # 1. ENTRY
+        log.infra.debug(
+            "[export] exporter._tripwire_scan: entry",
+            extra={"_fields": {"members": len(members)}},
+        )
+        for name, path in members.items():
+            if name == "stackowl.yaml":
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError as exc:  # B5 — never silent
+                log.infra.error(
+                    "[export] exporter._tripwire_scan: member unreadable",
+                    exc_info=exc,
+                    extra={"_fields": {"member": name}},
+                )
+                raise
+            # check_and_raise raises on a named-vendor hit; field_name=member so a
+            # key-scoped entropy gate stays inert here (member names aren't keys).
+            self._sanitizer.check_and_raise(content, name)
+        # 4. EXIT
+        log.infra.debug("[export] exporter._tripwire_scan: exit — clean")
 
     def _read_config_sanitized(self) -> dict:  # type: ignore[type-arg]
         """Read stackowl.yaml and replace sensitive values with keychain refs."""

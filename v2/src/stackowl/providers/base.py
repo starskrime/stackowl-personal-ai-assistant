@@ -15,7 +15,9 @@ from stackowl.infra.trace import TraceContext
 from stackowl.providers.react_callback import IterationCallback
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.providers.circuit_breaker import CircuitBreaker
     from stackowl.providers.cost_tracker import CostTracker
+    from stackowl.providers.rate_limiter import RateLimiter
 
 
 class DocumentBlock(BaseModel):
@@ -81,9 +83,49 @@ class ModelProvider(ABC):
     # recording helper is a no-op. NEVER let recording break a completion (B5).
     _cost_tracker: CostTracker | None = None
 
+    # C2/F115 — the registry-owned CircuitBreaker + RateLimiter the cascade READS,
+    # injected after construction (set_resilience) exactly like _cost_tracker. The
+    # provider WRITES breaker state at its per-round HTTP boundary via
+    # resilient_round so a genuinely-down provider is actually skipped by the
+    # cascade next turn. None by default (tests / standalone providers) → the
+    # per-round bracket is a byte-identical pass-through.
+    _breaker: CircuitBreaker | None = None
+    _limiter: RateLimiter | None = None
+
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker (idempotent; ProviderRegistry calls this)."""
         self._cost_tracker = cost_tracker
+
+    def set_resilience(
+        self,
+        breaker: CircuitBreaker | None,
+        limiter: RateLimiter | None,
+    ) -> None:
+        """Inject the registry-owned breaker + limiter (SP-4; idempotent).
+
+        The SAME breaker object the cascade reads next turn (registry-owned,
+        name-keyed) so a recorded fault drives selection. Default no-op-safe: when
+        both are None the provider's ``_resilient_round`` is a pass-through, keeping
+        a standalone/test provider byte-identical.
+        """
+        self._breaker = breaker
+        self._limiter = limiter
+
+    async def _resilient_round[T](
+        self,
+        do_round: Callable[[], Awaitable[T]],
+    ) -> T:
+        """Run ONE remote round through the shared breaker+limiter site (SP-2).
+
+        Thin instance bracket over :func:`providers._resilient_round.resilient_round`
+        binding this provider's injected breaker/limiter. Concrete providers wrap
+        EVERY remote round (each tool-loop ``create()``, the wrap-up round, the
+        ``complete()``/``stream()`` round) in this so breaker-record + limiter-acquire
+        share ONE audited site. Pass-through when nothing is injected.
+        """
+        from stackowl.providers._resilient_round import resilient_round
+
+        return await resilient_round(self._breaker, self._limiter, do_round)
 
     async def _record_cost(
         self,
@@ -147,6 +189,22 @@ class ModelProvider(ABC):
         return False
 
     @property
+    def supports_tools(self) -> bool:
+        """Whether this provider can run the agentic tool-use loop (F120).
+
+        Defaults **True** on the ABC: openai/anthropic providers override
+        ``complete_with_tools`` with a real ReAct loop. A provider that only
+        defines ``complete``/``stream`` (currently :class:`GeminiProvider`) inherits
+        the base default ``complete_with_tools`` — which IGNORES ``tool_schemas``
+        and returns ``(content, [])``, a silently non-agentic "can't act" reply the
+        give-up judge may pass as delivered. Such a provider overrides this to
+        **False** so the selector skips it for an agentic turn (loud route-away or
+        honest floor) instead of silently degrading. Mirrors
+        ``supports_vision``/``supports_document``.
+        """
+        return True
+
+    @property
     def supports_vision(self) -> bool:
         """Whether this provider's configured model can accept IMAGE blocks (E10-S1).
 
@@ -181,8 +239,17 @@ class ModelProvider(ABC):
         on_iteration_complete: IterationCallback | None = None,
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
+        wrapup_deadline_s: float | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
+
+        ``wrapup_deadline_s`` (F027/SP-4) is the residual wall-clock budget the
+        execute step (the BudgetGovernor owner) computes for the terminal Phase-F
+        wrap-up call. When set, a concrete provider wraps its terminal ``create``
+        in ``asyncio.wait_for(..., timeout=wrapup_deadline_s)`` so a hung wrap-up is
+        bounded; on ``TimeoutError`` it routes to the existing fail-open floor.
+        ``None`` (the default, always today) → byte-identical to current behavior.
+        The provider receives a VALUE, never the governor object.
 
         ``persistence_check`` (Phase D) is an optional real-time deliver-vs-giveup
         hook: a provider that supports the tool loop calls it just BEFORE returning
@@ -224,6 +291,19 @@ class ModelProvider(ABC):
         Default: falls back to a single complete() ignoring tools.
         Providers that support tool use override this method.
         """
+        # F120 defense-in-depth: a non-empty tool_schemas reaching this base default
+        # means a non-tool-capable provider (supports_tools is False) was routed an
+        # agentic turn despite the selector gate. Fail LOUD with a typed error rather
+        # than silently returning (content, []) — a fake-success the judge may pass.
+        if tool_schemas:
+            from stackowl.exceptions import ToolUseUnsupportedError
+
+            log.engine.error(
+                "[provider] complete_with_tools: base default reached with tools — "
+                "this provider cannot act; refusing to silently degrade",
+                extra={"_fields": {"provider": self.name, "tool_count": len(tool_schemas)}},
+            )
+            raise ToolUseUnsupportedError(self.name)
         msgs: list[Message] = []
         if system_text:
             msgs.append(Message(role="system", content=system_text))

@@ -35,6 +35,7 @@ from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import deliver
+from stackowl.pipeline.turn_persist import persist_turn
 
 
 async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
@@ -55,6 +56,10 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     # critical-failure cascade sees an honest state (never hides behind a giveup).
     surfaced = await surface_consequential_giveup_floor(surfaced)
     surfaced = await surface_critical_failure(surfaced, get_services())
+    # F088 — persist AFTER the honest floor band (parity with AsyncioBackend),
+    # synchronously inside the ledger ContextVar binding established by run().
+    # Floored turns record the user utterance only — never the dressed-up draft.
+    await persist_turn(surfaced)
     return await deliver.run(surfaced)
 
 try:

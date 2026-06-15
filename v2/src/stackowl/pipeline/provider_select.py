@@ -7,13 +7,84 @@ logging (log_selection=True).
 from __future__ import annotations
 
 from stackowl.commands.tier_command import get_session_tier
-from stackowl.exceptions import ProviderNotFoundError
+from stackowl.exceptions import (
+    AllProvidersUnavailableError,
+    ProviderNotFoundError,
+    ToolUseUnsupportedError,
+)
 from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import ModelProvider
 from stackowl.providers.registry import ProviderRegistry
+
+# Tier walk order for the F120 route-away cascade (mirrors registry._TIER_ORDER).
+_TOOL_CAPABLE_TIER_WALK: tuple[str, ...] = ("powerful", "standard", "fast", "local")
+
+
+def _ensure_tool_capable(
+    provider: ModelProvider,
+    registry: ProviderRegistry,
+    state: PipelineState,
+    *,
+    log_selection: bool,
+) -> ModelProvider:
+    """F120 capability gate: for an AGENTIC turn, never return a provider that can't
+    act (``supports_tools is False``).
+
+    A conversational turn is untouched (Gemini's stream/complete path is fine — gate
+    the tool loop, not the provider). For an agentic turn, if the chosen provider
+    cannot run the tool loop, cascade across tiers to the first tool-capable provider
+    (logging LOUDLY). If NONE exists, raise :class:`ToolUseUnsupportedError` so the
+    execute step floors HONESTLY ("I can't act with this model") — never a silent
+    tool-free reply.
+    """
+    if state.intent_class == "conversational":
+        return provider
+    # Duck-typed test fakes (not ModelProvider subclasses) may lack supports_tools —
+    # default True (tool-capable) so they pass through byte-identically, mirroring
+    # the getattr-guarded cost-tracker/resilience injection. Only a provider that
+    # EXPLICITLY declares supports_tools=False is gated.
+    if getattr(provider, "supports_tools", True):
+        return provider
+
+    log.engine.warning(
+        "[pipeline] execute: selected provider cannot call tools on an agentic turn — "
+        "routing to a tool-capable tier",
+        extra={"_fields": {
+            "owl": state.owl_name,
+            "incapable_provider": getattr(provider, "name", type(provider).__name__),
+            "intent_class": state.intent_class,
+        }},
+    )
+    seen: set[int] = set()
+    for tier in _TOOL_CAPABLE_TIER_WALK:
+        try:
+            candidate, _degraded = registry.resolve_tier_with_fallback(tier)
+        except AllProvidersUnavailableError:
+            continue
+        if id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        if getattr(candidate, "supports_tools", True):
+            if log_selection:
+                log.engine.info(
+                    "[pipeline] execute: routed agentic turn to a tool-capable provider",
+                    extra={"_fields": {
+                        "owl": state.owl_name,
+                        "chosen_provider_name": getattr(candidate, "name", "?"),
+                        "source": "tool_capability_route_away",
+                    }},
+                )
+            return candidate
+
+    # No tool-capable provider anywhere → floor honestly (caller catches and surfaces).
+    log.engine.error(
+        "[pipeline] execute: no tool-capable provider for an agentic turn — flooring honestly",
+        extra={"_fields": {"owl": state.owl_name, "intent_class": state.intent_class}},
+    )
+    raise ToolUseUnsupportedError(getattr(provider, "name", type(provider).__name__))
 
 
 def select_tool_provider(
@@ -57,7 +128,7 @@ def select_tool_provider(
                     "source": "owl_named_provider",
                 }},
             )
-        return provider
+        return _ensure_tool_capable(provider, registry, state, log_selection=log_selection)
     except ProviderNotFoundError:
         pass  # no per-owl provider — fall through to manifest/tier routing
 
@@ -91,7 +162,7 @@ def select_tool_provider(
                         "source": "manifest_pin",
                     }},
                 )
-            return provider
+            return _ensure_tool_capable(provider, registry, state, log_selection=log_selection)
         except ProviderNotFoundError:
             log.engine.warning(
                 "[pipeline] execute: manifest provider_name not registered — falling back to tier",
@@ -136,4 +207,4 @@ def select_tool_provider(
                 "source": tier_source,
             }},
         )
-    return provider
+    return _ensure_tool_capable(provider, registry, state, log_selection=log_selection)

@@ -136,6 +136,28 @@ async def test_build_seeds_three_default_schedules(tmp_db: DbPool) -> None:
     }
 
 
+async def test_build_seeds_turn_sweep_every_10m(tmp_db: DbPool) -> None:
+    # F050 — the turn-sweep backstop reaper gets a recurring seeded jobs row so the
+    # scheduler actually dispatches it (the handler itself is registered in the
+    # gateway assembly, which needs the TurnRegistry singleton).
+    await _build(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT handler_name, schedule FROM jobs WHERE handler_name = ?", ("turn_sweep",),
+    )
+    assert len(rows) == 1
+    assert rows[0]["schedule"] == "every 10m"
+
+
+async def test_turn_sweep_seed_is_idempotent(tmp_db: DbPool) -> None:
+    await _build(tmp_db)
+    HandlerRegistry.reset()
+    await _build(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT job_id FROM jobs WHERE handler_name = ?", ("turn_sweep",),
+    )
+    assert len(rows) == 1  # second build did not duplicate
+
+
 async def test_register_only_handlers_have_no_seeded_schedule(tmp_db: DbPool) -> None:
     """check_in, tool_pruning, goal_execution are register-only — no auto-schedule."""
     await _build(tmp_db)

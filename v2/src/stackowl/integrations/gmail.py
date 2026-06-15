@@ -69,7 +69,7 @@ class GmailAdapter(IntegrationAdapter):
         """Start the Google OAuth consent flow — opens a browser and listens for callback."""
         log.debug("integrations.gmail.connect: entry")
         try:
-            from google_auth_oauthlib.flow import Flow  # type: ignore[import]
+            from google_auth_oauthlib.flow import Flow
         except ImportError as exc:
             log.error("integrations.gmail.connect: google_auth_oauthlib not installed", exc_info=exc)
             raise RuntimeError("google-auth-oauthlib is required for Gmail integration") from exc
@@ -161,6 +161,34 @@ class GmailAdapter(IntegrationAdapter):
         log.debug("integrations.gmail.is_connected: exit", extra={"_fields": {"connected": result}})
         return result
 
+    def _build_service(self) -> Any:
+        """Build the googleapiclient Gmail discovery service from saved creds.
+
+        Lazy + ImportError-guarded (F024 Part 2): returns ``None`` when
+        ``googleapiclient`` is unavailable or there are no credentials, so callers
+        degrade to an honest ``unavailable`` — never a crash, never a fake success.
+        """
+        token_data = self._oauth.load()
+        if token_data is None:
+            return None
+        try:
+            from google.oauth2.credentials import Credentials
+            from googleapiclient.discovery import build  # type: ignore[import-not-found]
+        except ImportError as exc:
+            log.warning(
+                "integrations.gmail._build_service: googleapiclient unavailable",
+                extra={"_fields": {"error": str(exc)}},
+            )
+            return None
+        creds = Credentials(
+            token=token_data.get("token"),
+            refresh_token=token_data.get("refresh_token"),
+            token_uri=token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+        )
+        return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
     async def refresh_credentials(self) -> None:
         log.debug("integrations.gmail.refresh_credentials: entry")
         token_data = self._oauth.load()
@@ -168,8 +196,8 @@ class GmailAdapter(IntegrationAdapter):
             log.warning("integrations.gmail.refresh_credentials: no credentials to refresh")
             return
         try:
-            import google.auth.transport.requests  # type: ignore[import]
-            from google.oauth2.credentials import Credentials  # type: ignore[import]
+            import google.auth.transport.requests
+            from google.oauth2.credentials import Credentials
 
             creds = Credentials(
                 token=token_data.get("token"),
@@ -219,8 +247,30 @@ class GmailAdapter(IntegrationAdapter):
                 extra={"_fields": {"status": result.status}},
             )
             return result
-        # list_messages — stub; real impl would call Gmail API
-        result = ActionResult(status="ok", output="messages listed")
+        # list_messages — real call when connected + client available, else honest
+        # "unavailable" (F024): NEVER fabricate "ok" for an unperformed action.
+        service = self._build_service() if await self.is_connected() else None
+        if service is None:
+            result = ActionResult(
+                status="unavailable",
+                output="",
+                error="Gmail API client unavailable — messages NOT listed",
+            )
+        else:
+            try:
+                resp = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: service.users().messages().list(userId="me").execute(),
+                )
+                msgs = resp.get("messages", []) if isinstance(resp, dict) else []
+                self._last_api_ok = True
+                result = ActionResult(status="ok", output=f"{len(msgs)} messages listed")
+            except Exception as exc:
+                self._last_api_ok = False
+                log.error("integrations.gmail.list_messages: failed", exc_info=exc)
+                result = ActionResult(
+                    status="unavailable", output="", error=f"Gmail list failed: {exc}"
+                )
         log.debug("integrations.gmail.execute_action: exit", extra={"_fields": {"status": result.status}})
         return result
 
@@ -239,8 +289,40 @@ class GmailAdapter(IntegrationAdapter):
             )
             log.debug("integrations.gmail._send_email_gated: exit — requires_confirmation")
             return result
-        result = ActionResult(status="ok", output="Email queued for sending")
-        log.debug("integrations.gmail._send_email_gated: exit — ok (high autonomy)")
+        # High autonomy: no confirmation needed. Make the REAL API call when
+        # connected + client available; otherwise honest "unavailable" (F024) —
+        # NEVER a fabricated "Email queued for sending".
+        service = self._build_service() if await self.is_connected() else None
+        if service is None:
+            log.debug("integrations.gmail._send_email_gated: exit — unavailable (no client)")
+            return ActionResult(
+                status="unavailable",
+                output="",
+                error="Gmail API client unavailable — email NOT sent",
+            )
+        try:
+            import base64
+            from email.message import EmailMessage
+
+            msg = EmailMessage()
+            msg["To"] = str(params.get("to", ""))
+            msg["Subject"] = str(params.get("subject", ""))
+            msg.set_content(str(params.get("body", "")))
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            sent = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: service.users().messages().send(userId="me", body={"raw": raw}).execute(),
+            )
+            msg_id = sent.get("id", "") if isinstance(sent, dict) else ""
+            self._last_api_ok = True
+            result = ActionResult(status="ok", output=f"Email sent: {msg_id}")
+        except Exception as exc:
+            self._last_api_ok = False
+            log.error("integrations.gmail.send_email: failed", exc_info=exc)
+            result = ActionResult(
+                status="unavailable", output="", error=f"Email send failed: {exc}"
+            )
+        log.debug("integrations.gmail._send_email_gated: exit (live path)")
         return result
 
     async def health_check(self) -> HealthStatus:

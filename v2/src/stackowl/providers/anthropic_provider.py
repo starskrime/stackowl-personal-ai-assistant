@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal
@@ -10,7 +11,7 @@ import anthropic
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.exceptions import ProviderError
+from stackowl.exceptions import ProviderError, TurnStopped
 from stackowl.infra.observability import log
 from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
@@ -101,6 +102,7 @@ class AnthropicProvider(ModelProvider):
         chat_msgs = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
         resolved_model = model or self._config.default_model
         stream_kwargs: dict[str, object] = {"system": "\n\n".join(system_parts)} if system_parts else {}
+        _t0 = time.monotonic()
         try:
             async with self._client.messages.stream(
                 model=resolved_model,
@@ -108,8 +110,16 @@ class AnthropicProvider(ModelProvider):
                 max_tokens=_max_tokens(kwargs),
                 **stream_kwargs,  # type: ignore[arg-type]
             ) as stream:
-                async for text in stream.text_stream:
-                    yield text
+                try:
+                    async for text in stream.text_stream:
+                        yield text
+                finally:
+                    # F119 — record the streamed round's spend at generator exit
+                    # (even on early abandon). get_final_message() carries the usage;
+                    # best-effort, fail-open (B5) — never break the conversational path.
+                    await self._record_stream_usage_safe(
+                        stream, resolved_model, (time.monotonic() - _t0) * 1000
+                    )
         except anthropic.APIError as exc:
             log.engine.error(
                 "[anthropic] stream: API error",
@@ -118,6 +128,37 @@ class AnthropicProvider(ModelProvider):
             )
             raise ProviderError(self._name, exc) from exc
         log.engine.debug("[anthropic] stream: exit", extra={"_fields": {"provider": self._name}})
+
+    async def _record_stream_usage_safe(
+        self, stream: Any, model: str, duration_ms: float
+    ) -> None:
+        """Record one streamed round's cost from the final message usage (F119).
+
+        Fail-open (B5): ``get_final_message()`` / usage extraction may raise on an
+        abandoned or fake stream — record nothing, log at DEBUG, never break the
+        streamed reply.
+        """
+        try:
+            final = await stream.get_final_message()
+            usage = getattr(final, "usage", None)
+            if usage is None:
+                log.engine.debug(
+                    "[anthropic] stream: no usage on final message — recording nothing",
+                    extra={"_fields": {"provider": self._name}},
+                )
+                return
+            in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+            out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+            rec_model = getattr(final, "model", model) or model
+        except Exception as exc:  # B5 — never break the stream on cost accounting.
+            log.engine.debug(
+                "[anthropic] stream: usage extraction skipped",
+                extra={"_fields": {"provider": self._name, "err": str(exc)}},
+            )
+            return
+        await self._record_cost(
+            model=rec_model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+        )
 
     async def complete_with_tools(
         self,
@@ -131,6 +172,7 @@ class AnthropicProvider(ModelProvider):
         on_iteration_complete: IterationCallback | None = None,
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
+        wrapup_deadline_s: float | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Anthropic native tool-use loop using content blocks."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
@@ -240,14 +282,20 @@ class AnthropicProvider(ModelProvider):
             # stays valid for the Anthropic API.
             messages = trim_messages_to_budget(messages, budget)
             _t_call = time.monotonic()
-            try:
-                response = await self._client.messages.create(
+
+            async def _round(_msgs: list[dict[str, Any]] = messages) -> Any:
+                return await self._client.messages.create(
                     model=self._config.default_model,
-                    messages=messages,  # type: ignore[arg-type]
+                    messages=_msgs,  # type: ignore[arg-type]
                     max_tokens=self._config.max_output_tokens,
                     tools=tool_schemas,  # type: ignore[arg-type]
                     **system_kwargs,
                 )
+
+            try:
+                # F115 — per-round breaker/limiter site (NOT a wrap of the whole loop,
+                # which floors and would feed the breaker a false success).
+                response = await self._resilient_round(_round)
             except anthropic.APIError as exc:
                 log.engine.error(
                     "[anthropic] complete_with_tools: API error",
@@ -372,20 +420,56 @@ class AnthropicProvider(ModelProvider):
             messages = trim_messages_to_budget(messages, budget)
             messages.append({"role": "user", "content": WRAPUP_DIRECTIVE})
             _t_wrap = time.monotonic()
-            wrapup = await self._client.messages.create(
-                model=self._config.default_model,
-                messages=messages,  # type: ignore[arg-type]
-                max_tokens=self._config.max_output_tokens,
-                **system_kwargs,
-            )
+
+            async def _wrap_round() -> Any:
+                return await self._client.messages.create(
+                    model=self._config.default_model,
+                    messages=messages,  # type: ignore[arg-type]
+                    max_tokens=self._config.max_output_tokens,
+                    **system_kwargs,
+                )
+
+            # F027 — bound the terminal wrap-up by the governor's residual budget.
+            # None → byte-identical to today (no wait_for). Wall-clock wait_for around
+            # the await (a post-hoc check cannot bound a hang).
+            if wrapup_deadline_s is not None:
+                wrapup = await asyncio.wait_for(
+                    self._resilient_round(_wrap_round), timeout=wrapup_deadline_s,
+                )
+            else:
+                wrapup = await self._resilient_round(_wrap_round)
             await self._record_usage_safe(wrapup, (time.monotonic() - _t_wrap) * 1000)
             text = "".join(b.text for b in wrapup.content if hasattr(b, "text"))
             if text.strip():
+                # F026 — same structural give-up veto as the in-loop boundary, applied
+                # to the terminal wrap-up. Pure predicate (no nudge: no loop to
+                # continue; no LLM judge: no extra network call). On a dishonest
+                # give-up replace the dressed-up prose with the honest floor. SP-1's
+                # pipeline floor band stays the canonical replacer for pipeline
+                # callers; this protects non-pipeline consumers.
+                if is_consequential_giveup_now():
+                    floored = synthesize_from_calls(user_text, all_calls, text)
+                    log.engine.info(
+                        "[anthropic] complete_with_tools: wrap-up vetoed as give-up — flooring honest answer",
+                        extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+                    )
+                    return floored, all_calls
                 log.engine.debug(
                     "[anthropic] complete_with_tools: wrap-up answer delivered at max-out",
                     extra={"_fields": {"provider": self._name, "len": len(text)}},
                 )
                 return text, all_calls
+        except TurnStopped:
+            # A user-stop / budget-kill is NOT a give-up — propagate, never floor it.
+            raise
+        except TimeoutError as exc:
+            # F027 — wrap-up exceeded its residual deadline. Route to the EXISTING
+            # fail-open floor below (partial → synthesize_from_calls), bounded.
+            log.engine.warning(
+                "[anthropic] complete_with_tools: wrap-up exceeded deadline — flooring",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name, "deadline_s": wrapup_deadline_s}},
+            )
         except Exception as exc:  # fail-open — never surface silence on a wrap-up error
             log.engine.error(
                 "[anthropic] complete_with_tools: wrap-up call failed — falling back",
@@ -447,20 +531,21 @@ class AnthropicProvider(ModelProvider):
             if m.role != "system"
         ]
         resolved_model = model or self._config.default_model
+        sys_kwargs: dict[str, Any] = (
+            {"system": "\n\n".join(system_parts)} if system_parts else {}
+        )
+
+        async def _round() -> Any:
+            return await self._client.messages.create(
+                model=resolved_model,
+                messages=chat_msgs,  # type: ignore[arg-type]
+                max_tokens=_max_tokens(kwargs),
+                **sys_kwargs,
+            )
+
         try:
-            if system_parts:
-                response = await self._client.messages.create(
-                    model=resolved_model,
-                    messages=chat_msgs,  # type: ignore[arg-type]
-                    max_tokens=_max_tokens(kwargs),
-                    system="\n\n".join(system_parts),
-                )
-            else:
-                response = await self._client.messages.create(
-                    model=resolved_model,
-                    messages=chat_msgs,  # type: ignore[arg-type]
-                    max_tokens=_max_tokens(kwargs),
-                )
+            # F115 — record the per-round HTTP outcome onto the registry-owned breaker.
+            response = await self._resilient_round(_round)
         except anthropic.APIError as exc:
             log.engine.error(
                 "[anthropic] complete: API error",

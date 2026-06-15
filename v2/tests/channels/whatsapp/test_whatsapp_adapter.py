@@ -197,13 +197,23 @@ async def test_health_check_degraded_when_no_poll() -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_ok_after_handle_message() -> None:
-    """health_check() returns 'ok' after a message has been processed."""
-    adapter = _adapter(allowed=frozenset(["15551234567"]))
-    await adapter.handle_message("15551234567@s.whatsapp.net", "test")
+    """health_check() returns 'ok' after a message has been processed.
 
-    status = await adapter.health_check()
-    assert status.status == "ok"
-    assert status.name == "whatsapp"
+    F004-part1: ok now requires the poll loop to be live (liveness gate); a
+    running stand-in task satisfies it.
+    """
+    import asyncio
+
+    adapter = _adapter(allowed=frozenset(["15551234567"]))
+    poll = asyncio.ensure_future(asyncio.sleep(60))
+    adapter._poll_task = poll
+    try:
+        await adapter.handle_message("15551234567@s.whatsapp.net", "test")
+        status = await adapter.health_check()
+        assert status.status == "ok"
+        assert status.name == "whatsapp"
+    finally:
+        poll.cancel()
 
 
 # --------------------------------------------------------------------------- #
@@ -233,12 +243,23 @@ def test_register_with_registry_adds_adapter() -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_degraded_when_stale_poll() -> None:
-    """health_check() returns 'degraded' when last poll was >60s ago."""
+    """health_check() returns 'degraded' when last poll was >60s ago.
+
+    F004-part1: a live poll loop satisfies the liveness gate; staleness is then
+    judged on the poll timestamp.
+    """
+    import asyncio
+
     adapter = _adapter()
-    adapter._last_poll_at = time.monotonic() - 120.0
-    status = await adapter.health_check()
-    assert status.status == "degraded"
-    assert "stale" in (status.message or "")
+    poll = asyncio.ensure_future(asyncio.sleep(60))
+    adapter._poll_task = poll
+    try:
+        adapter._last_poll_at = time.monotonic() - 120.0
+        status = await adapter.health_check()
+        assert status.status == "degraded"
+        assert "stale" in (status.message or "")
+    finally:
+        poll.cancel()
 
 
 # --------------------------------------------------------------------------- #

@@ -66,7 +66,7 @@ class GoogleCalendarAdapter(IntegrationAdapter):
         """Start the Google OAuth consent flow for Calendar scopes."""
         log.debug("integrations.google_calendar.connect: entry")
         try:
-            from google_auth_oauthlib.flow import Flow  # type: ignore[import]
+            from google_auth_oauthlib.flow import Flow
         except ImportError as exc:
             log.error(
                 "integrations.google_calendar.connect: google_auth_oauthlib not installed",
@@ -113,8 +113,8 @@ class GoogleCalendarAdapter(IntegrationAdapter):
             log.warning("integrations.google_calendar.refresh_credentials: no credentials to refresh")
             return
         try:
-            import google.auth.transport.requests  # type: ignore[import]
-            from google.oauth2.credentials import Credentials  # type: ignore[import]
+            import google.auth.transport.requests
+            from google.oauth2.credentials import Credentials
 
             creds = Credentials(
                 token=token_data.get("token"),
@@ -134,6 +134,35 @@ class GoogleCalendarAdapter(IntegrationAdapter):
         except Exception as exc:
             log.error("integrations.google_calendar.refresh_credentials: failed", exc_info=exc)
             raise
+
+    def _build_service(self) -> Any:
+        """Build the googleapiclient Calendar discovery service from saved creds.
+
+        Lazy + ImportError-guarded (F024 Part 2): if ``googleapiclient`` is not
+        installed (Jetson/minimal install) or there are no credentials, returns
+        ``None`` so callers degrade to an honest ``unavailable`` — never a crash,
+        never a fake success. Modeled on ``refresh_credentials``' Credentials build.
+        """
+        token_data = self._oauth.load()
+        if token_data is None:
+            return None
+        try:
+            from google.oauth2.credentials import Credentials
+            from googleapiclient.discovery import build  # type: ignore[import-not-found]
+        except ImportError as exc:
+            log.warning(
+                "integrations.google_calendar._build_service: googleapiclient unavailable",
+                extra={"_fields": {"error": str(exc)}},
+            )
+            return None
+        creds = Credentials(
+            token=token_data.get("token"),
+            refresh_token=token_data.get("refresh_token"),
+            token_uri=token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+        )
+        return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
     async def get_morning_brief_section(self) -> BriefSection | None:
         log.debug("integrations.google_calendar.get_morning_brief_section: entry")
@@ -170,8 +199,30 @@ class GoogleCalendarAdapter(IntegrationAdapter):
                 extra={"_fields": {"status": result.status}},
             )
             return result
-        # list_events — stub; real impl would call Calendar API
-        result = ActionResult(status="ok", output="events listed")
+        # list_events — real call when connected + client available, else honest
+        # "unavailable" (F024): NEVER fabricate "ok" for an unperformed action.
+        service = self._build_service() if await self.is_connected() else None
+        if service is None:
+            result = ActionResult(
+                status="unavailable",
+                output="",
+                error="Calendar API client unavailable — events NOT listed",
+            )
+        else:
+            try:
+                resp = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: service.events().list(calendarId="primary").execute(),
+                )
+                items = resp.get("items", []) if isinstance(resp, dict) else []
+                self._last_api_ok = True
+                result = ActionResult(status="ok", output=f"{len(items)} events listed")
+            except Exception as exc:  # never crash the loop; report honestly
+                self._last_api_ok = False
+                log.error("integrations.google_calendar.list_events: failed", exc_info=exc)
+                result = ActionResult(
+                    status="unavailable", output="", error=f"Calendar list failed: {exc}"
+                )
         log.debug(
             "integrations.google_calendar.execute_action: exit",
             extra={"_fields": {"status": result.status}},
@@ -192,8 +243,40 @@ class GoogleCalendarAdapter(IntegrationAdapter):
             )
             log.debug("integrations.google_calendar._create_event_gated: exit — requires_confirmation")
             return result
-        result = ActionResult(status="ok", output="Event created")
-        log.debug("integrations.google_calendar._create_event_gated: exit — ok (high autonomy)")
+        # High autonomy: no confirmation needed. Make the REAL API call when
+        # connected + client available; otherwise honest "unavailable" (F024) —
+        # NEVER a fabricated "Event created".
+        service = self._build_service() if await self.is_connected() else None
+        if service is None:
+            result = ActionResult(
+                status="unavailable",
+                output="",
+                error="Calendar API client unavailable — event NOT created",
+            )
+            log.debug(
+                "integrations.google_calendar._create_event_gated: exit — unavailable (no client)"
+            )
+            return result
+        try:
+            body: dict[str, object] = {"summary": str(params.get("title", ""))}
+            if params.get("start"):
+                body["start"] = {"dateTime": str(params["start"])}
+            if params.get("end"):
+                body["end"] = {"dateTime": str(params["end"])}
+            created = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: service.events().insert(calendarId="primary", body=body).execute(),
+            )
+            event_id = created.get("id", "") if isinstance(created, dict) else ""
+            self._last_api_ok = True
+            result = ActionResult(status="ok", output=f"Event created: {event_id}")
+        except Exception as exc:  # never crash; report honestly
+            self._last_api_ok = False
+            log.error("integrations.google_calendar.create_event: failed", exc_info=exc)
+            result = ActionResult(
+                status="unavailable", output="", error=f"Event creation failed: {exc}"
+            )
+        log.debug("integrations.google_calendar._create_event_gated: exit (live path)")
         return result
 
     async def health_check(self) -> HealthStatus:

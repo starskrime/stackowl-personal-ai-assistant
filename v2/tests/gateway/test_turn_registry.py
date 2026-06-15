@@ -128,6 +128,86 @@ async def test_sweeper_selectivity_spares_live_within_ttl() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sweep_does_not_reap_live_running_turn() -> None:
+    # F050 — the bare-expired foot-gun: a still-RUNNING turn (task NOT done) far
+    # past TTL must be SPARED. Reaping it frees _running and lets a concurrent
+    # same-session message start a SECOND running turn → two writers to one chat
+    # history (the race project_concurrent_message_handling deleted). Fails against
+    # the OR'd ``expired``-alone leg.
+    reg = TurnRegistry()
+    live = asyncio.create_task(asyncio.sleep(60))
+    await reg.register("live", session_id="s1", task=live, target=None, original_input="a")
+
+    reaped = await reg.sweep(ttl_seconds=0.0)  # started_at already past → expired True
+
+    assert reaped == []
+    assert reg.get("live") is not None  # NOT reaped
+    running = reg.running("s1")
+    assert running is not None and running.turn_id == "live"  # _running slot intact
+
+    live.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await live
+
+
+@pytest.mark.asyncio
+async def test_sweep_reaps_done_not_DONE_turn() -> None:
+    # A turn whose task is done() but status != DONE (lost the finally race) is the
+    # legitimate wedge — reap it and free _running.
+    reg = TurnRegistry()
+    t = asyncio.create_task(asyncio.sleep(0))
+    await reg.register("stuck", session_id="s1", task=t, target=None, original_input="a")
+    await t  # done, status still RUNNING
+
+    reaped = await reg.sweep(ttl_seconds=999_999.0)  # not expired — done-leg must fire
+
+    assert reaped == ["stuck"]
+    assert reg.get("stuck") is None
+    assert reg.running("s1") is None
+
+
+@pytest.mark.asyncio
+async def test_sweep_fires_stranded_drain_after_reap() -> None:
+    # F050 stranded-session: a reap that frees a _running slot for a session with a
+    # queued intake must surface that session to the drain seam (no fake success —
+    # reaped AND surfaced). Spy on the registered callback.
+    calls: list[int] = []
+
+    async def _drainer() -> None:
+        calls.append(1)
+
+    reg = TurnRegistry()
+    reg.set_stranded_drainer(_drainer)
+    t = asyncio.create_task(asyncio.sleep(0))
+    await reg.register("stuck", session_id="s1", task=t, target=None, original_input="a")
+    await t
+
+    await reg.sweep(ttl_seconds=0.0)
+
+    assert calls == [1]  # drainer fired exactly once after the reap
+
+
+@pytest.mark.asyncio
+async def test_sweep_no_reap_does_not_fire_drainer() -> None:
+    calls: list[int] = []
+
+    async def _drainer() -> None:
+        calls.append(1)
+
+    reg = TurnRegistry()
+    reg.set_stranded_drainer(_drainer)
+    live = asyncio.create_task(asyncio.sleep(60))
+    await reg.register("live", session_id="s1", task=live, target=None, original_input="a")
+
+    await reg.sweep(ttl_seconds=0.0)  # nothing reaped
+
+    assert calls == []  # no spurious drain
+    live.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await live
+
+
+@pytest.mark.asyncio
 async def test_sweeper_reaps_all_multi_entry_without_raising() -> None:
     # >1 reapable entry is required to expose iterate-and-mutate ("dict changed
     # size") risk; the snapshot-then-act loop must reap all without raising.

@@ -42,6 +42,11 @@ class PipelineState(BaseModel, frozen=True):
     # the assemble step. None = unknown / probe failed. When set and at or below
     # LEAN_WINDOW_THRESHOLD the assemble step selects the lean charter and DNA.
     model_window: int | None = None
+    # Coarse language tag of the user's turn (F089/F098), stamped by triage via a
+    # stdlib script detector. Drives the deterministic honest floor's localization
+    # when providers are down and the LLM cascade can't re-derive the language.
+    # Default "en" matches synthesize_floor's own default → byte-identical to today.
+    language: str = "en"
     # True when a user is present on the originating channel and can answer a
     # mid-turn clarify question. FAIL-CLOSED: defaults to False — a human is
     # assumed ABSENT unless a user-facing channel (CLI/Telegram/etc.) EXPLICITLY
@@ -120,6 +125,13 @@ class PipelineState(BaseModel, frozen=True):
     pending_clarify_id: str | None = None
     responses: tuple[ResponseChunk, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
+    # SP-2 — the consolidate merge/trust decision, carried forward for persist_turn
+    # (F088). Stamped by consolidate.run at the merge site (where responses is still
+    # empty) from the FILTERED tool content, and read by the post-floor persist to
+    # set trust="untrusted" — NEVER recomputed from post-floor responses (which the
+    # honest floor may have replaced), so trust cannot be laundered. Default False =
+    # byte-identical to a clean (non-tool-merged) turn.
+    merged_external: bool = False
     memory_context: str | None = None
     # Query embedding computed once in classify (semantic only), forwarded so assemble
     # can score owned skills without re-embedding. None = no usable relevance signal. Story B.

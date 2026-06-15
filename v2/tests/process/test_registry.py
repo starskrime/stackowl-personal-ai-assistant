@@ -176,3 +176,89 @@ async def test_reconcile_dead_pid_starts_clean(clock, tmp_path) -> None:
     reg = ProcessRegistry(clock=clock, checkpoint=ckpt)
     reg.reconcile()
     assert reg.list(all=True) == []
+
+
+# --------------------------------------------------------------------------- #
+# F154 — concurrency-cap TOCTOU (the RACE merge-gate). A serial cap test passes
+# the buggy code; only a gather of concurrent starts that all clear the cap-read
+# before any inserts exposes the check-then-act window. The stubbed
+# create_subprocess_exec awaits a barrier so the N starts overlap inside the gap.
+# --------------------------------------------------------------------------- #
+
+
+class _FakeTransport:
+    """A minimal stand-in for asyncio's subprocess transport (never a real OS proc)."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.stdout = None
+        self.stderr = None
+        self.stdin = None
+
+    async def wait(self) -> int:
+        return 0
+
+
+def _patch_spawn(monkeypatch, *, gate: asyncio.Event | None = None, fail_pids=()):
+    """Patch create_subprocess_exec so starts overlap (optional barrier) and never
+    touch the OS. ``fail_pids`` raises OSError for the Nth spawn (1-indexed)."""
+    counter = {"n": 0}
+
+    async def _fake_exec(*_args, **_kwargs):
+        counter["n"] += 1
+        n = counter["n"]
+        if gate is not None:
+            await gate.wait()  # hold every spawn open so they overlap past the cap-read
+        if n in fail_pids:
+            raise OSError(f"injected spawn failure #{n}")
+        return _FakeTransport(pid=10_000 + n)
+
+    import stackowl.process.registry as reg_mod
+
+    monkeypatch.setattr(reg_mod.asyncio, "create_subprocess_exec", _fake_exec)
+    # Readers would try to consume the (None) pipes — no-op them for the fake transport.
+    monkeypatch.setattr(
+        "stackowl.process.handle.ProcessHandle.start_readers", lambda self: None
+    )
+    return counter
+
+
+async def test_concurrent_starts_respect_cap(clock, tmp_path, monkeypatch) -> None:
+    reg = _registry(clock, tmp_path, max_processes=3)
+    gate = asyncio.Event()
+    _patch_spawn(monkeypatch, gate=gate)
+
+    async def _start(i: int):
+        try:
+            await reg.start(py("print(1)"), session_id=f"s{i}")
+            return "ok"
+        except ProcessRegistryError as exc:
+            return exc.reason
+
+    # max + 5 concurrent starts, all stalled at the barrier so they overlap.
+    tasks = [asyncio.create_task(_start(i)) for i in range(8)]
+    await asyncio.sleep(0.05)  # let all enter the reserve critical section
+    gate.set()  # release every stalled spawn at once
+    results = await asyncio.gather(*tasks)
+
+    oks = [r for r in results if r == "ok"]
+    refused = [r for r in results if r == "too_many_processes"]
+    assert len(oks) == 3, f"cap breached: {results}"
+    assert len(refused) == 5
+    assert reg._reserved == 0  # every reservation released — no leak
+    assert len([h for h in reg.list(all=True) if h.is_running]) == 3
+
+
+async def test_failed_spawn_rolls_back_reservation(clock, tmp_path, monkeypatch) -> None:
+    reg = _registry(clock, tmp_path, max_processes=1)
+    # First spawn fails with OSError → reservation must roll back so the cap is not
+    # permanently shrunk to refuse-everything (leak-DOWN is the top risk).
+    _patch_spawn(monkeypatch, fail_pids=(1,))
+    with pytest.raises(ProcessRegistryError) as exc:
+        await reg.start(py("print(1)"), session_id="s1")
+    assert exc.value.reason == "spawn_failed"
+    assert reg._reserved == 0  # rolled back
+    # A subsequent start at-cap still succeeds (the slot was freed, not leaked down).
+    h = await reg.start(py("print(1)"), session_id="s1")
+    assert h is not None

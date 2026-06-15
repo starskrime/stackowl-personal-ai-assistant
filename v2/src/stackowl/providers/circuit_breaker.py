@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import enum
 from collections import deque
 from collections.abc import Awaitable
@@ -59,6 +60,16 @@ class CircuitBreaker:
         self._state: CircuitState = CircuitState.CLOSED
         self._failures: deque[float] = deque()
         self._opened_at: float | None = None
+        # F116 — per-instance lock (NEVER a default-arg lock; that would serialize
+        # ALL breakers globally). Guards the mutators (record/admit_probe) only.
+        # ``state`` stays a sync property (the cascade reads it cheaply for many
+        # providers per selection) and tolerates benign staleness — DO NOT make it
+        # async, that ripples into every cascade read and breaks happy-path identity.
+        self._lock = asyncio.Lock()
+        # HALF_OPEN single-probe gate: at most one in-flight probe at a time. The
+        # caller (resilient_round) MUST release it in a ``finally`` (even on
+        # CancelledError) so a failed/cancelled probe never wedges the breaker OPEN.
+        self._probe_in_flight: bool = False
         log.engine.debug(
             "[circuit] init: exit — initial state CLOSED",
             extra={"_fields": {"provider": provider_name}},
@@ -104,15 +115,16 @@ class CircuitBreaker:
             )
             raise CircuitOpenError(self._provider_name, retry_after)
 
-        prior_state = self._state
         log.engine.debug(
             "[circuit] call: decision — execute coroutine",
-            extra={"_fields": {"provider": self._provider_name, "state": prior_state.value}},
+            extra={"_fields": {"provider": self._provider_name, "state": self._state.value}},
         )
         try:
             result = await coro
         except Exception as exc:
-            self._record_failure()
+            # Delegate to the ONE locked recording impl (SP-1) so call() and the
+            # per-round resilient_round site share a single write path.
+            await self.record(ok=False)
             log.engine.warning(
                 "[circuit] call: step — failure recorded",
                 extra={
@@ -125,12 +137,62 @@ class CircuitBreaker:
             )
             raise
         else:
-            self._record_success(prior_state)
+            await self.record(ok=True)
             log.engine.debug(
                 "[circuit] call: exit — success",
                 extra={"_fields": {"provider": self._provider_name, "state": self._state.value}},
             )
             return result
+
+    async def record(self, *, ok: bool) -> None:
+        """The ONE public write seam: record one round's outcome (SP-1).
+
+        Under the per-instance lock: snapshot ``prior_state`` (promoting OPEN →
+        HALF_OPEN if the window elapsed) then delegate to the UNCHANGED
+        ``_record_success(prior_state)`` / ``_record_failure()`` bodies. Always
+        clears ``_probe_in_flight`` (both ok and not-ok) so a completed probe
+        frees the half-open gate; the SP-2 caller ALSO clears it in a ``finally``
+        for the cancelled/raised-before-record path (defense in depth).
+        """
+        async with self._lock:
+            self._maybe_promote_to_half_open()
+            prior_state = self._state
+            if ok:
+                self._record_success(prior_state)
+            else:
+                self._record_failure()
+            self._probe_in_flight = False
+
+    async def admit_probe(self) -> bool:
+        """HALF_OPEN single-probe admission (SP-2 caller uses this).
+
+        Under the lock: if state is HALF_OPEN and no probe is in flight, claim it
+        (set the flag, return True — this caller IS the probe). If HALF_OPEN with a
+        probe already in flight, return False (the caller must treat it as OPEN and
+        NOT call upstream). For CLOSED/OPEN returns False — those states are gated
+        by the cheap ``state`` read in resilient_round, not by probe admission.
+        """
+        async with self._lock:
+            self._maybe_promote_to_half_open()
+            if self._state is CircuitState.HALF_OPEN and not self._probe_in_flight:
+                self._probe_in_flight = True
+                log.engine.debug(
+                    "[circuit] admit_probe: this caller is the half-open probe",
+                    extra={"_fields": {"provider": self._provider_name}},
+                )
+                return True
+            return False
+
+    def clear_probe(self) -> None:
+        """Release the in-flight probe flag WITHOUT recording an outcome.
+
+        Used by the SP-2 caller's ``finally`` so a probe that was admitted but
+        whose round raised/was-cancelled BEFORE ``record`` ran still frees the
+        half-open gate (the "self-healing that can't heal" wedge guard). Idempotent
+        with ``record`` (which also clears it). Sync + cheap — never blocks a
+        cancellation/finally path on the lock.
+        """
+        self._probe_in_flight = False
 
     def _maybe_promote_to_half_open(self) -> None:
         if self._state is not CircuitState.OPEN or self._opened_at is None:

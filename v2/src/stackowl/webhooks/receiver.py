@@ -20,16 +20,19 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport
 from stackowl.supervisor.supervisor import SupervisedTask
 from stackowl.webhooks.rate_limit import TokenBucket
 from stackowl.webhooks.receiver_helpers import (
+    claim_delivery,
+    derive_event_id,
     make_event_id,
     now_iso,
-    persist_event_log,
     resolve_source_secret,
     validate_hmac_signature,
+    validate_signed_timestamp,
 )
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -77,11 +80,13 @@ class WebhookReceiver(SupervisedTask):
         settings: Settings,
         db: DbPool | None = None,
         rate_limiter: TokenBucket | None = None,
+        clock: Clock | None = None,
     ) -> None:
         self._scheduler = scheduler
         self._settings = settings
         self._db = db
         self._rate_limiter = rate_limiter or TokenBucket()
+        self._clock: Clock = clock or WallClock()
         self._runner: Any | None = None
         self._site: Any | None = None
         self._bound = False
@@ -196,17 +201,26 @@ class WebhookReceiver(SupervisedTask):
             )
             return _response(web, 404, "unknown source")
 
-        # 3. SIGNATURE — constant-time HMAC
+        # 3. TIMESTAMP-WINDOW + SIGNATURE — constant-time HMAC (over ts+body when
+        # the source opts into the signed-timestamp scheme, else body-only legacy).
         body = await request.read()
-        if not await self._signature_ok(source, cfg, body, request):
+        signed_timestamp = ""
+        if cfg.timestamp_header:
+            signed_timestamp = request.headers.get(cfg.timestamp_header, "")
+        delivery_id = ""
+        if cfg.delivery_id_header:
+            delivery_id = request.headers.get(cfg.delivery_id_header, "")
+        if not await self._signature_ok(source, cfg, body, request, signed_timestamp):
             return _response(web, 400, "invalid signature")
         log.webhook.debug(
             "[webhook] receiver.handle: signature validated",
             extra={"_fields": {"source": source}},
         )
 
-        # 4. PARSE + ENQUEUE
-        return await self._parse_and_enqueue(source, body, web, t0)
+        # 4. PARSE + DEDUP-CLAIM + ENQUEUE
+        return await self._parse_and_enqueue(
+            source, cfg, body, signed_timestamp, delivery_id, web, t0
+        )
 
     async def _signature_ok(
         self,
@@ -214,11 +228,31 @@ class WebhookReceiver(SupervisedTask):
         cfg: WebhookSourceConfig,
         body: bytes,
         request: Any,
+        signed_timestamp: str,
     ) -> bool:
         provided = request.headers.get("X-Webhook-Signature", "")
         secret = resolve_source_secret(source, cfg)
         if secret is None:
             return False
+        # Signed-timestamp scheme (preferred): rejects stale/tampered ts AND
+        # verifies the HMAC over ts+body in one constant-time check.
+        if cfg.timestamp_header:
+            ok = validate_signed_timestamp(
+                secret,
+                signed_timestamp,
+                body,
+                provided,
+                cfg.replay_tolerance_s,
+                self._clock,
+            )
+            if not ok:
+                log.webhook.warning(
+                    "[webhook] receiver.handle: invalid signed timestamp/signature",
+                    extra={"_fields": {"source": source}},
+                )
+            return ok
+        # Legacy body-only HMAC retained for existing senders (dedup via the
+        # delivery-id header, enforced at config load).
         if not validate_hmac_signature(secret, body, provided):
             log.webhook.warning(
                 "[webhook] receiver.handle: invalid signature",
@@ -228,7 +262,14 @@ class WebhookReceiver(SupervisedTask):
         return True
 
     async def _parse_and_enqueue(
-        self, source: str, body: bytes, web: Any, t0: float
+        self,
+        source: str,
+        cfg: WebhookSourceConfig,
+        body: bytes,
+        signed_timestamp: str,
+        delivery_id: str,
+        web: Any,
+        t0: float,
     ) -> Any:
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
@@ -246,11 +287,54 @@ class WebhookReceiver(SupervisedTask):
             )
             return _response(web, 400, "payload must be a json object")
 
-        event_id = make_event_id()
         received_at = now_iso()
+        # Server-derived, attacker-immutable dedup id (R5). When the source uses
+        # the signed-timestamp scheme the id is derived from source+ts+body so a
+        # captured replay collides; otherwise it stays a fresh uuid trace id and
+        # dedup leans on the delivery-id header (config-enforced) — folded in here.
+        if signed_timestamp:
+            event_id = derive_event_id(source, signed_timestamp, body)
+        elif delivery_id:
+            # Body-only legacy path: dedup keys off the sender delivery-id +
+            # body (folded with source). Config guarantees one mechanism exists.
+            event_id = derive_event_id(source, delivery_id, body)
+        else:
+            # Defensive fallback (config-validate should prevent reaching here):
+            # a fresh uuid so a missing-id request is never silently deduped away.
+            event_id = make_event_id()
         event = WebhookEvent(
             event_id=event_id, source=source, payload=payload, received_at=received_at
         )
+
+        # Dedup-claim BEFORE enqueue (R7): fail-closed CAS over the derived id.
+        # rowcount==0 → replay → 200 deduplicated, NO side-effecting job.
+        if self._db is not None:
+            try:
+                won = await claim_delivery(self._db, event_id, source, received_at)
+            except Exception as exc:  # B5 — fail-closed: a gate that swallows is not a gate
+                log.webhook.error(
+                    "[webhook] receiver.handle: dedup claim failed — rejecting",
+                    exc_info=exc,
+                    extra={"_fields": {"source": source}},
+                )
+                return _response(web, 500, "dedup claim failed")
+            if not won:
+                duration_ms = (_time.monotonic() - t0) * 1000
+                log.webhook.info(
+                    "[webhook] receiver.handle: replay deduplicated — no enqueue",
+                    extra={"_fields": {"source": source, "duration_ms": duration_ms}},
+                )
+                return _response(
+                    web, 200, json.dumps({"deduplicated": True}), json_body=True
+                )
+        else:
+            # DB None → replay-dedup disabled; the timestamp window still bounds
+            # replay to ±tolerance. Never pretend protection is active (R7).
+            log.webhook.warning(
+                "[webhook] receiver.handle: no DB — replay-dedup disabled, "
+                "window-only protection",
+                extra={"_fields": {"source": source}},
+            )
 
         try:
             await self._scheduler.create_job(
@@ -266,9 +350,6 @@ class WebhookReceiver(SupervisedTask):
                 extra={"_fields": {"event_id": event_id, "source": source}},
             )
             return _response(web, 500, "enqueue failed")
-
-        if self._db is not None:
-            await persist_event_log(self._db, event_id, source, received_at)
 
         duration_ms = (_time.monotonic() - t0) * 1000
         log.webhook.info(

@@ -462,30 +462,123 @@ def plugins_list() -> None:
         typer.echo(f"  {p.name}  {p.version}  [{p.type}]")
 
 
+def _install_local_plugin(source_dir: Path, *, consent_granted: bool, db_path: Path) -> str:
+    """Validate, copy under ~/.stackowl/plugins/<name>/, and register a local plugin.
+
+    Returns the installed plugin name. Pure of TTY/CLI concerns so it is unit
+    testable. SECURITY (F040): a local plugin runs third-party Python code at
+    ``serve`` boot, so installation is gated by ``consent_granted`` — fail CLOSED
+    (raise ``PermissionError``) when consent was not granted. The manifest is parsed
+    and validated FIRST (``PluginValidationError`` surfaced to the caller, never
+    swallowed); no third-party code is imported/executed at install time."""
+    import shutil
+
+    import yaml
+
+    from stackowl.exceptions import PluginValidationError
+    from stackowl.paths import StackowlHome
+    from stackowl.plugins.manifest import PluginManifest
+    from stackowl.plugins.registry import PluginRegistry
+
+    log.debug("[plugins] _install_local_plugin: entry — dir=%s", source_dir)
+
+    # 1. Validate the manifest (parse only — do NOT import the entry point here).
+    plugin_yaml = source_dir / "plugin.yaml"
+    if not plugin_yaml.exists():
+        raise PluginValidationError(str(source_dir), "missing plugin.yaml")
+    try:
+        raw = yaml.safe_load(plugin_yaml.read_text(encoding="utf-8"))
+        manifest = PluginManifest(**(raw or {}))
+    except PluginValidationError:
+        raise
+    except Exception as exc:
+        log.error("[plugins] _install_local_plugin: manifest invalid", exc_info=exc)
+        raise PluginValidationError(str(source_dir), f"manifest invalid: {exc}") from exc
+
+    # 2. SECURITY GATE — fail closed without explicit consent (off-TTY or denied).
+    if not consent_granted:
+        log.warning("[plugins] _install_local_plugin: consent NOT granted — refused")
+        raise PermissionError(
+            "Plugin install requires explicit consent (it runs third-party code) "
+            "and was not granted"
+        )
+
+    # 3. Copy under ~/.stackowl/plugins/<name>/ (all-state-in-home mandate).
+    dest = StackowlHome.plugins_dir() / manifest.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source_dir, dest)
+    log.info("[plugins] _install_local_plugin: copied to %s", dest)
+
+    # 4. Register the DB row so `serve` re-hydrates the plugin at boot.
+    import asyncio
+
+    asyncio.run(PluginRegistry(db_path).install(manifest))
+    log.info("[plugins] _install_local_plugin: registered '%s'", manifest.name)
+    return manifest.name
+
+
 @plugins_app.command("install")
 def plugins_install(
     source: str = typer.Argument(..., help="URL, local path, or index name"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Grant install consent non-interactively"
+    ),
 ) -> None:
-    """Install a plugin from a URL, local path, or index name."""
+    """Install a plugin from a local path (consent-gated) or index name.
+
+    Local install runs third-party code at serve boot, so it requires explicit
+    consent. Remote install requires a verified index entry (not yet in the index
+    schema) and honestly exits non-zero rather than installing an unverified
+    download.
+    """
     import sys
     from pathlib import Path
 
+    from stackowl.db.pool import default_db_path
+    from stackowl.exceptions import PluginValidationError
     from stackowl.plugins.index import PluginIndex
 
     # 1. ENTRY
     log.debug("[plugins] plugins_install: entry — source=%s", source)
 
-    # 2. DECISION — check if local path exists first
+    # 2. DECISION — local path?
     local = Path(source)
     if local.exists():
-        log.debug("[plugins] plugins_install: decision — local path detected")
         typer.echo(f"Installing local plugin from {source}...")
-        typer.echo(
-            "Local plugin install via LocalPluginLoader: not yet wired to CLI (use Python API)"
+        typer.secho(
+            "WARNING: a local plugin installs and RUNS third-party Python code on "
+            "this machine when StackOwl starts. Only install plugins you trust.",
+            err=True,
+            fg=typer.colors.YELLOW,
         )
+        # Consent: --yes, else an interactive prompt. Off-TTY without --yes fails
+        # closed (typer.confirm on a non-interactive stdin aborts → non-zero).
+        consent = yes
+        if not consent:
+            if not sys.stdin.isatty():
+                typer.echo(
+                    "Refusing to install without consent (no interactive terminal; "
+                    "re-run with --yes to confirm).",
+                    err=True,
+                )
+                sys.exit(1)
+            consent = typer.confirm("Install and trust this third-party plugin?")
+        try:
+            name = _install_local_plugin(
+                local, consent_granted=consent, db_path=default_db_path()
+            )
+        except PermissionError:
+            typer.echo("Install cancelled (consent not granted).", err=True)
+            sys.exit(1)
+        except PluginValidationError as exc:
+            typer.echo(f"Plugin validation failed: {exc}", err=True)
+            sys.exit(1)
+        typer.echo(f"Installed '{name}' — active on next `stackowl serve`.")
         return
 
-    # 3. STEP — check index for known plugin name
+    # 3. Index / remote path
     index = PluginIndex()
     entry = index.lookup(source)
     if entry is None:
@@ -494,9 +587,17 @@ def plugins_install(
         typer.echo("Run: stackowl plugins update-index", err=True)
         sys.exit(1)
 
-    # 4. EXIT (remote install deferred)
+    # 4. Remote install requires a VERIFIED index entry. The index schema has no
+    # checksum/signature field yet, so we honestly refuse rather than auto-exec an
+    # unverified download (F040 — documented cut, NOT a fake "installed").
     typer.echo(f"Found '{source}' in index: {entry.url}")
-    typer.echo("Remote install not yet implemented — manual install via local path required")
+    typer.echo(
+        "Remote install requires a verified index entry (checksum/signature), which "
+        "is not configured in the index schema yet. Download the plugin and install "
+        "it from a local path instead.",
+        err=True,
+    )
+    sys.exit(1)
 
 
 @plugins_app.command("update-index")

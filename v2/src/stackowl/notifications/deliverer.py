@@ -42,7 +42,7 @@ class _TargetedSender(Protocol):
     produced for a chat-addressable (telegram) channel.
     """
 
-    async def send_text(self, text: str, *, chat_id: int | None = ...) -> None: ...
+    async def send_text(self, text: str, *, chat_id: str | int | None = ...) -> None: ...
 
 
 class _TargetedFileSender(Protocol):
@@ -56,7 +56,7 @@ class _TargetedFileSender(Protocol):
     """
 
     async def send_file(
-        self, file_path: str, caption: str | None = ..., *, chat_id: int | None = ...
+        self, file_path: str, caption: str | None = ..., *, chat_id: str | int | None = ...
     ) -> None: ...
 
 
@@ -169,7 +169,7 @@ class ProactiveDeliverer:
         return await self._transport(channel, message, chat_id=None)
 
     async def _transport(
-        self, channel: str, message: str, *, chat_id: int | None = None
+        self, channel: str, message: str, *, chat_id: str | int | None = None
     ) -> DeliveryStatus:
         """Resolve the adapter and send ``message``; retry-once on send error.
 
@@ -236,7 +236,7 @@ class ProactiveDeliverer:
         return "failed"  # pragma: no cover — loop always returns
 
     async def _transport_file(
-        self, channel: str, file_path: str, caption: str, *, chat_id: int | None = None
+        self, channel: str, file_path: str, caption: str, *, chat_id: str | int | None = None
     ) -> DeliveryStatus:
         """Resolve the adapter and upload ``file_path`` via ``send_file``.
 

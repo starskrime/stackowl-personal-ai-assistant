@@ -4,7 +4,7 @@ Companion to :mod:`tests.test_story_7_3`. This file covers the orchestration
 + surface side:
 
 * :class:`MorningBriefHandler.execute()` orchestration, failure isolation,
-  ``job_results`` persistence, and ``morning_brief_delivered`` emission
+  ``job_results`` persistence, and ``morning_brief_rendered`` emission
 * :class:`BriefSettings` defaults + per-section toggling
 * :class:`BriefCommand` happy-path
 * :class:`TestModeGuard` enforcement at handler entry
@@ -58,19 +58,35 @@ async def test_execute_failing_assembler_becomes_error_section(
 
 
 @pytest.mark.asyncio
-async def test_execute_emits_morning_brief_delivered_event(
+async def test_execute_emits_morning_brief_rendered_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """C1/F109 contract: the handler emits ``morning_brief_rendered`` with the
+    HONEST per-channel status, NOT a fake ``morning_brief_delivered`` that lied
+    'delivered' even when nothing was sent.
+
+    ``make_handler`` wires NO deliverer, so ``_deliver`` returns the honest
+    ``undeliverable`` rollup (rendered + recorded, never actually transported) —
+    the event must reflect that truth, never a hard-coded ``delivered``.
+    """
     disable_guard(monkeypatch)
     bus = EventBus()
     captured: list[Any] = []
-    bus.subscribe("morning_brief_delivered", lambda p: captured.append(p))
+    # The fake 'delivered' event was intentionally replaced — assert it is GONE
+    # and the honest 'rendered' event fires in its place.
+    delivered_captured: list[Any] = []
+    bus.subscribe("morning_brief_delivered", lambda p: delivered_captured.append(p))
+    bus.subscribe("morning_brief_rendered", lambda p: captured.append(p))
     handler = make_handler(bus=bus)
     await handler.execute(make_job())
+    assert delivered_captured == []  # the fake 'delivered' event is gone
     assert len(captured) == 1
     payload = captured[0]
-    assert payload["status"] == "delivered"
-    assert payload["channels"] == ["cli"]
+    # No deliverer wired → nothing was sent → honest 'undeliverable', never a
+    # dishonest 'delivered'.
+    assert payload["status"] == "undeliverable"
+    assert payload["per_channel"] == {}
+    assert payload["undeliverable"] == []
     assert payload["section_count"] == 4
 
 
@@ -85,7 +101,10 @@ async def test_execute_writes_job_results_row(monkeypatch: pytest.MonkeyPatch) -
     assert len(inserts) == 1
     params = inserts[0][1]
     assert params[0] == job.job_id
-    assert params[2] == "completed"
+    # C1/F109 honest-status contract: the row records the ACTUAL delivery rollup
+    # (here ``undeliverable`` — no deliverer wired), not a hard-coded
+    # ``completed`` that lied about a send that never happened.
+    assert params[2] == "undeliverable"
     assert isinstance(params[3], str) and len(params[3]) > 0
 
 

@@ -167,11 +167,17 @@ async def semantic_recall(
     lancedb: LanceDBAdapter,
     query: str,
     limit: int,
+    filter_expr: str | None = None,
 ) -> list[MemoryRecord] | None:
     """Try LanceDB-backed recall.
 
     Returns ``None`` on any failure so the caller can fall back to FTS5.
     Returns ``[]`` when LanceDB returns no hits.
+
+    ``filter_expr`` is an optional per-row LanceDB predicate (F062 cheap
+    defense-in-depth — e.g. ``embedding_model = 'all-MiniLM-L6-v2'``). The
+    authoritative gate is the corpus-level decision in the caller; this filter
+    is a belt-and-suspenders thinning of any stray mixed rows.
     """
     try:
         vectors = await embeddings.get().embed([query])
@@ -190,7 +196,7 @@ async def semantic_recall(
         )
         return None
     try:
-        hits = await lancedb.search(vectors[0], limit=limit)
+        hits = await lancedb.search(vectors[0], limit=limit, filter_expr=filter_expr)
     except Exception as exc:
         # B5 — never crash recall on ANN failure
         log.memory.warning(
