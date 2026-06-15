@@ -39,7 +39,7 @@ dependencies = [
     # uncaught page JS error (FF-E2-4). Lower bound >=1.59: aria_snapshot(mode="ai")
     # (the browser_snapshot ref keystone) is unavailable before 1.59. 1.59.x is the
     # only line satisfying both against Camoufox 0.4.11 (latest, frozen since Jan 2025).
-    "playwright>=1.59.0,<1.60.0",
+    "playwright>=1.59.0,<1.61.0",
     "openai-whisper>=20231117",
     "mcp>=1.0.0",
     "google-auth-oauthlib>=1.2.0",
