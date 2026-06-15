@@ -19,7 +19,7 @@ from stackowl.scheduler.scheduler_helpers import (
     row_to_job,
     write_audit,
 )
-from stackowl.scheduler.scheduler_mutations import run_now, update_job
+from stackowl.scheduler.scheduler_mutations import _won_transition, run_now, update_job
 from stackowl.supervisor.supervisor import SupervisedTask
 
 _POLL_INTERVAL_SEC = 30.0
@@ -36,10 +36,16 @@ class JobScheduler(SupervisedTask):
         db: DbPool,
         clock: Clock = WallClock(),
         handler_registry: HandlerRegistry | None = None,
+        tz: str = "UTC",
     ) -> None:
         self._db = db
         self._clock = clock
         self._registry = handler_registry or HandlerRegistry.instance()
+        # The user IANA tz (settings.system.timezone) — threaded into every
+        # ``compute_next_run`` so a ``daily@HH:MM`` job re-arms at the right LOCAL
+        # instant and shares the quiet-hours clock (F108). Defaults to UTC for
+        # back-compat with non-orchestrated construction (tests, tools).
+        self._tz = tz
 
     @property
     def task_id(self) -> str:
@@ -90,10 +96,27 @@ class JobScheduler(SupervisedTask):
             )
             return
 
+        # F103: claim the occurrence with the SAME compare-and-swap run_now uses,
+        # so a concurrent poll tick and run_now (or two pollers) can never both
+        # dispatch this job. A guarded ``pending -> running`` UPDATE plus
+        # ``_won_transition`` (which reads ``changes()`` on the pool's single
+        # serialized connection) reports whether THIS dispatcher won. If we lose
+        # (another dispatcher already flipped the row), bail without running.
+        # COUPLING: ``_won_transition``'s correctness DEPENDS on DbPool using one
+        # serialized connection (``SELECT changes()`` reflects the immediately
+        # preceding UPDATE on THAT connection). A future multi-connection pool
+        # would silently corrupt this CAS — keep the pool single-connection.
         await self._db.execute(
-            "UPDATE jobs SET status = 'running' WHERE job_id = ?",
+            "UPDATE jobs SET status = 'running' WHERE job_id = ? AND status = 'pending'",
             (job.job_id,),
         )
+        if not await _won_transition(self._db):
+            log.heartbeat.info(
+                "[scheduler] %s: lost dispatch claim — another worker is running it",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return
         log.heartbeat.info(
             "[scheduler] %s: entry — running handler %s",
             job.job_id,
@@ -144,7 +167,7 @@ class JobScheduler(SupervisedTask):
 
     async def _mark_completed(self, job: Job, result: JobResult, duration_ms: float) -> None:
         now_iso = datetime.now(UTC).isoformat()
-        next_run = compute_next_run(job.schedule)
+        next_run = compute_next_run(job.schedule, tz=self._tz)
         run_id = str(uuid.uuid4())
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ? WHERE job_id = ?",
@@ -183,7 +206,7 @@ class JobScheduler(SupervisedTask):
         if not rows:
             log.scheduler.warning("[scheduler] resume: job not found", extra={"_fields": {"job_id": job_id}})
             return
-        next_run = compute_next_run(rows[0]["schedule"])
+        next_run = compute_next_run(rows[0]["schedule"], tz=self._tz)
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', enabled = 1, failure_count = 0, "
             "last_error = NULL, next_run_at = ? WHERE job_id = ?",
@@ -238,7 +261,7 @@ class JobScheduler(SupervisedTask):
                 await self._run_job(job)
                 replayed += 1
             else:
-                next_run = compute_next_run(job.schedule)
+                next_run = compute_next_run(job.schedule, tz=self._tz)
                 await self._db.execute(
                     "UPDATE jobs SET next_run_at = ? WHERE job_id = ?",
                     (next_run, job.job_id),
@@ -265,7 +288,7 @@ class JobScheduler(SupervisedTask):
             extra={"_fields": {"handler": handler_name, "schedule": schedule}},
         )
         job_id = f"{handler_name}-{uuid.uuid4().hex[:8]}"
-        next_run = compute_next_run(schedule)
+        next_run = compute_next_run(schedule, tz=self._tz)
         job = Job(
             job_id=job_id,
             handler_name=handler_name,

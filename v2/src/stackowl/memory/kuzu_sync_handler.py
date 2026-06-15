@@ -15,6 +15,7 @@ poisons the batch.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from typing import TYPE_CHECKING, ClassVar
@@ -132,6 +133,11 @@ class KuzuSyncJobHandler(JobHandler):
             if entity_count >= 0:
                 synced_count += 1
                 entity_total += entity_count
+            # F067 (C-5) — the Kuzu Connection is serialized onto ONE worker
+            # thread, so a long sync batch could starve a live classify traverse.
+            # Yield to the event loop between facts so interleaved traverse ops
+            # get a turn at the executor queue (bounded head-of-line latency).
+            await asyncio.sleep(0)
 
         duration_ms = (time.monotonic() - t0) * 1000.0
         # 4. EXIT

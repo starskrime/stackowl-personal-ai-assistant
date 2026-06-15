@@ -50,6 +50,20 @@ _STRINGS: dict[tuple[str, str], str] = {
         "{partial} "
         "Technisches Detail: {error}"
     ),
+    ("self_heal_floor", "fr"): (
+        "Je n'ai pas pu terminer complètement ceci : {goal}. "
+        "La capacité qui a échoué : {failed_capability}. "
+        "Ce que j'ai essayé : {attempts}. "
+        "{partial} "
+        "Détail technique : {error}"
+    ),
+    ("self_heal_floor", "es"): (
+        "No pude completar esto del todo: {goal}. "
+        "La capacidad que falló: {failed_capability}. "
+        "Lo que intenté: {attempts}. "
+        "{partial} "
+        "Detalle técnico: {error}"
+    ),
     # Self-heal substitution note (W3.T14) — prepended to a substituted observation
     # so the model knows an ALTERNATIVE capability produced this result. 2 slots:
     # {failed} (the tool that failed) {sibling} (the in-bounds non-consequential
@@ -96,6 +110,14 @@ _STRINGS: dict[tuple[str, str], str] = {
     ("self_heal_floor_minimal", "de"): (
         "Bei der Ausführung ist ein Problem aufgetreten und ich konnte nicht fertigstellen; "
         "das technische Detail befindet sich in den Protokollen."
+    ),
+    ("self_heal_floor_minimal", "fr"): (
+        "J'ai rencontré un problème en réalisant ceci et je n'ai pas pu terminer ; "
+        "le détail technique se trouve dans les journaux."
+    ),
+    ("self_heal_floor_minimal", "es"): (
+        "Tuve un problema al completar esto y no pude terminar; "
+        "el detalle técnico está en los registros."
     ),
     # Graceful floor for a give-up with NO real capability data (e.g. a bare
     # time/step backstop timeout): warm + honest, NO slots so nothing internal

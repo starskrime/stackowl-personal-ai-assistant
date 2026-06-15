@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.events.bus import EventBus
@@ -29,14 +29,10 @@ class ParliamentOrchestrator:
 
     Depends only on the OrchestratorBackend interface (ARCH-113). Enforces
     per-owl/session timeouts, a token budget, convergence early-termination,
-    and mid-session interjection via a class-level active-session ref.
+    and mid-session interjection via a PER-INSTANCE active-session dict keyed by
+    session_id (F075 — a single process-wide slot let concurrent sessions clobber
+    each other).
     """
-
-    _active_session: ClassVar[ParliamentSession | None] = None
-    # Eager init avoids a lazy check-then-set TOCTOU (two coroutines each
-    # creating a separate lock → mutual exclusion silently lost). asyncio.Lock()
-    # at class-definition time is safe on Python 3.10+ (no loop bound at create).
-    _active_session_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     def __init__(
         self,
@@ -74,6 +70,13 @@ class ParliamentOrchestrator:
             token_budget=token_budget,
             delegation_governor=delegation_governor,
         )
+        # F075 — active sessions keyed by session_id (was a single process-wide
+        # ClassVar slot that concurrent run() calls clobbered). The lock makes the
+        # read-mutate-write of an entry atomic. Eager init avoids a lazy
+        # check-then-set TOCTOU; asyncio.Lock() binds to the running loop on first
+        # await, which is fine here (constructed before any session runs).
+        self._active_sessions: dict[str, ParliamentSession] = {}
+        self._active_session_lock = asyncio.Lock()
 
     async def run(
         self,
@@ -102,7 +105,7 @@ class ParliamentOrchestrator:
         await self._store.create(session)
         lock = self._active_session_lock
         async with lock:
-            ParliamentOrchestrator._active_session = session
+            self._active_sessions[session.session_id] = session
         try:
             final = await asyncio.wait_for(
                 self._run_session(session),
@@ -121,12 +124,15 @@ class ParliamentOrchestrator:
                 },
             )
             async with lock:
-                current = ParliamentOrchestrator._active_session or session
+                # Fail THIS session (its latest active snapshot), never a neighbor's.
+                current = self._active_sessions.get(session.session_id, session)
                 final = current.fail()
             await self._store.update_final(final)
         finally:
             async with lock:
-                ParliamentOrchestrator._active_session = None
+                # Pop ONLY this session's entry — a blanket reset would null a
+                # concurrent session's slot (the "A's finally nulls B" bug).
+                self._active_sessions.pop(session.session_id, None)
 
         if self._event_bus is not None:
             try:
@@ -150,22 +156,30 @@ class ParliamentOrchestrator:
         )
         return final
 
-    async def inject_interjection(self, message: str) -> bool:
-        """Push ``message`` into the active session. Returns True if accepted."""
+    async def inject_interjection(
+        self, message: str, session_id: str | None = None
+    ) -> bool:
+        """Push ``message`` into a live session. Returns True if accepted.
+
+        Routing (F075, single-or-refuse — never silently pick one):
+        * ``session_id`` given → route to that session; unknown → refuse + warn.
+        * ``session_id`` None + exactly ONE live session → route to it (the natural
+          "the active debate", the ``/parliament push`` call site's intent).
+        * ``session_id`` None + MULTIPLE live → refuse LOUDLY (return False + warn);
+          a silent pick would misroute a push into the wrong debate.
+        """
         log.parliament.debug(
             "[parliament] orchestrator.inject_interjection: entry",
-            extra={"_fields": {"msg_len": len(message)}},
+            extra={"_fields": {"msg_len": len(message), "session_id": session_id}},
         )
         lock = self._active_session_lock
         async with lock:
-            current = ParliamentOrchestrator._active_session
-            if current is None:
-                log.parliament.debug(
-                    "[parliament] orchestrator.inject_interjection: no active session",
-                )
+            target_id = self._resolve_interjection_target_locked(session_id)
+            if target_id is None:
                 return False
+            current = self._active_sessions[target_id]
             updated = current.add_interjection(message)
-            ParliamentOrchestrator._active_session = updated
+            self._active_sessions[target_id] = updated
         log.parliament.info(
             "[parliament] orchestrator.inject_interjection: queued",
             extra={
@@ -177,6 +191,35 @@ class ParliamentOrchestrator:
         )
         return True
 
+    def _resolve_interjection_target_locked(self, session_id: str | None) -> str | None:
+        """Resolve which live session an interjection targets (caller holds the lock).
+
+        Returns the target session_id, or None to REFUSE (logged). Never silently
+        picks among multiple live sessions (no-fake-success).
+        """
+        if session_id is not None:
+            if session_id not in self._active_sessions:
+                log.parliament.warning(
+                    "[parliament] orchestrator.inject_interjection: unknown session — refusing",
+                    extra={"_fields": {"session_id": session_id}},
+                )
+                return None
+            return session_id
+        live = list(self._active_sessions.keys())
+        if not live:
+            log.parliament.debug(
+                "[parliament] orchestrator.inject_interjection: no active session",
+            )
+            return None
+        if len(live) > 1:
+            log.parliament.warning(
+                "[parliament] orchestrator.inject_interjection: ambiguous — "
+                "multiple debates active, refusing unscoped push",
+                extra={"_fields": {"active_count": len(live)}},
+            )
+            return None
+        return live[0]
+
     async def _run_session(self, session: ParliamentSession) -> ParliamentSession:
         """Core debate loop — runs rounds until convergence or max_rounds."""
         log.parliament.debug(
@@ -184,15 +227,24 @@ class ParliamentOrchestrator:
             extra={"_fields": {"session_id": session.session_id}},
         )
         lock = self._active_session_lock
+        sid = session.session_id
         converged = False
         for round_number in range(1, self._max_rounds + 1):
             async with lock:
-                current = ParliamentOrchestrator._active_session or session
+                # Read THIS session's latest snapshot (picks up any interjection
+                # added concurrently); fall back to the in-scope param on a
+                # completion-race key miss so it never NPEs.
+                current = self._active_sessions.get(sid, session)
             prompts = self._build_round_prompts(current, round_number)
             round_ = await self._round_runner.run_round(current, round_number, prompts)
-            current = current.add_round(round_)
             async with lock:
-                ParliamentOrchestrator._active_session = current
+                # Re-read under the lock and append the round to the LIVE snapshot,
+                # not the pre-round local: an interjection added DURING the round
+                # (concurrent inject_interjection mutated the dict entry) would
+                # otherwise be clobbered by a stale write-back (a lost-update race).
+                live = self._active_sessions.get(sid, current)
+                current = live.add_round(round_)
+                self._active_sessions[sid] = current
             await self._store.update_rounds(current)
             session = current
 
@@ -222,7 +274,7 @@ class ParliamentOrchestrator:
         final = await self._finalize_session(session)
         await self._store.update_final(final)
         async with lock:
-            ParliamentOrchestrator._active_session = final
+            self._active_sessions[sid] = final
         log.parliament.debug(
             "[parliament] orchestrator._run_session: exit",
             extra={"_fields": {"session_id": final.session_id, "rounds": len(final.rounds)}},

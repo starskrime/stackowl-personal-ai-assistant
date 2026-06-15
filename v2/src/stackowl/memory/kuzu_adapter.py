@@ -4,8 +4,22 @@ The graph stores two node types — ``Fact`` and ``Entity`` — joined by two
 relationship types: ``MENTIONS`` (Fact -> Entity) and ``RELATED_TO``
 (Entity -> Entity, strength-weighted). Schema is created lazily in the
 constructor; node upserts use delete-then-insert because Kuzu 0.x has no
-``MERGE``. All blocking calls are bounced through the default executor so
-the async event loop is never blocked.
+``MERGE``.
+
+THREAD-CONFINEMENT INVARIANT (F067): a ``kuzu.Connection`` is NOT thread-safe.
+ALL Connection access is confined to ONE dedicated worker thread — a
+``ThreadPoolExecutor(max_workers=1)``. Every blocking op is bounced through
+``self._executor`` (NEVER ``None`` = the default multi-worker pool), so a live
+``classify`` traverse and a dream-worker ``kuzu_sync`` upsert can never drive
+the same Connection from two threads. Serialization is the cost (a long upsert
+batch delays a live traverse) — bounded by chunking the dream-worker writer.
+The executor is shut down in :meth:`aclose`.
+
+``F067-followup`` (NOT fixed here): node upsert is delete-then-insert and is
+non-atomic across a crash (a process death between the DELETE and the INSERT
+loses the node). Single-thread confinement removes the cross-thread RACE only;
+the atomic crash window needs the delete+insert wrapped in one Kuzu transaction
+— tracked as a separate follow-up.
 
 All live I/O paths gate on :class:`TestModeGuard`; unit tests must
 monkey-patch ``TestModeGuard.assert_not_test_mode`` to exercise the
@@ -16,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -63,28 +78,43 @@ class KuzuAdapter:
         # passing a pre-existing empty directory raises. Anchor the database
         # inside ``data_dir`` so the directory stays our scoped sandbox.
         self._db_path = self._data_dir / "graph.kuzu"
+        # F067 — the dedicated single Kuzu worker thread. ALL Connection access
+        # (including creation + schema bootstrap below) is confined to it so the
+        # non-thread-safe Connection is never touched concurrently.
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="kuzu"
+        )
         # 2. DECISION — lazy import keeps test collection cheap when kuzu is absent
         import kuzu as _kuzu
 
         self._kuzu_mod = _kuzu
+        # Create the Database + Connection ON the worker thread (Kuzu may pin a
+        # Connection to its creating thread) and bootstrap the schema there too,
+        # so the very first access is already on the confined thread.
         self._db: kuzu.Database = _kuzu.Database(str(self._db_path))
-        self._conn: kuzu.Connection = _kuzu.Connection(self._db)
-        # 3. STEP — bootstrap schema (idempotent)
+        self._conn: kuzu.Connection = self._executor.submit(
+            self._make_conn_and_schema
+        ).result()
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.init: exit",
+            extra={"_fields": {"data_dir": str(self._data_dir)}},
+        )
+
+    def _make_conn_and_schema(self) -> kuzu.Connection:
+        """Create the Connection + bootstrap schema — runs on the worker thread."""
+        conn = self._kuzu_mod.Connection(self._db)
         try:
-            sync_create_schema(self._conn)
+            sync_create_schema(conn)
         except Exception as exc:
-            # B5
+            # B5 — a failed bootstrap must surface (hard-fail per assembly policy).
             log.memory.error(
                 "[memory] kuzu.init: schema bootstrap failed",
                 exc_info=exc,
                 extra={"_fields": {"data_dir": str(self._data_dir)}},
             )
             raise
-        # 4. EXIT
-        log.memory.debug(
-            "[memory] kuzu.init: exit",
-            extra={"_fields": {"data_dir": str(self._data_dir)}},
-        )
+        return conn
 
     # ----- public async API ----------------------------------------------------
 
@@ -105,7 +135,7 @@ class KuzuAdapter:
         loop = asyncio.get_event_loop()
         # 3. STEP — sync upsert in executor
         await loop.run_in_executor(
-            None,
+            self._executor,
             sync_upsert_entity,
             self._conn,
             entity_id,
@@ -135,7 +165,7 @@ class KuzuAdapter:
         loop = asyncio.get_event_loop()
         # 3. STEP
         await loop.run_in_executor(
-            None, sync_upsert_fact, self._conn, fact_id, content, confidence
+            self._executor, sync_upsert_fact, self._conn, fact_id, content, confidence
         )
         # 4. EXIT
         log.memory.debug(
@@ -165,7 +195,7 @@ class KuzuAdapter:
         loop = asyncio.get_event_loop()
         # 3. STEP
         await loop.run_in_executor(
-            None,
+            self._executor,
             sync_link_fact_to_entity,
             self._conn,
             fact_id,
@@ -202,7 +232,7 @@ class KuzuAdapter:
         loop = asyncio.get_event_loop()
         # 3. STEP
         await loop.run_in_executor(
-            None,
+            self._executor,
             sync_link_entities,
             self._conn,
             from_id,
@@ -229,7 +259,7 @@ class KuzuAdapter:
         loop = asyncio.get_event_loop()
         try:
             rows = await loop.run_in_executor(
-                None, sync_traverse, self._conn, entity_id, max_hops
+                self._executor, sync_traverse, self._conn, entity_id, max_hops
             )
         except Exception as exc:
             # B5
@@ -253,7 +283,9 @@ class KuzuAdapter:
         t0 = time.monotonic()
         loop = asyncio.get_event_loop()
         try:
-            entity_count = await loop.run_in_executor(None, sync_probe, self._conn)
+            entity_count = await loop.run_in_executor(
+                self._executor, sync_probe, self._conn
+            )
         except Exception as exc:
             # B5
             log.memory.warning(
@@ -283,3 +315,26 @@ class KuzuAdapter:
             extra={"_fields": dict(report.details, latency_ms=latency_ms)},
         )
         return report
+
+    async def aclose(self) -> None:
+        """Shut down the dedicated Kuzu worker thread (no leaked thread).
+
+        Idempotent + fail-safe: called on lifecycle teardown. Waits for any
+        in-flight op so the Connection isn't disposed mid-query.
+        """
+        log.memory.debug("[memory] kuzu.aclose: entry")
+        try:
+            self._executor.shutdown(wait=True)
+        except Exception as exc:
+            # B5 — a teardown must never raise.
+            log.memory.warning(
+                "[memory] kuzu.aclose: executor shutdown failed",
+                exc_info=exc,
+            )
+        log.memory.debug("[memory] kuzu.aclose: exit")
+
+    async def __aenter__(self) -> KuzuAdapter:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()

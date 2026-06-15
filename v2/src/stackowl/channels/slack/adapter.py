@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import SlackMessageSplitter
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
@@ -41,6 +42,13 @@ if TYPE_CHECKING:
 
 
 _HEALTH_STALE_AFTER_S = 90.0
+
+# Sentinel distinguishing "no target kwarg passed" (proactive/best-effort →
+# logged no-op on miss) from "target explicitly passed" (on-turn → raise on an
+# unresolvable miss). ``None`` alone is ambiguous: ``send()`` may pass
+# ``target=None`` after narrowing a stray non-str target on the on-turn path,
+# which MUST fail loud rather than silently drop a turn's answer (C6 / C-1).
+_UNSET: Any = object()
 
 
 class SlackChannelAdapter(ChannelAdapter):
@@ -101,6 +109,23 @@ class SlackChannelAdapter(ChannelAdapter):
     @property
     def channel_name(self) -> str:
         return "slack"
+
+    def resolve_target(self, session_id: str) -> str | int | None:
+        """Resolve the Slack channel id for ``session_id`` (C1/F104).
+
+        The ``slack:{hash}`` session_id is NOT itself a send target, so this
+        delegates to the adapter-owned :meth:`target_for_session` / ``_targets``
+        map (the asymmetry is honored by keeping resolution in the adapter that
+        owns the map). Returns the Slack-native ``str`` channel id, or ``None``
+        for an unknown session (the caller then records undeliverable, never a
+        guess).
+        """
+        target = self.target_for_session(session_id)
+        log.slack.debug(
+            "[slack] adapter.resolve_target: resolved",
+            extra={"_fields": {"resolved": target is not None}},
+        )
+        return target
 
     def target_for_session(self, session_id: str) -> str | None:
         """Resolve the Slack send destination (channel id) for a session.
@@ -186,7 +211,7 @@ class SlackChannelAdapter(ChannelAdapter):
             extra={"_fields": {"explicit_target": target is not None}},
         )
 
-    async def send_text(self, text: str, *, target: str | None = None) -> None:
+    async def send_text(self, text: str, *, target: str | None = _UNSET) -> None:
         """Split ``text`` per Slack's limit and post each part to ``target``.
 
         ``target`` is a Slack channel id (the per-message destination threaded
@@ -195,9 +220,18 @@ class SlackChannelAdapter(ChannelAdapter):
         deliverer, clarify degrade-path). The thread_ts (if any) is resolved
         adapter-side from the channel id so a channel reply threads correctly and
         a DM reply goes to the channel directly.
+
+        No-target contract (C6 / C-1): an EXPLICIT ``target`` (the on-turn
+        ``send()`` path) that fails to resolve → log ``error`` + raise
+        ``DeliveryError("slack", "no_target")`` (a turn's answer is never silently
+        dropped). ``target`` OMITTED (proactive/best-effort) with no
+        ``_last_target`` → loud ``error``-level logged NO-OP, never a raise
+        (preserves the proactive deliverer never-raises contract).
         """
         TestModeGuard.assert_not_test_mode("slack.send_text")
-        dest = target if target is not None else self._last_target
+        explicit = target is not _UNSET
+        resolved = target if explicit else None
+        dest = resolved if resolved is not None else self._last_target
         # Resolve the originating thread for this channel: a per-channel thread
         # map populated in handle_event. None → reply to the channel (DM path).
         thread_ts = self._threads.get(dest) if dest is not None else None
@@ -208,14 +242,20 @@ class SlackChannelAdapter(ChannelAdapter):
             extra={
                 "_fields": {
                     "text_len": len(text),
-                    "explicit_target": target is not None,
+                    "explicit_target": explicit,
                     "threaded": thread_ts is not None,
                 }
             },
         )
         if dest is None:
-            log.slack.warning(
-                "[slack] adapter.send_text: no target channel — message dropped",
+            if explicit:
+                log.slack.error(
+                    "[slack] adapter.send_text: explicit target unresolvable — failing loud",
+                    extra={"_fields": {"text_len": len(text)}},
+                )
+                raise DeliveryError("slack", "no_target")
+            log.slack.error(
+                "[slack] adapter.send_text: no target channel (best-effort) — message dropped",
                 extra={"_fields": {"text_len": len(text)}},
             )
             return

@@ -26,3 +26,7 @@ class WhatsAppSettings(BaseModel):
     headless: bool = True
     suppress_evolution_events: bool = False
     page_load_timeout_ms: int = 30_000
+    # Gate for orchestrator startup wiring (F004-part2). Defaults False so the
+    # channel is never accidentally started before its send path + consent
+    # prompter are wired — documents the gap rather than hiding it.
+    enabled: bool = False

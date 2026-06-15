@@ -22,6 +22,7 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.steps import consolidate
 from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.pipeline.turn_persist import persist_turn
 
 pytestmark = pytest.mark.asyncio
 
@@ -56,7 +57,9 @@ async def test_tool_merged_turn_staged_untrusted(tmp_db: DbPool) -> None:
             ),
             responses=(),
         )
-        await consolidate.run(state)
+        # F088: persistence relocated to the post-floor seam (persist_turn).
+        out = await consolidate.run(state)
+        await persist_turn(out)
     finally:
         reset_services(token)
 
@@ -88,7 +91,8 @@ async def test_clean_turn_staged_self(tmp_db: DbPool) -> None:
             ),
             tool_calls=(),
         )
-        await consolidate.run(state)
+        out = await consolidate.run(state)
+        await persist_turn(out)
     finally:
         reset_services(token)
 

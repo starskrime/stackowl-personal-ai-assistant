@@ -62,6 +62,25 @@ class GeminiProvider(ModelProvider):
         return "gemini"
 
     @property
+    def supports_tools(self) -> bool:
+        """False (F120): GeminiProvider defines only complete()/stream() and inherits
+        the base complete_with_tools (which ignores tool_schemas). The native tool
+        loop is deferred to T7; until it lands the selector must route an agentic
+        turn AWAY from Gemini (or floor honestly) rather than silently degrade.
+
+        T7 (DEFERRED — own epic): port a native ``complete_with_tools`` reusing the
+        shipped spine (LoopGuard, parse_react_action, decide_nudge/
+        synthesize_from_calls, is_consequential_giveup_now, summarize_tool_outcomes/
+        TOOL_FAILED_MARKER, WRAPUP_DIRECTIVE, truncate_observation/
+        trim_messages_to_budget, validate_resume_transcript [+provider_kind="gemini"],
+        on_iteration_complete/ReActIterationState, _record_usage_safe) with only the
+        google-genai function-calling wire adapter new; then flip this to True with
+        its own agentic-Gemini journey. NOT built in C2 (keeps it a focused
+        resilience fix).
+        """
+        return False
+
+    @property
     def supports_vision(self) -> bool:
         """True when the configured Gemini model is multimodal (1.5+/2.x)."""
         return is_vision_model(self._config.default_model)
@@ -83,14 +102,27 @@ class GeminiProvider(ModelProvider):
             system_instruction=system_instruction,
             max_output_tokens=_max_tokens(kwargs),
         )
+        _t0 = time.monotonic()
+        # F119 — accumulate the LAST non-None usage_metadata across chunks and
+        # record the streamed round's spend at generator exit (best-effort,
+        # fail-open) so streaming no longer under-counts the per-turn budget.
+        final_usage: Any = None
         try:
-            async for chunk in await self._client.aio.models.generate_content_stream(
-                model=resolved_model,
-                contents=contents,
-                config=config,
-            ):
-                if chunk.text:
-                    yield chunk.text
+            try:
+                async for chunk in await self._client.aio.models.generate_content_stream(
+                    model=resolved_model,
+                    contents=contents,
+                    config=config,
+                ):
+                    chunk_usage = getattr(chunk, "usage_metadata", None)
+                    if chunk_usage is not None:
+                        final_usage = chunk_usage
+                    if chunk.text:
+                        yield chunk.text
+            finally:
+                await self._record_stream_usage_safe(
+                    final_usage, resolved_model, (time.monotonic() - _t0) * 1000
+                )
         except Exception as exc:
             log.engine.error(
                 "[gemini] stream: error",
@@ -99,6 +131,34 @@ class GeminiProvider(ModelProvider):
             )
             raise ProviderError(self._name, exc) from exc
         log.engine.debug("[gemini] stream: exit", extra={"_fields": {"provider": self._name}})
+
+    async def _record_stream_usage_safe(
+        self, usage: Any, model: str, duration_ms: float
+    ) -> None:
+        """Record one streamed round's cost from the final usage_metadata (F119).
+
+        Mirrors ``complete()``'s reads (prompt_token_count / candidates_token_count).
+        Fail-open (B5): a missing/odd-shaped usage records NOTHING and logs at DEBUG
+        — never break the streamed reply.
+        """
+        if usage is None:
+            log.engine.debug(
+                "[gemini] stream: no usage_metadata — recording nothing",
+                extra={"_fields": {"provider": self._name}},
+            )
+            return
+        try:
+            in_tok = int(getattr(usage, "prompt_token_count", 0) or 0)
+            out_tok = int(getattr(usage, "candidates_token_count", 0) or 0)
+        except Exception as exc:  # B5 — never break the stream on cost accounting.
+            log.engine.debug(
+                "[gemini] stream: usage extraction skipped",
+                extra={"_fields": {"provider": self._name, "err": str(exc)}},
+            )
+            return
+        await self._record_cost(
+            model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+        )
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("gemini.complete")
@@ -113,12 +173,16 @@ class GeminiProvider(ModelProvider):
             system_instruction=system_instruction,
             max_output_tokens=_max_tokens(kwargs),
         )
-        try:
-            response = await self._client.aio.models.generate_content(
+        async def _round() -> Any:
+            return await self._client.aio.models.generate_content(
                 model=resolved_model,
                 contents=contents,
                 config=config,
             )
+
+        try:
+            # F115 — record the per-round HTTP outcome onto the registry-owned breaker.
+            response = await self._resilient_round(_round)
         except Exception as exc:
             log.engine.error(
                 "[gemini] complete: error",

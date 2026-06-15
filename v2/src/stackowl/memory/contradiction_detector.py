@@ -10,7 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from collections.abc import Awaitable, Callable
+
     from stackowl.memory.models import MemoryRecord, StagedFact
+
+    NeighbourLookup = Callable[
+        ["MemoryRecord | StagedFact"], Awaitable[list["MemoryRecord | StagedFact"]]
+    ]
 
 
 _NEAR_DUPLICATE_THRESHOLD = 0.95
@@ -108,6 +114,65 @@ class ContradictionDetector:
             extra={
                 "_fields": {
                     "fact_count": len(facts),
+                    "report_count": len(reports),
+                }
+            },
+        )
+        return reports
+
+    async def detect_incremental(
+        self,
+        new_facts: list[StagedFact | MemoryRecord],
+        neighbour_lookup: NeighbourLookup,
+    ) -> list[ContradictionReport]:
+        """Incremental scan: each NEW fact vs its ANN neighbours in the FULL corpus.
+
+        ``new_facts`` is the watermark-bounded LEFT side (only new/changed facts).
+        ``neighbour_lookup(fact)`` returns the RIGHT side — an ANN search over the
+        WHOLE corpus (model-scoped), so a new fact is still compared against every
+        old fact, not just other new facts. Cosine work drops from O(n^2) to
+        ``len(new_facts) · k``. Symmetric pairs are de-duplicated.
+
+        Crash-proof like :meth:`detect`: any unhandled error returns ``[]`` so the
+        DreamWorker never crashes (and the watermark is NOT advanced by the caller,
+        so the window re-scans next pass).
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] contradiction_detector.detect_incremental: entry",
+            extra={"_fields": {"new_fact_count": len(new_facts)}},
+        )
+        reports: list[ContradictionReport] = []
+        seen: set[frozenset[str]] = set()
+        try:
+            for fact in self._filter_embedded(new_facts):
+                candidates = await neighbour_lookup(fact)
+                for cand in self._filter_embedded(candidates):
+                    if cand.fact_id == fact.fact_id:
+                        continue
+                    key = frozenset({fact.fact_id, cand.fact_id})
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    report = self._classify_pair(fact, cand)
+                    if report is not None:
+                        reports.append(report)
+                        self._log_finding(report)
+        except Exception as exc:
+            # B5 — never crash the caller; return what we found and log.
+            log.memory.warning(
+                "[memory] contradiction_detector.detect_incremental: failed — "
+                "returning partial",
+                exc_info=exc,
+                extra={"_fields": {"new_fact_count": len(new_facts)}},
+            )
+            return reports
+        # 4. EXIT
+        log.memory.info(
+            "[memory] contradiction_detector.detect_incremental: exit",
+            extra={
+                "_fields": {
+                    "new_fact_count": len(new_facts),
                     "report_count": len(reports),
                 }
             },

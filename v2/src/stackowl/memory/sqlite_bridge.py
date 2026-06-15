@@ -216,25 +216,57 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.recall: entry",
             extra={"_fields": {"query_len": len(query), "limit": limit}},
         )
-        # 2. DECISION — try the semantic path when wired and embedder available
+        # 2. DECISION — try the semantic path when wired and embedder available.
+        # F062 — gate on the CORPUS-LEVEL identity (read once), NOT a flappy
+        # per-row count. When the active embedding model no longer matches the
+        # corpus the vectors were written under (or the corpus is untagged/legacy
+        # ⇒ None ⇒ mismatch, never default-to-active), the ANN is poisoned: skip
+        # semantic entirely and fall through to the SAME FTS fallback below — an
+        # honest degrade, never a silent empty or a mismatched "confirmed" hit.
         if (
             self._semantic_enabled
             and self._lancedb is not None
             and self._embeddings is not None
         ):
-            semantic = await semantic_recall(
-                self._db, self._embeddings, self._lancedb, query, limit
-            )
-            if semantic:
-                log.memory.debug(
-                    "[memory] sqlite_bridge.recall: exit — semantic",
-                    extra={"_fields": {"n_results": len(semantic)}},
+            corpus_model, corpus_dim = await self._lancedb.corpus_identity()
+            active_model = self._embeddings.active_model
+            if corpus_model is None or corpus_model != active_model:
+                log.memory.warning(
+                    "[memory] sqlite_bridge.recall: embedding model drift — "
+                    "ANN corpus mismatched, degrading to FTS + scheduling reindex",
+                    extra={
+                        "_fields": {
+                            "active_embedding_model": active_model,
+                            "corpus_embedding_model": corpus_model,
+                            "corpus_dim": corpus_dim,
+                        }
+                    },
                 )
-                return semantic
-            log.memory.debug(
-                "[memory] sqlite_bridge.recall: semantic empty → FTS5 fallback",
-                extra={"_fields": {"semantic_is_none": semantic is None}},
-            )
+                # Fall through to FTS (no early return — preserves the existing
+                # fallback ladder). The dream-worker reindex phase re-embeds from
+                # the SQLite SoT and rewrites the sidecar, curing the drift.
+            else:
+                # Corpus matches: semantic path, with a cheap per-row model filter
+                # as defense-in-depth against any stray mixed rows.
+                escaped = active_model.replace("'", "''")
+                semantic = await semantic_recall(
+                    self._db,
+                    self._embeddings,
+                    self._lancedb,
+                    query,
+                    limit,
+                    filter_expr=f"embedding_model = '{escaped}'",
+                )
+                if semantic:
+                    log.memory.debug(
+                        "[memory] sqlite_bridge.recall: exit — semantic",
+                        extra={"_fields": {"n_results": len(semantic)}},
+                    )
+                    return semantic
+                log.memory.debug(
+                    "[memory] sqlite_bridge.recall: semantic empty → FTS5 fallback",
+                    extra={"_fields": {"semantic_is_none": semantic is None}},
+                )
         # 3. STEP — FTS5 BM25 fallback
         records = await fts_recall(self._db, query, limit)
         # 4. EXIT

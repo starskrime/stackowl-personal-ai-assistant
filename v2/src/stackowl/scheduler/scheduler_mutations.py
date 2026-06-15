@@ -174,6 +174,15 @@ async def _won_transition(db: DbPool) -> bool:
 
     Reads SQLite's ``changes()`` on the same (single, serialised) connection the
     UPDATE just committed on, so it reflects that statement's affected rowcount.
+
+    COUPLING (do not break): this CAS is correct ONLY because ``DbPool`` holds a
+    single serialized connection — ``changes()`` reports the rowcount of the
+    immediately preceding statement *on that same connection*. Both the poller
+    (``JobScheduler._run_job``) and ``run_now`` rely on this to never
+    double-dispatch. A future multi-connection / connection-pool change would let
+    ``changes()`` read a DIFFERENT connection's counter and silently corrupt the
+    claim — if the pool ever goes multi-connection, this must move to an explicit
+    ``execute_returning_rowcount`` claim instead.
     """
     rows = await db.fetch_all("SELECT changes() AS n")
     if not rows:

@@ -18,12 +18,47 @@ from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool, default_db_path
 from stackowl.exceptions import ConfigurationError, StartupError
 from stackowl.paths import StackowlHome
+from stackowl.service.watchdog import WatchdogService
 from stackowl.startup.browser_probe import BrowserProbe, BrowserProbeResult
 from stackowl.startup.fs_probe import FilesystemProbe
 from stackowl.startup.provider_probe import ProviderProbe
-from stackowl.startup.watchdog import KeepAlive, WatchdogSec
 
 log = logging.getLogger("stackowl.startup")
+
+
+async def _run_until_signal(adapter: object, stop_event: asyncio.Event) -> None:
+    """Race the blocking ``adapter.run()`` against a cooperative ``stop_event``.
+
+    Returns as soon as EITHER the adapter exits on its own (CLI user quits) OR a
+    signal sets ``stop_event`` (SIGTERM/SIGINT). The loser is cancelled and awaited
+    so the caller's ``finally`` runs the real graceful teardown — replacing the old
+    ``SystemExit`` hard-raise that bypassed it (F144). Pure structural helper:
+    never raises out (CancelledError on the loser is suppressed)."""
+    log.debug("[startup] _run_until_signal: entry")
+    adapter_task = asyncio.ensure_future(adapter.run())  # type: ignore[attr-defined]
+    stop_task = asyncio.ensure_future(stop_event.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {adapter_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        via_signal = stop_task in done
+        log.info(
+            "[startup] _run_until_signal: woke — via_signal=%s",
+            via_signal,
+            extra={"_fields": {"via_signal": via_signal}},
+        )
+        for task in pending:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        # Re-raise a genuine adapter error (not a cancellation) so the caller's
+        # phase-6 wrapper records it; a clean signal exit just returns.
+        if adapter_task in done and not adapter_task.cancelled():
+            exc = adapter_task.exception()
+            if exc is not None:
+                raise exc
+    finally:
+        log.debug("[startup] _run_until_signal: exit")
 
 # Long-lived strong refs for fire-and-forget completion-drain tasks so the loop
 # can't GC them mid-flight (asyncio only weakly references tasks). Each task
@@ -117,6 +152,7 @@ class StartupOrchestrator:
         self._dry_run = dry_run
         self._settings: Settings | None = None
         self._browser_probe_result: BrowserProbeResult | None = None
+        self._shutting_down = False  # F144 — idempotency guard for double-signal
 
     async def run(self) -> None:
         log.info("[startup] orchestrator.run: entry dry_run=%s", self._dry_run)
@@ -142,11 +178,12 @@ class StartupOrchestrator:
                 raise StartupError(num, name, str(exc)) from exc
             log.info("[startup] phase %d (%s): ok (%.0fms)", num, name, (time.monotonic() - t0) * 1000)
 
-        # Write PID and signal ready BEFORE the blocking gateway phase
+        # Write PID before the blocking gateway phase. The systemd watchdog +
+        # READY=1 are now driven by the real WatchdogService INSIDE _phase_gateway
+        # (F142): pinging must be recurring, and READY must fire only after the
+        # service is actually serving-ready — not here, before the gateway assembles.
         if not self._dry_run:
             self._write_pid()
-            WatchdogSec().notify()
-            KeepAlive().register()
 
         # Phase 6 — gateway: blocks until the user exits (no-op in dry_run)
         log.info("[startup] phase 6 (gateway): start")
@@ -555,6 +592,13 @@ class StartupOrchestrator:
         process_registry = ProcessRegistry()
         process_registry.reconcile()
         register_process_sweep_handler(process_registry)
+        # F050 — register the turn-sweep backstop reaper next to process_sweep. The
+        # recurring JOB row is seeded in scheduler assembly (every 10m << TTL). The
+        # stranded-session drain callback is wired below, once the pump + adapter
+        # the drain seam needs are in scope.
+        from stackowl.scheduler.handlers.turn_sweep import register_turn_sweep_handler
+
+        register_turn_sweep_handler(turn_registry)
 
         # E11-S5 — the sandbox backend selector (the KEYSTONE code-execution trust
         # boundary). ONE DI singleton built from settings.sandbox: the rootless
@@ -618,6 +662,15 @@ class StartupOrchestrator:
         # registry object in place (callers captured this reference at startup).
         # Gated by `settings_watch`. Started before the blocking adapter await and
         # stopped in the `finally` block (so it never violates gateway-must-block).
+        # F105 — event-driven proactivity: subscribe the EventDeliveryBridge for
+        # the allow-listed proactive events, funnelling each through the SAME
+        # proactive_deliverer.deliver seam the cron path uses (no parallel path).
+        # Registered once here next to the settings_reloaded subscribe.
+        from stackowl.notifications.event_bridge import EventDeliveryBridge
+
+        EventDeliveryBridge(deliverer=proactive_deliverer).register(event_bus)
+        log.info("[startup] gateway: event-driven proactivity bridge registered")
+
         config_watcher = None
         if self._settings.settings_watch:
             from stackowl.config.watcher import ConfigWatcher
@@ -703,6 +756,7 @@ class StartupOrchestrator:
             memory_components=memory_components,
             backend=backend,
             skills_components=skills_components,
+            proactive_deliverer=proactive_deliverer,
         )
 
         # Plugin index — discover installed plugins from ~/.stackowl/plugins/.
@@ -1147,6 +1201,20 @@ class StartupOrchestrator:
             if woke:
                 with contextlib.suppress(Exception):
                     await _wake_global_held(pump, channel_adapter)
+
+        # F050 — wire the turn-sweeper's stranded-session drain to the SAME global-
+        # cap wake seam. When ``sweep`` reaps a wedged turn (done but never DONE) and
+        # frees its ``_running`` slot, that session may hold a queued intake with no
+        # running turn to wake it (silent unresponsiveness). ``_wake_global_held``
+        # surfaces exactly that ``idle_queued_session`` shape and dispatches its head
+        # intake faithfully — so a reap becomes a real re-dispatch, not fake success.
+        # Bound to the CLI pump/adapter (the always-present local loop); both
+        # ``sweep`` and ``_wake_global_held`` self-suppress so a wake error is loud
+        # but never crashes the scheduler loop.
+        async def _drain_stranded_after_reap() -> None:
+            await _wake_global_held(cli_pump, adapter)
+
+        turn_registry.set_stranded_drainer(_drain_stranded_after_reap)
 
         async def _intake(
             pump: ClarifyPump,
@@ -1803,6 +1871,222 @@ class StartupOrchestrator:
         else:
             log.info("[startup] gateway: no Slack bot_token/app_token — skipping")
 
+        # 3c. STEP — start the Discord adapter if configured + ENABLED (F004-part2,
+        # mirrors the Telegram block). Gated on BOTH a bot_token AND the
+        # ``enabled`` flag (default False): the channel is never started before its
+        # send path + consent prompter are wired. Consent/clarify/memory are wired
+        # BEFORE start() so a message arriving at boot never misses its prompter
+        # (else it fails closed with a spurious denial). The inbound loop is
+        # byte-for-byte the Telegram loop with a Discord pump/adapter.
+        discord_adapter = None
+        discord_loop_task = None
+        discord_cfg = self._settings.discord_channel
+        if discord_cfg.enabled and discord_cfg.bot_token:
+            log.info("[startup] gateway: starting Discord adapter")
+            try:
+                resolved_discord_token = SecretResolver.resolve(discord_cfg.bot_token)
+            except ConfigurationError as exc:
+                log.error(
+                    "[startup] gateway: Discord secret resolution failed — skipping",
+                    exc_info=exc,
+                )
+            else:
+                from stackowl.channels.discord.adapter import DiscordChannelAdapter
+                from stackowl.channels.discord.callbacks import DiscordCallbackRouter
+                from stackowl.channels.discord.clarify import DiscordClarifyResolver
+                from stackowl.channels.discord.consent import DiscordConsentPrompter
+                from stackowl.channels.discord.memory_callbacks import (
+                    DiscordMemoryCallbackHandler,
+                )
+
+                resolved_discord_settings = discord_cfg.model_copy(
+                    update={"bot_token": resolved_discord_token}
+                )
+                discord_adapter = DiscordChannelAdapter(resolved_discord_settings)
+
+                # Wire the consent round-trip BEFORE start() (mirrors Telegram).
+                discord_consent_prompter = DiscordConsentPrompter(discord_adapter)
+                consent_routing.register("discord", discord_consent_prompter)
+
+                # Build the prefix router + per-prefix handlers, then attach it so
+                # the View buttons (consent/clarify/memory) route their custom_id.
+                try:
+                    discord_router = DiscordCallbackRouter()
+                    discord_router.register(
+                        "consent:", discord_consent_prompter.handle_callback
+                    )
+                    discord_clarify_resolver = DiscordClarifyResolver(clarify_gateway)
+                    discord_router.register(
+                        "clarify:", discord_clarify_resolver.handle_callback
+                    )
+                    # Memory taps need a bridge exposing BOTH force_promote AND
+                    # delete; reuse the Slack composite (same requirement).
+                    discord_memory_bridge = _SlackMemoryBridgeComposite(
+                        bridge=memory_bridge,
+                        promoter=memory_components.promoter,
+                    )
+                    discord_memory_handler = DiscordMemoryCallbackHandler(
+                        discord_memory_bridge  # type: ignore[arg-type]
+                    )
+                    discord_memory_handler.register(discord_router)
+                    discord_adapter.attach_callback_router(discord_router)
+                    log.info(
+                        "[startup] gateway: Discord consent + clarify + memory wired"
+                    )
+                except Exception as exc:
+                    log.error(
+                        "[startup] gateway: Discord interactivity wiring failed — "
+                        "consequential actions on Discord will fail closed",
+                        exc_info=exc,
+                    )
+
+                await discord_adapter.start()
+                clarify_gateway.register_adapter("discord", discord_adapter)
+                discord_pump = ClarifyPump(
+                    clarify_gateway, stream_registry, clarify_classifier
+                )
+
+                async def _discord_loop() -> None:
+                    log.info("[startup] gateway: discord loop started")
+                    try:
+                        while True:
+                            try:
+                                msg = await discord_adapter.receive()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                                log.error(
+                                    "[startup] gateway: discord receive failed — sleeping then retrying",
+                                    exc_info=exc,
+                                )
+                                await asyncio.sleep(2.0)
+                                continue
+                            try:
+                                log.info(
+                                    "[startup] gateway: discord message received",
+                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                )
+                                decision = scanner.scan(msg)
+                                input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
+                                consumed, input_text = await discord_pump.resolve_or_rewrite(
+                                    session_id=msg.session_id, channel=msg.channel,
+                                    route=decision.route, target=decision.target, input_text=input_text,
+                                )
+                                if consumed:
+                                    continue
+                                await _intake(discord_pump, discord_adapter, msg, decision, input_text)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                                log.error(
+                                    "[startup] gateway: discord message processing failed — continuing",
+                                    exc_info=exc,
+                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                )
+                                with contextlib.suppress(Exception):
+                                    stream_registry.remove(getattr(msg, "trace_id", ""))
+                                continue
+                    except asyncio.CancelledError:
+                        log.info("[startup] gateway: discord loop cancelled")
+                        raise
+
+                discord_loop_task = asyncio.create_task(_discord_loop())
+                log.info("[startup] gateway: Discord adapter started")
+        else:
+            log.info(
+                "[startup] gateway: Discord not enabled or no bot_token — skipping"
+            )
+
+        # 3d. STEP — start the WhatsApp adapter if ENABLED (F004-part2, mirrors the
+        # Telegram block). WhatsApp Web is QR-auth (no bot token), so the gate is
+        # the ``enabled`` flag alone (default False). Consent is wired BEFORE
+        # start(); clarify is INHERITED (base numbered text — no buttons). The
+        # WhatsApp loop additionally checks the consent prompter's resolve_reply
+        # FIRST (a numbered consent reply resolves the parked Future), then the
+        # clarify pump, then intake — so a "reply N" consent answer is consumed
+        # before it is mistaken for a new turn.
+        whatsapp_adapter = None
+        whatsapp_loop_task = None
+        whatsapp_cfg = self._settings.whatsapp_channel
+        if whatsapp_cfg.enabled:
+            log.info("[startup] gateway: starting WhatsApp adapter")
+            try:
+                from stackowl.channels.whatsapp.adapter import WhatsAppChannelAdapter
+                from stackowl.channels.whatsapp.consent import WhatsAppConsentPrompter
+
+                whatsapp_adapter = WhatsAppChannelAdapter(whatsapp_cfg)
+
+                # Wire the consent round-trip BEFORE start() (mirrors Telegram).
+                whatsapp_consent_prompter = WhatsAppConsentPrompter(whatsapp_adapter)
+                consent_routing.register("whatsapp", whatsapp_consent_prompter)
+
+                await whatsapp_adapter.start()
+                clarify_gateway.register_adapter("whatsapp", whatsapp_adapter)
+                whatsapp_pump = ClarifyPump(
+                    clarify_gateway, stream_registry, clarify_classifier
+                )
+
+                async def _whatsapp_loop() -> None:
+                    log.info("[startup] gateway: whatsapp loop started")
+                    try:
+                        while True:
+                            try:
+                                msg = await whatsapp_adapter.receive()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                                log.error(
+                                    "[startup] gateway: whatsapp receive failed — sleeping then retrying",
+                                    exc_info=exc,
+                                )
+                                await asyncio.sleep(2.0)
+                                continue
+                            try:
+                                log.info(
+                                    "[startup] gateway: whatsapp message received",
+                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                )
+                                decision = scanner.scan(msg)
+                                input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
+                                # A numbered consent reply ("reply N") resolves the
+                                # parked consent Future BEFORE clarify/intake — else
+                                # it would be mistaken for a fresh turn.
+                                if await whatsapp_consent_prompter.resolve_reply(
+                                    msg.session_id, input_text
+                                ):
+                                    continue
+                                consumed, input_text = await whatsapp_pump.resolve_or_rewrite(
+                                    session_id=msg.session_id, channel=msg.channel,
+                                    route=decision.route, target=decision.target, input_text=input_text,
+                                )
+                                if consumed:
+                                    continue
+                                await _intake(whatsapp_pump, whatsapp_adapter, msg, decision, input_text)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                                log.error(
+                                    "[startup] gateway: whatsapp message processing failed — continuing",
+                                    exc_info=exc,
+                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                )
+                                with contextlib.suppress(Exception):
+                                    stream_registry.remove(getattr(msg, "trace_id", ""))
+                                continue
+                    except asyncio.CancelledError:
+                        log.info("[startup] gateway: whatsapp loop cancelled")
+                        raise
+
+                whatsapp_loop_task = asyncio.create_task(_whatsapp_loop())
+                log.info("[startup] gateway: WhatsApp adapter started")
+            except Exception as exc:
+                log.error(
+                    "[startup] gateway: WhatsApp adapter start failed — skipping",
+                    exc_info=exc,
+                )
+        else:
+            log.info("[startup] gateway: WhatsApp not enabled — skipping")
+
         # 4. STEP — start the CLI loop and block on the adapter
         log.info("[startup] gateway: starting CLI adapter")
         loop_task = asyncio.create_task(_message_loop())
@@ -1858,10 +2142,59 @@ class StartupOrchestrator:
         # (browser, dream worker, fact extraction, notification digest,
         # morning brief, etc.) actually dispatch.
         scheduler_task = asyncio.create_task(scheduler_components.supervisor.start())
-        WatchdogSec().notify()
+
+        # F144 — cooperative shutdown: route SIGTERM/SIGINT to a stop_event so the
+        # graceful teardown below actually runs (the old handler raised SystemExit,
+        # bypassing it → orphaned children + leaked DB handle). POSIX uses the loop's
+        # signal handler; Windows (no add_signal_handler) falls back to signal.signal
+        # that ONLY trips the event (never raises SystemExit), with a warning.
+        loop = asyncio.get_running_loop()
+        stop_event = asyncio.Event()
+        self._shutting_down = False
+
+        def _request_stop(signame: str) -> None:
+            if self._shutting_down:  # idempotent under double-signal (impatient Ctrl-C×2)
+                log.warning("[startup] gateway: %s during shutdown — ignored", signame)
+                return
+            self._shutting_down = True
+            log.info("[startup] gateway: %s received — cooperative shutdown", signame)
+            stop_event.set()
+
+        signals = [signal.SIGINT]
+        if hasattr(signal, "SIGTERM"):
+            signals.append(signal.SIGTERM)
+        for sig in signals:
+            try:
+                loop.add_signal_handler(sig, _request_stop, sig.name)
+            except NotImplementedError:
+                # Windows: add_signal_handler is unsupported. Register a plain
+                # handler that only trips the event from the loop thread; NEVER
+                # raise SystemExit (that is HOW F144's bug existed).
+                log.warning(
+                    "[startup] gateway: add_signal_handler unsupported (%s) — "
+                    "using threadsafe fallback",
+                    sig.name,
+                )
+
+                def _win_handler(signum: int, frame: object, _n: str = sig.name) -> None:
+                    loop.call_soon_threadsafe(_request_stop, _n)
+
+                signal.signal(sig, _win_handler)
+
+        # F142 — start the REAL recurring systemd watchdog (self-skips off-systemd).
+        watchdog = WatchdogService()
+        watchdog.start()
+        # READY=1 ONCE, AFTER all assembly is done and we are about to serve — never
+        # earlier (premature READY would let systemd start dependents while startup
+        # could still fail). No-op off-systemd.
+        watchdog.send_ready()
         try:
-            await adapter.run()
+            await _run_until_signal(adapter, stop_event)
         finally:
+            # F142 — stop the recurring watchdog ping FIRST so it cannot keep telling
+            # systemd "healthy" during a wedged teardown (masking the very bug).
+            with contextlib.suppress(Exception):
+                watchdog.stop()
             # Stop the live-config watcher daemon thread (guarded so a shutdown
             # never raises out of the finally block).
             if config_watcher is not None:
@@ -1904,6 +2237,24 @@ class StartupOrchestrator:
             if slack_adapter is not None and hasattr(slack_adapter, "stop"):
                 with contextlib.suppress(Exception):
                     await slack_adapter.stop()
+            # Discord shutdown (mirrors Telegram): cancel the message loop, then
+            # stop the adapter. Guarded so a shutdown never raises out of finally.
+            if discord_loop_task is not None:
+                discord_loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await discord_loop_task
+            if discord_adapter is not None and hasattr(discord_adapter, "stop"):
+                with contextlib.suppress(Exception):
+                    await discord_adapter.stop()
+            # WhatsApp shutdown (mirrors Telegram): cancel the message loop, then
+            # stop the adapter (cancels its poll loop + closes the browser).
+            if whatsapp_loop_task is not None:
+                whatsapp_loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await whatsapp_loop_task
+            if whatsapp_adapter is not None and hasattr(whatsapp_adapter, "stop"):
+                with contextlib.suppress(Exception):
+                    await whatsapp_adapter.stop()
             loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await loop_task
@@ -1928,8 +2279,18 @@ class StartupOrchestrator:
             if durable_recoverer is not None:
                 with contextlib.suppress(Exception):
                     await durable_recoverer.drain()
+            # F067 — shut the dedicated Kuzu worker thread down cleanly so no
+            # thread outlives the gateway (guarded; teardown never raises).
+            with contextlib.suppress(Exception):
+                await kuzu_adapter.aclose()
             with contextlib.suppress(Exception):
                 await db_pool.close()
+            # F144 — remove the PID file LAST (after the DB pool is closed) so a
+            # racing `stackowl serve` never sees "not running" while this process
+            # still holds the DB lock. Moved out of the old SystemExit handler.
+            with contextlib.suppress(Exception):
+                _pid_path().unlink(missing_ok=True)
+                log.info("[startup] gateway: PID file removed in shutdown finally")
 
         # 5. EXIT
         log.info("[startup] gateway: adapter exited — shutdown complete")
@@ -1949,11 +2310,17 @@ class StartupOrchestrator:
         self._register_pid_cleanup(pid_path)
 
     def _register_pid_cleanup(self, pid_path: Path) -> None:
-        def _cleanup(signum: int, frame: object) -> None:
-            pid_path.unlink(missing_ok=True)
-            log.info("[startup] PID file removed on signal %d", signum)
-            raise SystemExit(0)
+        """Register an ``atexit`` backstop that removes the PID file.
 
-        if hasattr(signal, "SIGTERM"):
-            signal.signal(signal.SIGTERM, _cleanup)
-        signal.signal(signal.SIGINT, _cleanup)
+        F144: the SIGTERM/SIGINT path is now handled cooperatively inside
+        ``_phase_gateway`` (signal → stop_event → graceful teardown → PID removed
+        LAST in the finally). This handler no longer touches signals and no longer
+        raises ``SystemExit`` — it is only a last-resort cleanup for an abnormal
+        exit that skips the gateway finally (e.g. a hard crash before serving)."""
+        import atexit
+
+        def _remove_pid() -> None:
+            with contextlib.suppress(Exception):
+                pid_path.unlink(missing_ok=True)
+
+        atexit.register(_remove_pid)

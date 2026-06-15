@@ -82,6 +82,12 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         aggregate_buffer_bytes: int = AGGREGATE_BUFFER_BYTES,
     ) -> None:
         self._procs: dict[str, ProcessHandle] = {}
+        # F154 — in-flight reservations counted toward the concurrency cap under
+        # ``_lock`` to close the start() check-then-act (TOCTOU) window. A slot is
+        # reserved BEFORE the lock is released for the awaited spawn, and committed
+        # (handed to a live handle) or rolled back on EVERY exit path. Transient —
+        # never checkpointed (boot reconcile must not restore reservations).
+        self._reserved: int = 0
         self._clock: Clock = clock or WallClock()
         self._checkpoint = checkpoint or ProcessCheckpoint()
         self._max = max_processes
@@ -120,67 +126,97 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         )
         if not command:
             raise ProcessRegistryError("empty_command", "no command given to start")
-        # 2. DECISION — cap is the hard concurrency rail on an ungated spawn.
+        # 2. DECISION — cap is the hard concurrency rail on an ungated spawn. The
+        # check-and-RESERVE is one atomic critical section under ``_lock`` so N
+        # concurrent starts cannot all read ``live < max`` and all spawn (F154
+        # TOCTOU). Live occupancy + in-flight reservations are both counted.
         with self._lock:
             live = sum(1 for h in self._procs.values() if h.is_running)
-        if live >= self._max:
-            log.tool.warning(
-                "process.registry.start: concurrency cap reached — refusing",
-                extra={"_fields": {"live": live, "cap": self._max}},
+            if live + self._reserved >= self._max:
+                log.tool.warning(
+                    "process.registry.start: concurrency cap reached — refusing",
+                    extra={"_fields": {"live": live, "reserved": self._reserved,
+                                       "cap": self._max}},
+                )
+                raise ProcessRegistryError(
+                    "too_many_processes",
+                    f"too many live processes ({live + self._reserved} >= {self._max}); "
+                    "kill one before starting another.",
+                )
+            self._reserved += 1
+            log.tool.debug(
+                "process.registry.start: slot reserved",
+                extra={"_fields": {"live": live, "reserved": self._reserved,
+                                   "cap": self._max}},
             )
-            raise ProcessRegistryError(
-                "too_many_processes",
-                f"too many live processes ({live} >= {self._max}); kill one before "
-                "starting another.",
-            )
-        # CATASTROPHIC gate — reuse the shell seam (fails closed off-TTY for the
-        # narrow catastrophic set only); never reimplemented here.
-        catastrophic, reason = is_catastrophic(command)
-        if catastrophic:
-            decision = await _gate_catastrophic(
-                tool_name="process", command=" ".join(command), reason=reason
-            )
-            if decision is not None:
-                raise ProcessRegistryError("catastrophic_denied", decision.error or reason)
-        # 3. STEP — spawn in its own session/group so kill reaps the tree.
+        # The reservation MUST be released on EVERY exit path below (commit, deny,
+        # spawn-fail, cancel) or the subsystem wedges into refuse-everything
+        # (leak-DOWN is worse than leak-up). ``committed`` flips only once the slot
+        # is owned by a live handle in ``_procs``; ``finally`` rolls back otherwise.
+        committed = False
         try:
-            transport = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.PIPE,
-                cwd=cwd or None,
-                env=env,
-                start_new_session=True,
+            # CATASTROPHIC gate — reuse the shell seam (fails closed off-TTY for the
+            # narrow catastrophic set only); never reimplemented here.
+            catastrophic, reason = is_catastrophic(command)
+            if catastrophic:
+                decision = await _gate_catastrophic(
+                    tool_name="process", command=" ".join(command), reason=reason
+                )
+                if decision is not None:
+                    raise ProcessRegistryError("catastrophic_denied", decision.error or reason)
+            # 3. STEP — spawn in its own session/group so kill reaps the tree.
+            try:
+                transport = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE,
+                    cwd=cwd or None,
+                    env=env,
+                    start_new_session=True,
+                )
+            except OSError as exc:  # B5 — surface a structured failure, never crash
+                log.tool.error(
+                    "process.registry.start: spawn failed",
+                    exc_info=exc,
+                    extra={"_fields": {"argv": command[:3]}},
+                )
+                raise ProcessRegistryError("spawn_failed", str(exc)) from exc
+            now = self._clock.monotonic()
+            handle = ProcessHandle(
+                command=command,
+                session_id=session_id,
+                transport=transport,
+                pid=transport.pid,
+                created_at=now,
+                ttl_deadline=now + self._max_lifetime,
+                cwd=cwd,
             )
-        except OSError as exc:  # B5 — surface a structured failure, never crash
-            log.tool.error(
-                "process.registry.start: spawn failed",
-                exc_info=exc,
-                extra={"_fields": {"argv": command[:3]}},
+            handle.start_readers()
+            # COMMIT — insert and drop the reservation in ONE critical section so
+            # occupancy is never under-counted between the two.
+            with self._lock:
+                self._procs[handle.process_id] = handle
+                self._reserved -= 1
+                committed = True
+            self._save_checkpoint()
+            # 4. EXIT
+            log.tool.info(
+                "process.registry.start: exit",
+                extra={"_fields": {"process_id": handle.process_id, "pid": handle.pid,
+                                   "session_id": session_id}},
             )
-            raise ProcessRegistryError("spawn_failed", str(exc)) from exc
-        now = self._clock.monotonic()
-        handle = ProcessHandle(
-            command=command,
-            session_id=session_id,
-            transport=transport,
-            pid=transport.pid,
-            created_at=now,
-            ttl_deadline=now + self._max_lifetime,
-            cwd=cwd,
-        )
-        handle.start_readers()
-        with self._lock:
-            self._procs[handle.process_id] = handle
-        self._save_checkpoint()
-        # 4. EXIT
-        log.tool.info(
-            "process.registry.start: exit",
-            extra={"_fields": {"process_id": handle.process_id, "pid": handle.pid,
-                               "session_id": session_id}},
-        )
-        return handle
+            return handle
+        finally:
+            if not committed:
+                # ROLLBACK on deny / spawn-fail / CancelledError — release the slot.
+                with self._lock:
+                    self._reserved -= 1
+                    rolled = self._reserved
+                log.tool.debug(
+                    "process.registry.start: reservation rolled back",
+                    extra={"_fields": {"reserved": rolled}},
+                )
 
     # ------------------------------------------------------------------ poll
     async def poll(self, process_id: str, session_id: str | None = None) -> ProcessHandle | None:

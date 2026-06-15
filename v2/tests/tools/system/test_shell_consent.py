@@ -60,6 +60,27 @@ from stackowl.tools.system.shell import ShellTool, is_catastrophic
         "chmod --recursive 000 /etc",
         "chown -R root /usr",
         ":(){",
+        # --- F156 bypass corpus: trailing-slash / subpath / dot-segment must NOT evade ---
+        "rm -rf /etc/",
+        "rm -rf /usr/lib",
+        "rm -rf /home/boss",
+        "rm -rf /home/boss/",
+        "rm -rf /etc/../etc",
+        "rm -rf /var/log",
+        "rm -rf /usr/local/bin",
+        "rm -rf /etc/.",
+        "chmod -R 777 /usr/bin",
+        "chmod -R 777 /etc/",
+        "chown -R root /var/log",
+        # --- F156 residual: leading double-slash must NOT evade (normpath preserves "//") ---
+        "rm -rf //etc",
+        "rm -rf //usr",
+        "rm -rf //home/boss",
+        "rm -rf //root",
+        "rm -rf //boot",
+        "chmod -R 777 //etc",
+        # triple-slash sanity (normpath already collapses ///etc → /etc)
+        "rm -rf ///etc",
     ],
 )
 def test_catastrophic_commands_flagged(command: str) -> None:
@@ -92,6 +113,11 @@ def test_catastrophic_commands_flagged(command: str) -> None:
         "chmod -R 755 ./mydir",
         "chown user:user ./file",
         "mkfs --help",
+        # --- F156 must NOT over-flag legitimate subpaths / trailing-slash / relative ---
+        "rm -rf /tmp/x/",
+        "rm -rf ./build/",
+        "rm -rf /tmp/scratch/sub",
+        "chmod -R 755 /tmp/mydir/",
     ],
 )
 def test_benign_commands_not_flagged(command: str) -> None:

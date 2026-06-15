@@ -11,12 +11,18 @@ The two halves, atomic under the per-turn lock:
     FINALIZING/DONE → ``enqueue(...)`` + return "NEW". Status-read + put are
     ATOMIC under the lock (no window where status reads RUNNING but the put
     lands after FINALIZING).
-  * Loop/finalize side — ``finalize_if_drained``: take the turn lock; if the
-    mailbox is non-empty → return False (caller loops again, does NOT finalize
-    with pending steers); else CAS RUNNING→FINALIZING and return True.
-  * Teardown — ``drain_survivors``: drain remaining mailbox items and re-route
-    each as a queued-new turn (``enqueue``), returning them. A discarded steer
-    is a lost instruction → convert, never GC.
+  * Completion-seam guard — ``finalize_and_drain``: the SOLE lost-steer guard,
+    wired in the orchestrator's ``_drain_next`` BEFORE ``deregister``. Under the
+    same per-turn lock it flips RUNNING→FINALIZING then drains+re-routes survivors,
+    so a steer racing the turn's end is either converted-to-queued-new (a
+    concurrent ``try_steer`` reads FINALIZING) or drained as a survivor.
+
+NOTE (F051): the redundant finalize-side CAS primitives ``finalize_if_drained`` /
+``drain_survivors`` were DEAD CODE (no production caller) and were REMOVED; the
+window they targeted is closed by ``finalize_and_drain``. The randomized no-lost-
+steer property test below now races the LIVE seam (``try_steer`` vs
+``finalize_and_drain``). The deeper completion-window property is also covered by
+tests/gateway/test_completion_finalize_drain.py.
 
 Signature reconciliation: the plan's draft test used ``request_id=`` as the
 new-turn id kwarg, which collides with the positional ``request_id`` (the turn
@@ -36,58 +42,50 @@ from stackowl.gateway.turn_registry import TurnRegistry, TurnStatus
 
 
 async def _one_interleaving(seed: int) -> None:
-    """Run a single steer-vs-finalize interleaving; assert ZERO lost steers.
+    """Race a steer against the LIVE completion seam; assert ZERO lost steers.
 
-    Extracted to module scope so the inner coroutines bind ``reg``/``seed`` as
-    real parameters (not closures over a loop variable — ruff B023). The body is
-    the plan's draft, with ``finish()`` modeling the execute loop's FOLD between
-    ``finalize_if_drained`` checks (the live path drains the mailbox via
-    ``make_steering_callback`` at each iteration boundary) so an accepted steer is
-    consumed rather than spinning forever.
+    The live lost-steer guard is ``finalize_and_drain`` (flip RUNNING→FINALIZING +
+    drain+re-route survivors), wired in the orchestrator's ``_drain_next`` before
+    ``deregister``. This property test races a ``try_steer`` against it (the dead
+    ``finalize_if_drained``/``drain_survivors`` primitives it used to exercise were
+    removed in F051). Extracted to module scope so the inner coroutines bind
+    ``reg``/``seed`` as real parameters (not closures over a loop var — ruff B023).
     """
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     await reg.register("r1", session_id="s1", task=t, target=None, original_input="orig")
     accepted: list[str] = []
     queued_new: list[str] = []
-    folded: list[str] = []
 
     async def steer() -> None:
+        # Seeded jitter so the steer lands before / during / after the FINALIZING
+        # flip across the 200 seeds.
+        for _ in range(random.randint(0, 3)):
+            await asyncio.sleep(0)
         outcome = await reg.try_steer(
             "r1", "corr", session_id="s1", request_id_new="r2", target=None
         )
         (accepted if outcome == "STEER" else queued_new).append("corr")
 
-    async def finish() -> None:
-        # finalize_if_drained returns False while a steer is pending; the loop then
-        # FOLDS (drains) it — exactly what make_steering_callback does at each
-        # iteration boundary — before re-checking. A bounded guard prevents any
-        # accidental infinite loop from masquerading as a hang.
-        guard = 0
-        while not await reg.finalize_if_drained("r1"):
-            turn = reg.get("r1")
-            assert turn is not None
-            while not turn.steering_mailbox.empty():
-                folded.append(turn.steering_mailbox.get_nowait())
-            guard += 1
-            assert guard < 100, f"seed={seed}: finalize loop did not converge"
+    async def finish() -> list[str]:
+        for _ in range(random.randint(0, 3)):
             await asyncio.sleep(0)
-        await reg.cas_status("r1", TurnStatus.FINALIZING, TurnStatus.DONE)
+        # The live completion seam: finalize+drain THEN deregister.
+        survivors = await reg.finalize_and_drain("r1")
+        await reg.deregister("r1")
+        return survivors
 
-    await asyncio.gather(steer(), finish())
+    _, survivors = await asyncio.gather(steer(), finish())
     # exactly one of accepted/queued_new holds the steer; never neither
     assert len(accepted) + len(queued_new) == 1
-    # teardown re-route: any steer accepted-but-not-folded becomes queued-new
-    survivors = await reg.drain_survivors("r1")
     # ZERO lost steers: every steer is accounted for in EXACTLY one place —
-    #   * NEW    → queued_new (converted because the turn was past finalization)
-    #   * STEER + folded by the running loop before it finalized → folded
-    #   * STEER + arrived after the last fold/finalize → survivors (re-routed)
-    # In NO interleaving is a steer silently dropped onto a finalized turn.
-    total_routed = len(queued_new) + len(folded) + len(survivors)
-    assert total_routed == 1, (
+    #   * NEW   → queued_new (try_steer saw FINALIZING / no live turn → converted)
+    #   * STEER → accepted onto RUNNING, then finalize_and_drain re-routed it as a
+    #             survivor. Accepted-but-NOT-a-survivor would be the lost-steer hole.
+    routed = bool(queued_new) or (bool(accepted) and "corr" in survivors)
+    assert routed, (
         f"seed={seed}: lost steer — accepted={accepted} queued_new={queued_new} "
-        f"folded={folded} survivors={survivors}"
+        f"survivors={survivors}"
     )
     await t
 
@@ -170,76 +168,8 @@ async def test_try_steer_missing_turn_returns_new() -> None:
     assert nxt is not None and nxt.request_id == "new-g"
 
 
-@pytest.mark.asyncio
-async def test_finalize_if_drained_false_when_pending() -> None:
-    reg = TurnRegistry()
-    t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register(
-        "req-p", session_id="s1", task=t, target=None, original_input="orig"
-    )
-    turn.steering_mailbox.put_nowait("pending steer")
-    assert await reg.finalize_if_drained("req-p") is False
-    # did NOT advance — still RUNNING with the pending steer intact
-    assert turn.status is TurnStatus.RUNNING
-    assert turn.steering_mailbox.get_nowait() == "pending steer"
-    await t
-
-
-@pytest.mark.asyncio
-async def test_finalize_if_drained_true_when_empty_and_cases() -> None:
-    reg = TurnRegistry()
-    t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register(
-        "req-e", session_id="s1", task=t, target=None, original_input="orig"
-    )
-    assert turn.steering_mailbox.empty()
-    assert await reg.finalize_if_drained("req-e") is True
-    # CAS RUNNING -> FINALIZING happened
-    assert turn.status is TurnStatus.FINALIZING
-    await t
-
-
-@pytest.mark.asyncio
-async def test_finalize_if_drained_missing_turn_returns_true() -> None:
-    # A deregistered/unknown turn is already past its finalization line → True
-    # (caller stops looping; there is nothing to finalize).
-    reg = TurnRegistry()
-    assert await reg.finalize_if_drained("nope") is True
-
-
-@pytest.mark.asyncio
-async def test_drain_survivors_reroutes_each_as_queued_new() -> None:
-    reg = TurnRegistry()
-    t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register(
-        "req-s", session_id="s1", task=t, target=4, original_input="orig"
-    )
-    turn.steering_mailbox.put_nowait("survivor one")
-    turn.steering_mailbox.put_nowait("survivor two")
-    survivors = await reg.drain_survivors("req-s")
-    assert survivors == ["survivor one", "survivor two"]
-    # mailbox fully drained
-    assert turn.steering_mailbox.empty()
-    # each re-routed as a queued-new turn on the SAME session, FIFO order,
-    # inheriting the turn's target
-    n1 = reg.pop_next("s1")
-    n2 = reg.pop_next("s1")
-    assert n1 is not None and n1.original_input == "survivor one" and n1.target == 4
-    assert n2 is not None and n2.original_input == "survivor two" and n2.target == 4
-    assert reg.pop_next("s1") is None
-    await t
-
-
-@pytest.mark.asyncio
-async def test_drain_survivors_empty_mailbox_returns_empty() -> None:
-    reg = TurnRegistry()
-    t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("req-ne", session_id="s1", task=t, target=None, original_input="orig")
-    assert await reg.drain_survivors("req-ne") == []
-    await t
-
-
-@pytest.mark.asyncio
-async def test_drain_survivors_missing_turn_returns_empty() -> None:
-    reg = TurnRegistry()
-    assert await reg.drain_survivors("absent") == []
+# NOTE (F051): the isolated tests that exercised ONLY the removed dead primitives
+# (test_finalize_if_drained_* and test_drain_survivors_*) were deleted here. The
+# shared helpers (_reroute_survivors_locked / _drain_mailbox_locked) and the live
+# guard finalize_and_drain remain covered — by the property test above and by
+# tests/gateway/test_completion_finalize_drain.py.

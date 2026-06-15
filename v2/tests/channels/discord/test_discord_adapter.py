@@ -155,6 +155,9 @@ async def test_health_check_recent_heartbeat_is_ok() -> None:
     import time as _time
 
     adapter = _adapter()
+    # F004-part1: ok now requires a live client (liveness gate), not just a
+    # fresh heartbeat — a stand-in client satisfies the gate.
+    adapter._client = object()  # type: ignore[assignment]
     adapter._last_heartbeat_at = _time.monotonic()
     status = await adapter.health_check()
     assert status.status == "ok"
@@ -165,6 +168,7 @@ async def test_health_check_stale_heartbeat_is_degraded() -> None:
     import time as _time
 
     adapter = _adapter()
+    adapter._client = object()  # type: ignore[assignment]  # live client → past the liveness gate
     adapter._last_heartbeat_at = _time.monotonic() - 120.0
     status = await adapter.health_check()
     assert status.status == "degraded"

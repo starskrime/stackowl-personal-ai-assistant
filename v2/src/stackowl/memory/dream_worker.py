@@ -20,14 +20,19 @@ from stackowl.memory.dream_worker_helpers import (
     DreamWorkerCheckpoint,
     PhaseName,
     advance_phase,
+    count_committed_facts,
+    count_committed_with_vectors,
     count_stuck_eligible,
     finalize_run,
+    get_contradiction_boundary_ids,
+    get_contradiction_watermark,
     load_committed_for_scan,
     mark_audit_contradictions,
     mark_run_failed,
     record_stuck_eligible,
     retry_once_promotion,
     select_resumable_run,
+    set_contradiction_watermark,
 )
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
@@ -66,6 +71,8 @@ class DreamWorkerJobHandler(JobHandler):
         kuzu_handler: KuzuSyncJobHandler,
         detector: ContradictionDetector,
         miner: ConversationMiner | None = None,
+        ann_k: int = 32,
+        ann_threshold: int = 200,
     ) -> None:
         # 1. ENTRY
         log.memory.debug("[memory] dream_worker.init: entry")
@@ -75,6 +82,11 @@ class DreamWorkerJobHandler(JobHandler):
         self._kuzu = kuzu_handler
         self._detector = detector
         self._miner = miner
+        # F063 — incremental/ANN contradiction-scan tuning (>=32 keeps the >=0.85
+        # cross-source band un-truncated; below threshold N the brute-force scan
+        # stays behaviour-identical).
+        self._ann_k = max(32, ann_k)
+        self._ann_threshold = ann_threshold
         # 4. EXIT
         log.memory.debug("[memory] dream_worker.init: exit")
 
@@ -252,15 +264,158 @@ class DreamWorkerJobHandler(JobHandler):
         )
         return checkpoint
 
+    async def _phase_reembed_on_model_drift(self, db: DbPool) -> int:
+        """F066/F062 durable cure — rebuild the ANN corpus on embedding-model drift.
+
+        When the corpus the LanceDB vectors were written under no longer matches
+        the active embedding model (a model-pull / dim swap), recall is degraded
+        to FTS by the F062 gate. This phase re-embeds the committed facts from the
+        SQLite SoT, rebuilds the table at the active dim, and rewrites the
+        sidecar — restoring semantic recall. Fail-safe: any error leaves the old
+        corpus intact (recall stays on FTS) and is logged loudly, never raised.
+        """
+        # Defensive getattr — a minimal/test bridge may not expose the vector
+        # surfaces; drift-cure is a no-op then (recall already FTS-only).
+        lancedb = getattr(self._bridge, "lancedb", None)
+        embeddings = getattr(self._bridge, "_embeddings", None)
+        if lancedb is None or embeddings is None:
+            return 0
+        try:
+            corpus_model, corpus_dim = await lancedb.corpus_identity()
+            active_model = embeddings.active_model
+            active_dim = embeddings.active_dim
+            # No drift, or an empty/never-written corpus (None) with nothing to
+            # rebuild → nothing to do. (A None corpus with committed facts present
+            # IS a legacy untagged corpus and SHOULD be reindexed to tag it.)
+            has_vectors = await count_committed_with_vectors(db) > 0
+            drift = corpus_model != active_model or corpus_dim != active_dim
+            if not drift or not has_vectors:
+                return 0
+            from stackowl.memory.dream_worker_helpers import reembed_committed_facts
+
+            log.memory.warning(
+                "[memory] dream_worker.reembed_on_drift: embedding-model drift — "
+                "rebuilding ANN corpus from SQLite SoT",
+                extra={
+                    "_fields": {
+                        "corpus_model": corpus_model,
+                        "corpus_dim": corpus_dim,
+                        "active_model": active_model,
+                        "active_dim": active_dim,
+                    }
+                },
+            )
+
+            async def _embed(texts: list[str]) -> list[list[float]]:
+                vectors: list[list[float]] = await embeddings.get().embed(texts)
+                return vectors
+
+            return await reembed_committed_facts(
+                db,
+                lancedb,
+                embed=_embed,
+                active_model=active_model,
+                active_dim=active_dim,
+            )
+        except Exception as exc:
+            # B5 — never fail the consolidation pass on a reindex error.
+            log.memory.error(
+                "[memory] dream_worker.reembed_on_drift: failed — corpus left "
+                "unchanged, recall stays on FTS",
+                exc_info=exc,
+            )
+            return 0
+
     async def _phase_contradiction(
         self, db: DbPool, checkpoint: DreamWorkerCheckpoint
     ) -> DreamWorkerCheckpoint:
-        facts = await load_committed_for_scan(db)
-        reports = await self._detector.detect(list(facts))
+        # F066/F062 — cure any embedding-model drift BEFORE the scan so the
+        # contradiction pass runs over a single-corpus, in-model set.
+        await self._phase_reembed_on_model_drift(db)
+
+        # F063 — choose the scan strategy by corpus size. Below the threshold the
+        # brute-force O(n^2) scan is cheap and behaviour-identical (preserves the
+        # cosine-clamp path). At/above it, switch to the incremental watermark +
+        # ANN-candidate scan so we never reload the whole corpus each run.
+        total = await count_committed_facts(db)
+        lancedb = getattr(self._bridge, "lancedb", None)
+        embeddings = getattr(self._bridge, "_embeddings", None)
+        use_incremental = (
+            total >= self._ann_threshold
+            and lancedb is not None
+            and embeddings is not None
+        )
+
+        if not use_incremental:
+            # Brute-force fallback (small-N or no LanceDB) — unchanged behaviour.
+            facts = await load_committed_for_scan(db)
+            reports = await self._detector.detect(list(facts))
+            await self._record_contradictions(db, reports)
+            return checkpoint.model_copy(
+                update={
+                    "facts_processed": len(facts),
+                    "contradictions_found": len(reports),
+                }
+            )
+
+        # Incremental path — only new facts (since the watermark) are the LEFT
+        # side; each gets an ANN search over the WHOLE corpus for the RIGHT side.
+        watermark = await get_contradiction_watermark(db)
+        boundary_ids = await get_contradiction_boundary_ids(db)
+        new_facts = await load_committed_for_scan(
+            db, since=watermark, exclude_ids=boundary_ids
+        )
+        if not new_facts:
+            return checkpoint.model_copy(update={"facts_processed": 0})
+
+        # use_incremental already guaranteed both are non-None; assert for the
+        # type-checker (and as a defensive invariant).
+        assert lancedb is not None and embeddings is not None
+        active_model = embeddings.active_model
+        escaped = active_model.replace("'", "''")
+        ann_k = self._ann_k
+
+        async def _neighbour_lookup(fact: object) -> list[object]:
+            embedding = getattr(fact, "embedding", None) or []
+            if not embedding:
+                return []
+            hits = await lancedb.search(
+                list(embedding),
+                limit=ann_k,
+                filter_expr=f"embedding_model = '{escaped}'",
+            )
+            if not hits:
+                return []
+            from stackowl.memory.sqlite_helpers import fetch_committed_by_ids
+
+            return list(
+                await fetch_committed_by_ids(db, [h.fact_id for h in hits])
+            )
+
+        reports = await self._detector.detect_incremental(
+            list(new_facts), _neighbour_lookup  # type: ignore[arg-type]
+        )
         await self._record_contradictions(db, reports)
+
+        # Advance the watermark to the newest scanned fact — ONLY after the scan
+        # results are recorded above. A crash BEFORE this re-scans the same window
+        # next pass (cheap re-work) rather than skipping unscanned facts, which
+        # would be a permanent contradiction blind spot. committed_at is ms-precise
+        # and SQLite 'now' is constant within a statement, so we use a >= scan and
+        # persist the boundary fact_ids (those AT the newest ms) to exclude next
+        # run — a same-ms fact is then scanned without re-emitting the boundary
+        # pair. Both move atomically, so crash-safety is preserved.
+        newest = max(f.committed_at for f in new_facts)
+        boundary_at_newest = [
+            f.fact_id for f in new_facts if f.committed_at == newest
+        ]
+        await set_contradiction_watermark(
+            db, newest.isoformat(), boundary_ids=boundary_at_newest
+        )
+
         return checkpoint.model_copy(
             update={
-                "facts_processed": len(facts),
+                "facts_processed": len(new_facts),
                 "contradictions_found": len(reports),
             }
         )

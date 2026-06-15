@@ -176,6 +176,32 @@ def test_apply_settings_secret_rotation_rebuilds_but_preserves_runtime_state(
     assert registry._limiters["a"] is old_limiter
 
 
+def test_apply_settings_secret_rotation_reinjects_breaker(
+    _isolated_config: Path, tmp_path: Path
+) -> None:
+    """SP-4 hot-reload critical: a secret rotation REBUILDS the provider but must
+    RE-INJECT the carried breaker/limiter — else the rotated provider silently
+    resets to a breaker-less state and stops feeding the cascade (F115)."""
+    cfg = _isolated_config
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("OLD-KEY", encoding="utf-8")
+    ref = f"file:{secret_file}"
+
+    registry = ProviderRegistry.from_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+    carried_breaker = registry._breakers["a"]
+    carried_limiter = registry._limiters["a"]
+
+    secret_file.write_text("NEW-KEY", encoding="utf-8")
+    registry.apply_settings(_write_settings(cfg, _provider("a", api_key=ref)))
+
+    rebuilt = registry._providers["a"]
+    # The rebuilt provider points at the SAME (carried) breaker + limiter the
+    # cascade reads — recording on the wire will drive selection next turn.
+    assert getattr(rebuilt, "_breaker", None) is carried_breaker
+    assert getattr(rebuilt, "_limiter", None) is carried_limiter
+    assert registry._breakers["a"] is carried_breaker
+
+
 def test_apply_settings_unchanged_secret_fully_preserves_provider(
     _isolated_config: Path, tmp_path: Path
 ) -> None:

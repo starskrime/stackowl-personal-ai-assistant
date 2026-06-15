@@ -18,6 +18,7 @@ from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import deliver
+from stackowl.pipeline.turn_persist import persist_turn
 
 
 class AsyncioBackend(OrchestratorBackend):
@@ -101,6 +102,13 @@ class AsyncioBackend(OrchestratorBackend):
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
             current = await surface_critical_failure(current, self._services)
+
+            # F088 — persist the turn AFTER the honest floor band, synchronously
+            # inside the ledger ContextVar binding (persist_turn reads it). On a
+            # floored turn this records the user utterance only, never the
+            # dressed-up draft — so the dream worker never promotes a lie. Relocated
+            # out of consolidate (which used to persist the PRE-floor draft).
+            await persist_turn(current)
 
             current = current.evolve(pipeline_step="deliver")
             deliver_t0 = time.monotonic()

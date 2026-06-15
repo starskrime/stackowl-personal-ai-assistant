@@ -11,9 +11,105 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
-    pass
+    from stackowl.db.pool import DbPool
 
 log = logging.getLogger("stackowl.audit")
+
+# Chain format version stamped on every new row. v1 rows (legacy / absent column)
+# verify with the legacy formula; v2 rows fold actor+target+a version literal into
+# a length-prefixed payload so who-did-what-to-whom is tamper-evident.
+_CHAIN_VERSION = "v2"
+
+# ASCII unit separator — joins length-prefixed fields so no field value can forge a
+# boundary (the `actor="ab"|target=""` vs `actor="a"|target="b"` ambiguity).
+_FIELD_SEP = "\x1f"
+
+
+def _lp(value: str | None) -> str:
+    """Length-prefix a (possibly None) field: ``None``/`""` -> ``0:`` (unambiguous)."""
+    s = "" if value is None else value
+    return f"{len(s)}:{s}"
+
+
+def compute_integrity_hash(
+    prev_hash: str,
+    event_type: str,
+    actor: str | None,
+    target: str | None,
+    timestamp: float,
+    details_json: str,
+) -> str:
+    """Canonical v2 chain-hash chokepoint — THE single audit payload builder.
+
+    Every audit writer (AuditLogger.append, scheduler write_audit, dream-worker,
+    retention prune) MUST chain through this so the hash protects the SAME field
+    set everywhere. Fields are length-prefixed and ``\\x1f``-joined; the version
+    literal is folded in so a v1/v2 boundary never collides. ``None`` is canonical
+    ``""`` and safe under length-prefixing (``0:`` differs from ``2:ab``).
+    """
+    payload = _FIELD_SEP.join(
+        (
+            _CHAIN_VERSION,
+            _lp(prev_hash),
+            _lp(event_type),
+            _lp(actor),
+            _lp(target),
+            _lp(repr(timestamp)),
+            _lp(details_json),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def compute_integrity_hash_v1(
+    prev_hash: str, event_type: str, timestamp: float, details_json: str
+) -> str:
+    """Reproduce the EXACT legacy v1 payload (``prev+type+str(ts)+details``).
+
+    Used only to verify pre-migration rows so existing history stays verifiable.
+    """
+    raw = prev_hash + event_type + str(timestamp) + details_json
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def chain_append_via_pool(
+    db: DbPool,
+    event_type: str,
+    actor: str,
+    target: str | None,
+    timestamp: float,
+    details_json: str,
+) -> None:
+    """Append a chained v2 audit row over a :class:`DbPool` (the shared chokepoint
+    for the async writers: scheduler write_audit + dream-worker contradictions).
+
+    Reads the prev_hash and INSERTs through the SAME single-serialized DbPool
+    connection that every other write uses, so the prev_hash-read + INSERT are
+    serialized relative to all other pool writes (R2). Computes the hash via the
+    canonical :func:`compute_integrity_hash` so these rows chain identically to
+    :meth:`AuditLogger.append` — closing the multi-writer break (R1) where these
+    rows previously wrote integrity_hash='' and voided verify_chain.
+    """
+    # 1. ENTRY
+    log.debug(
+        "[audit] chain_append_via_pool: entry event_type=%s actor=%s", event_type, actor
+    )
+    rows = await db.fetch_all(
+        "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
+    )
+    prev_hash = rows[0]["integrity_hash"] if rows else ""
+    integrity_hash = compute_integrity_hash(
+        prev_hash, event_type, actor, target, timestamp, details_json
+    )
+    # 3. STEP — INSERT with chain_version stamped.
+    await db.execute(
+        "INSERT INTO audit_log "
+        "(event_type, actor, target, timestamp, details, integrity_hash, chain_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (event_type, actor, target, timestamp, details_json, integrity_hash, _CHAIN_VERSION),
+    )
+    # 4. EXIT
+    log.debug("[audit] chain_append_via_pool: exit event_type=%s", event_type)
 
 
 class AuditLogger:
@@ -46,7 +142,8 @@ class AuditLogger:
             target         TEXT,
             timestamp      REAL    NOT NULL,
             details        TEXT    NOT NULL DEFAULT '{}',
-            integrity_hash TEXT    NOT NULL DEFAULT ''
+            integrity_hash TEXT    NOT NULL DEFAULT '',
+            chain_version  TEXT    NOT NULL DEFAULT 'v1'
         )
         """,
         """
@@ -66,9 +163,29 @@ class AuditLogger:
     )
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        """Idempotently provision the audit_log table + append-only triggers."""
+        """Idempotently provision the audit_log table + append-only triggers.
+
+        Also self-heals the ``chain_version`` column on a caller-supplied DB that
+        predates migration 0059 (mirrors the additive-migration pattern). The
+        guarded ADD COLUMN logs the already-applied branch — never silent.
+        """
         for stmt in self._SCHEMA_DDL:
             conn.execute(stmt)
+        # Self-heal: add chain_version to a pre-existing table that lacks it.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(audit_log)")}
+        if "chain_version" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE audit_log "
+                    "ADD COLUMN chain_version TEXT NOT NULL DEFAULT 'v1'"
+                )
+                log.info("[audit] logger._ensure_schema: added chain_version column")
+            except sqlite3.OperationalError as exc:
+                # Concurrent/already-applied — additive and idempotent; log loud.
+                log.info(
+                    "[audit] logger._ensure_schema: chain_version add no-op (already applied): %s",
+                    exc,
+                )
 
     # ------------------------------------------------------------------
     # Public API
@@ -89,35 +206,52 @@ class AuditLogger:
         )
         timestamp = time.time()
         try:
-            conn = sqlite3.connect(self._db_path)
+            conn = sqlite3.connect(self._db_path, isolation_level=None)
             try:
                 self._ensure_schema(conn)
-                # 2. DECISION — get previous hash for chain
-                row = conn.execute(
-                    "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
-                ).fetchone()
-                prev_hash = row[0] if row else ""
-                log.debug(
-                    "[audit] logger.append: decision — chaining from prev_hash=%s",
-                    (prev_hash[:8] + "...") if prev_hash else "(empty)",
-                )
-                # Compute integrity hash
                 details_json = json.dumps(details, sort_keys=True)
-                raw = prev_hash + event_type + str(timestamp) + details_json
-                integrity_hash = hashlib.sha256(raw.encode()).hexdigest()
-
-                # 3. STEP — INSERT
-                log.debug("[audit] logger.append: step — inserting row")
-                cursor = conn.execute(
-                    """
-                    INSERT INTO audit_log
-                        (event_type, actor, target, timestamp, details, integrity_hash)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (event_type, actor, target, timestamp, details_json, integrity_hash),
-                )
-                conn.commit()
-                audit_id = cursor.lastrowid
+                # Serialize the prev_hash-read + INSERT inside one write txn so two
+                # concurrent appends cannot chain off the same prev_hash (R2). SQLite
+                # BEGIN IMMEDIATE takes the write lock up-front; cross-platform.
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    # 2. DECISION — read previous hash for the chain (under the lock)
+                    row = conn.execute(
+                        "SELECT integrity_hash FROM audit_log "
+                        "ORDER BY audit_id DESC LIMIT 1"
+                    ).fetchone()
+                    prev_hash = row[0] if row else ""
+                    log.debug(
+                        "[audit] logger.append: decision — chaining from prev_hash=%s",
+                        (prev_hash[:8] + "...") if prev_hash else "(empty)",
+                    )
+                    integrity_hash = compute_integrity_hash(
+                        prev_hash, event_type, actor, target, timestamp, details_json
+                    )
+                    # 3. STEP — INSERT (chain_version stamped so verify is version-aware)
+                    log.debug("[audit] logger.append: step — inserting row")
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO audit_log
+                            (event_type, actor, target, timestamp, details,
+                             integrity_hash, chain_version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event_type,
+                            actor,
+                            target,
+                            timestamp,
+                            details_json,
+                            integrity_hash,
+                            _CHAIN_VERSION,
+                        ),
+                    )
+                    conn.execute("COMMIT")
+                    audit_id = cursor.lastrowid
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
             finally:
                 conn.close()
         except Exception as exc:
@@ -189,8 +323,23 @@ class AuditLogger:
         for row in rows:
             d = dict(row)
             details_json = d["details"]
-            raw = prev_hash + d["event_type"] + str(d["timestamp"]) + details_json
-            expected = hashlib.sha256(raw.encode()).hexdigest()
+            # Per-row version branch: legacy rows (v1 / absent column) verify with
+            # the legacy formula; v2 rows fold actor+target. prev_hash chains across
+            # the boundary unchanged so existing history stays verifiable.
+            version = d.get("chain_version") or "v1"
+            if version == _CHAIN_VERSION:
+                expected = compute_integrity_hash(
+                    prev_hash,
+                    d["event_type"],
+                    d["actor"],
+                    d["target"],
+                    d["timestamp"],
+                    details_json,
+                )
+            else:
+                expected = compute_integrity_hash_v1(
+                    prev_hash, d["event_type"], d["timestamp"], details_json
+                )
             if d["integrity_hash"] != expected:
                 log.warning(
                     "[audit] logger.verify_chain: chain broken",

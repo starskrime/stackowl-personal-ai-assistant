@@ -1,0 +1,22 @@
+-- Migration 0059 audit chain version column (C7 / F130).
+--
+-- The audit_log integrity hash chain originally hashed only
+-- prev_hash+event_type+timestamp+details and OMITTED actor and target, so an
+-- attacker with raw DB write access could rewrite who-did-what-to-whom without
+-- breaking verify_chain. The fix folds actor+target into a length-prefixed v2
+-- payload. This column lets verify_chain branch per row: legacy rows (v1) keep
+-- the old formula and stay verifiable, new rows (v2) carry the stronger hash.
+--
+-- Additive only: existing rows default to 'v1' so prior history verifies under
+-- the legacy formula. No data is touched, no table is dropped (real audit
+-- history exists, so the 0027 drop rationale no longer holds), the append-only
+-- audit_log_no_update / audit_log_no_delete triggers are left intact -- the
+-- re-baseline is read-time version-aware, NEVER a write-time UPDATE backfill.
+--
+-- Idempotent: the MigrationRunner gates on the recorded version string and skips
+-- an already-applied version. SQLite has no ADD COLUMN IF NOT EXISTS, and the
+-- AuditLogger._ensure_schema self-heal adds the same column on a caller-supplied
+-- DB, so this statement is the canonical owner for the main DB.
+-- NOTE no semicolons inside comments per the runner split gotcha.
+
+ALTER TABLE audit_log ADD COLUMN chain_version TEXT NOT NULL DEFAULT 'v1';

@@ -14,6 +14,7 @@ from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.setup.lang_detect import detect_language
 
 _FALLBACK_OWL = "secretary"
 
@@ -99,8 +100,20 @@ async def run(state: PipelineState) -> PipelineState:
     )
 
     result = await router.route(state)
+    # F089/F098 — stamp the turn's coarse language here (the established evolve
+    # seam) so a provider-down honest floor can localize without any model call.
+    language = detect_language(state.input_text)
     log.engine.info(
         "[pipeline] triage: routed",
-        extra={"_fields": {"trace_id": state.trace_id, "owl": result.owl_name, "intent_class": result.intent_class}},
+        extra={
+            "_fields": {
+                "trace_id": state.trace_id,
+                "owl": result.owl_name,
+                "intent_class": result.intent_class,
+                "language": language,
+            }
+        },
     )
-    return state.evolve(owl_name=result.owl_name, intent_class=result.intent_class)
+    return state.evolve(
+        owl_name=result.owl_name, intent_class=result.intent_class, language=language
+    )

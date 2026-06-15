@@ -28,6 +28,7 @@ from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
 from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention, strip_command_bot_suffix
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
@@ -37,6 +38,13 @@ if TYPE_CHECKING:
     pass
 
 _UPDATE_DEGRADED_AFTER_S = 120.0
+
+# Sentinel distinguishing "no chat_id kwarg passed" (proactive/best-effort →
+# logged no-op on miss) from "chat_id explicitly passed" (on-turn → raise on an
+# unresolvable miss). ``None`` alone is ambiguous: ``send()`` may pass
+# ``chat_id=None`` after narrowing a stray non-int target on the on-turn path,
+# which MUST fail loud rather than silently drop a turn's answer (C6 / C-1).
+_UNSET: Any = object()
 
 
 def _mint_request_id() -> str:
@@ -83,6 +91,40 @@ class TelegramChannelAdapter(ChannelAdapter):
     @property
     def contributor_name(self) -> str:
         return "telegram"
+
+    def resolve_target(self, session_id: str) -> str | int | None:
+        """Resolve the numeric chat id for ``session_id`` (private-chat convention).
+
+        Mirrors :func:`stackowl.notifications.router_helpers.resolve_target_chat_id`
+        for the telegram channel: a private chat's ``session_id`` IS the chat id
+        (session_id == str(user_id) == chat_id). A non-numeric session (e.g. a
+        group, whose chat_id != user_id) cannot be resolved here and returns
+        ``None`` — logged, never guessed — so the caller records the send as
+        undeliverable rather than riding ``_last_chat_id``.
+        """
+        log.telegram.debug(
+            "[telegram] adapter.resolve_target: entry",
+            extra={"_fields": {"session_present": bool(session_id)}},
+        )
+        sid = (session_id or "").strip()
+        if not sid:
+            log.telegram.warning(
+                "[telegram] adapter.resolve_target: blank session_id — unresolved",
+            )
+            return None
+        try:
+            chat_id = int(sid)
+        except ValueError:
+            log.telegram.warning(
+                "[telegram] adapter.resolve_target: session_id is not a chat id — unresolved",
+                extra={"_fields": {"session_id": sid}},
+            )
+            return None
+        log.telegram.debug(
+            "[telegram] adapter.resolve_target: exit",
+            extra={"_fields": {"chat_id": chat_id}},
+        )
+        return chat_id
 
     async def start(self) -> None:
         """Open a Telegram session and register with the channel registry."""
@@ -155,7 +197,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
         )
 
-    async def send_text(self, text: str, *, chat_id: int | None = None) -> None:
+    async def send_text(self, text: str, *, chat_id: int | None = _UNSET) -> None:
         """Split ``text`` per Telegram's limit and send each part.
 
         ``chat_id`` targets a specific chat (the per-message target threaded from
@@ -164,16 +206,43 @@ class TelegramChannelAdapter(ChannelAdapter):
         deliverer, clarify degrade-path). Resolving an EXPLICIT target here is what
         stops a concurrent turn from cross-delivering to whatever chat last sent an
         inbound update.
+
+        No-target contract (C6 / C-1): an EXPLICIT ``chat_id`` (the on-turn
+        ``send()`` path) that fails to resolve → log ``error`` + raise
+        ``DeliveryError("telegram", "no_target")`` (a turn's answer is never
+        silently dropped). ``chat_id`` OMITTED (proactive/best-effort) with no
+        ``_last_chat_id`` → loud ``error``-level logged NO-OP, never a raise
+        (preserves the proactive deliverer never-raises contract).
         """
-        target = chat_id if chat_id is not None else self._last_chat_id
+        explicit = chat_id is not _UNSET
+        resolved = chat_id if explicit else None
+        target = resolved if resolved is not None else self._last_chat_id
         log.telegram.debug(
             "[telegram] adapter.send_text: entry",
-            extra={"_fields": {"text_len": len(text), "explicit_chat": chat_id is not None}},
+            extra={"_fields": {"text_len": len(text), "explicit_chat": explicit}},
         )
         TestModeGuard.assert_not_test_mode("telegram.send_text")
         if self._bot_app is None or target is None:
-            log.telegram.warning(
-                "[telegram] adapter.send_text: no active chat — message dropped",
+            # An explicit on-turn target that cannot resolve must fail loud — the
+            # turn's answer would otherwise be silently lost. A resolved target
+            # with a missing bot app is a no_channel; any other unresolvable
+            # explicit target is a no_target. ``resolved is not None`` is load-
+            # bearing here (NOT redundant): an explicit ``chat_id=None`` with no
+            # bot app must still classify as no_target, matching the stray-narrow
+            # contract (see test_send_str_target_narrows_to_none_and_raises).
+            if explicit and resolved is not None and self._bot_app is None:
+                log.telegram.error(
+                    "[telegram] adapter.send_text: bot not initialised — failing loud",
+                )
+                raise DeliveryError("telegram", "no_channel")
+            if explicit:
+                log.telegram.error(
+                    "[telegram] adapter.send_text: explicit target unresolvable — failing loud",
+                    extra={"_fields": {"has_app": self._bot_app is not None}},
+                )
+                raise DeliveryError("telegram", "no_target")
+            log.telegram.error(
+                "[telegram] adapter.send_text: no active chat (best-effort) — message dropped",
                 extra={"_fields": {"has_app": self._bot_app is not None}},
             )
             return

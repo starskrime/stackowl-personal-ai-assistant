@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.assembly import MemoryComponents
     from stackowl.memory.critic_scorer_handler import CriticScorerHandler
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
+    from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.backends.base import OrchestratorBackend
     from stackowl.providers.registry import ProviderRegistry
@@ -91,6 +92,7 @@ class SchedulerAssembly:
         memory_components: MemoryComponents,
         backend: OrchestratorBackend,
         skills_components: SkillsComponents,
+        proactive_deliverer: ProactiveDeliverer | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -108,8 +110,10 @@ class SchedulerAssembly:
         from stackowl.scheduler.scheduler import JobScheduler
         from stackowl.supervisor.supervisor import Supervisor
 
-        # 1) JobScheduler — the polling loop that dispatches due jobs.
-        scheduler = JobScheduler(db=db)
+        # 1) JobScheduler — the polling loop that dispatches due jobs. Threaded with
+        # the user IANA tz so a daily@HH:MM job re-arms at the right LOCAL instant
+        # and shares the quiet-hours clock (F108).
+        scheduler = JobScheduler(db=db, tz=settings.system.timezone or "UTC")
         log.scheduler.debug("[scheduler] assembly: JobScheduler constructed")
 
         # 2) Supervisor — owns the scheduler's runtime task.
@@ -120,16 +124,32 @@ class SchedulerAssembly:
         # 3) Register the 6 orphaned handlers. Each uses HandlerRegistry directly
         # OR an existing factory (evolution uses register_evolution_handler).
 
+        # C1/F101+F102 — the exactly-once delivery ledger, shared by every
+        # cron-born proactive handler so an event-driven send and the cron send for
+        # the same occurrence deliver once. Built once here next to the deliverer.
+        from stackowl.notifications.delivery_ledger import DeliveryLedger
+
+        delivery_ledger = DeliveryLedger(db=db)
+
         morning_brief_handler = MorningBriefHandler(
             memory_bridge=memory_components.bridge,
             scheduler=scheduler,
             db=db,
             event_bus=event_bus,
             settings=settings,
+            proactive_deliverer=proactive_deliverer,
+            delivery_ledger=delivery_ledger,
         )
         HandlerRegistry.instance().register(morning_brief_handler)
 
-        check_in_handler = CheckInHandler()
+        check_in_handler = CheckInHandler(
+            memory_bridge=memory_components.bridge,
+            scheduler=scheduler,
+            db=db,
+            settings=settings,
+            proactive_deliverer=proactive_deliverer,
+            delivery_ledger=delivery_ledger,
+        )
         HandlerRegistry.instance().register(check_in_handler)
 
         knowledge_prune_handler = KnowledgePruneHandler(pruner=memory_components.pruner)
@@ -221,9 +241,12 @@ class SchedulerAssembly:
         # 4) Auto-schedule three per operator vote (morning_brief, evolution,
         # knowledge_prune). The remaining three are register-only and get
         # enqueued on user demand (e.g., goal_execution per /goal-add command).
+        brief_channels = list(settings.brief.channels)
         await _seed_daily_schedule(
             db, handler_name="morning_brief",
             schedule="daily@08:00", next_hour=8,
+            target_channels=brief_channels,
+            target_addresses=_resolve_owner_addresses(settings, brief_channels),
         )
         # EvolutionCoordinator registers itself under handler_name="evolution_batch".
         await _seed_daily_schedule(
@@ -273,6 +296,17 @@ class SchedulerAssembly:
             db, handler_name="process_sweep", schedule="every 10m",
             interval_minutes=10,
         )
+        # F050 — turn sweep is the BACKSTOP reaper for a turn left RUNNING after a
+        # missed completion hook (task done() but status never reached DONE), which
+        # wedges TurnRegistry._running[session_id] forever and jams all later
+        # same-session routing. Every 10m (well under the host-scaled TTL) it
+        # deregisters such wedged turns and surfaces any reaped-but-stranded session
+        # to the drain seam. The handler is registered in the gateway assembly (it
+        # needs the TurnRegistry singleton + the drain seam); this seeds the row.
+        await _seed_minutes_schedule(
+            db, handler_name="turn_sweep", schedule="every 10m",
+            interval_minutes=10,
+        )
         # E11-S6 — sandbox sweep reaps LEAKED sandbox artifacts a crash/kill left
         # behind: scratch dirs under ~/.stackowl/sandbox/ + stackowl-sbx-* docker
         # containers + bwrap cgroup scopes, each older than SANDBOX_ARTIFACT_TTL_S
@@ -320,6 +354,50 @@ class SchedulerAssembly:
         )
 
 
+def _resolve_owner_addresses(
+    settings: Settings, channels: list[str]
+) -> dict[str, str | int]:
+    """Resolve each proactive channel's DURABLE owner destination from config.
+
+    A cron-born brief has no live session, so its recipient must come from durable
+    config. For a single-user personal assistant the owner's telegram chat id IS
+    the (sole) allowed user id — a Telegram private chat's ``chat_id`` equals the
+    user's id. A channel with no resolvable owner token is OMITTED here: the
+    DeliverySpec resolver then reports it ``undeliverable`` loudly (never a fake
+    ``delivered``, never a ``_last_*`` guess). No hardcoded channel names drive
+    LOGIC beyond the per-adapter native-token shape.
+    """
+    addresses: dict[str, str | int] = {}
+    for channel in channels:
+        # TODO(channels): replace the telegram-only branch with a per-channel
+        # native-token resolver registry as channels grow.
+        if channel == "telegram":
+            allowed = sorted(settings.telegram_channel.allowed_user_ids)
+            # Only a SINGLE unambiguous owner yields a durable address — a multi-
+            # user allowlist has no single proactive recipient (left undeliverable).
+            if len(allowed) == 1:
+                addresses[channel] = allowed[0]
+            elif allowed:
+                log.scheduler.warning(
+                    "[scheduler] _resolve_owner_addresses: telegram has multiple "
+                    "allowed users — no single proactive recipient (undeliverable)",
+                    extra={"_fields": {"count": len(allowed)}},
+                )
+            else:
+                log.scheduler.warning(
+                    "[scheduler] _resolve_owner_addresses: telegram has no allowed "
+                    "user id — brief recipient unresolved (undeliverable)",
+                )
+        else:
+            # Other channels have no durable owner token at seed time; the brief
+            # for them is recorded undeliverable until a real recipient is wired.
+            log.scheduler.debug(
+                "[scheduler] _resolve_owner_addresses: no durable owner token",
+                extra={"_fields": {"channel": channel}},
+            )
+    return addresses
+
+
 def _next_local_hour_iso(hour: int) -> str:
     """Return the next local-time HH:00 as an ISO8601 UTC string."""
     now = datetime.now()
@@ -330,9 +408,22 @@ def _next_local_hour_iso(hour: int) -> str:
 
 
 async def _seed_daily_schedule(
-    db: DbPool, *, handler_name: str, schedule: str, next_hour: int,
+    db: DbPool,
+    *,
+    handler_name: str,
+    schedule: str,
+    next_hour: int,
+    target_channels: list[str] | None = None,
+    target_addresses: dict[str, str | int] | None = None,
 ) -> None:
-    """Idempotent: insert one `jobs` row for ``handler_name`` if none exists."""
+    """Idempotent: insert one `jobs` row for ``handler_name`` if none exists.
+
+    ``target_channels`` / ``target_addresses`` stamp the DURABLE recipient on the
+    seeded row (C1/F101) so a cron-born poll can address its send from durable
+    state. When provided the row is inserted via the shared ``insert_job`` (the
+    full SQL that persists the target columns); otherwise the legacy short insert
+    is kept byte-identical for handlers with no proactive recipient.
+    """
     existing = await db.fetch_all(_SELECT_EXISTING_SQL, (handler_name,))
     if existing:
         log.scheduler.debug(
@@ -341,6 +432,37 @@ async def _seed_daily_schedule(
         )
         return
     job_id = f"{handler_name}-{uuid.uuid4().hex[:8]}"
+    if target_channels:
+        # Stamp the durable recipient — reuse the helper insert that persists the
+        # target columns rather than a parallel SQL string.
+        from stackowl.scheduler.job import Job
+        from stackowl.scheduler.scheduler_helpers import insert_job
+
+        job = Job(
+            job_id=job_id,
+            handler_name=handler_name,
+            schedule=schedule,
+            idempotency_key=f"{handler_name}:daily",
+            last_run_at=None,
+            next_run_at=_next_local_hour_iso(next_hour),
+            status="pending",
+            target_channels=list(target_channels),
+            target_addresses=dict(target_addresses or {}),
+        )
+        await insert_job(db, job)
+        log.scheduler.info(
+            "[scheduler] schedule seeded (durable target)",
+            extra={
+                "_fields": {
+                    "handler": handler_name,
+                    "schedule": schedule,
+                    "job_id": job_id,
+                    "target_channels": list(target_channels),
+                    "addressed_channels": sorted(target_addresses or {}),
+                }
+            },
+        )
+        return
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
         _INSERT_JOB_SQL,

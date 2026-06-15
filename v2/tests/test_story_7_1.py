@@ -199,11 +199,16 @@ class TestSchedulerConfig:
 
 @pytest.mark.asyncio
 class TestHandlerExecution:
-    async def test_check_in_returns_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_check_in_unwired_skips_honestly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # C1/F102: the old permanent no-op ("check_in: noop") is gone. An
+        # UNWIRED handler (no deliverer/db/settings) has nothing to assemble or
+        # send, so it returns success with an HONEST skipped status — never a
+        # fake delivery, never the stub sentinel output.
         _disable_test_mode_guard(monkeypatch)
         result = await CheckInHandler().execute(_job())
         assert result.success is True
-        assert result.output == "check_in: noop"
+        assert result.output is None
+        assert result.metadata.get("delivery_status") == "skipped"
 
     async def test_goal_execution_returns_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _disable_test_mode_guard(monkeypatch)

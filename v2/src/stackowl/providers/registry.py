@@ -25,6 +25,24 @@ if TYPE_CHECKING:
 _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "powerful", "local")
 
 
+def _inject_resilience(
+    provider: object,
+    breaker: CircuitBreaker | None,
+    limiter: RateLimiter | None,
+) -> None:
+    """Inject the registry-owned breaker+limiter into one provider, if it accepts them.
+
+    Mirrors ``inject_cost_tracker``: duck-typed test fakes (not ``ModelProvider``
+    subclasses) lack ``set_resilience`` and simply opt out, so they stay
+    byte-identical pass-throughs without breaking. The provider WRITES breaker
+    state at its per-round boundary via this exact object — the SAME breaker the
+    cascade READS next turn (F115).
+    """
+    setter = getattr(provider, "set_resilience", None)
+    if callable(setter):
+        setter(breaker, limiter)
+
+
 def _build_provider(config: ProviderConfig, api_key: str) -> ModelProvider:
     """Construct the correct concrete provider for config.protocol."""
     if config.protocol == "anthropic":
@@ -150,6 +168,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
             rate_limit_rpm=config.rate_limit_rpm,
             clock=clock,
         )
+        # F115/SP-4 — wire the breaker the cascade reads into the provider that
+        # writes it (per-round, at its HTTP boundary). Without this every breaker
+        # stays permanently CLOSED and the cascade can never skip a dead provider.
+        _inject_resilience(provider, breakers[config.name], limiters[config.name])
         configs[config.name] = config
         # Remember the RESOLVED secret (value NEVER logged) so a later reload can
         # detect a rotated secret behind an unchanged yaml reference.
@@ -261,6 +283,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
+                        # SP-4 hot-reload critical: the provider was REBUILT but the
+                        # breaker+limiter are CARRIED — re-inject the carried objects
+                        # into the new provider, else a rotation silently resets it to
+                        # a breaker-less state (asserted in the hot-reload test).
+                        _inject_resilience(provider, self._breakers[name], self._limiters[name])
                         new_configs[name] = config
                         new_resolved_keys[name] = new_key  # value NEVER logged
                         rotated.append(name)
@@ -569,6 +596,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
         self._breakers[name] = CircuitBreaker(provider_name=name, clock=self._clock)
         self._limiters[name] = RateLimiter.from_rpm(name, None, clock=self._clock)
         inject_cost_tracker(mock, self._cost_tracker)  # E8-S0cost single recording site
+        # SP-4 — a mock that subclasses ModelProvider also records onto its breaker
+        # via the per-round bracket (the merge-gate journey drives this real path).
+        _inject_resilience(mock, self._breakers[name], self._limiters[name])
         log.engine.debug(
             "[registry] mock registered",
             extra={"_fields": {"name": name, "tier": tier}},

@@ -95,6 +95,21 @@ class EmbeddingRegistry:
     def is_semantic(self) -> bool:
         return self._is_semantic
 
+    @property
+    def active_model(self) -> str:
+        """The active provider's model id — the SINGLE corpus-identity authority.
+
+        ``"hash-v1-384d"`` when degraded to the hash fallback, the
+        sentence-transformer name when semantic. Callers MUST key corpus-match
+        decisions on this, never on a metadata default.
+        """
+        return self.get().model_name
+
+    @property
+    def active_dim(self) -> int:
+        """The active provider's embedding dimension (paired with ``active_model``)."""
+        return self.get().dimension
+
     async def health_check(self) -> HealthStatus:
         status: str = "ok" if self._is_semantic else "degraded"
         msg = None if self._is_semantic else "Hash fallback active — run `stackowl models pull` for semantic embeddings"

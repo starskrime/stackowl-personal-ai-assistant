@@ -123,6 +123,7 @@ class _ExplodingProvider:
         on_iteration_complete: IterationCallback | None = None,
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
+        wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
     ) -> tuple[str, list[dict[str, Any]]]:
         raise RuntimeError(_PROVIDER_BLEW_UP)
 

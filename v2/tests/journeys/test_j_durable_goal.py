@@ -146,6 +146,7 @@ class _ScriptedSecretary:
         on_iteration_complete: IterationCallback | None = None,
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
+        wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
     ) -> tuple[str, list[dict[str, Any]]]:
         self.dispatch_result = await tool_dispatcher("write_note", dict(_TOOL_ARGS))
         records = [{"name": "write_note", "args": dict(_TOOL_ARGS), "result": self.dispatch_result}]

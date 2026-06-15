@@ -41,8 +41,13 @@ def make_settings_with_webhooks(
     """Build a Settings-like SimpleNamespace with one webhook source configured."""
     sources: dict[str, WebhookSourceConfig] = {}
     if source_name:
+        # C7 / F132: every source must declare an anti-replay mechanism. These
+        # body-only-HMAC tests keep the legacy signature path and declare a
+        # delivery-id header for dedup (the validator requires ≥1 mechanism).
         sources[source_name] = WebhookSourceConfig(
-            enabled=enabled, secret=secret_env_var
+            enabled=enabled,
+            secret=secret_env_var,
+            delivery_id_header="X-Delivery-Id",
         )
     ns = SimpleNamespace(
         notifications=NotificationSettings(max_notifications_per_hour=max_per_hour),

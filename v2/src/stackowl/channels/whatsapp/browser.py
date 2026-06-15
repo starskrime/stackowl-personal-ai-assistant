@@ -175,32 +175,50 @@ class WhatsAppBrowserDriver:
         return raw
 
     async def send_message(self, jid: str, text: str) -> None:
-        """Navigate to a WhatsApp chat and send a text message.
+        """Open the EXISTING WhatsApp chat for ``jid`` and send a text message.
+
+        Selects the chat by its FULL JID (C-5) so it works for both user
+        (``...@s.whatsapp.net``) and group (``...@g.us``) chats. The old
+        ``/send?phone={jid.split('@')[0]}`` path opened a NEW-chat composer and
+        lost the group id at the ``@`` split; the JID-keyed chat-list row
+        (``[data-id]`` carries the full JID) preserves the group id and targets
+        the existing conversation.
 
         4-point logging: entry / decision / step / exit.
 
         Args:
-            jid: WhatsApp JID (``phone@s.whatsapp.net``).
+            jid: WhatsApp JID (``phone@s.whatsapp.net`` or ``group@g.us``).
             text: Text content to send.
         """
         log.whatsapp.debug(
             "[whatsapp] browser_driver.send_message: entry",
-            extra={"_fields": {"text_len": len(text)}},
+            extra={"_fields": {"text_len": len(text), "is_group": jid.endswith("@g.us")}},
         )
         TestModeGuard.assert_not_test_mode("whatsapp.browser.send")
         if self._page is None:
             log.whatsapp.error("[whatsapp] browser_driver.send_message: no page available")
             return
+        if not jid:
+            # Defence-in-depth: the adapter never passes an empty JID after F002,
+            # but guard here too rather than open a blank composer.
+            log.whatsapp.error("[whatsapp] browser_driver.send_message: empty JID — refusing to send")
+            return
 
-        phone = jid.split("@")[0] if "@" in jid else jid
-        chat_url = f"https://web.whatsapp.com/send?phone={phone}"
         log.whatsapp.debug(
-            "[whatsapp] browser_driver.send_message: decision navigate_to_chat",
-            extra={"_fields": {"chat_url_path": f"/send?phone=<redacted>"}},
+            "[whatsapp] browser_driver.send_message: decision select_existing_chat",
         )
+        # Select the existing chat row whose [data-id] carries this FULL JID.
+        # Quote-escape the JID so a stray quote can't break the selector.
+        safe_jid = jid.replace("\\", "\\\\").replace('"', '\\"')
+        selected = await self._open_chat_by_jid(safe_jid)
+        if not selected:
+            log.whatsapp.error(
+                "[whatsapp] browser_driver.send_message: chat not found for JID — not sending",
+                extra={"_fields": {"is_group": jid.endswith("@g.us")}},
+            )
+            return
 
-        await self._page.goto(chat_url, timeout=self._settings.page_load_timeout_ms)
-        # Wait for the message input box to be available.
+        # Wait for the message input box of the now-open chat.
         input_selector = '[data-testid="conversation-compose-box-input"]'
         await self._page.wait_for_selector(input_selector, timeout=15_000)
 
@@ -212,6 +230,32 @@ class WhatsAppBrowserDriver:
             "[whatsapp] browser_driver.send_message: exit",
             extra={"_fields": {"text_len": len(text)}},
         )
+
+    async def _open_chat_by_jid(self, safe_jid: str) -> bool:
+        """Click the chat-list row whose ``[data-id]`` carries ``safe_jid``.
+
+        Returns ``True`` when a matching row was found and clicked, ``False`` when
+        no existing chat matches (the caller then refuses to send rather than
+        opening a wrong/blank chat). The ``[data-id]`` attribute on a WhatsApp Web
+        chat row encodes the full JID, so a ``*=`` substring match on the JID is
+        the stable, group-safe selector (no ``@`` split, no phone composer).
+        """
+        # The chat row's data-id looks like ``false_<jid>_<msgid>`` for a 1:1 and
+        # ``false_<group-jid>_...`` for a group, so an attribute-substring match on
+        # the full JID selects the right existing conversation for both.
+        row_selector = f'[data-id*="{safe_jid}"]'
+        try:
+            handle = await self._page.wait_for_selector(row_selector, timeout=15_000)
+        except Exception as exc:
+            log.whatsapp.error(
+                "[whatsapp] browser_driver._open_chat_by_jid: row not found",
+                exc_info=exc,
+            )
+            return False
+        if handle is None:
+            return False
+        await handle.click()
+        return True
 
     async def stop(self) -> None:
         """Save session state and close the browser.

@@ -76,12 +76,16 @@ def test_webhook_settings_defaults() -> None:
 
 
 def test_webhook_source_config_is_frozen() -> None:
-    cfg = WebhookSourceConfig(secret="env:FOO")
+    # C7 / F132: a source must declare an anti-replay mechanism — give it a
+    # delivery-id header so the model validates, then assert frozen/extra-forbid.
+    cfg = WebhookSourceConfig(secret="env:FOO", delivery_id_header="X-Delivery-Id")
     assert cfg.enabled is True
     with pytest.raises(ValidationError):
         cfg.secret = "env:OTHER"  # type: ignore[misc]
     with pytest.raises(ValidationError):
-        WebhookSourceConfig(secret="env:FOO", unknown_field="x")  # type: ignore[call-arg]
+        WebhookSourceConfig(  # type: ignore[call-arg]
+            secret="env:FOO", delivery_id_header="X-Delivery-Id", unknown_field="x"
+        )
 
 
 def test_webhook_event_is_frozen_and_forbids_extras() -> None:

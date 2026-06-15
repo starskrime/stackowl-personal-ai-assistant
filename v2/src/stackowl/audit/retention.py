@@ -156,13 +156,43 @@ class AuditRetention:
             }
         )
         ts = time.time()
+        # Chain the prune record off the surviving tail (C7 / F130b) — previously
+        # this wrote integrity_hash='' on a separate connection, voiding the
+        # chain. Same connection as the prune so it reads the post-DELETE tail.
+        from stackowl.audit.logger import _CHAIN_VERSION, compute_integrity_hash
+
+        # Self-heal: a caller-supplied audit_log table predating migration 0059
+        # may lack chain_version. Guarded ADD COLUMN, logs the already-applied
+        # branch (mirrors AuditLogger._ensure_schema) — never silent.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(audit_log)")}
+        if "chain_version" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE audit_log "
+                    "ADD COLUMN chain_version TEXT NOT NULL DEFAULT 'v1'"
+                )
+                log.info("[audit] retention._append_prune_record: added chain_version column")
+            except sqlite3.OperationalError as exc:
+                log.info(
+                    "[audit] retention._append_prune_record: chain_version add no-op: %s",
+                    exc,
+                )
+
+        prev_row = conn.execute(
+            "SELECT integrity_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1"
+        ).fetchone()
+        prev_hash = prev_row[0] if prev_row else ""
+        integrity_hash = compute_integrity_hash(
+            prev_hash, "system_audit_prune", "system", None, ts, details
+        )
         conn.execute(
             """
             INSERT INTO audit_log
-                (event_type, actor, target, timestamp, details, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (event_type, actor, target, timestamp, details, integrity_hash,
+                 chain_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("system_audit_prune", "system", None, ts, details, ""),
+            ("system_audit_prune", "system", None, ts, details, integrity_hash, _CHAIN_VERSION),
         )
         if conn.isolation_level is not None:
             # If autocommit mode is active we need explicit commit

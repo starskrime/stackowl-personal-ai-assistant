@@ -10,6 +10,7 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import classify, consolidate
 from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.pipeline.turn_persist import persist_turn
 
 pytestmark = pytest.mark.asyncio
 
@@ -42,7 +43,9 @@ async def test_consolidate_persists_user_and_assistant_text(tmp_db: DbPool) -> N
                 ),
             ),
         )
-        await consolidate.run(state)
+        # F088: persistence relocated out of consolidate to the post-floor seam.
+        out = await consolidate.run(state)
+        await persist_turn(out)
     finally:
         reset_services(token)
 
@@ -60,7 +63,8 @@ async def test_consolidate_no_persist_when_both_empty(tmp_db: DbPool) -> None:
     token = set_services(StepServices(memory_bridge=bridge))
     try:
         state = _make_state(input_text="", responses=())
-        await consolidate.run(state)
+        out = await consolidate.run(state)
+        await persist_turn(out)
     finally:
         reset_services(token)
     staged = await bridge.list_staged()
@@ -71,7 +75,7 @@ async def test_consolidate_persist_failure_does_not_raise(tmp_db: DbPool) -> Non
     """Bridge that raises on store must not propagate up."""
 
     class _BoomBridge(SqliteMemoryBridge):
-        async def store(self, content: str, session_id: str) -> None:
+        async def store(self, content: str, session_id: str, *, trust: object = None) -> None:
             raise RuntimeError("simulated DB outage")
 
     bridge = _BoomBridge(db=tmp_db)
@@ -86,8 +90,9 @@ async def test_consolidate_persist_failure_does_not_raise(tmp_db: DbPool) -> Non
                 ),
             ),
         )
-        # Must not raise.
+        # Must not raise — persist_turn (F088 seam) is the best-effort store now.
         out = await consolidate.run(state)
+        await persist_turn(out)
         assert out.responses == state.responses
     finally:
         reset_services(token)

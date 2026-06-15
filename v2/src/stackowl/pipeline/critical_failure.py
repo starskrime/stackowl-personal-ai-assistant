@@ -30,6 +30,7 @@ from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message
+from stackowl.setup.localize import localize
 
 # The answer-producing step(s). A failure here with no usable response is what
 # leaves the user in silence; non-critical steps self-heal and stay silent.
@@ -211,10 +212,16 @@ async def _generate_localized_apology(
 
 
 def _neutral_fallback(state: PipelineState) -> str:
-    """Language-agnostic last-resort message (no i18n infra — known limitation)."""
+    """Localized last-resort message (F089/F098).
+
+    The leading prose is now the localized ``self_heal_floor_minimal`` for the
+    turn's language (``localize`` en-fallbacks safely for any uncatalogued lang).
+    A compact ``[<ExcType>]`` marker is still appended for debuggability — that
+    bracket is a technical innard inside a localized frame, not translated."""
     classes = _critical_failure_classes(state)
     marker = classes[0] if classes else "error"
-    return f"{_NEUTRAL_PREFIX}[{marker}]"
+    prose = localize("self_heal_floor_minimal", state.language)
+    return f"{_NEUTRAL_PREFIX}{prose} [{marker}]"
 
 
 async def surface_critical_failure(

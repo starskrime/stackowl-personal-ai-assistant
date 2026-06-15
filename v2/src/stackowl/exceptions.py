@@ -217,6 +217,23 @@ class CircuitOpenError(InfrastructureError):
         super().__init__(f"Circuit open for '{provider_name}' — retry after {retry_after_seconds:.0f}s")
 
 
+class ToolUseUnsupportedError(DomainError):
+    """Raised when a provider that cannot run the tool loop is asked to (F120).
+
+    Defense-in-depth: the selector skips a ``supports_tools is False`` provider for
+    an agentic turn, but if the base ``complete_with_tools`` default is ever reached
+    with a non-empty ``tool_schemas`` it raises THIS rather than silently returning
+    ``(content, [])`` — a hidden-error / fake-success the give-up judge could pass.
+    """
+
+    def __init__(self, provider_name: str) -> None:
+        self.provider_name = provider_name
+        super().__init__(
+            f"Provider '{provider_name}' cannot run the agentic tool loop "
+            "(supports_tools is False) but was asked to use tools."
+        )
+
+
 class AllProvidersUnavailableError(InfrastructureError):
     """Raised when cascade finds all providers OPEN."""
 
@@ -331,6 +348,25 @@ class ChannelAlreadyRegisteredError(DomainError):
     def __init__(self, name: str) -> None:
         self.channel_name = name
         super().__init__(f"Channel already registered: '{name}'")
+
+
+class DeliveryError(DomainError):
+    """Raised when an on-turn channel send cannot reach its target (C6 / C-1).
+
+    Carries ONLY a coarse ``channel`` name and a ``reason`` code — NEVER a raw
+    secret / JID / channel-id (sensitive-data mandate). Raised on the *on-turn*
+    path when an EXPLICIT keyword target was passed to ``send_text`` but cannot
+    be resolved/delivered (``"no_target"``) or no live transport channel exists
+    for it (``"no_channel"``); ``"transport_error"`` covers a downstream send
+    failure. A proactive/best-effort send with no explicit target stays a logged
+    no-op (it NEVER raises) so the :class:`ProactiveDeliverer`'s never-raises
+    contract and the :class:`DeliveryLedger` are preserved.
+    """
+
+    def __init__(self, channel: str, reason: str) -> None:
+        self.channel = channel
+        self.reason = reason
+        super().__init__(f"Channel {channel!r} delivery failed: {reason}")
 
 
 class PluginValidationError(DomainError):

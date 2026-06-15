@@ -6,12 +6,16 @@ data-driven assembly pipeline. Each section is owned by a concrete
 in any one of them produces an inline ``section_error:`` entry instead of
 crashing the whole brief.
 
-Persistence + delivery side-effects:
+Persistence + delivery side-effects (C1/F101 + F109):
 
-* Inserts a row into ``job_results`` with the rendered brief as
-  ``result_text`` so ``/agents log`` can surface it.
-* Emits ``"morning_brief_delivered"`` on the :class:`EventBus` for
-  any subscribers (notification routers, telemetry).
+* DELIVERS the rendered brief through the single ``ProactiveDeliverer`` seam to
+  the recipient persisted on the job row (durable ``target_channels`` /
+  ``target_addresses``), exactly-once via the ``DeliveryLedger`` — never the
+  adapter's shared ``_last_*``.
+* Records the ``job_results`` status from the ACTUAL transport outcome (a
+  ``delivered`` status is downstream of a real send, never asserted upfront).
+* Emits ``"morning_brief_rendered"`` as TELEMETRY only (the bus is not the
+  delivery mechanism), carrying the honest per-channel status.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from stackowl.brief.models import BriefSection, MorningBrief
 from stackowl.brief.renderer import BriefRenderer
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
+from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
@@ -42,6 +47,8 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.events.bus import EventBus
     from stackowl.integrations.registry import IntegrationRegistry
     from stackowl.memory.bridge import MemoryBridge
+    from stackowl.notifications.deliverer import ProactiveDeliverer
+    from stackowl.notifications.delivery_ledger import DeliveryLedger
     from stackowl.scheduler.scheduler import JobScheduler
 
 
@@ -50,7 +57,12 @@ _INSERT_JOB_RESULT_SQL = (
     "VALUES (?, ?, ?, ?, ?)"
 )
 _ERROR_PREVIEW_CHARS = 80
-_EVENT_DELIVERED = "morning_brief_delivered"
+# Telemetry-only event (F101): the bus is NOT the delivery mechanism — real
+# transport now goes through the ProactiveDeliverer seam. Renamed-intent so a
+# future subscriber sees that this is a "rendered" signal carrying the HONEST
+# per-channel status, never a hard-coded "delivered" (F109).
+_EVENT_RENDERED = "morning_brief_rendered"
+_CATEGORY = "morning_brief"
 
 
 class MorningBriefHandler(JobHandler):
@@ -64,6 +76,8 @@ class MorningBriefHandler(JobHandler):
         event_bus: EventBus,
         settings: Settings,
         integration_registry: IntegrationRegistry | None = None,
+        proactive_deliverer: ProactiveDeliverer | None = None,
+        delivery_ledger: DeliveryLedger | None = None,
     ) -> None:
         self._memory_bridge = memory_bridge
         self._scheduler = scheduler
@@ -71,6 +85,18 @@ class MorningBriefHandler(JobHandler):
         self._event_bus = event_bus
         self._settings = settings
         self._integration_registry = integration_registry
+        # C1/F101 — the SINGLE delivery seam + exactly-once ledger, constructor-
+        # injected (the scheduler poll thread has no get_services() context). When
+        # both are wired the brief is transported to its durable recipient; when
+        # absent (legacy/unit construction) the handler renders + records WITHOUT a
+        # send (back-compat, never a fake 'delivered').
+        from stackowl.notifications.proactive_job import ProactiveJobDeliverer
+
+        self._job_deliverer = (
+            ProactiveJobDeliverer(proactive_deliverer, delivery_ledger)
+            if proactive_deliverer is not None and delivery_ledger is not None
+            else None
+        )
         self._renderer = BriefRenderer()
         self._assemblers: list[BriefSectionAssembler] = [
             DateAndPrioritiesAssembler(db=db),
@@ -132,11 +158,14 @@ class MorningBriefHandler(JobHandler):
             },
         )
 
+        # 3. STEP — DELIVER through the single seam, then record the HONEST status
+        # derived from the ACTUAL transport outcome (F101 + F109). A 'delivered'
+        # status is downstream of a real send, never asserted upfront.
+        outcome = await self._deliver(job, rendered)
         duration_ms = (time.monotonic() - t0) * 1000
 
-        # 3. STEP — persist + emit delivery event
-        await self._record_result(job.job_id, "completed", rendered, duration_ms)
-        self._emit_delivered(brief, delivery_channels)
+        await self._record_result(job.job_id, outcome.rollup, rendered, duration_ms)
+        self._emit_rendered(brief, outcome)
 
         # 4. EXIT
         log.scheduler.info(
@@ -145,6 +174,7 @@ class MorningBriefHandler(JobHandler):
                 "_fields": {
                     "job_id": job.job_id,
                     "section_count": len(sections),
+                    "status": outcome.rollup,
                     "duration_ms": duration_ms,
                 }
             },
@@ -159,7 +189,30 @@ class MorningBriefHandler(JobHandler):
                 "section_count": len(sections),
                 "delivery_channels": delivery_channels,
                 "rendered_len": len(rendered),
+                "delivery_status": outcome.rollup,
+                "per_channel": outcome.per_channel,
+                "undeliverable": list(outcome.undeliverable),
             },
+        )
+
+    async def _deliver(
+        self, job: Job, rendered: str
+    ) -> ProactiveDeliveryOutcome:
+        """Transport the rendered brief to the job's durable recipients (F101).
+
+        Returns the honest aggregate outcome. When no deliverer is wired (legacy /
+        unit construction) the brief is rendered + recorded but NOT sent — surfaced
+        as ``undeliverable`` so nothing is ever dishonestly recorded ``delivered``.
+        """
+        if self._job_deliverer is None:
+            log.scheduler.warning(
+                "[scheduler] morning_brief._deliver: no deliverer wired — rendered "
+                "but NOT sent (no fake 'delivered')",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return ProactiveDeliveryOutcome(rollup="undeliverable")
+        return await self._job_deliverer.deliver_for_job(
+            job, message=rendered, category=_CATEGORY
         )
 
     # ---------------------------------------------------------------- helpers
@@ -238,24 +291,33 @@ class MorningBriefHandler(JobHandler):
             extra={"_fields": {"job_id": job_id, "status": status, "run_at": run_at}},
         )
 
-    def _emit_delivered(self, brief: MorningBrief, channels: list[str]) -> None:
-        """Emit the ``morning_brief_delivered`` event for downstream subscribers."""
+    def _emit_rendered(
+        self, brief: MorningBrief, outcome: ProactiveDeliveryOutcome
+    ) -> None:
+        """Emit ``morning_brief_rendered`` telemetry carrying the HONEST status (F109).
+
+        Telemetry-only: the bus is NOT the delivery mechanism (real transport went
+        through the seam in :meth:`_deliver`). The payload carries the rendered
+        section count + the per-channel truth, never a hard-coded ``delivered`` —
+        telemetry that asserts a falsehood is worse than none.
+        """
         payload = {
-            "channels": channels,
-            "status": "delivered",
+            "status": outcome.rollup,
+            "per_channel": outcome.per_channel,
+            "undeliverable": list(outcome.undeliverable),
             "section_count": len(brief.sections),
             "generated_at": brief.generated_at,
         }
         try:
-            self._event_bus.emit(_EVENT_DELIVERED, payload)
+            self._event_bus.emit(_EVENT_RENDERED, payload)
         except Exception as exc:  # B5 — never silent
             log.scheduler.warning(
-                "[scheduler] morning_brief._emit_delivered: emit failed",
+                "[scheduler] morning_brief._emit_rendered: emit failed",
                 exc_info=exc,
-                extra={"_fields": {"event": _EVENT_DELIVERED}},
+                extra={"_fields": {"event": _EVENT_RENDERED}},
             )
             return
         log.scheduler.debug(
-            "[scheduler] morning_brief._emit_delivered: event emitted",
-            extra={"_fields": {"event": _EVENT_DELIVERED, "channels": channels}},
+            "[scheduler] morning_brief._emit_rendered: event emitted",
+            extra={"_fields": {"event": _EVENT_RENDERED, "status": outcome.rollup}},
         )

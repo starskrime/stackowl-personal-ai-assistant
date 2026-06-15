@@ -28,7 +28,9 @@ from stackowl.channels.discord.helpers import (
 )
 from stackowl.channels.discord.settings import DiscordSettings
 from stackowl.channels.splitter import DiscordMessageSplitter
+from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
@@ -38,6 +40,13 @@ if TYPE_CHECKING:
     from stackowl.channels.registry import ChannelRegistry
 
 _HEARTBEAT_DEGRADED_AFTER_S = 60.0
+
+# Sentinel distinguishing "no channel_id kwarg passed" (proactive/best-effort →
+# logged no-op on miss) from "channel_id explicitly passed" (on-turn → raise on
+# an unresolvable miss). ``None`` alone is ambiguous: ``send()`` may legitimately
+# pass ``channel_id=None`` after narrowing a stray non-int target on the on-turn
+# path, which MUST fail loud rather than silently drop a turn's answer (C-1).
+_UNSET: Any = object()
 
 
 class DiscordChannelAdapter(ChannelAdapter):
@@ -51,6 +60,29 @@ class DiscordChannelAdapter(ChannelAdapter):
         self._splitter = DiscordMessageSplitter()
         self._last_heartbeat_at: float | None = None
         self._bot_id: int = 0
+        # Session→target maps (mirror Slack's _targets; the asymmetry is honored
+        # by keeping resolution in the adapter that owns the map). ``_targets``
+        # maps session_id (== str(user_id)) → the originating channel id; the
+        # session_id is NOT itself a send target on Discord (a guild reply must
+        # go to message.channel.id, not the user's DM). ``_channels`` holds the
+        # live discord.py channel object keyed by channel id — Discord sends via
+        # ``channel.send()`` not a raw id, and the object captured off the
+        # inbound message is the authoritative handle. The client cache
+        # (``get_channel``) is only a fallback for proactive sends to channels
+        # not yet seen — it returns None for any uncached channel. Growth is
+        # bounded by distinct channels seen (same property as Slack's
+        # ``_targets``); an LRU bound is a possible future enhancement.
+        # ``_last_channel_id`` is the proactive-only fallback, NEVER the primary
+        # path (preserves the concurrent cross-deliver fix).
+        self._targets: dict[str, int] = {}
+        self._channels: dict[int, Any] = {}
+        self._last_channel_id: int | None = None
+        # F005 — the prefix router a tapped button (consent/clarify/memory View)
+        # routes its custom_id through. Attached by the orchestrator after the
+        # handlers are built (mirrors Telegram's attach_callback_router). None
+        # until wired: a tap with no router is a logged no-op (the consent prompt
+        # still fails closed on timeout).
+        self._callback_router: Any | None = None
         log.discord.debug(
             "[discord] adapter.init: ready",
             extra={
@@ -68,6 +100,22 @@ class DiscordChannelAdapter(ChannelAdapter):
     @property
     def contributor_name(self) -> str:
         return "discord"
+
+    def resolve_target(self, session_id: str) -> str | int | None:
+        """Resolve the originating channel id for ``session_id`` (mirror Slack).
+
+        The Discord ``session_id`` (== ``str(user_id)``) is NOT itself a send
+        target — a guild reply must reach ``message.channel.id``, not the user.
+        Reads the adapter-owned ``_targets`` map; returns ``None`` honestly on a
+        miss (never guesses ``_last_channel_id``), so the caller records the send
+        as undeliverable rather than cross-delivering.
+        """
+        target = self._targets.get(session_id)
+        log.discord.debug(
+            "[discord] adapter.resolve_target: resolved",
+            extra={"_fields": {"resolved": target is not None}},
+        )
+        return target
 
     async def start(self) -> None:
         """Open a Discord WebSocket session and register with the channel registry.
@@ -106,40 +154,249 @@ class DiscordChannelAdapter(ChannelAdapter):
         return msg
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:
-        """Collect streaming chunks, split, and dispatch each part to Discord."""
+        """Collect streaming chunks, split, and dispatch each part to Discord.
+
+        Captures the per-turn ``chunk.target`` (the originating channel id stamped
+        at deliver-time) so this turn replies to ITS OWN channel — not the shared
+        ``_last_channel_id`` a newer concurrent inbound may have overwritten. The
+        captured target is passed EXPLICITLY (on-turn path) to ``send_text`` so an
+        unresolvable target fails loud rather than silently dropping the answer.
+        """
         log.discord.debug("[discord] adapter.send: entry")
         TestModeGuard.assert_not_test_mode("discord.send")
         buffer = ""
+        # Discord delivers only to int channel ids; a str target (Slack) cannot
+        # reach this adapter by construction (each turn is delivered by its OWN
+        # channel adapter). Log loudly and narrow to None if one ever does.
+        target: int | None = None
         async for chunk in chunks:
             buffer += chunk.content
-        await self.send_text(self._formatter.format_response(buffer))
+            raw = chunk.target
+            if isinstance(raw, str):
+                log.discord.warning(
+                    "[discord] adapter.send: unexpected str target — narrowing to None",
+                )
+                target = None
+            elif isinstance(raw, int):
+                target = raw
+        # On-turn path: pass the target EXPLICITLY (even None after a stray-type
+        # narrow) so an unresolvable target raises rather than dropping the turn.
+        await self.send_text(
+            self._formatter.format_response(buffer), channel_id=target
+        )
         log.discord.debug(
             "[discord] adapter.send: exit",
-            extra={"_fields": {"total_len": len(buffer)}},
+            extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
         )
 
-    async def send_text(self, text: str) -> None:
-        """Split ``text`` per Discord's 2000-char limit and send each part."""
+    async def send_text(self, text: str, *, channel_id: int | None = _UNSET) -> None:
+        """Split ``text`` per Discord's 2000-char limit and ``channel.send()`` each part.
+
+        No-target contract (C6 / C-1, see :meth:`ChannelAdapter.send_text`):
+
+        * ``channel_id`` passed EXPLICITLY (the on-turn ``send()`` path) but
+          unresolvable → log ``error`` + raise ``DeliveryError("discord",
+          "no_target")``. The live channel could not be found for a resolvable
+          id → ``DeliveryError("discord", "no_channel")``. An answer to a turn is
+          NEVER silently dropped.
+        * ``channel_id`` OMITTED (proactive/best-effort) with no
+          ``_last_channel_id`` → loud ``error``-level logged NO-OP, never a raise
+          (preserves the proactive deliverer never-raises contract).
+        """
+        explicit = channel_id is not _UNSET
+        resolved = channel_id if explicit else None
+        target = resolved if resolved is not None else self._last_channel_id
         log.discord.debug(
             "[discord] adapter.send_text: entry",
-            extra={"_fields": {"text_len": len(text)}},
+            extra={"_fields": {"text_len": len(text), "explicit": explicit}},
         )
         TestModeGuard.assert_not_test_mode("discord.send_text")
+        if target is None:
+            if explicit:
+                log.discord.error(
+                    "[discord] adapter.send_text: explicit target unresolvable — failing loud",
+                )
+                raise DeliveryError("discord", "no_target")
+            log.discord.error(
+                "[discord] adapter.send_text: no target channel (best-effort) — message dropped",
+            )
+            return
+        # Resolve the live channel object — Discord sends via channel.send(), not
+        # a raw id. Prefer the per-turn captured handle (the authoritative object
+        # received off the inbound message); fall back to the live client cache
+        # for channels not yet seen. A still-missing channel (bot kicked /
+        # uncached / no client) fails loud (no_channel) rather than silently
+        # dropping the answer. Typed Any (as the cache is): get_channel returns a
+        # union of channel kinds, only the messageable ones expose .send() — an
+        # unmessageable target is a config error caught at send time.
+        channel: Any = self._channels.get(target) or (
+            self._client.get_channel(target) if self._client is not None else None
+        )
+        if channel is None:
+            log.discord.error(
+                "[discord] adapter.send_text: no live channel for target — failing loud",
+            )
+            raise DeliveryError("discord", "no_channel")
         parts = self._splitter.split(text)
         log.discord.debug(
             "[discord] adapter.send_text: decision split",
             extra={"_fields": {"part_count": len(parts)}},
         )
-        # Wiring to a specific channel.send() requires a live discord.py
-        # session and a target channel; the adapter records the intent and
-        # the production runtime injects the channel handle via the bot's
-        # on_message callback closure.
         for idx, part in enumerate(parts):
             log.discord.debug(
                 "[discord] adapter.send_text: step part_dispatched",
                 extra={"_fields": {"idx": idx, "len": len(part)}},
             )
+            await channel.send(part)
         log.discord.debug("[discord] adapter.send_text: exit")
+
+    # ------------------------------------------------------------------ F005 rich
+
+    @property
+    def callback_router(self) -> Any | None:
+        """The attached button-interaction router (None until wired)."""
+        return self._callback_router
+
+    def attach_callback_router(self, router: Any) -> None:
+        """Attach the prefix router a tapped View button routes through.
+
+        Mirrors ``TelegramChannelAdapter.attach_callback_router``: the
+        orchestrator builds the consent/clarify/memory handlers, registers them on
+        a :class:`DiscordCallbackRouter`, then attaches it here so the View
+        buttons built by :func:`build_view` can dispatch their custom_id.
+        """
+        log.discord.debug("[discord] adapter.attach_callback_router: entry")
+        self._callback_router = router
+        log.discord.debug("[discord] adapter.attach_callback_router: exit")
+
+    async def send_inline_keyboard(
+        self,
+        text: str,
+        keyboard: dict[str, object],
+        channel_id: int | None = None,
+    ) -> Any:
+        """Post ``text`` with an interactive button View to a resolved channel.
+
+        ``channel_id`` targets a specific channel (e.g. the user who initiated a
+        consent prompt); when omitted it falls back to ``_last_channel_id``. An
+        EXPLICIT channel that cannot be resolved to a live channel raises (the
+        consent gate caller fails CLOSED) — the best-effort path (no explicit
+        channel) is a logged no-op. Returns the sent ``discord.Message`` so the
+        consent gate can later edit it to the chosen decision; ``None`` on the
+        best-effort no-target path.
+        """
+        from stackowl.channels.discord.callbacks import build_view
+
+        explicit = channel_id is not None
+        target = channel_id if explicit else self._last_channel_id
+        log.discord.debug(
+            "[discord] adapter.send_inline_keyboard: entry",
+            extra={"_fields": {"text_len": len(text), "explicit": explicit}},
+        )
+        TestModeGuard.assert_not_test_mode("discord.send_inline_keyboard")
+        if target is None:
+            log.discord.warning("[discord] adapter.send_inline_keyboard: no target channel")
+            if explicit:
+                raise DeliveryError("discord", "no_target")
+            return None
+        channel: Any = self._channels.get(target) or (
+            self._client.get_channel(target) if self._client is not None else None
+        )
+        if channel is None:
+            log.discord.error(
+                "[discord] adapter.send_inline_keyboard: no live channel — failing loud",
+            )
+            if explicit:
+                raise DeliveryError("discord", "no_channel")
+            return None
+        view = build_view(keyboard, self)
+        log.discord.debug("[discord] adapter.send_inline_keyboard: decision view_built")
+        message = await channel.send(text, view=view)
+        log.discord.debug("[discord] adapter.send_inline_keyboard: exit")
+        return message
+
+    async def edit_message_to_text(self, message: Any, text: str) -> None:
+        """Best-effort: rewrite a sent message to ``text`` and drop its buttons.
+
+        Used by the consent gate to render the chosen decision after a tap. The
+        message's ``edit`` is real network I/O behind a sync-looking call; any
+        failure is logged (the decision is already recorded) — never raises.
+        """
+        log.discord.debug("[discord] adapter.edit_message_to_text: entry")
+        if message is None or not hasattr(message, "edit"):
+            log.discord.debug("[discord] adapter.edit_message_to_text: no editable message — skip")
+            return
+        await message.edit(content=text, view=None)
+        log.discord.debug("[discord] adapter.edit_message_to_text: exit")
+
+    async def acknowledge_callback(self, callback_id: str, text: str = "") -> None:
+        """No-op ack — discord.py acks interactions via ``interaction.response``.
+
+        The button-callback seam (:func:`build_view`) defers the interaction
+        response on tap, so there is no out-of-band ack to perform here. Kept for
+        :class:`ChannelAdapter` signature parity.
+        """
+        log.discord.debug(
+            "[discord] adapter.acknowledge_callback: noop (interaction acked at seam)",
+            extra={"_fields": {"text_len": len(text)}},
+        )
+
+    async def send_clarify(
+        self,
+        session_id: str,
+        question: str,
+        choices: tuple[str, ...] | list[str],
+        clarify_id: str,
+    ) -> None:
+        """Deliver a clarify question as tap-buttons (one per choice).
+
+        The Discord destination is resolved from ``resolve_target(session_id)`` —
+        the ``str(user_id)`` session_id is NOT itself a send target. Each non-blank
+        choice becomes a button whose ``custom_id`` is ``clarify:{clarify_id}:{idx}``,
+        PRESERVING each choice's ORIGINAL index across blanks (so the tap maps to
+        ``entry.choices[idx]`` even with blanks present — mirrors Telegram/Slack).
+
+        Self-heals to the base numbered-text fallback on any error: an unresolved
+        target, no choices, or a delivery failure all degrade rather than crash
+        the turn (the gateway treats ``send_clarify`` as best-effort).
+        """
+        n_nonblank = sum(1 for c in choices if str(c).strip())
+        log.discord.debug(
+            "[discord] adapter.send_clarify: entry",
+            extra={"_fields": {"n_choices": n_nonblank, "clarify_id": clarify_id}},
+        )
+        dest = self.resolve_target(session_id)
+        if not isinstance(dest, int) or not n_nonblank:
+            log.discord.debug(
+                "[discord] adapter.send_clarify: decision base_text_fallback",
+                extra={"_fields": {"has_target": isinstance(dest, int), "n": n_nonblank}},
+            )
+            await super().send_clarify(session_id, question, choices, clarify_id)
+            return
+        try:
+            builder = InlineKeyboardBuilder()
+            n_buttons = 0
+            for idx, choice in enumerate(choices):
+                c = str(choice).strip()
+                if not c:
+                    continue
+                builder.add_button(c, f"clarify:{clarify_id}:{idx}")
+                n_buttons += 1
+            keyboard = builder.build()
+            log.discord.debug(
+                "[discord] adapter.send_clarify: step keyboard_built",
+                extra={"_fields": {"n_buttons": n_buttons}},
+            )
+            await self.send_inline_keyboard(question, keyboard, channel_id=dest)
+        except Exception as exc:  # self-healing — any failure → base numbered text
+            log.discord.error(
+                "[discord] adapter.send_clarify: button delivery failed — text fallback",
+                exc_info=exc,
+                extra={"_fields": {"clarify_id": clarify_id}},
+            )
+            await super().send_clarify(session_id, question, choices, clarify_id)
+            return
+        log.discord.debug("[discord] adapter.send_clarify: exit")
 
     async def handle_message(self, message: Any) -> None:
         """Discord.py ``on_message`` callback — enqueue an IngressMessage.
@@ -176,28 +433,65 @@ class DiscordChannelAdapter(ChannelAdapter):
             )
             return
 
+        # Stamp the ORIGINATING channel id (NOT author.id): a guild reply must go
+        # back to message.channel.id, else it misroutes to the user's DM or
+        # nowhere. session_id stays str(user_id) for memory/identity.
+        channel = getattr(message, "channel", None)
+        channel_id = int(getattr(channel, "id", 0) or 0)
         ingress = IngressMessage(
             text=stripped,
             session_id=str(user_id),
             channel=self.channel_name,
             trace_id=uuid4().hex,
+            chat_id=channel_id,
         )
         self._queue.put_nowait(ingress)
+        # Record the session→channel-id map + the live channel handle so the
+        # reply turn can resolve where to send. The captured channel object is
+        # the authoritative send handle (the client cache is only a fallback).
+        # ``_last_channel_id`` is the proactive-only fallback, NEVER the primary
+        # on-turn path.
+        if channel_id:
+            self._targets[str(user_id)] = channel_id
+            if channel is not None:
+                self._channels[channel_id] = channel
+            self._last_channel_id = channel_id
         log.discord.debug(
             "[discord] adapter.handle_message: exit",
             extra={
                 "_fields": {
                     "user_hash": user_hash,
                     "trace_id": ingress.trace_id,
+                    "has_channel": channel_id != 0,
                 }
             },
         )
 
     async def health_check(self) -> HealthStatus:
-        """Report ok/degraded based on the last gateway heartbeat timestamp."""
+        """Report ok/degraded based on transport LIVENESS + the last heartbeat.
+
+        Liveness gate (F004-part1): ``ok`` requires a live ``_client`` — a fresh
+        heartbeat alone does not prove send capability (there is no transport to
+        send through until startup constructs the client). Without it, report
+        ``degraded`` so health never lies about deliverability before the channel
+        is wired.
+        """
         log.discord.debug("[discord] adapter.health_check: entry")
         now = time.monotonic()
         latency_ms = 0.0
+
+        if self._client is None:
+            status = HealthStatus(
+                name=self.channel_name,
+                status="degraded",
+                message="no live client — channel not started",
+                latency_ms=latency_ms,
+            )
+            log.discord.debug(
+                "[discord] adapter.health_check: exit",
+                extra={"_fields": {"status": status.status, "reason": "no_client"}},
+            )
+            return status
 
         if self._last_heartbeat_at is None:
             status = HealthStatus(

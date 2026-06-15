@@ -63,6 +63,24 @@ class WatchdogService:
             extra={"_fields": {"interval_s": interval_s}},
         )
 
+    def send_ready(self) -> None:
+        """Send ``READY=1`` to systemd ONCE, after the service is serving-ready.
+
+        Under ``Type=notify`` systemd holds dependents until this fires. Must be
+        called AFTER all assembly (migrations, adapters) so systemd never marks the
+        unit ready while startup could still fail. Off-systemd (no ``WATCHDOG_USEC``
+        / no ``NOTIFY_SOCKET``) ``_sd_notify`` self-skips via ``systemd-notify``
+        absence — a clean no-op on macOS/Windows/Jetson (all-hardware mandate)."""
+        # 1. ENTRY
+        log.infra.debug("[watchdog] send_ready: entry")
+        if not os.environ.get("NOTIFY_SOCKET") and not os.environ.get("WATCHDOG_USEC"):
+            # 2. DECISION — not under systemd notify; nothing to signal.
+            log.infra.debug("[watchdog] send_ready: not under systemd — skipping READY=1")
+            return
+        # 3. STEP + 4. EXIT
+        self._sd_notify("READY=1")
+        log.infra.info("[watchdog] send_ready: exit — READY=1 sent")
+
     def stop(self) -> None:
         """Cancel the watchdog ping task."""
         # 1. ENTRY

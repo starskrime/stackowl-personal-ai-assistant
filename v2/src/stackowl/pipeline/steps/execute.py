@@ -16,6 +16,7 @@ from stackowl.exceptions import (
     OwlConcurrencyError,
     OwlTimeoutError,
     OwlTokenLimitError,
+    ToolUseUnsupportedError,
     TurnStopped,
 )
 from stackowl.infra import recovery_context, tool_outcome_ledger
@@ -668,25 +669,15 @@ async def _run_with_tools(
         tool_outcome_ledger.record_tool_outcome(
             name=name, action_severity=t.manifest.action_severity, success=tr.success,
         )
-        # Learning Commit 5 — post-execute heuristic match + event emission.
-        # Zero behavior change; downstream subscribers (classify, future hooks)
-        # see "tool.heuristic_match" when a known-bad pattern fires.
-        services = get_services()
-        if services.heuristic_store is not None and services.event_bus is not None:
-            from stackowl.learning.heuristic_matcher import match_and_emit
+        # F038 — DEMOTED: the old per-call matcher did a heuristic DB lookup +
+        # emitted a learning event on the bus, but NO production subscriber existed
+        # (only test files). Both were dead weight on the hot path. Replace with an
+        # honest no-IO log of the tool outcome; re-introducing a learned-hint
+        # consumer is a separate future story (must not steer a weak model on low
+        # evidence). match_and_log never raises — no guard needed.
+        from stackowl.learning.heuristic_matcher import match_and_log
 
-            try:
-                await match_and_emit(
-                    tool_name=name, tool_result=tr,
-                    heuristic_store=services.heuristic_store,
-                    event_bus=services.event_bus,
-                )
-            except Exception as exc:  # B5 — never block dispatch on a telemetry hook
-                log.engine.warning(
-                    "[pipeline] execute: heuristic match failed — continuing",
-                    exc_info=exc,
-                    extra={"_fields": {"tool": name}},
-                )
+        match_and_log(tool_name=name, tool_result=tr)
         if tr.success:
             return tr.output
         # FAILED — W3.T14 recovery actuator: before surrendering to the marker,
@@ -771,23 +762,21 @@ async def _run_with_tools(
     # process-wide TurnRegistry on services. Fail-safe: no registry / no turn /
     # empty mailbox → returns None (loop proceeds normally).
     #
-    # Task 11 FOLLOW-UP SEAM (lost-steer finalize side, NOT wired here): the
-    # registry now exposes `finalize_if_drained(request_id)` — re-check the mailbox
-    # under the turn lock and CAS RUNNING→FINALIZING only when drained — for the
-    # "execute terminal sequence" to loop on before the turn finalizes. It is NOT
-    # called here because execute.py does NOT own the ReAct loop: the provider's
-    # `complete_with_tools` drives every iteration internally and returns only the
-    # FINAL text; execute makes a single `await`, so there is no per-iteration
-    # terminal boundary in THIS function to fold a last-moment steer at. Moreover,
-    # the RUNNING→FINALIZING→DONE lifecycle is currently NOT driven for interactive
-    # turns at all (the orchestrator's _drain_next calls `deregister` directly,
-    # never transitioning status), so there is no existing finalization line to
-    # guard. Wiring finalize_if_drained correctly belongs at the point that DOES own
-    # finalization — either (a) a provider-internal hook invoked at the loop's true
-    # terminal boundary, or (b) the orchestrator's completion/_drain_next seam,
-    # which must first introduce the FINALIZING transition. The enqueue side
-    # (`try_steer`) and teardown (`drain_survivors`) are implemented + unit-tested,
-    # and the end-to-end fold is covered by tests/pipeline/test_steering_fold_end_to_end.py.
+    # LOST-STEER GUARD — where it actually lives: the SOLE completion-seam guard is
+    # the orchestrator's `_drain_next`, which calls `turn_registry.finalize_and_drain`
+    # (flip RUNNING→FINALIZING + drain+re-route survivors) BEFORE `deregister`, so a
+    # steer racing the turn's end is either converted-to-queued-new (a concurrent
+    # try_steer reads FINALIZING) or drained as a survivor — never lost. PER-ITERATION
+    # in-loop steering IS delivered here by `make_steering_callback` (folds THIS turn's
+    # mailbox at each ReAct boundary). There is NO finalize-side in-loop re-check in
+    # this function: execute.py does NOT own the ReAct loop (the provider's
+    # `complete_with_tools` drives every iteration internally behind a single `await`),
+    # so there is no per-iteration terminal boundary here to guard. The earlier
+    # redundant finalize-side CAS primitives (`finalize_if_drained`/`drain_survivors`)
+    # were dead — never wired to any caller — and were REMOVED (F051); the window they
+    # targeted is closed by `finalize_and_drain`. End-to-end fold coverage:
+    # tests/pipeline/test_steering_fold_end_to_end.py; completion-window property:
+    # tests/gateway/test_completion_finalize_drain.py.
     _steering_cb = make_steering_callback(_services.turn_registry, state.trace_id)
 
     def _compose_iter_cbs(
@@ -834,12 +823,16 @@ async def _run_with_tools(
         )
         if _default_cb is not None:
             _extra["on_iteration_complete"] = _default_cb
+        # F027 — the execute step owns the BudgetGovernor; compute the residual
+        # wall-clock budget HERE and thread it as wrapup_deadline_s so the provider's
+        # terminal wrap-up is bounded (the provider gets a VALUE, never the governor).
         return await provider.complete_with_tools(
             user_text=state.input_text,
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
             history=list(state.history),
+            wrapup_deadline_s=_governor.remaining_seconds(),
             **_extra,
         )
 
@@ -915,6 +908,7 @@ async def _run_with_tools(
                 on_iteration_complete=_iter_cb,
                 resume_messages=state.durable_resume_messages,
                 resume_tool_calls=state.durable_resume_tool_calls,
+                wrapup_deadline_s=_governor.remaining_seconds(),  # F027 — bound the wrap-up
                 **_durable_extra,
             )
         # 4. EXIT
@@ -1204,6 +1198,19 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state.evolve(
             errors=(*state.errors, f"execute: AllProvidersUnavailableError: {exc}"),
+        )
+    except ToolUseUnsupportedError as exc:
+        # F120 — an agentic turn was routed to a provider that cannot act and no
+        # tool-capable provider exists. Floor HONESTLY (never a silent tool-free
+        # reply): record the error so the critical-failure surface delivers an
+        # honest "I can't act with this model" floor.
+        log.engine.error(
+            "[pipeline] execute: no tool-capable provider for an agentic turn — flooring honestly",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+        )
+        return state.evolve(
+            errors=(*state.errors, f"execute: ToolUseUnsupportedError: {exc}"),
         )
 
     # Tool loop path: use complete_with_tools() when tools are available AND the

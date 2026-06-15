@@ -74,3 +74,26 @@ def test_raise_caps_lifts_the_breached_cap() -> None:
     assert g.check(0) is not None
     g.raise_caps("steps")
     assert g.check(1) is None
+
+
+# F027/SP-4 — remaining_seconds() residual budget accessor for the wrap-up bound.
+
+
+def test_remaining_seconds_none_when_no_time_cap() -> None:
+    g = _gov(ResourceCaps(max_steps=5))  # no time cap
+    assert g.remaining_seconds() is None
+
+
+def test_remaining_seconds_counts_down_with_the_clock() -> None:
+    clock = _Clock(0.0)
+    g = _gov(ResourceCaps(max_time_s=10.0), clock=clock)
+    assert g.remaining_seconds() == 10.0
+    clock.t = 4.0
+    assert g.remaining_seconds() == 6.0
+
+
+def test_remaining_seconds_floors_at_zero_never_negative() -> None:
+    clock = _Clock(0.0)
+    g = _gov(ResourceCaps(max_time_s=10.0), clock=clock)
+    clock.t = 25.0  # over budget
+    assert g.remaining_seconds() == 0.0

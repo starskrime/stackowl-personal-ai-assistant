@@ -133,6 +133,14 @@ class _StubEmbeddingRegistry:
     def is_semantic(self) -> bool:
         return True
 
+    @property
+    def active_model(self) -> str:
+        return self._provider.model_name
+
+    @property
+    def active_dim(self) -> int:
+        return self._provider.dimension
+
 
 class _SpyLanceDB:
     """In-memory ANN spy with the same async surface the bridge/promoter use.
@@ -145,6 +153,11 @@ class _SpyLanceDB:
     def __init__(self) -> None:
         self.upserts: list[tuple[str, list[float]]] = []
         self._vectors: dict[str, list[float]] = {}
+
+    async def corpus_identity(self) -> tuple[str | None, int | None]:
+        # Matches the stub embedder so the F062 gate routes through the semantic
+        # (spy) path this journey asserts on.
+        return ("stub-embed", 8)
 
     async def upsert(
         self, fact_id: str, embedding: list[float], metadata: dict[str, Any]

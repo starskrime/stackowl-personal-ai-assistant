@@ -7,6 +7,7 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
@@ -35,17 +36,12 @@ def parse_every(schedule: str) -> timedelta | None:
     return timedelta(seconds=count * _EVERY_UNIT_SECONDS[match.group(2).lower()])
 
 
-_INSERT_AUDIT_SQL = (
-    "INSERT INTO audit_log (event_type, actor, target, timestamp, details) "
-    "VALUES (?, ?, ?, ?, ?)"
-)
-
 _INSERT_JOB_SQL = (
     "INSERT INTO jobs "
     "(job_id, handler_name, schedule, idempotency_key, last_run_at, next_run_at, "
     "status, retry_count, created_at, failure_count, last_error, enabled, "
-    "replay_missed, primary_channel, params) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "replay_missed, primary_channel, params, target_channels, target_addresses) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -63,15 +59,13 @@ async def write_audit(
     )
     payload = json.dumps(details or {}, separators=(",", ":"), sort_keys=True)
     try:
-        await db.execute(
-            _INSERT_AUDIT_SQL,
-            (
-                event_type,
-                actor,
-                target,
-                time.time(),
-                payload,
-            ),
+        # Chain through the canonical audit chokepoint (C7 / F130b) so this
+        # scheduler-lifecycle row carries a v2 integrity_hash and does NOT void
+        # verify_chain (previously wrote integrity_hash='').
+        from stackowl.audit.logger import chain_append_via_pool
+
+        await chain_append_via_pool(
+            db, event_type, actor, target, time.time(), payload
         )
     except Exception as exc:  # B5 — never silent
         log.scheduler.warning(
@@ -86,21 +80,46 @@ async def write_audit(
     )
 
 
-def compute_next_run(schedule: str) -> str:
-    """Compute the next ISO-8601 UTC run time from a schedule expression."""
+def compute_next_run(
+    schedule: str, *, tz: str = "UTC", now: datetime | None = None
+) -> str:
+    """Compute the next ISO-8601 UTC run time from a schedule expression.
+
+    For a ``daily@HH:MM`` schedule the candidate is built as a LOCAL wall-clock
+    time in ``tz`` (the user-facing IANA timezone, ``settings.system.timezone``)
+    and then stored in UTC — so "8am" stays 8am across DST transitions and the
+    scheduler shares the SAME tz the quiet-hours clock uses (F108). ``tz`` defaults
+    to ``"UTC"`` for back-compat with non-daily callers; a bad tz fails open to UTC
+    (logged), matching ``in_quiet_hours``. ``now`` is injectable for tests.
+    """
     log.scheduler.debug(
         "[scheduler] compute_next_run: entry",
-        extra={"_fields": {"schedule": schedule}},
+        extra={"_fields": {"schedule": schedule, "tz": tz}},
     )
     if schedule.startswith("daily@"):
         parts = schedule[len("daily@") :].split(":")
         hour = int(parts[0])
         minute = int(parts[1]) if len(parts) > 1 else 0
-        now = datetime.now(UTC)
-        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= now:
+        try:
+            zone = ZoneInfo(tz)
+        except Exception as exc:  # B5 — fail open to UTC, never silent
+            log.scheduler.warning(
+                "[scheduler] compute_next_run: unknown tz — defaulting to UTC",
+                exc_info=exc,
+                extra={"_fields": {"tz": tz}},
+            )
+            zone = ZoneInfo("UTC")
+        # Anchor in the configured tz so the wall-clock HH:MM is interpreted
+        # LOCALLY. A non-existent (spring-forward gap) or ambiguous (fall-back
+        # fold) local time is resolved deterministically by ZoneInfo/PEP-495 when
+        # the aware datetime is normalised to UTC — never a silently-wrong instant.
+        local_now = (now or datetime.now(UTC)).astimezone(zone)
+        candidate = local_now.replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        if candidate <= local_now:
             candidate += timedelta(days=1)
-        return candidate.isoformat()
+        return candidate.astimezone(UTC).isoformat()
     interval = parse_every(schedule)
     if interval is not None:
         next_iso = (datetime.now(UTC) + interval).isoformat()
@@ -148,6 +167,30 @@ async def reap_stale_running(db: DbPool) -> int:
     return len(rows)
 
 
+def _decode_json_column(row: dict[str, Any], key: str, fallback: Any) -> Any:
+    """Decode a JSON-encoded ``jobs`` column, tolerating legacy NULL / bad JSON.
+
+    The durable delivery-target columns (``target_channels``/``target_addresses``)
+    are NULL on every pre-0054 customer row and may be absent from a partial row
+    dict, so a missing/blank value yields ``fallback`` and a malformed value is
+    logged (never silently swallowed) and falls back too.
+    """
+    raw = row.get(key)
+    if raw is None or raw == "":
+        return fallback
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:  # B5 — never silent
+        log.scheduler.warning(
+            "[scheduler] row_to_job: invalid JSON column — using fallback",
+            exc_info=exc,
+            extra={"_fields": {"job_id": row.get("job_id"), "column": key}},
+        )
+        return fallback
+
+
 def row_to_job(row: dict[str, Any]) -> Job:
     """Build a :class:`Job` from a raw ``jobs`` row dict (handles legacy columns)."""
     raw_params = row.get("params")
@@ -178,6 +221,8 @@ def row_to_job(row: dict[str, Any]) -> Job:
         replay_missed=bool(row.get("replay_missed", 0)),
         primary_channel=row.get("primary_channel"),
         params=params_dict,
+        target_channels=_decode_json_column(row, "target_channels", []),
+        target_addresses=_decode_json_column(row, "target_addresses", {}),
     )
 
 
@@ -206,6 +251,18 @@ async def insert_job(db: DbPool, job: Job) -> None:
             1 if job.replay_missed else 0,
             job.primary_channel,
             json.dumps(job.params, separators=(",", ":"), sort_keys=True),
+            # Persist durable delivery target as JSON (NULL when empty so a row
+            # with no stamped recipient stays indistinguishable from a legacy row).
+            (
+                json.dumps(job.target_channels, separators=(",", ":"))
+                if job.target_channels
+                else None
+            ),
+            (
+                json.dumps(job.target_addresses, separators=(",", ":"), sort_keys=True)
+                if job.target_addresses
+                else None
+            ),
         ),
     )
     log.scheduler.info(

@@ -54,6 +54,8 @@ def register_dream_worker_handler(
     kuzu_handler: KuzuSyncJobHandler,
     detector: ContradictionDetector,
     miner: ConversationMiner | None = None,
+    ann_k: int = 32,
+    ann_threshold: int = 200,
 ) -> DreamWorkerJobHandler:
     """Construct and register the :class:`DreamWorkerJobHandler` singleton.
 
@@ -71,6 +73,8 @@ def register_dream_worker_handler(
         kuzu_handler=kuzu_handler,
         detector=detector,
         miner=miner,
+        ann_k=ann_k,
+        ann_threshold=ann_threshold,
     )
     HandlerRegistry.instance().register(handler)
     # 4. EXIT

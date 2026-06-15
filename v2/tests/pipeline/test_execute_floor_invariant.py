@@ -169,3 +169,44 @@ async def test_empty_final_text_floors() -> None:
     # An empty final_text must never yield zero chunks.
     assert out_state.responses, "empty final_text produced no response chunk"
     assert out_state.responses[-1].content, "floored chunk for empty final was empty"
+
+
+class _DeadlineCapturingProvider:
+    """Records the wrapup_deadline_s the execute step threads in (F027 wiring)."""
+
+    protocol = "anthropic"
+
+    def __init__(self) -> None:
+        self.seen_deadline: float | None = "UNSET"  # type: ignore[assignment]
+
+    async def complete_with_tools(  # noqa: ANN001
+        self,
+        *,
+        user_text: str,
+        system_text: str,
+        tool_schemas: list[dict[str, object]],
+        tool_dispatcher: Any,
+        history: list[Any] | None = None,
+        on_iteration_complete: Any = None,
+        wrapup_deadline_s: float | None = None,
+        **_kwargs: object,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        self.seen_deadline = wrapup_deadline_s
+        return ("ok answer", [])
+
+
+@pytest.mark.asyncio
+async def test_execute_threads_residual_deadline_into_provider() -> None:
+    """F027 — the execute step (governor owner) computes a residual wall-clock
+    budget from its BudgetGovernor and passes it as wrapup_deadline_s. With no
+    explicit owl caps the default 120s backstop applies, so the provider must
+    receive a positive, bounded float (NOT the 'UNSET' sentinel, NOT None)."""
+    provider = _DeadlineCapturingProvider()
+    await _drive(provider)
+    assert provider.seen_deadline != "UNSET", (
+        "execute did not pass wrapup_deadline_s at all — F027 wiring missing"
+    )
+    assert isinstance(provider.seen_deadline, float)
+    assert 0.0 < provider.seen_deadline <= 120.0, (
+        f"residual deadline not bounded by the default backstop: {provider.seen_deadline}"
+    )

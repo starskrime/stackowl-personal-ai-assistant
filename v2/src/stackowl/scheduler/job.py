@@ -26,6 +26,16 @@ class Job(BaseModel):
     replay_missed: bool = False
     primary_channel: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    # Durable delivery target (C1/F104) — the recipient persisted on the job row
+    # so a cron-born poll (no session, no TraceContext, no channel) can address
+    # its send from durable state. ``target_channels`` is the list of channel
+    # names to deliver to; ``target_addresses`` maps each channel name to its
+    # channel-NATIVE destination token (telegram ``int`` chat id, slack ``str``
+    # channel id). Empty/None on a legacy row means no durable recipient was
+    # stamped — the DeliverySpec resolver then yields no pair and the caller
+    # records the send as undeliverable (never ``delivered``, never ``_last_*``).
+    target_channels: list[str] = Field(default_factory=list)
+    target_addresses: dict[str, str | int] = Field(default_factory=dict)
 
 
 class JobResult(BaseModel):
