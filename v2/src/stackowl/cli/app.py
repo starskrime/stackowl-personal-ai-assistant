@@ -237,6 +237,7 @@ def health(
         BrowserContributor,
         DbContributor,
         FilesystemContributor,
+        GraphContributor,
         ProviderContributor,
     )
     from stackowl.startup.fs_probe import _data_dir, _log_dir
@@ -245,6 +246,9 @@ def health(
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
+    # DUR-5 / F069 — truthful knowledge-graph health. Probes the kuzu native
+    # layer (the ARM-wheel-missing failure mode) without opening the live DB.
+    agg.register(GraphContributor.probe())
     # Browser contributor — no live runtime in CLI context (different process),
     # so it always reports 'degraded — runtime not constructed' from here.
     # /browser settings inside the serve process gives live status.

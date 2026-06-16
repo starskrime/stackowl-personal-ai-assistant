@@ -30,6 +30,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
+    from stackowl.health.contributors import GraphContributor
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.memory.contradiction_detector import ContradictionDetector
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
@@ -59,7 +60,9 @@ class MemoryComponents:
     preference_store: PreferenceStore
     embedding_registry: EmbeddingRegistry
     lancedb: LanceDBAdapter
-    kuzu_adapter: KuzuAdapter
+    # DUR-5 / F069 — None when Kuzu degraded at init (consistent with LanceDB /
+    # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
+    kuzu_adapter: KuzuAdapter | None
     promoter: FactPromoter
     pruner: MemoryPruner
     detector: ContradictionDetector
@@ -69,6 +72,8 @@ class MemoryComponents:
     fact_extractor: FactExtractor
     fact_extraction_handler: FactExtractionJobHandler
     lessons_index: LessonsIndex
+    # Health surface for the knowledge-graph layer (ok / down).
+    graph_health: GraphContributor
 
 
 class MemoryAssembly:
@@ -138,15 +143,34 @@ class MemoryAssembly:
         preference_store = PreferenceStore(db=db)
         log.memory.debug("[memory] assembly: preference_store ready")
 
-        # 4) Kuzu adapter — HARD-FAIL on initialisation per operator choice
-        # (Commit A vote). No try/except: silent degradation would lose the
-        # knowledge graph layer without operator awareness.
+        # 4) Kuzu adapter — DEGRADE-TO-NONE on init failure (DUR-5 / F069).
+        # Consistent with the LanceDB / embedding-registry degrade-don't-crash
+        # policy: a missing/broken native Kuzu wheel (e.g. an ARM gap) must NOT
+        # abort the whole memory assembly / startup — it degrades the graph
+        # layer to a None adapter with a LOUD ERROR and a health-surfaced 'down'
+        # status. classify + kuzu_sync already tolerate a None adapter.
+        from stackowl.health.contributors import GraphContributor
+
         kuzu_dir = StackowlHome.home() / "kuzu"
-        kuzu_adapter = KuzuAdapter(data_dir=kuzu_dir)
-        log.memory.info(
-            "[memory] assembly: kuzu adapter ready",
-            extra={"_fields": {"data_dir": str(kuzu_dir)}},
-        )
+        kuzu_adapter: KuzuAdapter | None
+        try:
+            kuzu_adapter = KuzuAdapter(data_dir=kuzu_dir)
+            graph_health = GraphContributor(available=True)
+            log.memory.info(
+                "[memory] assembly: kuzu adapter ready",
+                extra={"_fields": {"data_dir": str(kuzu_dir)}},
+            )
+        except Exception as exc:
+            # B5 / no-hidden-errors — surface LOUDLY, then degrade (don't crash).
+            reason = f"{type(exc).__name__}: {exc}"
+            kuzu_adapter = None
+            graph_health = GraphContributor(available=False, reason=reason)
+            log.memory.error(
+                "[memory] assembly: kuzu adapter FAILED to initialise — graph "
+                "layer DEGRADED to None (recall continues without the graph)",
+                exc_info=exc,
+                extra={"_fields": {"data_dir": str(kuzu_dir)}},
+            )
 
         # 5) Consolidation building blocks.
         from stackowl.infra.clock import WallClock
@@ -259,4 +283,5 @@ class MemoryAssembly:
             dream_worker=dream_worker,
             fact_extractor=fact_extractor,
             fact_extraction_handler=fact_extraction_handler,
+            graph_health=graph_health,
         )

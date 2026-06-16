@@ -13,6 +13,64 @@ from stackowl.health.status import HealthStatus
 log = logging.getLogger("stackowl.health")
 
 
+class GraphContributor:
+    """Health contributor for the Kuzu knowledge-graph layer (DUR-5 / F069).
+
+    Reports ``ok`` when the graph adapter initialised, or ``down`` (with the
+    init-failure reason) when Kuzu degraded to a None adapter at assembly. This
+    makes the memory subsystem's degrade-don't-crash policy operator-visible —
+    the asymmetry where Kuzu silently hard-failed startup is replaced by a
+    truthful health signal.
+    """
+
+    def __init__(self, *, available: bool, reason: str | None = None) -> None:
+        self._available = available
+        self._reason = reason
+
+    @classmethod
+    def probe(cls) -> GraphContributor:
+        """Build a contributor by probing whether the Kuzu native layer loads.
+
+        Used by the out-of-process ``health`` CLI command, which must NOT open
+        the live graph DB (the serve process holds it). Importing the ``kuzu``
+        native module reproduces the exact ARM-wheel-missing failure mode that
+        DUR-5 degrades on, so an import failure is reported as ``down`` without
+        touching the on-disk database.
+        """
+        try:
+            import kuzu  # noqa: F401
+        except Exception as exc:  # pragma: no cover — only on a broken wheel
+            return cls(available=False, reason=f"{type(exc).__name__}: {exc}")
+        return cls(available=True)
+
+    @property
+    def contributor_name(self) -> str:
+        return "graph"
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return self._reason
+
+    async def health_check(self) -> HealthStatus:
+        t0 = time.monotonic()
+        log.debug("[health] graph_contributor: entry available=%s", self._available)
+        latency_ms = (time.monotonic() - t0) * 1000
+        if self._available:
+            return HealthStatus(
+                name="graph", status="ok", message=None, latency_ms=latency_ms
+            )
+        return HealthStatus(
+            name="graph",
+            status="down",
+            message=self._reason or "knowledge graph unavailable",
+            latency_ms=latency_ms,
+        )
+
+
 class DbContributor:
     """Health contributor: SQLite database reachability."""
 

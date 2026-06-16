@@ -2281,8 +2281,10 @@ class StartupOrchestrator:
                     await durable_recoverer.drain()
             # F067 — shut the dedicated Kuzu worker thread down cleanly so no
             # thread outlives the gateway (guarded; teardown never raises).
-            with contextlib.suppress(Exception):
-                await kuzu_adapter.aclose()
+            # DUR-5 / F069 — kuzu_adapter is None when the graph layer degraded.
+            if kuzu_adapter is not None:
+                with contextlib.suppress(Exception):
+                    await kuzu_adapter.aclose()
             with contextlib.suppress(Exception):
                 await db_pool.close()
             # F144 — remove the PID file LAST (after the DB pool is closed) so a
