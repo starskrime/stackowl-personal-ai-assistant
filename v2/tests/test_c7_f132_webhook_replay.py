@@ -96,7 +96,9 @@ class TestTimestampWindow:
             ts = datetime.fromtimestamp(stale, UTC).isoformat()
             sig = _signed_timestamp_sig("shared", ts, body)
             resp = await receiver._handle_request(_request_with_ts(body=body, ts=ts, sig=sig))
-            assert resp.status == 400
+            # F139: stale-ts is a signature-verification failure → uniform 401
+            # reject (was 400); still rejected with no enqueue.
+            assert resp.status == 401
         finally:
             await db.close()
 
@@ -123,7 +125,8 @@ class TestTimestampWindow:
             # If forged_ts happens to equal real_ts (same microsecond), skip.
             if forged_ts == real_ts:
                 pytest.skip("timestamps collided")
-            assert resp.status == 400
+            # F139: tampered-ts fails HMAC → uniform 401 reject (was 400).
+            assert resp.status == 401
         finally:
             await db.close()
 

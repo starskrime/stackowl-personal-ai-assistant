@@ -61,6 +61,36 @@ def test_token_bucket_rejects_invalid_args() -> None:
         TokenBucket(window_seconds=0)
 
 
+def test_rate_limit_key_fingerprint_is_keyed_and_deterministic() -> None:
+    """F134: the log fingerprint is a keyed crypto digest, not Python hash().
+
+    - deterministic for a given key (same input → same fingerprint), so log
+      lines for one caller correlate;
+    - keyed/crypto so the value cannot be forged or trivially collided;
+    - distinct inputs produce distinct fingerprints (no trivial collision).
+    """
+    from stackowl.webhooks.rate_limit import _hash_key
+
+    a1 = _hash_key("203.0.113.7:github")
+    a2 = _hash_key("203.0.113.7:github")
+    b = _hash_key("203.0.113.8:github")
+
+    assert a1 == a2  # deterministic
+    assert a1 != b  # different inputs do not collide
+
+    # Keyed crypto: must equal a direct HMAC-SHA256 over the key (not builtin
+    # hash()), proving it is forge-resistant and stable across processes.
+    import hashlib
+    import hmac
+
+    from stackowl.webhooks.rate_limit import _FINGERPRINT_SECRET
+
+    expected = hmac.new(
+        _FINGERPRINT_SECRET, "203.0.113.7:github".encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:12]
+    assert a1 == f"k{expected}"
+
+
 # ---------------------------------------------------------------------------
 # 4-5. WebhookSettings + WebhookEvent
 # ---------------------------------------------------------------------------

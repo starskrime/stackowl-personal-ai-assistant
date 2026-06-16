@@ -12,6 +12,9 @@ class — the only state is the per-key timestamp list.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 import time
 from collections import deque
 
@@ -19,6 +22,19 @@ from stackowl.infra.observability import log
 
 _DEFAULT_MAX_TOKENS = 60
 _DEFAULT_WINDOW_SEC = 60
+
+# F134: the log fingerprint must be a KEYED cryptographic digest, not Python's
+# builtin hash() (which is non-crypto, PYTHONHASHSEED-salted — so it is both
+# trivially collidable and non-deterministic across restarts). We HMAC-SHA256
+# the bucket key under a server secret: deterministic per-source for log
+# correlation, but forge/collision-resistant so an attacker cannot craft inputs
+# that collide a fingerprint. The secret is read from the environment when set
+# (stable across the deployment); otherwise a fixed module salt keeps SHA256's
+# collision resistance even though forging would only require knowing the salt.
+_FINGERPRINT_SECRET: bytes = (
+    os.environ.get("STACKOWL_FINGERPRINT_SECRET", "")
+    or "stackowl.webhook.rate_limit.fingerprint.v1"
+).encode("utf-8")
 
 
 class TokenBucket:
@@ -76,9 +92,15 @@ class TokenBucket:
 
 
 def _hash_key(key: str) -> str:
-    """Return a stable short fingerprint of ``key`` for log fields.
+    """Return a stable short fingerprint of ``key`` for log fields (F134).
 
-    Keys can contain remote IPs — fine for logs, but we still avoid
-    echoing the source name into log lines verbatim.
+    Keys can contain remote IPs / source names — fine for logs, but we avoid
+    echoing them verbatim. The fingerprint is a KEYED HMAC-SHA256 digest (not
+    Python's non-crypto, seed-salted ``hash()``): deterministic per-source for
+    log correlation, yet forge/collision-resistant so an attacker cannot craft
+    colliding fingerprints. Truncated to 12 hex chars for compact log lines.
     """
-    return f"k{abs(hash(key)) % 10_000_000:07d}"
+    digest = hmac.new(
+        _FINGERPRINT_SECRET, key.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"k{digest[:12]}"
