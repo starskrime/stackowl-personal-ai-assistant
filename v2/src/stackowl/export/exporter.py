@@ -54,6 +54,27 @@ except ImportError:
     _HAS_ZSTD = False
 
 
+def _is_missing_table(exc: BaseException) -> bool:
+    """True iff ``exc`` is SQLite's "no such table" logic error (DUR-3 / F135).
+
+    Prefers the sqlite errorcode (SQLITE_ERROR) + a no-such-table message so a
+    different SQLITE_ERROR (e.g. a bad column) is NOT mistaken for a missing
+    table; falls back to message text when the wrapped exception carries no
+    code. Any other failure is therefore NOT classified as missing and will be
+    re-raised by the caller.
+    """
+    import sqlite3
+
+    msg = str(exc).lower()
+    if isinstance(exc, sqlite3.OperationalError):
+        code = getattr(exc, "sqlite_errorcode", None)
+        if code is not None and (int(code) & 0xFF) != sqlite3.SQLITE_ERROR:
+            return False
+        return "no such table" in msg
+    # Non-sqlite wrappers (or aiosqlite re-raises that preserve the message).
+    return "no such table" in msg
+
+
 def _utc_ts() -> str:
     return datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
 
@@ -107,14 +128,20 @@ class Exporter:
         with tempfile.TemporaryDirectory() as tmp_raw:
             tmp = Path(tmp_raw)
             members: dict[str, Path] = {}
+            # Per-table export status (DUR-3 / F135) recorded in the manifest so a
+            # consumer can tell a legitimately-empty/missing table apart from one
+            # that genuinely failed. A real failure RE-RAISES below (no half-
+            # written archive) — the status map is for the success path's audit.
+            table_status: dict[str, str] = {}
 
             # Table-driven sanitize loop — every exported table goes through a
             # declared strategy so the default for any table is "scrubbed".
             for filename, table, limit, strategy in _EXPORTED_TABLES:
                 if limit is None:
-                    rows = await self._fetch_table_safe(table)
+                    rows, status = await self._fetch_table_safe(table)
                 else:
-                    rows = await self._fetch_table_limited(table, limit)
+                    rows, status = await self._fetch_table_limited(table, limit)
+                table_status[table] = status
                 cleaned = self._sanitize_rows(table, rows, strategy)
                 path = tmp / filename
                 _write_json(path, cleaned)
@@ -140,6 +167,10 @@ class Exporter:
                 "files": {
                     name: _sha256_file(path) for name, path in members.items()
                 },
+                # DUR-3 / F135 — truthful per-table outcome ('ok' | 'empty' |
+                # 'missing'). A 'failed' status never reaches here: a genuine
+                # query failure re-raises in _fetch_table_* and aborts the export.
+                "table_status": table_status,
             }
             _write_json(tmp / "export-manifest.json", manifest)
             members["export-manifest.json"] = tmp / "export-manifest.json"
@@ -155,32 +186,57 @@ class Exporter:
         )
         return output_path
 
-    async def _fetch_table_safe(self, table: str) -> list[dict]:  # type: ignore[type-arg]
-        """Fetch all rows from a table, returning [] if the table doesn't exist."""
-        try:
-            return await self._db.fetch_all(f"SELECT * FROM {table}")  # noqa: S608
-        except Exception as exc:
-            log.infra.warning(
-                "[export] exporter._fetch_table_safe: table unavailable — %s: %s",
-                table,
-                exc,
-            )
-            return []
+    async def _fetch_table_safe(
+        self, table: str
+    ) -> tuple[list[dict], str]:  # type: ignore[type-arg]
+        """Fetch all rows; return ``(rows, status)``.
 
-    async def _fetch_table_limited(self, table: str, limit: int) -> list[dict]:  # type: ignore[type-arg]
-        """Fetch the last N rows from a table, returning [] on error."""
+        A genuinely MISSING table is the only swallowed case → ``([], "missing")``
+        (legitimate empty). Any OTHER error (DUR-3 / F135 — a transient backend
+        failure, a locked DB, a permissions error) is RE-RAISED so the export
+        aborts loudly rather than masking missing data as an empty table.
+        """
         try:
-            return await self._db.fetch_all(
+            rows = await self._db.fetch_all(f"SELECT * FROM {table}")  # noqa: S608
+        except Exception as exc:
+            return self._classify_fetch_error(table, exc)
+        return rows, ("ok" if rows else "empty")
+
+    async def _fetch_table_limited(
+        self, table: str, limit: int
+    ) -> tuple[list[dict], str]:  # type: ignore[type-arg]
+        """Fetch the last N rows; return ``(rows, status)`` (see _fetch_table_safe)."""
+        try:
+            rows = await self._db.fetch_all(
                 f"SELECT * FROM {table} ORDER BY rowid DESC LIMIT ?",  # noqa: S608
                 (limit,),
             )
         except Exception as exc:
+            return self._classify_fetch_error(table, exc)
+        return rows, ("ok" if rows else "empty")
+
+    def _classify_fetch_error(
+        self, table: str, exc: Exception
+    ) -> tuple[list[dict], str]:  # type: ignore[type-arg]
+        """Missing table → ``([], "missing")``; anything else re-raises loudly.
+
+        Keys on the sqlite errorcode where available (SQLITE_ERROR + a
+        no-such-table message), with an English-text fallback for wrappers that
+        drop the code. A real failure is never masked as an empty table.
+        """
+        if _is_missing_table(exc):
             log.infra.warning(
-                "[export] exporter._fetch_table_limited: table unavailable — %s: %s",
-                table,
-                exc,
+                "[export] exporter: table does not exist — exporting empty",
+                extra={"_fields": {"table": table}},
             )
-            return []
+            return [], "missing"
+        # B5 / no-hidden-errors — a genuine failure must surface, not export [].
+        log.infra.error(
+            "[export] exporter: table fetch FAILED — aborting export",
+            exc_info=exc,
+            extra={"_fields": {"table": table}},
+        )
+        raise
 
     def _sanitize_rows(
         self, table: str, rows: list[dict], strategy: str  # type: ignore[type-arg]
