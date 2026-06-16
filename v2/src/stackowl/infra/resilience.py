@@ -84,12 +84,18 @@ async def retry_once_on_dead_handle[T](
     *,
     op_name: str,
     dead_markers: tuple[str, ...] = DEFAULT_DEAD_HANDLE_MARKERS,
+    is_dead: Callable[[BaseException], bool] | None = None,
 ) -> T:
     """Run ``op``; on dead-handle errors, recycle ``resource`` and retry exactly once.
 
     ``op`` MUST re-acquire its own short-lived handles (context, page, cursor)
     on each call — it will be invoked up to twice and the first attempt's
     resources are presumed dead.
+
+    Classification: when ``is_dead`` is supplied it is the SOLE arbiter of
+    whether a failure is a dead handle (used by callers that classify on
+    exception type / errorcode rather than English text, e.g. DbPool). Otherwise
+    the substring ``dead_markers`` heuristic is used.
 
     Raises whatever ``op`` raises on a non-dead-handle error (no retry) or on
     the second attempt's failure (one retry max).
@@ -99,10 +105,16 @@ async def retry_once_on_dead_handle[T](
         "[resilience] retry_once.entry",
         extra={"_fields": {"op": op_name}},
     )
+
+    def _classify(exc: BaseException) -> bool:
+        if is_dead is not None:
+            return is_dead(exc)
+        return looks_like_dead_handle(exc, dead_markers)
+
     try:
         result = await op()
     except Exception as exc:
-        if not looks_like_dead_handle(exc, dead_markers):
+        if not _classify(exc):
             # 2. DECISION — not a dead-handle error; re-raise immediately
             log.infra.debug(
                 "[resilience] retry_once.exit: non-dead-handle error, propagating",

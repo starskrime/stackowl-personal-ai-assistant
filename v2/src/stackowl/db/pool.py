@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -28,17 +29,60 @@ _PRAGMAS = [
     "PRAGMA busy_timeout=5000",
 ]
 
-# SQLite-specific error markers used in addition to the default dead-handle list.
-_SQLITE_DEAD_MARKERS = (
-    "database is locked",
-    "disk I/O error",
-    "unable to open database",
-    "no such table",
-    "Cannot operate on a closed database",
-    "Connection closed",
-    "no active connection",  # aiosqlite raises this after .close()
-    "Cannot operate on a closed",
+# Primary SQLite error codes that indicate a transient connection-level failure
+# the pool can recover from by reconnecting (F022). These are matched on the
+# exception's ``sqlite_errorcode`` (Python 3.11+) MASKED to its primary code, so
+# extended variants (e.g. SQLITE_IOERR_*) collapse to their base. Crucially
+# SQLITE_ERROR (the code for "no such table" and other logic errors) is NOT
+# here, so a missing table surfaces loudly instead of triggering a reconnect
+# loop.
+_DEAD_PRIMARY_CODES: frozenset[int] = frozenset(
+    {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_CANTOPEN,
+        sqlite3.SQLITE_NOTADB,
+        sqlite3.SQLITE_CORRUPT,
+        sqlite3.SQLITE_PROTOCOL,
+    }
 )
+
+
+def _looks_like_dead_sqlite(exc: BaseException) -> bool:
+    """True iff ``exc`` is a recoverable SQLite connection-death failure.
+
+    Keys on the sqlite3 exception TYPE + ``sqlite_errorcode`` rather than the
+    English error text (F022). A closed/disposed connection surfaces as a
+    ``sqlite3.ProgrammingError`` (aiosqlite raises this after ``.close()``) and
+    is always treated as dead. ``OperationalError`` is dead only for the
+    transient primary codes in :data:`_DEAD_PRIMARY_CODES`; ``SQLITE_ERROR``
+    (missing table / bad column) is a logic error and is NOT recovered.
+    """
+    # A closed connection (or other invalid-handle misuse) is always recoverable
+    # by reconnecting — independent of any error text.
+    if isinstance(exc, sqlite3.ProgrammingError):
+        return True
+    # aiosqlite raises a bare ``ValueError("no active connection")`` from its
+    # worker thread when the connection was closed/disposed — a genuine dead
+    # handle that carries NO sqlite errorcode (it never reached SQLite). This is
+    # a library-internal sentinel, not a SQLite logic error, so matching it is
+    # safe and does not regress the "missing table surfaces loudly" guarantee.
+    if isinstance(exc, ValueError) and "no active connection" in str(exc):
+        return True
+    if isinstance(exc, sqlite3.OperationalError | sqlite3.DatabaseError):
+        code = getattr(exc, "sqlite_errorcode", None)
+        if code is None:
+            # No errorcode available (shouldn't happen on 3.11+, but never
+            # silently swallow): treat as NOT dead so a logic error surfaces.
+            log.warning(
+                "[db] _looks_like_dead_sqlite: sqlite exception without errorcode "
+                "— treating as logic error (no reconnect): %r",
+                exc,
+            )
+            return False
+        primary = int(code) & 0xFF  # mask extended code to its primary code
+        return primary in _DEAD_PRIMARY_CODES
+    return False
 
 
 def default_db_path() -> Path:
@@ -185,13 +229,13 @@ class DbPool:
                 await self._conn.execute(sql, params)
                 await self._conn.commit()
             except Exception as exc:
-                if self._looks_dead(exc):
+                if _looks_like_dead_sqlite(exc):
                     self._mark_dead(f"execute failed: {type(exc).__name__}: {exc}")
                 raise
 
         await retry_once_on_dead_handle(
             _do, self, op_name="db.execute",
-            dead_markers=_SQLITE_DEAD_MARKERS,
+            is_dead=_looks_like_dead_sqlite,
         )
         log.debug("[db] pool.execute: exit — committed")
 
@@ -224,7 +268,7 @@ class DbPool:
                 await self._conn.commit()
                 return int(affected)
             except Exception as exc:
-                if self._looks_dead(exc):
+                if _looks_like_dead_sqlite(exc):
                     self._mark_dead(
                         f"execute_returning_rowcount failed: {type(exc).__name__}: {exc}"
                     )
@@ -232,7 +276,7 @@ class DbPool:
 
         result = await retry_once_on_dead_handle(
             _do, self, op_name="db.execute_returning_rowcount",
-            dead_markers=_SQLITE_DEAD_MARKERS,
+            is_dead=_looks_like_dead_sqlite,
         )
         # 4. EXIT
         log.debug(
@@ -257,18 +301,13 @@ class DbPool:
                     keys = [d[0] for d in desc]
                     return [dict(zip(keys, tuple(row), strict=False)) for row in rows]
             except Exception as exc:
-                if self._looks_dead(exc):
+                if _looks_like_dead_sqlite(exc):
                     self._mark_dead(f"fetch_all failed: {type(exc).__name__}: {exc}")
                 raise
 
         result = await retry_once_on_dead_handle(
             _do, self, op_name="db.fetch_all",
-            dead_markers=_SQLITE_DEAD_MARKERS,
+            is_dead=_looks_like_dead_sqlite,
         )
         log.debug("[db] pool.fetch_all: exit — row_count=%d", len(result))
         return result
-
-    @staticmethod
-    def _looks_dead(exc: BaseException) -> bool:
-        msg = str(exc)
-        return any(m in msg for m in _SQLITE_DEAD_MARKERS)
