@@ -24,7 +24,6 @@ from tests._story_7_5_helpers import (
     open_db,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1-3. TokenBucket
 # ---------------------------------------------------------------------------
@@ -60,6 +59,36 @@ def test_token_bucket_rejects_invalid_args() -> None:
         TokenBucket(max_tokens=0)
     with pytest.raises(ValueError):
         TokenBucket(window_seconds=0)
+
+
+def test_rate_limit_key_fingerprint_is_keyed_and_deterministic() -> None:
+    """F134: the log fingerprint is a keyed crypto digest, not Python hash().
+
+    - deterministic for a given key (same input → same fingerprint), so log
+      lines for one caller correlate;
+    - keyed/crypto so the value cannot be forged or trivially collided;
+    - distinct inputs produce distinct fingerprints (no trivial collision).
+    """
+    from stackowl.webhooks.rate_limit import _hash_key
+
+    a1 = _hash_key("203.0.113.7:github")
+    a2 = _hash_key("203.0.113.7:github")
+    b = _hash_key("203.0.113.8:github")
+
+    assert a1 == a2  # deterministic
+    assert a1 != b  # different inputs do not collide
+
+    # Keyed crypto: must equal a direct HMAC-SHA256 over the key (not builtin
+    # hash()), proving it is forge-resistant and stable across processes.
+    import hashlib
+    import hmac
+
+    from stackowl.webhooks.rate_limit import _FINGERPRINT_SECRET
+
+    expected = hmac.new(
+        _FINGERPRINT_SECRET, "203.0.113.7:github".encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:12]
+    assert a1 == f"k{expected}"
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +176,11 @@ async def test_validate_signature_strips_sha256_prefix() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_handle_request_returns_404_for_unknown_source(
+async def test_handle_request_rejects_unknown_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # F139: rejection is uniform (401 unauthorized) so an unknown source is
+    # indistinguishable from an invalid signature — no source enumeration.
     disable_guard()
     monkeypatch.setenv("WEBHOOK_TEST_SECRET", "shared")
     settings = make_settings_with_webhooks()
@@ -157,10 +188,10 @@ async def test_handle_request_returns_404_for_unknown_source(
     receiver = WebhookReceiver(scheduler=scheduler, settings=settings)
     req = make_mock_request(source="unknown", body=b"{}", signature="x")
     resp = await receiver._handle_request(req)
-    assert resp.status == 404
+    assert resp.status == 401
 
 
-async def test_handle_request_returns_400_for_invalid_signature(
+async def test_handle_request_rejects_invalid_signature(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     disable_guard()
@@ -172,7 +203,33 @@ async def test_handle_request_returns_400_for_invalid_signature(
         source="test_source", body=b'{"a":1}', signature="bad-signature"
     )
     resp = await receiver._handle_request(req)
-    assert resp.status == 400
+    assert resp.status == 401
+
+
+async def test_handle_request_unknown_source_and_bad_signature_indistinguishable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F139: the two rejection paths return identical status AND body.
+
+    A distinguishable response (e.g. 404 'unknown source' vs 400 'invalid
+    signature') lets an attacker enumerate which source ids are configured.
+    """
+    disable_guard()
+    monkeypatch.setenv("WEBHOOK_TEST_SECRET", "shared")
+    settings = make_settings_with_webhooks()
+    scheduler = make_mock_scheduler()
+    receiver = WebhookReceiver(scheduler=scheduler, settings=settings)
+
+    unknown = await receiver._handle_request(
+        make_mock_request(source="unknown", body=b"{}", signature="x")
+    )
+    bad_sig = await receiver._handle_request(
+        make_mock_request(
+            source="test_source", body=b'{"a":1}', signature="bad-signature"
+        )
+    )
+    assert unknown.status == bad_sig.status
+    assert unknown.text == bad_sig.text
 
 
 async def test_handle_request_returns_429_when_rate_limited(
@@ -258,7 +315,7 @@ async def test_handle_request_returns_400_for_invalid_json(
 async def test_handle_request_returns_404_for_disabled_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A disabled source is rejected before any signature work happens."""
+    """A disabled source is rejected uniformly (401) — same as unknown (F139)."""
     disable_guard()
     monkeypatch.setenv("WEBHOOK_TEST_SECRET", "shared")
     settings = make_settings_with_webhooks(enabled=False)
@@ -268,7 +325,7 @@ async def test_handle_request_returns_404_for_disabled_source(
     sig = make_signature("shared", body)
     req = make_mock_request(source="test_source", body=body, signature=sig)
     resp = await receiver._handle_request(req)
-    assert resp.status == 404
+    assert resp.status == 401
 
 
 # ---------------------------------------------------------------------------

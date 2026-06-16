@@ -54,6 +54,13 @@ def _import_aiohttp_web() -> Any:
         ) from exc
 
 
+# F139: single generic rejection used for BOTH unknown/disabled source and
+# invalid signature, so the two cases are indistinguishable to a caller and a
+# source id cannot be enumerated. Internal logs still record which check failed.
+_UNAUTHORIZED_STATUS = 401
+_UNAUTHORIZED_BODY = "unauthorized"
+
+
 def _response(web: Any, status: int, text: str, *, json_body: bool = False) -> Any:
     if json_body:
         return web.Response(status=status, content_type="application/json", text=text)
@@ -193,13 +200,18 @@ class WebhookReceiver(SupervisedTask):
             return _response(web, 429, "rate limit exceeded")
 
         # 2. SOURCE LOOKUP
+        # F139: an unknown/disabled source and an invalid signature MUST be
+        # indistinguishable to the caller (same status + body), else an attacker
+        # can enumerate which source ids are configured. The HTTP response is the
+        # generic ``_UNAUTHORIZED`` reject; the LOG still records exactly which
+        # check failed for operators.
         cfg = self._settings.webhook.sources.get(source)
         if cfg is None or not cfg.enabled:
             log.webhook.warning(
                 "[webhook] receiver.handle: unknown or disabled source",
                 extra={"_fields": {"source": source}},
             )
-            return _response(web, 404, "unknown source")
+            return self._reject(web)
 
         # 3. TIMESTAMP-WINDOW + SIGNATURE — constant-time HMAC (over ts+body when
         # the source opts into the signed-timestamp scheme, else body-only legacy).
@@ -211,7 +223,8 @@ class WebhookReceiver(SupervisedTask):
         if cfg.delivery_id_header:
             delivery_id = request.headers.get(cfg.delivery_id_header, "")
         if not await self._signature_ok(source, cfg, body, request, signed_timestamp):
-            return _response(web, 400, "invalid signature")
+            # F139: identical reject to the unknown-source path above.
+            return self._reject(web)
         log.webhook.debug(
             "[webhook] receiver.handle: signature validated",
             extra={"_fields": {"source": source}},
@@ -221,6 +234,10 @@ class WebhookReceiver(SupervisedTask):
         return await self._parse_and_enqueue(
             source, cfg, body, signed_timestamp, delivery_id, web, t0
         )
+
+    def _reject(self, web: Any) -> Any:
+        """Uniform unauthorized rejection (F139) — same status + body always."""
+        return _response(web, _UNAUTHORIZED_STATUS, _UNAUTHORIZED_BODY)
 
     async def _signature_ok(
         self,
