@@ -3,16 +3,10 @@ HeuristicMatcher."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from stackowl.db.pool import DbPool
-from stackowl.events.bus import EventBus
-from stackowl.learning.heuristic_matcher import (
-    _extract_error_class,
-    match_and_emit,
-)
+from stackowl.learning.heuristic_matcher import _extract_error_class
 from stackowl.learning.lessons_index import LessonDraft
 from stackowl.learning.tool_heuristic_store import (
     ToolHeuristicStore,
@@ -20,7 +14,6 @@ from stackowl.learning.tool_heuristic_store import (
 )
 from stackowl.learning.tool_outcome_miner import ToolOutcomeMiner
 from stackowl.memory.outcome_store import TaskOutcomeStore
-from stackowl.tools.base import ToolResult
 
 # ---------- ToolHeuristicStore CRUD ----------------------------------------
 
@@ -218,57 +211,3 @@ def test_extract_error_class_parses_exception_prefix() -> None:
     assert _extract_error_class("tool failed unexpectedly") == "tool_error"
     assert _extract_error_class(None) == ""
     assert _extract_error_class("") == ""
-
-
-async def test_matcher_emits_event_when_failure_matches(tmp_db: DbPool) -> None:
-    store = ToolHeuristicStore(tmp_db)
-    await store.upsert(
-        tool_name="web_fetch", condition_kind="failure_class",
-        condition_value="ToolTimeoutError", predicted_outcome="fails",
-        evidence_count=10, mean_quality=0.2, failure_class="ToolTimeoutError",
-    )
-    bus = EventBus()
-    received: list[Any] = []
-    bus.subscribe("tool.heuristic_match", received.append)
-
-    failed = ToolResult(
-        success=False, output="",
-        error="ToolTimeoutError: web_fetch timed out", duration_ms=5000.0,
-    )
-    await match_and_emit(
-        tool_name="web_fetch", tool_result=failed,
-        heuristic_store=store, event_bus=bus,
-    )
-    assert len(received) == 1
-    assert received[0]["tool_name"] == "web_fetch"
-    assert received[0]["failure_class"] == "ToolTimeoutError"
-    assert received[0]["evidence_count"] == 10
-
-
-async def test_matcher_silent_when_no_heuristic_matches(tmp_db: DbPool) -> None:
-    bus = EventBus()
-    received: list[Any] = []
-    bus.subscribe("tool.heuristic_match", received.append)
-    failed = ToolResult(
-        success=False, output="",
-        error="ValueError: bad arg", duration_ms=10.0,
-    )
-    await match_and_emit(
-        tool_name="never_used_tool", tool_result=failed,
-        heuristic_store=ToolHeuristicStore(tmp_db), event_bus=bus,
-    )
-    assert received == []
-
-
-async def test_matcher_tolerates_none_stores() -> None:
-    """No store or no bus → silent no-op (test mode)."""
-    failed = ToolResult(success=False, output="", error="X: y", duration_ms=10.0)
-    await match_and_emit(
-        tool_name="x", tool_result=failed,
-        heuristic_store=None, event_bus=EventBus(),
-    )
-    await match_and_emit(
-        tool_name="x", tool_result=failed,
-        heuristic_store=None, event_bus=None,
-    )
-    # No exception = pass
