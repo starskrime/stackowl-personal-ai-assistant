@@ -48,7 +48,8 @@ def plugins_db(tmp_path: Path) -> Path:
             author       TEXT,
             license      TEXT,
             installed_at REAL NOT NULL,
-            enabled      INTEGER NOT NULL DEFAULT 1
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            sha256       TEXT NOT NULL DEFAULT ''
         )
         """
     )
