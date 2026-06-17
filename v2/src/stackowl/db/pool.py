@@ -305,7 +305,7 @@ class DbPool:
         re-raises so the base table and a derived index (e.g. ``committed_facts``
         + ``committed_facts_fts``) can never diverge on a mid-sequence failure.
 
-        Held under the pool's connection lock for the txn's duration so it cannot
+        Held under the pool's ``_write_lock`` for the txn's duration so it cannot
         interleave with another ``execute``/``transaction`` on the single shared
         connection (which would corrupt the in-flight write txn). The lock is
         released the moment the txn ends. NOT self-healed mid-flight: a dead
