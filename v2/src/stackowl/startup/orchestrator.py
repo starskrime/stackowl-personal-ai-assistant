@@ -501,19 +501,13 @@ class StartupOrchestrator:
         # E0-S1 — consent gate: combination consent policy + per-channel prompters.
         # Routing prompter is mutable so the Telegram prompter can register after
         # its adapter starts (below). CLI gets the TTY prompter immediately.
-        from stackowl.tools.consent import ConsentPolicy, RoutingPrompter, TtyConsentPrompter
-        from stackowl.tools.registry import ConsequentialActionGate
-        from stackowl.tui.i18n_strings import install_default_translations
+        # Wired via the ConsentAssembly seam (OPS-5/F149) — extracted from this
+        # monolith so the consent boundary has a unit-testable assembly.
+        from stackowl.tools.consent_assembly import ConsentAssembly
 
-        # Consent button/label catalog — English copy lives in the i18n catalog
-        # (single source of truth); other locales can be registered later.
-        install_default_translations()
-
-        consent_routing = RoutingPrompter()
-        consent_routing.register("cli", TtyConsentPrompter())
-        consent_gate = ConsequentialActionGate(
-            ConsentPolicy(prompter=consent_routing, audit_logger=audit_logger)
-        )
+        consent_components = ConsentAssembly.build(audit_logger)
+        consent_routing = consent_components.routing_prompter
+        consent_gate = consent_components.consent_gate
 
         # E5 — clarify pause/resume gateway. One DI singleton: tools reach it via
         # get_services().clarify_gateway to ask the user mid-turn; the message
@@ -627,32 +621,16 @@ class StartupOrchestrator:
         # picked). The execute_code tool reads THIS off services at execute time; if
         # neither backend is viable the selector returns a structured unavailable and
         # the tool NEVER runs code on the host. Wired onto StepServices below.
-        from stackowl.sandbox.bwrap import BwrapSandbox
-        from stackowl.sandbox.docker import DockerSandbox
-        from stackowl.sandbox.selector import SandboxSelector
+        # Wired via the SandboxAssembly seam (OPS-5/F149) — extracted from this
+        # monolith so the code-execution trust boundary has a unit-testable
+        # assembly. Builds the selector + the shared SandboxGovernor (bounds total
+        # concurrent runs so N runs × the per-run memory cap can't OOM the host)
+        # and registers the recurring sandbox_sweep GC handler.
+        from stackowl.sandbox.assembly import SandboxAssembly
 
-        sandbox_selector = SandboxSelector(
-            backends=[
-                BwrapSandbox(enabled=self._settings.sandbox.bwrap_enabled),
-                DockerSandbox(enabled=self._settings.sandbox.docker_enabled),
-            ]
-        )
-
-        # E11-S6 — ONE shared SandboxGovernor: bounds total concurrent sandbox runs
-        # so N runs × the per-run memory cap cannot OOM the host. Injected onto
-        # StepServices so the execute_code tool acquires a slot around each run;
-        # saturated past a bounded wait it REFUSES (typed) and nothing runs. The
-        # recurring GC sweep (leaked scratch dirs / stackowl-sbx-* containers /
-        # cgroup scopes from crashes) is registered as a JobHandler here and seeded
-        # as a `sandbox_sweep` job row in the scheduler assembly (every 10m),
-        # mirroring process_sweep. Clock-injected so the reap TTL is deterministic.
-        from stackowl.sandbox.governor import SandboxGovernor
-        from stackowl.scheduler.handlers.sandbox_sweep import (
-            register_sandbox_sweep_handler,
-        )
-
-        sandbox_governor = SandboxGovernor()
-        register_sandbox_sweep_handler()
+        sandbox_components = SandboxAssembly.build(self._settings)
+        sandbox_selector = sandbox_components.selector
+        sandbox_governor = sandbox_components.governor
 
         # E8-S0cost — ONE shared CostTracker (per-turn running total feeds the soft
         # cost-pause) + the CostPauseGuard that asks the user "Continue?" via the
