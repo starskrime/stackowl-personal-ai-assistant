@@ -118,13 +118,116 @@ class OwnedRepository(ABC):  # noqa: B024 — abstract by contract: subclasses m
         )
         return rows
 
-    async def _execute_owned(self, sql: str, params: Sequence[Any]) -> None:
-        """Run a write whose SQL the caller has ALREADY owner-scoped.
+    async def _update_owned(
+        self,
+        table: str,
+        *,
+        set_sql: str,
+        set_params: Sequence[Any] = (),
+        where_sql: str = "",
+        where_params: Sequence[Any] = (),
+    ) -> None:
+        """Owner-scoped ``UPDATE {table} SET {set_sql} WHERE owner_id = ? [AND (...)]``.
 
-        This is the escape hatch for UPDATE/DELETE that need owner_id in their
-        own WHERE clause. The caller is responsible for including the owner
-        predicate; prefer :meth:`_insert_owned` for inserts so the stamping is
-        automatic.
+        STRUCTURAL owner scoping (F136): the owner predicate is composed HERE —
+        the base appends ``owner_id = ?`` bound to ``self._owner_id`` and any
+        caller-supplied ``where_sql`` is conjoined inside parentheses. A subclass
+        therefore cannot escape owner scope with a crafted predicate (e.g.
+        ``OR 1=1``): the owner clause is always AND-ed OUTSIDE the caller's
+        parenthesized extra, so it can only ever NARROW the affected rows.
+        """
+        await self._owner_scoped_write(
+            "UPDATE", table, set_sql=set_sql, set_params=set_params,
+            where_sql=where_sql, where_params=where_params,
+        )
+
+    async def _delete_owned(
+        self,
+        table: str,
+        *,
+        where_sql: str = "",
+        where_params: Sequence[Any] = (),
+    ) -> None:
+        """Owner-scoped ``DELETE FROM {table} WHERE owner_id = ? [AND (...)]``.
+
+        Same structural guarantee as :meth:`_update_owned`: the owner predicate is
+        composed by the base and bound to ``self._owner_id``; a caller predicate
+        can only narrow, never widen, the affected rows.
+        """
+        await self._owner_scoped_write(
+            "DELETE", table, where_sql=where_sql, where_params=where_params,
+        )
+
+    async def _owner_scoped_write(
+        self,
+        verb: str,
+        table: str,
+        *,
+        set_sql: str = "",
+        set_params: Sequence[Any] = (),
+        where_sql: str = "",
+        where_params: Sequence[Any] = (),
+    ) -> None:
+        """Compose + run a structurally owner-scoped UPDATE/DELETE (shared core)."""
+        # 1. ENTRY
+        log.tenancy.debug(
+            "[tenancy] owned_repo.owner_scoped_write: entry",
+            extra={"_fields": {
+                "verb": verb, "table": table, "owner_id": self._owner_id,
+                "has_where": bool(where_sql),
+            }},
+        )
+        # 2. DECISION — validate the structural inputs (fail closed on anything odd).
+        if verb not in ("UPDATE", "DELETE"):
+            raise ValueError(f"unsupported verb {verb!r} (only UPDATE/DELETE)")
+        if not _IDENT_RE.match(table):
+            raise ValueError(f"unsafe table name: {table!r}")
+        params: list[Any] = []
+        if verb == "UPDATE":
+            if not set_sql.strip():
+                raise ValueError("UPDATE requires a non-empty set_sql")
+            head = f"UPDATE {table} SET {set_sql.strip()}"  # noqa: S608 — table validated, columns literal
+            params.extend(set_params)
+        else:
+            head = f"DELETE FROM {table}"  # noqa: S608 — table validated
+        # The owner clause is composed HERE and bound to self._owner_id — NOT
+        # supplied by the caller. The caller's predicate is conjoined INSIDE
+        # parentheses so it can only narrow (an OR inside the parens cannot reach
+        # past the structural ``owner_id = ?`` AND-ed outside it).
+        clause = "WHERE owner_id = ?"
+        params.append(self._owner_id)
+        extra = where_sql.strip()
+        if extra:
+            clause += f" AND ({extra})"
+            params.extend(where_params)
+        sql = f"{head} {clause}"
+        try:
+            # 3. STEP — owner-scoped write through the self-healing pool.
+            await self._db.execute(sql, params)
+        except Exception as exc:
+            log.tenancy.error(
+                "[tenancy] owned_repo.owner_scoped_write: write failed",
+                exc_info=exc,
+                extra={"_fields": {"verb": verb, "table": table, "owner_id": self._owner_id}},
+            )
+            raise
+        # 4. EXIT
+        log.tenancy.debug(
+            "[tenancy] owned_repo.owner_scoped_write: exit",
+            extra={"_fields": {"verb": verb, "table": table, "owner_id": self._owner_id}},
+        )
+
+    async def _execute_owned(self, sql: str, params: Sequence[Any]) -> None:
+        """Legacy raw-SQL escape hatch for an already owner-scoped UPDATE/DELETE.
+
+        Prefer :meth:`_update_owned` / :meth:`_delete_owned` (the owner predicate
+        is composed structurally there). This hatch remains for callers that build
+        a complex dynamic SET clause, but its guard is now STRUCTURAL, not a
+        substring test (F136): the SQL MUST contain the canonical bound predicate
+        ``owner_id = ?`` (whitespace-insensitive) AND ``self._owner_id`` MUST be
+        among ``params``. This refuses the escapes the old substring guard let
+        through — ``owner_id IS NOT NULL`` (no ``= ?``) and binding another
+        principal's id.
         """
         # 1. ENTRY
         log.tenancy.debug(
@@ -134,14 +237,25 @@ class OwnedRepository(ABC):  # noqa: B024 — abstract by contract: subclasses m
                 "params_count": len(params),
             }},
         )
-        # 2. DECISION — fail-closed: SQL must contain an owner_id predicate
-        if "owner_id" not in sql.lower():
+        # 2. DECISION — fail-closed: SQL must bind owner_id with the canonical
+        # ``owner_id = ?`` form AND self._owner_id must be one of the bound params.
+        normalized = " ".join(sql.lower().split())
+        if "owner_id = ?" not in normalized and "owner_id=?" not in normalized:
             log.tenancy.error(
-                "[tenancy] owned_repo.execute_owned: missing owner_id predicate — refusing write",
+                "[tenancy] owned_repo.execute_owned: no canonical 'owner_id = ?' predicate — refusing write",
                 extra={"_fields": {"owner_id": self._owner_id, "sql_len": len(sql)}},
             )
             raise ValueError(
-                "_execute_owned requires an owner_id predicate in the SQL"
+                "_execute_owned requires a canonical bound 'owner_id = ?' predicate"
+                " — refusing potential cross-owner write"
+            )
+        if self._owner_id not in tuple(params):
+            log.tenancy.error(
+                "[tenancy] owned_repo.execute_owned: bound owner not in params — refusing write",
+                extra={"_fields": {"owner_id": self._owner_id}},
+            )
+            raise ValueError(
+                "_execute_owned requires self._owner_id to be bound in params"
                 " — refusing potential cross-owner write"
             )
         try:

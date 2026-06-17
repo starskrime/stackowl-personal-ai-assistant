@@ -24,10 +24,18 @@ class _WidgetRepo(OwnedRepository):
         return sorted(str(r["name"]) for r in rows)
 
     async def rename(self, old_name: str, new_name: str) -> None:
-        """Owner-scoped UPDATE — uses _execute_owned with correct owner_id predicate."""
-        await self._execute_owned(
-            "UPDATE widgets SET name = ? WHERE owner_id = ? AND name = ?",
-            (new_name, self._owner_id, old_name),
+        """Owner-scoped UPDATE — owner predicate is composed STRUCTURALLY by the base.
+
+        The caller supplies only the table, the SET clause + params, and an
+        optional extra predicate; ``_update_owned`` appends ``owner_id = ?``
+        bound to ``self._owner_id`` itself (a sloppy subclass cannot escape scope).
+        """
+        await self._update_owned(
+            "widgets",
+            set_sql="name = ?",
+            set_params=(new_name,),
+            where_sql="name = ?",
+            where_params=(old_name,),
         )
 
 
@@ -114,8 +122,73 @@ async def test_execute_owned_scoped_update_leaves_other_owner_untouched(
     assert await bob.names() == ["b1"]  # bob's row is untouched
 
 
-async def test_execute_owned_without_owner_id_predicate_raises(pool: DbPool) -> None:
-    """_execute_owned must raise ValueError when SQL omits the owner_id predicate."""
+async def test_update_owned_rejects_unsafe_table(pool: DbPool) -> None:
+    """The table name must be a safe SQL identifier (no injection via table)."""
     alice = _WidgetRepo(pool, "principal-alice")
-    with pytest.raises(ValueError, match="owner_id predicate"):
-        await alice._execute_owned("UPDATE widgets SET name = ?", ("x",))
+    with pytest.raises(ValueError, match="table"):
+        await alice._update_owned(
+            "widgets; DROP TABLE widgets", set_sql="name = ?", set_params=("x",)
+        )
+
+
+async def test_update_owned_owner_predicate_is_structural_not_substring(
+    pool: DbPool,
+) -> None:
+    """A caller cannot escape owner scope via a crafted extra predicate.
+
+    The owner clause is composed by the base (``owner_id = ?`` bound to
+    ``self._owner_id``) and the caller's extra predicate is AND-ed inside
+    parentheses. An attacker-style ``OR 1=1`` in the caller predicate therefore
+    cannot touch another owner's rows: the structural owner clause is always
+    conjoined OUTSIDE the parenthesized caller predicate. The OLD substring guard
+    would have happily accepted ``WHERE owner_id = ? OR 1=1`` hand-written by a
+    sloppy subclass — the new structural composition makes that impossible.
+    """
+    alice = _WidgetRepo(pool, "principal-alice")
+    bob = _WidgetRepo(pool, "principal-bob")
+    await alice.add("a1")
+    await bob.add("b1")
+
+    await alice._delete_owned("widgets", where_sql="name = ? OR 1=1", where_params=("a1",))
+
+    assert await alice.names() == []  # alice's rows gone
+    assert await bob.names() == ["b1"]  # bob's row UNTOUCHED — owner scope held
+
+
+async def test_delete_owned_is_owner_scoped(pool: DbPool) -> None:
+    """A no-extra-predicate DELETE removes only the caller's rows."""
+    alice = _WidgetRepo(pool, "principal-alice")
+    bob = _WidgetRepo(pool, "principal-bob")
+    await alice.add("a1")
+    await alice.add("a2")
+    await bob.add("b1")
+
+    await alice._delete_owned("widgets")
+
+    assert await alice.names() == []
+    assert await bob.names() == ["b1"]
+
+
+async def test_execute_owned_legacy_rejects_uncanonical_owner_predicate(
+    pool: DbPool,
+) -> None:
+    """The legacy raw-SQL escape hatch demands a CANONICAL bound owner predicate.
+
+    ``WHERE owner_id IS NOT NULL`` (the substring-passing escape the old guard
+    allowed) is now refused: the guard requires literal ``owner_id = ?`` AND the
+    bound owner among the params.
+    """
+    alice = _WidgetRepo(pool, "principal-alice")
+    with pytest.raises(ValueError, match="owner_id"):
+        await alice._execute_owned(
+            "DELETE FROM widgets WHERE owner_id IS NOT NULL", ()
+        )
+
+
+async def test_execute_owned_legacy_rejects_owner_not_in_params(pool: DbPool) -> None:
+    """Even with ``owner_id = ?`` present, the bound owner MUST be a param."""
+    alice = _WidgetRepo(pool, "principal-alice")
+    with pytest.raises(ValueError, match="owner"):
+        await alice._execute_owned(
+            "DELETE FROM widgets WHERE owner_id = ?", ("principal-bob",)
+        )
