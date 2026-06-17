@@ -17,13 +17,20 @@ _CONFIG_BASE = StackowlHome.plugins_dir()
 
 @dataclass(frozen=True)
 class PluginIndexEntry:
-    """A single entry in the local plugin index."""
+    """A single entry in the local plugin index.
+
+    ``sha256`` (PLUG-1) is the hex SHA-256 of the downloadable archive — the
+    integrity field a verified remote install (PLUG-2) checks before extracting.
+    Legacy/unsigned entries omit it → it defaults to ``""`` (unverifiable, refused
+    by the verifier — fail-closed, never auto-installed).
+    """
 
     name: str
     url: str
     version: str
     description: str
     type: str
+    sha256: str = ""
 
 
 class PluginIndex:
@@ -97,6 +104,8 @@ class PluginIndex:
                     version=str(meta.get("version", "0.0.0")),
                     description=str(meta.get("description", "")),
                     type=str(meta.get("type", "local_plugin")),
+                    # PLUG-1 — optional; legacy entries without it parse fine.
+                    sha256=str(meta.get("sha256", "")),
                 )
             except Exception as exc:
                 log.warning(

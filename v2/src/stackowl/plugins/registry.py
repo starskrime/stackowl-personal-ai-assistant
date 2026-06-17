@@ -44,12 +44,20 @@ class PluginRegistry:
     # Public API
     # ------------------------------------------------------------------
 
-    async def install(self, manifest: PluginManifest) -> None:
-        """Persist *manifest* to the plugins table (INSERT OR REPLACE)."""
+    async def install(self, manifest: PluginManifest, *, sha256: str = "") -> None:
+        """Persist *manifest* to the plugins table (INSERT OR REPLACE).
+
+        ``sha256`` (PLUG-2) records the verified integrity digest of a remotely
+        installed plugin. A local install passes ``""`` (no remote digest) →
+        byte-identical to the pre-PLUG behaviour for local plugins.
+        """
         # 1. ENTRY
         log.debug(
             "[plugins] registry.install: entry",
-            extra={"_fields": {"name": manifest.name, "version": manifest.version}},
+            extra={"_fields": {
+                "name": manifest.name, "version": manifest.version,
+                "verified": bool(sha256),
+            }},
         )
         try:
             # 2. DECISION
@@ -64,8 +72,8 @@ class PluginRegistry:
                     """
                     INSERT OR REPLACE INTO plugins
                         (name, version, type, entry_point, capabilities, config_schema,
-                         description, author, license, installed_at, enabled)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                         description, author, license, installed_at, enabled, sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """,
                     (
                         manifest.name,
@@ -78,6 +86,7 @@ class PluginRegistry:
                         manifest.author,
                         manifest.license,
                         time.time(),
+                        sha256,
                     ),
                 )
                 conn.commit()

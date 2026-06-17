@@ -545,7 +545,9 @@ def plugins_list() -> None:
         typer.echo(f"  {p.name}  {p.version}  [{p.type}]")
 
 
-def _install_local_plugin(source_dir: Path, *, consent_granted: bool, db_path: Path) -> str:
+def _install_local_plugin(
+    source_dir: Path, *, consent_granted: bool, db_path: Path, sha256: str = "",
+) -> str:
     """Validate, copy under ~/.stackowl/plugins/<name>/, and register a local plugin.
 
     Returns the installed plugin name. Pure of TTY/CLI concerns so it is unit
@@ -597,7 +599,7 @@ def _install_local_plugin(source_dir: Path, *, consent_granted: bool, db_path: P
     # 4. Register the DB row so `serve` re-hydrates the plugin at boot.
     import asyncio
 
-    asyncio.run(PluginRegistry(db_path).install(manifest))
+    asyncio.run(PluginRegistry(db_path).install(manifest, sha256=sha256))
     log.info("[plugins] _install_local_plugin: registered '%s'", manifest.name)
     return manifest.name
 
@@ -670,17 +672,54 @@ def plugins_install(
         typer.echo("Run: stackowl plugins update-index", err=True)
         sys.exit(1)
 
-    # 4. Remote install requires a VERIFIED index entry. The index schema has no
-    # checksum/signature field yet, so we honestly refuse rather than auto-exec an
-    # unverified download (F040 — documented cut, NOT a fake "installed").
+    # 4. Remote install requires a VERIFIED index entry (PLUG-1/PLUG-2). When the
+    # entry carries a sha256, we download → verify → consent-gate → install. When it
+    # does not, we honestly refuse rather than auto-exec an unverified download.
     typer.echo(f"Found '{source}' in index: {entry.url}")
-    typer.echo(
-        "Remote install requires a verified index entry (checksum/signature), which "
-        "is not configured in the index schema yet. Download the plugin and install "
-        "it from a local path instead.",
+    if not (entry.sha256 or "").strip():
+        typer.echo(
+            "Remote install requires a verified index entry (sha256 checksum), which "
+            f"'{source}' does not carry. Refusing to install an unverified download. "
+            "Add a sha256 to the index, or download and install from a local path.",
+            err=True,
+        )
+        sys.exit(1)
+
+    typer.secho(
+        "WARNING: a plugin installs and RUNS third-party Python code on this machine "
+        "when StackOwl starts. The download will be checksum-verified before install, "
+        "but you must still trust the publisher.",
         err=True,
+        fg=typer.colors.YELLOW,
     )
-    sys.exit(1)
+    consent = yes
+    if not consent:
+        if not sys.stdin.isatty():
+            typer.echo(
+                "Refusing to install without consent (no interactive terminal; "
+                "re-run with --yes to confirm).",
+                err=True,
+            )
+            sys.exit(1)
+        consent = typer.confirm("Install and trust this verified third-party plugin?")
+
+    from stackowl.plugins.remote_install import install_remote_plugin
+    from stackowl.plugins.verify import PluginVerificationError
+
+    try:
+        name = install_remote_plugin(
+            entry, consent_granted=consent, db_path=default_db_path()
+        )
+    except PluginVerificationError as exc:
+        typer.echo(f"Verification failed — install refused: {exc}", err=True)
+        sys.exit(1)
+    except PermissionError:
+        typer.echo("Install cancelled (consent not granted).", err=True)
+        sys.exit(1)
+    except PluginValidationError as exc:
+        typer.echo(f"Plugin validation failed: {exc}", err=True)
+        sys.exit(1)
+    typer.echo(f"Installed '{name}' (checksum-verified) — active on next `stackowl serve`.")
 
 
 @plugins_app.command("update-index")
