@@ -163,7 +163,13 @@ class TraceContext:
 
     @classmethod
     def get(cls) -> dict[str, Any]:
-        """Return current trace context as a dict (safe to embed in log records)."""
+        """Return current trace context as a dict (safe to embed in log records).
+
+        LOG-SAFE by construction: deliberately OMITS ``creation_ceiling`` (a
+        BoundsSpec object that must never land in a log record) and
+        ``durable_owner_id`` (consumed at the delegation seam, not in logs). Use
+        :meth:`snapshot` when you need the FULL context for reconstruction.
+        """
         return {
             "trace_id": cls._trace_id.get(),
             "span_id": cls._span_id.get(),
@@ -176,3 +182,19 @@ class TraceContext:
             "owl_name": cls._owl_name.get(),
             "task_id": cls._task_id.get(),
         }
+
+    @classmethod
+    def snapshot(cls) -> dict[str, Any]:
+        """Return the FULL current context for reconstruction (F025).
+
+        Unlike :meth:`get` (which is log-safe and intentionally omits them), this
+        includes ``durable_owner_id`` and ``creation_ceiling`` (a BoundsSpec | None)
+        so a caller that must REBUILD the acting context at a delegation/durable
+        seam has the complete set in one call — no need to remember to also call the
+        two dedicated accessors. NOT for log records (it carries a BoundsSpec and an
+        owner id); use :meth:`get` for anything that may be logged.
+        """
+        snap = cls.get()
+        snap["durable_owner_id"] = cls._durable_owner_id.get()
+        snap["creation_ceiling"] = cls._creation_ceiling.get()
+        return snap

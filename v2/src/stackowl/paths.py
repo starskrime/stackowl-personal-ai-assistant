@@ -86,6 +86,18 @@ class StackowlHome:
         return Path(raw) if raw else cls.home() / "logs"
 
     @classmethod
+    def audit_sink_failures_file(cls) -> Path:
+        """Durable, append-only marker sink for failed audit writes (SEC-7 / F137).
+
+        SEPARATE from the tamper-evident audit_log DB on purpose: when that DB
+        write fails, a security event that should have been audited is otherwise
+        lost to a single ERROR log line. A JSONL marker here records (durably,
+        under ``~/.stackowl``) that an audited security event was dropped, so the
+        operator can reconstruct it. Never contains a secret value.
+        """
+        return cls.logs_dir() / "audit_sink_failures.jsonl"
+
+    @classmethod
     def plugins_dir(cls) -> Path:
         return cls.home() / "plugins"
 

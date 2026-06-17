@@ -98,8 +98,50 @@ class SecurityError(StackOwlError):
                 _audit("security_violation", {"category": category, **self.context})
             except Exception as _exc:
                 log.error("SecurityError._audit_fn raised", exc_info=_exc)
+                # F137 — the tamper-evident audit sink failed: do NOT let the
+                # security event decay to one ERROR line. Append a durable marker
+                # to a SEPARATE sink under ~/.stackowl so the operator can
+                # reconstruct that an audited security event was dropped.
+                self._record_audit_sink_failure(category, _exc)
 
-        # Side-effect 3 — toast notification
+        self._fire_notify(message)
+
+    @staticmethod
+    def _record_audit_sink_failure(category: str, sink_error: BaseException) -> None:
+        """Append a durable ``audit_sink_failed`` marker to a separate sink (F137).
+
+        Best-effort + NEVER raises (a failure to record the failure must not mask
+        the original SecurityError). Records the category + a coarse reason string —
+        NEVER a secret value. JSONL append so concurrent writers each add one line.
+        """
+        try:
+            import json
+            from datetime import UTC, datetime
+
+            from stackowl.paths import StackowlHome
+
+            marker = StackowlHome.audit_sink_failures_file()
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "marker": "audit_sink_failed",
+                "ts": datetime.now(UTC).isoformat(),
+                "category": category,
+                # type + str of the sink error only — no secret, no raw context.
+                "sink_error": f"{type(sink_error).__name__}: {sink_error}",
+            }
+            with marker.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record) + "\n")
+        except Exception as _marker_exc:  # never raise from a security side-effect
+            # If even the durable marker fails, a CRITICAL log is the last resort —
+            # the original CRITICAL security-violation line above already fired.
+            log.critical(
+                "SecurityError: audit sink failed AND durable marker write failed",
+                exc_info=_marker_exc,
+                extra={"_fields": {"category": category}},
+            )
+
+    def _fire_notify(self, message: str) -> None:
+        """Side-effect 3 — toast notification (self-healing)."""
         _notify = type(self).__dict__.get("_notify_fn") or SecurityError.__dict__.get("_notify_fn")
         if _notify is not None:
             try:
