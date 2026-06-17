@@ -26,6 +26,22 @@ from stackowl.startup.provider_probe import ProviderProbe
 log = logging.getLogger("stackowl.startup")
 
 
+def resolve_reply_to_inflight(*, is_reply: bool, turn_running: bool) -> bool:
+    """Map a channel reply-to-the-bot flag to a STRUCTURAL reply-to-inflight STEER.
+
+    STEER-1/F060: ``IngressMessage.is_reply`` is True when the inbound message is
+    a channel reply to one of the bot's own messages (Telegram stamps it from
+    ``message.reply_to_message``). It becomes a reply-to-inflight STEER — the
+    structural, zero-LLM-cost signal that ``parse_explicit_signal`` honours — ONLY
+    when a turn is ACTUALLY in-flight for the session. A reply to an OLD bot
+    message with nothing running is just a normal message (NOT a steer), so it
+    must NOT short-circuit into the mid-turn router. Pure, side-effect-free; the
+    caller already gates on ``running_turn is not None`` but we make the contract
+    explicit and unit-testable here.
+    """
+    return bool(is_reply and turn_running)
+
+
 async def _run_until_signal(adapter: object, stop_event: asyncio.Event) -> None:
     """Race the blocking ``adapter.run()`` against a cooperative ``stop_event``.
 
@@ -1326,9 +1342,13 @@ class StartupOrchestrator:
                 )
 
                 # is_reply_to_inflight: a STRUCTURAL reply-to-the-running-message
-                # signal. IngressMessage carries no reply-link field today, so this
-                # is False (fail-safe — never a spurious structural STEER). Wiring a
-                # real Telegram reply-to-inflight link is a follow-up.
+                # signal (STEER-1/F060). The channel (Telegram) stamps
+                # ``msg.is_reply`` when the inbound message replies to one of the
+                # bot's own messages; it becomes a structural STEER only when a turn
+                # is actually in-flight (``running_turn is not None`` — already true
+                # on this branch). ``resolve_reply_to_inflight`` makes that contract
+                # explicit + unit-testable (a reply to an OLD bot message with
+                # nothing running is a normal message, never a spurious steer).
                 outcome = await route_inflight_message(
                     router=turn_router,
                     registry=turn_registry,
@@ -1337,7 +1357,9 @@ class StartupOrchestrator:
                     session_id=msg.session_id,
                     request_id_new=msg.trace_id,
                     target=msg.chat_id,
-                    is_reply_to_inflight=False,
+                    is_reply_to_inflight=resolve_reply_to_inflight(
+                        is_reply=msg.is_reply, turn_running=True
+                    ),
                 )
                 routed_signal = outcome.signal
                 if outcome.action is InflightAction.HANDLED:

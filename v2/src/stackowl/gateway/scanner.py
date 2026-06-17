@@ -52,6 +52,16 @@ class IngressMessage:
     # byte-for-byte unaffected.
     # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.
     chat_id: int | str | None = None
+    # STEER-1/F060 — a STRUCTURAL reply-to-the-bot link. Telegram's
+    # ``_handle_update`` sets this True when ``message.reply_to_message`` points at
+    # one of the bot's own messages; the orchestrator turns it into a
+    # reply-to-inflight STEER (``parse_explicit_signal``) ONLY when a turn is
+    # in-flight for the session (see ``resolve_reply_to_inflight``). A
+    # language-neutral structural signal — replying to the running turn is an
+    # unambiguous "this refines THAT turn". Defaulted False so every existing
+    # ``IngressMessage(...)`` constructor is byte-for-byte unaffected; channels
+    # without a reply concept (CLI) leave it False.
+    is_reply: bool = False
 
 
 @dataclass(frozen=True)
