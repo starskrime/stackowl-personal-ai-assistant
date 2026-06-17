@@ -56,6 +56,24 @@ class SlackChannelAdapter(ChannelAdapter):
 
     contributor_name: str = "slack_channel"
 
+    # Bound on the per-turn state maps (thread-by-trace, inbound-files-by-trace).
+    # A turn's entry is read once at send/fetch time; the FIFO cap evicts the
+    # oldest turns so a long-lived process never leaks. Generous so an in-flight
+    # turn's entry is never evicted under realistic concurrency.
+    _TURN_STATE_MAX: int = 1024
+
+    @staticmethod
+    def _put_bounded(store: dict[str, list[str]] | dict[str, str], key: str, value: object) -> None:
+        """Insert keyed turn state, evicting the OLDEST entry past the bound (FIFO).
+
+        A plain dict preserves insertion order, so the first key is the oldest.
+        Re-inserting an existing key refreshes its value in place (order kept).
+        """
+        store[key] = value  # type: ignore[assignment]
+        while len(store) > SlackChannelAdapter._TURN_STATE_MAX:
+            oldest = next(iter(store))
+            store.pop(oldest, None)
+
     def __init__(self, settings: SlackSettings) -> None:
         log.slack.debug(
             "[slack] adapter.init: entry",
@@ -79,19 +97,27 @@ class SlackChannelAdapter(ChannelAdapter):
         # single-terminal fallback when a chunk carries no explicit target.
         self._targets: dict[str, str] = {}
         self._last_target: str | None = None
-        # Parallel thread map: session_id → thread_ts. A reply to a channel
-        # message threads under the originating thread; a DM (no thread) replies
-        # to the channel directly. chunk.target carries only the channel id (a
-        # simple routing string) — the thread_ts is resolved adapter-side at
-        # send time, keyed by the same id used as the target.
+        # Per-CHANNEL thread map: channel_id → thread_ts, for OUT-OF-BAND callers
+        # (send_file mid-turn, consent/clarify prompts) that resolve by channel id
+        # rather than by turn. Best-effort latest-wins for those paths. The on-turn
+        # send() path uses the authoritative per-trace map below instead. The
+        # global ``_last_thread`` fallback was REMOVED (F011 mis-thread hazard).
         self._threads: dict[str, str] = {}
-        self._last_thread: str | None = None
-        # Inbound-files map (C2): session_id → the Slack file id(s) attached to
-        # the latest inbound event for that session. ``IngressMessage`` carries
-        # no media field (it would ripple through the frozen dataclass + whole
-        # pipeline), so file ids are surfaced here — keyed by the SAME session_id
-        # the turn already owns — for a turn to fetch via ``download_media``.
-        # Mirrors the per-session ``_targets``/``_threads`` maps.
+        # Per-TURN thread map (F011): trace_id → the originating thread_ts. A turn
+        # owns its trace_id, so resolving the reply thread from THIS map (not the
+        # per-channel ``_threads`` or the global ``_last_thread``) means a newer
+        # concurrent event for the same channel/user can never mis-thread an
+        # earlier turn's reply. Bounded FIFO (``_TURN_STATE_MAX``) so it never
+        # grows unbounded across a long-lived process.
+        self._thread_by_trace: dict[str, str] = {}
+        # Inbound-files map (F010): trace_id → the Slack file id(s) attached to the
+        # inbound event that minted this turn. Previously keyed by session_id
+        # (``slack:{hash(user)}`` — shared across ALL of a user's messages), so a
+        # later FILELESS same-user event cleared an earlier turn's ids before it
+        # fetched them. Keying by the turn-owned trace_id makes the ids immune to
+        # any later event. ``IngressMessage`` carries no media field (it would
+        # ripple through the frozen dataclass + whole pipeline), so ids are
+        # surfaced here for a turn to fetch via ``download_media``. Bounded FIFO.
         self._inbound_files: dict[str, list[str]] = {}
         # The live AsyncApp is injected by the integration runner — we keep an
         # untyped reference so the adapter remains importable without
@@ -136,15 +162,15 @@ class SlackChannelAdapter(ChannelAdapter):
         """
         return self._targets.get(session_id)
 
-    def inbound_files_for_session(self, session_id: str) -> list[str]:
-        """Return the Slack file id(s) attached to the latest event for a session.
+    def inbound_files_for_trace(self, trace_id: str) -> list[str]:
+        """Return the Slack file id(s) attached to the event that minted this turn.
 
-        Closes the C1 backlog: an inbound event's ``files`` array is surfaced
-        here so the turn can fetch each file's bytes via :meth:`download_media`.
-        Returns an empty list for an unknown session or an event with no files —
-        never fabricates ids.
+        Keyed by the turn-owned ``trace_id`` (F010) so a later same-user event can
+        never clear an earlier turn's ids. The turn fetches each file's bytes via
+        :meth:`download_media`. Returns an empty list for an unknown trace or an
+        event with no files — never fabricates ids.
         """
-        return list(self._inbound_files.get(session_id, []))
+        return list(self._inbound_files.get(trace_id, []))
 
     async def start(self) -> None:
         """Prepare the adapter for live use (no network I/O happens here)."""
@@ -186,8 +212,14 @@ class SlackChannelAdapter(ChannelAdapter):
         # newer concurrent inbound event may have overwritten). None →
         # send_text falls back to `_last_target` (single-terminal/back-compat).
         target: str | None = None
+        # Per-turn thread (F011): capture this turn's trace_id so the reply threads
+        # under ITS originating thread, not a stale per-channel / global thread a
+        # newer concurrent event may have overwritten.
+        turn_trace: str | None = None
         async for chunk in chunks:
             buffer += chunk.content
+            if chunk.trace_id:
+                turn_trace = chunk.trace_id
             raw = chunk.target
             if isinstance(raw, str):
                 target = raw
@@ -201,25 +233,47 @@ class SlackChannelAdapter(ChannelAdapter):
                     extra={"_fields": {"target": raw}},
                 )
                 target = None
+        # Per-turn thread is AUTHORITATIVE (F011). When the turn's trace has no
+        # stamped thread (a best-effort / legacy caller whose chunk carries no real
+        # inbound trace), fall back to the per-channel map — NOT the removed global
+        # _last_thread, which could adopt a different turn's thread.
+        thread_ts = self._thread_by_trace.get(turn_trace) if turn_trace else None
+        if thread_ts is None:
+            dest_for_thread = target if target is not None else self._last_target
+            if dest_for_thread is not None:
+                thread_ts = self._threads.get(dest_for_thread)
         log.slack.debug(
             "[slack] adapter.send: decision collected",
-            extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
+            extra={
+                "_fields": {
+                    "total_len": len(buffer),
+                    "explicit_target": target is not None,
+                    "threaded": thread_ts is not None,
+                }
+            },
         )
-        await self.send_text(buffer, target=target)
+        await self.send_text(buffer, target=target, thread_ts=thread_ts)
         log.slack.debug(
             "[slack] adapter.send: exit",
             extra={"_fields": {"explicit_target": target is not None}},
         )
 
-    async def send_text(self, text: str, *, target: str | None = _UNSET) -> None:
+    async def send_text(
+        self, text: str, *, target: str | None = _UNSET, thread_ts: str | None = None
+    ) -> None:
         """Split ``text`` per Slack's limit and post each part to ``target``.
 
         ``target`` is a Slack channel id (the per-message destination threaded
         from ``IngressMessage.chat_id`` → ``ResponseChunk.target``); when omitted
         it falls back to ``self._last_target`` for back-compat callers (proactive
-        deliverer, clarify degrade-path). The thread_ts (if any) is resolved
-        adapter-side from the channel id so a channel reply threads correctly and
-        a DM reply goes to the channel directly.
+        deliverer, clarify degrade-path).
+
+        ``thread_ts`` (F011) is the per-TURN originating thread resolved by
+        :meth:`send` from the turn's ``trace_id``. It is passed EXPLICITLY rather
+        than re-derived adapter-side from the channel id, because a per-channel /
+        global thread map can be overwritten by a newer concurrent event for the
+        same channel and would mis-thread this turn's reply. ``None`` → reply to
+        the channel root (a DM, or a best-effort caller with no turn context).
 
         No-target contract (C6 / C-1): an EXPLICIT ``target`` (the on-turn
         ``send()`` path) that fails to resolve → log ``error`` + raise
@@ -232,11 +286,6 @@ class SlackChannelAdapter(ChannelAdapter):
         explicit = target is not _UNSET
         resolved = target if explicit else None
         dest = resolved if resolved is not None else self._last_target
-        # Resolve the originating thread for this channel: a per-channel thread
-        # map populated in handle_event. None → reply to the channel (DM path).
-        thread_ts = self._threads.get(dest) if dest is not None else None
-        if thread_ts is None and dest == self._last_target:
-            thread_ts = self._last_thread
         log.slack.debug(
             "[slack] adapter.send_text: entry",
             extra={
@@ -297,9 +346,10 @@ class SlackChannelAdapter(ChannelAdapter):
         turn. ``TestModeGuard`` blocks live I/O in tests.
         """
         dest = target if target is not None else self._last_target
+        # Per-channel thread (best-effort for out-of-band file sends). The global
+        # _last_thread fallback is removed — it could mis-thread under concurrency
+        # (F011). A DM or unknown channel → channel root.
         thread_ts = self._threads.get(dest) if dest is not None else None
-        if thread_ts is None and dest == self._last_target:
-            thread_ts = self._last_thread
         log.slack.debug(
             "[slack] adapter.send_file: entry",
             extra={
@@ -724,21 +774,29 @@ class SlackChannelAdapter(ChannelAdapter):
             # inbound event may overwrite before this turn finishes.
             chat_id=channel_id,
         )
-        # Record the session→target map (Phase B) + the per-channel thread map +
-        # single-terminal fallbacks, all consulted at send time.
+        # Record the session→target map (Phase B) + single-terminal fallback for
+        # best-effort callers that carry no explicit target.
         self._targets[session_id] = channel_id
         self._last_target = channel_id
+        # Per-TURN thread (F011): stamp this turn's originating thread under its
+        # trace_id so its reply threads correctly even after a newer concurrent
+        # event for the same channel arrives. ``None`` (a DM) records no entry so
+        # the reply goes to the channel root. This map is the AUTHORITATIVE source
+        # for the on-turn send() path.
+        if thread_ts is not None:
+            self._put_bounded(self._thread_by_trace, trace_id, thread_ts)
+        # Per-CHANNEL thread map: kept for OUT-OF-BAND callers (send_file during a
+        # turn, consent/clarify prompts) that resolve by channel id, not trace.
+        # Best-effort/latest-wins by design for those paths; the global
+        # ``_last_thread`` fallback (the F011 mis-thread hazard) is removed.
         if thread_ts is not None:
             self._threads[channel_id] = thread_ts
         else:
             self._threads.pop(channel_id, None)
-        self._last_thread = thread_ts
-        # Record (or clear) this session's inbound file ids so the turn can fetch
-        # them via download_media; an event with no files clears any stale ids.
+        # Per-TURN inbound files (F010): key by trace_id so a later same-user
+        # event can't clear them. An event with no files records no entry.
         if file_ids:
-            self._inbound_files[session_id] = file_ids
-        else:
-            self._inbound_files.pop(session_id, None)
+            self._put_bounded(self._inbound_files, trace_id, file_ids)
         await self._queue.put(msg)
         log.slack.debug(
             "[slack] adapter.handle_event: exit — queued",

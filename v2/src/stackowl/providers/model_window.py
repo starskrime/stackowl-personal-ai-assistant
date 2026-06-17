@@ -20,6 +20,33 @@ _PROBE_TIMEOUT = 4.0
 
 _WINDOW_CACHE: dict[tuple[str, str], int] = {}
 
+#: Module-level pooled httpx client for ollama window probes (F129). Created once
+#: and reused across every distinct (provider, model) probe so each probe does
+#: NOT pay full client/connection-pool setup + teardown. Lazily built; lives for
+#: the process. resolve_window memoizes per (provider, model), so the number of
+#: probes is already bounded — this just avoids a fresh client per first-probe.
+_PROBE_CLIENT: httpx.AsyncClient | None = None
+
+
+def _new_probe_client() -> httpx.AsyncClient:
+    """Construct the pooled probe client (its own seam so tests can override)."""
+    return httpx.AsyncClient(timeout=_PROBE_TIMEOUT)
+
+
+def _get_probe_client() -> httpx.AsyncClient:
+    """Return the shared pooled probe client, creating it on first use."""
+    global _PROBE_CLIENT
+    if _PROBE_CLIENT is None:
+        _PROBE_CLIENT = _new_probe_client()
+        log.engine.debug("[model_window] pooled probe client created")
+    return _PROBE_CLIENT
+
+
+def _reset_probe_client() -> None:
+    """Drop the pooled client (test hygiene; next probe rebuilds it)."""
+    global _PROBE_CLIENT
+    _PROBE_CLIENT = None
+
 
 def _clamp(tokens: int) -> int:
     return max(1, min(int(tokens), WINDOW_CEILING_DEFAULT))
@@ -57,10 +84,10 @@ async def _probe_ollama(base_url: str, model: str) -> int | None:
         base = base[: -len("/v1")]
     url = f"{base}/api/show"
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            resp = await client.post(url, json={"name": model})
-            resp.raise_for_status()
-            info = resp.json().get("model_info", {}) or {}
+        client = _get_probe_client()
+        resp = await client.post(url, json={"name": model})
+        resp.raise_for_status()
+        info = resp.json().get("model_info", {}) or {}
         for key, val in info.items():
             if key.endswith("context_length") and isinstance(val, int) and val > 0:
                 return val

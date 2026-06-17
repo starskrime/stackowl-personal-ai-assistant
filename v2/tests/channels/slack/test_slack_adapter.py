@@ -705,7 +705,7 @@ async def test_send_text_leaves_code_span_literal() -> None:
 
 @pytest.mark.asyncio
 async def test_handle_event_surfaces_inbound_file_ids() -> None:
-    """An event with a ``files`` array surfaces the file id(s) per session."""
+    """An event with a ``files`` array surfaces the file id(s) per TURN (trace)."""
     adapter = _make_adapter(allowed=["U_allowed"])
     await adapter.handle_event(
         {
@@ -717,7 +717,7 @@ async def test_handle_event_surfaces_inbound_file_ids() -> None:
         text="see attached",
     )
     msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
-    assert adapter.inbound_files_for_session(msg.session_id) == ["F111", "F222"]
+    assert adapter.inbound_files_for_trace(msg.trace_id) == ["F111", "F222"]
 
 
 @pytest.mark.asyncio
@@ -730,7 +730,7 @@ async def test_handle_event_no_files_means_empty() -> None:
         text="plain",
     )
     msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
-    assert adapter.inbound_files_for_session(msg.session_id) == []
+    assert adapter.inbound_files_for_trace(msg.trace_id) == []
 
 
 @pytest.mark.asyncio

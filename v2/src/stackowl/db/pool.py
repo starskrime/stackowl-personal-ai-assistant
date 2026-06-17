@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+import sqlite3
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -28,17 +30,60 @@ _PRAGMAS = [
     "PRAGMA busy_timeout=5000",
 ]
 
-# SQLite-specific error markers used in addition to the default dead-handle list.
-_SQLITE_DEAD_MARKERS = (
-    "database is locked",
-    "disk I/O error",
-    "unable to open database",
-    "no such table",
-    "Cannot operate on a closed database",
-    "Connection closed",
-    "no active connection",  # aiosqlite raises this after .close()
-    "Cannot operate on a closed",
+# Primary SQLite error codes that indicate a transient connection-level failure
+# the pool can recover from by reconnecting (F022). These are matched on the
+# exception's ``sqlite_errorcode`` (Python 3.11+) MASKED to its primary code, so
+# extended variants (e.g. SQLITE_IOERR_*) collapse to their base. Crucially
+# SQLITE_ERROR (the code for "no such table" and other logic errors) is NOT
+# here, so a missing table surfaces loudly instead of triggering a reconnect
+# loop.
+_DEAD_PRIMARY_CODES: frozenset[int] = frozenset(
+    {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_CANTOPEN,
+        sqlite3.SQLITE_NOTADB,
+        sqlite3.SQLITE_CORRUPT,
+        sqlite3.SQLITE_PROTOCOL,
+    }
 )
+
+
+def _looks_like_dead_sqlite(exc: BaseException) -> bool:
+    """True iff ``exc`` is a recoverable SQLite connection-death failure.
+
+    Keys on the sqlite3 exception TYPE + ``sqlite_errorcode`` rather than the
+    English error text (F022). A closed/disposed connection surfaces as a
+    ``sqlite3.ProgrammingError`` (aiosqlite raises this after ``.close()``) and
+    is always treated as dead. ``OperationalError`` is dead only for the
+    transient primary codes in :data:`_DEAD_PRIMARY_CODES`; ``SQLITE_ERROR``
+    (missing table / bad column) is a logic error and is NOT recovered.
+    """
+    # A closed connection (or other invalid-handle misuse) is always recoverable
+    # by reconnecting — independent of any error text.
+    if isinstance(exc, sqlite3.ProgrammingError):
+        return True
+    # aiosqlite raises a bare ``ValueError("no active connection")`` from its
+    # worker thread when the connection was closed/disposed — a genuine dead
+    # handle that carries NO sqlite errorcode (it never reached SQLite). This is
+    # a library-internal sentinel, not a SQLite logic error, so matching it is
+    # safe and does not regress the "missing table surfaces loudly" guarantee.
+    if isinstance(exc, ValueError) and "no active connection" in str(exc):
+        return True
+    if isinstance(exc, sqlite3.OperationalError | sqlite3.DatabaseError):
+        code = getattr(exc, "sqlite_errorcode", None)
+        if code is None:
+            # No errorcode available (shouldn't happen on 3.11+, but never
+            # silently swallow): treat as NOT dead so a logic error surfaces.
+            log.warning(
+                "[db] _looks_like_dead_sqlite: sqlite exception without errorcode "
+                "— treating as logic error (no reconnect): %r",
+                exc,
+            )
+            return False
+        primary = int(code) & 0xFF  # mask extended code to its primary code
+        return primary in _DEAD_PRIMARY_CODES
+    return False
 
 
 def default_db_path() -> Path:
@@ -58,6 +103,14 @@ class DbPool:
         self._path = db_path or default_db_path()
         self._conn: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
+        # Serializes WRITE operations (execute / execute_returning_rowcount /
+        # transaction) against each other on the single shared connection (F070):
+        # a multi-statement transaction()'s BEGIN IMMEDIATE must not be committed
+        # out from under it by a concurrent execute()'s implicit commit. Distinct
+        # from ``_lock`` (the connection-open lock) so retry's ensure_available()
+        # never self-deadlocks. Reads (fetch_all) intentionally do NOT take it —
+        # they never commit and tolerate seeing pre-txn data.
+        self._write_lock = asyncio.Lock()
         self._unavailable_reason: str | None = None
         self._on_recycled_cbs: list[Callable[[], None]] = []
         self._recycle_count: int = 0
@@ -185,14 +238,15 @@ class DbPool:
                 await self._conn.execute(sql, params)
                 await self._conn.commit()
             except Exception as exc:
-                if self._looks_dead(exc):
+                if _looks_like_dead_sqlite(exc):
                     self._mark_dead(f"execute failed: {type(exc).__name__}: {exc}")
                 raise
 
-        await retry_once_on_dead_handle(
-            _do, self, op_name="db.execute",
-            dead_markers=_SQLITE_DEAD_MARKERS,
-        )
+        async with self._write_lock:
+            await retry_once_on_dead_handle(
+                _do, self, op_name="db.execute",
+                is_dead=_looks_like_dead_sqlite,
+            )
         log.debug("[db] pool.execute: exit — committed")
 
     async def execute_returning_rowcount(
@@ -224,21 +278,74 @@ class DbPool:
                 await self._conn.commit()
                 return int(affected)
             except Exception as exc:
-                if self._looks_dead(exc):
+                if _looks_like_dead_sqlite(exc):
                     self._mark_dead(
                         f"execute_returning_rowcount failed: {type(exc).__name__}: {exc}"
                     )
                 raise
 
-        result = await retry_once_on_dead_handle(
-            _do, self, op_name="db.execute_returning_rowcount",
-            dead_markers=_SQLITE_DEAD_MARKERS,
-        )
+        async with self._write_lock:
+            result = await retry_once_on_dead_handle(
+                _do, self, op_name="db.execute_returning_rowcount",
+                is_dead=_looks_like_dead_sqlite,
+            )
         # 4. EXIT
         log.debug(
             "[db] pool.execute_returning_rowcount: exit — rows_affected=%d", result
         )
         return result
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Run several statements atomically in ONE committed transaction (F070).
+
+        Yields the live connection inside a ``BEGIN IMMEDIATE`` write txn; the
+        body issues ``await conn.execute(sql, params)`` calls (no per-statement
+        commit). On clean exit the txn COMMITs; on ANY exception it ROLLBACKs and
+        re-raises so the base table and a derived index (e.g. ``committed_facts``
+        + ``committed_facts_fts``) can never diverge on a mid-sequence failure.
+
+        Held under the pool's ``_write_lock`` for the txn's duration so it cannot
+        interleave with another ``execute``/``transaction`` on the single shared
+        connection (which would corrupt the in-flight write txn). The lock is
+        released the moment the txn ends. NOT self-healed mid-flight: a dead
+        handle inside a txn aborts it (rollback semantics demand the caller retry
+        the whole unit), but the dead handle is marked so the NEXT call reopens.
+        """
+        # 1. ENTRY
+        log.debug("[db] pool.transaction: entry")
+        await self.ensure_available()
+        async with self._write_lock:
+            if self._conn is None:
+                raise RuntimeError("DbPool: connection unexpectedly None")
+            conn = self._conn
+            try:
+                await conn.execute("BEGIN IMMEDIATE")
+            except Exception as exc:
+                if _looks_like_dead_sqlite(exc):
+                    self._mark_dead(f"transaction begin failed: {type(exc).__name__}: {exc}")
+                log.error("[db] pool.transaction: BEGIN failed", exc_info=exc)
+                raise
+            try:
+                yield conn
+            except Exception as exc:
+                # 3. STEP — roll back the whole unit; never leave a half-applied txn.
+                try:
+                    await conn.rollback()
+                except Exception as rb_exc:  # never mask the original; log loudly
+                    if _looks_like_dead_sqlite(rb_exc):
+                        self._mark_dead(
+                            f"transaction rollback failed: {type(rb_exc).__name__}: {rb_exc}"
+                        )
+                    log.error("[db] pool.transaction: ROLLBACK failed", exc_info=rb_exc)
+                if _looks_like_dead_sqlite(exc):
+                    self._mark_dead(f"transaction body failed: {type(exc).__name__}: {exc}")
+                log.warning("[db] pool.transaction: rolled back on error", exc_info=exc)
+                raise
+            else:
+                await conn.commit()
+        # 4. EXIT
+        log.debug("[db] pool.transaction: exit — committed")
 
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Execute a read statement and return all rows as dicts. Self-heals."""
@@ -257,18 +364,13 @@ class DbPool:
                     keys = [d[0] for d in desc]
                     return [dict(zip(keys, tuple(row), strict=False)) for row in rows]
             except Exception as exc:
-                if self._looks_dead(exc):
+                if _looks_like_dead_sqlite(exc):
                     self._mark_dead(f"fetch_all failed: {type(exc).__name__}: {exc}")
                 raise
 
         result = await retry_once_on_dead_handle(
             _do, self, op_name="db.fetch_all",
-            dead_markers=_SQLITE_DEAD_MARKERS,
+            is_dead=_looks_like_dead_sqlite,
         )
         log.debug("[db] pool.fetch_all: exit — row_count=%d", len(result))
         return result
-
-    @staticmethod
-    def _looks_dead(exc: BaseException) -> bool:
-        msg = str(exc)
-        return any(m in msg for m in _SQLITE_DEAD_MARKERS)

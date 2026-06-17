@@ -31,29 +31,37 @@ _TIMEOUT_HEALTH_WINDOW_S: float = 300.0
 _TIMEOUT_DEGRADED_THRESHOLD: int = 3
 
 
-def _try_acquire_nowait(sem: asyncio.Semaphore) -> bool:
-    """Acquire a semaphore slot without awaiting; return False when none available.
+class _NonBlockingSlots:
+    """A non-blocking counting slot pool backed by a plain int + an asyncio.Lock.
 
-    ``asyncio.Semaphore`` does not expose a public non-blocking acquire and
-    ``asyncio.wait_for(sem.acquire(), timeout=0.0)`` always times out before the
-    coroutine runs. Inspecting the internal counter is the only reliable
-    single-thread / single-loop pattern.
+    Replaces the prior private-counter probe of ``asyncio.Semaphore`` (F077):
+    there is no public non-blocking ``Semaphore.acquire`` and stepping the
+    acquire coroutine by hand depends on CPython's fast-path staying unchanged
+    across interpreter versions. A held lock guards
+    the counter so a non-blocking ``try_acquire`` and ``release`` are correct on
+    any interpreter and across concurrent ``await``-interleaved callers on one
+    loop. The lock is held only for the O(1) counter mutation — never across the
+    guarded provider call — so it never serializes the actual work.
     """
-    value: int = sem._value  # noqa: SLF001 — documented private invariant
-    if value <= 0:
-        return False
-    # ``Semaphore.acquire`` returns immediately when ``_value > 0`` and no
-    # waiters are queued — call it and discard the awaitable's already-resolved
-    # result by stepping the coroutine once.
-    coro = sem.acquire()
-    try:
-        coro.send(None)
-    except StopIteration:
-        return True
-    # If the acquire actually suspended, cancel it and report failure so we
-    # never leave a dangling waiter on the semaphore.
-    coro.close()
-    return False
+
+    def __init__(self, capacity: int) -> None:
+        self._capacity = capacity
+        self._in_use = 0
+        self._lock = asyncio.Lock()
+
+    async def try_acquire(self) -> bool:
+        """Take a slot without blocking; return False when all slots are in use."""
+        async with self._lock:
+            if self._in_use >= self._capacity:
+                return False
+            self._in_use += 1
+            return True
+
+    async def release(self) -> None:
+        """Return a slot. Never drops below zero (idempotent under double-release)."""
+        async with self._lock:
+            if self._in_use > 0:
+                self._in_use -= 1
 
 
 class OwlResourceGuard:
@@ -65,7 +73,7 @@ class OwlResourceGuard:
 
     def __init__(self, manifest: OwlAgentManifest) -> None:
         self._manifest = manifest
-        self._semaphore = asyncio.Semaphore(manifest.max_concurrent_requests)
+        self._slots = _NonBlockingSlots(manifest.max_concurrent_requests)
         self._timeout_violation_count: int = 0
         self._timeout_violation_window_start: float = 0.0
         log.engine.debug(
@@ -157,8 +165,9 @@ class OwlResourceGuard:
         )
         TestModeGuard.assert_not_test_mode("owl.execute")
 
-        # 2. DECISION — non-blocking semaphore acquire
-        if not _try_acquire_nowait(self._semaphore):
+        # 2. DECISION — non-blocking slot acquire (counter + lock, not a probe
+        # of the semaphore's private counter — F077).
+        if not await self._slots.try_acquire():
             log.engine.warning(
                 "[guard] stream: concurrency limit reached",
                 extra={
@@ -216,8 +225,8 @@ class OwlResourceGuard:
                 token_count += chunk_tokens
                 yield text
         finally:
-            # 4. EXIT — always release semaphore, always log result
-            self._semaphore.release()
+            # 4. EXIT — always release the slot, always log result
+            await self._slots.release()
             duration_ms = (time.monotonic() - t0) * 1000
             log.engine.debug(
                 "[guard] stream: exit",

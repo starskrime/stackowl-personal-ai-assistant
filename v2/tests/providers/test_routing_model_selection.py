@@ -136,9 +136,9 @@ class TestSelectToolProvider:
     """Precedence: provider_name pin > session tier > manifest tier > 'powerful'."""
 
     def _select(self):
-        from stackowl.pipeline.steps.execute import _select_tool_provider
+        from stackowl.pipeline.provider_select import select_tool_provider
 
-        return _select_tool_provider
+        return select_tool_provider
 
     def test_owl_named_provider_wins_over_everything(self) -> None:
         """A provider registered under the owl's own name is the top precedence."""

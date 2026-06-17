@@ -96,8 +96,27 @@ def validate_config() -> None:
 
 @app.command()
 def init() -> None:
-    """Initialize a new StackOwl installation."""
-    typer.echo("init: not yet implemented")
+    """Initialize a new StackOwl installation (create ~/.stackowl/ + apply migrations).
+
+    Idempotent and non-serving: ensures the home tree exists and brings the
+    database schema up to date, so the install is ready before the first
+    ``stackowl start``/``serve`` (F147 — was a "not yet implemented" stub).
+    """
+    from stackowl.infra.observability import setup_logging
+    from stackowl.paths import StackowlHome
+    from stackowl.startup.orchestrator import StartupOrchestrator
+
+    setup_logging()
+    log.debug("[cli] init: entry")
+
+    StackowlHome.ensure_exists()
+    typer.echo(f"StackOwl home: {StackowlHome.home()}")
+
+    # Reuse the orchestrator's single migration site (F146) so init shares the
+    # exact same idempotent migration path as start/serve — one source of truth.
+    StartupOrchestrator().ensure_migrations()
+    typer.echo("✓ Initialized — home tree ready and migrations applied")
+    log.debug("[cli] init: exit")
 
 
 @app.command()
@@ -111,7 +130,6 @@ def start(
 
     from stackowl.config.secret_resolver import SecretResolver
     from stackowl.config.settings import Settings
-    from stackowl.db.migrations.runner import MigrationRunner
     from stackowl.db.pool import DbPool
     from stackowl.exceptions import ConfigurationError, StartupError
     from stackowl.infra.observability import setup_logging
@@ -127,9 +145,15 @@ def start(
     StackowlHome.ensure_exists()
     typer.echo(f"StackOwl home: {StackowlHome.home()}")
 
-    # Phase 1 — MIGRATE: apply any pending migrations
+    # Build the orchestrator ONCE so `start` and `serve` share one boot ordering
+    # (F146). The orchestrator owns the single migration site; the CLI delegates
+    # its pre-onboarding schema guarantee to this same instance, which migrates
+    # exactly once (idempotent) — no longer a separate redundant CLI migration.
+    orchestrator = StartupOrchestrator(dry_run=dry_run)
+
+    # Phase 1 — MIGRATE: apply any pending migrations (single site, idempotent)
     log.debug("[cli] start: phase 1 — migrations")
-    MigrationRunner(db_path=StackowlHome.db_path()).run()
+    orchestrator.ensure_migrations()
 
     # Phase 2 — DETECT FIRST RUN
     log.debug("[cli] start: phase 2 — first-run detection")
@@ -179,10 +203,11 @@ def start(
         if not all_ok:
             raise typer.Exit(1)
 
-    # Phase 5 — SERVE
+    # Phase 5 — SERVE (reuse the same orchestrator instance; its migration guard
+    # already fired in phase 1, so _phase_migrations is a no-op — single site).
     log.debug("[cli] start: phase 5 — serve")
     try:
-        asyncio.run(StartupOrchestrator(dry_run=dry_run).run())
+        asyncio.run(orchestrator.run())
     except StartupError as exc:
         typer.echo(f"✗ Startup failed: {exc}", err=True)
         sys.exit(1)
@@ -237,6 +262,7 @@ def health(
         BrowserContributor,
         DbContributor,
         FilesystemContributor,
+        GraphContributor,
         ProviderContributor,
     )
     from stackowl.startup.fs_probe import _data_dir, _log_dir
@@ -245,6 +271,9 @@ def health(
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
+    # DUR-5 / F069 — truthful knowledge-graph health. Probes the kuzu native
+    # layer (the ARM-wheel-missing failure mode) without opening the live DB.
+    agg.register(GraphContributor.probe())
     # Browser contributor — no live runtime in CLI context (different process),
     # so it always reports 'degraded — runtime not constructed' from here.
     # /browser settings inside the serve process gives live status.
@@ -427,14 +456,68 @@ def mcp_start(
 
 @mcp_app.command("status")
 def mcp_status() -> None:
-    """Show MCP server status."""
-    typer.echo("MCP server status: not running (no persistent process tracked)")
+    """Show real MCP server status (TCP liveness probe at the configured host:port)."""
+    from stackowl.config.settings import Settings
+    from stackowl.startup.mcp_status_probe import McpStatusProbe
+
+    log.debug("[cli] mcp_status: entry")
+    mcp_cfg = Settings().mcp_server
+    host = getattr(mcp_cfg, "host", "127.0.0.1")
+    port = getattr(mcp_cfg, "port", 8765)
+    enabled = getattr(mcp_cfg, "enabled", False)
+    transport = getattr(mcp_cfg, "transport", "sse")
+
+    # stdio transport has no listening socket — it is launched per-client by the
+    # MCP host process, so there is nothing to probe. Report that honestly.
+    if transport == "stdio":
+        typer.echo(
+            f"MCP server: stdio transport (launched per-client; no listening socket to probe). "
+            f"enabled={enabled}"
+        )
+        log.debug("[cli] mcp_status: exit — stdio")
+        return
+
+    result = McpStatusProbe(host=host, port=port).check()
+    if result.running:
+        typer.echo(f"MCP server: running — accepting connections at {host}:{port}")
+    else:
+        typer.echo(
+            f"MCP server: not running — no listener at {host}:{port} "
+            f"(config enabled={enabled})"
+        )
+    log.debug("[cli] mcp_status: exit — running=%s", result.running)
 
 
 @mcp_app.command("list-clients")
 def mcp_list_clients() -> None:
-    """List currently connected MCP clients."""
-    typer.echo("No active MCP clients")
+    """Report MCP client-connection visibility (no per-client tracking is maintained)."""
+    from stackowl.config.settings import Settings
+    from stackowl.startup.mcp_status_probe import McpStatusProbe
+
+    log.debug("[cli] mcp_list_clients: entry")
+    mcp_cfg = Settings().mcp_server
+    host = getattr(mcp_cfg, "host", "127.0.0.1")
+    port = getattr(mcp_cfg, "port", 8765)
+    transport = getattr(mcp_cfg, "transport", "sse")
+
+    # The SSE transport does not maintain a queryable per-client registry, so we
+    # must NOT fabricate a definitive client list. Report the server's liveness
+    # and state truthfully that individual client tracking is unavailable.
+    if transport == "stdio":
+        typer.echo(
+            "MCP client tracking unavailable: stdio transport has no central client registry."
+        )
+        log.debug("[cli] mcp_list_clients: exit — stdio")
+        return
+
+    result = McpStatusProbe(host=host, port=port).check()
+    state = "running" if result.running else "not running"
+    typer.echo(
+        f"MCP server is {state} at {host}:{port}. "
+        "Per-client connection tracking is not maintained, so the connected-client "
+        "list cannot be reported."
+    )
+    log.debug("[cli] mcp_list_clients: exit — running=%s", result.running)
 
 
 # ---------------------------------------------------------------------------

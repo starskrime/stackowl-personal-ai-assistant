@@ -153,6 +153,29 @@ class StartupOrchestrator:
         self._settings: Settings | None = None
         self._browser_probe_result: BrowserProbeResult | None = None
         self._shutting_down = False  # F144 — idempotency guard for double-signal
+        self._migrations_applied = False  # F146 — single migration site per boot
+
+    def ensure_migrations(self) -> None:
+        """Apply pending migrations exactly once per orchestrator instance (F146).
+
+        This is the SINGLE migration site shared by both ``start`` and ``serve``.
+        ``cli start`` calls it directly before its first-run/onboarding detection
+        (which needs the schema) using the SAME orchestrator instance it later
+        passes to :meth:`run`; ``_phase_migrations`` (boot phase 1) also routes
+        through here. The idempotency flag means a boot migrates exactly once
+        regardless of how many callers ask — replacing the old double-run where
+        ``cli start`` migrated and then the orchestrator migrated again."""
+        log.debug("[startup] ensure_migrations: entry applied=%s", self._migrations_applied)
+        if self._dry_run:
+            log.info("[startup] ensure_migrations: dry_run — skipping migration application")
+            return
+        if self._migrations_applied:
+            log.debug("[startup] ensure_migrations: already applied this boot — skipping")
+            return
+        db_path = default_db_path()
+        MigrationRunner(db_path=db_path).run()
+        self._migrations_applied = True
+        log.info("[startup] ensure_migrations: exit — migrations applied")
 
     async def run(self) -> None:
         log.info("[startup] orchestrator.run: entry dry_run=%s", self._dry_run)
@@ -200,12 +223,9 @@ class StartupOrchestrator:
         log.info("[startup] orchestrator.run: exit — ready")
 
     async def _phase_migrations(self) -> None:
-        if self._dry_run:
-            log.info("[startup] reconciler: dry_run — skipping migration application")
-            return
-        db_path = default_db_path()
-        runner = MigrationRunner(db_path=db_path)
-        runner.run()
+        # F146 — route through the single idempotent migration site so a boot
+        # migrates exactly once even if cli start already applied them.
+        self.ensure_migrations()
 
     async def _phase_filesystem(self) -> None:
         FilesystemProbe().check(dry_run=self._dry_run)
@@ -481,19 +501,13 @@ class StartupOrchestrator:
         # E0-S1 — consent gate: combination consent policy + per-channel prompters.
         # Routing prompter is mutable so the Telegram prompter can register after
         # its adapter starts (below). CLI gets the TTY prompter immediately.
-        from stackowl.tools.consent import ConsentPolicy, RoutingPrompter, TtyConsentPrompter
-        from stackowl.tools.registry import ConsequentialActionGate
-        from stackowl.tui.i18n_strings import install_default_translations
+        # Wired via the ConsentAssembly seam (OPS-5/F149) — extracted from this
+        # monolith so the consent boundary has a unit-testable assembly.
+        from stackowl.tools.consent_assembly import ConsentAssembly
 
-        # Consent button/label catalog — English copy lives in the i18n catalog
-        # (single source of truth); other locales can be registered later.
-        install_default_translations()
-
-        consent_routing = RoutingPrompter()
-        consent_routing.register("cli", TtyConsentPrompter())
-        consent_gate = ConsequentialActionGate(
-            ConsentPolicy(prompter=consent_routing, audit_logger=audit_logger)
-        )
+        consent_components = ConsentAssembly.build(audit_logger)
+        consent_routing = consent_components.routing_prompter
+        consent_gate = consent_components.consent_gate
 
         # E5 — clarify pause/resume gateway. One DI singleton: tools reach it via
         # get_services().clarify_gateway to ask the user mid-turn; the message
@@ -607,32 +621,16 @@ class StartupOrchestrator:
         # picked). The execute_code tool reads THIS off services at execute time; if
         # neither backend is viable the selector returns a structured unavailable and
         # the tool NEVER runs code on the host. Wired onto StepServices below.
-        from stackowl.sandbox.bwrap import BwrapSandbox
-        from stackowl.sandbox.docker import DockerSandbox
-        from stackowl.sandbox.selector import SandboxSelector
+        # Wired via the SandboxAssembly seam (OPS-5/F149) — extracted from this
+        # monolith so the code-execution trust boundary has a unit-testable
+        # assembly. Builds the selector + the shared SandboxGovernor (bounds total
+        # concurrent runs so N runs × the per-run memory cap can't OOM the host)
+        # and registers the recurring sandbox_sweep GC handler.
+        from stackowl.sandbox.assembly import SandboxAssembly
 
-        sandbox_selector = SandboxSelector(
-            backends=[
-                BwrapSandbox(enabled=self._settings.sandbox.bwrap_enabled),
-                DockerSandbox(enabled=self._settings.sandbox.docker_enabled),
-            ]
-        )
-
-        # E11-S6 — ONE shared SandboxGovernor: bounds total concurrent sandbox runs
-        # so N runs × the per-run memory cap cannot OOM the host. Injected onto
-        # StepServices so the execute_code tool acquires a slot around each run;
-        # saturated past a bounded wait it REFUSES (typed) and nothing runs. The
-        # recurring GC sweep (leaked scratch dirs / stackowl-sbx-* containers /
-        # cgroup scopes from crashes) is registered as a JobHandler here and seeded
-        # as a `sandbox_sweep` job row in the scheduler assembly (every 10m),
-        # mirroring process_sweep. Clock-injected so the reap TTL is deterministic.
-        from stackowl.sandbox.governor import SandboxGovernor
-        from stackowl.scheduler.handlers.sandbox_sweep import (
-            register_sandbox_sweep_handler,
-        )
-
-        sandbox_governor = SandboxGovernor()
-        register_sandbox_sweep_handler()
+        sandbox_components = SandboxAssembly.build(self._settings)
+        sandbox_selector = sandbox_components.selector
+        sandbox_governor = sandbox_components.governor
 
         # E8-S0cost — ONE shared CostTracker (per-turn running total feeds the soft
         # cost-pause) + the CostPauseGuard that asks the user "Continue?" via the
@@ -641,11 +639,17 @@ class StartupOrchestrator:
         # fails OPEN (never wedges a turn) and is interactive-only.
         from stackowl.interaction.cost_pause import CostPauseGuard
         from stackowl.providers.cost_tracker import CostTracker
+        from stackowl.providers.pricing.loader import PricingLoader
 
         cost_tracker = CostTracker(
             db=db_pool,
             event_bus=event_bus,
             daily_limit_usd=self._settings.budget.daily_limit_usd,
+            # F128 — seed the loader's conservative fallback for unknown CLOUD models
+            # from config so an unpriced paid model trips the budget, not bills $0.
+            pricing=PricingLoader(
+                unknown_cloud_per_1m_usd=self._settings.budget.unknown_cloud_per_1m_usd,
+            ),
         )
         # E8-S0cost — make providers the SINGLE cost-recording site: inject the ONE
         # shared tracker into every provider so a turn's REAL main-pipeline spend
@@ -2281,8 +2285,10 @@ class StartupOrchestrator:
                     await durable_recoverer.drain()
             # F067 — shut the dedicated Kuzu worker thread down cleanly so no
             # thread outlives the gateway (guarded; teardown never raises).
-            with contextlib.suppress(Exception):
-                await kuzu_adapter.aclose()
+            # DUR-5 / F069 — kuzu_adapter is None when the graph layer degraded.
+            if kuzu_adapter is not None:
+                with contextlib.suppress(Exception):
+                    await kuzu_adapter.aclose()
             with contextlib.suppress(Exception):
                 await db_pool.close()
             # F144 — remove the PID file LAST (after the DB pool is closed) so a

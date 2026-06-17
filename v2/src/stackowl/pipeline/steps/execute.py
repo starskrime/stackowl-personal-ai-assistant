@@ -745,9 +745,31 @@ async def _run_with_tools(
             "max_time_s": DEFAULT_TURN_MAX_TIME_S,
             "max_steps": DEFAULT_TURN_MAX_STEPS,
         })
+    # F093 — cumulative cost across durable resume: seed the governor with the
+    # spend already accumulated by PRIOR attempts of this durable task (the
+    # in-memory cost ledger resets on resume). Read off the task row; 0.0 for an
+    # ephemeral turn, a first attempt, or any read failure (best-effort, never
+    # blocks the turn). A negative/missing value floors at 0.0 in the governor.
+    _prior_cost_usd = 0.0
+    if state.task_id is not None and _services.db_pool is not None:
+        try:
+            from stackowl.pipeline.durable.store import DurableTaskStore
+            from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+
+            _cost_store = DurableTaskStore(
+                _services.db_pool, state.durable_owner_id or DEFAULT_PRINCIPAL_ID
+            )
+            _prior_cost_usd = await _cost_store.get_accumulated_cost(state.task_id)
+        except Exception as exc:  # noqa: BLE001 — best-effort seed; never block the turn
+            log.tasks.error(
+                "[tasks] execute: prior accumulated-cost read failed — seeding 0.0",
+                exc_info=exc,
+                extra={"_fields": {"task_id": state.task_id, "trace_id": state.trace_id}},
+            )
     _governor = BudgetGovernor(
         _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
         started_monotonic=time.monotonic(), clock=_MonotonicClock(),
+        prior_cost_usd=_prior_cost_usd,
     )
     _budget_cb = make_budget_callback(
         _governor,
@@ -878,6 +900,28 @@ async def _run_with_tools(
         session = durable_session_for_state(state, db)
         ctx = session.ctx
         cb = make_checkpoint_callback(ctx, session.store)
+
+        # F093 — persist the CUMULATIVE cost (prior attempts + this attempt) on the
+        # task row each completed iteration so the next resume seeds its governor
+        # with it and the cost ceiling holds across the whole task. Writes the
+        # governor's ABSOLUTE current cumulative spend (monotonic, idempotent on
+        # replay — never an additive delta). Best-effort: a persist failure is
+        # logged and swallowed so cost bookkeeping never breaks a durable drive.
+        async def _persist_cost_cb(
+            _s: ReActIterationState,
+        ) -> list[dict[str, Any]] | None:
+            try:
+                await session.store.set_accumulated_cost(
+                    task_id, _governor.current_cost_usd()
+                )
+            except Exception as exc:  # noqa: BLE001 — never break the drive on cost I/O
+                log.tasks.error(
+                    "[tasks] execute: durable cost persist failed — continuing",
+                    exc_info=exc,
+                    extra={"_fields": {"task_id": task_id, "trace_id": state.trace_id}},
+                )
+            return None
+
         # E2-S4 / Task 10 — compose in order: checkpoint the completed iteration
         # first (so a breached turn is still durably recorded and the resume seam
         # can replay from it on a Raise), THEN gate budget, THEN fold steering.
@@ -885,7 +929,7 @@ async def _run_with_tools(
         # [steering] message. _compose_iter_cbs concatenates any folded messages
         # (Task 9 splice contract) so no callback's splice is silently lost.
         _iter_cb = _compose_iter_cbs(
-            [c for c in (cb, _budget_cb, _steering_cb) if c is not None]
+            [c for c in (cb, _persist_cost_cb, _budget_cb, _steering_cb) if c is not None]
         )
 
         log.tasks.debug(

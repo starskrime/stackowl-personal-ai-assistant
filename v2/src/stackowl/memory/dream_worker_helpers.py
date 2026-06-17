@@ -7,6 +7,7 @@ handler re-exports it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -589,13 +590,58 @@ async def count_committed_facts(db: DbPool) -> int:
     return count
 
 
+def _contradiction_id(report: ContradictionReport) -> str:
+    """Deterministic id for a contradiction (DUR-4 / F068).
+
+    Stable across re-scans so a crash-resume that re-detects the SAME
+    contradiction maps to the SAME id. The fact pair is order-normalised so
+    (a,b) and (b,a) collapse to one id; the explanation is folded in so a
+    different *kind* of contradiction over the same pair is still distinct.
+    """
+    a, b = sorted((report.fact_id_a, report.fact_id_b))
+    payload = f"{a}\x1f{b}\x1f{report.explanation}".encode()
+    return hashlib.sha256(payload).hexdigest()[:32]
+
+
+async def _contradiction_already_audited(db: DbPool, contradiction_id: str) -> bool:
+    """True if a ``memory.contradiction`` audit row already carries this id.
+
+    Uses ``json_extract`` on ``details`` so the check is exact (no LIKE false
+    positives). Read failure is treated as "not present" but logged loudly — a
+    spurious duplicate is far less harmful than aborting the consolidation pass.
+    """
+    try:
+        rows = await db.fetch_all(
+            "SELECT 1 FROM audit_log "
+            "WHERE event_type = ? "
+            "AND json_extract(details, '$.contradiction_id') = ? LIMIT 1",
+            (_AUDIT_EVENT_TYPE, contradiction_id),
+        )
+    except Exception as exc:
+        log.memory.warning(
+            "[memory] dream_worker_helpers: contradiction-dedup read failed "
+            "— proceeding (may duplicate)",
+            exc_info=exc,
+            extra={"_fields": {"contradiction_id": contradiction_id}},
+        )
+        return False
+    return bool(rows)
+
+
 async def mark_audit_contradictions(
     db: DbPool, reports: list[ContradictionReport]
 ) -> None:
-    """Best-effort append of each report into ``audit_log``.
+    """Idempotently append each report into ``audit_log``.
 
-    Audit writes are non-fatal: a missing table or write failure must never
-    cause the consolidation pass to fail. Every failure is logged at WARNING.
+    Idempotency (DUR-4 / F068): each contradiction is keyed by a deterministic
+    :func:`_contradiction_id` (in the row's ``details``); a report whose id is
+    already present is skipped, so re-running the contradiction phase after a
+    mid-phase crash never writes a duplicate ``memory.contradiction`` row. The
+    audit_log is append-only (no UPDATE/DELETE), so dedup is a pre-insert
+    existence check rather than an upsert.
+
+    Audit writes are otherwise non-fatal: a missing table or write failure must
+    never cause the consolidation pass to fail. Every failure is logged.
     """
     if not reports:
         return
@@ -603,10 +649,18 @@ async def mark_audit_contradictions(
         "[memory] dream_worker_helpers.mark_audit_contradictions: entry",
         extra={"_fields": {"report_count": len(reports)}},
     )
+    written = 0
+    skipped = 0
     for report in reports:
+        cid = _contradiction_id(report)
         try:
+            if await _contradiction_already_audited(db, cid):
+                # 2. DECISION — already recorded on a prior (crashed) pass.
+                skipped += 1
+                continue
             details = json.dumps(
                 {
+                    "contradiction_id": cid,
                     "fact_id_a": report.fact_id_a,
                     "fact_id_b": report.fact_id_b,
                     "explanation": report.explanation,
@@ -626,6 +680,7 @@ async def mark_audit_contradictions(
                 time.time(),
                 details,
             )
+            written += 1
         except Exception as exc:
             # B5 — audit failure must not abort the consolidation pass
             log.memory.warning(
@@ -640,7 +695,7 @@ async def mark_audit_contradictions(
             )
     log.memory.debug(
         "[memory] dream_worker_helpers.mark_audit_contradictions: exit",
-        extra={"_fields": {"written": len(reports)}},
+        extra={"_fields": {"written": written, "skipped_duplicate": skipped}},
     )
 
 

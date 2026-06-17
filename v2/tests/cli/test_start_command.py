@@ -17,6 +17,21 @@ from stackowl.setup.onboarding_table import OnboardingTable
 runner = CliRunner()
 
 
+def _wire_real_migrations(mock_orch: MagicMock) -> None:
+    """Make a mocked orchestrator's single migration site (F146) actually migrate.
+
+    `cli start` now delegates its pre-onboarding schema guarantee to the
+    orchestrator's `ensure_migrations` (the ONE migration site). When the
+    orchestrator is mocked, that delegation must still build the schema so the
+    first-run/onboarding detection query has its table.
+    """
+    from stackowl.paths import StackowlHome
+
+    mock_orch.ensure_migrations = MagicMock(
+        side_effect=lambda: MigrationRunner(db_path=StackowlHome.db_path()).run()
+    )
+
+
 def _setup_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "stackowl-home"
     monkeypatch.setenv("STACKOWL_HOME", str(home))
@@ -42,6 +57,7 @@ def test_start_creates_home_on_fresh_install(
         mock_setup_cls.return_value.run = AsyncMock()
         mock_orch = MagicMock()
         mock_orch.run = AsyncMock()
+        _wire_real_migrations(mock_orch)
         mock_orch_cls.return_value = mock_orch
         mock_settings_cls.return_value.providers = []
 
@@ -68,6 +84,7 @@ def test_start_first_run_invokes_minimal_setup(
         mock_setup_cls.return_value.run = mock_run
         mock_orch = MagicMock()
         mock_orch.run = AsyncMock()
+        _wire_real_migrations(mock_orch)
         mock_orch_cls.return_value = mock_orch
         mock_settings_cls.return_value.providers = []
 
@@ -105,6 +122,7 @@ def test_start_skips_setup_when_event_recorded(
         mock_setup_cls.return_value.run = mock_run
         mock_orch = MagicMock()
         mock_orch.run = AsyncMock()
+        _wire_real_migrations(mock_orch)
         mock_orch_cls.return_value = mock_orch
         mock_settings_cls.return_value.providers = []
 
@@ -129,6 +147,7 @@ def test_start_skip_setup_flag_overrides_first_run(
         mock_setup_cls.return_value.run = mock_run
         mock_orch = MagicMock()
         mock_orch.run = AsyncMock()
+        _wire_real_migrations(mock_orch)
         mock_orch_cls.return_value = mock_orch
         mock_settings_cls.return_value.providers = []
 
@@ -158,6 +177,7 @@ def test_start_exits_on_config_validation_failure(
         mock_setup_cls.return_value.run = AsyncMock()
         mock_orch = MagicMock()
         mock_orch.run = AsyncMock()
+        _wire_real_migrations(mock_orch)
         mock_orch_cls.return_value = mock_orch
         mock_settings_cls.return_value.providers = [provider]
 

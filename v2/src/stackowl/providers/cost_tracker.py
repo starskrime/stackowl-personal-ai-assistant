@@ -90,9 +90,11 @@ class CostTracker(OwnedRepository):
             extra={"_fields": {"pricing_models": len(self._pricing.table)}},
         )
 
-    def _estimate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        """Delegate cost estimation to the PricingLoader."""
-        return self._pricing.estimate(model, input_tokens, output_tokens)
+    def _estimate_cost(
+        self, model: str, input_tokens: int, output_tokens: int, *, is_local: bool
+    ) -> float:
+        """Delegate cost estimation to the PricingLoader (locality-aware)."""
+        return self._pricing.estimate(model, input_tokens, output_tokens, is_local=is_local)
 
     async def record(
         self,
@@ -102,8 +104,14 @@ class CostTracker(OwnedRepository):
         output_tokens: int,
         duration_ms: float,
         trace_id: str = "",
+        is_local: bool = False,
     ) -> CostRecord:
-        """Record a completed LLM call. Persists to SQLite and checks budget."""
+        """Record a completed LLM call. Persists to SQLite and checks budget.
+
+        ``is_local`` marks a self-hosted backend so an unknown LOCAL model stays
+        $0 while an unknown CLOUD model gets a conservative fallback price (F128).
+        Defaults to ``False`` (cloud) so an un-threaded caller fails safe to PAID.
+        """
         log.engine.debug(
             "[cost_tracker] record: entry",
             extra={"_fields": {
@@ -129,7 +137,7 @@ class CostTracker(OwnedRepository):
                 ValueError("Budget cap reached — /config set budget.daily_limit_usd <N> to raise it"),
             )
 
-        cost_usd = self._estimate_cost(model, input_tokens, output_tokens)
+        cost_usd = self._estimate_cost(model, input_tokens, output_tokens, is_local=is_local)
         record = CostRecord(
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,

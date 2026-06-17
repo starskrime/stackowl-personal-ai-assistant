@@ -24,6 +24,15 @@ if TYPE_CHECKING:
 
 _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "powerful", "local")
 
+#: Tiers ordered MOST → LEAST capable for a capability-degrade substitution
+#: (F125). When a requested capable tier (e.g. ``powerful``) has no provider, a
+#: substitution prefers the next most-capable AVAILABLE tier rather than an
+#: arbitrary config-order provider (which could be a weak local model). ``local``
+#: is last because, while orthogonal to tier for routing, an unlabeled local
+#: backend is the weakest synthesis substitute and must never win over a cloud
+#: standard/fast provider.
+_CAPABILITY_ORDER: tuple[str, ...] = ("powerful", "standard", "fast", "local")
+
 
 def _inject_resilience(
     provider: object,
@@ -534,6 +543,58 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         healthy = self.get_with_cascade(tier)
         return healthy, primary_name
+
+    def resolve_capable_or_degrade(
+        self, tier: str,
+    ) -> tuple[ModelProvider, str | None]:
+        """Resolve a CAPABLE tier, cascading to the most-capable available substitute.
+
+        Returns ``(provider, degraded_from)``. On an exact match ``degraded_from``
+        is ``None``. When no provider serves ``tier``, this prefers the next
+        MOST-CAPABLE available tier (``_CAPABILITY_ORDER``) and returns
+        ``degraded_from=tier`` so the caller can SURFACE the substitution — never a
+        silent arbitrary (possibly weak-local) provider as :meth:`get_by_tier` did
+        (F125). Used by parliament synthesis, which depends on actually getting a
+        powerful model. Raises :class:`ProviderNotFoundError` when the roster is
+        empty (no honest substitute exists).
+        """
+        log.engine.debug(
+            "[registry] resolve_capable_or_degrade: entry",
+            extra={"_fields": {"tier": tier}},
+        )
+        # Snapshot together: a concurrent apply_settings() swaps both atomically.
+        providers = self._providers
+        tiers = self._tiers
+
+        # Exact match first — byte-identical happy path to get_by_tier.
+        for name, provider_tier in tiers.items():
+            if provider_tier == tier and name in providers:
+                return providers[name], None
+
+        # No exact provider: cascade by CAPABILITY (most-capable first), skipping the
+        # requested tier itself (already known absent). Returns degraded_from=tier.
+        for cand_tier in _CAPABILITY_ORDER:
+            if cand_tier == tier:
+                continue
+            for name, provider_tier in tiers.items():
+                if provider_tier == cand_tier and name in providers:
+                    log.engine.warning(
+                        "[registry] resolve_capable_or_degrade: no provider for "
+                        "requested tier — substituting the most-capable available "
+                        "tier (DEGRADED); add/relabel a provider to fix routing",
+                        extra={"_fields": {
+                            "requested_tier": tier,
+                            "substitute_tier": cand_tier,
+                            "substitute": name,
+                        }},
+                    )
+                    return providers[name], tier
+
+        log.engine.error(
+            "[registry] resolve_capable_or_degrade: no providers registered",
+            extra={"_fields": {"tier": tier}},
+        )
+        raise ProviderNotFoundError(f"tier:{tier}")
 
     def healthy_distinct(self, limit: int | None = None) -> list[ModelProvider]:
         """Return providers whose CircuitBreaker is NOT OPEN, distinct underlying.

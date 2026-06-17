@@ -148,8 +148,14 @@ async def test_build_bridge_uses_db_pool(tmp_db: DbPool) -> None:
     assert len(turns) == 1
 
 
-async def test_build_kuzu_hard_fails_if_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_db: DbPool) -> None:
-    """If KuzuAdapter raises, assembly propagates — no silent degradation."""
+async def test_build_kuzu_degrades_to_none_if_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_db: DbPool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """DUR-5 / F069 — if KuzuAdapter raises, assembly DEGRADES to a None adapter
+    (consistent with LanceDB/embeddings policy) with a LOUD ERROR + 'down' graph
+    health, rather than aborting startup (the prior hard-fail policy)."""
+    import logging
+
     from stackowl.memory import kuzu_adapter as kuzu_mod
 
     class _BoomKuzu:
@@ -158,7 +164,13 @@ async def test_build_kuzu_hard_fails_if_unavailable(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(kuzu_mod, "KuzuAdapter", _BoomKuzu)
     settings = Settings(memory=MemorySettings())
-    with pytest.raises(RuntimeError, match="simulated kuzu"):
-        await MemoryAssembly.build(
+    with caplog.at_level(logging.ERROR):
+        components = await MemoryAssembly.build(
             db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
         )
+    assert components.kuzu_adapter is None
+    assert (await components.graph_health.health_check()).status == "down"
+    assert any(
+        r.levelno >= logging.ERROR and "kuzu" in r.getMessage().lower()
+        for r in caplog.records
+    )

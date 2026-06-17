@@ -15,6 +15,13 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 
 log = logging.getLogger("stackowl.audit")
 
+# Lock-wait budget (ms) for a connection that loses the BEGIN IMMEDIATE race
+# (F140). SQLite's spec default is 0 (fail instantly with "database is locked");
+# some distro builds default to 5000 but that is NOT portable, and StackOwl must
+# behave identically on every host. Set it explicitly on every connection so two
+# concurrent appends serialize via the lock instead of one failing immediately.
+_BUSY_TIMEOUT_MS = 5000
+
 # Chain format version stamped on every new row. v1 rows (legacy / absent column)
 # verify with the legacy formula; v2 rows fold actor+target+a version literal into
 # a length-prefixed payload so who-did-what-to-whom is tamper-evident.
@@ -208,6 +215,10 @@ class AuditLogger:
         try:
             conn = sqlite3.connect(self._db_path, isolation_level=None)
             try:
+                # F140 — explicit lock-wait so a concurrent writer that loses the
+                # BEGIN IMMEDIATE race WAITS instead of failing instantly. Portable
+                # across SQLite builds (spec default is 0).
+                conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
                 self._ensure_schema(conn)
                 details_json = json.dumps(details, sort_keys=True)
                 # Serialize the prev_hash-read + INSERT inside one write txn so two
@@ -272,6 +283,7 @@ class AuditLogger:
             conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row
             try:
+                conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
                 self._ensure_schema(conn)
                 # 2. DECISION
                 log.debug("[audit] logger.tail: decision — querying last %d rows", n)
@@ -307,6 +319,7 @@ class AuditLogger:
             conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row
             try:
+                conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
                 # 2. DECISION
                 log.debug("[audit] logger.verify_chain: decision — reading all rows")
                 # 3. STEP

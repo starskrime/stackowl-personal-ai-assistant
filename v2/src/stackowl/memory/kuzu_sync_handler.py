@@ -58,9 +58,9 @@ class KuzuSyncJobHandler(JobHandler):
 
     def __init__(
         self,
-        kuzu_adapter: KuzuAdapter,
-        entity_extractor: EntityExtractor,
-        db: DbPool,
+        kuzu_adapter: KuzuAdapter | None,
+        entity_extractor: EntityExtractor | None,
+        db: DbPool | None,
         batch_size: int = 50,
     ) -> None:
         # 1. ENTRY
@@ -87,6 +87,24 @@ class KuzuSyncJobHandler(JobHandler):
             extra={"_fields": {"job_id": job.job_id, "batch_size": self._batch_size}},
         )
         t0 = time.monotonic()
+
+        # 2a. DECISION — graph layer degraded (DUR-5 / F069). When Kuzu failed to
+        # initialise the adapter is None; the sync is a clean no-op so the
+        # dream-worker kuzu phase (and the scheduler) succeed without the graph.
+        if self._kuzu is None or self._db is None:
+            duration_ms = (time.monotonic() - t0) * 1000.0
+            log.memory.warning(
+                "[memory] kuzu_sync_handler.execute: graph DEGRADED (None adapter) "
+                "— skipping sync",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return JobResult(
+                job_id=job.job_id,
+                success=True,
+                output="synced_count=0 graph_degraded",
+                error=None,
+                duration_ms=duration_ms,
+            )
 
         # 2. DECISION — fetch un-mirrored fact batch
         try:
@@ -170,6 +188,12 @@ class KuzuSyncJobHandler(JobHandler):
         itself could not be persisted (so it stays un-mirrored for the
         next tick).
         """
+        # Invariant: only reached on the non-degraded path — ``execute`` returns
+        # early (a clean no-op) when any of these is None (DUR-5 / F069), so the
+        # collaborators are guaranteed present here.
+        assert self._kuzu is not None
+        assert self._extractor is not None
+        assert self._db is not None
         # 3. STEP — extract entities (returns [] on any failure)
         try:
             entities = await self._extractor.extract(content, fact_id)
@@ -214,6 +238,9 @@ class KuzuSyncJobHandler(JobHandler):
         self, fact_id: str, entities: list[ExtractedEntity]
     ) -> int:
         """Upsert every entity + add a MENTIONS edge. Returns count succeeded."""
+        # Invariant: unreachable on the degraded (None-adapter) path — see
+        # ``_sync_one_fact`` / ``execute`` (DUR-5 / F069).
+        assert self._kuzu is not None
         written = 0
         for entity in entities:
             entity_id = _entity_id_for(fact_id, entity.name, entity.entity_type)

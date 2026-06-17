@@ -201,14 +201,17 @@ class TestOwlResourceGuard:
             ]
 
         task = asyncio.create_task(consume_one())
-        # Give first task a chance to acquire the semaphore + emit "start ".
+        # Wait until the first task has acquired the slot and yielded its first
+        # chunk (i.e. it is parked inside the provider waiting on the gate).
+        # We observe this via _slots._in_use rather than a private semaphore
+        # attribute — _slots is the public-replacement counter introduced by
+        # CONC-4 and is the canonical way to inspect slot occupancy in tests.
         for _ in range(50):
             await asyncio.sleep(0.01)
-            if not guard._semaphore.locked():  # noqa: SLF001
-                continue
-            break
+            if guard._slots._in_use >= 1:  # noqa: SLF001
+                break
 
-        assert guard._semaphore.locked(), "first call should hold the semaphore"  # noqa: SLF001
+        assert guard._slots._in_use == 1, "first call should hold one slot"  # noqa: SLF001
 
         with pytest.raises(OwlConcurrencyError) as ei:
             async for _ in guard.stream(provider, [Message(role="user", content="y")], model=""):

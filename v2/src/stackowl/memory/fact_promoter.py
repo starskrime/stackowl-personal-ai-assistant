@@ -245,27 +245,35 @@ class FactPromoter:
 
         embedding_blob = pack_embedding(fact.embedding) if fact.embedding else b""
         embedding_model = fact.embedding_model or ""
-        await self._db.execute(
-            _INSERT_COMMITTED_SQL,
-            (
-                fact.fact_id,
-                fact.content,
-                embedding_blob,
-                embedding_model,
-                fact.source_type,
-                fact.source_ref,
-                json.dumps([]),
-                fact.trust,
-            ),
-        )
-        await self._db.execute(_UPDATE_STAGED_STATUS_SQL, (fact.fact_id,))
-        # FTS5 sync — fetch the rowid we just inserted, then mirror content
-        rowid_rows = await self._db.fetch_all(_SELECT_ROWID_SQL, (fact.fact_id,))
-        if rowid_rows:
-            await self._db.execute(
-                _INSERT_FTS_SQL,
-                (rowid_rows[0]["rid"], fact.content),
+        # Commit the base row + its FTS index entry + the staged-status flip
+        # ATOMICALLY (F070): INSERT committed -> read its rowid (visible to the
+        # same txn before commit) -> INSERT fts, all in one transaction so a crash
+        # mid-sequence can never leave committed_facts and committed_facts_fts
+        # divergent. The rowid SELECT runs against the uncommitted INSERT inside
+        # the txn's own connection.
+        async with self._db.transaction() as tx:
+            await tx.execute(
+                _INSERT_COMMITTED_SQL,
+                (
+                    fact.fact_id,
+                    fact.content,
+                    embedding_blob,
+                    embedding_model,
+                    fact.source_type,
+                    fact.source_ref,
+                    json.dumps([]),
+                    fact.trust,
+                ),
             )
+            await tx.execute(_UPDATE_STAGED_STATUS_SQL, (fact.fact_id,))
+            # FTS5 sync — fetch the rowid we just inserted, then mirror content.
+            async with tx.execute(_SELECT_ROWID_SQL, (fact.fact_id,)) as cursor:
+                rowid_row = await cursor.fetchone()
+            if rowid_row is not None:
+                await tx.execute(
+                    _INSERT_FTS_SQL,
+                    (rowid_row[0], fact.content),
+                )
         # Vector upsert — the committed fact must be SEMANTICALLY recallable, not
         # only FTS. The SQLite commit + FTS sync above are the source of truth, so
         # a LanceDB failure here is logged and swallowed; it MUST NOT abort the

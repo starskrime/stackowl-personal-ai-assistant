@@ -284,12 +284,16 @@ class ToolBuildTool(Tool):
         if tool is None:
             return
         try:
-            # Internal removal — the registry keeps a name→tool dict and a
-            # source map; drop both entries so the name is immediately free.
-            registry._tools.pop(name, None)  # noqa: SLF001 — controlled removal
-            for names in registry._source_map.values():  # noqa: SLF001
-                if name in names:
-                    names.remove(name)
+            # Public single-name removal (F044) — atomically drops the name→tool
+            # entry AND its source-map references under the registry lock, instead
+            # of poking the private _tools/_source_map (which races a concurrent
+            # dispatch and bypasses the hardened unregister contract).
+            removed = registry.unregister(name)
+            if not removed:
+                log.tool.warning(
+                    "tool_build.execute: registry.unregister no-op (already gone or refused)",
+                    extra={"_fields": {"tool": name}},
+                )
         except Exception as exc:  # B5 — never raise on cleanup
             log.tool.warning(
                 "tool_build.execute: registry drop failed — file already removed",

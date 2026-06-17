@@ -7,8 +7,10 @@ from stackowl.providers import model_window as mw
 @pytest.fixture(autouse=True)
 def _clear_cache():
     mw._WINDOW_CACHE.clear()
+    mw._reset_probe_client()
     yield
     mw._WINDOW_CACHE.clear()
+    mw._reset_probe_client()
 
 
 def test_config_override_wins_and_converts_chars_to_tokens():
@@ -37,14 +39,11 @@ async def test_resolve_probes_ollama_api_show(monkeypatch):
             return {"model_info": {"qwen3.qwen.context_length": 32768}}
 
     class _Client:
-        def __init__(self, *a, **k): ...
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
         async def post(self, url, json):
             assert url.endswith("/api/show")
             return _Resp()
 
-    monkeypatch.setattr(mw.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(mw, "_new_probe_client", lambda: _Client())
     w = await mw.resolve_window(
         provider_name="ollama", base_url="http://x:11434/v1",
         model="qwen3.5:9b", context_chars=None, protocol="openai",
@@ -54,12 +53,9 @@ async def test_resolve_probes_ollama_api_show(monkeypatch):
 
 async def test_resolve_probe_failure_falls_back(monkeypatch):
     class _Boom:
-        def __init__(self, *a, **k): ...
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
         async def post(self, *a, **k): raise httpx.ConnectError("down")
 
-    monkeypatch.setattr(mw.httpx, "AsyncClient", _Boom)
+    monkeypatch.setattr(mw, "_new_probe_client", lambda: _Boom())
     w = await mw.resolve_window(
         provider_name="ollama", base_url="http://x:11434/v1",
         model="m", context_chars=None, protocol="openai",

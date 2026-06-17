@@ -280,26 +280,62 @@ class GoogleCalendarAdapter(IntegrationAdapter):
         return result
 
     async def health_check(self) -> HealthStatus:
+        """Report Calendar health from a REAL authenticated probe (F023).
+
+        Never reports ``ok`` merely because a token exists: a fresh adapter has
+        ``_last_api_ok=True`` but has performed no real call, which used to
+        false-green. We now run a lightweight ``calendarList().list(maxResults=1)``
+        probe and report from its actual outcome — ``ok`` only on success,
+        ``degraded`` until a real call succeeds (no ``unknown`` literal exists in
+        HealthStatus, so ``degraded`` carries the "not yet verified" case)."""
         log.debug("integrations.google_calendar.health_check: entry")
         connected = await self.is_connected()
         if not connected:
-            result = HealthStatus(
+            log.debug("integrations.google_calendar.health_check: exit — down")
+            return HealthStatus(
                 name=self.contributor_name,
                 status="down",
                 message="not connected",
                 latency_ms=0.0,
             )
-            log.debug("integrations.google_calendar.health_check: exit — down")
-            return result
-        if not self._last_api_ok:
-            result = HealthStatus(
+
+        t0 = time.time()
+        service = self._build_service()
+        if service is None:
+            # Token exists but the API client cannot be built (no creds /
+            # googleapiclient unavailable) — unverifiable, so NOT ok.
+            log.debug("integrations.google_calendar.health_check: exit — degraded (no client)")
+            return HealthStatus(
                 name=self.contributor_name,
                 status="degraded",
-                message="last API call failed",
-                latency_ms=0.0,
+                message="API client unavailable — health not verified",
+                latency_ms=(time.time() - t0) * 1000,
             )
-            log.debug("integrations.google_calendar.health_check: exit — degraded")
-            return result
-        result = HealthStatus(name=self.contributor_name, status="ok", message=None, latency_ms=0.0)
-        log.debug("integrations.google_calendar.health_check: exit — ok")
-        return result
+
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: service.calendarList().list(maxResults=1).execute(),
+            )
+            self._last_api_call_at = time.time()
+            self._last_api_ok = True
+            log.debug("integrations.google_calendar.health_check: exit — ok (probe succeeded)")
+            return HealthStatus(
+                name=self.contributor_name,
+                status="ok",
+                message=None,
+                latency_ms=(time.time() - t0) * 1000,
+            )
+        except Exception as exc:  # never crash the health aggregator
+            self._last_api_call_at = time.time()
+            self._last_api_ok = False
+            log.warning(
+                "integrations.google_calendar.health_check: probe failed",
+                extra={"_fields": {"error": str(exc)}},
+            )
+            return HealthStatus(
+                name=self.contributor_name,
+                status="degraded",
+                message=f"calendarList probe failed: {exc}",
+                latency_ms=(time.time() - t0) * 1000,
+            )

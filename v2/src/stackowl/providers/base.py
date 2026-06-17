@@ -156,6 +156,7 @@ class ModelProvider(ABC):
                 output_tokens=output_tokens,
                 duration_ms=duration_ms,
                 trace_id=trace_id,
+                is_local=self._is_local_backend,
             )
         except Exception as exc:  # B5 — never let cost recording break a completion.
             log.engine.error(
@@ -163,6 +164,18 @@ class ModelProvider(ABC):
                 exc_info=exc,
                 extra={"_fields": {"provider": self.name, "model": model}},
             )
+
+    @property
+    def _is_local_backend(self) -> bool:
+        """Whether this provider's backend is self-hosted (on-box / private net).
+
+        Drives locality-aware pricing (F128): an unknown model on a LOCAL backend
+        stays $0; an unknown CLOUD model gets a conservative fallback price.
+        Defaults **False** (cloud) on the ABC — the conservative, fail-safe-to-paid
+        default. The only backend that can be local is an openai-compatible one
+        pointed at a loopback/private base_url (e.g. Ollama), which overrides this.
+        """
+        return False
 
     @property
     @abstractmethod

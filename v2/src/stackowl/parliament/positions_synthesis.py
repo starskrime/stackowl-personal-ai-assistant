@@ -75,11 +75,23 @@ async def synthesize_positions(
     t0 = time.monotonic()
     labels = [f"agent_{i + 1}" for i in range(len(positions))]
     messages = build_positions_prompt(system_prompt, question, positions, labels)
-    provider = providers.get_by_tier("powerful")
+    # F125 — prefer the most-capable AVAILABLE substitute (not config-order first)
+    # and SURFACE the degrade so the user is never shown a fake "powerful" consensus
+    # silently synthesized by a weak model.
+    provider, degraded_from = providers.resolve_capable_or_degrade("powerful")
     log.parliament.debug(
         "[parliament] synthesize_positions: provider selected",
-        extra={"_fields": {"provider_name": provider.name, "tier": "powerful"}},
+        extra={"_fields": {
+            "provider_name": provider.name, "tier": "powerful",
+            "tier_degraded": degraded_from is not None,
+        }},
     )
+    if degraded_from is not None:
+        log.parliament.warning(
+            "[parliament] synthesize_positions: no 'powerful' provider — synthesizing "
+            "on a less-capable substitute (DEGRADED)",
+            extra={"_fields": {"provider_name": provider.name, "degraded_from": degraded_from}},
+        )
 
     try:
         completion = await provider.complete(messages, model="")
@@ -99,7 +111,13 @@ async def synthesize_positions(
     parsed = parser.parse(raw_text, "moa")
     rollcall = " · ".join(labels)
     body = raw_text.split(_DIAMOND)[0].rstrip()
-    synthesis_text = f"Mixture-of-Agents: {rollcall}\n\n{body}\n{_DIAMOND}"
+    degrade_notice = (
+        "_(Note: no powerful synthesis model was available — this was aggregated "
+        "by a less-capable substitute.)_\n\n"
+        if degraded_from is not None
+        else ""
+    )
+    synthesis_text = f"Mixture-of-Agents: {rollcall}\n\n{degrade_notice}{body}\n{_DIAMOND}"
     result = SynthesisResult(
         consensus=parsed.consensus,
         disagreements=parsed.disagreements,
