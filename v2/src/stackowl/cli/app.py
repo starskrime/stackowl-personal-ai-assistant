@@ -456,14 +456,68 @@ def mcp_start(
 
 @mcp_app.command("status")
 def mcp_status() -> None:
-    """Show MCP server status."""
-    typer.echo("MCP server status: not running (no persistent process tracked)")
+    """Show real MCP server status (TCP liveness probe at the configured host:port)."""
+    from stackowl.config.settings import Settings
+    from stackowl.startup.mcp_status_probe import McpStatusProbe
+
+    log.debug("[cli] mcp_status: entry")
+    mcp_cfg = Settings().mcp_server
+    host = getattr(mcp_cfg, "host", "127.0.0.1")
+    port = getattr(mcp_cfg, "port", 8765)
+    enabled = getattr(mcp_cfg, "enabled", False)
+    transport = getattr(mcp_cfg, "transport", "sse")
+
+    # stdio transport has no listening socket — it is launched per-client by the
+    # MCP host process, so there is nothing to probe. Report that honestly.
+    if transport == "stdio":
+        typer.echo(
+            f"MCP server: stdio transport (launched per-client; no listening socket to probe). "
+            f"enabled={enabled}"
+        )
+        log.debug("[cli] mcp_status: exit — stdio")
+        return
+
+    result = McpStatusProbe(host=host, port=port).check()
+    if result.running:
+        typer.echo(f"MCP server: running — accepting connections at {host}:{port}")
+    else:
+        typer.echo(
+            f"MCP server: not running — no listener at {host}:{port} "
+            f"(config enabled={enabled})"
+        )
+    log.debug("[cli] mcp_status: exit — running=%s", result.running)
 
 
 @mcp_app.command("list-clients")
 def mcp_list_clients() -> None:
-    """List currently connected MCP clients."""
-    typer.echo("No active MCP clients")
+    """Report MCP client-connection visibility (no per-client tracking is maintained)."""
+    from stackowl.config.settings import Settings
+    from stackowl.startup.mcp_status_probe import McpStatusProbe
+
+    log.debug("[cli] mcp_list_clients: entry")
+    mcp_cfg = Settings().mcp_server
+    host = getattr(mcp_cfg, "host", "127.0.0.1")
+    port = getattr(mcp_cfg, "port", 8765)
+    transport = getattr(mcp_cfg, "transport", "sse")
+
+    # The SSE transport does not maintain a queryable per-client registry, so we
+    # must NOT fabricate a definitive client list. Report the server's liveness
+    # and state truthfully that individual client tracking is unavailable.
+    if transport == "stdio":
+        typer.echo(
+            "MCP client tracking unavailable: stdio transport has no central client registry."
+        )
+        log.debug("[cli] mcp_list_clients: exit — stdio")
+        return
+
+    result = McpStatusProbe(host=host, port=port).check()
+    state = "running" if result.running else "not running"
+    typer.echo(
+        f"MCP server is {state} at {host}:{port}. "
+        "Per-client connection tracking is not maintained, so the connected-client "
+        "list cannot be reported."
+    )
+    log.debug("[cli] mcp_list_clients: exit — running=%s", result.running)
 
 
 # ---------------------------------------------------------------------------
