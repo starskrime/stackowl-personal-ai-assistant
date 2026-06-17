@@ -263,16 +263,43 @@ async def test_cost_tracker_record_persists(tmp_db: DbPool) -> None:
     assert rows[0]["trace_id"] == "t-1"
 
 
-async def test_cost_tracker_unknown_model_falls_back_to_local_default(tmp_db: DbPool) -> None:
+async def test_cost_tracker_unknown_model_locality_aware_pricing(tmp_db: DbPool) -> None:
+    """Unknown model is priced by LOCALITY (PROV-2/F128), not flat $0.
+
+    PROV-2 deliberately changed unknown-model billing: an unknown model on a LOCAL
+    (self-hosted) backend stays $0, but an unknown CLOUD model is charged a
+    conservative non-zero fallback so an unrecognized PAID model can never silently
+    bill $0 and bypass the budget cap. ``record(is_local=...)`` carries the signal
+    (threaded in production from ``ModelProvider._is_local_backend`` via
+    ``is_local_url(base_url)``); it defaults to ``False`` (cloud) — fail-safe to PAID.
+
+    This test previously asserted a flat $0 for any unknown model, which encoded the
+    PRE-PROV-2 behavior. Updated to assert the new, intentional locality-aware pricing.
+    """
     tracker, _events = _make_tracker(tmp_db)
-    rec = await tracker.record(
+
+    # Unknown LOCAL model → still free ($0).
+    local_rec = await tracker.record(
         provider_name="ollama",
         model="some-unknown-model",
         input_tokens=1_000_000,
         output_tokens=500_000,
         duration_ms=10.0,
+        is_local=True,
     )
-    assert rec.cost_usd == 0.0
+    assert local_rec.cost_usd == 0.0
+
+    # Unknown CLOUD model → conservative non-zero fallback (default 15.0/1M applied to
+    # both input and output): (1.0M + 0.5M) * 15.0 / 1M = 22.5 USD.
+    cloud_rec = await tracker.record(
+        provider_name="some-cloud",
+        model="some-unknown-model",
+        input_tokens=1_000_000,
+        output_tokens=500_000,
+        duration_ms=10.0,
+        is_local=False,
+    )
+    assert cloud_rec.cost_usd == pytest.approx((1_000_000 + 500_000) * 15.0 / 1_000_000.0)
 
 
 async def test_cost_tracker_daily_total_aggregates(tmp_db: DbPool) -> None:
