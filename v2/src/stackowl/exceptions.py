@@ -537,8 +537,15 @@ class TurnStopped(Exception):
         *,
         partial_text: str = "",
         tool_call_records: list[dict[str, object]] | None = None,
+        drained_steers: list[str] | None = None,
     ) -> None:
         self.request_id = request_id
         self.partial_text = partial_text
         self.tool_call_records = tool_call_records or []
+        # REACT-6/F033 — steers the boundary callback drained from the mailbox but
+        # could NOT fold (the turn is stopping). They were already removed from the
+        # mailbox, so the completion-seam survivor drain would find nothing — carry
+        # them here so the execute finalize seam re-routes them as queued-new turns
+        # instead of losing the user's co-arriving message.
+        self.drained_steers = drained_steers or []
         super().__init__(f"turn stopped cooperatively: request_id={request_id}")

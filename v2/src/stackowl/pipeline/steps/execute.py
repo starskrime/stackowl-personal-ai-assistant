@@ -213,11 +213,12 @@ def make_steering_callback(
             except asyncio.QueueEmpty:
                 break
         # §5.3 — honor cooperative STOP at this iteration boundary. Checked AFTER
-        # draining so we observe (and count via `pending_steers`) any co-arriving
-        # steer before we stop. Those drained steers are then DISCARDED — the turn
-        # is stopping, so there is no further iteration to fold them into; this is
-        # intentional, not a lost-steer bug. FLAG only — we raise a controlled
-        # TurnStopped, NEVER task.cancel().
+        # draining so we observe any co-arriving steer before we stop. REACT-6/F033:
+        # those drained steers are NOT discarded — the callback already removed them
+        # from the mailbox, so the completion-seam survivor drain would find nothing.
+        # Carry them on TurnStopped so the execute finalize seam re-routes them as
+        # queued-new turns (the same path survivors take). FLAG only — we raise a
+        # controlled TurnStopped, NEVER task.cancel().
         if turn.stop_requested:
             log.engine.info(
                 "[steer] stop flag honored at iteration boundary — finalizing gracefully",
@@ -233,6 +234,7 @@ def make_steering_callback(
                 request_id,
                 partial_text=_last_assistant_text(_state.messages),
                 tool_call_records=list(_state.tool_call_records),
+                drained_steers=drained,
             )
         if not drained:
             return None
@@ -1093,8 +1095,26 @@ async def _run_with_tools(
             "[pipeline] execute: turn stopped cooperatively — finalizing gracefully",
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name,
                                "request_id": exc.request_id,
-                               "tool_calls": len(exc.tool_call_records)}},
+                               "tool_calls": len(exc.tool_call_records),
+                               "drained_steers": len(exc.drained_steers)}},
         )
+        # REACT-6/F033 — a steer co-arriving with the stop was drained from the
+        # mailbox by the boundary callback but could not be folded into a stopping
+        # turn. Re-route it as a queued-new turn so the user's message is preserved
+        # rather than silently lost. Fail-safe: never breaks the stop finalize.
+        if exc.drained_steers and _services.turn_registry is not None:
+            try:
+                await _services.turn_registry.requeue_steers_as_new(
+                    exc.request_id, exc.drained_steers
+                )
+            except Exception as _req_exc:  # never let re-route break the clean stop
+                log.engine.error(
+                    "[pipeline] execute: re-routing stopped-turn steers failed",
+                    exc_info=_req_exc,
+                    extra={"_fields": {"trace_id": state.trace_id,
+                                       "request_id": exc.request_id,
+                                       "drained_steers": len(exc.drained_steers)}},
+                )
         _stopped_note = "[stopped: you asked me to stop — ending this turn here.]"
         _stopped_content = (
             f"{exc.partial_text}\n\n{_stopped_note}" if exc.partial_text else _stopped_note

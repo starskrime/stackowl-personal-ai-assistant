@@ -439,6 +439,35 @@ class TurnRegistry:
                 break
         return survivors
 
+    async def requeue_steers_as_new(self, request_id: str, texts: list[str]) -> None:
+        """REACT-6/F033 — re-route steers that a stop swallowed as queued-new turns.
+
+        The cooperative-stop callback drains the steering mailbox at the iteration
+        boundary and cannot fold the drained steers into a stopping turn. Those
+        items were already removed from the mailbox, so the completion-seam
+        ``finalize_and_drain`` would find nothing to re-route — the user's
+        co-arriving message would be lost. The execute finalize seam hands them
+        here so they are re-enqueued as queued-new turns via the SAME shared
+        ``_reroute_survivors_locked`` path survivors take. Fail-safe: an unknown
+        request id (already deregistered) or an empty list is a no-op; a full
+        intake queue is logged-not-raised inside the shared helper.
+
+        Runs under the turn's ``lock`` (the SAME lock ``try_steer`` /
+        ``finalize_and_drain`` take) so the intake-deque mutation is serialized
+        with any concurrent steer routing on this session.
+        """
+        if not texts:
+            return
+        turn = self._turns.get(request_id)
+        if turn is None:
+            log.gateway.warning(
+                "[turn] requeue_steers_as_new: no live turn — steers dropped",
+                extra={"_fields": {"request_id": request_id, "count": len(texts)}},
+            )
+            return
+        async with turn.lock:
+            self._reroute_survivors_locked(turn, texts)
+
     async def finalize_and_drain(self, request_id: str) -> list[str]:
         """Atomically FINALIZE the turn then drain+re-route survivors (one lock).
 
