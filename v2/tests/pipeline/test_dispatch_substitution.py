@@ -303,6 +303,7 @@ async def _build_real_dispatch(
     reg: _FakeRegistry,
     *,
     denied_tools: set[str] | None = None,
+    language: str = "en",
 ):
     """Construct execute._run_with_tools' inner _dispatch with the substitution
     wiring active, stubbing the bounds + consent + services seams so the test
@@ -366,6 +367,7 @@ async def _build_real_dispatch(
     state = PipelineState(
         input_text="hi", owl_name="secretary", session_id="s1",
         channel="cli", trace_id="t1", pipeline_step="execute",
+        language=language,
     )
 
     await exe._run_with_tools(state, _FakeProvider(), reg)  # type: ignore[arg-type]

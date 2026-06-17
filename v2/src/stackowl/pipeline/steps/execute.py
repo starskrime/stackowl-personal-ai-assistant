@@ -314,6 +314,7 @@ async def _try_substitute(
     effective: Any,
     substituted_tags: set[str],
     trace_id: str,
+    locale: str = "en",
 ) -> str | None:
     """The W3.T14 recovery actuator (route around a broken capability).
 
@@ -389,8 +390,11 @@ async def _try_substitute(
         tag = sib.manifest.capability_tag
         if tag:
             substituted_tags.add(tag)
+        # F030/REACT-4 — localize the user-facing note from the turn's resolved
+        # language (state.language, threaded as `locale`); localize_format
+        # en-fallbacks for any uncatalogued language. Never the hardcoded "en".
         note = localize_format(
-            "self_heal_substituted", "en", failed=failed_tool, sibling=sibling_name,
+            "self_heal_substituted", locale, failed=failed_tool, sibling=sibling_name,
         )
         log.engine.info(
             "[pipeline] execute: self-heal substitution succeeded",
@@ -696,6 +700,7 @@ async def _run_with_tools(
             effective=effective,
             substituted_tags=substituted_tags,
             trace_id=state.trace_id,
+            locale=state.language,
         )
         if sub is not None:
             return sub
