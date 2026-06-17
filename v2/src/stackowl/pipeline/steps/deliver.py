@@ -51,6 +51,15 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state
 
+    # REACT-8/F037 — terminal signaling contract. The tool path (and consolidate)
+    # build content chunks; ``StreamWriter.close()`` below appends the SINGLE
+    # is_final=True sentinel (empty content) that ``StreamReader`` keys on to stop
+    # (the reader BREAKS on is_final WITHOUT yielding it). So a content chunk must
+    # NEVER carry is_final=True — the reader would swallow its content. The terminal
+    # signal for the streaming path is the close() sentinel, not a per-content flag;
+    # the cli_adapter/conversation_view is_final checks are satisfied by the adapter's
+    # own belt-and-suspenders terminal marker. is_final on a CONTENT chunk is dead for
+    # this path by design — kept only for the non-streaming consolidate merge.
     for chunk in state.responses:
         if chunk.trace_id and chunk.trace_id != state.trace_id:
             log.gateway.error(
@@ -61,7 +70,6 @@ async def run(state: PipelineState) -> PipelineState:
         # Stamp this turn's reply target onto the (frozen) chunk so a fan-out
         # channel (Telegram) routes the output back to ITS OWN chat under
         # concurrency. None for CLI turns — the adapter resolves the destination.
-        chunk = chunk.model_copy(update={"target": state.reply_target})
         await writer.write(chunk)
     await writer.close()
 
