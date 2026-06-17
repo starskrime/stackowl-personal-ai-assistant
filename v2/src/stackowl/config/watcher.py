@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -55,12 +56,27 @@ class ConfigWatcher:
         self._pending_mtime: float | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        # CFG-3 (F018) — the asyncio loop that owns the subscribers' state. When
+        # set, settings_reloaded is marshalled to it via call_soon_threadsafe so
+        # handlers run ON the loop thread, never the watcher daemon thread.
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def capture_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Record the asyncio loop to marshal settings_reloaded onto (CFG-3)."""
+        self._loop = loop
 
     def start(self) -> None:
         self._running = True
         self._last_mtime = self._mtime()
         self._pending_mtime = None
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="config-watcher")
+        # Capture the running loop (if any) so the cross-thread emit is marshalled
+        # to it. start() is called from the async gateway phase where a loop runs.
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = None  # no loop (e.g. a sync test) → direct emit
+        self._thread = threading.Thread(target=self._loop_body, daemon=True, name="config-watcher")
         self._thread.start()
         log.info("[config] Watching %s for changes (poll %.1fs)", self._path, self._poll_interval)
 
@@ -76,7 +92,7 @@ class ConfigWatcher:
         except OSError:
             return None
 
-    def _loop(self) -> None:
+    def _loop_body(self) -> None:
         while self._running:
             time.sleep(self._poll_interval)
             self._check_once()
@@ -121,5 +137,24 @@ class ConfigWatcher:
                 exc_info=exc,
             )
             return
-        self._event_bus.emit("settings_reloaded", new_settings)
+        self._dispatch_reloaded(new_settings)
         log.info("[config] Settings reloaded successfully")
+
+    def _dispatch_reloaded(self, new_settings: Any) -> None:
+        """Emit settings_reloaded on the loop thread, never the watcher thread.
+
+        CFG-3 (F018) — :class:`EventBus` runs sync handlers INLINE on the caller's
+        thread, and the settings_reloaded consumers (provider registry / cost
+        tracker reload) touch asyncio-owned state. When a loop was captured
+        (:meth:`capture_loop`/:meth:`start`) the emit is marshalled to it via
+        ``call_soon_threadsafe`` so handlers run ON the loop thread. With no loop
+        (a sync context / test) the emit is direct — a loop-agnostic subscriber is
+        unaffected. This is the explicit off-loop dispatch contract.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            self._event_bus.emit("settings_reloaded", new_settings)
+            return
+        loop.call_soon_threadsafe(
+            self._event_bus.emit, "settings_reloaded", new_settings
+        )
