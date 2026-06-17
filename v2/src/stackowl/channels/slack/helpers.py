@@ -85,6 +85,10 @@ _INLINE_CODE_RE = re.compile(r"`[^`]*`", re.UNICODE)
 # GFM bold: **text** or __text__ → *text* (mrkdwn). Non-greedy, no nested fence.
 _BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
 _BOLD_UNDER_RE = re.compile(r"__(.+?)__", re.DOTALL | re.UNICODE)
+# GFM single-asterisk italic: *text* → _text_ (mrkdwn). CHAN-2 / F008. Matched
+# ONLY after bold has been stashed out (so a ``*`` here can never be part of a
+# ``**bold**`` run); the inner text excludes ``*`` so it can't span two markers.
+_ITALIC_STAR_RE = re.compile(r"\*([^*\n]+?)\*", re.UNICODE)
 # GFM strike: ~~text~~ → ~text~ (mrkdwn).
 _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL | re.UNICODE)
 # GFM inline link: [text](url) → <url|text>. ``text`` excludes brackets, ``url``
@@ -114,11 +118,11 @@ def to_slack_mrkdwn(text: str) -> str:
     markup INSIDE them — are preserved literally. Underscore italic (``_x_``)
     already matches mrkdwn and is left untouched.
 
-    Known limitation: GFM single-asterisk italic (``*italic*``) collides with
-    Slack's single-asterisk bold and is NOT disambiguated here; converting it
-    would corrupt the far more common bold case. Underscore italic should be
-    preferred upstream. This is deliberate — correctness of bold over a fragile
-    italic heuristic.
+    Italic disambiguation (CHAN-2 / F008): ``**bold**``/``__bold__`` is converted
+    and STASHED to a placeholder FIRST, so the subsequent single-asterisk italic
+    pass (``*italic*`` → ``_italic_``) can never see a ``*`` that belongs to a
+    ``**bold**`` run — bold stays correct AND single-asterisk italic now renders.
+    This is the ONE place the GFM→mrkdwn contract lives.
     """
     log.slack.debug(
         "[slack] to_slack_mrkdwn: entry",
@@ -155,13 +159,23 @@ def to_slack_mrkdwn(text: str) -> str:
         extra={"_fields": {"protected_count": len(protected)}},
     )
 
-    # 2. Convert markup on the unprotected remainder. Order matters: strike's
-    #    ``~~`` before any single-tilde handling; headers operate per-line.
-    work = _HEADER_RE.sub(r"*\1*", work)
-    work = _BOLD_STAR_RE.sub(r"*\1*", work)
-    work = _BOLD_UNDER_RE.sub(r"*\1*", work)
+    # 2. Convert markup on the unprotected remainder. Order matters:
+    #    headers per-line; then bold is STASHED (not converted in place) so the
+    #    single-asterisk italic pass cannot mistake a bold ``*`` for italic
+    #    (CHAN-2 / F008); then strike, link, and finally single-asterisk italic.
+    def _stash_bold(match: re.Match[str]) -> str:
+        # Stash the rendered ``*bold*`` so the italic regex below never sees it.
+        protected.append(f"*{match.group(1)}*")
+        return f"{_PLACEHOLDER}{len(protected) - 1}{_PLACEHOLDER}"
+
+    # Headers render as bold and are stashed too — the single-asterisk italic
+    # pass must not re-read the emitted ``*Header*`` as italic (CHAN-2).
+    work = _HEADER_RE.sub(_stash_bold, work)
+    work = _BOLD_STAR_RE.sub(_stash_bold, work)
+    work = _BOLD_UNDER_RE.sub(_stash_bold, work)
     work = _STRIKE_RE.sub(r"~\1~", work)
     work = _LINK_RE.sub(r"<\2|\1>", work)
+    work = _ITALIC_STAR_RE.sub(r"_\1_", work)
     log.slack.debug("[slack] to_slack_mrkdwn: step markup converted")
 
     # 3. Restore the protected code segments verbatim.
