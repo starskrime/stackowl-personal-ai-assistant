@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +103,14 @@ class DbPool:
         self._path = db_path or default_db_path()
         self._conn: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
+        # Serializes WRITE operations (execute / execute_returning_rowcount /
+        # transaction) against each other on the single shared connection (F070):
+        # a multi-statement transaction()'s BEGIN IMMEDIATE must not be committed
+        # out from under it by a concurrent execute()'s implicit commit. Distinct
+        # from ``_lock`` (the connection-open lock) so retry's ensure_available()
+        # never self-deadlocks. Reads (fetch_all) intentionally do NOT take it —
+        # they never commit and tolerate seeing pre-txn data.
+        self._write_lock = asyncio.Lock()
         self._unavailable_reason: str | None = None
         self._on_recycled_cbs: list[Callable[[], None]] = []
         self._recycle_count: int = 0
@@ -233,10 +242,11 @@ class DbPool:
                     self._mark_dead(f"execute failed: {type(exc).__name__}: {exc}")
                 raise
 
-        await retry_once_on_dead_handle(
-            _do, self, op_name="db.execute",
-            is_dead=_looks_like_dead_sqlite,
-        )
+        async with self._write_lock:
+            await retry_once_on_dead_handle(
+                _do, self, op_name="db.execute",
+                is_dead=_looks_like_dead_sqlite,
+            )
         log.debug("[db] pool.execute: exit — committed")
 
     async def execute_returning_rowcount(
@@ -274,15 +284,68 @@ class DbPool:
                     )
                 raise
 
-        result = await retry_once_on_dead_handle(
-            _do, self, op_name="db.execute_returning_rowcount",
-            is_dead=_looks_like_dead_sqlite,
-        )
+        async with self._write_lock:
+            result = await retry_once_on_dead_handle(
+                _do, self, op_name="db.execute_returning_rowcount",
+                is_dead=_looks_like_dead_sqlite,
+            )
         # 4. EXIT
         log.debug(
             "[db] pool.execute_returning_rowcount: exit — rows_affected=%d", result
         )
         return result
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Run several statements atomically in ONE committed transaction (F070).
+
+        Yields the live connection inside a ``BEGIN IMMEDIATE`` write txn; the
+        body issues ``await conn.execute(sql, params)`` calls (no per-statement
+        commit). On clean exit the txn COMMITs; on ANY exception it ROLLBACKs and
+        re-raises so the base table and a derived index (e.g. ``committed_facts``
+        + ``committed_facts_fts``) can never diverge on a mid-sequence failure.
+
+        Held under the pool's connection lock for the txn's duration so it cannot
+        interleave with another ``execute``/``transaction`` on the single shared
+        connection (which would corrupt the in-flight write txn). The lock is
+        released the moment the txn ends. NOT self-healed mid-flight: a dead
+        handle inside a txn aborts it (rollback semantics demand the caller retry
+        the whole unit), but the dead handle is marked so the NEXT call reopens.
+        """
+        # 1. ENTRY
+        log.debug("[db] pool.transaction: entry")
+        await self.ensure_available()
+        async with self._write_lock:
+            if self._conn is None:
+                raise RuntimeError("DbPool: connection unexpectedly None")
+            conn = self._conn
+            try:
+                await conn.execute("BEGIN IMMEDIATE")
+            except Exception as exc:
+                if _looks_like_dead_sqlite(exc):
+                    self._mark_dead(f"transaction begin failed: {type(exc).__name__}: {exc}")
+                log.error("[db] pool.transaction: BEGIN failed", exc_info=exc)
+                raise
+            try:
+                yield conn
+            except Exception as exc:
+                # 3. STEP — roll back the whole unit; never leave a half-applied txn.
+                try:
+                    await conn.rollback()
+                except Exception as rb_exc:  # never mask the original; log loudly
+                    if _looks_like_dead_sqlite(rb_exc):
+                        self._mark_dead(
+                            f"transaction rollback failed: {type(rb_exc).__name__}: {rb_exc}"
+                        )
+                    log.error("[db] pool.transaction: ROLLBACK failed", exc_info=rb_exc)
+                if _looks_like_dead_sqlite(exc):
+                    self._mark_dead(f"transaction body failed: {type(exc).__name__}: {exc}")
+                log.warning("[db] pool.transaction: rolled back on error", exc_info=exc)
+                raise
+            else:
+                await conn.commit()
+        # 4. EXIT
+        log.debug("[db] pool.transaction: exit — committed")
 
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Execute a read statement and return all rows as dicts. Self-heals."""

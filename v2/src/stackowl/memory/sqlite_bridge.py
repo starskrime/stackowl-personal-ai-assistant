@@ -283,18 +283,21 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.delete: entry",
             extra={"_fields": {"fact_id": fact_id}},
         )
-        # 3. STEP — clean FTS first (need committed rowids), then delete rows
+        # 3. STEP — resolve committed rowids (read), then delete base + FTS + staged
+        # ATOMICALLY in one transaction so a crash between the FTS delete and the
+        # base delete can never leave the index and base table divergent (F070).
         committed_rows = await self._db.fetch_all(
             "SELECT rowid AS rowid FROM committed_facts WHERE fact_id = ?",
             (fact_id,),
         )
-        for row in committed_rows:
-            await self._db.execute(
-                "DELETE FROM committed_facts_fts WHERE rowid = ?",
-                (row["rowid"],),
-            )
-        await self._db.execute("DELETE FROM committed_facts WHERE fact_id = ?", (fact_id,))
-        await self._db.execute("DELETE FROM staged_facts WHERE fact_id = ?", (fact_id,))
+        async with self._db.transaction() as tx:
+            for row in committed_rows:
+                await tx.execute(
+                    "DELETE FROM committed_facts_fts WHERE rowid = ?",
+                    (row["rowid"],),
+                )
+            await tx.execute("DELETE FROM committed_facts WHERE fact_id = ?", (fact_id,))
+            await tx.execute("DELETE FROM staged_facts WHERE fact_id = ?", (fact_id,))
         # 3. STEP — best-effort delete from LanceDB
         if self._lancedb is not None:
             try:
