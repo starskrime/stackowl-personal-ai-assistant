@@ -22,11 +22,14 @@ from typing import Any, Protocol
 from stackowl.infra.observability import log
 
 # ---------------------------------------------------------------------------
-# NormalizedInput type alias (web_knowledge canonical form)
+# NormalizedInput type alias (per-capability-class canonical form)
 # ---------------------------------------------------------------------------
-# For "web_knowledge" capability class the normalized representation is:
-#   {"url": str, "query": str}
-# An empty string means the field is unavailable.
+# The normalized representation is a flat str→str dict whose keys depend on the
+# capability class:
+#   - "web_knowledge": {"url": str, "query": str}
+#   - "file_read":     {"path": str}   (SUBST-1/F091)
+# An empty string means the field is unavailable. Each class's adapters only read
+# the keys they own, so the single dict type serves every class.
 
 NormalizedInput = dict[str, str]
 
@@ -90,6 +93,27 @@ def _web_fetch_from_normalized(ni: NormalizedInput) -> dict[str, object] | None:
 
 
 # ---------------------------------------------------------------------------
+# File-read adapter helpers (SUBST-1 / F091) — second READ-ONLY capability class.
+# ---------------------------------------------------------------------------
+# ``read_file`` and ``pdf`` both take a ``path`` and return file contents. When one
+# read-only reader fails on a given path, its read-only sibling can serve the same
+# path. The normalized form for the "file_read" class is {"path": str}.
+#
+# SAFETY: BOTH tools are action_severity="read". No write/consequential file tool is
+# ever placed in this capability class — a substitution can only ever re-read a file.
+
+def _read_file_to_normalized(args: dict[str, object]) -> NormalizedInput:
+    return {"path": str(args.get("path") or "")}
+
+
+def _file_read_from_normalized(ni: NormalizedInput) -> dict[str, object] | None:
+    path = ni.get("path", "")
+    if not path:
+        return None
+    return {"path": path}
+
+
+# ---------------------------------------------------------------------------
 # Declarative registry: tool_name → _ToolAdapter
 # ---------------------------------------------------------------------------
 # To add a new capability class, append entries here.  No other code changes.
@@ -106,6 +130,15 @@ _ADAPTERS: dict[str, _ToolAdapter] = {
     "web_fetch": _ToolAdapter(
         to_normalized=_web_fetch_to_normalized,
         from_normalized=_web_fetch_from_normalized,
+    ),
+    # file_read class (SUBST-1) — read_file ⇄ pdf, both READ-ONLY.
+    "read_file": _ToolAdapter(
+        to_normalized=_read_file_to_normalized,
+        from_normalized=_file_read_from_normalized,
+    ),
+    "pdf": _ToolAdapter(
+        to_normalized=_read_file_to_normalized,
+        from_normalized=_file_read_from_normalized,
     ),
 }
 

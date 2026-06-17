@@ -102,9 +102,13 @@ class PdfTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        # SUBST-1/F091 — read-only ``file_read`` capability class (sibling of
+        # read_file): a failed text read can fall back to PDF extraction and vice
+        # versa. Stays action_severity="read" — never auto-runs a consequential op.
         return ToolManifest(
             name=self.name, description=self.description,
             parameters=self.parameters, action_severity="read",
+            capability_tag="file_read",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
