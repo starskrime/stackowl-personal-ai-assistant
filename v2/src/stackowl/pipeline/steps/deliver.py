@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.pipeline.services import StepServices
 
 
 async def run(state: PipelineState) -> PipelineState:
@@ -40,15 +45,17 @@ async def run(state: PipelineState) -> PipelineState:
         return state
 
     # Streams are keyed by request_id (== trace_id) so each concurrent turn owns
-    # its own slot. A request_id with no registered writer is a HARD DROP — the
-    # turn output is discarded loudly and NEVER rerouted to a default/other slot
-    # (the response-side mirror of no-hidden-errors).
+    # its own slot. A request_id with no registered writer is a stream-MISS — the
+    # live reader is gone (terminal disconnected mid-turn, or the slot was reaped).
+    # The output is NEVER rerouted to a default/other slot (the response-side
+    # mirror of no-hidden-errors), but STEER-2/F100: a computed top-level answer
+    # must not be silently DROPPED. When this turn has a durable channel reply
+    # target, fall back to a proactive send via that target so the answer still
+    # reaches the user. CLI/single-terminal turns (no reply_target) have no durable
+    # destination to push to — there the miss IS terminal and is logged loudly.
     writer = registry.get_writer(state.trace_id)
     if writer is None:
-        log.gateway.warning(
-            "[deliver] stream-miss: no writer for request_id; dropping turn output",
-            extra={"_fields": {"request_id": state.trace_id, "session_id": state.session_id}},
-        )
+        await _proactive_fallback(state, services)
         return state
 
     # REACT-8/F037 — terminal signaling contract. The tool path (and consolidate)
@@ -79,3 +86,71 @@ async def run(state: PipelineState) -> PipelineState:
         extra={"_fields": {"session_id": state.session_id, "chunks_written": len(state.responses)}},
     )
     return state
+
+
+async def _proactive_fallback(state: PipelineState, services: StepServices) -> None:
+    """Durably push a top-level turn's answer when its live stream is gone (F100).
+
+    Called ONLY on a stream-miss for a non-delegated top-level turn (the caller
+    already excludes ``delegation_depth>0``). The computed answer is joined and
+    handed to the :class:`ProactiveDeliverer`, addressed via THIS turn's own
+    ``reply_target`` (the per-turn destination — never the adapter's shared
+    mutable ``_last_*``) at ``critical`` urgency so a direct answer is never
+    quiet-hours-batched or suppressed away. Self-healing (B5): a missing
+    deliverer, a turn with no durable reply target, or a deliverer that raises is
+    logged loudly and swallowed — the fallback can never crash the pipeline. When
+    no durable push is possible the miss is terminal and is logged as such (the
+    response-side mirror of no-hidden-errors).
+    """
+    deliverer = services.proactive_deliverer
+    body = "".join(c.content for c in state.responses if c.content)
+    # A CLI / single-terminal turn owns no durable channel target; the adapter
+    # resolved the destination, so a missing live writer there is a true terminal
+    # miss with nowhere to push. Likewise an empty body or no deliverer.
+    if deliverer is None or state.reply_target is None or not body:
+        log.gateway.warning(
+            "[deliver] stream-miss: no durable fallback available — answer not delivered",
+            extra={
+                "_fields": {
+                    "request_id": state.trace_id,
+                    "session_id": state.session_id,
+                    "has_deliverer": deliverer is not None,
+                    "has_target": state.reply_target is not None,
+                    "body_len": len(body),
+                }
+            },
+        )
+        return
+
+    # Import locally so the typing-only services import stays light and there is
+    # no import cycle at module load (notifications imports pipeline types).
+    from stackowl.notifications.router import Notification
+
+    note = Notification(
+        message=body,
+        urgency="critical",  # a direct answer must not be batched/suppressed away
+        category="turn_answer",
+        channel_name=state.channel,
+        target=state.reply_target,
+    )
+    try:
+        status = await deliverer.deliver(note)
+    except Exception as exc:  # B5 — the fallback must never crash the pipeline.
+        log.gateway.error(
+            "[deliver] stream-miss: proactive fallback raised — answer not delivered",
+            exc_info=exc,
+            extra={"_fields": {"request_id": state.trace_id, "session_id": state.session_id}},
+        )
+        return
+    log.gateway.warning(
+        "[deliver] stream-miss: live reader gone — answer delivered via proactive fallback",
+        extra={
+            "_fields": {
+                "request_id": state.trace_id,
+                "session_id": state.session_id,
+                "channel": state.channel,
+                "status": status,
+                "body_len": len(body),
+            }
+        },
+    )
