@@ -101,8 +101,12 @@ def _build_request(provider: ProviderConfig, api_key: str | None) -> tuple[str, 
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
     elif provider.protocol == "gemini":
-        base = "https://generativelanguage.googleapis.com/v1beta/models"
-        url = f"{base}?key={api_key}" if api_key else base
+        # Send the key via the documented x-goog-api-key header — NEVER in the URL
+        # query string. A URL-embedded key leaks into httpx logs, proxy/access
+        # logs, and any exception that stringifies the request URL (F150).
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if api_key:
+            headers["x-goog-api-key"] = api_key
     else:
         base = (provider.base_url or "https://api.openai.com").rstrip("/")
         url = f"{base}/v1/models"
