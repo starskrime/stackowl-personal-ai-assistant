@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import webbrowser
 from typing import Any
 
 from stackowl.brief.models import BriefSection
@@ -21,7 +20,6 @@ _SCOPES = [
 ]
 
 _OAUTH_CALLBACK_PORT = 8080
-_REDIRECT_URI = f"http://localhost:{_OAUTH_CALLBACK_PORT}/oauth/callback"
 
 _SUPPORTED_ACTIONS = frozenset({"create_event", "list_events"})
 
@@ -63,37 +61,27 @@ class GoogleCalendarAdapter(IntegrationAdapter):
         return "google_calendar"
 
     async def connect(self) -> None:
-        """Start the Google OAuth consent flow for Calendar scopes."""
-        log.debug("integrations.google_calendar.connect: entry")
-        try:
-            from google_auth_oauthlib.flow import Flow
-        except ImportError as exc:
-            log.error(
-                "integrations.google_calendar.connect: google_auth_oauthlib not installed",
-                exc_info=exc,
-            )
-            raise RuntimeError("google-auth-oauthlib is required for Calendar integration") from exc
+        """Start the Google OAuth consent flow for Calendar scopes (OAUTH-1).
 
-        config = {
-            "installed": {
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-                "redirect_uris": [_REDIRECT_URI],
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        }
-        flow = Flow.from_client_config(config, scopes=_SCOPES, redirect_uri=_REDIRECT_URI)
-        auth_url, _ = flow.authorization_url(prompt="consent")
-        log.debug(
-            "integrations.google_calendar.connect: decision — opening browser for consent",
-            extra={"_fields": {"url_len": len(auth_url)}},
+        Previously this opened a browser but NEVER captured the callback (the flow
+        could not complete). Now it delegates to the shared ``GoogleOAuthFlow``,
+        which captures the localhost callback on a desktop and runs the manual-copy
+        (OOB) flow on a headless host — no hang — then persists the tokens.
+        """
+        log.debug("integrations.google_calendar.connect: entry")
+        from stackowl.integrations.google_oauth import GoogleOAuthFlow
+
+        flow = GoogleOAuthFlow(
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            scopes=list(_SCOPES),
+            callback_port=_OAUTH_CALLBACK_PORT,
         )
-        webbrowser.open(auth_url)
-        log.info("integrations.google_calendar.connect: step — browser opened for consent")
-        log.warning(
-            "integrations.google_calendar.connect: callback listener not started — "
-            "use GmailAdapter shared OAuth flow or handle redirect externally"
+        token_data = await asyncio.to_thread(flow.run)
+        self._oauth.save(token_data)
+        log.info(
+            "integrations.google_calendar.connect: step — credentials saved",
+            extra={"_fields": {"headless": flow.detect_headless()}},
         )
         log.debug("integrations.google_calendar.connect: exit")
 
