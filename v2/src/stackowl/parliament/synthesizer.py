@@ -96,17 +96,30 @@ class ParliamentSynthesizer:
         )
 
         messages = self._build_synthesis_prompt(session)
-        provider = self._providers.get_by_tier("powerful")
+        # F125 — most-capable available substitute (not config-order first), and
+        # SURFACE the degrade so a weak-model synthesis is never shown as a clean
+        # powerful verdict.
+        provider, degraded_from = self._providers.resolve_capable_or_degrade("powerful")
         log.parliament.debug(
             "[parliament] synthesizer.synthesize: provider selected",
             extra={
                 "_fields": {
                     "provider_name": provider.name,
                     "tier": "powerful",
+                    "tier_degraded": degraded_from is not None,
                     "session_id": session.session_id,
                 }
             },
         )
+        if degraded_from is not None:
+            log.parliament.warning(
+                "[parliament] synthesizer.synthesize: no 'powerful' provider — "
+                "synthesizing on a less-capable substitute (DEGRADED)",
+                extra={"_fields": {
+                    "provider_name": provider.name, "degraded_from": degraded_from,
+                    "session_id": session.session_id,
+                }},
+            )
 
         try:
             completion = await provider.complete(messages, model="")
@@ -132,6 +145,11 @@ class ParliamentSynthesizer:
         confidence = self._compute_confidence(session, mean_sim)
         parsed = self._parser.parse(raw_text, session.session_id)
         synthesis_text = self._format_synthesis_text(raw_text, session, confidence)
+        if degraded_from is not None:
+            synthesis_text = (
+                "_(Note: no powerful synthesis model was available — this was "
+                "synthesized by a less-capable substitute.)_\n\n" + synthesis_text
+            )
 
         result = SynthesisResult(
             consensus=parsed.consensus,

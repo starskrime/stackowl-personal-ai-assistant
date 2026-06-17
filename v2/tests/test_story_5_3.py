@@ -162,6 +162,11 @@ class MockProviderRegistry:
         self.tier_calls.append(tier)
         return self._provider
 
+    def resolve_capable_or_degrade(self, tier: str) -> tuple[ModelProvider, str | None]:
+        # The mock always serves the requested tier exactly (not degraded).
+        self.tier_calls.append(tier)
+        return self._provider, None
+
 
 def _make_session_with_rounds(
     *,
