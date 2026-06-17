@@ -900,7 +900,7 @@ def stop() -> None:
     except ValueError:
         typer.echo(f"Invalid PID file contents: {text!r}", err=True)
         log.warning("[cli] stop: invalid PID file contents — %s", text)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     log.debug("[cli] stop: decision — sending SIGTERM to pid=%d", pid)
     typer.echo(f"Sending SIGTERM to PID {pid}...")
@@ -914,11 +914,11 @@ def stop() -> None:
     except ProcessLookupError:
         typer.echo(f"Process {pid} is not running — removing stale PID file")
         pid_manager.release()
-        raise typer.Exit(0)
+        raise typer.Exit(0) from None
     except PermissionError as exc:
         log.warning("[cli] stop: permission denied sending signal — %s", exc)
         typer.echo(f"Error: permission denied (are you the process owner?): {exc}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     # Wait up to 5s for process to exit
     deadline = time.monotonic() + 5.0
@@ -928,7 +928,7 @@ def stop() -> None:
         except ProcessLookupError:
             typer.echo("✓ StackOwl stopped")
             log.info("[cli] stop: exit — process %d stopped", pid)
-            raise typer.Exit(0)
+            raise typer.Exit(0) from None
         time.sleep(0.2)
 
     # 4. EXIT — process still alive after 5s

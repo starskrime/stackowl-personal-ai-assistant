@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 from stackowl.channels.base import ChannelAdapter
@@ -46,9 +46,6 @@ from stackowl.gateway.scanner import IngressMessage
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
 from stackowl.pipeline.streaming import ResponseChunk
-
-if TYPE_CHECKING:
-    from stackowl.channels.registry import ChannelRegistry
 
 _POLL_INTERVAL_S = 2.0
 _HEARTBEAT_DEGRADED_AFTER_S = 60.0
