@@ -11,21 +11,40 @@ from stackowl.infra.observability import log
 
 PRICING_FALLBACK_KEY = "_local_default"
 
+#: Conservative default price (USD per 1M tokens, applied to BOTH input and
+#: output) used for an unknown CLOUD model. Deliberately high so an unrecognized
+#: paid model trips a budget cap rather than silently billing $0 (F128). Override
+#: per-deployment via BudgetSettings.unknown_cloud_per_1m_usd.
+DEFAULT_UNKNOWN_CLOUD_PER_1M_USD = 15.0
+
 
 class PricingLoader:
     """Loads pricing.yaml from the package directory and computes per-call cost.
 
     The loader is defensive: it never raises during load — it logs the error
-    and falls back to an empty pricing table (which then drives every model
-    through the `_local_default` zero-cost fallback).
+    and falls back to an empty pricing table.
+
+    A model absent from the table is priced by LOCALITY: a local (self-hosted)
+    backend stays $0 (the `_local_default` free fallback); an unknown CLOUD model
+    is charged a conservative per-1M fallback (``unknown_cloud_per_1m_usd``) and
+    logged at WARNING so an unpriced paid model can never silently bill $0 (F128).
     """
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        unknown_cloud_per_1m_usd: float = DEFAULT_UNKNOWN_CLOUD_PER_1M_USD,
+    ) -> None:
         log.engine.debug(
             "[pricing] init: entry",
-            extra={"_fields": {"path": str(path) if path else None}},
+            extra={"_fields": {
+                "path": str(path) if path else None,
+                "unknown_cloud_per_1m_usd": unknown_cloud_per_1m_usd,
+            }},
         )
         self._path = path or (Path(__file__).parent / "pricing.yaml")
+        self._unknown_cloud_per_1m_usd = float(unknown_cloud_per_1m_usd)
         self._table: dict[str, dict[str, float]] = self._load()
         log.engine.debug(
             "[pricing] init: exit",
@@ -93,18 +112,35 @@ class PricingLoader:
                 )
         return cleaned
 
-    def estimate(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        """Compute estimated cost (USD). Falls back to _local_default zero-cost."""
+    def estimate(
+        self, model: str, input_tokens: int, output_tokens: int, *, is_local: bool = False
+    ) -> float:
+        """Compute estimated cost (USD).
+
+        Known model → table price. Unknown model: a LOCAL backend stays $0
+        (``_local_default``); an unknown CLOUD model gets the conservative
+        ``unknown_cloud_per_1m_usd`` fallback, logged at WARNING (F128) — a paid
+        model we don't recognize must never silently bill $0.
+        """
         prices = self._table.get(model)
         if prices is None:
-            prices = self._table.get(
-                PRICING_FALLBACK_KEY,
-                {"input_per_1m": 0.0, "output_per_1m": 0.0},
-            )
-            log.engine.debug(
-                "[pricing] estimate: decision — fallback pricing",
-                extra={"_fields": {"model": model, "fallback": PRICING_FALLBACK_KEY}},
-            )
+            if is_local:
+                prices = self._table.get(
+                    PRICING_FALLBACK_KEY,
+                    {"input_per_1m": 0.0, "output_per_1m": 0.0},
+                )
+                log.engine.debug(
+                    "[pricing] estimate: decision — local model, free fallback",
+                    extra={"_fields": {"model": model, "fallback": PRICING_FALLBACK_KEY}},
+                )
+            else:
+                rate = self._unknown_cloud_per_1m_usd
+                prices = {"input_per_1m": rate, "output_per_1m": rate}
+                log.engine.warning(
+                    "[pricing] estimate: UNKNOWN CLOUD MODEL — conservative fallback "
+                    "pricing applied (add it to pricing.yaml to price it exactly)",
+                    extra={"_fields": {"model": model, "fallback_per_1m_usd": rate}},
+                )
         cost = (
             input_tokens * prices["input_per_1m"] / 1_000_000.0 + output_tokens * prices["output_per_1m"] / 1_000_000.0
         )

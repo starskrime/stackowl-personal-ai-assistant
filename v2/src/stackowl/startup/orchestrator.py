@@ -641,11 +641,17 @@ class StartupOrchestrator:
         # fails OPEN (never wedges a turn) and is interactive-only.
         from stackowl.interaction.cost_pause import CostPauseGuard
         from stackowl.providers.cost_tracker import CostTracker
+        from stackowl.providers.pricing.loader import PricingLoader
 
         cost_tracker = CostTracker(
             db=db_pool,
             event_bus=event_bus,
             daily_limit_usd=self._settings.budget.daily_limit_usd,
+            # F128 — seed the loader's conservative fallback for unknown CLOUD models
+            # from config so an unpriced paid model trips the budget, not bills $0.
+            pricing=PricingLoader(
+                unknown_cloud_per_1m_usd=self._settings.budget.unknown_cloud_per_1m_usd,
+            ),
         )
         # E8-S0cost — make providers the SINGLE cost-recording site: inject the ONE
         # shared tracker into every provider so a turn's REAL main-pipeline spend

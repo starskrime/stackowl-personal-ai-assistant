@@ -74,6 +74,17 @@ class BudgetSettings(BaseModel):
         description="Daily spend cap in USD. None = unlimited.",
         json_schema_extra={"hot_reload": True},
     )
+    unknown_cloud_per_1m_usd: float = Field(
+        default=15.0,
+        description=(
+            "Conservative price (USD per 1M tokens, applied to both input and "
+            "output) charged for an unrecognized CLOUD model absent from "
+            "pricing.yaml. Deliberately high so an unpriced paid model trips the "
+            "budget cap rather than silently billing $0 (F128). Local/self-hosted "
+            "backends are always free; this only affects unknown cloud models."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
     per_turn_pause_usd: float | None = Field(
         default=0.50,
         description=(

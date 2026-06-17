@@ -16,6 +16,7 @@ import openai
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError, TurnStopped
+from stackowl.infra.net.host_locality import is_local_url
 from stackowl.infra.observability import log
 from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
@@ -84,6 +85,17 @@ class OpenAIProvider(ModelProvider):
     @property
     def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
         return "openai"
+
+    @property
+    def _is_local_backend(self) -> bool:
+        """True when configured against a loopback/private base_url (e.g. Ollama).
+
+        Locality-aware pricing (F128): an unknown model served by THIS local
+        backend stays $0; the same unknown model on a cloud endpoint is charged a
+        conservative fallback. Uses the authoritative ``is_local_url`` classifier
+        over the configured ``base_url`` (None → cloud OpenAI).
+        """
+        return is_local_url(self._config.base_url)
 
     @property
     def supports_vision(self) -> bool:
