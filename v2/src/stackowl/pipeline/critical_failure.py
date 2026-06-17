@@ -28,6 +28,7 @@ import json
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.step_error import parse_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message
 from stackowl.setup.localize import localize
@@ -85,18 +86,27 @@ def _has_floor_only(state: PipelineState) -> bool:
 def _critical_failure_classes(state: PipelineState) -> list[str]:
     """Return the failure class for each critical step that recorded an error.
 
-    Errors are stored as ``"<step>: <ExcType>: <msg>"``. We scan for the
-    ``"<step>: "`` prefix of any critical step and extract the ``<ExcType>`` for
-    a compact, debuggable marker in the neutral fallback.
+    REACT-7/F092 — PRIMARY source is the STRUCTURED ``state.step_errors`` records
+    (typed step + exc_type), so a drift in the human error STRING never breaks
+    critical-failure detection. The string parser (via the SHARED step_error helper,
+    not an inline literal) is the back-compat fallback for any legacy error string
+    written outside the structured seam.
     """
     classes: list[str] = []
+    for rec in state.step_errors:
+        if rec.step in _CRITICAL_STEPS:
+            classes.append(rec.exc_type or "error")
+    # Fallback: parse any legacy/free string for a critical step (e.g. errors
+    # appended without a structured record). De-dup against structured records by
+    # only parsing strings when they name a critical step the structured set missed.
+    structured_msgs = {(r.step, r.exc_type) for r in state.step_errors}
     for err in state.errors:
-        for step in _CRITICAL_STEPS:
-            prefix = f"{step}: "
-            if err.startswith(prefix):
-                rest = err[len(prefix):]
-                exc_type = rest.split(":", 1)[0].strip() or "error"
-                classes.append(exc_type)
+        parsed = parse_step_error(err)
+        if parsed is None:
+            continue
+        step, exc_type, _msg = parsed
+        if step in _CRITICAL_STEPS and (step, exc_type) not in structured_msgs:
+            classes.append(exc_type or "error")
     return classes
 
 

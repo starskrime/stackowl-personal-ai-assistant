@@ -16,7 +16,8 @@ from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import PipelineState, StepError
+from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
 from stackowl.pipeline.turn_persist import persist_turn
 
@@ -77,14 +78,21 @@ class AsyncioBackend(OrchestratorBackend):
                 except Exception as exc:
                     duration_ms = (time.monotonic() - step_t0) * 1000
                     step_durations.append((step_name, duration_ms))
-                    error_msg = f"{step_name}: {type(exc).__name__}: {exc}"
+                    error_msg = format_step_error(step_name, exc)
                     log.engine.error(
                         "[asyncio_backend] run: step failed — %s",
                         error_msg,
                         exc_info=True,
                         extra={"_fields": {"step": step_name, "trace_id": state.trace_id, "duration_ms": duration_ms}},
                     )
-                    current = current.evolve(errors=(*current.errors, error_msg))
+                    # REACT-7/F092 — write the structured record in lockstep with the
+                    # human string so the critical-failure honesty surface reads typed
+                    # fields, not a re-parsed (drift-prone) string.
+                    current = current.evolve(
+                        errors=(*current.errors, error_msg),
+                        step_errors=(*current.step_errors,
+                                     StepError(step=step_name, exc_type=type(exc).__name__, message=str(exc))),
+                    )
 
             # Applied-lesson annotation runs BEFORE critical-failure surfacing: on a
             # failed turn there is no real answer yet, so the honesty guard suppresses
@@ -123,14 +131,18 @@ class AsyncioBackend(OrchestratorBackend):
             except Exception as exc:
                 deliver_ms = (time.monotonic() - deliver_t0) * 1000
                 step_durations.append(("deliver", deliver_ms))
-                error_msg = f"deliver: {type(exc).__name__}: {exc}"
+                error_msg = format_step_error("deliver", exc)
                 log.engine.error(
                     "[asyncio_backend] run: deliver failed — %s",
                     error_msg,
                     exc_info=True,
                     extra={"_fields": {"step": "deliver", "trace_id": state.trace_id, "duration_ms": deliver_ms}},
                 )
-                current = current.evolve(errors=(*current.errors, error_msg))
+                current = current.evolve(
+                    errors=(*current.errors, error_msg),
+                    step_errors=(*current.step_errors,
+                                 StepError(step="deliver", exc_type=type(exc).__name__, message=str(exc))),
+                )
         finally:
             _rec_events = recovery_context.get_recovery()
             if _rec_events:

@@ -28,7 +28,8 @@ from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import PipelineState, ToolCall
+from stackowl.pipeline.state import PipelineState, StepError, ToolCall
+from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
@@ -411,6 +412,46 @@ async def _try_substitute(
             extra={"_fields": {"failed_tool": failed_tool, "trace_id": trace_id}},
         )
         return None
+
+
+_EFFECTFUL_SEVERITIES = {"write", "consequential"}
+_BRIDGING_RECOVERY_KINDS = {"substitution"}
+
+
+def _snapshot_consequential(state: PipelineState) -> PipelineState:
+    """REACT-7/F099 — stamp the turn's consequential tally + bridged set onto state.
+
+    Read the turn-scoped ledger/recovery ContextVars (caller guarantees they are
+    still bound) and carry the result on immutable state so the honest giveup floor
+    reads the snapshot rather than depending on the bind() lifetime spanning the
+    floor call. Never raises — a snapshot failure leaves the live-ledger path intact
+    (consequential_snapshot_taken stays False)."""
+    try:
+        outcomes = tool_outcome_ledger.get_outcomes()
+        failures = tuple(
+            o.name for o in outcomes
+            if o.action_severity in _EFFECTFUL_SEVERITIES and not o.success
+        )
+        successes = tuple(
+            o.name for o in outcomes
+            if o.action_severity in _EFFECTFUL_SEVERITIES and o.success
+        )
+        recovered = tuple(
+            e.failed for e in recovery_context.get_recovery()
+            if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
+        )
+        return state.evolve(
+            consequential_failures=failures,
+            consequential_successes=successes,
+            recovered_consequential=recovered,
+            consequential_snapshot_taken=True,
+        )
+    except Exception as exc:  # B5 — never break the turn; fall back to the live ledger
+        log.engine.error(
+            "[pipeline] execute: consequential snapshot failed — floor reads live ledger",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return state
 
 
 async def _run_with_tools(
@@ -1135,7 +1176,9 @@ async def _run_with_tools(
         )
         return state.evolve(
             responses=(*state.responses, floor_chunk),
-            errors=(*state.errors, f"execute: {type(exc).__name__}: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
 
     duration_ms = (time.monotonic() - t0) * 1000
@@ -1246,7 +1289,9 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
         return state.evolve(
-            errors=(*state.errors, f"execute: AllProvidersUnavailableError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
     except ToolUseUnsupportedError as exc:
         # F120 — an agentic turn was routed to a provider that cannot act and no
@@ -1259,7 +1304,9 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
         return state.evolve(
-            errors=(*state.errors, f"execute: ToolUseUnsupportedError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
 
     # Tool loop path: use complete_with_tools() when tools are available AND the
@@ -1287,7 +1334,12 @@ async def run(state: PipelineState) -> PipelineState:
             }},
         )
     if _use_tools and tool_registry is not None:
-        return await _run_with_tools(state, provider, tool_registry)
+        out = await _run_with_tools(state, provider, tool_registry)
+        # REACT-7/F099 — snapshot the consequential tally + bridged set onto state
+        # HERE, while the turn-scoped ledger/recovery ContextVars are still bound
+        # (the backend binds them for the whole pipeline). The honest giveup floor
+        # then reads the immutable snapshot rather than an implicit bind() lifetime.
+        return _snapshot_consequential(out)
 
     messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]
     if state.system_prompt:
@@ -1318,7 +1370,9 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state.evolve(
             responses=(*state.responses, *chunks),
-            errors=(*state.errors, f"execute: OwlTimeoutError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
     except OwlConcurrencyError as exc:
         log.engine.warning(
@@ -1327,7 +1381,9 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
         return state.evolve(
-            errors=(*state.errors, f"execute: OwlConcurrencyError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
     except OwlTokenLimitError as exc:
         # Token-limit truncation is intentional — collected chunks stay in state.
@@ -1342,7 +1398,11 @@ async def run(state: PipelineState) -> PipelineState:
             exc_info=exc,
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
-        return state.evolve(errors=(*state.errors, f"execute: {type(exc).__name__}: {exc}"))
+        return state.evolve(
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
+        )
 
     duration_ms = (time.monotonic() - t0) * 1000
     log.engine.info(
