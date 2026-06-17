@@ -915,9 +915,15 @@ class StartupOrchestrator:
         # to RE-DISPATCH a queued message faithfully (same routing, same clarify
         # interception) the drain needs the original raw IngressMessage. Park it
         # here keyed by request_id; pop it when the queue entry is drained.
+        from stackowl.gateway.parked_intakes import ParkedIntakes
         from stackowl.gateway.scanner import IngressMessage, RouteDecision
 
-        _parked_intakes: dict[str, IngressMessage] = {}
+        # STEER-3/F057 — the park map is now a ParkedIntakes (was a bare dict) so
+        # the turn sweep can EVICT entries for reaped wedged/GC'd turns (otherwise
+        # a parked raw IngressMessage only pops on a successful drain → a slow
+        # leak). Wired to the registry's reaped-evictor hook below.
+        _parked_intakes = ParkedIntakes()
+        turn_registry.set_reaped_evictor(_parked_intakes.evict)
 
         async def _dispatch_turn(
             pump: ClarifyPump,
@@ -1084,13 +1090,13 @@ class StartupOrchestrator:
                             )
                             for i, text in enumerate(survivors):
                                 survivor_rid = f"{finished_request_id}-survivor-{i}"
-                                _parked_intakes[survivor_rid] = IngressMessage(
+                                _parked_intakes.put(survivor_rid, IngressMessage(
                                     text=text,
                                     session_id=session_id,
                                     channel=channel_adapter.channel_name,
                                     trace_id=survivor_rid,
                                     chat_id=survivor_target,
-                                )
+                                ))
                             log.info(
                                 "[startup] gateway: completion seam drained survivor steers",
                                 extra={"_fields": {
@@ -1114,7 +1120,7 @@ class StartupOrchestrator:
                     await turn_registry.deregister(finished_request_id)
                     nxt = turn_registry.pop_next(session_id)
                     if nxt is not None:
-                        parked = _parked_intakes.pop(nxt.request_id, None)
+                        parked = _parked_intakes.get_and_pop(nxt.request_id)
                         if parked is None:
                             log.error(
                                 "[startup] gateway: queued intake lost its raw message — dropping",
@@ -1195,7 +1201,7 @@ class StartupOrchestrator:
                 nxt = turn_registry.pop_next(sid)
                 if nxt is None:
                     return
-                parked = _parked_intakes.pop(nxt.request_id, None)
+                parked = _parked_intakes.get_and_pop(nxt.request_id)
                 if parked is None:
                     log.error(
                         "[startup] gateway: held intake lost its raw message — dropping",
@@ -1297,7 +1303,7 @@ class StartupOrchestrator:
                     # turn (bounded enqueue) so it runs when capacity frees. No
                     # routing: there is no same-session running turn to steer/stop.
                     # Park the raw message so the global-cap WAKE seam can re-dispatch.
-                    _parked_intakes[msg.trace_id] = msg
+                    _parked_intakes.put(msg.trace_id, msg)
                     try:
                         turn_registry.enqueue(
                             msg.session_id, original_input=input_text,
@@ -1305,7 +1311,7 @@ class StartupOrchestrator:
                         )
                     except QueueFull as exc:
                         # Loud overflow: never silently grow, never crash the loop.
-                        _parked_intakes.pop(msg.trace_id, None)
+                        _parked_intakes.get_and_pop(msg.trace_id)
                         log.warning(
                             "[startup] gateway: intake queue full — dropping with notice",
                             extra={"_fields": {
@@ -1401,14 +1407,14 @@ class StartupOrchestrator:
                             )
                             ack_kind = "dispatched"
                         else:
-                            _parked_intakes[msg.trace_id] = routed_msg
+                            _parked_intakes.put(msg.trace_id, routed_msg)
                             try:
                                 turn_registry.enqueue(
                                     msg.session_id, original_input=routed_input,
                                     request_id=msg.trace_id, target=msg.chat_id,
                                 )
                             except QueueFull as exc:
-                                _parked_intakes.pop(msg.trace_id, None)
+                                _parked_intakes.get_and_pop(msg.trace_id)
                                 log.warning(
                                     "[startup] gateway: intake queue full — dropping with notice",
                                     extra={"_fields": {
