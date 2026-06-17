@@ -112,6 +112,46 @@ class ExecSpec(BaseModel):
             raise ValueError(f"timeout_s must be positive non-zero (got {value})")
         return value
 
+    @field_validator("env_allow")
+    @classmethod
+    def _env_allow_no_secret_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Fail-closed: refuse any env name that looks credential-bearing (F162).
+
+        ``env_allow`` forwards the HOST value of each named variable into the
+        sandbox, so a credential-named var would smuggle a secret across the trust
+        boundary. The guard is the central log-redaction predicate
+        (:func:`stackowl.infra.observability._is_sensitive`) PLUS substring checks
+        for the core credential words (``secret`` / ``token`` / ``password`` /
+        ``passwd`` / ``pwd`` / ``api_key`` / ``apikey`` / ``credential``). The
+        sandbox is deliberately STRICTER than the log redactor (over-restriction is
+        the safe direction for a forwarded-value guard); the log path is unchanged,
+        so the two never silently drift in the LENIENT direction. Only the
+        OFFENDING NAMES are surfaced (never any value).
+        """
+        # Imported lazily to avoid a module-import cycle (observability imports the
+        # trace context; this keeps spec.py free of that edge at import time).
+        from stackowl.infra.observability import _is_sensitive
+
+        # Substring tokens (lowercased name): credential words that the pattern-based
+        # log predicate (which is anchored/glob) may miss, e.g. ``DB_PASSWORD``.
+        _CREDENTIAL_SUBSTRINGS = (
+            "secret", "token", "password", "passwd", "pwd",
+            "api_key", "apikey", "credential",
+        )
+        offending = [
+            name
+            for name in value
+            if _is_sensitive(name)
+            or any(tok in name.lower() for tok in _CREDENTIAL_SUBSTRINGS)
+        ]
+        if offending:
+            raise ValueError(
+                "env_allow refuses secret-named variable(s) "
+                f"{sorted(offending)} — a credential-named host var must never be "
+                "forwarded into the sandbox (matches a secret/redaction pattern)"
+            )
+        return value
+
 
 class ExecResult(BaseModel):
     """The provenance-carrying outcome of one run. Frozen; built via factories.

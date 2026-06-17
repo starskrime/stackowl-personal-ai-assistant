@@ -53,8 +53,35 @@ class TestExecSpec:
         spec = ExecSpec(code="print(1)")
         # Allowlist-from-empty: only the minimal secret-free set, nothing host-wide.
         assert spec.env_allow == DEFAULT_ENV_ALLOW
-        assert "PATH" in spec.env_allow
         assert all("TOKEN" not in name and "SECRET" not in name for name in spec.env_allow)
+
+    def test_default_env_allow_does_not_forward_host_path(self) -> None:
+        # F162 — the sandbox uses a FIXED sanitized PATH, never the host's PATH
+        # value. So PATH is no longer in the default forwarded allowlist.
+        assert "PATH" not in DEFAULT_ENV_ALLOW
+
+    @pytest.mark.parametrize(
+        "secret_name",
+        [
+            "AWS_SECRET_ACCESS_KEY",
+            "OPENAI_API_KEY",
+            "GITHUB_TOKEN",
+            "DB_PASSWORD",
+            "my_secret",
+            "service_key",
+            "KEY_PRIMARY",
+        ],
+    )
+    def test_env_allow_refuses_secret_named_var(self, secret_name: str) -> None:
+        # F162 — env_allow is fail-closed: a name matching a redaction pattern
+        # (apikey/token/secret/password/*_key/key_*) is REFUSED at construction so
+        # a token-bearing host var can never be forwarded into the sandbox.
+        with pytest.raises(ValidationError, match="secret"):
+            ExecSpec(code="print(1)", env_allow=("LANG", secret_name))
+
+    def test_env_allow_accepts_safe_names(self) -> None:
+        spec = ExecSpec(code="print(1)", env_allow=("LANG", "TZ", "LC_ALL"))
+        assert spec.env_allow == ("LANG", "TZ", "LC_ALL")
 
     def test_language_python_only(self) -> None:
         assert ExecSpec(code="print(1)").language == "python"
