@@ -215,6 +215,7 @@ def row_to_job(row: dict[str, Any]) -> Job:
         next_run_at=row["next_run_at"],
         status=row["status"],
         retry_count=int(row.get("retry_count", 0) or 0),
+        retry_at=row.get("retry_at"),
         failure_count=int(row.get("failure_count", 0) or 0),
         last_error=row.get("last_error"),
         enabled=bool(row.get("enabled", 1)),

@@ -20,6 +20,11 @@ class Job(BaseModel):
     next_run_at: str
     status: Literal["pending", "running", "completed", "failed"]
     retry_count: int = 0
+    # STEER-5/F113 — the SEPARATE retry slot. NULL = no retry pending (steady
+    # state). A failed run schedules a retry here without touching next_run_at (the
+    # canonical recurring cadence); cleared on success. Read-only on the model —
+    # the scheduler writes it via direct UPDATEs, not through insert_job.
+    retry_at: str | None = None
     failure_count: int = 0
     last_error: str | None = None
     enabled: bool = True
