@@ -153,6 +153,29 @@ class StartupOrchestrator:
         self._settings: Settings | None = None
         self._browser_probe_result: BrowserProbeResult | None = None
         self._shutting_down = False  # F144 — idempotency guard for double-signal
+        self._migrations_applied = False  # F146 — single migration site per boot
+
+    def ensure_migrations(self) -> None:
+        """Apply pending migrations exactly once per orchestrator instance (F146).
+
+        This is the SINGLE migration site shared by both ``start`` and ``serve``.
+        ``cli start`` calls it directly before its first-run/onboarding detection
+        (which needs the schema) using the SAME orchestrator instance it later
+        passes to :meth:`run`; ``_phase_migrations`` (boot phase 1) also routes
+        through here. The idempotency flag means a boot migrates exactly once
+        regardless of how many callers ask — replacing the old double-run where
+        ``cli start`` migrated and then the orchestrator migrated again."""
+        log.debug("[startup] ensure_migrations: entry applied=%s", self._migrations_applied)
+        if self._dry_run:
+            log.info("[startup] ensure_migrations: dry_run — skipping migration application")
+            return
+        if self._migrations_applied:
+            log.debug("[startup] ensure_migrations: already applied this boot — skipping")
+            return
+        db_path = default_db_path()
+        MigrationRunner(db_path=db_path).run()
+        self._migrations_applied = True
+        log.info("[startup] ensure_migrations: exit — migrations applied")
 
     async def run(self) -> None:
         log.info("[startup] orchestrator.run: entry dry_run=%s", self._dry_run)
@@ -200,12 +223,9 @@ class StartupOrchestrator:
         log.info("[startup] orchestrator.run: exit — ready")
 
     async def _phase_migrations(self) -> None:
-        if self._dry_run:
-            log.info("[startup] reconciler: dry_run — skipping migration application")
-            return
-        db_path = default_db_path()
-        runner = MigrationRunner(db_path=db_path)
-        runner.run()
+        # F146 — route through the single idempotent migration site so a boot
+        # migrates exactly once even if cli start already applied them.
+        self.ensure_migrations()
 
     async def _phase_filesystem(self) -> None:
         FilesystemProbe().check(dry_run=self._dry_run)

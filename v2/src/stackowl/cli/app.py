@@ -111,7 +111,6 @@ def start(
 
     from stackowl.config.secret_resolver import SecretResolver
     from stackowl.config.settings import Settings
-    from stackowl.db.migrations.runner import MigrationRunner
     from stackowl.db.pool import DbPool
     from stackowl.exceptions import ConfigurationError, StartupError
     from stackowl.infra.observability import setup_logging
@@ -127,9 +126,15 @@ def start(
     StackowlHome.ensure_exists()
     typer.echo(f"StackOwl home: {StackowlHome.home()}")
 
-    # Phase 1 — MIGRATE: apply any pending migrations
+    # Build the orchestrator ONCE so `start` and `serve` share one boot ordering
+    # (F146). The orchestrator owns the single migration site; the CLI delegates
+    # its pre-onboarding schema guarantee to this same instance, which migrates
+    # exactly once (idempotent) — no longer a separate redundant CLI migration.
+    orchestrator = StartupOrchestrator(dry_run=dry_run)
+
+    # Phase 1 — MIGRATE: apply any pending migrations (single site, idempotent)
     log.debug("[cli] start: phase 1 — migrations")
-    MigrationRunner(db_path=StackowlHome.db_path()).run()
+    orchestrator.ensure_migrations()
 
     # Phase 2 — DETECT FIRST RUN
     log.debug("[cli] start: phase 2 — first-run detection")
@@ -179,10 +184,11 @@ def start(
         if not all_ok:
             raise typer.Exit(1)
 
-    # Phase 5 — SERVE
+    # Phase 5 — SERVE (reuse the same orchestrator instance; its migration guard
+    # already fired in phase 1, so _phase_migrations is a no-op — single site).
     log.debug("[cli] start: phase 5 — serve")
     try:
-        asyncio.run(StartupOrchestrator(dry_run=dry_run).run())
+        asyncio.run(orchestrator.run())
     except StartupError as exc:
         typer.echo(f"✗ Startup failed: {exc}", err=True)
         sys.exit(1)
