@@ -33,14 +33,22 @@ from stackowl.providers.openai_provider import OpenAIProvider
 # --------------------------------------------------------------------------- #
 
 
-def test_tool_max_iterations_default_is_30() -> None:
+def test_tool_max_iterations_default_aligns_with_step_backstop() -> None:
+    # F028/REACT-2 — the provider loop ceiling default is reconciled with the
+    # default per-turn step backstop (DEFAULT_TURN_MAX_STEPS) so the two bounds
+    # agree by construction. On the no-explicit-caps path the governor already cut
+    # at DEFAULT_TURN_MAX_STEPS, so the live default-path budget is unchanged; this
+    # only removes the dead +10 headroom that let the provider ceiling drift higher
+    # than the governor. (Was 30; Phase F's real fix was raising 8 -> the backstop.)
+    from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS
+
     config = ProviderConfig(
         name="ollama",
         protocol="openai",
         default_model="gemma4:e4b",
         tier="local",
     )
-    assert config.tool_max_iterations == 30
+    assert config.tool_max_iterations == DEFAULT_TURN_MAX_STEPS
 
 
 # --------------------------------------------------------------------------- #
@@ -187,9 +195,13 @@ async def test_loop_runs_about_thirty_iterations_before_maxout(
     tool_iterations = sum(1 for t in completions.tools_seen if t)
     wrapup_calls = sum(1 for t in completions.tools_seen if not t)
     assert wrapup_calls == 1, "exactly one tool-free wrap-up call expected at max-out"
-    # Loose/robust: clearly more than the old budget of 8, around 30.
-    assert tool_iterations >= 25, f"expected ~30 tool iterations, got {tool_iterations}"
-    assert tool_iterations <= 31
+    # Loose/robust: clearly more than the old budget of 8, ~DEFAULT_TURN_MAX_STEPS.
+    from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS
+
+    assert tool_iterations >= DEFAULT_TURN_MAX_STEPS - 5, (
+        f"expected ~{DEFAULT_TURN_MAX_STEPS} tool iterations, got {tool_iterations}"
+    )
+    assert tool_iterations <= DEFAULT_TURN_MAX_STEPS + 1
 
 
 # --------------------------------------------------------------------------- #
@@ -347,9 +359,11 @@ async def test_anthropic_maxout_makes_toolfree_call_and_returns_nonempty(
     assert text != ""
     assert messages.tools_seen[-1] is False, "final wrap-up call must omit tools="
     assert all(messages.tools_seen[:-1]), "only the last call may be tool-free"
-    # Sanity: ran more than the old budget of 8.
+    # Sanity: ran more than the old budget of 8 (~DEFAULT_TURN_MAX_STEPS now).
+    from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS
+
     tool_iterations = sum(1 for t in messages.tools_seen if t)
-    assert tool_iterations >= 25
+    assert tool_iterations >= DEFAULT_TURN_MAX_STEPS - 5
 
 
 # --------------------------------------------------------------------------- #

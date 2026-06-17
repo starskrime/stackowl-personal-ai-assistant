@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS
+
 
 class ProviderConfig(BaseModel):
     """Configuration for one AI provider.
@@ -24,7 +26,14 @@ class ProviderConfig(BaseModel):
     timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
     max_output_tokens: int = 4096
-    tool_max_iterations: int = 30
+    # F028/REACT-2 — the provider's own tool-loop ceiling. Derived from the default
+    # per-turn step backstop (authz/bounds.DEFAULT_TURN_MAX_STEPS) so the two bounds
+    # AGREE by construction: on the no-explicit-caps path the BudgetGovernor cuts at
+    # DEFAULT_TURN_MAX_STEPS, and the provider's own ceiling sits at the SAME value
+    # instead of 10 higher (which let the loop ceiling silently become the bound and
+    # an uncounted wrap-up generation run as a 21st+ step). An owl with explicit caps
+    # still overrides via max_iterations at the call site.
+    tool_max_iterations: int = DEFAULT_TURN_MAX_STEPS
     # Optional per-model context window in CHARACTERS. When set, the tool loop uses
     # ~80% of this as its total-context trim budget instead of the global default,
     # so a small-context model gets trimmed sooner and a large one less aggressively.
