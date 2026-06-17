@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -150,6 +151,15 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
         self._source_map: dict[str, list[str]] = {}
         self._gate = gate
+        # F045 — the registry is a process-level singleton read from concurrent
+        # dispatch paths (parallel across chats) while tool_build registers a
+        # learned tool LIVE mid-turn. A reentrant lock guards every mutation and
+        # every snapshot of the name→tool dict + source map. It is held only for
+        # the O(1) dict op / list copy — never across any tool call — so it never
+        # serializes the actual work. RLock so register() can call _is_dangerous
+        # / nested helpers without self-deadlock. threading (not asyncio) because
+        # register/unregister/all/get are SYNC methods reachable off-loop.
+        self._lock = threading.RLock()
 
     @staticmethod
     def _is_dangerous(tool: Tool) -> bool:
@@ -166,29 +176,9 @@ class ToolRegistry:
         tool, nor may any tool replace an existing dangerous one — so a skill or
         MCP server can never silently clobber a native consequential tool.
         """
-        existing = self._tools.get(tool.name)
-        if existing is not None:
-            # Fail closed if either side is dangerous — no shadowing of/by a
-            # consequential tool, even when replace=True is requested.
-            if self._is_dangerous(tool) or self._is_dangerous(existing):
-                from stackowl.exceptions import ToolRegistrationError
-
-                raise ToolRegistrationError(
-                    tool.name,
-                    "refusing to shadow or replace a dangerous-category tool",
-                )
-            if not replace:
-                from stackowl.exceptions import ToolRegistrationError
-
-                raise ToolRegistrationError(
-                    tool.name, "already registered (pass replace=True to override)"
-                )
-            # Intentional replace — drop the stale name from any source mapping.
-            for names in self._source_map.values():
-                if tool.name in names:
-                    names.remove(tool.name)
         # Register-time fail-closed (E1-S4 / §17): a tool that declares a dangerous
         # consent_category but is NOT marked consequential would slip past the gate.
+        # Computed outside the lock (no shared state read).
         manifest = tool.manifest
         if manifest.consent_category in _DANGEROUS_CONSENT_CATEGORIES and manifest.action_severity != "consequential":
             from stackowl.exceptions import ToolRegistrationError
@@ -197,9 +187,34 @@ class ToolRegistry:
                 tool.name,
                 f"consent_category {manifest.consent_category!r} requires action_severity='consequential'",
             )
-        self._tools[tool.name] = tool
-        if source_name:
-            self._source_map.setdefault(source_name, []).append(tool.name)
+        # F045 — read-existing + mutate under one lock so a concurrent dispatch
+        # never observes a half-updated dict/source map (and two registers cannot
+        # clobber each other).
+        with self._lock:
+            existing = self._tools.get(tool.name)
+            if existing is not None:
+                # Fail closed if either side is dangerous — no shadowing of/by a
+                # consequential tool, even when replace=True is requested.
+                if self._is_dangerous(tool) or self._is_dangerous(existing):
+                    from stackowl.exceptions import ToolRegistrationError
+
+                    raise ToolRegistrationError(
+                        tool.name,
+                        "refusing to shadow or replace a dangerous-category tool",
+                    )
+                if not replace:
+                    from stackowl.exceptions import ToolRegistrationError
+
+                    raise ToolRegistrationError(
+                        tool.name, "already registered (pass replace=True to override)"
+                    )
+                # Intentional replace — drop the stale name from any source mapping.
+                for names in self._source_map.values():
+                    if tool.name in names:
+                        names.remove(tool.name)
+            self._tools[tool.name] = tool
+            if source_name:
+                self._source_map.setdefault(source_name, []).append(tool.name)
         log.tool.debug(
             "[tools] registry.register: tool registered",
             extra={"_fields": {"tool": tool.name, "source": source_name, "replace": replace}},
@@ -211,20 +226,56 @@ class ToolRegistry:
             "[tools] registry.unregister_by_source: entry",
             extra={"_fields": {"source": source_name}},
         )
-        names = self._source_map.pop(source_name, [])
-        for name in names:
-            self._tools.pop(name, None)
+        with self._lock:
+            names = self._source_map.pop(source_name, [])
+            for name in names:
+                self._tools.pop(name, None)
         log.tool.debug(
             "[tools] registry.unregister_by_source: exit",
             extra={"_fields": {"source": source_name, "removed": len(names)}},
         )
         return len(names)
 
+    def unregister(self, name: str) -> bool:
+        """Remove a single tool by name; return True if it was present (F044).
+
+        THE public single-name removal seam — atomically drops the name→tool
+        entry AND any source-map references under the registry lock, so a learned
+        tool (tool_build) can be retired without poking ``_tools``/``_source_map``
+        directly. A dangerous (consequential / consent-category) tool may not be
+        silently dropped — removing one returns ``False`` and logs a warning so a
+        native consequential tool can never be unregistered out from under the
+        gate by a learned-source cleanup path.
+        """
+        with self._lock:
+            tool = self._tools.get(name)
+            if tool is None:
+                return False
+            if self._is_dangerous(tool):
+                log.tool.warning(
+                    "[tools] registry.unregister: refusing to drop a dangerous-category tool",
+                    extra={"_fields": {"tool": name}},
+                )
+                return False
+            self._tools.pop(name, None)
+            for names in self._source_map.values():
+                if name in names:
+                    names.remove(name)
+        log.tool.debug(
+            "[tools] registry.unregister: removed",
+            extra={"_fields": {"tool": name}},
+        )
+        return True
+
     def get(self, name: str) -> Tool | None:
-        return self._tools.get(name)
+        with self._lock:
+            return self._tools.get(name)
 
     def all(self) -> list[Tool]:
-        return list(self._tools.values())
+        # Snapshot under the lock — never iterate the live dict (F045: a concurrent
+        # register/unregister must not raise "dict changed size during iteration").
+        with self._lock:
+            return list(self._tools.values())
 
     def to_provider_schema(
         self,
