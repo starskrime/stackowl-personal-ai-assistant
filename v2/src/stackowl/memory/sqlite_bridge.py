@@ -11,6 +11,7 @@ from stackowl.exceptions import DuplicateFactError
 from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport, MemoryBridge
 from stackowl.memory.models import MemoryRecord, StagedFact
+from stackowl.memory.recall_ranker import RecallRanker
 from stackowl.memory.sqlite_helpers import (
     fts_recall,
     pack_embedding,
@@ -41,6 +42,9 @@ class SqliteMemoryBridge(MemoryBridge):
         embedding_registry: EmbeddingRegistry | None = None,
         lancedb: LanceDBAdapter | None = None,
         semantic_search_enabled: bool = True,
+        recall_limit: int = 5,
+        recall_candidate_pool: int = 20,
+        recall_decay_half_life_days: float = 30.0,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -50,6 +54,8 @@ class SqliteMemoryBridge(MemoryBridge):
                     "has_embeddings": embedding_registry is not None,
                     "has_lancedb": lancedb is not None,
                     "semantic_enabled": semantic_search_enabled,
+                    "recall_limit": recall_limit,
+                    "recall_candidate_pool": recall_candidate_pool,
                 }
             },
         )
@@ -57,6 +63,14 @@ class SqliteMemoryBridge(MemoryBridge):
         self._embeddings = embedding_registry
         self._lancedb = lancedb
         self._semantic_enabled = semantic_search_enabled
+        # MEM-1 (F073) — blended recall config + the single-policy ranker. The
+        # candidate pool is over-fetched (>= the final limit) so recency /
+        # reinforcement can promote a fact the raw relevance cut would drop.
+        self._recall_limit = max(1, recall_limit)
+        self._recall_candidate_pool = max(self._recall_limit, recall_candidate_pool)
+        self._recall_ranker = RecallRanker(
+            decay_half_life_days=recall_decay_half_life_days
+        )
         # 4. EXIT
         log.memory.debug("[memory] sqlite_bridge.init: exit")
 
@@ -79,7 +93,13 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.retrieve: entry",
             extra={"_fields": {"session_id": session_id, "query_len": len(query)}},
         )
-        records = await self.recall(query, limit=5)
+        # MEM-1 (F073) — over-fetch a candidate pool in raw relevance order, then
+        # apply the SINGLE blended rank (relevance × recency × reinforcement ×
+        # trust) and truncate to the final limit. A freshly-reinforced preference
+        # can now outrank a stale one-off the fixed top-5 relevance cut would have
+        # surfaced instead.
+        candidates = await self.recall(query, limit=self._recall_candidate_pool)
+        records = self._recall_ranker.rank(candidates, limit=self._recall_limit)
         # 2. DECISION
         if not records:
             log.memory.debug(

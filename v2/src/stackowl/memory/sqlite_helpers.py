@@ -91,6 +91,9 @@ def row_to_record(row: dict[str, Any]) -> MemoryRecord:
         source_ref=row["source_ref"],
         tags=list(tags),
         trust=row.get("trust", "untrusted"),
+        # MEM-1 (F073) — present once the 0062 migration runs; legacy SELECTs
+        # without the column .get() to the conservative one-off floor.
+        reinforcement_count=int(row.get("reinforcement_count", 0) or 0),
     )
 
 
@@ -124,7 +127,7 @@ async def fts_recall(
         rows = await db.fetch_all(
             """SELECT cf.fact_id, cf.content, cf.embedding, cf.embedding_model,
                       cf.committed_at, cf.source_type, cf.source_ref, cf.tags,
-                      cf.trust
+                      cf.trust, cf.reinforcement_count
                FROM committed_facts_fts fts
                JOIN committed_facts cf ON cf.rowid = fts.rowid
                WHERE committed_facts_fts MATCH ?
@@ -152,7 +155,8 @@ async def fetch_committed_by_ids(
     placeholders = ",".join(["?"] * len(fact_ids))
     rows = await db.fetch_all(
         f"""SELECT fact_id, content, embedding, embedding_model,
-                   committed_at, source_type, source_ref, tags, trust
+                   committed_at, source_type, source_ref, tags, trust,
+                   reinforcement_count
             FROM committed_facts
             WHERE fact_id IN ({placeholders})""",
         tuple(fact_ids),

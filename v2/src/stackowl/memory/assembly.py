@@ -136,6 +136,10 @@ class MemoryAssembly:
             embedding_registry=embedding_registry,
             lancedb=lancedb,
             semantic_search_enabled=mem.semantic_search_enabled,
+            # MEM-1 (F073) — config-driven blended recall (N + decay half-life).
+            recall_limit=mem.recall_limit,
+            recall_candidate_pool=mem.recall_candidate_pool,
+            recall_decay_half_life_days=mem.recall_decay_half_life_days,
         )
         log.memory.debug("[memory] assembly: bridge ready (semantic enabled)")
 

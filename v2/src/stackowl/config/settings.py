@@ -416,6 +416,17 @@ class MemorySettings(BaseModel):
     # at small N, behaviour-identical to the legacy path). At/above it the
     # incremental watermark + ANN-candidate path takes over.
     contradiction_ann_threshold: int = Field(default=200, ge=2)
+    # MEM-1 (F073) — blended recall ranking config.
+    # How many committed facts the classify-step recall presents to the prompt
+    # AFTER blended ranking (the final top-K). Host-scalable upward.
+    recall_limit: int = Field(default=5, ge=1)
+    # Candidate over-fetch: pull this many relevance-ordered candidates BEFORE
+    # blending, so recency/reinforcement can promote a fact the raw relevance
+    # cut would have dropped. Must be >= recall_limit (enforced at use site).
+    recall_candidate_pool: int = Field(default=20, ge=1)
+    # Recency half-life in days: a fact's freshness weight halves every N days.
+    # Larger = a long relationship's older facts stay competitive longer.
+    recall_decay_half_life_days: float = Field(default=30.0, gt=0.0)
 
 
 class SchedulerSettings(BaseModel):
