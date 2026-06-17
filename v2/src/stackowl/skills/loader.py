@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from stackowl.exceptions import ToolRegistrationError
 from stackowl.infra.observability import log
 from stackowl.skills.manifest import SkillManifest, SkillSource
 from stackowl.skills.skill_md import SkillMarkdownError, parse_skill_md
@@ -132,6 +133,12 @@ class SkillLoader:
                         extra={"_fields": {"path": str(skill_dir)}},
                     )
                     continue
+                except ToolRegistrationError:
+                    # PLUG-3/F047 — a genuine cross-source tool-name collision is a
+                    # hard, actionable error, NOT a "skip this skill" case. Propagate
+                    # so the caller (reindex) can surface a distinct collision
+                    # message instead of a misleading generic "reindex pending".
+                    raise
                 except Exception as exc:  # B5
                     log.skills.error(
                         "[skills] loader.load_all: unexpected error — skipping",
@@ -262,9 +269,37 @@ class SkillLoader:
                 if isinstance(obj, type) and issubclass(obj, Tool) and obj is not Tool:
                     try:
                         instance = obj()
-                        self._tool_registry.register(instance, source_name=source_name)
+                    except Exception as exc:  # B5 — a tool that can't instantiate
+                        log.skills.error(
+                            "[skills] loader._load_tools: tool instantiation failed",
+                            exc_info=exc,
+                            extra={"_fields": {"tool": attr_name, "source": source_name}},
+                        )
+                        continue
+                    # PLUG-3/F047 — distinguish an idempotent re-register of the
+                    # SAME source (re-author / reindex over the whole tree) from a
+                    # genuine cross-source name collision.
+                    owner = self._tool_registry.source_of(instance.name)
+                    if owner is not None and owner != source_name:
+                        # Genuine collision: a DIFFERENT skill already owns the
+                        # name. Surface a distinct, owner-naming error (NOT a silent
+                        # skip and NOT a misleading "reindex pending") so the
+                        # re-author is told exactly what conflicts.
+                        raise ToolRegistrationError(
+                            instance.name,
+                            f"name collision — already registered by skill "
+                            f"{owner!r}; rename the tool or remove the other skill",
+                        )
+                    # Same-source (or first-time) registration: replace=True makes a
+                    # re-author of a learned/user skill idempotent. The registry
+                    # STILL refuses to replace a dangerous-category tool even with
+                    # replace=True, so the consent boundary is intact.
+                    try:
+                        self._tool_registry.register(
+                            instance, source_name=source_name, replace=True,
+                        )
                         names.append(instance.name)
-                    except Exception as exc:  # B5
+                    except Exception as exc:  # B5 — dangerous-shadow refusal etc.
                         log.skills.error(
                             "[skills] loader._load_tools: tool registration failed",
                             exc_info=exc,

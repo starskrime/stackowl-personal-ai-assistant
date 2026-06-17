@@ -271,6 +271,18 @@ class ToolRegistry:
         with self._lock:
             return self._tools.get(name)
 
+    def source_of(self, name: str) -> str | None:
+        """Return the source name that registered tool ``name``, or ``None``.
+
+        Used by the skill loader (PLUG-3/F047) to tell an idempotent re-register
+        of the SAME source apart from a genuine cross-source name collision.
+        """
+        with self._lock:
+            for source, names in self._source_map.items():
+                if name in names:
+                    return source
+            return None
+
     def all(self) -> list[Tool]:
         # Snapshot under the lock — never iterate the live dict (F045: a concurrent
         # register/unregister must not raise "dict changed size during iteration").
