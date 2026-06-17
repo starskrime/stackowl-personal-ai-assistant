@@ -273,7 +273,18 @@ class TurnRegistry:
             )
 
     def put_steer(self, request_id: str, text: str) -> None:
-        """Put a steer onto a live turn's mailbox with supersede-oldest backpressure.
+        """TEST-ONLY / future-API: lock-free synchronous steer-put helper.
+
+        NOT wired into the production steer path — the live route is
+        ``try_steer`` → ``_put_steer_superseding`` (called under ``turn.lock`` so
+        the status-read and put stay one atomic critical section, Task 11 lost-steer
+        atomicity). This wrapper exists so the bounded-mailbox + supersede-oldest
+        invariant can be exercised lock-free in tests, and as the documented entry
+        for a future lock-free producer. The ``QueueFull``-after-supersede defensive
+        branch in ``_put_steer_superseding`` exists for exactly this lock-free
+        contract (it is unreachable on the lock-held live path). Search before wiring
+        this in production: a lock-free producer must accept the documented
+        newest-dropped-LOUD fail-safe.
 
         §5.4 — bounded mailbox + supersede-oldest. Resolves the turn by
         ``request_id`` and folds ``text`` in via ``_put_steer_superseding`` (drop the
