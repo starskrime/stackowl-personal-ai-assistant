@@ -244,7 +244,7 @@ class LangGraphBackend(OrchestratorBackend):
         builder.add_node("deliver", self._wrap_step("deliver", _deliver_with_surfacing))  # type: ignore[call-overload]
 
         # Canonical sequence: triage → dispatch → classify → execute
-        # → parliament_step (via Send) → consolidate → synthesize → deliver → END.
+        # → parliament_step (via Send) → consolidate → deliver → END.
         builder.set_entry_point(PIPELINE_STEPS[0][0])
         step_names = [name for name, _ in PIPELINE_STEPS]
         for i, name in enumerate(step_names):
