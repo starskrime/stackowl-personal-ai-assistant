@@ -28,6 +28,7 @@ from stackowl.infra.observability import log
 from stackowl.interaction.clarify_gateway import OUTCOME_ANSWERED
 from stackowl.pipeline.services import StepServices
 from stackowl.tools.base import ToolResult
+from stackowl.tools.child_exclusion import child_excluded_now
 from stackowl.tools.registry import ToolRegistry
 
 # Hard cap on the number of actions one batch may present (an unreadable plan the
@@ -222,6 +223,25 @@ class BatchExecutor:
     async def _run_one(
         self, n: int, action: BatchAction, session_id: str,
     ) -> dict[str, object]:
+        # SEC-3 / F164 — DEFENSE-IN-DEPTH: an approved batch executes each action
+        # DIRECTLY (pre-consented, bypassing the per-action dispatch consent gate).
+        # That bypass must NOT also bypass the child-exclusion depth rail, so the
+        # guard is re-applied per action here: a child-excluded tool (spawn /
+        # delegate / process / execute_code / owl_build) at delegation_depth>0 is
+        # REFUSED even inside an approved batch. (batch_approve already fails closed
+        # in non-interactive/delegated contexts; this is belt-and-braces.)
+        if child_excluded_now(action.tool):
+            excl_err = (
+                f"action {action.tool!r} is child-excluded at delegation_depth>0 — "
+                "refused inside the batch (defense-in-depth)"
+            )
+            log.tool.warning(
+                "batch_approve.execute: action refused — child-excluded at depth",
+                extra={"_fields": {"n": n, "tool": action.tool}},
+            )
+            self._auditor.action(session_id, action, success=False, error=excl_err)
+            return {"n": n, "tool": action.tool, "summary": action.summary,
+                    "success": False, "error": excl_err}
         tool = self._registry.get(action.tool)
         if tool is None:  # defensive — validated earlier, but never trust drift
             self._auditor.action(session_id, action, success=False, error="tool no longer registered")

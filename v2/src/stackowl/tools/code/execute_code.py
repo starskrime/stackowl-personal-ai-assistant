@@ -36,6 +36,7 @@ from stackowl.pipeline.services import get_services
 from stackowl.sandbox.governor import SandboxSaturatedError, run_under_slot
 from stackowl.sandbox.spec import ExecResult, ExecSpec, ResourceCaps
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.child_exclusion import child_excluded_now
 from stackowl.tools.code._consent import bounded_code
 from stackowl.tools.code._ptc import build_ptc_factory, consent_callback_note
 
@@ -158,6 +159,24 @@ class ExecuteCodeTool(Tool):
                 "network": bool(kwargs.get("network")),
             }},
         )
+        # SEC-3 / F163 — SELF-DEFENSE: a delegated sub-agent (delegation_depth>0)
+        # must NOT run arbitrary code in a sandbox. The pipeline already filters
+        # execute_code from a child's schema set + re-checks at the dispatch seam;
+        # this entry-time assertion is defense-in-depth so a future call path that
+        # reaches execute() without that filter still fails closed.
+        if child_excluded_now("execute_code"):
+            log.tool.warning(
+                "execute_code.execute: refused — child-excluded at delegation_depth>0",
+                extra={"_fields": {
+                    "delegation_depth": TraceContext.get().get("delegation_depth"),
+                }},
+            )
+            return self._err(
+                "code execution is refused for a delegated sub-agent "
+                "(delegation_depth>0); only a top-level turn may run code.",
+                t0,
+            )
+
         try:
             args = ExecuteCodeArgs.model_validate(kwargs)
         except ValidationError as exc:
