@@ -208,6 +208,26 @@ class ToolExecutionError(InfrastructureError):
         super().__init__(f"Tool '{tool_name}' failed: {cause}")
 
 
+class RateLimitError(InfrastructureError):
+    """Raised when a RateLimiter cannot grant a call and must FAIL CLOSED (F124).
+
+    A capacity-set limiter whose ``refill_rate`` is zero can never recover a
+    drained token, so a deficit acquire would otherwise spin forever — the prior
+    code instead RETURNED (granting the call, failing OPEN past the cap). This
+    typed error makes the cap real: a zero-refill bucket with no tokens refuses
+    rather than silently letting every over-budget call through.
+    """
+
+    def __init__(self, provider_name: str, requested: int, capacity: int | None) -> None:
+        self.provider_name = provider_name
+        self.requested = requested
+        self.capacity = capacity
+        super().__init__(
+            f"Rate limit for '{provider_name}': cannot grant {requested} token(s) "
+            f"(capacity={capacity}, refill_rate=0 — no recovery possible)"
+        )
+
+
 class CircuitOpenError(InfrastructureError):
     """Raised when CircuitBreaker is OPEN and blocks a provider call."""
 
