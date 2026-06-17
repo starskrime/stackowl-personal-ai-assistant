@@ -318,11 +318,20 @@ class ParliamentOrchestrator:
             try:
                 await self._pellet_gen.from_parliament(final, synthesis_result)
             except Exception as exc:
+                # PARL-4 (F082) — flag the failure on the session so health /
+                # observability can surface a RUN of pellet-staging failures.
+                # The synthesis is already stored; only the pellet side-channel
+                # failed, so the session still reports 'completed'.
+                final = final.model_copy(update={"pellet_staged": False})
                 log.parliament.warning(
                     "[parliament] orchestrator._finalize_session: "
-                    "pellet generation failed — synthesis already stored",
+                    "pellet generation failed — synthesis already stored, "
+                    "session flagged pellet_staged=False",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": final.session_id}},
+                    extra={"_fields": {
+                        "session_id": final.session_id,
+                        "pellet_staged": False,
+                    }},
                 )
         log.parliament.debug(
             "[parliament] orchestrator._finalize_session: exit",

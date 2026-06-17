@@ -66,6 +66,11 @@ class ParliamentSession(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     interjections: list[str] = Field(default_factory=list)
+    # PARL-4 (F082): observable pellet-staging outcome. False ⇒ synthesis was
+    # stored but the pellet side-channel failed (so health/observability can
+    # surface a run of failures). Not persisted — the synthesis itself is the
+    # durable artifact; this flag rides the in-memory session + the warning log.
+    pellet_staged: bool = True
 
     def add_round(self, round_: ParliamentRound) -> ParliamentSession:
         """Return a new session with ``round_`` appended to ``rounds``."""
