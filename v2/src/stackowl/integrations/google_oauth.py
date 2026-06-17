@@ -167,7 +167,9 @@ class GoogleOAuthFlow:
         if opener is None:
             import webbrowser
 
-            opener = webbrowser.open
+            def opener(url: str) -> None:
+                webbrowser.open(url)
+
         opener(auth_url)
         waiter = self._callback_waiter
         if waiter is None:
