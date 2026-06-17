@@ -39,6 +39,7 @@ class BudgetGovernor:
         trace_id: str,
         started_monotonic: float,
         clock: _Clock,
+        prior_cost_usd: float = 0.0,
     ) -> None:
         self._max_steps = caps.max_steps
         self._max_time_s = caps.max_time_s
@@ -47,6 +48,11 @@ class BudgetGovernor:
         self._trace_id = trace_id
         self._t0 = started_monotonic
         self._clock = clock
+        # F093 — spend already accumulated by PRIOR durable attempts of this task
+        # (the in-memory cost ledger resets to 0 on resume). Seeding it makes the
+        # cost ceiling CUMULATIVE across park/resume rather than per-attempt.
+        # 0.0 for an ephemeral turn or a first attempt → legacy behavior unchanged.
+        self._prior_cost_usd = max(0.0, prior_cost_usd)
 
     def check(self, iteration: int) -> BudgetBreach | None:
         """Return a BudgetBreach for the FIRST set cap exceeded after this iteration.
@@ -62,10 +68,22 @@ class BudgetGovernor:
             if elapsed >= self._max_time_s:
                 return BudgetBreach("time", self._max_time_s, elapsed)
         if self._max_cost_usd is not None and self._cost is not None:
-            spent = self._cost.turn_cost_usd(self._trace_id)
+            # Cumulative spend = prior durable attempts + this attempt's running
+            # total (F093). For a non-durable turn _prior_cost_usd is 0.0.
+            spent = self._prior_cost_usd + self._cost.turn_cost_usd(self._trace_id)
             if spent >= self._max_cost_usd:
                 return BudgetBreach("cost", self._max_cost_usd, spent)
         return None
+
+    def current_cost_usd(self) -> float:
+        """Cumulative spend so far = prior durable attempts + this attempt's total.
+
+        F093 — the durable executor persists this on the task row each iteration so
+        the NEXT resume seeds its governor with it and the cost ceiling holds across
+        the whole task. Returns the prior seed alone when no cost tracker is wired.
+        """
+        attempt = self._cost.turn_cost_usd(self._trace_id) if self._cost is not None else 0.0
+        return self._prior_cost_usd + attempt
 
     def remaining_seconds(self) -> float | None:
         """Residual wall-clock budget for THIS run, or None when no time cap is set.

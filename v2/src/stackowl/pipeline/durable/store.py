@@ -532,6 +532,58 @@ class DurableTaskStore(OwnedRepository):
         return blob
 
 
+    async def get_accumulated_cost(self, task_id: str) -> float:
+        """Return the cumulative USD spend recorded across ALL attempts (F093).
+
+        Owner-scoped read off the ``accumulated_cost_usd`` column. A task missing
+        for the bound owner (or a legacy row predating migration 0060) returns
+        ``0.0`` — no prior spend, so a resume seeds its governor with 0.0 and
+        behaves exactly as a first attempt.
+        """
+        log.tasks.debug(
+            "[tasks] store.get_accumulated_cost: entry",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+        rows = await self._fetch_owned(self._table, "task_id = ?", (task_id,))
+        if not rows:
+            return 0.0
+        raw = rows[0].get("accumulated_cost_usd")
+        value = 0.0 if raw is None else float(raw)
+        log.tasks.debug(
+            "[tasks] store.get_accumulated_cost: exit",
+            extra={"_fields": {"task_id": task_id, "accumulated_cost_usd": value}},
+        )
+        return value
+
+    async def set_accumulated_cost(self, task_id: str, cost_usd: float) -> None:
+        """Persist the cumulative USD spend for ``task_id`` (owner-scoped, F093).
+
+        The durable executor passes the governor's ABSOLUTE current cumulative
+        spend (prior attempts + this attempt) so the value is monotonic and
+        idempotent across re-runs of the same iteration — never an additive delta
+        that could double-count on replay. Fails loud on a missing/wrong-owner row
+        (mirrors :meth:`save_checkpoint`) so a "durable" cost write can't silently
+        no-op. Negative inputs are floored at 0.0.
+        """
+        safe = max(0.0, float(cost_usd))
+        log.tasks.debug(
+            "[tasks] store.set_accumulated_cost: entry",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id, "cost_usd": safe,
+            }},
+        )
+        sql = (
+            f"UPDATE {self._table} SET accumulated_cost_usd = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND task_id = ?"
+        )
+        await self._require_owned(task_id, op="set_accumulated_cost")
+        await self._execute_owned(sql, [safe, self._owner_id, task_id])
+        log.tasks.info(
+            "[tasks] store.set_accumulated_cost: saved",
+            extra={"_fields": {"task_id": task_id, "accumulated_cost_usd": safe}},
+        )
+
+
 def _row_to_task(row: dict[str, Any]) -> DurableTask:
     """Map one ``tasks`` row dict to a :class:`DurableTask`."""
     raw_thread = row.get("thread_id")
