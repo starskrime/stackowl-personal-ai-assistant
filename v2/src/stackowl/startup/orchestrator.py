@@ -778,6 +778,9 @@ class StartupOrchestrator:
             backend=backend,
             skills_components=skills_components,
             proactive_deliverer=proactive_deliverer,
+            # PARL-7 (F084) — the host-wide governor so the nightly evolution
+            # batch's concurrent fan-out shares the single in-flight budget.
+            delegation_governor=delegation_governor,
         )
 
         # Plugin index — discover installed plugins from ~/.stackowl/plugins/.

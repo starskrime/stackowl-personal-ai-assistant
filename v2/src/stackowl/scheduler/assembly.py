@@ -36,6 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.critic_scorer_handler import CriticScorerHandler
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
     from stackowl.notifications.deliverer import ProactiveDeliverer
+    from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.backends.base import OrchestratorBackend
     from stackowl.providers.registry import ProviderRegistry
@@ -93,6 +94,7 @@ class SchedulerAssembly:
         backend: OrchestratorBackend,
         skills_components: SkillsComponents,
         proactive_deliverer: ProactiveDeliverer | None = None,
+        delegation_governor: ConcurrencyGovernor | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -172,6 +174,10 @@ class SchedulerAssembly:
             db=db,
             provider_registry=provider_registry,
             owl_registry=owl_registry,
+            # PARL-7 (F084) — share the host-wide in-flight governor so the
+            # nightly evolution batch's concurrent fan-out draws from the SAME
+            # budget as delegation/parliament.
+            delegation_governor=delegation_governor,
         )
 
         # Learning Commit 1 — CriticScorerHandler scores pending task_outcomes

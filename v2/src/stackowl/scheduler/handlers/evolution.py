@@ -9,6 +9,7 @@ from stackowl.scheduler.base import HandlerRegistry
 
 if TYPE_CHECKING:
     from stackowl.db.pool import DbPool
+    from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
     from stackowl.providers.registry import ProviderRegistry
 
@@ -18,6 +19,7 @@ def register_evolution_handler(
     provider_registry: ProviderRegistry,
     owl_registry: OwlRegistry,
     evolution_batch_size: int = 10,
+    delegation_governor: ConcurrencyGovernor | None = None,
 ) -> None:
     """Construct and register the ``EvolutionCoordinator`` job handler.
 
@@ -37,6 +39,7 @@ def register_evolution_handler(
         provider_registry,
         owl_registry,
         evolution_batch_size=evolution_batch_size,
+        delegation_governor=delegation_governor,
     )
     HandlerRegistry.instance().register(handler)
     log.heartbeat.info(

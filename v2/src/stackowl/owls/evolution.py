@@ -10,6 +10,7 @@ pipeline, re-exported here for caller convenience::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -19,6 +20,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcomeStore
+from stackowl.owls.concurrency import ConcurrencyGovernor
 from stackowl.owls.dna import _MUTABLE_TRAITS, OwlDNA
 from stackowl.owls.dna_attribution import (
     AttributionReport,
@@ -45,6 +47,10 @@ __all__ = [
 
 _DELTA_LOWER = -0.1
 _DELTA_UPPER = 0.1
+# PARL-7 (F084) — bound for a single owl's evolution (attribution query + optional
+# LLM fallback + DB writes). Generous, since a real LLM fallback can be slow on a
+# weak host, but finite so one stuck owl can't wedge the nightly batch.
+EVOLUTION_PER_OWL_TIMEOUT_SECONDS = 120.0
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.UNICODE)
 
 _FETCH_EXCERPTS_SQL = """
@@ -126,6 +132,8 @@ class EvolutionCoordinator(JobHandler):
         owl_registry: OwlRegistry,
         evolution_batch_size: int = 10,
         attributor: DnaAttributor | None = None,
+        per_owl_timeout_s: float = EVOLUTION_PER_OWL_TIMEOUT_SECONDS,
+        delegation_governor: ConcurrencyGovernor | None = None,
     ) -> None:
         self._db = db
         self._provider_registry = provider_registry
@@ -134,6 +142,11 @@ class EvolutionCoordinator(JobHandler):
         self._prompt_builder = EvolutionPromptBuilder()
         self._validator = DeltaValidator()
         self._checkpointer = DNACheckpointer(db)
+        # PARL-7 (F084) — bound each owl's evolution and run the batch CONCURRENTLY
+        # under the shared in-flight governor, so one stuck owl (e.g. a hung LLM
+        # fallback call) cannot stall the whole nightly batch.
+        self._per_owl_timeout_s = per_owl_timeout_s
+        self._governor = delegation_governor
         # Learning Commit 4 — attribution-based evolution. Injectable so tests
         # can supply a deterministic RNG; production gets the default
         # (10% explore margin, 20-sample threshold per operator vote).
@@ -153,12 +166,17 @@ class EvolutionCoordinator(JobHandler):
         t0 = time.monotonic()
         mutated_owls: list[str] = []
         skipped_owls: list[str] = []
+        stuck_owls: list[str] = []
         try:
-            for manifest in self._owl_registry.list():
-                if await self._evolve_one(manifest):
-                    mutated_owls.append(manifest.name)
-                else:
-                    skipped_owls.append(manifest.name)
+            manifests = list(self._owl_registry.list())
+            # PARL-7 (F084) — evolve owls CONCURRENTLY, each bounded by a per-owl
+            # timeout under the shared governor. A hung owl times out (recorded as
+            # stuck) without blocking the rest; return_exceptions keeps one owl's
+            # failure from cancelling its siblings.
+            results = await asyncio.gather(
+                *(self._evolve_one_bounded(m) for m in manifests),
+                return_exceptions=True,
+            )
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             log.engine.error(
@@ -173,8 +191,22 @@ class EvolutionCoordinator(JobHandler):
                 error=str(exc),
                 duration_ms=duration_ms,
             )
+        for manifest, outcome in zip(manifests, results, strict=True):
+            if isinstance(outcome, BaseException):
+                # A per-owl crash (not a timeout) — logged in the helper; counted
+                # as stuck so the batch result stays honest without failing.
+                stuck_owls.append(manifest.name)
+            elif outcome is None:
+                stuck_owls.append(manifest.name)  # timed out
+            elif outcome:
+                mutated_owls.append(manifest.name)
+            else:
+                skipped_owls.append(manifest.name)
         duration_ms = (time.monotonic() - t0) * 1000
-        output = f"mutated={len(mutated_owls)} skipped={len(skipped_owls)}"
+        output = (
+            f"mutated={len(mutated_owls)} skipped={len(skipped_owls)} "
+            f"stuck={len(stuck_owls)}"
+        )
         log.engine.info(
             "[dna] coordinator.execute: exit",
             extra={
@@ -182,6 +214,7 @@ class EvolutionCoordinator(JobHandler):
                     "job_id": job.job_id,
                     "mutated": mutated_owls,
                     "skipped": skipped_owls,
+                    "stuck": stuck_owls,
                     "duration_ms": duration_ms,
                 }
             },
@@ -293,6 +326,37 @@ class EvolutionCoordinator(JobHandler):
             }},
         )
         return True
+
+    async def _evolve_one_bounded(self, manifest: OwlAgentManifest) -> bool | None:
+        """Evolve one owl under the governor + a per-owl timeout (PARL-7 / F084).
+
+        Returns ``True``/``False`` from :meth:`_evolve_one`, or ``None`` if the
+        owl timed out — a timeout is recorded (stuck), never propagated, so a
+        single hung owl cannot stall or fail the whole nightly batch.
+        """
+        try:
+            if self._governor is None:
+                return await asyncio.wait_for(
+                    self._evolve_one(manifest), timeout=self._per_owl_timeout_s
+                )
+            async with self._governor.slot():
+                return await asyncio.wait_for(
+                    self._evolve_one(manifest), timeout=self._per_owl_timeout_s
+                )
+        except TimeoutError:
+            log.engine.warning(
+                "[dna] coordinator._evolve_one_bounded: owl timed out — skipping",
+                extra={"_fields": {
+                    "owl": manifest.name, "timeout_s": self._per_owl_timeout_s,
+                }},
+            )
+            return None
+        except Exception as exc:  # B5 — one owl's crash never sinks the batch
+            log.engine.warning(
+                "[dna] coordinator._evolve_one_bounded: owl evolution failed — skipping",
+                exc_info=exc, extra={"_fields": {"owl": manifest.name}},
+            )
+            return None
 
     async def _try_attribution(self, manifest: OwlAgentManifest) -> AttributionReport:
         """Pull scored outcomes for this owl and run the attributor.
