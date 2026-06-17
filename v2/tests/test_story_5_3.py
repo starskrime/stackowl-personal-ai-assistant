@@ -576,8 +576,10 @@ class TestOrchestratorWiring:
             pellet_generator=pellet_gen,
         )
         result = await orch.run("topic", ["a", "b"])
-        # Session is finished but carries NO fabricated synthesis verdict.
-        assert result.status == "completed"
+        # PARL-3 (F081): a failed synthesis is the DISTINCT degraded terminal
+        # 'completed_no_synthesis' — never a clean 'completed' (which would imply
+        # a verdict formed). Carries NO fabricated synthesis verdict.
+        assert result.status == "completed_no_synthesis"
         assert result.synthesis is None
         # A failed synthesis yields NO stored pellet.
         assert bridge.staged == []
