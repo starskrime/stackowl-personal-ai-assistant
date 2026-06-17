@@ -40,11 +40,21 @@ class ConvergenceDetector:
                 }
             },
         )
-        responses = list(round_.responses.values())
+        # PARL-1 (F078/F079) — only GENUINE owl positions count. Error/timeout
+        # sentinels (truncated=True) are excluded BEFORE any embedding call so
+        # convergence can never be driven by, nor pay to embed, a '[error: …]'
+        # marker. With <2 genuine responses we short-circuit to False without
+        # ever touching the embedding provider.
+        responses = list(round_.genuine_responses().values())
         if len(responses) < 2:
             log.parliament.debug(
-                "[parliament] convergence.check: skipped — need ≥2 responses",
-                extra={"_fields": {"responses": len(responses)}},
+                "[parliament] convergence.check: skipped — need ≥2 genuine responses",
+                extra={
+                    "_fields": {
+                        "genuine_responses": len(responses),
+                        "total_responses": len(round_.responses),
+                    }
+                },
             )
             return False
 

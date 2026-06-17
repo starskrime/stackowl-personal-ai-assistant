@@ -242,6 +242,11 @@ class TestSynthesizerConfidence:
         provider = MockProvider()
         registry = MockProviderRegistry(provider)
         det = ConvergenceDetector(embedding_registry=None)
+        # PARL-1 (F078): the mock would only be reached with >=2 GENUINE
+        # responses. With every owl truncated there are 0 genuine positions, so
+        # _compute_mean_similarity correctly returns 0.0 WITHOUT embedding the
+        # sentinels (the bug fix). mean_sim=0.0 → no-embedder base 0.7, and the
+        # >50%-truncated penalty still fires: 0.7 - 0.2 = 0.5.
         det.mean_similarity = AsyncMock(return_value=0.9)  # type: ignore[method-assign]
         syn = ParliamentSynthesizer(registry, convergence_detector=det)  # type: ignore[arg-type]
         # All responses truncated → ratio = 1.0 > 0.5 → -0.2 penalty
@@ -249,8 +254,10 @@ class TestSynthesizerConfidence:
             round_count=1, owl_names=("a", "b"), truncated_owls=("a", "b")
         )
         result = await syn.synthesize(session)
-        # 0.9 base - 0.2 = 0.7
-        assert 0.65 <= result.confidence <= 0.75
+        # 0.7 base (no genuine pair to measure) - 0.2 truncation penalty = 0.5
+        assert 0.45 <= result.confidence <= 0.55
+        # The mock was NOT reached — sentinels were excluded before embedding.
+        det.mean_similarity.assert_not_awaited()
 
     async def test_confidence_clamped_to_zero(self) -> None:
         provider = MockProvider()

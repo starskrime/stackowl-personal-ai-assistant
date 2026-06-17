@@ -26,6 +26,22 @@ class ParliamentRound(BaseModel):
     truncated: dict[str, bool]
     duration_ms: float = 0.0
 
+    def genuine_responses(self) -> dict[str, str]:
+        """Return only the non-truncated, non-error owl responses (PARL-1 / F078).
+
+        Error/timeout sentinels (``[error: …]``, ``[timed out …]``,
+        ``[backend error: …]``) are recorded with ``truncated[name] = True`` by
+        the RoundRunner, as are token-budget-clipped responses. None of these is a
+        genuine owl position, so they must NOT be embedded for convergence nor fed
+        to synthesis. A name missing from ``truncated`` defaults to genuine
+        (backward-compatible with any round built without the flag).
+        """
+        return {
+            name: text
+            for name, text in self.responses.items()
+            if not self.truncated.get(name, False)
+        }
+
 
 class ParliamentSession(BaseModel):
     """Full Parliament session lifecycle record — persisted to SQLite.
@@ -74,13 +90,20 @@ class ParliamentSession(BaseModel):
         )
 
     def cumulative_token_estimate(self) -> int:
-        """Estimate total tokens across all rounds (4 chars ≈ 1 token)."""
-        total_chars = sum(
-            len(response)
+        """Estimate total tokens across all rounds (PARL-1 / F078).
+
+        Uses the script-aware multilingual estimator instead of the legacy
+        ``chars // 4`` heuristic, which grossly undercounts space-free scripts.
+        Counts GENUINE responses only — error/timeout sentinels are not real
+        token spend the budget should reserve against.
+        """
+        from stackowl.parliament.token_estimate import estimate_tokens
+
+        return sum(
+            estimate_tokens(response)
             for rnd in self.rounds
-            for response in rnd.responses.values()
+            for response in rnd.genuine_responses().values()
         )
-        return total_chars // 4
 
 
 def make_critic_persona() -> OwlAgentManifest:

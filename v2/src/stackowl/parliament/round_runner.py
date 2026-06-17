@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from stackowl.exceptions import OwlConcurrencyError, OwlTimeoutError, OwlTokenLimitError
 from stackowl.infra.observability import log
 from stackowl.parliament.models import ParliamentRound, ParliamentSession
+from stackowl.parliament.token_estimate import estimate_tokens
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.state import PipelineState
 
@@ -66,7 +67,10 @@ class RoundRunner:
 
         responses: dict[str, str] = {}
         truncated: dict[str, bool] = {}
-        cumulative_chars = session.cumulative_token_estimate() * 4
+        # PARL-1 (F078) — token-aware budget over prior GENUINE responses (the
+        # estimator skips sentinels). Error markers added below contribute 0 real
+        # tokens, so a failed owl can never silently inflate or shrink the budget.
+        cumulative_tokens = session.cumulative_token_estimate()
         for owl_name, result in zip(session.owl_names, results, strict=True):
             if isinstance(result, BaseException):
                 log.parliament.warning(
@@ -78,15 +82,15 @@ class RoundRunner:
                 truncated[owl_name] = True
                 continue
             _name, text, was_truncated = result
-            cumulative_chars += len(text)
-            if cumulative_chars >= self._token_budget * 4:
+            cumulative_tokens += estimate_tokens(text)
+            if cumulative_tokens >= self._token_budget:
                 log.parliament.warning(
                     "[parliament] round_runner: token budget exceeded — truncating",
                     extra={
                         "_fields": {
                             "owl_name": owl_name,
                             "budget": self._token_budget,
-                            "estimated_tokens": cumulative_chars // 4,
+                            "estimated_tokens": cumulative_tokens,
                         }
                     },
                 )
