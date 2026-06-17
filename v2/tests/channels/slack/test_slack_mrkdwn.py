@@ -107,3 +107,32 @@ def test_no_sentinel_input_byte_for_byte_unchanged() -> None:
     # Regression: the common path (no sentinel anywhere) is untouched.
     assert to_slack_mrkdwn("**b**") == "*b*"
     assert to_slack_mrkdwn("`**x**`") == "`**x**`"
+
+
+# --------------------------------------------------------------------------- #
+# CHAN-2 (F008) — single-asterisk GFM italic is disambiguated from bold and
+# normalized to Slack underscore italic, without corrupting the common bold.
+# --------------------------------------------------------------------------- #
+
+
+def test_single_asterisk_italic_becomes_underscore() -> None:
+    # GFM *italic* (single) must render as Slack _italic_, not as bold *italic*.
+    assert to_slack_mrkdwn("*italic*") == "_italic_"
+
+
+def test_bold_still_wins_over_italic() -> None:
+    # **bold** must stay *bold* (Slack bold), never be mangled by italic handling.
+    assert to_slack_mrkdwn("**bold**") == "*bold*"
+
+
+def test_mixed_bold_and_italic() -> None:
+    # A mix in one line: bold→*bold*, italic→_italic_.
+    assert to_slack_mrkdwn("**b** and *i*") == "*b* and _i_"
+
+
+def test_italic_inside_code_span_stays_literal() -> None:
+    assert to_slack_mrkdwn("`*x*`") == "`*x*`"
+
+
+def test_underscore_italic_still_untouched_after_chan2() -> None:
+    assert to_slack_mrkdwn("_italic_") == "_italic_"

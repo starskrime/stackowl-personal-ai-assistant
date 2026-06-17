@@ -33,6 +33,7 @@ from stackowl.exceptions import (
     CircuitOpenError,
     DurableReplayUncertain,
     ProviderError,
+    RateLimitError,
     ResumeTranscriptError,
     TurnStopped,
 )
@@ -216,7 +217,12 @@ async def resilient_round[T](
     if limiter is not None:
         try:
             await limiter.acquire()
-        except Exception as exc:  # B5 fail-open — limiter internal error must not break a good round.
+        except RateLimitError:
+            # A DELIBERATE cap refusal (F124, fail-closed): a zero-refill bucket
+            # cannot recover, so the cap must be honored — NOT failed open. Propagate
+            # so the caller backs off rather than over-running a real rate limit.
+            raise
+        except Exception as exc:  # B5 fail-open — limiter INTERNAL error must not break a good round.
             log.engine.error(
                 "[resilient_round] limiter.acquire raised — failing open (proceeding)",
                 exc_info=exc,

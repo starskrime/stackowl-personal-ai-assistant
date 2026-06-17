@@ -234,14 +234,36 @@ class ClarifyPump:
 
     @staticmethod
     async def _safe_close(writer: _ClosableWriter) -> None:
-        """Close a writer, swallowing errors (it may already be closed)."""
+        """Close a writer, never raising — but distinguish benign vs real failures.
+
+        F059 — a genuine close failure (the transport broke, a buffer flush
+        errored) must NOT be indistinguishable from the expected idempotent
+        double-close. We classify STRUCTURALLY (no error-string matching, which
+        would be locale-fragile): if the writer reports it is already closing/closed
+        (``is_closing()`` / ``closed`` truthy), the raised error is the benign
+        already-closed case → DEBUG. Otherwise the close failed unexpectedly and a
+        stuck/leaked stream is possible → WARNING so it is visible. Either way we
+        swallow the exception (self-healing teardown path).
+        """
         try:
             await writer.close()
-        except Exception as exc:  # self-healing — a double close is harmless
-            log.gateway.debug(
-                "clarify_pump._safe_close: close failed (likely already closed)",
-                extra={"_fields": {"error": str(exc)}},
+        except Exception as exc:
+            already_closed = bool(
+                getattr(writer, "closed", False)
+            ) or (
+                callable(getattr(writer, "is_closing", None)) and writer.is_closing()  # type: ignore[attr-defined]
             )
+            if already_closed:
+                log.gateway.debug(
+                    "clarify_pump._safe_close: close failed on already-closed writer (benign)",
+                    extra={"_fields": {"error": str(exc)}},
+                )
+            else:
+                log.gateway.warning(
+                    "clarify_pump._safe_close: unexpected close failure — stream may be stuck",
+                    exc_info=exc,
+                    extra={"_fields": {"writer_type": type(writer).__name__}},
+                )
 
     # ------------------------------------------------------------------ shutdown
 

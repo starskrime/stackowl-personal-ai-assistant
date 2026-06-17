@@ -22,6 +22,13 @@ _PARAGRAPH_RE = re.compile(r"\n\n+", re.UNICODE)
 _SENTENCE_RE = re.compile(r"(?<=[.?!。？！])\s+", re.UNICODE)
 _FENCE_RE = re.compile(r"```", re.UNICODE)
 
+# Atomic link spans that must never be cut mid-way (CHAN-3 / F007):
+#   * Slack mrkdwn ``<url|text>`` (and bare ``<url>``) — no ``<``/``>`` inside.
+#   * Telegram/GFM ``[text](url)`` — text excludes ``]``, url excludes ``)``.
+# A cut landing inside any such span retreats to just before it opens, the same
+# mechanism as :meth:`_avoid_open_fence`.
+_LINK_SPAN_RE = re.compile(r"<[^<>]+>|\[[^\]]+\]\([^)\s]+\)", re.UNICODE)
+
 # When looking back for a paragraph break, scan the last N chars of the
 # candidate chunk before giving up and looking for a sentence break.
 _PARAGRAPH_LOOKBACK = 400
@@ -90,11 +97,14 @@ class BaseMessageSplitter(ABC):
         if cut is None:
             cut = self.char_limit
         cut = self._avoid_open_fence(text, cut)
+        cut = self._avoid_split_link(text, cut)
         # Defensive lower bound: never produce empty heads — fall back to a
-        # hard split if fence-avoidance dragged the cut to zero.
+        # hard split if fence/link-avoidance dragged the cut to zero (e.g. a
+        # single link longer than the whole limit: it cannot be kept atomic, so
+        # make progress with a hard cut rather than loop forever).
         if cut <= 0:
             log.gateway.warning(
-                "[splitter] _choose_cut: fence-avoidance produced zero cut, hard splitting",
+                "[splitter] _choose_cut: fence/link-avoidance produced zero cut, hard splitting",
                 extra={"_fields": {"limit": self.char_limit}},
             )
             cut = self.char_limit
@@ -125,6 +135,30 @@ class BaseMessageSplitter(ABC):
             # Odd number of fences before cut → cut is inside a fence.
             # Retreat to just before the most recent (opening) fence.
             return fence_indices[-1]
+        return cut
+
+    @staticmethod
+    def _avoid_split_link(text: str, cut: int) -> int:
+        """If ``cut`` lands inside a link span, retreat to before it (CHAN-3).
+
+        Scans for an atomic link span (Slack ``<url|text>`` or GFM/Telegram
+        ``[text](url)``) that STRADDLES ``cut`` — starts before ``cut`` and ends
+        after it. Such a span is retreated to its start so the link stays intact
+        in one chunk, mirroring :meth:`_avoid_open_fence`. A span that begins at
+        index 0 cannot be retreated without an empty head (it is longer than the
+        whole limit) — the caller's zero-cut guard then hard-splits to make
+        progress rather than loop forever.
+        """
+        for match in _LINK_SPAN_RE.finditer(text):
+            start, end = match.start(), match.end()
+            if start >= cut:
+                break  # spans are ordered; none further can straddle the cut
+            if end > cut:
+                log.gateway.debug(
+                    "[splitter] _avoid_split_link: retreating cut before link span",
+                    extra={"_fields": {"span_start": start, "old_cut": cut}},
+                )
+                return start
         return cut
 
 

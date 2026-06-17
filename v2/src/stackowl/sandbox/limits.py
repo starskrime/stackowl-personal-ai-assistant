@@ -50,7 +50,18 @@ MAX_STDERR_BYTES = 10_000
 # --- Environment allowlist (allowlist-FROM-EMPTY). The child inherits NOTHING by
 #     default except this minimal, secret-free set; a spec may extend it, never
 #     start broader. Secrets/tokens never appear here.
-DEFAULT_ENV_ALLOW: tuple[str, ...] = ("PATH", "HOME", "LANG")
+#
+#     F162: PATH is DELIBERATELY NOT forwarded from the host (the host PATH can
+#     point the sandbox at host-specific / attacker-influenced bin dirs). The
+#     backends instead set PATH to the FIXED :data:`SANDBOX_PATH` below. HOME is
+#     likewise pinned to the writable workspace by each backend, never the host's.
+DEFAULT_ENV_ALLOW: tuple[str, ...] = ("HOME", "LANG")
+
+# --- Fixed sanitized PATH inside the sandbox (F162). A constant minimal PATH so a
+#     run finds the standard interpreters/tools without ever inheriting the host's
+#     PATH value. Conservative + identical on every host (cross-platform: the
+#     sandbox interior is the Linux container/bwrap filesystem regardless of host).
+SANDBOX_PATH: str = "/usr/local/bin:/usr/bin:/bin"
 
 # --- Global concurrency cap (enforced by the SandboxGovernor in E11-S6).
 #     A personal assistant rarely needs many parallel sandboxes; past this the

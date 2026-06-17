@@ -27,6 +27,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from stackowl.sandbox.limits import SANDBOX_PATH
 from stackowl.sandbox.mounts import WORKSPACE_MOUNT, MountBuilder
 from stackowl.sandbox.ptc.protocol import PTC_SOCK_ENV, in_sandbox_sock_path
 from stackowl.sandbox.spec import ExecSpec
@@ -82,10 +83,14 @@ class BwrapArgvBuilder:
             argv += ["--bind", str(ptc_sock), in_sock]
         # invariant #4: clear the environment, then forward ONLY the allowlisted
         # names (host value passed through); HOME is pinned to the writable workspace.
+        # F162: PATH is set to a FIXED sanitized value, never the host's PATH.
         argv += ["--clearenv", "--setenv", "HOME", WORKSPACE_MOUNT]
+        argv += ["--setenv", "PATH", SANDBOX_PATH]
         for name in spec.env_allow:
-            if name == "HOME":
-                continue  # HOME is pinned to /workspace above; never the host HOME
+            if name in ("HOME", "PATH"):
+                # HOME pinned to /workspace, PATH pinned to SANDBOX_PATH above —
+                # neither is ever taken from the host environment (F162).
+                continue
             value = os.environ.get(name)
             if value is not None:
                 argv += ["--setenv", name, value]

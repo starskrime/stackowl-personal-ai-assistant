@@ -255,3 +255,53 @@ async def test_spawn_send_does_not_wedge_when_producer_crashes_before_close() ->
     await asyncio.sleep(0)  # let the send task's done-callback (_cleanup) run
     assert reg.get_writer(request_id) is None  # stream reaped, keyed by request_id
     assert request_id not in pump._inflight  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------- F059
+
+
+class _AlreadyClosedWriter:
+    """A writer that reports it is already closing and raises on close()."""
+
+    def is_closing(self) -> bool:
+        return True
+
+    async def close(self) -> None:
+        raise RuntimeError("cannot close a closing transport")
+
+
+class _BrokenWriter:
+    """A writer that is NOT closed yet but fails to close (real failure)."""
+
+    def is_closing(self) -> bool:
+        return False
+
+    async def close(self) -> None:
+        raise OSError("transport flush failed")
+
+
+async def test_safe_close_benign_already_closed_logs_debug(monkeypatch: object) -> None:
+    """F059 — an already-closed writer's close error logs at DEBUG, never WARNING."""
+    import stackowl.gateway.clarify_pump as cp
+
+    debugs: list[str] = []
+    warns: list[str] = []
+    monkeypatch.setattr(cp.log.gateway, "debug", lambda msg, *a, **k: debugs.append(msg))  # type: ignore[attr-defined]
+    monkeypatch.setattr(cp.log.gateway, "warning", lambda msg, *a, **k: warns.append(msg))  # type: ignore[attr-defined]
+
+    await ClarifyPump._safe_close(_AlreadyClosedWriter())  # type: ignore[arg-type]
+    assert len(debugs) == 1 and warns == [], (debugs, warns)
+
+
+async def test_safe_close_unexpected_failure_logs_warning(monkeypatch: object) -> None:
+    """F059 — a real close failure on a live writer WARNs so a stuck stream shows."""
+    import stackowl.gateway.clarify_pump as cp
+
+    debugs: list[str] = []
+    warns: list[str] = []
+    monkeypatch.setattr(cp.log.gateway, "debug", lambda msg, *a, **k: debugs.append(msg))  # type: ignore[attr-defined]
+    monkeypatch.setattr(cp.log.gateway, "warning", lambda msg, *a, **k: warns.append(msg))  # type: ignore[attr-defined]
+
+    # Must NOT raise (self-healing teardown), but must surface as a WARNING.
+    await ClarifyPump._safe_close(_BrokenWriter())  # type: ignore[arg-type]
+    assert len(warns) == 1 and debugs == [], (debugs, warns)

@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from stackowl.sandbox.limits import SANDBOX_PATH
 from stackowl.sandbox.ptc.protocol import PTC_SOCK_ENV, in_sandbox_sock_path
 from stackowl.sandbox.spec import ExecSpec
 
@@ -124,11 +125,15 @@ class DockerArgvBuilder:
             in_sock = in_sandbox_sock_path(WORK_MOUNT)
             argv += ["--volume", f"{ptc_socket}:{in_sock}"]
 
-        # --- env (#4): allowlist-from-empty; HOME pinned to the writable scratch.
+        # --- env (#4): allowlist-from-empty; HOME pinned to the writable scratch;
+        #     PATH set to a FIXED sanitized value, never the host's PATH (F162).
         argv += ["--env", f"HOME={WORK_MOUNT}"]
+        argv += ["--env", f"PATH={SANDBOX_PATH}"]
         for name in spec.env_allow:
-            if name == "HOME":
-                continue  # HOME is pinned to /work above; never the host HOME
+            if name in ("HOME", "PATH"):
+                # HOME pinned to /work, PATH pinned to SANDBOX_PATH above — neither
+                # is ever taken from the host environment (F162).
+                continue
             value = os.environ.get(name)
             if value is not None:
                 argv += ["--env", f"{name}={value}"]

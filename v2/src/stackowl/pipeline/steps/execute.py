@@ -36,6 +36,7 @@ from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
 from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_window
 from stackowl.providers.react_callback import ReActIterationState
+from stackowl.tools.child_exclusion import CHILD_EXCLUDED_TOOLS
 from stackowl.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -57,9 +58,10 @@ PersistenceCheck = Callable[[str, list[str]], Awaitable[str | None]]
 # E11-S5 GAP-B — `execute_code` joins them: a delegated sub-agent must NOT run
 # arbitrary code in a sandbox. The top-level owl runs code under the consent gate;
 # a child handles its sub-task and returns, never recursing into code execution.
-_CHILD_EXCLUDED_TOOLS = frozenset(
-    {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code", "owl_build"}
-)
+# SEC-3 — the canonical set now lives in stackowl.tools.child_exclusion (shared with
+# the per-tool self-defense). Aliased here under the long-standing name so this
+# module's schema filter + dispatch-seam re-check keep using one source of truth.
+_CHILD_EXCLUDED_TOOLS = CHILD_EXCLUDED_TOOLS
 
 
 def _est_tokens(text: str | None) -> int:

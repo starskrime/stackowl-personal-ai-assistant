@@ -286,3 +286,52 @@ class TestEviction:
         await reg.start_sweep_loop()
         await asyncio.sleep(0.01)
         await reg.stop_sweep_loop()
+
+
+class TestHandlerFailureRateLimit:
+    """F160 — a hostile page firing events that trip an observer handler must not
+    flood the error log: first failure of each kind ERRORs, the rest suppress."""
+
+    def test_first_failure_loud_then_suppressed(self, monkeypatch: Any) -> None:
+        from stackowl.tools.browser import sessions as sess_mod
+
+        errors: list[tuple[str, dict[str, Any]]] = []
+        debugs: list[tuple[str, dict[str, Any]]] = []
+
+        def _err(msg: str, *_a: Any, **kw: Any) -> None:
+            errors.append((msg, kw.get("extra", {}).get("_fields", {})))
+
+        def _dbg(msg: str, *_a: Any, **kw: Any) -> None:
+            debugs.append((msg, kw.get("extra", {}).get("_fields", {})))
+
+        monkeypatch.setattr(sess_mod.log.engine, "error", _err)
+        monkeypatch.setattr(sess_mod.log.engine, "debug", _dbg)
+
+        obs = sess_mod.PageObservers()
+        boom = RuntimeError("handler blew up")
+        for _ in range(5):
+            sess_mod._log_handler_failure(obs, "console", "h1", boom)
+
+        # exactly one loud ERROR (the first), four suppressed to DEBUG
+        assert len(errors) == 1, errors
+        assert len(debugs) == 4, debugs
+        assert obs.handler_failures["console"] == 5
+        assert errors[0][1]["failure_count"] == 1
+
+    def test_per_kind_counters_independent(self, monkeypatch: Any) -> None:
+        from stackowl.tools.browser import sessions as sess_mod
+
+        errors: list[str] = []
+        monkeypatch.setattr(
+            sess_mod.log.engine, "error", lambda msg, *a, **k: errors.append(msg)
+        )
+        monkeypatch.setattr(sess_mod.log.engine, "debug", lambda *a, **k: None)
+
+        obs = sess_mod.PageObservers()
+        boom = RuntimeError("x")
+        sess_mod._log_handler_failure(obs, "console", "h1", boom)
+        sess_mod._log_handler_failure(obs, "pageerror", "h1", boom)
+        sess_mod._log_handler_failure(obs, "dialog", "h1", boom)
+        # each kind's FIRST failure is loud → three ERRORs total
+        assert len(errors) == 3, errors
+        assert obs.handler_failures == {"console": 1, "pageerror": 1, "dialog": 1}

@@ -112,6 +112,68 @@ class ExecSpec(BaseModel):
             raise ValueError(f"timeout_s must be positive non-zero (got {value})")
         return value
 
+    @field_validator("env_allow")
+    @classmethod
+    def _env_allow_no_secret_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Fail-closed: refuse any env name that looks credential-bearing (F162).
+
+        ``env_allow`` forwards the HOST value of each named variable into the
+        sandbox, so a credential-named var would smuggle a secret across the trust
+        boundary. The guard is the central log-redaction predicate
+        (:func:`stackowl.infra.observability._is_sensitive`) PLUS substring checks
+        for the core credential words (``secret`` / ``token`` / ``password`` /
+        ``passwd`` / ``pwd`` / ``api_key`` / ``apikey`` / ``credential``). The
+        sandbox is deliberately STRICTER than the log redactor (over-restriction is
+        the safe direction for a forwarded-value guard); the log path is unchanged,
+        so the two never silently drift in the LENIENT direction. Only the
+        OFFENDING NAMES are surfaced (never any value).
+
+        SEC-2 — beyond credential NAMES, an exact-name (case-insensitive) denylist
+        rejects env-based code-injection / leak vectors that are not themselves
+        credential-named: the dynamic-loader hooks ``LD_PRELOAD`` /
+        ``LD_LIBRARY_PATH`` / ``DYLD_INSERT_LIBRARIES`` (inject a library into the
+        child), ``BASH_ENV`` / ``IFS`` (alter shell load/parse), and
+        ``AWS_ACCESS_KEY_ID`` (the non-secret-named half of an AWS pair whose
+        SECRET half is already caught). These are fail-closed too.
+        """
+        # Imported lazily to avoid a module-import cycle (observability imports the
+        # trace context; this keeps spec.py free of that edge at import time).
+        from stackowl.infra.observability import _is_sensitive
+
+        # Substring tokens (lowercased name): credential words that the pattern-based
+        # log predicate (which is anchored/glob) may miss, e.g. ``DB_PASSWORD``.
+        _CREDENTIAL_SUBSTRINGS = (
+            "secret", "token", "password", "passwd", "pwd",
+            "api_key", "apikey", "credential",
+        )
+        # SEC-2 — env-based code-injection / leak vectors that are NOT credential-
+        # NAMED but are dangerous to forward: the dynamic-loader hooks
+        # (LD_PRELOAD/LD_LIBRARY_PATH/DYLD_INSERT_LIBRARIES) let a host value inject
+        # a library into the child, BASH_ENV/IFS alter how a shell loads/parses, and
+        # AWS_ACCESS_KEY_ID is the (non-secret-named) half of an AWS credential pair
+        # whose SECRET half is already caught. EXACT-name, case-insensitive (these
+        # are not credential-suffix globs). Fail-closed.
+        _DENIED_EXACT_NAMES = frozenset({
+            "ld_preload", "ld_library_path", "bash_env", "ifs",
+            "dyld_insert_libraries", "aws_access_key_id",
+        })
+        offending = [
+            name
+            for name in value
+            if _is_sensitive(name)
+            or any(tok in name.lower() for tok in _CREDENTIAL_SUBSTRINGS)
+            or name.lower() in _DENIED_EXACT_NAMES
+        ]
+        if offending:
+            raise ValueError(
+                "env_allow refuses secret-named / injection-vector variable(s) "
+                f"{sorted(offending)} — a credential-named host var (matches a "
+                "secret/redaction pattern) or a code-injection vector "
+                "(LD_PRELOAD/LD_LIBRARY_PATH/DYLD_INSERT_LIBRARIES/BASH_ENV/IFS/"
+                "AWS_ACCESS_KEY_ID) must never be forwarded into the sandbox"
+            )
+        return value
+
 
 class ExecResult(BaseModel):
     """The provenance-carrying outcome of one run. Frozen; built via factories.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -58,17 +59,34 @@ def resolve_source_secret(source: str, config: WebhookSourceConfig) -> str | Non
     return secret
 
 
+#: A SHA-256 hexdigest is EXACTLY 64 lowercase/uppercase hex chars. Any provided
+#: signature must match this BEFORE the constant-time compare (F141) — a non-hex
+#: or wrong-length value is malformed and rejected up front (defense-in-depth;
+#: compare_digest is already length-safe, but a strict format gate documents the
+#: contract and refuses garbage early without ever leaking timing/format info).
+_SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
 def validate_hmac_signature(secret: str, body: bytes, provided_sig: str) -> bool:
-    """Constant-time HMAC-SHA256 comparison.
+    """Constant-time HMAC-SHA256 comparison with an up-front hex-format guard.
 
     ``provided_sig`` may include a ``sha256=`` prefix (GitHub convention) — we
-    strip it before comparison.  Never logs ``secret`` or ``body``.
+    strip it before comparison. F141: the stripped value is bounded to
+    ``^[0-9a-fA-F]{64}$`` BEFORE :func:`hmac.compare_digest`; a malformed
+    (non-hex / wrong-length) signature is rejected as ``False``. Never logs
+    ``secret`` or ``body``.
     """
     if not provided_sig:
         return False
     raw_sig = provided_sig
     if raw_sig.startswith("sha256="):
         raw_sig = raw_sig[len("sha256=") :]
+    if not _SHA256_HEX_RE.match(raw_sig):
+        log.webhook.warning(
+            "[webhook] receiver_helpers.validate_hmac_signature: malformed signature format — rejecting",
+            extra={"_fields": {"sig_len": len(raw_sig)}},
+        )
+        return False
     expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, raw_sig)
 

@@ -47,7 +47,7 @@ VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?)
 
 def _entity_id_for(fact_id: str, name: str, entity_type: str) -> str:
     """Deterministic content-addressed id for an entity within a fact."""
-    digest = hashlib.sha256(f"{entity_type}|{name}".encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(f"{entity_type}|{name}".encode()).hexdigest()[:16]
     return f"ent_{digest}"
 
 

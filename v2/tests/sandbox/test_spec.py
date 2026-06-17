@@ -53,8 +53,63 @@ class TestExecSpec:
         spec = ExecSpec(code="print(1)")
         # Allowlist-from-empty: only the minimal secret-free set, nothing host-wide.
         assert spec.env_allow == DEFAULT_ENV_ALLOW
-        assert "PATH" in spec.env_allow
         assert all("TOKEN" not in name and "SECRET" not in name for name in spec.env_allow)
+
+    def test_default_env_allow_does_not_forward_host_path(self) -> None:
+        # F162 — the sandbox uses a FIXED sanitized PATH, never the host's PATH
+        # value. So PATH is no longer in the default forwarded allowlist.
+        assert "PATH" not in DEFAULT_ENV_ALLOW
+
+    @pytest.mark.parametrize(
+        "secret_name",
+        [
+            "AWS_SECRET_ACCESS_KEY",
+            "OPENAI_API_KEY",
+            "GITHUB_TOKEN",
+            "DB_PASSWORD",
+            "my_secret",
+            "service_key",
+            "KEY_PRIMARY",
+        ],
+    )
+    def test_env_allow_refuses_secret_named_var(self, secret_name: str) -> None:
+        # F162 — env_allow is fail-closed: a name matching a redaction pattern
+        # (apikey/token/secret/password/*_key/key_*) is REFUSED at construction so
+        # a token-bearing host var can never be forwarded into the sandbox.
+        with pytest.raises(ValidationError, match="secret"):
+            ExecSpec(code="print(1)", env_allow=("LANG", secret_name))
+
+    def test_env_allow_accepts_safe_names(self) -> None:
+        spec = ExecSpec(code="print(1)", env_allow=("LANG", "TZ", "LC_ALL"))
+        assert spec.env_allow == ("LANG", "TZ", "LC_ALL")
+
+    @pytest.mark.parametrize(
+        "danger_name",
+        [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "BASH_ENV",
+            "IFS",
+            "DYLD_INSERT_LIBRARIES",
+            "AWS_ACCESS_KEY_ID",
+            # Case-insensitive, exact-name match.
+            "ld_preload",
+            "Bash_Env",
+        ],
+    )
+    def test_env_allow_refuses_code_injection_vectors(self, danger_name: str) -> None:
+        # SEC-2 — env-based code-injection / leak vectors are denied even though
+        # they are not credential-NAMED: forwarding LD_PRELOAD/BASH_ENV/IFS/etc.
+        # into the child lets a host value alter how the sandboxed process loads
+        # or interprets code. Fail-closed at construction.
+        with pytest.raises(ValidationError):
+            ExecSpec(code="print(1)", env_allow=("LANG", danger_name))
+
+    def test_env_allow_does_not_overmatch_dangerous_substrings(self) -> None:
+        # Exact-name (not suffix-glob): a benign var whose name merely CONTAINS a
+        # denied token (e.g. "MY_IFS_CONFIG") is not falsely rejected by SEC-2.
+        spec = ExecSpec(code="print(1)", env_allow=("LANG", "MY_IFS_CONFIG"))
+        assert "MY_IFS_CONFIG" in spec.env_allow
 
     def test_language_python_only(self) -> None:
         assert ExecSpec(code="print(1)").language == "python"

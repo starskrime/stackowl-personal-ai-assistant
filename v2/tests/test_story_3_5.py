@@ -95,7 +95,6 @@ async def test_backend_captures_errors(backend: OrchestratorBackend, monkeypatch
         dispatch,
         execute,
         parliament_step,
-        synthesize,
         triage,
     )
 
@@ -106,7 +105,6 @@ async def test_backend_captures_errors(backend: OrchestratorBackend, monkeypatch
         ("execute", execute.run),
         ("parliament_step", parliament_step.run),
         ("consolidate", consolidate.run),
-        ("synthesize", synthesize.run),
     ]
     monkeypatch.setattr(registry, "PIPELINE_STEPS", patched_steps)
     monkeypatch.setattr(be_async, "PIPELINE_STEPS", patched_steps)

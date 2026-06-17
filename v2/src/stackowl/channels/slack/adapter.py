@@ -311,11 +311,11 @@ class SlackChannelAdapter(ChannelAdapter):
         # Convert assistant GFM → Slack mrkdwn BEFORE splitting so the splitter
         # counts final mrkdwn chars (e.g. ``**bold**``→``*bold*`` shrinks the
         # text). Code spans/fences are preserved verbatim by the converter.
-        # NOTE (split-safety): the splitter cuts on paragraph/sentence/grapheme
-        # boundaries and retreats out of an open code fence, but it is NOT
-        # ``<url|text>``-aware — a link straddling the ~3900-char limit could be
-        # severed. Real assistant replies almost never place a single link
-        # across a chunk boundary, so this is a documented edge, not a fix here.
+        # Split-safety (CHAN-3 / F007): the splitter cuts on paragraph/sentence/
+        # grapheme boundaries, retreats out of an open code fence, AND retreats a
+        # cut that lands inside a ``<url|text>`` link span so a link is never
+        # severed mid-chunk (a link longer than the whole limit still hard-splits
+        # to make progress).
         mrkdwn = to_slack_mrkdwn(text)
         log.slack.debug(
             "[slack] adapter.send_text: decision converted to mrkdwn",

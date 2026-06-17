@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from stackowl.exceptions import RateLimitError
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 
@@ -150,8 +151,12 @@ class RateLimiter:
                     return
 
                 if self._refill_rate <= 0.0:
+                    # FAIL CLOSED (F124): a zero-refill bucket can never recover the
+                    # deficit, so the call cannot be granted. Raising a typed error
+                    # (instead of returning, which silently GRANTED the call past
+                    # the cap) makes the cap real. The exception carries no secret.
                     log.engine.error(
-                        "[rate_limiter] acquire: refill_rate is zero — cannot grant tokens",
+                        "[rate_limiter] acquire: refill_rate is zero — refusing (fail closed)",
                         extra={
                             "_fields": {
                                 "provider": self._provider_name,
@@ -160,7 +165,7 @@ class RateLimiter:
                             }
                         },
                     )
-                    return
+                    raise RateLimitError(self._provider_name, tokens, self._capacity)
 
                 deficit = tokens - self._tokens
                 sleep_seconds = max(deficit / self._refill_rate, 0.01)

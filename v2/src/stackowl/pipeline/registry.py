@@ -1,4 +1,4 @@
-"""Pipeline registry — ordered 8-step sequence."""
+"""Pipeline registry — ordered 7-step sequence (``deliver`` runs after)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from stackowl.pipeline.steps import (
     dispatch,
     execute,
     parliament_step,
-    synthesize,
     triage,
 )
 
@@ -27,5 +26,4 @@ PIPELINE_STEPS: list[tuple[str, StepFn]] = [
     ("execute", execute.run),
     ("parliament_step", parliament_step.run),
     ("consolidate", consolidate.run),
-    ("synthesize", synthesize.run),
 ]

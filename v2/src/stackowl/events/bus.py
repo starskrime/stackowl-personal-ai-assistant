@@ -41,6 +41,19 @@ class EventBus:
             handlers.remove(handler)
 
     def emit(self, event: str, payload: Any = None) -> None:
+        """Publish ``event`` to its subscribers.
+
+        Threading contract (CFG-3 / F018): SYNC handlers run INLINE on the
+        CALLER's thread. A handler that mutates asyncio-owned state (e.g. the
+        provider registry / cost-tracker ``settings_reloaded`` consumers) is
+        therefore only safe if ``emit`` is itself called on the owning loop
+        thread, OR the handler is loop-agnostic. An off-loop emitter (the config
+        watcher's daemon thread) MUST marshal to the loop —
+        :meth:`ConfigWatcher._dispatch_reloaded` calls ``emit`` via
+        ``loop.call_soon_threadsafe`` so its handlers run on the loop thread.
+        ASYNC (coroutine) handlers are always scheduled on the running loop, so
+        they are loop-safe regardless of the emitter's thread.
+        """
         for handler in list(self._handlers.get(event, [])):
             if inspect.iscoroutinefunction(handler):
                 self._dispatch_async(event, handler, payload)

@@ -25,6 +25,18 @@ from stackowl.tools.system.shell import _TIMEOUT_CEILING_SEC, _TIMEOUT_SEC, run_
 
 _LEARNED_GROUP = "learned"
 
+# F046 — a fixed, NON-author-controlled consent_category stamped on a learned tool
+# whose action_severity is "consequential". The author cannot mint a consent
+# category (LearnedToolSpec deliberately has no such field — that would let the
+# model relax/raise its own gating); the TOOL OBJECT pins this one, exactly as it
+# pins ``toolset_group`` to "learned". This gives shadow-guard / consent-surface
+# parity with native consequential tools: the dangerous-shadow guard and the
+# consent prompt both see a consent_category, not just a severity. It is
+# DELIBERATELY NOT one of the registry's _DANGEROUS_CONSENT_CATEGORIES (which would
+# wrongly imply lock/alarm/destructive semantics); danger is established by the
+# consequential severity, and this category simply makes the gate uniform.
+_LEARNED_CONSEQUENTIAL_CATEGORY = "learned_consequential"
+
 
 class LearnedShellTool(Tool):
     """A registered Tool that runs a learned spec's argv through the shell seam."""
@@ -60,11 +72,21 @@ class LearnedShellTool(Tool):
 
     @property
     def manifest(self) -> ToolManifest:
+        # F046 — stamp a fixed consent_category for a consequential learned tool so
+        # the registry's dangerous-shadow guard + the consent surface treat it on
+        # par with a native consequential tool. Non-consequential learned tools
+        # carry no forced category (unchanged).
+        consent_category = (
+            _LEARNED_CONSEQUENTIAL_CATEGORY
+            if self._spec.action_severity == "consequential"
+            else None
+        )
         return ToolManifest(
             name=self.name,
             description=self.description,
             parameters=self.parameters,
             action_severity=self._spec.action_severity,
+            consent_category=consent_category,
             toolset_group=_LEARNED_GROUP,
         )
 

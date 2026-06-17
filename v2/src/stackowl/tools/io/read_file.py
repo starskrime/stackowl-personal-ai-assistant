@@ -6,7 +6,7 @@ import asyncio
 import time
 
 from stackowl.infra.observability import log
-from stackowl.tools.base import Tool, ToolResult
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.io.path_guard import is_within_root as _guard  # shared guard (E3)
 from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve  # workspace anchoring
 
@@ -29,6 +29,19 @@ class ReadFileTool(Tool):
             "properties": {"path": {"type": "string", "description": "Relative or absolute file path"}},
             "required": ["path"],
         }
+
+    @property
+    def manifest(self) -> ToolManifest:
+        # SUBST-1/F091 — tag as the read-only ``file_read`` capability class so the
+        # self-heal supervisor can substitute the ``pdf`` reader (and vice versa)
+        # when one fails on a given path. action_severity stays "read".
+        return ToolManifest(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters,
+            action_severity="read",
+            capability_tag="file_read",
+        )
 
     async def execute(self, **kwargs: object) -> ToolResult:
         path_str = str(kwargs.get("path", ""))

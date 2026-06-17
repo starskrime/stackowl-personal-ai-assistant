@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -16,12 +17,24 @@ log = logging.getLogger("stackowl.config")
 SettingsFactory = Callable[[], Any]
 
 
+# Config edits are RARE, so the default poll cadence is deliberately slow — a
+# 1Hz stat() loop for the whole process lifetime is pure waste (CFG-2 / F016).
+_DEFAULT_POLL_INTERVAL = 5.0
+
+
 class ConfigWatcher:
     """Polls a YAML config file for modifications and re-validates on change.
 
-    When the file changes and parses cleanly, emits ``settings_reloaded``
-    on the provided ``EventBus`` with the new ``Settings`` object as payload.
-    Invalid files are rejected with a WARNING; the previous settings are kept.
+    When the file changes and parses cleanly, emits ``settings_reloaded`` on the
+    provided ``EventBus`` with the new ``Settings`` object as payload. A broken
+    config REJECTS the reload and keeps the previous settings (CFG-1).
+
+    Debounce (CFG-2 / F016): a detected change is not reloaded immediately. The
+    watcher re-stats on the next poll and only reloads once the mtime has SETTLED
+    (unchanged across one poll window), so a mid-write / truncated file is never
+    parsed. The default poll interval is ``5s`` (config edits are rare → no 1Hz
+    idle wakeup). The poll loop is the portable, cross-platform fallback; an
+    inotify/watchdog observer can layer on top without changing this contract.
 
     Wired to start only when ``Settings.settings_watch`` is ``True``.
     """
@@ -31,20 +44,39 @@ class ConfigWatcher:
         config_path: Path,
         event_bus: EventBus,
         settings_factory: SettingsFactory,
-        poll_interval: float = 1.0,
+        poll_interval: float = _DEFAULT_POLL_INTERVAL,
     ) -> None:
         self._path = config_path
         self._event_bus = event_bus
         self._settings_factory = settings_factory
         self._poll_interval = poll_interval
         self._last_mtime: float | None = None
+        # Debounce state: the mtime first seen for an in-progress change, awaiting
+        # a settle confirmation on the next poll. ``None`` = no change pending.
+        self._pending_mtime: float | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        # CFG-3 (F018) — the asyncio loop that owns the subscribers' state. When
+        # set, settings_reloaded is marshalled to it via call_soon_threadsafe so
+        # handlers run ON the loop thread, never the watcher daemon thread.
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def capture_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Record the asyncio loop to marshal settings_reloaded onto (CFG-3)."""
+        self._loop = loop
 
     def start(self) -> None:
         self._running = True
         self._last_mtime = self._mtime()
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="config-watcher")
+        self._pending_mtime = None
+        # Capture the running loop (if any) so the cross-thread emit is marshalled
+        # to it. start() is called from the async gateway phase where a loop runs.
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = None  # no loop (e.g. a sync test) → direct emit
+        self._thread = threading.Thread(target=self._loop_body, daemon=True, name="config-watcher")
         self._thread.start()
         log.info("[config] Watching %s for changes (poll %.1fs)", self._path, self._poll_interval)
 
@@ -60,18 +92,69 @@ class ConfigWatcher:
         except OSError:
             return None
 
-    def _loop(self) -> None:
+    def _loop_body(self) -> None:
         while self._running:
             time.sleep(self._poll_interval)
-            current = self._mtime()
-            if current != self._last_mtime:
-                self._last_mtime = current
-                self._reload()
+            self._check_once()
+
+    def _check_once(self) -> None:
+        """One poll tick: detect → debounce-settle → reload (CFG-2 / F016).
+
+        A newly-changed mtime is recorded as *pending* and NOT reloaded yet. Only
+        when the next tick sees the SAME mtime (the write has settled) does the
+        reload fire — a still-changing (mid-write/truncated) file keeps deferring.
+        """
+        current = self._mtime()
+        if current == self._last_mtime:
+            # No change vs the last applied state — clear any stale pending mark.
+            self._pending_mtime = None
+            return
+        if current != self._pending_mtime:
+            # First sighting of this change (or it changed again since last tick)
+            # → mark pending and wait for it to settle before reloading.
+            log.debug(
+                "[config] change detected, awaiting settle (debounce): %s", self._path
+            )
+            self._pending_mtime = current
+            return
+        # Settled: the mtime is unchanged across a full poll window → safe reload.
+        self._last_mtime = current
+        self._pending_mtime = None
+        self._reload()
 
     def _reload(self) -> None:
         try:
             new_settings = self._settings_factory()
-            self._event_bus.emit("settings_reloaded", new_settings)
-            log.info("[config] Settings reloaded successfully")
         except Exception as exc:
-            log.warning("[config] reload rejected: %s", exc)
+            # CFG-1 (F017) — a broken config (e.g. YAML parse error of an existing
+            # file, now raised by _YamlSource) REJECTS the reload: the prior
+            # Settings are retained (no settings_reloaded is emitted, so no
+            # consumer mutates), and the operator is alerted at ERROR (health-
+            # visible), NOT a buried WARNING.
+            log.error(
+                "[config] reload REJECTED — keeping previous settings: %s",
+                exc,
+                exc_info=exc,
+            )
+            return
+        self._dispatch_reloaded(new_settings)
+        log.info("[config] Settings reloaded successfully")
+
+    def _dispatch_reloaded(self, new_settings: Any) -> None:
+        """Emit settings_reloaded on the loop thread, never the watcher thread.
+
+        CFG-3 (F018) — :class:`EventBus` runs sync handlers INLINE on the caller's
+        thread, and the settings_reloaded consumers (provider registry / cost
+        tracker reload) touch asyncio-owned state. When a loop was captured
+        (:meth:`capture_loop`/:meth:`start`) the emit is marshalled to it via
+        ``call_soon_threadsafe`` so handlers run ON the loop thread. With no loop
+        (a sync context / test) the emit is direct — a loop-agnostic subscriber is
+        unaffected. This is the explicit off-loop dispatch contract.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            self._event_bus.emit("settings_reloaded", new_settings)
+            return
+        loop.call_soon_threadsafe(
+            self._event_bus.emit, "settings_reloaded", new_settings
+        )

@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stackowl.commands.skill_helpers import record_skill_mutation, reindex_after_change
+from stackowl.exceptions import ToolRegistrationError
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
@@ -549,6 +550,20 @@ class SkillManageTool(Tool):
                     embedding_registry=services.embedding_registry,
                 )
                 return ""
+            except ToolRegistrationError as exc:
+                # PLUG-3/F047 — a tool-name collision is NOT a transient reindex
+                # failure: retrying will never resolve it and the misleading
+                # "reindex pending" note hid the real cause. Surface a distinct,
+                # actionable collision message and do not retry.
+                log.tool.warning(
+                    "skill_manage.execute: reindex blocked by tool-name collision",
+                    extra={"_fields": {"tool": exc.tool_name, "reason": exc.reason}},
+                )
+                return (
+                    f" NOTE: the skill was saved but its tool {exc.tool_name!r} "
+                    f"could not be registered — {exc.reason}. The skill is NOT yet "
+                    "active; rename the conflicting tool and re-author."
+                )
             except Exception as exc:  # B5 — retry once, then degrade
                 log.tool.warning(
                     "skill_manage.execute: reindex failed",

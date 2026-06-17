@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from stackowl.exceptions import OwlConcurrencyError, OwlTimeoutError, OwlTokenLimitError
+from stackowl.exceptions import OwlConcurrencyError, OwlTimeoutError
 from stackowl.infra.observability import log
 from stackowl.owls.concurrency import GovernorSaturatedError
 from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
@@ -220,7 +220,13 @@ class RoundRunner:
                 f"[timed out after {self._per_owl_timeout_s:.0f}s]",
                 True,
             )
-        except (OwlTimeoutError, OwlTokenLimitError, OwlConcurrencyError) as exc:
+        except (OwlTimeoutError, OwlConcurrencyError) as exc:
+            # NB: OwlTokenLimitError is intentionally NOT caught here.
+            # OwlResourceGuard truncates a token-overflow stream cleanly (yields
+            # the final chunk and returns, no exception bubbled — see
+            # guards.py:_stream_impl), so a token-limited owl returns a usable
+            # truncated answer rather than surfacing an error. Including it in this
+            # tuple was an unreachable arm (F083); removing it preserves behavior.
             log.parliament.warning(
                 "[parliament] round_runner._run_owl: owl error",
                 exc_info=exc,
