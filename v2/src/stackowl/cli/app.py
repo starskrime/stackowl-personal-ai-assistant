@@ -96,8 +96,27 @@ def validate_config() -> None:
 
 @app.command()
 def init() -> None:
-    """Initialize a new StackOwl installation."""
-    typer.echo("init: not yet implemented")
+    """Initialize a new StackOwl installation (create ~/.stackowl/ + apply migrations).
+
+    Idempotent and non-serving: ensures the home tree exists and brings the
+    database schema up to date, so the install is ready before the first
+    ``stackowl start``/``serve`` (F147 — was a "not yet implemented" stub).
+    """
+    from stackowl.infra.observability import setup_logging
+    from stackowl.paths import StackowlHome
+    from stackowl.startup.orchestrator import StartupOrchestrator
+
+    setup_logging()
+    log.debug("[cli] init: entry")
+
+    StackowlHome.ensure_exists()
+    typer.echo(f"StackOwl home: {StackowlHome.home()}")
+
+    # Reuse the orchestrator's single migration site (F146) so init shares the
+    # exact same idempotent migration path as start/serve — one source of truth.
+    StartupOrchestrator().ensure_migrations()
+    typer.echo("✓ Initialized — home tree ready and migrations applied")
+    log.debug("[cli] init: exit")
 
 
 @app.command()
