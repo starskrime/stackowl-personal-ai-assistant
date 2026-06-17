@@ -306,6 +306,54 @@ class WhatsAppChannelAdapter(ChannelAdapter):
             await self._browser.send_message(dest, part)
         log.whatsapp.debug("[whatsapp] adapter.send_text: exit")
 
+    async def send_file(
+        self, file_path: str, caption: str | None = None, *, target: str | None = _UNSET
+    ) -> None:
+        """Send a file to the resolved WhatsApp chat via the attach flow (CHAN-4).
+
+        Destination resolution mirrors :meth:`send_text` (same per-session target
+        threading): an EXPLICIT ``target`` JID (the on-turn path) wins; otherwise
+        ``_last_target`` (proactive/best-effort). An explicit-but-unresolvable
+        target fails loud (``DeliveryError("whatsapp","no_target")``) — a turn's
+        file is never silently dropped — while a best-effort send with no target
+        is a loud logged no-op (never navigate to an empty chat). ``caption`` is
+        sent as the media caption.
+
+        Self-healing: a browser attach failure is logged and swallowed so a file
+        send never crashes the turn.
+        """
+        explicit = target is not _UNSET
+        resolved = target if explicit else None
+        dest = resolved if resolved is not None else self._last_target
+        log.whatsapp.debug(
+            "[whatsapp] adapter.send_file: entry",
+            extra={"_fields": {"explicit": explicit, "has_caption": bool(caption)}},
+        )
+        TestModeGuard.assert_not_test_mode("whatsapp.send_file")
+        if dest is None:
+            if explicit:
+                log.whatsapp.error(
+                    "[whatsapp] adapter.send_file: explicit target unresolvable — failing loud",
+                )
+                raise DeliveryError("whatsapp", "no_target")
+            log.whatsapp.error(
+                "[whatsapp] adapter.send_file: no target chat (best-effort) — file dropped",
+            )
+            return
+        log.whatsapp.debug(
+            "[whatsapp] adapter.send_file: step driving attach flow",
+            extra={"_fields": {"jid_hash": hash_jid(dest)}},
+        )
+        try:
+            await self._browser.send_file(dest, file_path, caption)
+            log.whatsapp.debug("[whatsapp] adapter.send_file: exit sent")
+        except Exception as exc:  # self-healing — a file send must not crash the turn
+            log.whatsapp.error(
+                "[whatsapp] adapter.send_file: attach flow failed",
+                exc_info=exc,
+                extra={"_fields": {"jid_hash": hash_jid(dest)}},
+            )
+
     async def stop(self) -> None:
         """Cancel the poll loop task and shut down the browser.
 

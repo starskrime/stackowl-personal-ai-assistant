@@ -231,6 +231,61 @@ class WhatsAppBrowserDriver:
             extra={"_fields": {"text_len": len(text)}},
         )
 
+    async def send_file(self, jid: str, file_path: str, caption: str | None = None) -> None:
+        """Attach and send a file to the EXISTING WhatsApp chat for ``jid`` (CHAN-4).
+
+        Drives WhatsApp Web's attach flow with Playwright: open the chat by full
+        JID (group-safe, same as :meth:`send_message`), click the attach (clip)
+        button, set the hidden file ``<input type=file>`` to ``file_path``, type
+        the optional ``caption``, then send. No silent drop — a missing page or an
+        unfound chat is logged loudly and the send is refused (the adapter maps a
+        raise to a self-healed ``failed``).
+
+        4-point logging: entry / decision / step / exit.
+        """
+        log.whatsapp.debug(
+            "[whatsapp] browser_driver.send_file: entry",
+            extra={"_fields": {"has_caption": bool(caption), "is_group": jid.endswith("@g.us")}},
+        )
+        TestModeGuard.assert_not_test_mode("whatsapp.browser.send_file")
+        if self._page is None:
+            log.whatsapp.error("[whatsapp] browser_driver.send_file: no page available")
+            return
+        if not jid:
+            log.whatsapp.error("[whatsapp] browser_driver.send_file: empty JID — refusing to send")
+            return
+
+        safe_jid = jid.replace("\\", "\\\\").replace('"', '\\"')
+        selected = await self._open_chat_by_jid(safe_jid)
+        if not selected:
+            log.whatsapp.error(
+                "[whatsapp] browser_driver.send_file: chat not found for JID — not sending",
+                extra={"_fields": {"is_group": jid.endswith("@g.us")}},
+            )
+            return
+
+        log.whatsapp.debug("[whatsapp] browser_driver.send_file: step opening attach menu")
+        # Open the attach (clip) menu, then set the hidden document file input.
+        await self._page.click('[data-testid="clip"], [title="Attach"]')
+        file_input = '[data-testid="attach-document"] input[type=file], input[type=file]'
+        input_handle = await self._page.wait_for_selector(file_input, timeout=15_000)
+        if input_handle is None:
+            log.whatsapp.error("[whatsapp] browser_driver.send_file: no file input found")
+            return
+        await input_handle.set_input_files(file_path)
+
+        if caption:
+            log.whatsapp.debug("[whatsapp] browser_driver.send_file: step typing caption")
+            caption_selector = (
+                '[data-testid="media-caption-input-container"] div[contenteditable=true], '
+                'div[contenteditable=true]'
+            )
+            await self._page.fill(caption_selector, caption)
+
+        log.whatsapp.debug("[whatsapp] browser_driver.send_file: step sending")
+        await self._page.click('[data-testid="send"], span[data-icon="send"]')
+        log.whatsapp.debug("[whatsapp] browser_driver.send_file: exit")
+
     async def _open_chat_by_jid(self, safe_jid: str) -> bool:
         """Click the chat-list row whose ``[data-id]`` carries ``safe_jid``.
 

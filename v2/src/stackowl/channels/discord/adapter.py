@@ -77,6 +77,11 @@ class DiscordChannelAdapter(ChannelAdapter):
         self._targets: dict[str, int] = {}
         self._channels: dict[int, Any] = {}
         self._last_channel_id: int | None = None
+        # CHAN-4 — inbound attachments cached by their string id so
+        # download_media(file_id) can read the bytes via attachment.read()
+        # (discord.py has no fetch-attachment-by-id off the client). Bounded by
+        # distinct attachments seen on authorized inbound messages.
+        self._attachments: dict[str, Any] = {}
         # F005 — the prefix router a tapped button (consent/clarify/memory View)
         # routes its custom_id through. Attached by the orchestrator after the
         # handlers are built (mirrors Telegram's attach_callback_router). None
@@ -249,6 +254,97 @@ class DiscordChannelAdapter(ChannelAdapter):
             )
             await channel.send(part)
         log.discord.debug("[discord] adapter.send_text: exit")
+
+    async def send_file(
+        self, file_path: str, caption: str | None = None, *, channel_id: int | None = _UNSET
+    ) -> None:
+        """Upload ``file_path`` to a resolved Discord channel (CHAN-4 / F013).
+
+        Destination resolution mirrors :meth:`send_text` (same per-session target
+        threading): an EXPLICIT ``channel_id`` (the on-turn path) wins; otherwise
+        ``_last_channel_id`` (proactive/best-effort). An explicit-but-unresolvable
+        target fails loud (``DeliveryError("discord","no_target")`` / ``no_channel``)
+        — a turn's file is never silently dropped — while the best-effort path with
+        no target is a loud logged no-op. ``caption`` rides as the message content.
+
+        Self-healing: an upload error is logged and swallowed so a file send never
+        crashes the turn (the :class:`ProactiveDeliverer` maps it to ``failed``).
+        """
+        explicit = channel_id is not _UNSET
+        resolved = channel_id if explicit else None
+        target = resolved if resolved is not None else self._last_channel_id
+        log.discord.debug(
+            "[discord] adapter.send_file: entry",
+            extra={"_fields": {"explicit": explicit, "has_caption": bool(caption)}},
+        )
+        TestModeGuard.assert_not_test_mode("discord.send_file")
+        if target is None:
+            if explicit:
+                log.discord.error(
+                    "[discord] adapter.send_file: explicit target unresolvable — failing loud",
+                )
+                raise DeliveryError("discord", "no_target")
+            log.discord.error(
+                "[discord] adapter.send_file: no target channel (best-effort) — file dropped",
+            )
+            return
+        channel: Any = self._channels.get(target) or (
+            self._client.get_channel(target) if self._client is not None else None
+        )
+        if channel is None:
+            log.discord.error(
+                "[discord] adapter.send_file: no live channel for target — failing loud",
+            )
+            raise DeliveryError("discord", "no_channel")
+        log.discord.debug(
+            "[discord] adapter.send_file: step uploading",
+            extra={"_fields": {"channel": target}},
+        )
+        try:
+            discord_file = discord.File(file_path)
+            await channel.send(caption or None, file=discord_file)
+            log.discord.debug("[discord] adapter.send_file: exit uploaded")
+        except Exception as exc:  # self-healing — a file send must not crash the turn
+            log.discord.error(
+                "[discord] adapter.send_file: upload failed",
+                exc_info=exc,
+                extra={"_fields": {"channel": target}},
+            )
+
+    async def download_media(self, file_id: str) -> bytes:
+        """Read an inbound Discord attachment's bytes by its id (CHAN-4 / F013).
+
+        Discord exposes no fetch-attachment-by-id off the client, so inbound
+        attachments are cached at :meth:`handle_message` time keyed by their
+        string id; this reads the cached attachment via ``attachment.read()``.
+        Per the no-hidden-errors rule an unknown id or a read failure is logged
+        loudly and re-raised — never a silent empty ``b""``.
+        """
+        log.discord.debug(
+            "[discord] adapter.download_media: entry",
+            extra={"_fields": {"file_id_len": len(file_id)}},
+        )
+        TestModeGuard.assert_not_test_mode("discord.download_media")
+        attachment = self._attachments.get(file_id)
+        if attachment is None:
+            log.discord.error(
+                "[discord] adapter.download_media: unknown attachment id",
+                extra={"_fields": {"file_id_len": len(file_id)}},
+            )
+            raise RuntimeError(f"discord download_media: no cached attachment for {file_id!r}")
+        try:
+            data: bytes = await attachment.read()
+        except Exception as exc:
+            log.discord.error(
+                "[discord] adapter.download_media: attachment.read() failed",
+                exc_info=exc,
+            )
+            raise
+        log.discord.debug(
+            "[discord] adapter.download_media: exit",
+            extra={"_fields": {"byte_len": len(data)}},
+        )
+        return data
 
     # ------------------------------------------------------------------ F005 rich
 
@@ -456,6 +552,12 @@ class DiscordChannelAdapter(ChannelAdapter):
             if channel is not None:
                 self._channels[channel_id] = channel
             self._last_channel_id = channel_id
+        # CHAN-4 — cache any inbound attachments by string id so download_media
+        # can later read their bytes (discord.py has no fetch-by-id off client).
+        for att in getattr(message, "attachments", None) or []:
+            att_id = getattr(att, "id", None)
+            if att_id is not None:
+                self._attachments[str(att_id)] = att
         log.discord.debug(
             "[discord] adapter.handle_message: exit",
             extra={
