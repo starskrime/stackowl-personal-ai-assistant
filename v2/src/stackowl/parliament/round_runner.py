@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 
 from stackowl.exceptions import OwlConcurrencyError, OwlTimeoutError, OwlTokenLimitError
 from stackowl.infra.observability import log
+from stackowl.owls.concurrency import GovernorSaturatedError
+from stackowl.owls.delegation_limits import GOVERNOR_ACQUIRE_TIMEOUT_SECONDS
 from stackowl.parliament.models import ParliamentRound, ParliamentSession
+from stackowl.parliament.token_estimate import estimate_tokens
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.state import PipelineState
 
@@ -33,12 +36,17 @@ class RoundRunner:
         per_owl_timeout_s: float,
         token_budget: int,
         delegation_governor: ConcurrencyGovernor | None = None,
+        acquire_timeout_s: float = GOVERNOR_ACQUIRE_TIMEOUT_SECONDS,
     ) -> None:
         self._backend = backend
         self._per_owl_timeout_s = per_owl_timeout_s
         self._token_budget = token_budget
         # E8-S0 — shared in-flight budget; the same instance A2ADelegator holds.
         self._governor = delegation_governor
+        # PARL-5 (F087) — bound the governor-slot ACQUIRE separately from the
+        # per-owl RUN budget so a saturated host (never got a slot) is reported
+        # distinctly from a slow run (got a slot, ran too long).
+        self._acquire_timeout_s = acquire_timeout_s
 
     async def run_round(
         self,
@@ -66,7 +74,10 @@ class RoundRunner:
 
         responses: dict[str, str] = {}
         truncated: dict[str, bool] = {}
-        cumulative_chars = session.cumulative_token_estimate() * 4
+        # PARL-1 (F078) — token-aware budget over prior GENUINE responses (the
+        # estimator skips sentinels). Error markers added below contribute 0 real
+        # tokens, so a failed owl can never silently inflate or shrink the budget.
+        cumulative_tokens = session.cumulative_token_estimate()
         for owl_name, result in zip(session.owl_names, results, strict=True):
             if isinstance(result, BaseException):
                 log.parliament.warning(
@@ -78,15 +89,15 @@ class RoundRunner:
                 truncated[owl_name] = True
                 continue
             _name, text, was_truncated = result
-            cumulative_chars += len(text)
-            if cumulative_chars >= self._token_budget * 4:
+            cumulative_tokens += estimate_tokens(text)
+            if cumulative_tokens >= self._token_budget:
                 log.parliament.warning(
                     "[parliament] round_runner: token budget exceeded — truncating",
                     extra={
                         "_fields": {
                             "owl_name": owl_name,
                             "budget": self._token_budget,
-                            "estimated_tokens": cumulative_chars // 4,
+                            "estimated_tokens": cumulative_tokens,
                         }
                     },
                 )
@@ -120,11 +131,23 @@ class RoundRunner:
         Acquires a governor slot (released in ``finally`` via the slot context
         manager) so a parliament fan-out cannot exceed the host-wide in-flight
         cap shared with delegation. Ungated when no governor is wired.
+
+        PARL-5 (F087): the slot is acquired with a BOUNDED acquire timeout; if
+        the host is saturated the acquire raises :class:`GovernorSaturatedError`
+        (never the per-owl run timeout), so the caller reports 'queued out'. The
+        RUN itself is bounded separately by the caller's ``per_owl_timeout_s``.
         """
         if self._governor is None:
-            return await self._backend.run(state)
-        async with self._governor.slot():
-            return await self._backend.run(state)
+            return await self._run_backend_bounded(state)
+        async with self._governor.slot(timeout=self._acquire_timeout_s):
+            return await self._run_backend_bounded(state)
+
+    async def _run_backend_bounded(self, state: PipelineState) -> PipelineState:
+        """Run the backend bounded by the per-owl RUN budget only."""
+        return await asyncio.wait_for(
+            self._backend.run(state),
+            timeout=self._per_owl_timeout_s,
+        )
 
     async def _run_owl(
         self,
@@ -158,9 +181,29 @@ class RoundRunner:
         )
         t0 = time.monotonic()
         try:
-            final_state = await asyncio.wait_for(
-                self._run_under_governor(state),
-                timeout=self._per_owl_timeout_s,
+            # The per-owl RUN budget is enforced INSIDE _run_under_governor (around
+            # backend.run only); the bounded slot ACQUIRE is enforced by the
+            # governor and raises GovernorSaturatedError, handled distinctly below.
+            final_state = await self._run_under_governor(state)
+        except GovernorSaturatedError as exc:
+            # PARL-5 (F087) — the host was saturated and this owl NEVER got a
+            # slot. Report 'queued out' (distinct from '[timed out]', which means
+            # it ran but was too slow) so the operator can tell the two apart.
+            log.parliament.warning(
+                "[parliament] round_runner._run_owl: queued out — host saturated",
+                exc_info=exc,
+                extra={
+                    "_fields": {
+                        "owl_name": owl_name,
+                        "acquire_timeout_s": self._acquire_timeout_s,
+                    }
+                },
+            )
+            return (
+                owl_name,
+                f"[queued out — host saturated, no slot within "
+                f"{self._acquire_timeout_s:.0f}s]",
+                True,
             )
         except TimeoutError:
             log.parliament.warning(

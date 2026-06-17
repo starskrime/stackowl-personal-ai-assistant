@@ -37,9 +37,14 @@ async def run(state: PipelineState) -> PipelineState:
             tc.result for tc in state.tool_calls if tc.result and tc.error is None
         )
         if combined:
+            # REACT-8/F037 — is_final MUST be False on a CONTENT chunk: StreamReader
+            # BREAKS on is_final WITHOUT yielding it, so an is_final=True merged chunk
+            # would be SWALLOWED (the user would lose the merged tool output). The
+            # terminal signal for the streaming path is deliver's close() sentinel,
+            # not a per-content flag. (Latent bug fixed: this chunk was is_final=True.)
             chunk = ResponseChunk(
                 content=combined,
-                is_final=True,
+                is_final=False,
                 chunk_index=0,
                 trace_id=state.trace_id,
                 owl_name=state.owl_name,

@@ -652,6 +652,28 @@ class TelegramChannelAdapter(ChannelAdapter):
             return
         chat = update.effective_chat
         chat_id = int(chat.id) if chat is not None else 0
+        # STEER-1/F060 — a STRUCTURAL reply-to-the-bot link. When this message
+        # replies to one of the BOT's own messages, stamp ``is_reply`` so the
+        # orchestrator can fold it as a reply-to-inflight STEER (only when a turn is
+        # actually running — ``resolve_reply_to_inflight``). We confirm the reply
+        # target is the bot (``from_user.is_bot`` AND, when both usernames are
+        # known, a username match) so a reply to ANOTHER user's message in a group
+        # is never mistaken for a steer.
+        is_reply_to_bot = False
+        reply_to = getattr(message, "reply_to_message", None)
+        if reply_to is not None:
+            replied_user = getattr(reply_to, "from_user", None)
+            if replied_user is not None and bool(getattr(replied_user, "is_bot", False)):
+                replied_username = getattr(replied_user, "username", None)
+                # If both usernames are known, require a match; otherwise trust
+                # is_bot (a 1:1 DM with the bot has no other bot to confuse it).
+                if (
+                    not replied_username
+                    or not self._bot_username
+                    or str(replied_username).casefold()
+                    == self._bot_username.casefold()
+                ):
+                    is_reply_to_bot = True
         ingress = IngressMessage(
             text=stripped,
             session_id=str(user_id),
@@ -661,6 +683,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             # to THIS chat — never the shared `_last_chat_id`, which a newer inbound
             # update may overwrite before this turn finishes (cross-deliver fix).
             chat_id=chat_id,
+            is_reply=is_reply_to_bot,
         )
         self._queue.put_nowait(ingress)
         self._last_update_at = time.monotonic()

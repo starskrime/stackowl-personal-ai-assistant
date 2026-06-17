@@ -154,6 +154,10 @@ class SecretaryRouter:
     ) -> None:
         self._provider_registry: ProviderRegistry = provider_registry
         self._owl_registry: OwlRegistry = owl_registry
+        # PARL-6 (F080) — the in-module fuzzy matcher, now actually wired into
+        # _parse_choice so a near-miss owl name (a typo'd @mention) is corrected
+        # to a known owl instead of silently collapsing to the secretary.
+        self._fuzzy = FuzzyMatcher()
 
     def _build_prompt(self, owls: list[tuple[str, str]], user_text: str) -> str:
         """Compose the router-glue prompt (English template, user data inlined)."""
@@ -183,6 +187,30 @@ class SecretaryRouter:
             return _DEFAULT_FALLBACK
         if candidate in known_names:
             return candidate
+        # PARL-6 (F080) — a non-exact candidate is run through the fuzzy matcher
+        # BEFORE the secretary fallback. A high-confidence correction ('scoutt' →
+        # 'scout') is accepted and logged; only a far miss collapses to secretary.
+        # The fallback itself is excluded as a correction target so a typo
+        # resolves to a real specialist, never silently to the default.
+        candidates = [n for n in known_names if n != _DEFAULT_FALLBACK]
+        match = self._fuzzy.find(candidate, candidates)
+        if match is not None:
+            corrected, confidence = match
+            log.engine.info(
+                "[router] _parse_choice: fuzzy-corrected near-miss owl name",
+                extra={
+                    "_fields": {
+                        "raw_candidate": candidate,
+                        "corrected": corrected,
+                        "confidence": confidence,
+                    }
+                },
+            )
+            return corrected
+        log.engine.debug(
+            "[router] _parse_choice: no fuzzy match — secretary fallback",
+            extra={"_fields": {"raw_candidate": candidate}},
+        )
         return _DEFAULT_FALLBACK
 
     def _parse_intent_class(self, raw: str) -> Literal["conversational", "standard"]:

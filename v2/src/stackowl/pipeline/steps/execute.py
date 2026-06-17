@@ -25,14 +25,16 @@ from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
+from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import PipelineState, ToolCall
+from stackowl.pipeline.state import PipelineState, StepError, ToolCall
+from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
-from stackowl.providers.model_window import resolve_window
+from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_window
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.tools.registry import ToolRegistry
 
@@ -212,11 +214,12 @@ def make_steering_callback(
             except asyncio.QueueEmpty:
                 break
         # §5.3 — honor cooperative STOP at this iteration boundary. Checked AFTER
-        # draining so we observe (and count via `pending_steers`) any co-arriving
-        # steer before we stop. Those drained steers are then DISCARDED — the turn
-        # is stopping, so there is no further iteration to fold them into; this is
-        # intentional, not a lost-steer bug. FLAG only — we raise a controlled
-        # TurnStopped, NEVER task.cancel().
+        # draining so we observe any co-arriving steer before we stop. REACT-6/F033:
+        # those drained steers are NOT discarded — the callback already removed them
+        # from the mailbox, so the completion-seam survivor drain would find nothing.
+        # Carry them on TurnStopped so the execute finalize seam re-routes them as
+        # queued-new turns (the same path survivors take). FLAG only — we raise a
+        # controlled TurnStopped, NEVER task.cancel().
         if turn.stop_requested:
             log.engine.info(
                 "[steer] stop flag honored at iteration boundary — finalizing gracefully",
@@ -232,6 +235,7 @@ def make_steering_callback(
                 request_id,
                 partial_text=_last_assistant_text(_state.messages),
                 tool_call_records=list(_state.tool_call_records),
+                drained_steers=drained,
             )
         if not drained:
             return None
@@ -314,6 +318,7 @@ async def _try_substitute(
     effective: Any,
     substituted_tags: set[str],
     trace_id: str,
+    locale: str = "en",
 ) -> str | None:
     """The W3.T14 recovery actuator (route around a broken capability).
 
@@ -389,8 +394,11 @@ async def _try_substitute(
         tag = sib.manifest.capability_tag
         if tag:
             substituted_tags.add(tag)
+        # F030/REACT-4 — localize the user-facing note from the turn's resolved
+        # language (state.language, threaded as `locale`); localize_format
+        # en-fallbacks for any uncatalogued language. Never the hardcoded "en".
         note = localize_format(
-            "self_heal_substituted", "en", failed=failed_tool, sibling=sibling_name,
+            "self_heal_substituted", locale, failed=failed_tool, sibling=sibling_name,
         )
         log.engine.info(
             "[pipeline] execute: self-heal substitution succeeded",
@@ -407,6 +415,103 @@ async def _try_substitute(
             extra={"_fields": {"failed_tool": failed_tool, "trace_id": trace_id}},
         )
         return None
+
+
+# REACT-1/F032+F090 — hard ceiling on the FALLBACK window probe. The steady path
+# never reaches it (assemble stamps state.model_window). It only fires when a turn
+# reaches _run_with_tools WITHOUT assemble having run (e.g. a direct/system route),
+# where a live ollama probe on the hot tool-loop entry must never hang the turn.
+_WINDOW_PROBE_DEADLINE_S = 5.0
+
+# REACT-5/F061 — per-tool execution DEADLINE (seconds). Bounds how long a single
+# in-flight tool awaitable may run so a cooperative /stop is never blocked longer
+# than this by one long tool: on timeout asyncio.wait_for cancels the TOOL's own
+# coroutine (NOT the turn task), the loop observes a failed outcome and proceeds to
+# the next iteration boundary where the stop flag is honored. Generous so it bounds
+# the pathology without truncating a legitimately long tool; host-scalable (a beefier
+# host can widen it) — NOT pinned to the dev box. This value IS the documented
+# upper bound on stop latency contributed by a single in-flight tool.
+_TOOL_DEADLINE_S = 180.0
+
+
+async def _resolve_execute_window(state: PipelineState, provider: ModelProvider) -> int:
+    """Resolve THIS turn's context window for the tool-loop budget — single probe.
+
+    REACT-1/F032+F090:
+      * STEADY path — assemble already resolved and stamped ``state.model_window``;
+        return it directly so execute issues NO second probe (resolve_window's own
+        memoization would make it a cache hit anyway, but reading state skips the
+        call entirely and keeps the single-probe guarantee testable).
+      * FALLBACK path — a route reached _run_with_tools without assemble (model_window
+        is None). Issue ONE bounded probe under an explicit deadline; on timeout or
+        any error fall back to the safe default window. resolve_window never raises,
+        so the wait_for timeout is the only failure mode we add here.
+    """
+    if state.model_window is not None:
+        return state.model_window
+    cfg = getattr(provider, "_config", None)
+    log.engine.debug(
+        "[pipeline] execute: no stamped window — bounded fallback probe",
+        extra={"_fields": {"trace_id": state.trace_id, "deadline_s": _WINDOW_PROBE_DEADLINE_S}},
+    )
+    try:
+        return await asyncio.wait_for(
+            resolve_window(
+                provider_name=getattr(provider, "name", "") or "",
+                base_url=cfg.base_url if cfg is not None else None,
+                model=(cfg.default_model if cfg is not None else "") or "",
+                context_chars=(cfg.context_chars if cfg is not None else None),
+                protocol=getattr(provider, "protocol", "") or "",
+            ),
+            timeout=_WINDOW_PROBE_DEADLINE_S,
+        )
+    except TimeoutError as exc:
+        log.engine.warning(
+            "[pipeline] execute: window probe exceeded deadline — safe default window",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id, "window": DEFAULT_WINDOW_FALLBACK}},
+        )
+        return DEFAULT_WINDOW_FALLBACK
+
+
+_EFFECTFUL_SEVERITIES = {"write", "consequential"}
+_BRIDGING_RECOVERY_KINDS = {"substitution"}
+
+
+def _snapshot_consequential(state: PipelineState) -> PipelineState:
+    """REACT-7/F099 — stamp the turn's consequential tally + bridged set onto state.
+
+    Read the turn-scoped ledger/recovery ContextVars (caller guarantees they are
+    still bound) and carry the result on immutable state so the honest giveup floor
+    reads the snapshot rather than depending on the bind() lifetime spanning the
+    floor call. Never raises — a snapshot failure leaves the live-ledger path intact
+    (consequential_snapshot_taken stays False)."""
+    try:
+        outcomes = tool_outcome_ledger.get_outcomes()
+        failures = tuple(
+            o.name for o in outcomes
+            if o.action_severity in _EFFECTFUL_SEVERITIES and not o.success
+        )
+        successes = tuple(
+            o.name for o in outcomes
+            if o.action_severity in _EFFECTFUL_SEVERITIES and o.success
+        )
+        recovered = tuple(
+            e.failed for e in recovery_context.get_recovery()
+            if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
+        )
+        return state.evolve(
+            consequential_failures=failures,
+            consequential_successes=successes,
+            recovered_consequential=recovered,
+            consequential_snapshot_taken=True,
+        )
+    except Exception as exc:  # B5 — never break the turn; fall back to the live ledger
+        log.engine.error(
+            "[pipeline] execute: consequential snapshot failed — floor reads live ledger",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return state
 
 
 async def _run_with_tools(
@@ -451,16 +556,9 @@ async def _run_with_tools(
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
     # Per-model context budget: size the presented tool set to the model's real
     # window so a weak/small-window model is not drowned in tool schemas.
-    # Prefer the already-resolved value stamped by assemble (Task 4: avoids a
-    # redundant probe; resolve_window is memoized so a cache miss is cheap).
-    _cfg = getattr(provider, "_config", None)
-    _window = state.model_window if state.model_window is not None else await resolve_window(
-        provider_name=getattr(provider, "name", "") or "",
-        base_url=_cfg.base_url if _cfg is not None else None,
-        model=(_cfg.default_model if _cfg is not None else "") or "",
-        context_chars=(_cfg.context_chars if _cfg is not None else None),
-        protocol=getattr(provider, "protocol", "") or "",
-    )
+    # REACT-1/F032+F090 — prefer the value assemble already stamped (no second
+    # probe on the steady path); the fallback probe is bounded + safe-defaulted.
+    _window = await _resolve_execute_window(state, provider)
     _fixed_cost = _est_tokens(state.system_prompt) + sum(
         _est_tokens(getattr(m, "content", "")) for m in state.history
     )
@@ -659,13 +757,55 @@ async def _run_with_tools(
                 f"The action '{name}' requires your approval and was not run because consent "
                 "was declined or not granted. Ask the user to approve it if they want it to proceed."
             )
+        # REACT-5/F061 — STOP PRE-CHECK: if a /stop is already pending for this turn,
+        # do NOT start a fresh tool. The stop is honored at the next iteration
+        # boundary; starting a (possibly long) tool first would only add latency.
+        # NON-consequential read short-circuits (the durable ledger isn't touched, so
+        # no exactly-once concern); a consequential/write tool is left to run so an
+        # in-flight effect is not abandoned half-way (exactly-once integrity > a few
+        # hundred ms of stop latency). Fail-safe: any registry miss → proceed.
+        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+        _reg = get_services().turn_registry
+        if _reg is not None and t.manifest.action_severity != "consequential":
+            _turn = _reg.get(state.trace_id)
+            if _turn is not None and _turn.stop_requested:
+                log.engine.info(
+                    "[pipeline] execute: stop pending — short-circuiting tool before start",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+                )
+                tool_outcome_ledger.record_tool_outcome(
+                    name=name, action_severity=t.manifest.action_severity, success=False,
+                )
+                return f"{TOOL_FAILED_MARKER}Not run — the turn is stopping at your request."
+
         # S2 durable-react — route the real tool call through the exactly-once
         # ledger guard. DORMANT: with no active DurableReActContext (every path
         # today) this is a transparent `await t(**args)`. Only a side-effecting
         # tool under an active durable task is ledger-guarded (exactly-once).
+        # REACT-5/F061 — bound the tool's OWN awaitable: asyncio.wait_for cancels the
+        # tool coroutine (not the turn task) at the per-tool deadline so a hung/long
+        # tool can never block the loop — or a co-pending stop — indefinitely.
         from stackowl.pipeline.durable.ledger_guard import ledger_guard
 
-        tr = await ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args))
+        try:
+            tr = await asyncio.wait_for(
+                ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args)),
+                timeout=_TOOL_DEADLINE_S,
+            )
+        except TimeoutError:
+            log.engine.warning(
+                "[pipeline] execute: tool exceeded per-tool deadline — cancelled",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                   "deadline_s": _TOOL_DEADLINE_S}},
+            )
+            tool_outcome_ledger.record_tool_outcome(
+                name=name, action_severity=t.manifest.action_severity, success=False,
+            )
+            return (
+                f"{TOOL_FAILED_MARKER}The action '{name}' was cancelled after exceeding the "
+                f"{_TOOL_DEADLINE_S:.0f}s per-tool time limit and did not complete."
+            )
         tool_outcome_ledger.record_tool_outcome(
             name=name, action_severity=t.manifest.action_severity, success=tr.success,
         )
@@ -696,6 +836,7 @@ async def _run_with_tools(
             effective=effective,
             substituted_tags=substituted_tags,
             trace_id=state.trace_id,
+            locale=state.language,
         )
         if sub is not None:
             return sub
@@ -703,8 +844,7 @@ async def _run_with_tools(
         # the give-up judge (which sees only these rendered strings) can tell a
         # failed action from a successful one. Language-agnostic; the model still
         # reads a normal error message after the (invisible-ish) sentinel.
-        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
-
+        # (TOOL_FAILED_MARKER imported above at the stop pre-check.)
         return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
@@ -771,11 +911,15 @@ async def _run_with_tools(
         started_monotonic=time.monotonic(), clock=_MonotonicClock(),
         prior_cost_usd=_prior_cost_usd,
     )
+    # STEER-7/F094 — the clarify Raise/Stop wait scales PER CHANNEL from settings
+    # (120s fallback) so a slow mobile user isn't auto-Stopped before answering.
+    _clarify_wait_s = resolve_clarify_wait_timeout(state.channel, _services.settings)
     _budget_cb = make_budget_callback(
         _governor,
         interactive=(state.interactive and not _default_backstop),
         clarify=_services.clarify_gateway,
         session_id=state.session_id, channel=state.channel,
+        wait_timeout_s=_clarify_wait_s,
     )
 
     # Task 10 — steering closure: drain THIS turn's mailbox at each iteration
@@ -1007,8 +1151,26 @@ async def _run_with_tools(
             "[pipeline] execute: turn stopped cooperatively — finalizing gracefully",
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name,
                                "request_id": exc.request_id,
-                               "tool_calls": len(exc.tool_call_records)}},
+                               "tool_calls": len(exc.tool_call_records),
+                               "drained_steers": len(exc.drained_steers)}},
         )
+        # REACT-6/F033 — a steer co-arriving with the stop was drained from the
+        # mailbox by the boundary callback but could not be folded into a stopping
+        # turn. Re-route it as a queued-new turn so the user's message is preserved
+        # rather than silently lost. Fail-safe: never breaks the stop finalize.
+        if exc.drained_steers and _services.turn_registry is not None:
+            try:
+                await _services.turn_registry.requeue_steers_as_new(
+                    exc.request_id, exc.drained_steers
+                )
+            except Exception as _req_exc:  # never let re-route break the clean stop
+                log.engine.error(
+                    "[pipeline] execute: re-routing stopped-turn steers failed",
+                    exc_info=_req_exc,
+                    extra={"_fields": {"trace_id": state.trace_id,
+                                       "request_id": exc.request_id,
+                                       "drained_steers": len(exc.drained_steers)}},
+                )
         _stopped_note = "[stopped: you asked me to stop — ending this turn here.]"
         _stopped_content = (
             f"{exc.partial_text}\n\n{_stopped_note}" if exc.partial_text else _stopped_note
@@ -1130,7 +1292,9 @@ async def _run_with_tools(
         )
         return state.evolve(
             responses=(*state.responses, floor_chunk),
-            errors=(*state.errors, f"execute: {type(exc).__name__}: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
 
     duration_ms = (time.monotonic() - t0) * 1000
@@ -1241,7 +1405,9 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
         return state.evolve(
-            errors=(*state.errors, f"execute: AllProvidersUnavailableError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
     except ToolUseUnsupportedError as exc:
         # F120 — an agentic turn was routed to a provider that cannot act and no
@@ -1254,7 +1420,9 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
         return state.evolve(
-            errors=(*state.errors, f"execute: ToolUseUnsupportedError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
 
     # Tool loop path: use complete_with_tools() when tools are available AND the
@@ -1282,7 +1450,12 @@ async def run(state: PipelineState) -> PipelineState:
             }},
         )
     if _use_tools and tool_registry is not None:
-        return await _run_with_tools(state, provider, tool_registry)
+        out = await _run_with_tools(state, provider, tool_registry)
+        # REACT-7/F099 — snapshot the consequential tally + bridged set onto state
+        # HERE, while the turn-scoped ledger/recovery ContextVars are still bound
+        # (the backend binds them for the whole pipeline). The honest giveup floor
+        # then reads the immutable snapshot rather than an implicit bind() lifetime.
+        return _snapshot_consequential(out)
 
     messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]
     if state.system_prompt:
@@ -1313,7 +1486,9 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state.evolve(
             responses=(*state.responses, *chunks),
-            errors=(*state.errors, f"execute: OwlTimeoutError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
     except OwlConcurrencyError as exc:
         log.engine.warning(
@@ -1322,7 +1497,9 @@ async def run(state: PipelineState) -> PipelineState:
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
         return state.evolve(
-            errors=(*state.errors, f"execute: OwlConcurrencyError: {exc}"),
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
     except OwlTokenLimitError as exc:
         # Token-limit truncation is intentional — collected chunks stay in state.
@@ -1337,7 +1514,11 @@ async def run(state: PipelineState) -> PipelineState:
             exc_info=exc,
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
-        return state.evolve(errors=(*state.errors, f"execute: {type(exc).__name__}: {exc}"))
+        return state.evolve(
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
+        )
 
     duration_ms = (time.monotonic() - t0) * 1000
     log.engine.info(

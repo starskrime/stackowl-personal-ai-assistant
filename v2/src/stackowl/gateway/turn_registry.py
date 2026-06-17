@@ -123,10 +123,20 @@ class TurnRegistry:
         # surfaced to the global-cap drain seam (no fake success: reaped AND
         # surfaced). Wired by the orchestrator at startup; None in unit tests.
         self._on_stranded: Callable[[], Awaitable[None]] | None = None
+        # STEER-3/F057 — eviction hook fired by ``sweep`` with the reaped
+        # request_ids, so a reaped (wedged/GC'd) turn's parked raw IngressMessage
+        # is reclaimed (the ParkedIntakes map otherwise only pops on a successful
+        # drain → a slow leak). Wired by the orchestrator at startup; None in unit
+        # tests. SYNCHRONOUS (pure bookkeeping over an in-memory dict, no await).
+        self._on_reaped: Callable[[list[str]], int] | None = None
 
     def set_stranded_drainer(self, cb: Callable[[], Awaitable[None]] | None) -> None:
         """Register the post-reap drain callback (F050 stranded-session surfacing)."""
         self._on_stranded = cb
+
+    def set_reaped_evictor(self, cb: Callable[[list[str]], int] | None) -> None:
+        """Register the post-reap parked-intake evictor (STEER-3/F057 leak guard)."""
+        self._on_reaped = cb
 
     @property
     def per_session_queue_max(self) -> int:
@@ -439,6 +449,35 @@ class TurnRegistry:
                 break
         return survivors
 
+    async def requeue_steers_as_new(self, request_id: str, texts: list[str]) -> None:
+        """REACT-6/F033 — re-route steers that a stop swallowed as queued-new turns.
+
+        The cooperative-stop callback drains the steering mailbox at the iteration
+        boundary and cannot fold the drained steers into a stopping turn. Those
+        items were already removed from the mailbox, so the completion-seam
+        ``finalize_and_drain`` would find nothing to re-route — the user's
+        co-arriving message would be lost. The execute finalize seam hands them
+        here so they are re-enqueued as queued-new turns via the SAME shared
+        ``_reroute_survivors_locked`` path survivors take. Fail-safe: an unknown
+        request id (already deregistered) or an empty list is a no-op; a full
+        intake queue is logged-not-raised inside the shared helper.
+
+        Runs under the turn's ``lock`` (the SAME lock ``try_steer`` /
+        ``finalize_and_drain`` take) so the intake-deque mutation is serialized
+        with any concurrent steer routing on this session.
+        """
+        if not texts:
+            return
+        turn = self._turns.get(request_id)
+        if turn is None:
+            log.gateway.warning(
+                "[turn] requeue_steers_as_new: no live turn — steers dropped",
+                extra={"_fields": {"request_id": request_id, "count": len(texts)}},
+            )
+            return
+        async with turn.lock:
+            self._reroute_survivors_locked(turn, texts)
+
     async def finalize_and_drain(self, request_id: str) -> list[str]:
         """Atomically FINALIZE the turn then drain+re-route survivors (one lock).
 
@@ -611,5 +650,17 @@ class TurnRegistry:
             except Exception as exc:  # B5 — never crash the scheduler loop
                 log.gateway.error(
                     "[turn] sweeper stranded-drain failed — continuing", exc_info=exc
+                )
+        # STEER-3/F057 — reclaim parked raw IngressMessages for the reaped turns
+        # (a wedged/GC'd turn never drains its parked entry → a slow leak). Fired
+        # for EVERY reap (not just freed-running ones — a reaped survivor key has
+        # no _running slot but still leaks). Self-healing: a failing evictor is
+        # logged, never raised into the scheduler loop.
+        if reaped and self._on_reaped is not None:
+            try:
+                self._on_reaped(reaped)
+            except Exception as exc:  # B5 — never crash the scheduler loop
+                log.gateway.error(
+                    "[turn] sweeper parked-evict failed — continuing", exc_info=exc
                 )
         return reaped

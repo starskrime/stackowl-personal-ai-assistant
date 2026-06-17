@@ -40,8 +40,8 @@ WHERE fact_id = ?
 _INSERT_COMMITTED_SQL = """
 INSERT OR IGNORE INTO committed_facts
     (fact_id, content, embedding, embedding_model, committed_at,
-     source_type, source_ref, tags, trust)
-VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?, ?)
+     source_type, source_ref, tags, trust, reinforcement_count)
+VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?, ?, ?)
 """
 
 _UPDATE_STAGED_STATUS_SQL = (
@@ -263,6 +263,10 @@ class FactPromoter:
                     fact.source_ref,
                     json.dumps([]),
                     fact.trust,
+                    # MEM-1 (F073) — carry the reinforcement the fact accrued
+                    # while staged into the committed row, so blended recall can
+                    # lift a repeatedly-confirmed preference.
+                    fact.reinforcement_count,
                 ),
             )
             await tx.execute(_UPDATE_STAGED_STATUS_SQL, (fact.fact_id,))

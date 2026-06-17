@@ -33,7 +33,8 @@ from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import PipelineState, StepError
+from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
 from stackowl.pipeline.turn_persist import persist_turn
 
@@ -286,14 +287,19 @@ class LangGraphBackend(OrchestratorBackend):
                 next_state = await step_fn(current)
                 return {"pipeline_state": next_state}
             except Exception as exc:
-                error_msg = f"{step_name}: {type(exc).__name__}: {exc}"
+                error_msg = format_step_error(step_name, exc)
                 log.engine.error(
                     "[langgraph_backend] step failed — %s",
                     error_msg,
                     exc_info=True,
                     extra={"_fields": {"step": step_name, "trace_id": current.trace_id}},
                 )
-                return {"pipeline_state": current.evolve(errors=(*current.errors, error_msg))}
+                # REACT-7/F092 — structured record in lockstep with the human string.
+                return {"pipeline_state": current.evolve(
+                    errors=(*current.errors, error_msg),
+                    step_errors=(*current.step_errors,
+                                 StepError(step=step_name, exc_type=type(exc).__name__, message=str(exc))),
+                )}
 
         return _node
 

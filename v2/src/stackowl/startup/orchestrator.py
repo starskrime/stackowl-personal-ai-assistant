@@ -26,6 +26,22 @@ from stackowl.startup.provider_probe import ProviderProbe
 log = logging.getLogger("stackowl.startup")
 
 
+def resolve_reply_to_inflight(*, is_reply: bool, turn_running: bool) -> bool:
+    """Map a channel reply-to-the-bot flag to a STRUCTURAL reply-to-inflight STEER.
+
+    STEER-1/F060: ``IngressMessage.is_reply`` is True when the inbound message is
+    a channel reply to one of the bot's own messages (Telegram stamps it from
+    ``message.reply_to_message``). It becomes a reply-to-inflight STEER — the
+    structural, zero-LLM-cost signal that ``parse_explicit_signal`` honours — ONLY
+    when a turn is ACTUALLY in-flight for the session. A reply to an OLD bot
+    message with nothing running is just a normal message (NOT a steer), so it
+    must NOT short-circuit into the mid-turn router. Pure, side-effect-free; the
+    caller already gates on ``running_turn is not None`` but we make the contract
+    explicit and unit-testable here.
+    """
+    return bool(is_reply and turn_running)
+
+
 async def _run_until_signal(adapter: object, stop_event: asyncio.Event) -> None:
     """Race the blocking ``adapter.run()`` against a cooperative ``stop_event``.
 
@@ -728,6 +744,7 @@ class StartupOrchestrator:
             sandbox_selector=sandbox_selector,
             sandbox_governor=sandbox_governor,
             turn_registry=turn_registry,
+            settings=self._settings,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
@@ -761,6 +778,9 @@ class StartupOrchestrator:
             backend=backend,
             skills_components=skills_components,
             proactive_deliverer=proactive_deliverer,
+            # PARL-7 (F084) — the host-wide governor so the nightly evolution
+            # batch's concurrent fan-out shares the single in-flight budget.
+            delegation_governor=delegation_governor,
         )
 
         # Plugin index — discover installed plugins from ~/.stackowl/plugins/.
@@ -899,9 +919,15 @@ class StartupOrchestrator:
         # to RE-DISPATCH a queued message faithfully (same routing, same clarify
         # interception) the drain needs the original raw IngressMessage. Park it
         # here keyed by request_id; pop it when the queue entry is drained.
+        from stackowl.gateway.parked_intakes import ParkedIntakes
         from stackowl.gateway.scanner import IngressMessage, RouteDecision
 
-        _parked_intakes: dict[str, IngressMessage] = {}
+        # STEER-3/F057 — the park map is now a ParkedIntakes (was a bare dict) so
+        # the turn sweep can EVICT entries for reaped wedged/GC'd turns (otherwise
+        # a parked raw IngressMessage only pops on a successful drain → a slow
+        # leak). Wired to the registry's reaped-evictor hook below.
+        _parked_intakes = ParkedIntakes()
+        turn_registry.set_reaped_evictor(_parked_intakes.evict)
 
         async def _dispatch_turn(
             pump: ClarifyPump,
@@ -1068,13 +1094,13 @@ class StartupOrchestrator:
                             )
                             for i, text in enumerate(survivors):
                                 survivor_rid = f"{finished_request_id}-survivor-{i}"
-                                _parked_intakes[survivor_rid] = IngressMessage(
+                                _parked_intakes.put(survivor_rid, IngressMessage(
                                     text=text,
                                     session_id=session_id,
                                     channel=channel_adapter.channel_name,
                                     trace_id=survivor_rid,
                                     chat_id=survivor_target,
-                                )
+                                ))
                             log.info(
                                 "[startup] gateway: completion seam drained survivor steers",
                                 extra={"_fields": {
@@ -1098,7 +1124,7 @@ class StartupOrchestrator:
                     await turn_registry.deregister(finished_request_id)
                     nxt = turn_registry.pop_next(session_id)
                     if nxt is not None:
-                        parked = _parked_intakes.pop(nxt.request_id, None)
+                        parked = _parked_intakes.get_and_pop(nxt.request_id)
                         if parked is None:
                             log.error(
                                 "[startup] gateway: queued intake lost its raw message — dropping",
@@ -1179,7 +1205,7 @@ class StartupOrchestrator:
                 nxt = turn_registry.pop_next(sid)
                 if nxt is None:
                     return
-                parked = _parked_intakes.pop(nxt.request_id, None)
+                parked = _parked_intakes.get_and_pop(nxt.request_id)
                 if parked is None:
                     log.error(
                         "[startup] gateway: held intake lost its raw message — dropping",
@@ -1281,7 +1307,7 @@ class StartupOrchestrator:
                     # turn (bounded enqueue) so it runs when capacity frees. No
                     # routing: there is no same-session running turn to steer/stop.
                     # Park the raw message so the global-cap WAKE seam can re-dispatch.
-                    _parked_intakes[msg.trace_id] = msg
+                    _parked_intakes.put(msg.trace_id, msg)
                     try:
                         turn_registry.enqueue(
                             msg.session_id, original_input=input_text,
@@ -1289,7 +1315,7 @@ class StartupOrchestrator:
                         )
                     except QueueFull as exc:
                         # Loud overflow: never silently grow, never crash the loop.
-                        _parked_intakes.pop(msg.trace_id, None)
+                        _parked_intakes.get_and_pop(msg.trace_id)
                         log.warning(
                             "[startup] gateway: intake queue full — dropping with notice",
                             extra={"_fields": {
@@ -1326,9 +1352,13 @@ class StartupOrchestrator:
                 )
 
                 # is_reply_to_inflight: a STRUCTURAL reply-to-the-running-message
-                # signal. IngressMessage carries no reply-link field today, so this
-                # is False (fail-safe — never a spurious structural STEER). Wiring a
-                # real Telegram reply-to-inflight link is a follow-up.
+                # signal (STEER-1/F060). The channel (Telegram) stamps
+                # ``msg.is_reply`` when the inbound message replies to one of the
+                # bot's own messages; it becomes a structural STEER only when a turn
+                # is actually in-flight (``running_turn is not None`` — already true
+                # on this branch). ``resolve_reply_to_inflight`` makes that contract
+                # explicit + unit-testable (a reply to an OLD bot message with
+                # nothing running is a normal message, never a spurious steer).
                 outcome = await route_inflight_message(
                     router=turn_router,
                     registry=turn_registry,
@@ -1337,7 +1367,9 @@ class StartupOrchestrator:
                     session_id=msg.session_id,
                     request_id_new=msg.trace_id,
                     target=msg.chat_id,
-                    is_reply_to_inflight=False,
+                    is_reply_to_inflight=resolve_reply_to_inflight(
+                        is_reply=msg.is_reply, turn_running=True
+                    ),
                 )
                 routed_signal = outcome.signal
                 if outcome.action is InflightAction.HANDLED:
@@ -1379,14 +1411,14 @@ class StartupOrchestrator:
                             )
                             ack_kind = "dispatched"
                         else:
-                            _parked_intakes[msg.trace_id] = routed_msg
+                            _parked_intakes.put(msg.trace_id, routed_msg)
                             try:
                                 turn_registry.enqueue(
                                     msg.session_id, original_input=routed_input,
                                     request_id=msg.trace_id, target=msg.chat_id,
                                 )
                             except QueueFull as exc:
-                                _parked_intakes.pop(msg.trace_id, None)
+                                _parked_intakes.get_and_pop(msg.trace_id)
                                 log.warning(
                                     "[startup] gateway: intake queue full — dropping with notice",
                                     extra={"_fields": {

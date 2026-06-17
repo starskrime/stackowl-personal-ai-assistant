@@ -50,3 +50,7 @@ class MemoryRecord(BaseModel):
     tags: list[str] = Field(default_factory=list)
     # Provenance trust tier (Story E). Default 'untrusted' = fail-safe (a forgotten stamp recalls fenced).
     trust: Literal["trusted", "self", "untrusted"] = "untrusted"
+    # MEM-1 (F073) — reinforcement count carried from staging, so blended recall
+    # can lift a repeatedly-confirmed preference over a stale one-off. Default 0
+    # = a one-off (legacy rows backfill to 0 via the 0062 migration default).
+    reinforcement_count: int = 0

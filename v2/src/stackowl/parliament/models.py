@@ -26,6 +26,22 @@ class ParliamentRound(BaseModel):
     truncated: dict[str, bool]
     duration_ms: float = 0.0
 
+    def genuine_responses(self) -> dict[str, str]:
+        """Return only the non-truncated, non-error owl responses (PARL-1 / F078).
+
+        Error/timeout sentinels (``[error: …]``, ``[timed out …]``,
+        ``[backend error: …]``) are recorded with ``truncated[name] = True`` by
+        the RoundRunner, as are token-budget-clipped responses. None of these is a
+        genuine owl position, so they must NOT be embedded for convergence nor fed
+        to synthesis. A name missing from ``truncated`` defaults to genuine
+        (backward-compatible with any round built without the flag).
+        """
+        return {
+            name: text
+            for name, text in self.responses.items()
+            if not self.truncated.get(name, False)
+        }
+
 
 class ParliamentSession(BaseModel):
     """Full Parliament session lifecycle record — persisted to SQLite.
@@ -41,10 +57,20 @@ class ParliamentSession(BaseModel):
     owl_names: list[str]
     rounds: list[ParliamentRound] = Field(default_factory=list)
     synthesis: str | None = None
-    status: Literal["running", "completed", "failed"] = "running"
+    # PARL-3 (F081): ``completed_no_synthesis`` is a DISTINCT degraded terminal —
+    # the debate ran to completion but synthesis raised, so there is no verdict.
+    # It must never be reported as a clean ``completed``.
+    status: Literal[
+        "running", "completed", "completed_no_synthesis", "failed"
+    ] = "running"
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     interjections: list[str] = Field(default_factory=list)
+    # PARL-4 (F082): observable pellet-staging outcome. False ⇒ synthesis was
+    # stored but the pellet side-channel failed (so health/observability can
+    # surface a run of failures). Not persisted — the synthesis itself is the
+    # durable artifact; this flag rides the in-memory session + the warning log.
+    pellet_staged: bool = True
 
     def add_round(self, round_: ParliamentRound) -> ParliamentSession:
         """Return a new session with ``round_`` appended to ``rounds``."""
@@ -64,6 +90,22 @@ class ParliamentSession(BaseModel):
             }
         )
 
+    def complete_no_synthesis(self) -> ParliamentSession:
+        """Mark a DEGRADED terminal: the debate ran but synthesis failed (PARL-3).
+
+        Distinct from ``complete()`` — there is no verdict, so the channel must
+        tell the user the debate finished without a conclusion rather than show a
+        silent synthesis=None dressed up as a clean completion. Distinct from
+        ``fail()`` — the rounds DID run and are preserved.
+        """
+        return self.model_copy(
+            update={
+                "status": "completed_no_synthesis",
+                "synthesis": None,
+                "completed_at": datetime.now(UTC),
+            }
+        )
+
     def fail(self) -> ParliamentSession:
         """Mark the session as failed (timeout, hard error)."""
         return self.model_copy(
@@ -74,13 +116,20 @@ class ParliamentSession(BaseModel):
         )
 
     def cumulative_token_estimate(self) -> int:
-        """Estimate total tokens across all rounds (4 chars ≈ 1 token)."""
-        total_chars = sum(
-            len(response)
+        """Estimate total tokens across all rounds (PARL-1 / F078).
+
+        Uses the script-aware multilingual estimator instead of the legacy
+        ``chars // 4`` heuristic, which grossly undercounts space-free scripts.
+        Counts GENUINE responses only — error/timeout sentinels are not real
+        token spend the budget should reserve against.
+        """
+        from stackowl.parliament.token_estimate import estimate_tokens
+
+        return sum(
+            estimate_tokens(response)
             for rnd in self.rounds
-            for response in rnd.responses.values()
+            for response in rnd.genuine_responses().values()
         )
-        return total_chars // 4
 
 
 def make_critic_persona() -> OwlAgentManifest:

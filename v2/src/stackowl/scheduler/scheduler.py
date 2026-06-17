@@ -66,9 +66,14 @@ class JobScheduler(SupervisedTask):
     async def _poll(self) -> None:
         TestModeGuard.assert_not_test_mode("scheduler.execute")
         now_iso = datetime.now(UTC).isoformat()
+        # STEER-5/F113 — a job is due when EITHER its canonical recurring slot
+        # (next_run_at) OR its separate retry slot (retry_at, when set) is reached.
+        # retry_at is NULL for a healthy job, so this is byte-equivalent to the old
+        # next_run_at-only select in the steady state.
         rows = await self._db.fetch_all(
-            "SELECT * FROM jobs WHERE next_run_at <= ? AND status = 'pending' AND enabled = 1",
-            (now_iso,),
+            "SELECT * FROM jobs WHERE status = 'pending' AND enabled = 1 "
+            "AND (next_run_at <= ? OR (retry_at IS NOT NULL AND retry_at <= ?))",
+            (now_iso, now_iso),
         )
         for row in rows:
             await self._run_job(row_to_job(row))
@@ -159,9 +164,13 @@ class JobScheduler(SupervisedTask):
                 )
                 await self._mark_failed(job)
             else:
+                # STEER-5/F113 — schedule the retry on the SEPARATE retry_at slot;
+                # NEVER touch next_run_at (the canonical recurring cadence). A
+                # daily@08:00 job that fails retries at ~08:05 via retry_at while
+                # its 08:00-tomorrow cadence slot stays intact.
                 retry_at = (datetime.now(UTC) + timedelta(minutes=_RETRY_DELAY_MIN)).isoformat()
                 await self._db.execute(
-                    "UPDATE jobs SET status = 'pending', retry_count = ?, next_run_at = ? WHERE job_id = ?",
+                    "UPDATE jobs SET status = 'pending', retry_count = ?, retry_at = ? WHERE job_id = ?",
                     (new_retries, retry_at, job.job_id),
                 )
 
@@ -169,8 +178,12 @@ class JobScheduler(SupervisedTask):
         now_iso = datetime.now(UTC).isoformat()
         next_run = compute_next_run(job.schedule, tz=self._tz)
         run_id = str(uuid.uuid4())
+        # STEER-5/F113 — on success, recompute the canonical cadence AND clear the
+        # transient retry state (retry_count=0, retry_at=NULL) so a previously
+        # flaky job returns to a clean steady state on its real schedule.
         await self._db.execute(
-            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ? WHERE job_id = ?",
+            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
+            "retry_count = 0, retry_at = NULL WHERE job_id = ?",
             (now_iso, next_run, job.job_id),
         )
         await self._db.execute(

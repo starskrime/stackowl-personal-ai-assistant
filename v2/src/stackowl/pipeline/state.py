@@ -21,6 +21,19 @@ class ToolCall(BaseModel, frozen=True):
     duration_ms: float
 
 
+class StepError(BaseModel, frozen=True):
+    """A STRUCTURED per-step failure record (REACT-7 / F092).
+
+    Carried alongside the human-readable ``errors`` string so honesty surfaces
+    (critical_failure) read typed fields instead of re-parsing a free-form string
+    whose format could drift between the writer and the reader.
+    """
+
+    step: str
+    exc_type: str
+    message: str
+
+
 class PipelineState(BaseModel, frozen=True):
     """Immutable snapshot of pipeline execution state.
 
@@ -146,11 +159,49 @@ class PipelineState(BaseModel, frozen=True):
     # assemble runs. RC-B fix.
     system_prompt: str | None = None
     errors: tuple[str, ...] = ()
+    # REACT-7/F092 — STRUCTURED per-step failure records, written in lockstep with
+    # `errors` via stackowl.pipeline.step_error.format_step_error. The critical-failure
+    # honesty surface reads these typed fields (PRIMARY); the string parser is the
+    # back-compat fallback. Default () = byte-identical to a clean turn.
+    step_errors: tuple[StepError, ...] = ()
+    # REACT-7/F099 — consequential give-up SNAPSHOT, stamped onto immutable state at
+    # the end of execute (while the turn-scoped tool_outcome_ledger / recovery_context
+    # ContextVars are still bound). The honest giveup floor reads this snapshot when
+    # present so its decision travels with the state, not an implicit bind() lifetime.
+    # Names of consequential/write tools that FAILED, that SUCCEEDED, and the failed
+    # names that were BRIDGED by a successful substitution this turn. Empty tuples =
+    # no snapshot taken → the floor falls back to reading the live ledger (today's path).
+    consequential_failures: tuple[str, ...] = ()
+    consequential_successes: tuple[str, ...] = ()
+    recovered_consequential: tuple[str, ...] = ()
+    # True once execute has stamped the snapshot above. Set explicitly so a CLEAN
+    # turn (execute recorded zero consequential activity → all three tuples empty)
+    # is still trusted as a snapshot rather than falling back to the live ledger.
+    # The floor uses ``has_consequential_snapshot`` (this flag OR any non-empty
+    # snapshot tuple) so honesty data that rides on state is never silently ignored
+    # just because the flag was not threaded through.
+    consequential_snapshot_taken: bool = False
     # Per-pipeline-step elapsed time in milliseconds, keyed by step name.
     # Populated by the backend's step loop; consumed by the outcome-capture
     # helper at end-of-run. Frozen tuple-of-tuples to keep PipelineState
     # immutable (pydantic frozen=True forbids mutable dicts).
     step_durations: tuple[tuple[str, float], ...] = ()
+
+    @property
+    def has_consequential_snapshot(self) -> bool:
+        """REACT-7/F099 — True when the consequential give-up snapshot rides on state.
+
+        The snapshot is present if execute stamped the flag (covers a clean turn where
+        every snapshot tuple is empty) OR any snapshot tuple carries data (so honesty
+        data that travels on state is honored even if the flag was not threaded). When
+        False the floor falls back to the live ledger (the original, byte-identical path).
+        """
+        return (
+            self.consequential_snapshot_taken
+            or bool(self.consequential_failures)
+            or bool(self.consequential_successes)
+            or bool(self.recovered_consequential)
+        )
 
     def evolve(self, **kwargs: Any) -> PipelineState:
         """Return a new PipelineState with the given fields updated."""

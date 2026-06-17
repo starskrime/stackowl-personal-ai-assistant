@@ -23,6 +23,35 @@ _STOP = "Stop"
 _WAIT_TIMEOUT_S = 120.0
 
 
+def resolve_clarify_wait_timeout(channel: str, settings: Any) -> float:
+    """Resolve the per-channel clarify Raise/Stop wait timeout (STEER-7/F094).
+
+    Accepts EITHER a :class:`ClarifySettings` directly OR a root ``Settings``
+    object (whose ``.clarify`` is unwrapped). A ``per_channel`` override for
+    ``channel`` wins, else the global ``wait_timeout_s`` (default 120s). Pure and
+    fail-safe — a missing/odd settings object or a non-positive configured value
+    falls back to the 120s default and NEVER raises (a broken config must not
+    auto-Stop the user; it degrades to the safe documented default).
+    """
+    try:
+        if settings is None:
+            return _WAIT_TIMEOUT_S
+        # Unwrap a root Settings to its ClarifySettings; a ClarifySettings (which
+        # has no nested ``.clarify``) is used as-is.
+        clarify = getattr(settings, "clarify", None)
+        if clarify is None:
+            clarify = settings
+        per_channel = getattr(clarify, "per_channel", {}) or {}
+        if channel in per_channel:
+            value = float(per_channel[channel])
+            if value > 0.0:
+                return value
+        default = float(getattr(clarify, "wait_timeout_s", _WAIT_TIMEOUT_S))
+        return default if default > 0.0 else _WAIT_TIMEOUT_S
+    except Exception:  # noqa: BLE001 — never let a bad config crash/auto-Stop; use default
+        return _WAIT_TIMEOUT_S
+
+
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
     for m in reversed(messages):
         if m.get("role") == "assistant" and isinstance(m.get("content"), str):

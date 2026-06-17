@@ -24,10 +24,22 @@ _EFFECTFUL = {"write", "consequential"}
 _BRIDGING_RECOVERY_KINDS = {"substitution"}
 
 
-def _unrecovered_consequential_failures() -> set[str]:
+def _unrecovered_consequential_failures(
+    state: PipelineState | None = None,
+) -> set[str]:
     """Names of consequential/write tools that FAILED this turn and were NOT
     bridged by a successful substitution. Empty ⇒ every effect was achieved or
-    recovered. Impure: reads the turn ledger + recovery context."""
+    recovered.
+
+    REACT-7/F099 — when ``state`` carries the consequential SNAPSHOT (stamped by
+    execute while the ledger was live), read it instead of the ambient ContextVars,
+    so the honesty decision does not depend on the bind() lifetime spanning this
+    call. Falls back to the live ledger/recovery context when no snapshot was taken
+    (byte-identical to the original path)."""
+    if state is not None and state.has_consequential_snapshot:
+        failed = set(state.consequential_failures)
+        recovered = set(state.recovered_consequential)
+        return failed - recovered
     failed = {
         o.name for o in tool_outcome_ledger.get_outcomes()
         if o.action_severity in _EFFECTFUL and not o.success
@@ -39,19 +51,26 @@ def _unrecovered_consequential_failures() -> set[str]:
     return failed - recovered
 
 
-def is_consequential_giveup_now() -> bool:
+def is_consequential_giveup_now(state: PipelineState | None = None) -> bool:
     """True iff a consequential/write action was attempted-and-failed with NO
     consequential success AND at least one such failure was not bridged by a
     capability substitution this turn.
-    Impure: reads the turn-scoped tool-outcome ledger + recovery context. Never raises.
-    The SINGLE source of truth for both the nudge veto and the terminal floor."""
+
+    REACT-7/F099 — when ``state`` carries the consequential snapshot, the tally is
+    read from immutable state (not the ambient ledger ContextVar). Falls back to the
+    live ledger when no snapshot was taken. Never raises. The SINGLE source of truth
+    for both the nudge veto and the terminal floor."""
     try:
-        cf, cs = tool_outcome_ledger.consequential_tally()
+        if state is not None and state.has_consequential_snapshot:
+            cf = len(state.consequential_failures)
+            cs = len(state.consequential_successes)
+        else:
+            cf, cs = tool_outcome_ledger.consequential_tally()
         if not is_unachieved_consequential_giveup(cons_failures=cf, cons_successes=cs):
             return False
         # Every failed consequential must be individually bridged — a single
         # substitution does NOT cover sibling failures (per-tool recovery check).
-        return bool(_unrecovered_consequential_failures())
+        return bool(_unrecovered_consequential_failures(state))
     except Exception as exc:  # never raise into the loop / delivery
         log.engine.error(
             "[giveup_floor] is_consequential_giveup_now failed",
@@ -75,19 +94,26 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
             "[giveup_floor] surface_consequential_giveup_floor: entry",
             extra={"_fields": {"trace_id": state.trace_id, "n_responses": len(state.responses)}},
         )
-        # 2. DECISION — fast exit: shared predicate covers ledger tally + substitution guard
-        if not is_consequential_giveup_now():
+        # 2. DECISION — fast exit: shared predicate covers ledger tally + substitution guard.
+        # Prefer the state snapshot (F099) so the decision rides immutable state.
+        if not is_consequential_giveup_now(state):
             log.engine.debug(
                 "[giveup_floor] surface_consequential_giveup_floor: no unachieved consequential — no-op",
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
             return state
-        unrecovered = _unrecovered_consequential_failures()
-        failed_name = next(
-            (o.name for o in tool_outcome_ledger.get_outcomes()
-             if o.action_severity in _EFFECTFUL and not o.success and o.name in unrecovered),
-            None,
-        )
+        unrecovered = _unrecovered_consequential_failures(state)
+        if state.has_consequential_snapshot:
+            # Name from the snapshot's ordered failures (first unrecovered).
+            failed_name = next(
+                (n for n in state.consequential_failures if n in unrecovered), None,
+            )
+        else:
+            failed_name = next(
+                (o.name for o in tool_outcome_ledger.get_outcomes()
+                 if o.action_severity in _EFFECTFUL and not o.success and o.name in unrecovered),
+                None,
+            )
         # 3. STEP — build honest floor (pure, deterministic, no model call)
         floor_text = synthesize_floor(
             goal=state.input_text,

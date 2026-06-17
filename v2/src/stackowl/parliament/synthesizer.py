@@ -202,7 +202,9 @@ class ParliamentSynthesizer:
         if not session.rounds:
             return 0.0
         last_round = session.rounds[-1]
-        responses = list(last_round.responses.values())
+        # PARL-1 (F078) — never embed error/timeout sentinels as if they were
+        # owl positions; mean similarity is over genuine responses only.
+        responses = list(last_round.genuine_responses().values())
         if len(responses) < 2:
             return 0.0
         try:
@@ -224,7 +226,10 @@ class ParliamentSynthesizer:
         ]
         for rnd in session.rounds:
             transcript_lines.append(f"--- Round {rnd.round_number} ---")
-            for owl_name, response in rnd.responses.items():
+            # PARL-1 (F078) — exclude error/timeout sentinels from the synthesis
+            # transcript so '[error: …]' / '[timed out …]' markers are never
+            # presented to the synthesis model as a participant's actual position.
+            for owl_name, response in rnd.genuine_responses().items():
                 transcript_lines.append(f"[{owl_name}]: {response}")
             transcript_lines.append("")
         if session.interjections:

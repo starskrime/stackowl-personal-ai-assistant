@@ -87,6 +87,36 @@ def _ensure_tool_capable(
     raise ToolUseUnsupportedError(getattr(provider, "name", type(provider).__name__))
 
 
+def _warn_owl_name_shadow(services: object, state: PipelineState) -> None:
+    """Warn when an owl-named provider is about to shadow an explicit, DIFFERENT
+    ``manifest.provider_name`` pin (F031/REACT-3). Best-effort: a manifest lookup
+    failure is swallowed (logged at debug) — the warn is an observability aid, never
+    a gate, so it must never block provider selection."""
+    owl_reg = getattr(services, "owl_registry", None)
+    if owl_reg is None:
+        return
+    try:
+        manifest = owl_reg.get(state.owl_name)
+    except Exception as exc:  # unknown owl / registry fault — no manifest to compare
+        log.engine.debug(
+            "[pipeline] execute: owl-name-shadow check: manifest lookup failed",
+            exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
+        )
+        return
+    pin = getattr(manifest, "provider_name", None)
+    if pin and pin != state.owl_name:
+        log.engine.warning(
+            "[pipeline] execute: owl-named provider SHADOWS an explicit manifest "
+            "provider_name pin — the owl-name binding wins (most-specific); the "
+            "manifest pin is ignored this turn",
+            extra={"_fields": {
+                "owl": state.owl_name,
+                "owl_named_provider": state.owl_name,
+                "shadowed_manifest_pin": pin,
+            }},
+        )
+
+
 def select_tool_provider(
     registry: ProviderRegistry,
     services: object,
@@ -98,6 +128,10 @@ def select_tool_provider(
     """Resolve the ModelProvider for the tool-use loop.
 
     Precedence (highest → lowest):
+    0. A provider registered under the OWL's own name — the most specific per-owl
+       binding. If this wins while the manifest ALSO carries a DIFFERENT explicit
+       ``provider_name`` pin, the collision is logged at WARN (F031/REACT-3): the
+       owl-name binding still wins, but the shadowed manifest pin is now visible.
     1. Owl manifest ``provider_name`` pin — if set and registered, use it directly.
        On ProviderNotFoundError warn and fall through to tier routing.
     2. Desired tier = get_session_tier(session_id) OR manifest.model_tier OR "powerful".
@@ -117,8 +151,17 @@ def select_tool_provider(
 
     # --- Step 0: A provider registered under the owl's own name wins (a
     # per-owl provider binding). This is the most specific pin. ---
+    #
+    # F031/REACT-3 precedence (documented): owl-named provider > manifest.provider_name
+    # > session/manifest tier. The owl-named provider intentionally wins because it is
+    # the most specific per-owl binding. BUT when the owl's manifest ALSO carries an
+    # explicit, DIFFERENT provider_name pin, the user made a deliberate routing choice
+    # that this step silently overrides — so warn (collision is now VISIBLE, not buried
+    # in a debug line). A matching pin (or no pin) is not a collision and stays quiet.
     try:
         provider = registry.get(state.owl_name)
+        if record_recovery:  # only the loud (execute) selection emits the collision warn
+            _warn_owl_name_shadow(services, state)
         if log_selection:
             log.engine.info(
                 "[pipeline] execute: tool provider selected",

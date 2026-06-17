@@ -236,7 +236,10 @@ async def test_asyncio_backend_deliver_no_writer_logs_warning(capture_logs: list
     backend = AsyncioBackend(services=StepServices(stream_registry=registry))
     result = await backend.run(state)
     assert result.errors == ()
-    warning_msgs = [r["msg"] for r in capture_logs if "no writer" in r.get("msg", "")]
+    # STEER-2/F100 renamed the stream-miss log: a top-level turn with no durable
+    # reply_target + no deliverer is an honest "answer not delivered" miss (the
+    # message moved from "no writer" to "stream-miss: no durable fallback available").
+    warning_msgs = [r["msg"] for r in capture_logs if "stream-miss" in r.get("msg", "")]
     assert warning_msgs
 
 
