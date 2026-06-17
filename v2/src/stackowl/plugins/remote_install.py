@@ -77,9 +77,22 @@ def _safe_extract(zip_bytes: bytes, dest: Path) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     dest_resolved = dest.resolve()
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for member in zf.namelist():
+        for info in zf.infolist():
+            member = info.filename
+            # Reject symlink members fail-closed: a stored symlink lets a
+            # follow-up member write THROUGH it to escape the root, so the
+            # path-containment check below (which only sees stored names) is
+            # not enough. The Unix file-type bits live in the high 16 bits of
+            # external_attr; 0o120000 marks a symlink.
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise PluginVerificationError(
+                    f"refusing symlink member in plugin archive: {member!r}"
+                )
             target = (dest / member).resolve()
-            if not str(target).startswith(str(dest_resolved)):
+            # Proper containment check — `startswith` accepts a prefix-collision
+            # sibling (e.g. dest=/x/root accepts /x/rootX/evil). is_relative_to
+            # compares path components, not string prefixes (Python 3.9+).
+            if target != dest_resolved and not target.is_relative_to(dest_resolved):
                 raise PluginVerificationError(
                     f"refusing zip member that escapes extraction root: {member!r}"
                 )
