@@ -1,9 +1,19 @@
 """NotificationRouter — focus-mode / quiet-hours aware dispatch (Story 7.4).
 
 Routes Notifications via a pure decision table to one of ``delivered`` /
-``batched`` / ``suppressed``. Every call writes a row to ``notification_log``;
-``batched`` additionally inserts into ``notification_queue``. The raw message
-content is never persisted — only ``sha256(message)[:16]`` (the message_hash).
+``batched`` / ``suppressed``. Every call writes a row to ``notification_log``
+recording only ``sha256(message)[:16]`` (the ``message_hash``) — the audit log
+never stores the raw body.
+
+PERSISTENCE & RETENTION (STEER-6/F112 — the honest contract). A ``batched``
+decision (quiet-hours / focus mode) MUST insert the raw message BODY into
+``notification_queue`` so the later ``NotificationDigestJob`` flush can transport
+the exact text the user expects — the body is genuinely persisted for batched
+notifications (it cannot be reconstructed from the hash). That persistence is
+BOUNDED and cleaned up: the digest deletes the queue row on a successful flush, on
+exactly-once reconciliation, and on dead-letter past the bounded attempt cap — so
+a body lives in ``notification_queue`` only while a delivery is pending, never
+indefinitely. ``delivered`` and ``suppressed`` decisions persist no body at all.
 """
 
 from __future__ import annotations
