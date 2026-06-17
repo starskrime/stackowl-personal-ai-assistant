@@ -744,6 +744,7 @@ class StartupOrchestrator:
             sandbox_selector=sandbox_selector,
             sandbox_governor=sandbox_governor,
             turn_registry=turn_registry,
+            settings=self._settings,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto

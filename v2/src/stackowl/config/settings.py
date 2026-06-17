@@ -100,6 +100,32 @@ class BudgetSettings(BaseModel):
     )
 
 
+class ClarifySettings(BaseModel):
+    """Per-channel clarify (Raise/Stop) wait-timeout policy (STEER-7/F094).
+
+    When an interactive budget cap is hit, the gate blocks awaiting a human
+    Raise/Stop answer. A single hardcoded 120s could auto-Stop a slow mobile user
+    before they reply. ``wait_timeout_s`` is the global fallback (kept at 120s for
+    back-compat); ``per_channel`` overrides it for specific channels (e.g. a
+    generous wait for ``telegram``). Channel keys are the channel names
+    (``cli``/``telegram``/``slack``/…); an unlisted channel uses ``wait_timeout_s``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    wait_timeout_s: float = Field(
+        default=120.0,
+        gt=0.0,
+        description="Fallback seconds to await a human Raise/Stop before failing closed.",
+        json_schema_extra={"hot_reload": True},
+    )
+    per_channel: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-channel clarify wait-timeout overrides (channel name → seconds).",
+        json_schema_extra={"hot_reload": True},
+    )
+
+
 class WebSearchSettings(BaseModel):
     """Web-search provider configuration (SearXNG instance, etc.).
 
@@ -559,6 +585,7 @@ class Settings(BaseSettings):
     tts: TtsSettings = Field(default_factory=TtsSettings)
     image: ImageSettings = Field(default_factory=ImageSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    clarify: ClarifySettings = Field(default_factory=ClarifySettings)
 
     @classmethod
     def settings_customise_sources(

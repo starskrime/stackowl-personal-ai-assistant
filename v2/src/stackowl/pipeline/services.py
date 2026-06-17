@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from stackowl.audit.logger import AuditLogger
+    from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
@@ -115,6 +116,11 @@ class StepServices:
     # folds a [steering] message into the live ReAct loop. None → no steering
     # (fail-safe; the loop proceeds normally, e.g. in non-orchestrated unit tests).
     turn_registry: TurnRegistry | None = field(default=None)
+    # STEER-7/F094 — the resolved application Settings, threaded so steps can read
+    # config-driven policy (e.g. the per-channel clarify Raise/Stop wait timeout)
+    # without a global settings singleton. None in non-orchestrated unit tests →
+    # callers fall back to documented defaults (resolve_clarify_wait_timeout → 120s).
+    settings: Settings | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

@@ -25,6 +25,7 @@ from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
+from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
@@ -910,11 +911,15 @@ async def _run_with_tools(
         started_monotonic=time.monotonic(), clock=_MonotonicClock(),
         prior_cost_usd=_prior_cost_usd,
     )
+    # STEER-7/F094 — the clarify Raise/Stop wait scales PER CHANNEL from settings
+    # (120s fallback) so a slow mobile user isn't auto-Stopped before answering.
+    _clarify_wait_s = resolve_clarify_wait_timeout(state.channel, _services.settings)
     _budget_cb = make_budget_callback(
         _governor,
         interactive=(state.interactive and not _default_backstop),
         clarify=_services.clarify_gateway,
         session_id=state.session_id, channel=state.channel,
+        wait_timeout_s=_clarify_wait_s,
     )
 
     # Task 10 — steering closure: drain THIS turn's mailbox at each iteration
