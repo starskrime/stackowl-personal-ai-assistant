@@ -302,12 +302,16 @@ class ParliamentOrchestrator:
         try:
             synthesis_result = await self._synthesizer.synthesize(session)
         except Exception as exc:
+            # PARL-3 (F081) — a synthesis failure is a DEGRADED terminal, not a
+            # clean 'completed'. Mark completed_no_synthesis so the channel tells
+            # the user the debate ran but no conclusion formed (no fake success).
             log.parliament.error(
-                "[parliament] orchestrator._finalize_session: synthesis failed",
+                "[parliament] orchestrator._finalize_session: synthesis failed — "
+                "marking completed_no_synthesis (degraded)",
                 exc_info=exc,
                 extra={"_fields": {"session_id": session.session_id}},
             )
-            return session.complete()
+            return session.complete_no_synthesis()
 
         final = session.complete(synthesis=synthesis_result.synthesis_text)
         if self._pellet_gen is not None:

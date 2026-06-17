@@ -157,6 +157,16 @@ class ParliamentCommand(SlashCommand):
                 }
             },
         )
+        # PARL-3 (F081) — distinguish a DEGRADED finish (synthesis raised) from a
+        # benign "no synthesizer wired" completion, so the user is told honestly
+        # the debate ran but no conclusion formed rather than a vague no-op.
+        if session.status == "completed_no_synthesis":
+            return (
+                f"{rollcall}\n\n"
+                "[Parliament ran to completion, but synthesis failed — no "
+                "conclusion was formed. The debate transcript is available via "
+                "`/parliament log`.]"
+            )
         return (
             f"{rollcall}\n\n"
             f"[Parliament session complete — no synthesis produced]"

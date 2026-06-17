@@ -57,7 +57,12 @@ class ParliamentSession(BaseModel):
     owl_names: list[str]
     rounds: list[ParliamentRound] = Field(default_factory=list)
     synthesis: str | None = None
-    status: Literal["running", "completed", "failed"] = "running"
+    # PARL-3 (F081): ``completed_no_synthesis`` is a DISTINCT degraded terminal —
+    # the debate ran to completion but synthesis raised, so there is no verdict.
+    # It must never be reported as a clean ``completed``.
+    status: Literal[
+        "running", "completed", "completed_no_synthesis", "failed"
+    ] = "running"
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     interjections: list[str] = Field(default_factory=list)
@@ -76,6 +81,22 @@ class ParliamentSession(BaseModel):
             update={
                 "status": "completed",
                 "synthesis": synthesis,
+                "completed_at": datetime.now(UTC),
+            }
+        )
+
+    def complete_no_synthesis(self) -> ParliamentSession:
+        """Mark a DEGRADED terminal: the debate ran but synthesis failed (PARL-3).
+
+        Distinct from ``complete()`` — there is no verdict, so the channel must
+        tell the user the debate finished without a conclusion rather than show a
+        silent synthesis=None dressed up as a clean completion. Distinct from
+        ``fail()`` — the rounds DID run and are preserved.
+        """
+        return self.model_copy(
+            update={
+                "status": "completed_no_synthesis",
+                "synthesis": None,
                 "completed_at": datetime.now(UTC),
             }
         )
