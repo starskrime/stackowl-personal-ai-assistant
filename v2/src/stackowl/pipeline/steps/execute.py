@@ -33,7 +33,7 @@ from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
-from stackowl.providers.model_window import resolve_window
+from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_window
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.tools.registry import ToolRegistry
 
@@ -414,6 +414,53 @@ async def _try_substitute(
         return None
 
 
+# REACT-1/F032+F090 — hard ceiling on the FALLBACK window probe. The steady path
+# never reaches it (assemble stamps state.model_window). It only fires when a turn
+# reaches _run_with_tools WITHOUT assemble having run (e.g. a direct/system route),
+# where a live ollama probe on the hot tool-loop entry must never hang the turn.
+_WINDOW_PROBE_DEADLINE_S = 5.0
+
+
+async def _resolve_execute_window(state: PipelineState, provider: ModelProvider) -> int:
+    """Resolve THIS turn's context window for the tool-loop budget — single probe.
+
+    REACT-1/F032+F090:
+      * STEADY path — assemble already resolved and stamped ``state.model_window``;
+        return it directly so execute issues NO second probe (resolve_window's own
+        memoization would make it a cache hit anyway, but reading state skips the
+        call entirely and keeps the single-probe guarantee testable).
+      * FALLBACK path — a route reached _run_with_tools without assemble (model_window
+        is None). Issue ONE bounded probe under an explicit deadline; on timeout or
+        any error fall back to the safe default window. resolve_window never raises,
+        so the wait_for timeout is the only failure mode we add here.
+    """
+    if state.model_window is not None:
+        return state.model_window
+    cfg = getattr(provider, "_config", None)
+    log.engine.debug(
+        "[pipeline] execute: no stamped window — bounded fallback probe",
+        extra={"_fields": {"trace_id": state.trace_id, "deadline_s": _WINDOW_PROBE_DEADLINE_S}},
+    )
+    try:
+        return await asyncio.wait_for(
+            resolve_window(
+                provider_name=getattr(provider, "name", "") or "",
+                base_url=cfg.base_url if cfg is not None else None,
+                model=(cfg.default_model if cfg is not None else "") or "",
+                context_chars=(cfg.context_chars if cfg is not None else None),
+                protocol=getattr(provider, "protocol", "") or "",
+            ),
+            timeout=_WINDOW_PROBE_DEADLINE_S,
+        )
+    except TimeoutError as exc:
+        log.engine.warning(
+            "[pipeline] execute: window probe exceeded deadline — safe default window",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id, "window": DEFAULT_WINDOW_FALLBACK}},
+        )
+        return DEFAULT_WINDOW_FALLBACK
+
+
 _EFFECTFUL_SEVERITIES = {"write", "consequential"}
 _BRIDGING_RECOVERY_KINDS = {"substitution"}
 
@@ -496,16 +543,9 @@ async def _run_with_tools(
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
     # Per-model context budget: size the presented tool set to the model's real
     # window so a weak/small-window model is not drowned in tool schemas.
-    # Prefer the already-resolved value stamped by assemble (Task 4: avoids a
-    # redundant probe; resolve_window is memoized so a cache miss is cheap).
-    _cfg = getattr(provider, "_config", None)
-    _window = state.model_window if state.model_window is not None else await resolve_window(
-        provider_name=getattr(provider, "name", "") or "",
-        base_url=_cfg.base_url if _cfg is not None else None,
-        model=(_cfg.default_model if _cfg is not None else "") or "",
-        context_chars=(_cfg.context_chars if _cfg is not None else None),
-        protocol=getattr(provider, "protocol", "") or "",
-    )
+    # REACT-1/F032+F090 — prefer the value assemble already stamped (no second
+    # probe on the steady path); the fallback probe is bounded + safe-defaulted.
+    _window = await _resolve_execute_window(state, provider)
     _fixed_cost = _est_tokens(state.system_prompt) + sum(
         _est_tokens(getattr(m, "content", "")) for m in state.history
     )
