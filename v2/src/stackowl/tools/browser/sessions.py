@@ -64,6 +64,43 @@ class PageObservers:
     )
     # Pending JS dialogs keyed by dialog_id (insertion-ordered → oldest first).
     dialogs: dict[str, PendingDialog] = field(default_factory=dict)
+    # F160 — per-handler-kind failure counters. A hostile page that fires events
+    # faster than the handler can absorb them (or whose payloads trip the handler
+    # repeatedly) must NOT flood the error log with one ERROR per event. We log the
+    # FIRST failure of each kind loudly (so a real handler bug stays visible), then
+    # suppress to DEBUG with a running count.
+    handler_failures: dict[str, int] = field(default_factory=dict)
+
+
+# F160 — after this many failures of one handler kind on a page, drop from
+# loud (ERROR) to suppressed (DEBUG) logging so a hostile page that trips a
+# handler on every event cannot flood the error log. Re-emits a running count
+# at each power-of-the-window boundary so persistent breakage stays observable.
+_HANDLER_FAILURE_LOUD_LIMIT = 1
+_HANDLER_FAILURE_RESAMPLE_EVERY = 1000
+
+
+def _log_handler_failure(obs: PageObservers, kind: str, handle: str, exc: Exception) -> None:
+    """Rate-limit per-page page-observer handler-failure logging (F160).
+
+    The FIRST failure of each ``kind`` on this page logs at ERROR (a real handler
+    bug stays visible); subsequent failures suppress to DEBUG, with a periodic
+    ERROR re-emit carrying the running count so chronic breakage is not silently
+    lost. Never raises — a logging failure must not break the page event loop.
+    """
+    count = obs.handler_failures.get(kind, 0) + 1
+    obs.handler_failures[kind] = count
+    if count <= _HANDLER_FAILURE_LOUD_LIMIT or count % _HANDLER_FAILURE_RESAMPLE_EVERY == 0:
+        log.engine.error(
+            f"[browser] {kind} handler failed",
+            exc_info=exc,
+            extra={"_fields": {"page_handle": handle, "kind": kind, "failure_count": count}},
+        )
+    else:
+        log.engine.debug(
+            f"[browser] {kind} handler failed (suppressed — see first failure)",
+            extra={"_fields": {"page_handle": handle, "kind": kind, "failure_count": count}},
+        )
 
 
 class BrowserSessionLimitError(Exception):
@@ -342,7 +379,7 @@ class BrowserSessionRegistry:
                     "text": str(getattr(msg, "text", "")),
                 })
             except Exception as exc:  # never let a log handler break the page
-                log.engine.error("[browser] console handler failed", exc_info=exc)
+                _log_handler_failure(obs, "console", handle, exc)
 
         def _on_pageerror(err: Any) -> None:
             try:
@@ -353,13 +390,13 @@ class BrowserSessionRegistry:
                     "message": str(getattr(err, "message", None) or err),
                 })
             except Exception as exc:
-                log.engine.error("[browser] pageerror handler failed", exc_info=exc)
+                _log_handler_failure(obs, "pageerror", handle, exc)
 
         def _on_dialog(dialog: Any) -> None:
             try:
                 self._register_dialog(obs, dialog)
             except Exception as exc:
-                log.engine.error("[browser] dialog handler failed", exc_info=exc)
+                _log_handler_failure(obs, "dialog", handle, exc)
 
         try:
             page.on("console", _on_console)
