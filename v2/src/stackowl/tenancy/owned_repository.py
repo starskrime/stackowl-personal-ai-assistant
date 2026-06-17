@@ -30,6 +30,26 @@ from stackowl.infra.observability import log
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+def _is_paren_balanced(fragment: str) -> bool:
+    """True iff round-parentheses in ``fragment`` are balanced and never go negative.
+
+    The running depth must never drop below zero (which would mean a ``)`` closes a
+    paren the fragment never opened — e.g. ``1=1) OR (1=1`` could close the base's
+    own ``(`` early) and must end at exactly zero (no dangling open). A pure count
+    is insufficient: ``1=1) OR (1=1`` has one ``(`` and one ``)`` yet escapes. This
+    is a structural latch, not a SQL parser (the fragment is developer-authored).
+    """
+    depth = 0
+    for ch in fragment:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
 class OwnedRepository(ABC):  # noqa: B024 — abstract by contract: subclasses must set `_table`
     """Owner-scoped repository base. Subclasses set :attr:`_table`.
 
@@ -135,6 +155,12 @@ class OwnedRepository(ABC):  # noqa: B024 — abstract by contract: subclasses m
         therefore cannot escape owner scope with a crafted predicate (e.g.
         ``OR 1=1``): the owner clause is always AND-ed OUTSIDE the caller's
         parenthesized extra, so it can only ever NARROW the affected rows.
+
+        GUARANTEE: ``where_sql`` can ONLY narrow, never widen. To keep that true
+        the fragment MUST be parenthesis-balanced — an unbalanced fragment (e.g.
+        ``1=1) OR (1=1``) would close the wrapping paren early and AND-attach an
+        always-true predicate outside owner scope, so it is REJECTED with a
+        ``ValueError`` before any query is composed.
         """
         await self._owner_scoped_write(
             "UPDATE", table, set_sql=set_sql, set_params=set_params,
@@ -152,7 +178,9 @@ class OwnedRepository(ABC):  # noqa: B024 — abstract by contract: subclasses m
 
         Same structural guarantee as :meth:`_update_owned`: the owner predicate is
         composed by the base and bound to ``self._owner_id``; a caller predicate
-        can only narrow, never widen, the affected rows.
+        can only narrow, never widen, the affected rows. The ``where_sql`` fragment
+        MUST be parenthesis-balanced (an unbalanced fragment that could escape the
+        wrapping parens is rejected with a ``ValueError`` before composing).
         """
         await self._owner_scoped_write(
             "DELETE", table, where_sql=where_sql, where_params=where_params,
@@ -198,6 +226,19 @@ class OwnedRepository(ABC):  # noqa: B024 — abstract by contract: subclasses m
         params.append(self._owner_id)
         extra = where_sql.strip()
         if extra:
+            # The fragment is conjoined INSIDE parentheses. An UNBALANCED fragment
+            # (e.g. ``1=1) OR (1=1``) would textually close the base's open paren
+            # early and AND-attach an always-true predicate OUTSIDE owner scope —
+            # making the "can ONLY narrow" guarantee a lie. Refuse it BEFORE
+            # composing (a balanced-paren check is sufficient; the fragment is
+            # developer-authored, not user input, so this is a defense-in-depth
+            # latch, not a SQL parser).
+            if not _is_paren_balanced(extra):
+                raise ValueError(
+                    "where_sql fragment must be parenthesis-balanced "
+                    "(a fragment that opens/closes more parens than it matches "
+                    "could escape the structural owner_id scope) — refusing"
+                )
             clause += f" AND ({extra})"
             params.extend(where_params)
         sql = f"{head} {clause}"

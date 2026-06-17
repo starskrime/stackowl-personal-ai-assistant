@@ -192,3 +192,79 @@ async def test_execute_owned_legacy_rejects_owner_not_in_params(pool: DbPool) ->
         await alice._execute_owned(
             "DELETE FROM widgets WHERE owner_id = ?", ("principal-bob",)
         )
+
+
+# --- SEC-1 hardening: balanced-paren guard on the caller where_sql fragment ------
+
+
+async def test_delete_owned_rejects_unbalanced_where_sql_paren_escape(
+    pool: DbPool,
+) -> None:
+    """A developer-authored UNBALANCED fragment cannot break out of the parens.
+
+    The base conjoins ``owner_id = ? AND (<where_sql>)``. A fragment like
+    ``1=1) OR (1=1`` would (textually) close the base's open paren early and
+    AND-attach an always-true ``OR (1=1...)`` OUTSIDE owner scope. The composer
+    now validates the fragment is paren-balanced BEFORE composing and refuses an
+    unbalanced one rather than emit an owner-scope-escaping query.
+    """
+    alice = _WidgetRepo(pool, "principal-alice")
+    bob = _WidgetRepo(pool, "principal-bob")
+    await alice.add("a1")
+    await bob.add("b1")
+
+    with pytest.raises(ValueError, match="balanced|parenthes"):
+        await alice._delete_owned("widgets", where_sql="1=1) OR (1=1")
+
+    # The refusal means NO query ran — bob's row is untouched, owner scope held.
+    assert await bob.names() == ["b1"]
+
+
+async def test_update_owned_rejects_unbalanced_where_sql_paren_escape(
+    pool: DbPool,
+) -> None:
+    """``_update_owned`` shares the same balanced-fragment guard as delete."""
+    alice = _WidgetRepo(pool, "principal-alice")
+    bob = _WidgetRepo(pool, "principal-bob")
+    await alice.add("a1")
+    await bob.add("b1")
+
+    with pytest.raises(ValueError, match="balanced|parenthes"):
+        await alice._update_owned(
+            "widgets",
+            set_sql="name = ?",
+            set_params=("hacked",),
+            where_sql="1=1) OR (1=1",
+        )
+
+    # No query ran — nobody's name was changed.
+    assert await alice.names() == ["a1"]
+    assert await bob.names() == ["b1"]
+
+
+async def test_update_owned_rejects_trailing_unbalanced_close_paren(
+    pool: DbPool,
+) -> None:
+    """A lone trailing ``)`` (or leading ``(``) is unbalanced and refused."""
+    alice = _WidgetRepo(pool, "principal-alice")
+    with pytest.raises(ValueError, match="balanced|parenthes"):
+        await alice._update_owned(
+            "widgets", set_sql="name = ?", set_params=("x",), where_sql="name = ?)"
+        )
+
+
+async def test_balanced_where_sql_fragment_still_narrows(pool: DbPool) -> None:
+    """A normal BALANCED fragment is accepted and only narrows the affected rows."""
+    alice = _WidgetRepo(pool, "principal-alice")
+    bob = _WidgetRepo(pool, "principal-bob")
+    await alice.add("a1")
+    await alice.add("a2")
+    await bob.add("b1")
+
+    # Balanced fragment (even one with its own matched parens) is fine.
+    await alice._delete_owned(
+        "widgets", where_sql="(name = ?)", where_params=("a1",)
+    )
+
+    assert await alice.names() == ["a2"]  # only the matched row removed
+    assert await bob.names() == ["b1"]  # other owner untouched

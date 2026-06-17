@@ -83,6 +83,34 @@ class TestExecSpec:
         spec = ExecSpec(code="print(1)", env_allow=("LANG", "TZ", "LC_ALL"))
         assert spec.env_allow == ("LANG", "TZ", "LC_ALL")
 
+    @pytest.mark.parametrize(
+        "danger_name",
+        [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "BASH_ENV",
+            "IFS",
+            "DYLD_INSERT_LIBRARIES",
+            "AWS_ACCESS_KEY_ID",
+            # Case-insensitive, exact-name match.
+            "ld_preload",
+            "Bash_Env",
+        ],
+    )
+    def test_env_allow_refuses_code_injection_vectors(self, danger_name: str) -> None:
+        # SEC-2 — env-based code-injection / leak vectors are denied even though
+        # they are not credential-NAMED: forwarding LD_PRELOAD/BASH_ENV/IFS/etc.
+        # into the child lets a host value alter how the sandboxed process loads
+        # or interprets code. Fail-closed at construction.
+        with pytest.raises(ValidationError):
+            ExecSpec(code="print(1)", env_allow=("LANG", danger_name))
+
+    def test_env_allow_does_not_overmatch_dangerous_substrings(self) -> None:
+        # Exact-name (not suffix-glob): a benign var whose name merely CONTAINS a
+        # denied token (e.g. "MY_IFS_CONFIG") is not falsely rejected by SEC-2.
+        spec = ExecSpec(code="print(1)", env_allow=("LANG", "MY_IFS_CONFIG"))
+        assert "MY_IFS_CONFIG" in spec.env_allow
+
     def test_language_python_only(self) -> None:
         assert ExecSpec(code="print(1)").language == "python"
         with pytest.raises(ValidationError):
