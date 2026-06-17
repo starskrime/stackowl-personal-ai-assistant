@@ -16,8 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from stackowl.config.settings import TtsSettings
-from stackowl.infra.observability import log
-from stackowl.media.tts.base import TtsBackend
+from stackowl.media.local_first import select_local_first
+from stackowl.media.tts.base import TtsAvailability, TtsBackend
 from stackowl.media.tts.cloud import CloudTtsBackend
 from stackowl.media.tts.piper import PiperBackend
 
@@ -70,46 +70,40 @@ class TtsSelector:
             model=settings.cloud_model,
         )
 
-    async def select(self, *, voice: str | None = None) -> TtsSelection:
-        """Return the best available backend (local before cloud). Never raises.
-
-        The local engine is tried first; the cloud fallback is consulted ONLY when
-        the local engine is unavailable AND the engine setting permits a fallback
-        ('auto'). 'piper' = local-only (cloud never used even if configured).
-        """
-        # 1. ENTRY
-        log.tool.debug(
-            "[tts.selector] select: entry",
-            extra={"_fields": {"engine": self._settings.engine}},
-        )
-
-        # 2. LOCAL-FIRST — prefer the self-hosted engine (text stays on the box).
-        local_avail = await self._local.is_available(voice)
-        if local_avail.available:
-            log.tool.info("[tts.selector] select: chose LOCAL engine")
-            return TtsSelection.found(self._local)
-        local_reason = local_avail.reason or "local TTS engine unavailable"
-        log.tool.info(
-            "[tts.selector] select: local engine unavailable",
-            extra={"_fields": {"reason": local_reason}},
-        )
-
-        # 3. CLOUD FALLBACK — opt-in only, and only when engine='auto'.
-        if self._settings.engine == "auto":
-            cloud_avail = await self._cloud.is_available()
-            if cloud_avail.available:
-                log.tool.info("[tts.selector] select: chose CLOUD fallback (egress)")
-                return TtsSelection.found(self._cloud)
-            cloud_reason = cloud_avail.reason or "cloud TTS unavailable"
-        else:
-            cloud_reason = "cloud fallback disabled (engine='piper')"
-
-        # 4. EXIT — nothing available → actionable, structured unavailable.
-        log.tool.info("[tts.selector] select: no TTS backend available")
-        return TtsSelection.unavailable(
+    @staticmethod
+    def _unavailable_message(local_reason: str, cloud_reason: str) -> str:
+        """Build the actionable all-unavailable message (per-modality wording)."""
+        return (
             f"tts unavailable — the local OSS TTS engine failed to initialize "
             f"({local_reason}) and no cloud TTS is available ({cloud_reason}). "
             f"Install the local engine (it auto-installs on first use; check the "
             f"logs for the install error) or enable + configure the cloud fallback "
             f"(tts.cloud_enabled + tts.cloud_api_key)."
         )
+
+    async def select(self, *, voice: str | None = None) -> TtsSelection:
+        """Return the best available backend (local before cloud). Never raises.
+
+        Delegates the local-first-then-cloud control flow to the shared
+        :func:`select_local_first` (CFG-4 / F019); only this modality's backend
+        factories, probe (closing over ``voice``), and message wording are
+        supplied here. 'auto' = local then cloud fallback; 'piper' = local-only.
+        """
+        async def _local_probe() -> TtsAvailability:
+            return await self._local.is_available(voice)
+
+        async def _cloud_probe() -> TtsAvailability:
+            return await self._cloud.is_available()
+
+        result = await select_local_first(
+            engine=self._settings.engine,
+            local_probe=_local_probe,
+            cloud_probe=_cloud_probe,
+            local_factory=lambda: self._local,
+            cloud_factory=lambda: self._cloud,
+            unavailable=self._unavailable_message,
+            local_only_engine_reason="cloud fallback disabled (engine='piper')",
+        )
+        if result.backend is not None:
+            return TtsSelection.found(result.backend)
+        return TtsSelection.unavailable(result.reason or "tts unavailable")

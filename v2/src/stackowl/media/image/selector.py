@@ -17,10 +17,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from stackowl.config.settings import ImageSettings
-from stackowl.infra.observability import log
 from stackowl.media.image.base import ImageBackend
 from stackowl.media.image.cloud import CloudImageBackend
 from stackowl.media.image.local_sdxl import LocalSdxlBackend
+from stackowl.media.local_first import select_local_first
 
 __all__ = ["ImageSelection", "ImageSelector"]
 
@@ -71,56 +71,10 @@ class ImageSelector:
             default_size=settings.size,
         )
 
-    async def select(self) -> ImageSelection:
-        """Return the best available backend (local before cloud). Never raises.
-
-        The local engine is tried first (its probe gates the heavy install); the
-        cloud fallback is consulted ONLY when local is unavailable AND the engine
-        setting permits a fallback ('auto'). 'local' = local-only (cloud never
-        used even if configured); 'cloud' = skip local, cloud-only.
-        """
-        # 1. ENTRY
-        log.tool.debug(
-            "[image.selector] select: entry",
-            extra={"_fields": {"engine": self._settings.engine}},
-        )
-
-        # engine='cloud' → skip the local probe entirely, go straight to cloud.
-        if self._settings.engine == "cloud":
-            cloud_avail = await self._cloud.is_available()
-            if cloud_avail.available:
-                log.tool.info("[image.selector] select: chose CLOUD (engine='cloud', egress)")
-                return ImageSelection.found(self._cloud)
-            return ImageSelection.unavailable(
-                f"image generation unavailable — engine is set to 'cloud' but the "
-                f"cloud backend is unavailable ({cloud_avail.reason or 'not configured'}). "
-                f"Enable + configure it (image.cloud_enabled + image.cloud_api_key)."
-            )
-
-        # 2. LOCAL-FIRST — prefer the self-hosted model (prompt stays on the box).
-        local_avail = await self._local.is_available()
-        if local_avail.available:
-            log.tool.info("[image.selector] select: chose LOCAL model")
-            return ImageSelection.found(self._local)
-        local_reason = local_avail.reason or "local image model unavailable"
-        log.tool.info(
-            "[image.selector] select: local model unavailable",
-            extra={"_fields": {"reason": local_reason}},
-        )
-
-        # 3. CLOUD FALLBACK — opt-in only, and only when engine='auto'.
-        if self._settings.engine == "auto":
-            cloud_avail = await self._cloud.is_available()
-            if cloud_avail.available:
-                log.tool.info("[image.selector] select: chose CLOUD fallback (egress)")
-                return ImageSelection.found(self._cloud)
-            cloud_reason = cloud_avail.reason or "cloud image generation unavailable"
-        else:
-            cloud_reason = "cloud fallback disabled (engine='local')"
-
-        # 4. EXIT — nothing available → actionable, structured unavailable.
-        log.tool.info("[image.selector] select: no image backend available")
-        return ImageSelection.unavailable(
+    @staticmethod
+    def _unavailable_message(local_reason: str, cloud_reason: str) -> str:
+        """Build the actionable all-unavailable message (per-modality wording)."""
+        return (
             f"image generation unavailable — local GPU not available "
             f"({local_reason}) and no cloud image provider is configured "
             f"({cloud_reason}). Run on an x86+CUDA host with enough memory/disk "
@@ -128,3 +82,24 @@ class ImageSelector:
             f"clears) or enable + configure the cloud fallback "
             f"(image.cloud_enabled + image.cloud_api_key)."
         )
+
+    async def select(self) -> ImageSelection:
+        """Return the best available backend (local before cloud). Never raises.
+
+        Delegates the local-first-then-cloud control flow to the shared
+        :func:`select_local_first` (CFG-4 / F019); only this modality's backend
+        factories, probe, and message wording are supplied here. 'auto' = local
+        then cloud fallback; 'local' = local-only; 'cloud' = cloud-only.
+        """
+        result = await select_local_first(
+            engine=self._settings.engine,
+            local_probe=self._local.is_available,
+            cloud_probe=self._cloud.is_available,
+            local_factory=lambda: self._local,
+            cloud_factory=lambda: self._cloud,
+            unavailable=self._unavailable_message,
+            local_only_engine_reason="cloud fallback disabled (engine='local')",
+        )
+        if result.backend is not None:
+            return ImageSelection.found(result.backend)
+        return ImageSelection.unavailable(result.reason or "image generation unavailable")
