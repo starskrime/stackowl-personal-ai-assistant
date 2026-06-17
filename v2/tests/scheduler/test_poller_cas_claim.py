@@ -111,6 +111,38 @@ async def test_poll_skips_a_running_job(migrated_db: DbPool) -> None:
     assert handler.runs == [], "a job claimed 'running' must not be dispatched by the poll"
 
 
+# ----------------------------------------------- STEER-4/F110 recover vs poll race
+
+
+async def test_recover_and_poll_dispatch_missed_job_exactly_once(migrated_db: DbPool) -> None:
+    """A startup recover() racing the first _poll() on the SAME due replay-missed
+    job dispatches the handler EXACTLY ONCE.
+
+    F110 worried recover()'s replay (which calls _run_job) could double-fire with
+    the poll loop. Both paths run the SAME pending->running CAS claim
+    (_won_transition over the single serialized connection), so only one dispatcher
+    wins the occurrence. This pins it with the REAL race (concurrent gather), not
+    just a sequential check.
+    """
+    import asyncio
+
+    handler = _CountingHandler()
+    HandlerRegistry.instance().register(handler)
+    job_id = await _seed_due_job(migrated_db)
+    # The replay path only fires for replay_missed jobs inside the window.
+    await migrated_db.execute(
+        "UPDATE jobs SET replay_missed = 1 WHERE job_id = ?", (job_id,)
+    )
+
+    sched = JobScheduler(db=migrated_db)
+    # Drive recover() and _poll() CONCURRENTLY against the same due occurrence.
+    await asyncio.gather(sched.recover(), sched._poll())
+
+    assert handler.runs == [job_id], (
+        "the missed job must dispatch exactly once across a recover()/poll() race"
+    )
+
+
 # --------------------------------------------------------------- delivery ledger
 
 

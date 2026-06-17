@@ -15,9 +15,13 @@ On every execution the handler:
    ``_MAX_FLUSH_ATTEMPTS`` so a permanently-bad channel cannot hot-loop or
    grow the queue without bound.
 
-Delivery is **at-least-once**: if an adapter's ``send_text`` reaches the user
-but then errors on the response path, the row is retained and re-sent next
-tick. Exactly-once dedupe needs adapter-level idempotency (tracked fast-follow).
+Delivery is **exactly-once** (STEER-4/F111): if an adapter's ``send_text``
+reaches the user but then errors on the post-send response/delete path, the queue
+row is retained, BUT a ``delivered`` ``notification_log`` row keyed by the
+``notification_id`` was already written — so the next tick's idempotency guard
+(:data:`_ALREADY_DELIVERED_SQL`) RECONCILES the leftover row (deletes it) without
+a second transport. A genuinely-failed transport (no delivered log) still retries
+under the bounded ``attempts`` cap. The ``notification_id`` is the idempotency key.
 """
 
 from __future__ import annotations
@@ -44,6 +48,15 @@ _SELECT_DUE_SQL = (
 )
 _DELETE_QUEUE_SQL = "DELETE FROM notification_queue WHERE notification_id = ?"
 _BUMP_ATTEMPTS_SQL = "UPDATE notification_queue SET attempts = ? WHERE notification_id = ?"
+# STEER-4/F111 exactly-once guard: a ``delivered`` notification_log row keyed by
+# notification_id means the user ALREADY received this message (a prior tick
+# transported it but failed on the post-send response/delete path, leaving the
+# queue row). A re-tick must reconcile (delete the leftover row) WITHOUT a second
+# transport. notification_id is the notification_log PRIMARY KEY (1 row per id).
+_ALREADY_DELIVERED_SQL = (
+    "SELECT 1 FROM notification_log "
+    "WHERE notification_id = ? AND delivery_status = 'delivered' LIMIT 1"
+)
 
 # A row that fails transport this many times is dead-lettered (failed audit row
 # + removed) so a permanently-bad channel cannot hot-loop or grow the queue.
@@ -137,6 +150,44 @@ class NotificationDigestJob(JobHandler):
         body = str(body_value) if body_value is not None else None
         attempts_value = row.get("attempts")
         attempts = attempts_value if isinstance(attempts_value, int) else 0
+
+        # STEER-4/F111 — exactly-once guard. If a ``delivered`` log row already
+        # exists for this notification_id, a prior tick reached the user but failed
+        # on the post-send path, leaving the queue row. RECONCILE (delete the
+        # leftover row) WITHOUT a second transport or a duplicate log write — the
+        # user must never receive the same batched notification twice. Self-healing
+        # (B5): if the dedupe SELECT itself errors we fall through to the normal
+        # path (at-least-once degradation is safer than dropping the message).
+        try:
+            already = await self._db.fetch_all(_ALREADY_DELIVERED_SQL, (notification_id,))
+        except Exception as exc:  # B5 — never silent; degrade to at-least-once
+            log.notifications.warning(
+                "[notifications] digest._flush_row: dedupe check failed — proceeding",
+                exc_info=exc,
+                extra={"_fields": {"notification_id": notification_id}},
+            )
+            already = []
+        if already:
+            log.notifications.info(
+                "[notifications] digest._flush_row: already delivered — reconciling, no re-send",
+                extra={
+                    "_fields": {
+                        "notification_id": notification_id,
+                        "channel": channel,
+                        "message_hash": message_hash,
+                    }
+                },
+            )
+            try:
+                await self._db.execute(_DELETE_QUEUE_SQL, (notification_id,))
+            except Exception as exc:  # B5 — never silent
+                log.notifications.warning(
+                    "[notifications] digest._flush_row: reconcile delete failed",
+                    exc_info=exc,
+                    extra={"_fields": {"notification_id": notification_id}},
+                )
+                return False
+            return True
 
         # Transport the stored body if present + a deliverer is wired; otherwise
         # degrade to audit-only (legacy rows without a body, or no deliverer).
