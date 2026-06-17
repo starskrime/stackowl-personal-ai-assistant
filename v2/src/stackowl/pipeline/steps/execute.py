@@ -422,6 +422,16 @@ async def _try_substitute(
 # where a live ollama probe on the hot tool-loop entry must never hang the turn.
 _WINDOW_PROBE_DEADLINE_S = 5.0
 
+# REACT-5/F061 — per-tool execution DEADLINE (seconds). Bounds how long a single
+# in-flight tool awaitable may run so a cooperative /stop is never blocked longer
+# than this by one long tool: on timeout asyncio.wait_for cancels the TOOL's own
+# coroutine (NOT the turn task), the loop observes a failed outcome and proceeds to
+# the next iteration boundary where the stop flag is honored. Generous so it bounds
+# the pathology without truncating a legitimately long tool; host-scalable (a beefier
+# host can widen it) — NOT pinned to the dev box. This value IS the documented
+# upper bound on stop latency contributed by a single in-flight tool.
+_TOOL_DEADLINE_S = 180.0
+
 
 async def _resolve_execute_window(state: PipelineState, provider: ModelProvider) -> int:
     """Resolve THIS turn's context window for the tool-loop budget — single probe.
@@ -746,13 +756,55 @@ async def _run_with_tools(
                 f"The action '{name}' requires your approval and was not run because consent "
                 "was declined or not granted. Ask the user to approve it if they want it to proceed."
             )
+        # REACT-5/F061 — STOP PRE-CHECK: if a /stop is already pending for this turn,
+        # do NOT start a fresh tool. The stop is honored at the next iteration
+        # boundary; starting a (possibly long) tool first would only add latency.
+        # NON-consequential read short-circuits (the durable ledger isn't touched, so
+        # no exactly-once concern); a consequential/write tool is left to run so an
+        # in-flight effect is not abandoned half-way (exactly-once integrity > a few
+        # hundred ms of stop latency). Fail-safe: any registry miss → proceed.
+        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+        _reg = get_services().turn_registry
+        if _reg is not None and t.manifest.action_severity != "consequential":
+            _turn = _reg.get(state.trace_id)
+            if _turn is not None and _turn.stop_requested:
+                log.engine.info(
+                    "[pipeline] execute: stop pending — short-circuiting tool before start",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+                )
+                tool_outcome_ledger.record_tool_outcome(
+                    name=name, action_severity=t.manifest.action_severity, success=False,
+                )
+                return f"{TOOL_FAILED_MARKER}Not run — the turn is stopping at your request."
+
         # S2 durable-react — route the real tool call through the exactly-once
         # ledger guard. DORMANT: with no active DurableReActContext (every path
         # today) this is a transparent `await t(**args)`. Only a side-effecting
         # tool under an active durable task is ledger-guarded (exactly-once).
+        # REACT-5/F061 — bound the tool's OWN awaitable: asyncio.wait_for cancels the
+        # tool coroutine (not the turn task) at the per-tool deadline so a hung/long
+        # tool can never block the loop — or a co-pending stop — indefinitely.
         from stackowl.pipeline.durable.ledger_guard import ledger_guard
 
-        tr = await ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args))
+        try:
+            tr = await asyncio.wait_for(
+                ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args)),
+                timeout=_TOOL_DEADLINE_S,
+            )
+        except TimeoutError:
+            log.engine.warning(
+                "[pipeline] execute: tool exceeded per-tool deadline — cancelled",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                   "deadline_s": _TOOL_DEADLINE_S}},
+            )
+            tool_outcome_ledger.record_tool_outcome(
+                name=name, action_severity=t.manifest.action_severity, success=False,
+            )
+            return (
+                f"{TOOL_FAILED_MARKER}The action '{name}' was cancelled after exceeding the "
+                f"{_TOOL_DEADLINE_S:.0f}s per-tool time limit and did not complete."
+            )
         tool_outcome_ledger.record_tool_outcome(
             name=name, action_severity=t.manifest.action_severity, success=tr.success,
         )
@@ -791,8 +843,7 @@ async def _run_with_tools(
         # the give-up judge (which sees only these rendered strings) can tell a
         # failed action from a successful one. Language-agnostic; the model still
         # reads a normal error message after the (invisible-ish) sentinel.
-        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
-
+        # (TOOL_FAILED_MARKER imported above at the stop pre-check.)
         return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
