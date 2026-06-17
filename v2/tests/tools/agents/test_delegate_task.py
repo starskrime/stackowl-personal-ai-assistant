@@ -918,6 +918,17 @@ async def test_dedup_memo_hit_within_ladder_does_not_charge_attempt() -> None:
     fake = _FakeDelegator(A2AResult(status="ok", content="done", resolved_owl="scout"))
     token = set_services(_services(fake, _registry_with_specialist()))
     trace = TraceContext.start("s", trace_id="tr-charge", channel="cli")
+    # Count charges via a spy: the per-turn attempt counter is now evicted on
+    # turn completion (F158, evict-on-release), so we cannot read its post-turn
+    # residue — assert on the number of charges that actually occurred instead.
+    charges: list[str] = []
+    real_charge = tool._charge_attempt
+
+    def _spy(tid: str) -> bool:
+        charges.append(tid)
+        return real_charge(tid)
+
+    tool._charge_attempt = _spy  # type: ignore[method-assign]
     try:
         res = await tool.execute(goal="task to check", to_owl="scout")
     finally:
@@ -927,8 +938,8 @@ async def test_dedup_memo_hit_within_ladder_does_not_charge_attempt() -> None:
     assert res.success
     # Exactly 1 delegate() call (ok path, no retry needed).
     assert len(fake.calls) == 1
-    # The attempt counter for this trace should be exactly 1 (one charge).
-    assert tool._attempts.get("tr-charge", 0) == 1
+    # Exactly 1 charge for this trace (a memo hit would NOT add a second charge).
+    assert charges == ["tr-charge"]
 
 
 # -------------------------------------------------------- D3: relevance gate

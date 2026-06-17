@@ -257,6 +257,12 @@ class DelegateTaskArgs(BaseModel):
 class DelegateTaskTool(Tool):
     """Delegate a focused sub-task to a specialist owl and return its result."""
 
+    # Defense-in-depth cap on the attempt-counter dict size. Live in-flight turns
+    # are NEVER evicted (their budget must not reset); only the oldest IDLE entry
+    # is dropped past this bound. The natural lifecycle (evict-on-release) keeps
+    # the dict far below this in normal operation (F158).
+    _ATTEMPTS_MAX_ENTRIES: int = 256
+
     def __init__(self) -> None:
         """Construct the singleton tool.
 
@@ -267,8 +273,15 @@ class DelegateTaskTool(Tool):
         ``_attempts`` is a cumulative per-``trace_id`` counter for the global
         per-turn attempt budget (``MAX_DELEGATION_ATTEMPTS_PER_TURN``). It bounds
         all delegate() calls (initial + retries + fallbacks) within one turn so a
-        crafted prompt cannot walk an unbounded delegation tree. Bounded to 256
-        entries to prevent an unbounded leak across turns.
+        crafted prompt cannot walk an unbounded delegation tree.
+
+        Lifecycle (F158): a trace's attempt counter is evicted on TURN COMPLETION
+        — when its in-flight count returns to zero in ``_release`` — so the dict
+        tracks only live + recently-active turns, never growing unbounded. As a
+        defense-in-depth backstop a bounded LRU caps the dict at
+        ``_ATTEMPTS_MAX_ENTRIES`` by evicting the OLDEST IDLE entry (never a live
+        in-flight turn, whose budget would otherwise reset under it). ``_attempts``
+        is insertion-ordered (a plain dict preserves order) so "oldest" is cheap.
         """
         self._active: dict[str, int] = {}
         self._attempts: dict[str, int] = {}
@@ -939,25 +952,55 @@ class DelegateTaskTool(Tool):
             return True
 
     def _release(self, trace_id: str) -> None:
-        """Decrement the per-trace in-flight counter; drop the key at zero."""
+        """Decrement the per-trace in-flight counter; drop the key at zero.
+
+        When in-flight returns to zero the turn's delegation activity is over, so
+        the per-turn ATTEMPT counter is evicted too (F158) — tying its lifetime to
+        the turn instead of a global size threshold. A future turn (even one that
+        recycles the same trace id) then starts with a fresh budget.
+        """
         with self._lock:
             current = self._active.get(trace_id, 0)
             if current <= 1:
                 self._active.pop(trace_id, None)
+                # Turn complete — evict its attempt budget (natural lifecycle).
+                self._attempts.pop(trace_id, None)
             else:
                 self._active[trace_id] = current - 1
 
     def _charge_attempt(self, trace_id: str) -> bool:
         """Increment the per-trace cumulative attempt counter; return False past budget.
 
-        Mirrors ``_try_acquire`` structure (same lock, same pattern). Bounded to 256
-        entries to prevent an unbounded memory leak across turns/traces.
+        Mirrors ``_try_acquire`` structure (same lock, same pattern). The dict is
+        bounded by the natural evict-on-release lifecycle; this method only adds a
+        defense-in-depth LRU backstop that evicts the OLDEST IDLE entry — NEVER a
+        live in-flight turn (F158: the old ``clear()`` nuked every live turn's
+        budget). Insertion-ordered dict makes "oldest" the first key.
         """
         with self._lock:
-            if len(self._attempts) > 256:
-                self._attempts.clear()
+            if len(self._attempts) >= self._ATTEMPTS_MAX_ENTRIES:
+                self._evict_oldest_idle_locked()
             current = self._attempts.get(trace_id, 0)
             if current >= MAX_DELEGATION_ATTEMPTS_PER_TURN:
                 return False
             self._attempts[trace_id] = current + 1
             return True
+
+    def _evict_oldest_idle_locked(self) -> None:
+        """Drop the oldest attempt-counter entry whose turn is NOT in-flight.
+
+        Caller MUST hold ``self._lock``. A live trace (``_active`` > 0) is skipped
+        so its per-turn budget is never reset mid-turn. Iterates oldest→newest
+        (insertion order) and removes the first idle entry; if every entry is live
+        (pathological), nothing is evicted — correctness (never reset a live rail)
+        wins over the soft size bound, and the dict is still bounded by the number
+        of concurrent turns.
+        """
+        for candidate in list(self._attempts):
+            if self._active.get(candidate, 0) == 0:
+                self._attempts.pop(candidate, None)
+                log.tool.debug(
+                    "delegate_task._charge_attempt: LRU-evicted idle attempt counter",
+                    extra={"_fields": {"evicted_trace": candidate}},
+                )
+                return
