@@ -71,7 +71,17 @@ class ConfigWatcher:
     def _reload(self) -> None:
         try:
             new_settings = self._settings_factory()
-            self._event_bus.emit("settings_reloaded", new_settings)
-            log.info("[config] Settings reloaded successfully")
         except Exception as exc:
-            log.warning("[config] reload rejected: %s", exc)
+            # CFG-1 (F017) — a broken config (e.g. YAML parse error of an existing
+            # file, now raised by _YamlSource) REJECTS the reload: the prior
+            # Settings are retained (no settings_reloaded is emitted, so no
+            # consumer mutates), and the operator is alerted at ERROR (health-
+            # visible), NOT a buried WARNING.
+            log.error(
+                "[config] reload REJECTED — keeping previous settings: %s",
+                exc,
+                exc_info=exc,
+            )
+            return
+        self._event_bus.emit("settings_reloaded", new_settings)
+        log.info("[config] Settings reloaded successfully")

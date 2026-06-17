@@ -27,6 +27,7 @@ from stackowl.config.webhook_settings import (
     WebhookSettings,
     WebhookSourceConfig,
 )
+from stackowl.exceptions import ConfigurationError
 from stackowl.mcp.server_settings import McpServerSettings
 from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
@@ -48,14 +49,23 @@ class _YamlSource(PydanticBaseSettingsSource):
         self._data: dict[str, Any] = self._load()
 
     def _load(self) -> dict[str, Any]:
+        # Distinguish a MISSING file (legitimately {} — first-run defaults) from
+        # an EXISTING file that fails to parse. A parse error of an existing file
+        # must NOT fall back to {} (CFG-1 / F017): that silently emptied the
+        # providers list to all-defaults and PASSED validation, the opposite of
+        # the documented "previous settings kept" guarantee. Raise so a hot
+        # reload is genuinely rejected (the watcher keeps the prior Settings) and
+        # a boot-time typo fails loud instead of booting an empty config.
         if not self._path.exists():
             return {}
         try:
             raw = yaml.safe_load(self._path.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
         except Exception as exc:
-            log.warning("[config] Failed to parse %s: %s", self._path, exc)
-            return {}
+            log.error("[config] Failed to parse %s: %s", self._path, exc)
+            raise ConfigurationError(
+                f"config file {self._path} exists but failed to parse: {exc}"
+            ) from exc
+        return raw if isinstance(raw, dict) else {}
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         return self._data.get(field_name), field_name, self.field_is_complex(field)
