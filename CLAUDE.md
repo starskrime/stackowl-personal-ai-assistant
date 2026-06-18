@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands (v2 Python — from repo root after migration, or from `v2/` during development)
+## Commands (Python — run from the repo root)
 
 ```bash
 uv run python -m stackowl --help     # Show all CLI commands
@@ -17,12 +17,14 @@ uv run ruff check src/               # Lint
 uv run mypy src/                     # Type-check (strict)
 ```
 
-Development (pre-migration, from `v2/` directory):
+First-time setup (from the repo root):
 ```bash
-cd v2/
 uv sync                              # Install dependencies
 uv run python -m stackowl --version  # Smoke test
 ```
+
+> Note: the Python project was migrated from the `v2/` subfolder to the repo root.
+> The previous root (v1 TypeScript app + earlier infra) is archived under `old/`.
 
 ## Architecture Overview
 

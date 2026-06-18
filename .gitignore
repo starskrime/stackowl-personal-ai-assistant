@@ -20,3 +20,4 @@ stackowl.yaml
 *.mkv
 *.webm
 .claude/
+_bmad/
