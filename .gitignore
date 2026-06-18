@@ -1,56 +1,22 @@
-# Dependencies
-node_modules/
-
-# Build output
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
 dist/
+.ruff_cache/
+stackowl.yaml
+.dev-home/
 
-# Config contains API keys — NEVER commit
-stackowl.config.json
-.stackowl.credentials.json
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-.claude
-.agents
-_bmad
-_bmad-output
-
-# Logs
-*.log
-
-# Test coverage reports
-coverage/
-
-# Superpowers agent workspace
-.superpowers/
-
-# GitHub workflows
-
-# First-run markers
-.scrapling_ready
-
-# Session data (optional — uncomment to exclude)
-# workspace/sessions/
-# workspace/memory/embeddings.json
-workspace/*
-src/tools/synthesized/*
-session.tmp
-
-# Embedding model cache (auto-downloaded, machine-specific)
-local_cache/
-session.tmp
-.DS_Store
-__tests__/.pellets_test_workspace/
-__tests__/.test_workspace/
-skills-stats.json
-stackowl.config copy.json
-
-.worktrees/
-.worktrees/
+# Runtime state/artifacts must live under ~/.stackowl/ (StackowlHome), never the project.
+# These guard against stray writes if a process ever runs with the wrong CWD.
+/data/
+/downloads/
+*.mp4
+*.mov
+*.mkv
+*.webm
+.claude/
