@@ -467,7 +467,7 @@ async def run(state: PipelineState) -> PipelineState:
     _lean = state.intent_class in TOOL_FREE_CLASSES
     if _lean:
         log.engine.info(
-            "[pipeline] classify: conversational — lean assembly (skipping heavy blocks)",
+            "[pipeline] classify: tool-free class — lean assembly (skipping heavy blocks)",
             extra={"_fields": {"trace_id": state.trace_id}},
         )
     # Long-term graph context.

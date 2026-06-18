@@ -505,9 +505,9 @@ async def test_greeting_routes_conversational_no_floor(
     # -----------------------------------------------------------------------
     # OUTCOME 1 — a non-empty greeting is delivered.
     # -----------------------------------------------------------------------
-    assert delivered.strip(), (
-        f"J2 FAIL: delivered text is empty for a 'hi' conversational turn. "
-        f"Got: {delivered!r}"
+    assert greeting in delivered, (
+        f"J2 FAIL: the scripted greeting was not delivered for a 'hi' "
+        f"conversational turn. Expected {greeting!r} in: {delivered!r}"
     )
 
     # -----------------------------------------------------------------------
