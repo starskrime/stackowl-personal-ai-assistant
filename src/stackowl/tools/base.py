@@ -20,6 +20,15 @@ class ToolResult(BaseModel):
     output: str
     error: str | None = None
     duration_ms: float
+    # Did this call cross the side-effect boundary? Default True (conservative: an
+    # undeclared failure is assumed to have touched the world, so the honest give-up
+    # floor still fires). A tool sets this False on a PRE-EXECUTION refusal — bad/
+    # missing args, an unavailable store — where its effectful body provably never
+    # ran. The give-up floor counts a failed write/consequential outcome ONLY when
+    # the boundary was (or may have been) crossed, so a validation-refused no-op no
+    # longer masquerades as a failed consequential action. See
+    # tool_outcome_ledger.is_effectful_failure and pipeline/giveup_floor.py.
+    side_effect_committed: bool = True
 
 
 class ToolManifest(BaseModel):

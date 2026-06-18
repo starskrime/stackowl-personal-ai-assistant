@@ -17,8 +17,6 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 
-_EFFECTFUL = {"write", "consequential"}
-
 # Recovery kind that bridges a consequential failure via a sibling tool.
 # When a substitution succeeded, the capability gap was bridged — NOT a give-up.
 _BRIDGING_RECOVERY_KINDS = {"substitution"}
@@ -42,7 +40,9 @@ def _unrecovered_consequential_failures(
         return failed - recovered
     failed = {
         o.name for o in tool_outcome_ledger.get_outcomes()
-        if o.action_severity in _EFFECTFUL and not o.success
+        if tool_outcome_ledger.is_effectful_failure(
+            o.action_severity, o.success, o.side_effect_committed,
+        )
     }
     recovered = {
         e.failed for e in recovery_context.get_recovery()
@@ -111,7 +111,9 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
         else:
             failed_name = next(
                 (o.name for o in tool_outcome_ledger.get_outcomes()
-                 if o.action_severity in _EFFECTFUL and not o.success and o.name in unrecovered),
+                 if tool_outcome_ledger.is_effectful_failure(
+                     o.action_severity, o.success, o.side_effect_committed,
+                 ) and o.name in unrecovered),
                 None,
             )
         # 3. STEP — build honest floor (pure, deterministic, no model call)
