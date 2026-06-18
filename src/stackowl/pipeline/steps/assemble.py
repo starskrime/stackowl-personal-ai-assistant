@@ -14,7 +14,7 @@ from stackowl.infra.observability import log
 from stackowl.owls.base_prompt import build_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.skills.instruction_injector import (
     SkillInstructionInjector,
     SkillTier,
@@ -108,7 +108,7 @@ async def run(state: PipelineState) -> PipelineState:
         store is not None
         and manifest is not None
         and manifest.skills
-        and state.intent_class != "conversational"
+        and state.intent_class not in TOOL_FREE_CLASSES
     ):
         try:
             owned = await store.get_many_by_name(manifest.skills)

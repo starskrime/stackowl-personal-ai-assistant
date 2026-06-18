@@ -15,7 +15,7 @@ from stackowl.exceptions import (
 from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
 from stackowl.owls.manifest import OwlAgentManifest
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.providers.base import ModelProvider
 from stackowl.providers.registry import ProviderRegistry
 
@@ -40,7 +40,7 @@ def _ensure_tool_capable(
     execute step floors HONESTLY ("I can't act with this model") — never a silent
     tool-free reply.
     """
-    if state.intent_class == "conversational":
+    if state.intent_class in TOOL_FREE_CLASSES:
         return provider
     # Duck-typed test fakes (not ModelProvider subclasses) may lack supports_tools —
     # default True (tool-capable) so they pass through byte-identically, mirroring
