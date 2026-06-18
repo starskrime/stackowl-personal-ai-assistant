@@ -21,6 +21,26 @@ class ToolOutcome:
     name: str
     action_severity: str
     success: bool
+    # Whether the call crossed the side-effect boundary (mirrors
+    # ToolResult.side_effect_committed). Default True ⇒ conservative: an undeclared
+    # failure is treated as effectful so the honest floor still fires. A False here
+    # marks a pre-execution refusal (bad/missing args, unavailable store) that did
+    # nothing — it must NOT count as an unachieved consequential outcome.
+    side_effect_committed: bool = True
+
+
+def is_effectful_failure(
+    action_severity: str, success: bool, side_effect_committed: bool = True,
+) -> bool:
+    """True iff this outcome is a write/consequential FAILURE that crossed (or may
+    have crossed) the side-effect boundary.
+
+    THE single source of truth for "did the user's effect fail to land?" — shared by
+    the ledger tally, the execute snapshot, and the give-up floor so the three never
+    drift. A validation-refused no-op (``side_effect_committed=False``) is excluded:
+    nothing was attempted, so there is nothing to be honest about.
+    """
+    return action_severity in _EFFECTFUL and not success and side_effect_committed
 
 
 _outcomes: ContextVar[tuple[ToolOutcome, ...] | None] = ContextVar(
@@ -36,8 +56,15 @@ def reset(token: Token[tuple[ToolOutcome, ...] | None]) -> None:
     _outcomes.reset(token)
 
 
-def record_tool_outcome(*, name: str, action_severity: str, success: bool) -> None:
-    """Record one dispatched tool's outcome. No-op (logged) when unbound; never raises."""
+def record_tool_outcome(
+    *, name: str, action_severity: str, success: bool, side_effect_committed: bool = True,
+) -> None:
+    """Record one dispatched tool's outcome. No-op (logged) when unbound; never raises.
+
+    ``side_effect_committed`` defaults True (conservative). Callers pass False for a
+    pre-execution refusal (bad/missing args, unavailable store) so it is excluded from
+    the unachieved-consequential tally — see :func:`is_effectful_failure`.
+    """
     current = _outcomes.get()
     if current is None:
         log.engine.debug(
@@ -45,7 +72,13 @@ def record_tool_outcome(*, name: str, action_severity: str, success: bool) -> No
             extra={"_fields": {"name": name}},
         )
         return
-    _outcomes.set((*current, ToolOutcome(name=name, action_severity=action_severity, success=success)))
+    _outcomes.set((
+        *current,
+        ToolOutcome(
+            name=name, action_severity=action_severity, success=success,
+            side_effect_committed=side_effect_committed,
+        ),
+    ))
 
 
 def get_outcomes() -> tuple[ToolOutcome, ...]:
@@ -56,6 +89,9 @@ def get_outcomes() -> tuple[ToolOutcome, ...]:
 def consequential_tally() -> tuple[int, int]:
     """Return (consequential_failures, consequential_successes) over write+consequential outcomes."""
     outcomes = get_outcomes()
-    cons_f = sum(1 for o in outcomes if o.action_severity in _EFFECTFUL and not o.success)
+    cons_f = sum(
+        1 for o in outcomes
+        if is_effectful_failure(o.action_severity, o.success, o.side_effect_committed)
+    )
     cons_s = sum(1 for o in outcomes if o.action_severity in _EFFECTFUL and o.success)
     return cons_f, cons_s

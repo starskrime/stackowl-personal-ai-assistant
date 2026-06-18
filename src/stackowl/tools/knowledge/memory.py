@@ -345,7 +345,12 @@ class MemoryTool(Tool):
             "memory.execute: exit",
             extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        # Pre-execution refusal (bad/missing args) — nothing was written. Mark it as
+        # no side effect so a malformed call does not trip the honest give-up floor.
+        return ToolResult(
+            success=False, output="", error=msg, duration_ms=duration_ms,
+            side_effect_committed=False,
+        )
 
     @staticmethod
     def _unavailable(source: str, reason: str, t0: float) -> ToolResult:
@@ -360,4 +365,9 @@ class MemoryTool(Tool):
             "memory.execute: store unavailable — structured degradation",
             extra={"_fields": {"source": source, "reason": reason, "duration_ms": duration_ms}},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        # The store was never reached — no write was attempted. No side effect, so
+        # this degradation must not be counted as an unachieved consequential give-up.
+        return ToolResult(
+            success=False, output="", error=msg, duration_ms=duration_ms,
+            side_effect_committed=False,
+        )

@@ -171,10 +171,14 @@ class SecretaryRouter:
             f"User request: {user_text}\n\n"
             "Reply with exactly two lines:\n"
             "Line 1: the owl name (required).\n"
-            "Line 2: 'conversational' if the user is ONLY being social — a "
-            "greeting, thanks, a compliment, an opinion or reaction, or chit-chat "
-            "— with NO request to do, find, make, change, or look up anything. "
-            "Otherwise 'standard'. Judge by meaning, in any language."
+            "Line 2: 'conversational' if you can FULLY answer this yourself, right "
+            "now, from your own knowledge — with NO need to look anything up, search, "
+            "fetch, read a file, run a command, or take any other external action. "
+            "This covers greetings, thanks, opinions and chit-chat AND any question "
+            "you can answer or explain directly (a definition, a how-to or "
+            "explanation, advice, a mnemonic, reasoning). Reply 'standard' only if "
+            "answering REQUIRES doing, finding, fetching, creating, or changing "
+            "something in the world. Judge by meaning, in any language."
         )
 
     def _parse_choice(self, raw: str, known_names: set[str]) -> str:

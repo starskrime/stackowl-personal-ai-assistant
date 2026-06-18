@@ -492,7 +492,9 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         outcomes = tool_outcome_ledger.get_outcomes()
         failures = tuple(
             o.name for o in outcomes
-            if o.action_severity in _EFFECTFUL_SEVERITIES and not o.success
+            if tool_outcome_ledger.is_effectful_failure(
+                o.action_severity, o.success, o.side_effect_committed,
+            )
         )
         successes = tuple(
             o.name for o in outcomes
@@ -778,8 +780,48 @@ async def _run_with_tools(
                 )
                 tool_outcome_ledger.record_tool_outcome(
                     name=name, action_severity=t.manifest.action_severity, success=False,
+                    # The tool never started — no side effect was attempted, so this
+                    # must not count as an unachieved consequential give-up.
+                    side_effect_committed=False,
                 )
                 return f"{TOOL_FAILED_MARKER}Not run — the turn is stopping at your request."
+
+        # L3 — REQUIRED-PARAMETER PRE-VALIDATION. A weak model can emit a tool call
+        # that omits a required arg (the live incident: `memory` called with an empty
+        # `action`). Refuse it BEFORE execute so a malformed no-op never reaches the
+        # tool body, and record it as a NO-side-effect refusal so it cannot trip the
+        # give-up floor (composes with L1). Hand the model a crisp, self-correcting
+        # message naming the missing parameter. Fail-safe: any non-list schema → skip.
+        _schema = t.manifest.parameters if isinstance(t.manifest.parameters, dict) else {}
+        _required = _schema.get("required")
+        if isinstance(_required, list) and _required and isinstance(args, dict):
+            # A required param is "unset" only when ABSENT or explicitly null. An
+            # empty string is NOT unset — several write tools legitimately take one
+            # (write_file content="" creates an empty file; edit new_string="" is a
+            # deletion). A semantically-bad blank is the tool's OWN concern: its
+            # validation returns success=False with side_effect_committed=False (L1),
+            # which already avoids the floor without us blocking the call here.
+            def _is_unset(key: object) -> bool:
+                return key not in args or args[key] is None
+
+            _missing = [p for p in _required if _is_unset(p)]
+            if _missing:
+                log.engine.info(
+                    "[pipeline] execute: tool call missing required parameter(s) — refusing pre-execute",
+                    extra={"_fields": {
+                        "tool": name, "missing": _missing, "trace_id": state.trace_id,
+                    }},
+                )
+                tool_outcome_ledger.record_tool_outcome(
+                    name=name, action_severity=t.manifest.action_severity, success=False,
+                    side_effect_committed=False,
+                )
+                _req = ", ".join(str(p) for p in _required)
+                return (
+                    f"{TOOL_FAILED_MARKER}The call to '{name}' is missing required "
+                    f"parameter(s): {', '.join(str(p) for p in _missing)}. "
+                    f"Required: {_req}. Re-issue the call with every required parameter set."
+                )
 
         # S2 durable-react — route the real tool call through the exactly-once
         # ledger guard. DORMANT: with no active DurableReActContext (every path
@@ -810,6 +852,10 @@ async def _run_with_tools(
             )
         tool_outcome_ledger.record_tool_outcome(
             name=name, action_severity=t.manifest.action_severity, success=tr.success,
+            # L1 — a tool that pre-execution-refuses (bad args, unavailable store)
+            # reports side_effect_committed=False so a no-op failure does not trip the
+            # honest give-up floor as if a real consequential action had failed.
+            side_effect_committed=tr.side_effect_committed,
         )
         # F038 — DEMOTED: the old per-call matcher did a heuristic DB lookup +
         # emitted a learning event on the bus, but NO production subscriber existed

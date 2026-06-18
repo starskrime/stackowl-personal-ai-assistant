@@ -155,8 +155,15 @@ def test_owl_name_line_not_treated_as_class() -> None:
     assert _r()._parse_intent_class("standard\nconversational") == "conversational"
 
 
-def test_prompt_mentions_compliment_and_no_task() -> None:
+def test_prompt_distinguishes_direct_answer_from_action_required() -> None:
+    # The conversational class is no longer social-ONLY: it now covers any request
+    # answerable directly from the model's own knowledge (greeting/opinion/chit-chat
+    # AND a definition/how-to/explanation/advice/mnemonic). 'standard' is reserved for
+    # requests that require an external action. (L2 routing fix.)
     p = _r()._build_prompt([("secretary", "general")], "i liked your style")
     low = p.lower()
     assert "conversational" in low and "standard" in low
-    assert "compliment" in low or "social" in low
+    # Still covers the social cases…
+    assert "chit-chat" in low or "greeting" in low
+    # …and now keys on the real discriminator: needing an external action.
+    assert "external action" in low
