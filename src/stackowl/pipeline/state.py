@@ -181,6 +181,20 @@ class PipelineState(BaseModel, frozen=True):
     # snapshot tuple) so honesty data that rides on state is never silently ignored
     # just because the flag was not threaded through.
     consequential_snapshot_taken: bool = False
+    # P0/budget-cap GOAL-RELEVANT ACCOUNTING. ``consequential_successes`` above counts
+    # EVERY effectful (write+consequential) success — fine for a clean model-chosen stop
+    # and for the nudge veto. But a turn cut off by the BUDGET CAP mid-work is untrusted:
+    # an incidental local-workspace FILE mutation (write_file / edit / apply_patch /
+    # undo_write) is NOT the user's outcome — it never crossed the boundary OUT.
+    # ``delivered_successes`` is the goal-relevant / user-delivered subset: every effectful
+    # success EXCEPT those local file mutations (so consequential sends AND boundary-
+    # crossing dispatches like delegate_task / sessions_* DO count as delivered).
+    # ``budget_capped`` marks a turn terminated by the budget governor. The honest give-up
+    # floor uses delivered-only accounting ONLY when ``budget_capped`` is True; a clean stop
+    # and the nudge veto are byte-identical (they keep reading ``consequential_successes``).
+    # Empty/False = no change to today's paths.
+    delivered_successes: tuple[str, ...] = ()
+    budget_capped: bool = False
     # Per-pipeline-step elapsed time in milliseconds, keyed by step name.
     # Populated by the backend's step loop; consumed by the outcome-capture
     # helper at end-of-run. Frozen tuple-of-tuples to keep PipelineState
@@ -192,14 +206,16 @@ class PipelineState(BaseModel, frozen=True):
         """REACT-7/F099 — True when the consequential give-up snapshot rides on state.
 
         The snapshot is present if execute stamped the flag (covers a clean turn where
-        every snapshot tuple is empty) OR any snapshot tuple carries data (so honesty
-        data that travels on state is honored even if the flag was not threaded). When
-        False the floor falls back to the live ledger (the original, byte-identical path).
+        every snapshot tuple is empty) OR any snapshot tuple carries data — including the
+        budget-cap ``delivered_successes`` subset — so honesty data that travels on state
+        is honored even if the flag was not threaded. When False the floor falls back to
+        the live ledger (the original, byte-identical path).
         """
         return (
             self.consequential_snapshot_taken
             or bool(self.consequential_failures)
             or bool(self.consequential_successes)
+            or bool(self.delivered_successes)
             or bool(self.recovered_consequential)
         )
 
