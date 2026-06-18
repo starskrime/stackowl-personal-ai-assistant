@@ -147,6 +147,7 @@ class ClarifyGateway:
         choices: tuple[str, ...] = (),
         awaiting_text: bool = False,
         blocking: bool = False,
+        deliver: bool = True,
     ) -> str:
         """Register a pending clarify for ``session_id`` and deliver it.
 
@@ -181,6 +182,7 @@ class ClarifyGateway:
                     "n_choices": len(choices),
                     "awaiting_text": awaiting_text,
                     "blocking": blocking,
+                    "deliver": deliver,
                 }
             },
         )
@@ -216,9 +218,18 @@ class ClarifyGateway:
             event=event,
         )
 
-        # 3. STEP — deliver via the channel's adapter (self-healing on failure).
+        # 3. STEP — deliver via the channel's adapter (self-healing on failure),
+        # UNLESS the caller registers-only (deliver=False): the question reaches
+        # the user another way (e.g. streamed as the turn response) and a second
+        # send_clarify would double-deliver. The entry is still stored so the
+        # user's next reply resolves via try_resolve.
         adapter = self._adapters.get(channel)
-        if adapter is None:
+        if not deliver:
+            log.gateway.debug(
+                "clarify_gateway.ask: register-only (deliver=False) — entry stored, not sent",
+                extra={"_fields": {"channel": channel, "clarify_id": clarify_id}},
+            )
+        elif adapter is None:
             log.gateway.warning(
                 "clarify_gateway.ask: no adapter registered — registered but undelivered",
                 extra={"_fields": {"channel": channel, "clarify_id": clarify_id}},
@@ -239,7 +250,7 @@ class ClarifyGateway:
             extra={
                 "_fields": {
                     "clarify_id": clarify_id,
-                    "delivered": adapter is not None,
+                    "delivered": deliver and adapter is not None,
                     "blocking": blocking,
                 }
             },
