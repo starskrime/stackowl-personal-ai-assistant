@@ -63,7 +63,23 @@ def is_consequential_giveup_now(state: PipelineState | None = None) -> bool:
     try:
         if state is not None and state.has_consequential_snapshot:
             cf = len(state.consequential_failures)
-            cs = len(state.consequential_successes)
+            # GOAL-RELEVANT ACCOUNTING (P0 budget-cap overclaim fix). On a turn cut off
+            # by the BUDGET CAP, an incidental local-workspace FILE mutation (write_file /
+            # edit / apply_patch / undo_write) is NOT the user's delivered outcome — it
+            # never crossed the boundary OUT. So at the budget-cap terminal path the
+            # success tally is the DELIVERED subset (every effectful success EXCEPT those
+            # local file mutations — consequential sends AND boundary-crossing dispatches
+            # like delegate_task / sessions_* DO count). An incidental local write alongside
+            # a consequential failure no longer disarms the honest floor; a turn that
+            # genuinely dispatched delegated work is NOT floored. A CLEAN model-chosen stop
+            # is trusted and keeps the full effectful-success tally (byte-identical to
+            # today). The shared nudge-veto predicate (is_unachieved_consequential_giveup)
+            # is unchanged either way.
+            cs = (
+                len(state.delivered_successes)
+                if state.budget_capped
+                else len(state.consequential_successes)
+            )
         else:
             cf, cs = tool_outcome_ledger.consequential_tally()
         if not is_unachieved_consequential_giveup(cons_failures=cf, cons_successes=cs):

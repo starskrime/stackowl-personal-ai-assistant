@@ -479,6 +479,22 @@ async def _resolve_execute_window(state: PipelineState, provider: ModelProvider)
 _EFFECTFUL_SEVERITIES = {"write", "consequential"}
 _BRIDGING_RECOVERY_KINDS = {"substitution"}
 
+# Local-workspace FILE-MUTATION tools. These mutate the local filesystem and are
+# NEVER delivered out to the user — their success must not mask an unachieved
+# consequential goal at a budget cap. EVERYTHING ELSE that succeeds (consequential
+# sends, delegations `delegate_task`/`sessions_*`, builds) is a GOAL-RELEVANT /
+# delivered success and disarms the floor. (`write`-severity boundary-crossing
+# dispatches like `delegate_task` are deliberately NOT here — they cross the boundary
+# OUT, so they count as delivered work.) Keyed on tool identity (a name set), NOT on
+# prose keywords. If these tools ever gain a clean `capability_tag` (e.g.
+# `filesystem.write`), prefer keying on that attribute over this set.
+_LOCAL_FILE_MUTATION_TOOLS = frozenset({
+    "write_file",   # io/write_file.py
+    "edit",         # io/edit.py
+    "apply_patch",  # io/apply_patch.py
+    "undo_write",   # io/undo_store.py
+})
+
 
 def _snapshot_consequential(state: PipelineState) -> PipelineState:
     """REACT-7/F099 — stamp the turn's consequential tally + bridged set onto state.
@@ -500,6 +516,20 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             o.name for o in outcomes
             if o.action_severity in _EFFECTFUL_SEVERITIES and o.success
         )
+        # GOAL-RELEVANT subset: effectful successes MINUS local-workspace file
+        # mutations. A pure local file write (write_file / edit / apply_patch /
+        # undo_write) is incidental — it never delivers anything to the user, so it
+        # must not disarm the honest floor when a consequential goal was unachieved at a
+        # budget cap. Everything else effectful — consequential sends AND boundary-
+        # crossing `write` dispatches (delegate_task / sessions_*) — is delivered work.
+        # Used by the honest floor ONLY on a budget-cap cutoff; clean stops keep reading
+        # the full `successes` tuple above.
+        delivered = tuple(
+            o.name for o in outcomes
+            if o.action_severity in _EFFECTFUL_SEVERITIES
+            and o.success
+            and o.name not in _LOCAL_FILE_MUTATION_TOOLS
+        )
         recovered = tuple(
             e.failed for e in recovery_context.get_recovery()
             if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
@@ -507,6 +537,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         return state.evolve(
             consequential_failures=failures,
             consequential_successes=successes,
+            delivered_successes=delivered,
             recovered_consequential=recovered,
             consequential_snapshot_taken=True,
         )
@@ -1271,10 +1302,15 @@ async def _run_with_tools(
                     content=exc.partial_text, is_final=False, chunk_index=0,
                     trace_id=state.trace_id, owl_name=state.owl_name,
                 ),)
-                return state.evolve(
+                # D2 — stamp the consequential snapshot on the budget-cap return so the
+                # terminal honest floor decides on IMMUTABLE state (the ledger ContextVar
+                # may be torn down by the time the floor runs — F099). budget_capped=True
+                # arms the floor's goal-relevant (delivered-only) accounting (D1).
+                return _snapshot_consequential(state).evolve(
                     responses=(*state.responses, *_breach_chunks),
                     tool_calls=(*state.tool_calls, *_breach_tool_records),
                     errors=(*state.errors, marker),
+                    budget_capped=True,
                 )
             # Empty partial under the default backstop → graceful slot-free floor
             # (no raw budget error / blank capability fields surfaced to the user).
@@ -1292,10 +1328,11 @@ async def _run_with_tools(
                 owl_name=state.owl_name,
                 is_floor=True,
             )
-            return state.evolve(
+            return _snapshot_consequential(state).evolve(
                 responses=(*state.responses, floor_chunk),
                 tool_calls=(*state.tool_calls, *_breach_tool_records),
                 errors=(*state.errors, marker),
+                budget_capped=True,
             )
         # Explicit cap: deliver partial with a human-visible budget note.
         note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
@@ -1304,10 +1341,11 @@ async def _run_with_tools(
             content=_stop_content, is_final=False, chunk_index=0,
             trace_id=state.trace_id, owl_name=state.owl_name,
         ),)
-        return state.evolve(
+        return _snapshot_consequential(state).evolve(
             responses=(*state.responses, *_breach_chunks),
             tool_calls=(*state.tool_calls, *_breach_tool_records),
             errors=(*state.errors, marker),
+            budget_capped=True,
         )
     except Exception as exc:
         log.engine.error(
@@ -1503,7 +1541,11 @@ async def run(state: PipelineState) -> PipelineState:
         # HERE, while the turn-scoped ledger/recovery ContextVars are still bound
         # (the backend binds them for the whole pipeline). The honest giveup floor
         # then reads the immutable snapshot rather than an implicit bind() lifetime.
-        return _snapshot_consequential(out)
+        # GUARD: the BudgetBreach terminal paths inside _run_with_tools already stamp
+        # the snapshot (with budget_capped=True + delivered_successes). Re-snapshotting
+        # here would clobber those fields (and is fragile if ledger binding ever moves),
+        # so only snapshot when one was not already taken.
+        return _snapshot_consequential(out) if not out.consequential_snapshot_taken else out
 
     messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]
     if state.system_prompt:
