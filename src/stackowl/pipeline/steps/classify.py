@@ -15,7 +15,7 @@ from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.providers.base import Message
 
 # Unicode tokenisation — stdlib ``re`` ``\w`` already covers \p{L}\p{N}_
@@ -464,7 +464,7 @@ async def run(state: PipelineState) -> PipelineState:
     # Lean gate: conversational turns (greetings/small-talk) skip every heavy
     # block that would only balloon the prompt for no task-relevant gain.
     # "standard" (the default) is byte-identical to prior behavior.
-    _lean = state.intent_class == "conversational"
+    _lean = state.intent_class in TOOL_FREE_CLASSES
     if _lean:
         log.engine.info(
             "[pipeline] classify: conversational — lean assembly (skipping heavy blocks)",

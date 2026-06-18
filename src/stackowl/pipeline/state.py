@@ -10,6 +10,11 @@ from stackowl.authz.bounds import BoundsSpec
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message
 
+# Intent classes that NEVER enter the tool loop: a tool-free reply (conversational)
+# or a single clarifying question (clarify). Shared by provider_select (skip the
+# tool-capability gate), classify (lean assembly), and assemble (skip skills).
+TOOL_FREE_CLASSES: frozenset[str] = frozenset({"conversational", "clarify"})
+
 
 class ToolCall(BaseModel, frozen=True):
     """A record of a single tool invocation within the pipeline."""
@@ -50,7 +55,10 @@ class PipelineState(BaseModel, frozen=True):
     # Fail-safe default "standard" = byte-identical to pre-classification behavior.
     # "conversational" marks trivial greetings/small-talk (no task) so downstream
     # steps can choose a lean path and skip heavy prompt assembly.
-    intent_class: Literal["conversational", "standard"] = "standard"
+    intent_class: Literal["conversational", "standard", "clarify"] = "standard"
+    # The ONE clarifying question to surface when intent_class == "clarify"
+    # (router-authored, same fast-tier call). None for every other class.
+    clarify_question: str | None = None
     # Context-window size (tokens) of the resolved model for this turn, probed by
     # the assemble step. None = unknown / probe failed. When set and at or below
     # LEAN_WINDOW_THRESHOLD the assemble step selects the lean charter and DNA.
