@@ -245,6 +245,13 @@ class SecretaryRouter:
         The question is every non-empty line AFTER the line that carried the
         class token, joined with spaces. Returns None for any non-clarify class
         OR when no question text follows (caller downgrades clarify→standard).
+
+        Lines whose entire normalized content equals a class token are dropped
+        so that a degenerate reply like "secretary\\nclarify\\nstandard" does NOT
+        ship "standard" as the question — it yields None and the caller
+        downgrades the verdict to standard.  Only a line that IS a class token
+        (after normalization) is dropped; a line that merely CONTAINS a class
+        word inside natural language is kept unchanged.
         """
         if intent_class != "clarify":
             return None
@@ -253,7 +260,13 @@ class SecretaryRouter:
         for i, line in enumerate(lines[1:], start=1):
             token = line.strip().strip("\"'`.,:;()[]{}<>").lower()
             if token in _VALID_CLASSES:
-                rest = [ln.strip() for ln in lines[i + 1:] if ln.strip()]
+                rest = [
+                    ln.strip()
+                    for ln in lines[i + 1:]
+                    if ln.strip()
+                    # drop any line that, when normalized, IS itself a class token
+                    and ln.strip().strip("\"'`.,:;()[]{}<>").lower() not in _VALID_CLASSES
+                ]
                 question = " ".join(rest).strip()
                 return question or None
         return None
