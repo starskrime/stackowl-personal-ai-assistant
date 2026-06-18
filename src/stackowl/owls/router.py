@@ -29,15 +29,20 @@ _FAST_TIER = "fast"
 _ROUTING_MAX_TOKENS = 64
 _ROUTING_TEMPERATURE = 0.0
 
-_VALID_CLASSES = {"conversational", "standard"}
+_VALID_CLASSES = {"conversational", "standard", "clarify"}
 
 
 @dataclass(frozen=True)
 class RouteResult:
-    """Immutable router output: chosen owl name + coarse turn classification."""
+    """Immutable router output: chosen owl + coarse turn classification.
+
+    ``clarify_question`` is the one user-facing question to surface when
+    ``intent_class == "clarify"`` (router-authored); None for every other class.
+    """
 
     owl_name: str
-    intent_class: Literal["conversational", "standard"]
+    intent_class: Literal["conversational", "standard", "clarify"]
+    clarify_question: str | None = None
 
 
 def _levenshtein(a: str, b: str) -> int:
@@ -169,16 +174,24 @@ class SecretaryRouter:
             "Available owls:\n"
             f"{roster}\n\n"
             f"User request: {user_text}\n\n"
-            "Reply with exactly two lines:\n"
+            "Reply with these lines:\n"
             "Line 1: the owl name (required).\n"
-            "Line 2: 'conversational' if you can FULLY answer this yourself, right "
-            "now, from your own knowledge — with NO need to look anything up, search, "
-            "fetch, read a file, run a command, or take any other external action. "
-            "This covers greetings, thanks, opinions and chit-chat AND any question "
-            "you can answer or explain directly (a definition, a how-to or "
-            "explanation, advice, a mnemonic, reasoning). Reply 'standard' only if "
-            "answering REQUIRES doing, finding, fetching, creating, or changing "
-            "something in the world. Judge by meaning, in any language."
+            "Line 2: one of 'conversational', 'standard', or 'clarify':\n"
+            "- 'conversational' if you can FULLY answer this yourself, right now, "
+            "from your own knowledge — greetings, thanks, opinions, chit-chat, and "
+            "any question you can answer or explain directly (a definition, how-to, "
+            "advice, a mnemonic, reasoning), with NO need to look anything up, "
+            "search, fetch, read a file, run a command, or take any external action.\n"
+            "- 'standard' if answering REQUIRES doing, finding, fetching, creating, "
+            "or changing something — AND the request is clear enough to act on, OR "
+            "the likely action is cheap and reversible (just try it).\n"
+            "- 'clarify' ONLY when the request is genuinely ambiguous about WHAT to "
+            "do AND the most likely action is expensive, slow, irreversible, or you "
+            "are unsure it is even possible — so a wrong guess would waste real "
+            "effort or do harm. When torn between 'standard' and 'clarify', choose "
+            "'standard' and act. Judge by meaning, in any language.\n"
+            "Line 3 (ONLY if line 2 is 'clarify'): the single short question to ask "
+            "the user, in their language. Omit this line otherwise."
         )
 
     def _parse_choice(self, raw: str, known_names: set[str]) -> str:
@@ -217,14 +230,33 @@ class SecretaryRouter:
         )
         return _DEFAULT_FALLBACK
 
-    def _parse_intent_class(self, raw: str) -> Literal["conversational", "standard"]:
+    def _parse_intent_class(self, raw: str) -> Literal["conversational", "standard", "clarify"]:
         """Scan every line AFTER the owl-name line for the class token. Fail-safe → 'standard'."""
         lines = (raw or "").strip().splitlines()
         for line in lines[1:]:
             token = line.strip().strip("\"'`.,:;()[]{}<>").lower()
             if token in _VALID_CLASSES:
-                return "conversational" if token == "conversational" else "standard"
+                return token  # type: ignore[return-value]
         return "standard"
+
+    def _parse_clarify_question(self, raw: str, intent_class: str) -> str | None:
+        """Extract the line-3 clarifying question for a 'clarify' verdict.
+
+        The question is every non-empty line AFTER the line that carried the
+        class token, joined with spaces. Returns None for any non-clarify class
+        OR when no question text follows (caller downgrades clarify→standard).
+        """
+        if intent_class != "clarify":
+            return None
+        lines = (raw or "").strip().splitlines()
+        # find the index of the line bearing the clarify token, then take the rest
+        for i, line in enumerate(lines[1:], start=1):
+            token = line.strip().strip("\"'`.,:;()[]{}<>").lower()
+            if token in _VALID_CLASSES:
+                rest = [ln.strip() for ln in lines[i + 1:] if ln.strip()]
+                question = " ".join(rest).strip()
+                return question or None
+        return None
 
     async def route(self, state: PipelineState) -> RouteResult:
         """Call the fast-tier provider and return RouteResult(owl_name, intent_class).
@@ -315,6 +347,15 @@ class SecretaryRouter:
 
         owl = self._parse_choice(result.content, known_names)  # UNCHANGED owl parse
         intent_class = self._parse_intent_class(result.content)
+        clarify_question = self._parse_clarify_question(result.content, intent_class)
+        if intent_class == "clarify" and not clarify_question:
+            # A clarify verdict with no question is malformed — downgrade to the
+            # conservative default (act) so we never surface an empty question.
+            log.engine.info(
+                "[router] route: clarify verdict had no question — downgrading to standard",
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
+            intent_class = "standard"
 
         # E8-S0cost — the routing call's cost is recorded by the PROVIDER inside
         # provider.complete (single recording site), so the router records nothing
@@ -340,4 +381,4 @@ class SecretaryRouter:
             },
         )
 
-        return RouteResult(owl, intent_class)
+        return RouteResult(owl, intent_class, clarify_question)
