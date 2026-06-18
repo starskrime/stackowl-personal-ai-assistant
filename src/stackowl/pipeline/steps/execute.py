@@ -1469,6 +1469,83 @@ def _open_stream(
     return guard.stream(provider, messages, model="")
 
 
+async def _maybe_clarify(state: PipelineState, services: object) -> PipelineState | None:
+    """If this is an INTERACTIVE clarify turn, surface ONE question and yield.
+
+    Registers a turn-yield pending clarify (deliver=False — the question is the
+    streamed response, so a second send_clarify would double-deliver) and returns
+    a state whose single response IS the question.  Returns None when this is not
+    a clarify turn OR there is no human to answer (cron/parliament) — the caller
+    then proceeds to the standard tool path (best-effort action).
+
+    4-point log: entry / decision / step / exit.
+    """
+    # 1. ENTRY
+    log.engine.debug(
+        "[pipeline] _maybe_clarify: entry",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "intent_class": state.intent_class,
+            "interactive": state.interactive,
+            "has_question": bool(state.clarify_question),
+        }},
+    )
+    # 2. DECISION — only act on an interactive clarify turn with a question
+    if state.intent_class != "clarify" or not state.clarify_question:
+        log.engine.debug(
+            "[pipeline] _maybe_clarify: not a clarify turn — passing through",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+    if not state.interactive:
+        log.engine.info(
+            "[pipeline] _maybe_clarify: clarify verdict in a non-interactive context — "
+            "falling through to the standard tool path",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+    # 3. STEP — register the pending clarify (deliver=False: question IS the streamed response)
+    gateway = getattr(services, "clarify_gateway", None)
+    if gateway is not None:
+        try:
+            await gateway.ask(
+                state.session_id,
+                state.channel,
+                state.clarify_question,
+                blocking=False,
+                deliver=False,
+            )
+            log.engine.debug(
+                "[pipeline] _maybe_clarify: pending clarify registered (deliver=False)",
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
+        except Exception as exc:  # noqa: BLE001 — never block the turn on registration failure
+            log.engine.error(
+                "[pipeline] _maybe_clarify: clarify pending registration failed — "
+                "still surfacing the question",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
+    else:
+        log.engine.warning(
+            "[pipeline] _maybe_clarify: no clarify_gateway on services — question surfaced without registration",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+    chunk = ResponseChunk(
+        content=state.clarify_question,
+        is_final=False,
+        chunk_index=0,
+        trace_id=state.trace_id,
+        owl_name=state.owl_name,
+    )
+    # 4. EXIT
+    log.engine.info(
+        "[pipeline] _maybe_clarify: clarify — surfaced one question, yielding turn (no tool loop)",
+        extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+    )
+    return state.evolve(responses=(*state.responses, chunk))
+
+
 async def run(state: PipelineState) -> PipelineState:
     """Stream tokens from the assigned provider and build state.responses."""
     log.engine.info(
@@ -1510,6 +1587,13 @@ async def run(state: PipelineState) -> PipelineState:
             step_errors=(*state.step_errors,
                          StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
+
+    # Clarify branch: an interactive clarify turn surfaces ONE question and yields
+    # WITHOUT entering the tool loop.  Non-clarify turns (conversational/standard)
+    # are byte-identical to the previous behaviour.
+    _clarify_out = await _maybe_clarify(state, services)
+    if _clarify_out is not None:
+        return _clarify_out
 
     # Tool loop path: use complete_with_tools() when tools are available AND the
     # turn is not conversational.  Conversational turns take the plain-stream path

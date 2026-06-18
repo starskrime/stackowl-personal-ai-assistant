@@ -115,5 +115,8 @@ async def run(state: PipelineState) -> PipelineState:
         },
     )
     return state.evolve(
-        owl_name=result.owl_name, intent_class=result.intent_class, language=language
+        owl_name=result.owl_name,
+        intent_class=result.intent_class,
+        clarify_question=result.clarify_question,
+        language=language,
     )
