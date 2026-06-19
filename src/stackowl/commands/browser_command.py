@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import shutil
 from pathlib import Path
 
@@ -162,8 +161,25 @@ class BrowserCommand(SlashCommand):
             target_dir = owner_dir / target
             if not target_dir.exists():
                 return f"Profile '{args[1]}' not found for {owner_key}."
-            with contextlib.suppress(OSError):
+            try:
                 shutil.rmtree(target_dir)
+            except OSError as exc:
+                log.gateway.error(
+                    "[commands] browser.profile_delete: rmtree failed",
+                    exc_info=exc,
+                    extra={"_fields": {"target_dir": str(target_dir)}},
+                )
+                return f"✗ Failed to delete profile '{args[1]}': {exc}"
+            if target_dir.exists():
+                log.gateway.error(
+                    "[commands] browser.profile_delete: dir still present after rmtree",
+                    extra={"_fields": {"target_dir": str(target_dir)}},
+                )
+                return f"✗ Profile '{args[1]}' could not be removed (directory still present)."
+            log.gateway.info(
+                "[commands] browser.profile_delete: deleted",
+                extra={"_fields": {"profile": args[1], "owner_key": owner_key}},
+            )
             return f"Deleted profile '{args[1]}' for {owner_key}."
         return "Usage: /browser profile list | /browser profile delete <name>"
 
