@@ -287,7 +287,7 @@ class StartupOrchestrator:
 
         from stackowl.audit.logger import AuditLogger
         from stackowl.channels.cli_adapter import CLIAdapter
-        from stackowl.commands.registry import CommandRegistry, load_builtin_commands
+        from stackowl.commands.registry import CommandRegistry
         from stackowl.exceptions import CommandNotFoundError
         from stackowl.gateway.scanner import GatewayScanner
         from stackowl.owls.registry import OwlRegistry
@@ -319,7 +319,6 @@ class StartupOrchestrator:
         turn_registry = TurnRegistry()
         owl_registry = OwlRegistry.from_settings(self._settings)
         owl_registry.register_builtin_personas()
-        load_builtin_commands()
         db_pool = DbPool(default_db_path())
         await db_pool.open()
         from stackowl.owls.dna_authored import capture_authored_dna
@@ -403,53 +402,16 @@ class StartupOrchestrator:
                     "[startup] gateway: MCP registration phase failed — continuing without federation",
                     exc_info=exc,
                 )
-        # `/skill` slash command — Commit 3, sub-phase 3b.
-        from stackowl.commands.skill_command import SkillCommand
-
-        SkillCommand.create_and_register(
-            store=skills_components.store,
-            loader=skills_components.loader,
-            skills_root=StackowlHome.skills_dir(),
-            embedding_registry=memory_components.embedding_registry,
-        )
         audit_logger = AuditLogger(default_db_path())
 
         # Notifications subsystem assembly — router singleton + scheduled
-        # digest job + router-dependent slash commands. See plan
-        # gleaming-finding-puppy.md Commit C. Focus mode persists across
-        # restarts via PreferenceStore.
+        # digest job. Focus mode persists across restarts via PreferenceStore.
+        # NOTE: router-dependent commands are registered below via
+        # register_all_commands once router exists in CommandDeps.
         from stackowl.events.bus import EventBus
         from stackowl.notifications.assembly import NotificationAssembly
 
         event_bus = EventBus()
-
-        # `/memory` slash command — wires the user-facing memory management surface
-        # (remember/search/reindex/stats/...) onto the same CommandRegistry singleton
-        # the other slash commands use. Reuses the already-built memory_components so
-        # remember+recall, reindex back-fill, and stats all run over the live stores.
-        from stackowl.commands.memory_command import MemoryCommand
-
-        MemoryCommand.create_and_register(
-            bridge=memory_bridge,
-            settings=self._settings,
-            db=db_pool,
-            event_bus=event_bus,
-            lancedb=memory_components.lancedb,
-            promoter=memory_components.promoter,
-            embedding_registry=memory_components.embedding_registry,
-        )
-
-        # `/owls` slash command — owl persona management + the owl-builder
-        # (add/edit specialists with bounds). Wired with the live owl + tool
-        # registries so preset/explicit toolsets validate against the real catalog.
-        from stackowl.commands.owls_command import OwlsCommand
-
-        OwlsCommand.create_and_register(
-            owl_registry=owl_registry,
-            db=db_pool,
-            event_bus=event_bus,
-            tool_registry=tool_registry,
-        )
 
         notification_components = await NotificationAssembly.build(
             db=db_pool,
@@ -459,6 +421,27 @@ class StartupOrchestrator:
         )
         notification_router = notification_components.router
         proactive_deliverer = notification_components.proactive_deliverer
+
+        # Single registration point for ALL slash commands (Epic A spine).
+        # Must run AFTER NotificationAssembly.build() so router exists,
+        # and BEFORE channel loops / Telegram setMyCommands.
+        from stackowl.commands.assembly import CommandDeps, register_all_commands
+
+        register_all_commands(CommandDeps(
+            event_bus=event_bus,
+            db=db_pool,
+            router=notification_router,
+            settings=self._settings,
+            owl_registry=owl_registry,
+            tool_registry=tool_registry,
+            bridge=memory_bridge,
+            lancedb=memory_components.lancedb,
+            promoter=memory_components.promoter,
+            embedding_registry=memory_components.embedding_registry,
+            skills_store=skills_components.store,
+            skills_loader=skills_components.loader,
+            skills_root=StackowlHome.skills_dir(),
+        ))
 
         # Browser runtime — only start if the binary is present (libs/xvfb are advisory).
         browser_runtime: CamoufoxRuntime | None = None

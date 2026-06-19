@@ -80,9 +80,16 @@ def load_builtin_commands() -> int:
 
     Returns the number of commands now in the registry. Safe to call multiple
     times — re-importing modules is a no-op and ``register`` simply overwrites.
+
+    After a :meth:`CommandRegistry.reset`, the module-level
+    ``_CMD = register_command(...)`` lines do NOT re-execute (the modules are
+    already in ``sys.modules``).  To handle that case this function also walks
+    already-loaded ``*_command`` modules and re-registers any ``_CMD`` they
+    expose — idempotent because ``register`` overwrites the same slot.
     """
     import importlib
     import pkgutil
+    import sys
 
     import stackowl.commands as pkg
 
@@ -99,6 +106,17 @@ def load_builtin_commands() -> int:
                 exc_info=exc,
                 extra={"_fields": {"module": full}},
             )
+    # Re-register any _CMD instances from already-cached modules (handles
+    # post-reset() scenarios where import_module is a no-op).
+    from stackowl.commands.base import SlashCommand as _SlashCommand
+
+    prefix = "stackowl.commands."
+    for name, mod in list(sys.modules.items()):
+        if not (name.startswith(prefix) and name[len(prefix):].endswith("_command")):
+            continue
+        cmd = getattr(mod, "_CMD", None)
+        if isinstance(cmd, _SlashCommand):
+            CommandRegistry.instance().register(cmd)
     after = len(CommandRegistry.instance().list())
     log.gateway.info(
         "[commands] registry.load_builtin_commands: discovered",

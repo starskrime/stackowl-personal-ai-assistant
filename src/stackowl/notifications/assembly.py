@@ -99,6 +99,9 @@ class NotificationAssembly:
         from stackowl.notifications.digest_job import NotificationDigestJob
         from stackowl.notifications.router import NotificationRouter
         from stackowl.scheduler.base import HandlerRegistry
+        # (FocusCommand / UrgentCommand / QuietHoursCommand / NotificationsMissedCommand
+        # are imported here to construct the objects for NotificationComponents;
+        # they are registered onto CommandRegistry by register_all_commands, not here.)
 
         # 1) Router — single process-wide instance.
         router = NotificationRouter(db=db, settings=settings)
@@ -164,15 +167,16 @@ class NotificationAssembly:
             extra={"_fields": {"handler": digest_handler.handler_name}},
         )
 
-        # 3) Router-dependent slash commands — previously orphaned because
-        # `load_builtin_commands()` imports modules but doesn't call the
-        # router-aware factories.
-        focus_command = FocusCommand.create_and_register(router, event_bus)
-        urgent_command = UrgentCommand.create_and_register(router)
-        quiet_command = QuietHoursCommand.create_and_register(db)
-        notifications_missed_command = NotificationsMissedCommand.create_and_register(db)
+        # 3) Router-dependent slash commands — constructed here so they are
+        # available in NotificationComponents; registration is delegated to
+        # register_all_commands (commands/assembly.py) which runs after this
+        # method returns and has access to the router via CommandDeps.
+        focus_command = FocusCommand(router=router, event_bus=event_bus)
+        urgent_command = UrgentCommand(router=router)
+        quiet_command = QuietHoursCommand(db=db)
+        notifications_missed_command = NotificationsMissedCommand(db=db)
         log.notifications.info(
-            "[notifications] assembly: 4 commands registered",
+            "[notifications] assembly: 4 commands constructed (registration via register_all_commands)",
             extra={"_fields": {"commands": [
                 focus_command.command, urgent_command.command,
                 quiet_command.command, notifications_missed_command.command,

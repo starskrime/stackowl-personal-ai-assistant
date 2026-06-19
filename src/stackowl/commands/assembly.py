@@ -1,0 +1,187 @@
+"""Command assembler — single entry-point for all slash-command registration.
+
+This module owns ONE call site for every slash command.  The startup
+orchestrator builds a :class:`CommandDeps` from live objects and calls
+:func:`register_all_commands` once.  Nothing else calls
+``create_and_register`` or ``load_builtin_commands`` directly.
+
+Pattern A (dependency-free) commands self-register via a module-level
+``_CMD = register_command(Cmd())`` at the bottom of their ``*_command.py``
+file; :func:`load_builtin_commands` triggers those imports.
+
+Pattern B (DI) commands are constructed here with their live dependencies
+and registered explicitly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from stackowl.infra.observability import log
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
+    from pathlib import Path
+
+    from stackowl.commands.registry import CommandRegistry
+    from stackowl.config.settings import Settings
+    from stackowl.db.pool import DbPool
+    from stackowl.embeddings.registry import EmbeddingRegistry
+    from stackowl.events.bus import EventBus
+    from stackowl.integrations.registry import IntegrationRegistry
+    from stackowl.memory.bridge import MemoryBridge
+    from stackowl.memory.fact_promoter import FactPromoter
+    from stackowl.memory.lancedb_adapter import LanceDBAdapter
+    from stackowl.notifications.router import NotificationRouter
+    from stackowl.owls.registry import OwlRegistry
+    from stackowl.parliament.orchestrator import ParliamentOrchestrator
+    from stackowl.plugins.registry import PluginRegistry
+    from stackowl.skills.loader import SkillLoader
+    from stackowl.skills.store import SkillIndexStore
+    from stackowl.tools.registry import ToolRegistry
+
+
+@dataclass
+class CommandDeps:
+    """All dependencies any slash command might need.
+
+    Every field is Optional (defaults None) so a partial set of deps can
+    be passed without error — commands emit their own "not configured"
+    message at runtime when a required dep is absent.
+    """
+
+    # Core infrastructure
+    event_bus: EventBus | None = None
+    db: DbPool | None = None
+    router: NotificationRouter | None = None
+    settings: Settings | None = None
+
+    # Registries
+    owl_registry: OwlRegistry | None = None
+    tool_registry: ToolRegistry | None = None
+    plugin_registry: PluginRegistry | None = None
+    integration_registry: IntegrationRegistry | None = None
+
+    # Memory subsystem
+    bridge: MemoryBridge | None = None
+    preference_store: object | None = None  # PreferenceStore — avoid heavy import
+    lancedb: LanceDBAdapter | None = None
+    promoter: FactPromoter | None = None
+    embedding_registry: EmbeddingRegistry | None = None
+
+    # Skills subsystem
+    skills_store: SkillIndexStore | None = None
+    skills_loader: SkillLoader | None = None
+    skills_root: Path | None = None
+
+    # Audit / observability
+    audit_logger: object | None = None  # AuditLogger — avoid heavy import
+
+    # Scheduler
+    scheduler: object | None = None  # SchedulerRegistry — avoid heavy import
+
+    # Parliament / agents
+    parliament_orchestrator: ParliamentOrchestrator | None = None
+    morning_brief_handler: object | None = None  # MorningBriefHandler
+
+
+def register_all_commands(
+    deps: CommandDeps,
+    registry: CommandRegistry | None = None,
+) -> CommandRegistry:
+    """Register every shipped slash command onto *registry*.
+
+    Parameters
+    ----------
+    deps:
+        All live dependencies.  Missing deps (None) are tolerated — each
+        command emits a "not configured" message at dispatch time.
+    registry:
+        Defaults to ``CommandRegistry.instance()``.  Pass an explicit
+        instance (e.g. a fresh one from ``CommandRegistry()`` after
+        ``CommandRegistry.reset()``) in tests.
+
+    Returns
+    -------
+    CommandRegistry
+        The registry after all commands have been registered.
+    """
+    from stackowl.commands.registry import CommandRegistry, load_builtin_commands
+
+    reg = registry if registry is not None else CommandRegistry.instance()
+
+    # ── 1. Pattern-A commands (dependency-free, self-register on import) ───
+    # load_builtin_commands() imports every *_command.py module and also
+    # re-registers any already-cached _CMD instances (handles post-reset()
+    # scenarios where importlib.import_module is a no-op).
+    load_builtin_commands()
+
+    # ── 2. Pattern-B commands (DI, constructed + registered here) ──────────
+    _register_di_commands(deps, reg)
+
+    registered = [c.command for c in reg.list()]
+    log.gateway.info(
+        "[commands] assembly.register_all_commands: exit",
+        extra={"_fields": {"count": len(registered), "commands": sorted(registered)}},
+    )
+    return reg
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
+    """Construct and register each DI command using deps."""
+
+    # /skill
+    if deps.skills_store is not None and deps.skills_loader is not None and deps.skills_root is not None:
+        from stackowl.commands.skill_command import SkillCommand
+        registry.register(SkillCommand(
+            store=deps.skills_store,
+            loader=deps.skills_loader,
+            skills_root=deps.skills_root,
+            embedding_registry=deps.embedding_registry,
+        ))
+
+    # /memory
+    if deps.bridge is not None and deps.settings is not None and deps.db is not None and deps.event_bus is not None:
+        from stackowl.commands.memory_command import MemoryCommand
+        registry.register(MemoryCommand(
+            bridge=deps.bridge,
+            settings=deps.settings,
+            db=deps.db,
+            event_bus=deps.event_bus,
+            lancedb=deps.lancedb,
+            promoter=deps.promoter,
+            embedding_registry=deps.embedding_registry,
+        ))
+
+    # /owls
+    from stackowl.commands.owls_command import OwlsCommand
+    registry.register(OwlsCommand(
+        owl_registry=deps.owl_registry,
+        db=deps.db,
+        event_bus=deps.event_bus,
+        tool_registry=deps.tool_registry,
+    ))
+
+    # /focus — requires router + event_bus
+    if deps.router is not None and deps.event_bus is not None:
+        from stackowl.commands.focus_command import FocusCommand
+        registry.register(FocusCommand(router=deps.router, event_bus=deps.event_bus))
+
+    # /urgent — requires router
+    if deps.router is not None:
+        from stackowl.commands.urgent_command import UrgentCommand
+        registry.register(UrgentCommand(router=deps.router))
+
+    # /quiet — requires db
+    if deps.db is not None:
+        from stackowl.commands.quiet_command import QuietHoursCommand
+        registry.register(QuietHoursCommand(db=deps.db))
+
+    # /notifications — requires db
+    if deps.db is not None:
+        from stackowl.commands.notifications_command import NotificationsMissedCommand
+        registry.register(NotificationsMissedCommand(db=deps.db))
