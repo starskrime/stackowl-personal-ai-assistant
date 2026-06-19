@@ -95,11 +95,58 @@ def is_consequential_giveup_now(state: PipelineState | None = None) -> bool:
         return False
 
 
+def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk:
+    """Build an is_floor=True honest-floor ResponseChunk naming ``failed_name``.
+
+    Pure, deterministic, no model call. Shared by the consequential-giveup path and
+    the no-progress-giveup path (Task 4) so the chunk shape stays byte-identical."""
+    floor_text = synthesize_floor(
+        goal=state.input_text,
+        error=None,
+        attempts=None,
+        partial=None,
+        failed_capability=failed_name,
+        lang=state.language,  # F089/F098 — localize the provider-down floor
+    )
+    return ResponseChunk(
+        content=floor_text,
+        is_final=False,
+        chunk_index=0,
+        trace_id=state.trace_id,
+        owl_name=state.owl_name,
+        # SP-1 — floor-origin marker. Lets persist (F088) skip the floor prose
+        # as a promotable fact, keeps the critical-failure cascade from treating
+        # this honest floor as a genuine answer, and lets the pipeline floor band
+        # recognize a provider floor as replaceable (no double floor).
+        is_floor=True,
+    )
+
+
+def is_no_progress_giveup(state: PipelineState) -> bool:
+    """True iff the turn made NO forward progress, delivered nothing to the user,
+    and at least one tool was bounced for no-progress — i.e. the model spiraled and
+    its draft cannot be trusted. INDEPENDENT of the consequential ledger (covers the
+    G2 pure-refusal shape the consequential floor misses). turn_made_progress
+    defaults True, so a non-tool / progressing / conversational turn is never caught."""
+    try:
+        if state.turn_made_progress:
+            return False
+        if not state.no_progress_tools:
+            return False
+        if state.delivered_successes:   # something crossed the boundary OUT → not a give-up
+            return False
+        # Don't double-floor: if the existing responses are already a floor, no-op.
+        return not any(getattr(c, "is_floor", False) for c in state.responses)
+    except Exception as exc:
+        log.engine.error("[giveup_floor] is_no_progress_giveup failed", exc_info=exc)
+        return False
+
+
 async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineState:
     """Replace a dressed-up give-up draft with an honest floor.
 
     1. ENTRY — read the turn ledger's consequential tally.
-    2. DECISION — if no unachieved consequential outcome, no-op.
+    2. DECISION — if no unachieved consequential outcome, check no-progress path.
     3. STEP — synthesize honest floor naming the failed capability.
     4. EXIT — return evolved state with responses REPLACED.
     B5 catch: never raises; logs on failure and returns state untouched.
@@ -117,6 +164,17 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
                 "[giveup_floor] surface_consequential_giveup_floor: no unachieved consequential — no-op",
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
+            # G2 honesty gap: no consequential failure, but the turn may have spiraled
+            # (same tool bounced repeatedly with no progress and nothing delivered).
+            if is_no_progress_giveup(state):
+                log.engine.info(
+                    "[giveup_floor] no forward progress — replacing draft with honest floor",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id,
+                        "failed_capability": state.no_progress_tools[0],
+                    }},
+                )
+                return state.evolve(responses=(_floor_chunk(state, state.no_progress_tools[0]),))
             return state
         unrecovered = _unrecovered_consequential_failures(state)
         if state.has_consequential_snapshot:
@@ -133,32 +191,12 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
                 None,
             )
         # 3. STEP — build honest floor (pure, deterministic, no model call)
-        floor_text = synthesize_floor(
-            goal=state.input_text,
-            error=None,
-            attempts=None,
-            partial=None,
-            failed_capability=failed_name,
-            lang=state.language,  # F089/F098 — localize the provider-down floor
-        )
         log.engine.info(
             "[giveup_floor] consequential outcome not achieved — replacing draft with honest floor",
             extra={"_fields": {"trace_id": state.trace_id, "failed_capability": failed_name}},
         )
-        chunk = ResponseChunk(
-            content=floor_text,
-            is_final=False,
-            chunk_index=0,
-            trace_id=state.trace_id,
-            owl_name=state.owl_name,
-            # SP-1 — floor-origin marker. Lets persist (F088) skip the floor prose
-            # as a promotable fact, keeps the critical-failure cascade from treating
-            # this honest floor as a genuine answer, and lets the pipeline floor band
-            # recognize a provider floor as replaceable (no double floor).
-            is_floor=True,
-        )
         # 4. EXIT — REPLACE the untrusted draft; never append
-        return state.evolve(responses=(chunk,))
+        return state.evolve(responses=(_floor_chunk(state, failed_name),))
     except Exception as exc:  # B5 — never break delivery
         log.engine.error(
             "[giveup_floor] failed — leaving response untouched",
