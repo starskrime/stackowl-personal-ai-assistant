@@ -30,9 +30,13 @@ _EVENT_FOCUS_CHANGED = "focus_mode_changed"
 class FocusCommand(SlashCommand):
     """Set the in-memory focus mode for the notification router."""
 
-    def __init__(self, router: NotificationRouter, event_bus: EventBus) -> None:
-        self._router = router
-        self._event_bus = event_bus
+    def __init__(
+        self,
+        router: NotificationRouter | None = None,
+        event_bus: EventBus | None = None,
+    ) -> None:
+        self._router: NotificationRouter = router  # type: ignore[assignment]  # guarded in handle()
+        self._event_bus: EventBus = event_bus  # type: ignore[assignment]  # guarded in handle()
 
     @property
     def command(self) -> str:
@@ -47,6 +51,8 @@ class FocusCommand(SlashCommand):
             "[notifications] focus.handle: entry",
             extra={"_fields": {"args": args[:40], "session": state.session_id}},
         )
+        if self._router is None or self._event_bus is None:
+            return "✗ /focus: not configured"
         stripped = args.strip()
         mode: FocusMode
         if stripped == "--hard":

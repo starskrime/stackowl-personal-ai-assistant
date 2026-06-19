@@ -1,8 +1,9 @@
 """QuietHoursCommand — ``/quiet`` slash command (Story 7.4).
 
-Inserts a session-scoped row into ``notification_overrides``. The override is
-honoured by the :class:`NotificationRouter` until ``expires_at`` (default:
-24 hours from now).
+Inserts a **global** row into ``notification_overrides`` (the table has no
+``session_id`` column — the override applies process-wide, not per session).
+The override is honoured by the :class:`NotificationRouter` until
+``expires_at`` (default: 24 hours from now).
 
 Forms:
 
@@ -39,10 +40,10 @@ _USAGE = (
 
 
 class QuietHoursCommand(SlashCommand):
-    """Insert a per-session quiet-hours override row."""
+    """Insert a global quiet-hours override row (applies process-wide, not per-session)."""
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    def __init__(self, db: DbPool | None = None) -> None:
+        self._db: DbPool = db  # type: ignore[assignment]  # guarded in handle()
 
     @property
     def command(self) -> str:
@@ -50,13 +51,15 @@ class QuietHoursCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Override quiet hours for the current session."
+        return "Set a global quiet-hours override (process-wide, expires in 24 h)."
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] quiet.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        if self._db is None:
+            return "✗ /quiet: not configured"
         parts = args.strip().split()
         if not parts:
             log.notifications.debug("[notifications] quiet.handle: usage shown — empty args")

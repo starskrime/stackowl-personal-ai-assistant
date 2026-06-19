@@ -259,6 +259,17 @@ class GmailAdapter(IntegrationAdapter):
         log.debug("integrations.gmail._send_email_gated: exit (live path)")
         return result
 
+    async def delete_credentials(self) -> bool:
+        """Remove stored OAuth credentials; returns True if any existed."""
+        log.debug("integrations.gmail.delete_credentials: entry")
+        had_creds = self._oauth.exists()
+        self._oauth.delete()
+        log.debug(
+            "integrations.gmail.delete_credentials: exit",
+            extra={"_fields": {"had_creds": had_creds}},
+        )
+        return had_creds
+
     async def health_check(self) -> HealthStatus:
         log.debug("integrations.gmail.health_check: entry")
         connected = await self.is_connected()

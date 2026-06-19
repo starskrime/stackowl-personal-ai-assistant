@@ -71,10 +71,7 @@ def parse_intent_response(raw: str) -> dict[str, Any]:
 def format_proposal(proposal: dict[str, Any]) -> str:
     """Render a human-readable summary of a pending agent proposal."""
     params = proposal.get("params") or {}
-    if isinstance(params, dict):
-        goal = params.get("goal", "(no goal field)")
-    else:
-        goal = "(invalid params payload)"
+    goal = params.get("goal", "(no goal field)") if isinstance(params, dict) else "(invalid params payload)"
     return (
         "Proposed agent:\n"
         f"  Handler: {proposal.get('handler_name')}\n"

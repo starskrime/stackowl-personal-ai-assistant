@@ -75,18 +75,43 @@ def register_command(cmd: SlashCommand) -> SlashCommand:
     return cmd
 
 
-def load_builtin_commands() -> int:
+def load_builtin_commands(registry: CommandRegistry | None = None) -> int:
     """Import every ``*_command.py`` module so they self-register.
 
-    Returns the number of commands now in the registry. Safe to call multiple
-    times — re-importing modules is a no-op and ``register`` simply overwrites.
+    Parameters
+    ----------
+    registry:
+        Target registry for Pattern-A (module-level ``_CMD``) instances.
+        Defaults to ``CommandRegistry.instance()``.  Pass an explicit registry
+        (e.g. from :func:`register_all_commands`) so that Pattern-A commands
+        land in the same registry as Pattern-B DI commands — not the global
+        singleton — when an isolated registry is requested.
+
+    Returns the number of commands now in the target registry. Safe to call
+    multiple times — re-importing modules is a no-op and ``register`` simply
+    overwrites.
+
+    After a :meth:`CommandRegistry.reset`, the module-level
+    ``_CMD = register_command(...)`` lines do NOT re-execute (the modules are
+    already in ``sys.modules``).  To handle that case this function also walks
+    already-loaded ``*_command`` modules and re-registers any ``_CMD`` they
+    expose — idempotent because ``register`` overwrites the same slot.
+
+    Note: the import-time ``register_command(cmd)`` helper (called by
+    module-level ``_CMD = register_command(...)`` at first import) still
+    registers to the global singleton — that is correct for normal startup
+    where the singleton IS the target.  This function then re-registers those
+    same instances into *registry* so an explicit isolated registry also gets
+    them.
     """
     import importlib
     import pkgutil
+    import sys
 
     import stackowl.commands as pkg
 
-    before = len(CommandRegistry.instance().list())
+    target = registry if registry is not None else CommandRegistry.instance()
+    before = len(target.list())
     for mod_info in pkgutil.iter_modules(pkg.__path__):
         if not mod_info.name.endswith("_command"):
             continue
@@ -99,7 +124,19 @@ def load_builtin_commands() -> int:
                 exc_info=exc,
                 extra={"_fields": {"module": full}},
             )
-    after = len(CommandRegistry.instance().list())
+    # Re-register any _CMD instances from already-cached modules into *target*
+    # (handles post-reset() scenarios where import_module is a no-op, and
+    # ensures Pattern-A commands land in an explicit isolated registry).
+    from stackowl.commands.base import SlashCommand as _SlashCommand
+
+    prefix = "stackowl.commands."
+    for name, mod in list(sys.modules.items()):
+        if not (name.startswith(prefix) and name[len(prefix):].endswith("_command")):
+            continue
+        cmd = getattr(mod, "_CMD", None)
+        if isinstance(cmd, _SlashCommand):
+            target.register(cmd)
+    after = len(target.list())
     log.gateway.info(
         "[commands] registry.load_builtin_commands: discovered",
         extra={"_fields": {"before": before, "after": after, "added": after - before}},

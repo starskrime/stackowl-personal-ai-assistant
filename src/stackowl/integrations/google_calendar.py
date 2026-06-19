@@ -267,6 +267,17 @@ class GoogleCalendarAdapter(IntegrationAdapter):
         log.debug("integrations.google_calendar._create_event_gated: exit (live path)")
         return result
 
+    async def delete_credentials(self) -> bool:
+        """Remove stored OAuth credentials; returns True if any existed."""
+        log.debug("integrations.google_calendar.delete_credentials: entry")
+        had_creds = self._oauth.exists()
+        self._oauth.delete()
+        log.debug(
+            "integrations.google_calendar.delete_credentials: exit",
+            extra={"_fields": {"had_creds": had_creds}},
+        )
+        return had_creds
+
     async def health_check(self) -> HealthStatus:
         """Report Calendar health from a REAL authenticated probe (F023).
 

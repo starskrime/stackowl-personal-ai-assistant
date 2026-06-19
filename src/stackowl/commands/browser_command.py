@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import shutil
 from pathlib import Path
 
@@ -158,12 +157,39 @@ class BrowserCommand(SlashCommand):
                 return f"No profiles for {owner_key}."
             return f"Profiles for {owner_key}:\n  " + "\n  ".join(entries)
         if sub == "delete" and len(args) >= 2:
-            target = args[1].replace(":", "_").replace("/", "_")
+            raw_name = args[1]
+            # Path-traversal guard: a name with '..' or a path separator could
+            # escape owner_dir and rmtree something outside it (e.g. '..' →
+            # the parent profiles_dir). Reject before touching the filesystem.
+            if ".." in raw_name or "/" in raw_name or "\\" in raw_name:
+                log.gateway.warning(
+                    "[commands] browser.profile_delete: rejected unsafe profile name",
+                    extra={"_fields": {"name": raw_name}},
+                )
+                return f"✗ Invalid profile name '{raw_name}'."
+            target = raw_name.replace(":", "_")
             target_dir = owner_dir / target
             if not target_dir.exists():
                 return f"Profile '{args[1]}' not found for {owner_key}."
-            with contextlib.suppress(OSError):
+            try:
                 shutil.rmtree(target_dir)
+            except OSError as exc:
+                log.gateway.error(
+                    "[commands] browser.profile_delete: rmtree failed",
+                    exc_info=exc,
+                    extra={"_fields": {"target_dir": str(target_dir)}},
+                )
+                return f"✗ Failed to delete profile '{args[1]}': {exc}"
+            if target_dir.exists():
+                log.gateway.error(
+                    "[commands] browser.profile_delete: dir still present after rmtree",
+                    extra={"_fields": {"target_dir": str(target_dir)}},
+                )
+                return f"✗ Profile '{args[1]}' could not be removed (directory still present)."
+            log.gateway.info(
+                "[commands] browser.profile_delete: deleted",
+                extra={"_fields": {"profile": args[1], "owner_key": owner_key}},
+            )
             return f"Deleted profile '{args[1]}' for {owner_key}."
         return "Usage: /browser profile list | /browser profile delete <name>"
 

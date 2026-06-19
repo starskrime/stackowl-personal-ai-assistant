@@ -25,7 +25,7 @@ _USAGE = (
 class PluginsCommand(SlashCommand):
     """``/plugins`` slash command — manage installed plugins."""
 
-    def __init__(self, plugin_registry: PluginRegistry) -> None:
+    def __init__(self, plugin_registry: PluginRegistry | None) -> None:
         # 1. ENTRY
         log.gateway.debug("plugins_command.__init__: entry")
         self._registry = plugin_registry
@@ -46,6 +46,9 @@ class PluginsCommand(SlashCommand):
             "plugins_command.handle: entry",
             extra={"_fields": {"args": args[:80]}},
         )
+        if self._registry is None:
+            log.gateway.warning("plugins_command.handle: registry not configured")
+            return "✗ /plugins: not configured (plugin registry unavailable)"
         parts = args.strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "list"
         arg = parts[1] if len(parts) > 1 else ""
@@ -83,6 +86,7 @@ class PluginsCommand(SlashCommand):
         return result
 
     def _handle_list(self) -> str:
+        assert self._registry is not None  # guarded by handle()
         # 1. ENTRY
         log.gateway.debug("plugins_command._handle_list: entry")
         plugins = self._registry.list()
@@ -106,6 +110,7 @@ class PluginsCommand(SlashCommand):
         return result
 
     async def _handle_info(self, name: str) -> str:
+        assert self._registry is not None  # guarded by handle()
         # 1. ENTRY
         log.gateway.debug(
             "plugins_command._handle_info: entry",
@@ -149,11 +154,22 @@ class PluginsCommand(SlashCommand):
         return result
 
     async def _handle_enable(self, name: str) -> str:
+        assert self._registry is not None  # guarded by handle()
         # 1. ENTRY
         log.gateway.debug(
             "plugins_command._handle_enable: entry",
             extra={"_fields": {"name": name}},
         )
+        # 2. DECISION — existence check before claiming success
+        if not self._registry.exists(name):
+            log.gateway.debug(
+                "plugins_command._handle_enable: not found",
+                extra={"_fields": {"name": name}},
+            )
+            return (
+                f"Plugin '{name}' not found. "
+                "Run /plugins list to see installed plugins."
+            )
         await self._registry.set_enabled(name, enabled=True)
         # 4. EXIT
         log.gateway.debug(
@@ -163,11 +179,22 @@ class PluginsCommand(SlashCommand):
         return f"Plugin '{name}' enabled."
 
     async def _handle_disable(self, name: str) -> str:
+        assert self._registry is not None  # guarded by handle()
         # 1. ENTRY
         log.gateway.debug(
             "plugins_command._handle_disable: entry",
             extra={"_fields": {"name": name}},
         )
+        # 2. DECISION — existence check before claiming success
+        if not self._registry.exists(name):
+            log.gateway.debug(
+                "plugins_command._handle_disable: not found",
+                extra={"_fields": {"name": name}},
+            )
+            return (
+                f"Plugin '{name}' not found. "
+                "Run /plugins list to see installed plugins."
+            )
         await self._registry.set_enabled(name, enabled=False)
         # 4. EXIT
         log.gateway.debug(

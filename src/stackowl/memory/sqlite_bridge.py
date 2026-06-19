@@ -420,6 +420,33 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return results
 
+    async def clear_session(self, session_id: str) -> int:
+        """Delete all conversation staged facts for *session_id*.
+
+        Returns the number of rows deleted so the caller can report reality.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] sqlite_bridge.clear_session: entry",
+            extra={"_fields": {"session_id": session_id}},
+        )
+        # 2. DECISION — scoped to source_type='conversation' AND source_ref=session_id
+        log.memory.debug(
+            "[memory] sqlite_bridge.clear_session: deleting conversation turns for session",
+            extra={"_fields": {"session_id": session_id}},
+        )
+        # 3. STEP — delete and capture rowcount atomically
+        count = await self._db.execute_returning_rowcount(
+            "DELETE FROM staged_facts WHERE source_type = 'conversation' AND source_ref = ?",
+            (session_id,),
+        )
+        # 4. EXIT
+        log.memory.info(
+            "[memory] sqlite_bridge.clear_session: exit",
+            extra={"_fields": {"session_id": session_id, "deleted": count}},
+        )
+        return count
+
     async def health(self) -> HealthReport:
         """Probe SQLite connectivity and report staged/committed row counts."""
         # 1. ENTRY

@@ -67,9 +67,9 @@ class SkillCommand(SlashCommand):
 
     def __init__(
         self,
-        store: SkillIndexStore,
-        loader: SkillLoader,
-        skills_root: Path,
+        store: SkillIndexStore | None = None,
+        loader: SkillLoader | None = None,
+        skills_root: Path | None = None,
         *,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
@@ -81,9 +81,9 @@ class SkillCommand(SlashCommand):
                 "has_embedding": embedding_registry is not None,
             }},
         )
-        self._store = store
-        self._loader = loader
-        self._root = skills_root
+        self._store: SkillIndexStore = store  # type: ignore[assignment]  # guarded in handle()
+        self._loader: SkillLoader = loader  # type: ignore[assignment]  # guarded in handle()
+        self._root: Path = skills_root  # type: ignore[assignment]  # guarded in handle()
         self._embedding_registry = embedding_registry
         # 4. EXIT
         log.skills.debug("[commands] skill.init: exit")
@@ -105,6 +105,8 @@ class SkillCommand(SlashCommand):
             "[commands] skill.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        if self._store is None or self._loader is None or self._root is None:
+            return "✗ /skill: not configured"
         stripped = args.strip()
         if not stripped:
             return _USAGE
@@ -524,13 +526,20 @@ class SkillCommand(SlashCommand):
 
 
 def _looks_like_git_repo(url: str) -> bool:
-    """Heuristic: github/gitlab/bitbucket repo path looks like ``host/owner/repo``."""
+    """Heuristic: treat a URL as a git repo if it ends in ``.git``, starts with
+    ``git@``, or its host is a known git forge with at least two non-empty path
+    segments (owner/repo).  Trailing slashes and extra path segments (e.g.
+    ``.../owner/repo/tree/main``) are tolerated.
+    """
+    # Explicit git markers take priority over archive extensions.
+    if url.endswith(".git") or url.startswith("git@"):
+        return True
     git_hosts = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org")
     for host in git_hosts:
         if f"://{host}/" in url:
             tail = url.split(f"://{host}/", 1)[1].rstrip("/")
-            # owner/repo (exactly two path segments) → repo URL
+            # owner/repo or deeper (e.g. owner/repo/tree/main) → repo URL
             segs = [s for s in tail.split("/") if s]
-            if len(segs) == 2:
+            if len(segs) >= 2:
                 return True
     return False

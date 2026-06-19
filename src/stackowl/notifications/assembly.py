@@ -16,9 +16,9 @@ Per the BMad v2 wiring audit (plan: gleaming-finding-puppy.md, Commit C):
   via the existing scheduler primitives; respects the B9 boundary by
   registering through :class:`HandlerRegistry`.
 * All four router-dependent slash commands (`/focus`, `/urgent`, `/quiet`,
-  `/notifications-missed`) self-register via their ``create_and_register``
-  factories — previously orphaned because ``load_builtin_commands()`` does
-  not instantiate them.
+  `/notifications`) are constructed here and returned in
+  :class:`NotificationComponents`; they are registered centrally by
+  :func:`commands.assembly.register_all_commands` — not by this module.
 """
 
 from __future__ import annotations
@@ -99,6 +99,9 @@ class NotificationAssembly:
         from stackowl.notifications.digest_job import NotificationDigestJob
         from stackowl.notifications.router import NotificationRouter
         from stackowl.scheduler.base import HandlerRegistry
+        # (FocusCommand / UrgentCommand / QuietHoursCommand / NotificationsMissedCommand
+        # are imported here to construct the objects for NotificationComponents;
+        # they are registered onto CommandRegistry by register_all_commands, not here.)
 
         # 1) Router — single process-wide instance.
         router = NotificationRouter(db=db, settings=settings)
@@ -164,15 +167,16 @@ class NotificationAssembly:
             extra={"_fields": {"handler": digest_handler.handler_name}},
         )
 
-        # 3) Router-dependent slash commands — previously orphaned because
-        # `load_builtin_commands()` imports modules but doesn't call the
-        # router-aware factories.
-        focus_command = FocusCommand.create_and_register(router, event_bus)
-        urgent_command = UrgentCommand.create_and_register(router)
-        quiet_command = QuietHoursCommand.create_and_register(db)
-        notifications_missed_command = NotificationsMissedCommand.create_and_register(db)
+        # 3) Router-dependent slash commands — constructed here so they are
+        # available in NotificationComponents; registration is delegated to
+        # register_all_commands (commands/assembly.py) which runs after this
+        # method returns and has access to the router via CommandDeps.
+        focus_command = FocusCommand(router=router, event_bus=event_bus)
+        urgent_command = UrgentCommand(router=router)
+        quiet_command = QuietHoursCommand(db=db)
+        notifications_missed_command = NotificationsMissedCommand(db=db)
         log.notifications.info(
-            "[notifications] assembly: 4 commands registered",
+            "[notifications] assembly: 4 commands constructed (registration via register_all_commands)",
             extra={"_fields": {"commands": [
                 focus_command.command, urgent_command.command,
                 quiet_command.command, notifications_missed_command.command,

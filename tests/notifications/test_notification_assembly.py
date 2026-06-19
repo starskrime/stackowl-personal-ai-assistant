@@ -97,16 +97,17 @@ async def test_build_seed_is_idempotent(tmp_db: DbPool) -> None:
     assert len(rows) == 1  # NOT 2
 
 
-async def test_build_registers_four_router_dependent_commands(tmp_db: DbPool) -> None:
-    """focus/urgent/quiet/notifications commands are previously orphaned."""
+async def test_build_returns_four_router_dependent_command_objects(tmp_db: DbPool) -> None:
+    """build() constructs all 4 notification commands and exposes them in components.
+
+    Registration onto CommandRegistry is now done by register_all_commands
+    (commands/assembly.py), not by NotificationAssembly.build itself.
+    """
     components = await _build(tmp_db)
-    registered = {c.command: c for c in CommandRegistry.instance().list()}
-    assert registered.get("focus") is components.focus_command
-    assert registered.get("urgent") is components.urgent_command
-    assert registered.get("quiet") is components.quiet_command
-    # NotificationsMissedCommand uses /notifications as its command name.
-    nm_name = components.notifications_missed_command.command
-    assert registered.get(nm_name) is components.notifications_missed_command
+    assert components.focus_command.command == "focus"
+    assert components.urgent_command.command == "urgent"
+    assert components.quiet_command.command == "quiet"
+    assert components.notifications_missed_command.command == "notifications"
 
 
 async def test_focus_mode_hydrates_from_preference_store(tmp_db: DbPool) -> None:

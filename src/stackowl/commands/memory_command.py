@@ -62,10 +62,10 @@ class MemoryCommand(SlashCommand):
 
     def __init__(
         self,
-        bridge: MemoryBridge,
-        settings: Settings,
-        db: DbPool,
-        event_bus: EventBus,
+        bridge: MemoryBridge | None = None,
+        settings: Settings | None = None,
+        db: DbPool | None = None,
+        event_bus: EventBus | None = None,
         lancedb: LanceDBAdapter | None = None,
         promoter: FactPromoter | None = None,
         embedding_registry: EmbeddingRegistry | None = None,
@@ -81,10 +81,10 @@ class MemoryCommand(SlashCommand):
                 }
             },
         )
-        self._bridge = bridge
-        self._settings = settings
-        self._db = db
-        self._bus = event_bus
+        self._bridge: MemoryBridge = bridge  # type: ignore[assignment]  # guarded in handle()
+        self._settings: Settings = settings  # type: ignore[assignment]  # guarded in handle()
+        self._db: DbPool = db  # type: ignore[assignment]  # guarded in handle()
+        self._bus: EventBus = event_bus  # type: ignore[assignment]  # guarded in handle()
         self._lancedb = lancedb
         self._promoter = promoter
         self._embeddings = embedding_registry
@@ -105,6 +105,8 @@ class MemoryCommand(SlashCommand):
             "[commands] memory.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        if self._bridge is None or self._settings is None or self._db is None or self._bus is None:
+            return "✗ /memory: not configured"
         stripped = args.strip()
         if not stripped:
             return _USAGE
@@ -185,20 +187,28 @@ class MemoryCommand(SlashCommand):
         if not args:
             return "Usage: /memory delete <fact_id> [YES]"
         parts = args.split(maxsplit=1)
-        fact_id = parts[0]
+        prefix = parts[0]
         confirmation = parts[1].strip() if len(parts) > 1 else ""
+        # Resolve prefix → full fact, mirroring _forget so that short IDs work.
+        fact = await find_staged_by_id(self._bridge, prefix)
+        if fact is None:
+            log.memory.debug(
+                "[commands] memory.delete: no match",
+                extra={"_fields": {"prefix": prefix[:16]}},
+            )
+            return f"✗ /memory delete: no fact matches prefix '{prefix}'"
         if confirmation != _CONFIRMATION:
             log.memory.debug("[commands] memory.delete: decision — missing YES")
             return (
-                f"Confirm deletion of '{fact_id}'.\n"
-                f"Type '/memory delete {fact_id} YES' to proceed."
+                f"Confirm deletion of {fact.fact_id[:8]} ('{fact.content[:40]}...').\n"
+                f"Type '/memory delete {fact.fact_id} YES' to proceed."
             )
-        await forget_fact(self._bridge, fact_id, actor="user:delete")
+        await forget_fact(self._bridge, fact.fact_id, actor="user:delete")
         log.memory.info(
             "[commands] memory.delete: exit",
-            extra={"_fields": {"fact_id": fact_id}},
+            extra={"_fields": {"fact_id": fact.fact_id}},
         )
-        return f"✓ Deleted {fact_id}"
+        return f"✓ Deleted {fact.fact_id}"
 
     async def _budget(self) -> str:
         log.memory.debug("[commands] memory.budget: entry")

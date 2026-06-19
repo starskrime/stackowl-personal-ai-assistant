@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, Template, select_autoescape
 
 from stackowl.commands.agent_create_helpers import (
     format_proposal,
@@ -72,13 +72,13 @@ class AgentCreateCommand(SlashCommand):
         self._db = db
         self._bus = event_bus
         self._pending: dict[str, dict[str, Any]] = {}
-        env = Environment(
+        self._template_env = Environment(
             loader=FileSystemLoader(str(_PROMPT_DIR)),
             autoescape=select_autoescape(disabled_extensions=("j2",), default=False),
             undefined=StrictUndefined,
             keep_trailing_newline=True,
         )
-        self._template = env.get_template(_TEMPLATE_NAME)
+        self._template: Template | None = None  # loaded lazily on first _create() call
 
     @property
     def command(self) -> str:
@@ -146,6 +146,16 @@ class AgentCreateCommand(SlashCommand):
             )
             return _NO_PROVIDER
 
+        if self._template is None:
+            try:
+                self._template = self._template_env.get_template(_TEMPLATE_NAME)
+            except Exception as exc:
+                log.scheduler.error(
+                    "[commands] agent._create: template load failed",
+                    exc_info=exc,
+                    extra={"_fields": {"template": _TEMPLATE_NAME, "prompt_dir": str(_PROMPT_DIR)}},
+                )
+                raise
         prompt = self._template.render(user_intent=intent)
         provider = self._providers.get_by_tier(_FAST_TIER)
         log.scheduler.debug(

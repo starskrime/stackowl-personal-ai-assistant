@@ -552,9 +552,33 @@ async def test_guard_memory_command_registered_via_orchestrator(
         return SimpleNamespace(store=SimpleNamespace(), loader=SimpleNamespace(), loaded=[])
 
     async def _fake_notif_build(*_a: object, **_k: object) -> object:
-        # Registration of MemoryCommand happens IMMEDIATELY before this call,
-        # so reaching here means registration already ran. Halt the boot.
-        raise _SentinelStop
+        # Registration now happens via the single register_all_commands call,
+        # which runs AFTER NotificationAssembly.build + SchedulerAssembly.build
+        # (Epic A/B spine). So this no longer raises — it returns a minimal
+        # NotificationComponents-shaped fake (the orchestrator reads .router +
+        # .proactive_deliverer, the latter passed into ParliamentOrchestrator).
+        return SimpleNamespace(router=SimpleNamespace(), proactive_deliverer=SimpleNamespace())
+
+    async def _fake_scheduler_build(*_a: object, **_k: object) -> object:
+        # register_all_commands reads .scheduler + .morning_brief_handler.
+        return SimpleNamespace(
+            scheduler=SimpleNamespace(),
+            morning_brief_handler=SimpleNamespace(),
+            supervisor=SimpleNamespace(),
+        )
+
+    # Wrap the SINGLE registration entry: run the REAL registration (so /memory
+    # actually lands on the registry over tmp_db), then halt the boot. The
+    # orchestrator does `from stackowl.commands.assembly import register_all_commands`
+    # at call time, so patching the source-module attribute is what binds.
+    import stackowl.commands.assembly as _asm_mod
+
+    _real_register = _asm_mod.register_all_commands
+
+    def _wrapped_register(deps: object, registry: object = None) -> object:
+        result = _real_register(deps, registry)  # type: ignore[arg-type]
+        raise _SentinelStop  # reached only AFTER real registration ran
+        return result  # pragma: no cover
 
     async def _fake_learned_load(_self: object, _reg: object) -> int:
         return 0
@@ -567,6 +591,12 @@ async def test_guard_memory_command_registered_via_orchestrator(
     monkeypatch.setattr("stackowl.skills.assembly.SkillsAssembly.build", _fake_skills_build)
     monkeypatch.setattr(
         "stackowl.notifications.assembly.NotificationAssembly.build", _fake_notif_build
+    )
+    monkeypatch.setattr(
+        "stackowl.scheduler.assembly.SchedulerAssembly.build", _fake_scheduler_build
+    )
+    monkeypatch.setattr(
+        "stackowl.commands.assembly.register_all_commands", _wrapped_register
     )
     monkeypatch.setattr(
         "stackowl.tools.meta.learned_tool_loader.LearnedToolLoader.load_all",

@@ -284,10 +284,14 @@ class TestProviderUsage:
 
 
 class TestProviderRegistration:
-    def test_auto_registered_in_registry(self) -> None:
-        from stackowl.commands.registry import CommandRegistry, load_builtin_commands
+    def test_registered_via_assembly(self) -> None:
+        # /provider is a DI command (Epic C1) — it registers via register_all_commands,
+        # not via Pattern-A self-registration.  load_builtin_commands alone is not enough.
+        from stackowl.commands.assembly import CommandDeps, register_all_commands
+        from stackowl.commands.registry import CommandRegistry
 
-        load_builtin_commands()
+        CommandRegistry.reset()
+        register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
         names = [c.command for c in CommandRegistry.instance().list()]
         assert "provider" in names
 

@@ -26,7 +26,9 @@ if TYPE_CHECKING:
 
 _PANIC_RE = re.compile(r"(?:/panic|!panic)", re.IGNORECASE | re.UNICODE)
 _AT_OWL_RE = re.compile(r"^@(\w+)", re.UNICODE)
-_SLASH_CMD_RE = re.compile(r"^/(\w+)", re.UNICODE)
+# Leading whitespace is tolerated so that `' /help'` and `'\t/help'` still
+# route as commands instead of silently falling through to the secretary LLM.
+_SLASH_CMD_RE = re.compile(r"^\s*/(\w+)", re.UNICODE)
 _MULTI_AT_OWL_RE = re.compile(r"@(\w+)", re.UNICODE)
 
 _INGRESS_MAXSIZE = 3

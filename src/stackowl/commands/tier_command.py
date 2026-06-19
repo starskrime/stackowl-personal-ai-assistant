@@ -1,9 +1,13 @@
-"""TierCommand — /tier slash command for per-owner provider preference.
+"""TierCommand — /tier slash command for per-session provider preference.
 
 Persists the preferred provider tier (``fast`` | ``standard`` | ``powerful`` |
 ``local``) via :class:`PreferenceStore` so it survives ``stackowl serve``
-restarts and propagates across all channels for the same owner. Falls back to
-an in-memory dict when the store is unavailable (e.g. unit tests).
+restarts within the same session.  The preference is keyed by
+``state.session_id``, so it is session-scoped — a Telegram session and a CLI
+session are independent even for the same physical user.  Cross-channel
+owner threading is a future enhancement; until then each session has its own
+preference.  Falls back to an in-memory dict when the store is unavailable
+(e.g. unit tests).
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ class TierCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Set the preferred provider tier for this session."
+        return "Set the preferred provider tier for this session (session-scoped, not cross-channel)."
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.engine.debug(

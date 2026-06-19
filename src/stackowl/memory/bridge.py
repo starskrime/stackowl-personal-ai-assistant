@@ -76,6 +76,16 @@ class MemoryBridge(ABC):
         """List staged facts filtered by status."""
         ...
 
+    async def clear_session(self, session_id: str) -> int:
+        """Delete all conversation staged facts for *session_id*.
+
+        Returns the number of rows deleted.  Used by ``/reset`` to actually
+        wipe session history (the previous no-op implementation returned a
+        hard-coded success message while deleting nothing).
+        Default implementation returns 0 (no-op); concrete bridges override.
+        """
+        return 0
+
     async def recent_conversation_turns(
         self, session_id: str, limit: int = 6, staged_before: str | None = None,
     ) -> list[StagedFact]:
