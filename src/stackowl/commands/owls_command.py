@@ -49,7 +49,6 @@ _USAGE = (
 )
 
 _NO_REGISTRY = "(no owl registry wired — start StackOwl normally to manage owls)"
-_NO_DB = "(no database wired — DNA state is not yet persisted)"
 
 _SELECT_DNA_SQL = (
     "SELECT challenge_level, verbosity, curiosity, formality, creativity, "
@@ -169,7 +168,8 @@ class OwlsCommand(SlashCommand):
             "[commands] owls.add: exit",
             extra={"_fields": {"name": manifest.name, "role": manifest.role}},
         )
-        return f"✓ owl '{manifest.name}' registered (role={manifest.role}, tier={manifest.model_tier})"
+        suffix = "" if self._db is not None else " (DNA not persisted — no DB)"
+        return f"✓ owl '{manifest.name}' registered (role={manifest.role}, tier={manifest.model_tier}){suffix}"
 
     # ------------------------------------------------------------------ edit
     async def _edit(self, rest: str) -> str:
@@ -207,7 +207,8 @@ class OwlsCommand(SlashCommand):
             "[commands] owls.edit: exit",
             extra={"_fields": {"name": updated.name, "tier": updated.model_tier}},
         )
-        return f"✓ owl '{updated.name}' updated (tier={updated.model_tier})"
+        suffix = "" if self._db is not None else " (DNA not persisted — no DB)"
+        return f"✓ owl '{updated.name}' updated (tier={updated.model_tier}){suffix}"
 
     # ---------------------------------------------------------------- remove
     async def _remove(self, rest: str) -> str:
