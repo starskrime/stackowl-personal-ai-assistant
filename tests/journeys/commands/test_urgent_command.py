@@ -118,9 +118,10 @@ async def test_urgent_description_says_all_registered_channels() -> None:
     from stackowl.commands.urgent_command import UrgentCommand
 
     cmd = UrgentCommand()
-    assert "registered" in cmd.description or "all" in cmd.description
-    # The old false description said only "all channels" but wired only cli.
-    # Ensure 'registered' (or equivalent honest qualifier) is present.
+    # Lock the honest qualifier: the old false description said "all channels"
+    # but only targeted cli. "registered" must be present so a regression to the
+    # bare overclaim is caught.
+    assert "registered" in cmd.description
     assert "cli" not in cmd.description, (
         "Description must not hard-code 'cli' — that was the overclaim"
     )
