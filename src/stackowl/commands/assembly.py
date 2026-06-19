@@ -247,3 +247,13 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         db=deps.db,
         event_bus=deps.event_bus,
     ))
+
+    # /parliament
+    from stackowl.commands.parliament_command import ParliamentCommand
+    from stackowl.parliament.session_store import SessionStore
+    registry.register(ParliamentCommand(
+        orchestrator=deps.parliament_orchestrator,
+        session_store=cast("SessionStore | None", deps.parliament_session_store),
+        owl_registry=deps.owl_registry,
+        event_bus=deps.event_bus,
+    ))
