@@ -113,6 +113,7 @@ class WebhookCommand(SlashCommand):
         )
 
     async def _list(self, state: PipelineState) -> str:
+        assert self._db is not None and self._settings is not None  # narrowed by handle() guard
         log.webhook.debug("[webhook] command.list: entry")
         configured = sorted(self._settings.webhook.sources.keys())
         try:
@@ -147,6 +148,7 @@ class WebhookCommand(SlashCommand):
         return "\n".join(lines)
 
     async def _disable(self, source: str, state: PipelineState) -> str:
+        assert self._db is not None  # narrowed by handle() guard
         log.webhook.info(
             "[webhook] command.disable: instructions + audit-log",
             extra={"_fields": {"source": source}},

@@ -202,12 +202,16 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     registry.register(WhoamiCommand(owl_registry=deps.owl_registry))
 
     # /audit
+    from typing import cast
+
+    from stackowl.audit.logger import AuditLogger
     from stackowl.commands.audit import AuditCommand
-    registry.register(AuditCommand(audit_logger=deps.audit_logger))
+    registry.register(AuditCommand(audit_logger=cast("AuditLogger | None", deps.audit_logger)))
 
     # /brief
     from stackowl.commands.brief_command import BriefCommand
-    registry.register(BriefCommand(handler=deps.morning_brief_handler))
+    from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
+    registry.register(BriefCommand(handler=cast("MorningBriefHandler | None", deps.morning_brief_handler)))
 
     # /webhook
     from stackowl.commands.webhook_command import WebhookCommand

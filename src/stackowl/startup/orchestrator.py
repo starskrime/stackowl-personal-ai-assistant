@@ -750,8 +750,8 @@ class StartupOrchestrator:
         # Must run AFTER SchedulerAssembly.build() so morning_brief_handler
         # and scheduler are available. See Epic B batch-1.
         from stackowl.commands.assembly import CommandDeps, register_all_commands
-        from stackowl.plugins.registry import PluginRegistry
         from stackowl.integrations.registry import IntegrationRegistry
+        from stackowl.plugins.registry import PluginRegistry
 
         register_all_commands(CommandDeps(
             event_bus=event_bus,

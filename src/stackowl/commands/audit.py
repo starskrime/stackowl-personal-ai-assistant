@@ -75,7 +75,7 @@ class AuditCommand(SlashCommand):
         lines: list[str] = [header, separator]
         for r in rows:
             ts_raw = r.get("timestamp", 0.0)
-            ts_str = datetime.fromtimestamp(float(ts_raw), tz=UTC).strftime("%Y-%m-%d %H:%M")
+            ts_str = datetime.fromtimestamp(float(str(ts_raw)), tz=UTC).strftime("%Y-%m-%d %H:%M")
             details_raw = r.get("details", "{}")
             try:
                 details_obj = json.loads(str(details_raw))
