@@ -16,9 +16,9 @@ Per the BMad v2 wiring audit (plan: gleaming-finding-puppy.md, Commit C):
   via the existing scheduler primitives; respects the B9 boundary by
   registering through :class:`HandlerRegistry`.
 * All four router-dependent slash commands (`/focus`, `/urgent`, `/quiet`,
-  `/notifications-missed`) self-register via their ``create_and_register``
-  factories — previously orphaned because ``load_builtin_commands()`` does
-  not instantiate them.
+  `/notifications`) are constructed here and returned in
+  :class:`NotificationComponents`; they are registered centrally by
+  :func:`commands.assembly.register_all_commands` — not by this module.
 """
 
 from __future__ import annotations

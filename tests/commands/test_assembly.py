@@ -160,3 +160,59 @@ def test_focus_and_urgent_register_with_router() -> None:
     names = {c.command for c in reg.list()}
     assert "focus" in names
     assert "urgent" in names
+
+
+def test_registered_commands_are_correct_types(
+    tmp_path: Any,
+) -> None:
+    """Each registry slot must hold the correct concrete type — catches swap regressions."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    from stackowl.commands.focus_command import FocusCommand
+    from stackowl.commands.memory_command import MemoryCommand
+    from stackowl.commands.notifications_command import NotificationsMissedCommand
+    from stackowl.commands.owls_command import OwlsCommand
+    from stackowl.commands.quiet_command import QuietHoursCommand
+    from stackowl.commands.skill_command import SkillCommand
+    from stackowl.commands.urgent_command import UrgentCommand
+
+    fake_db = MagicMock()
+    fake_db.execute = AsyncMock()
+    fake_db.fetch_all = AsyncMock(return_value=[])
+    fake_bus = MagicMock()
+    fake_bus.emit = MagicMock()
+    fake_settings = MagicMock()
+    fake_bridge = MagicMock()
+    fake_router = _fake_router()
+    fake_store = MagicMock()
+    fake_loader = MagicMock()
+    fake_skills_root = tmp_path / "skills"
+    fake_skills_root.mkdir(parents=True, exist_ok=True)
+    fake_embedding = MagicMock()
+
+    deps = CommandDeps(
+        db=fake_db,
+        event_bus=fake_bus,
+        settings=fake_settings,
+        bridge=fake_bridge,
+        router=fake_router,
+        skills_store=fake_store,
+        skills_loader=fake_loader,
+        skills_root=fake_skills_root,
+        embedding_registry=fake_embedding,
+    )
+
+    reg = _fresh_registry()
+    register_all_commands(deps, registry=reg)
+    by_name = {c.command: c for c in reg.list()}
+
+    assert isinstance(by_name["focus"], FocusCommand), "focus slot holds wrong type"
+    assert isinstance(by_name["urgent"], UrgentCommand), "urgent slot holds wrong type"
+    assert isinstance(by_name["quiet"], QuietHoursCommand), "quiet slot holds wrong type"
+    assert isinstance(by_name["notifications"], NotificationsMissedCommand), (
+        "notifications slot holds wrong type"
+    )
+    assert isinstance(by_name["memory"], MemoryCommand), "memory slot holds wrong type"
+    assert isinstance(by_name["owls"], OwlsCommand), "owls slot holds wrong type"
+    assert isinstance(by_name["skill"], SkillCommand), "skill slot holds wrong type"

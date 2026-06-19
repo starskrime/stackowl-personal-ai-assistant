@@ -114,7 +114,9 @@ def register_all_commands(
     # load_builtin_commands() imports every *_command.py module and also
     # re-registers any already-cached _CMD instances (handles post-reset()
     # scenarios where importlib.import_module is a no-op).
-    load_builtin_commands()
+    # Pass *reg* so Pattern-A commands land in the same target registry as
+    # Pattern-B DI commands — not necessarily the global singleton.
+    load_builtin_commands(registry=reg)
 
     # ── 2. Pattern-B commands (DI, constructed + registered here) ──────────
     _register_di_commands(deps, reg)
