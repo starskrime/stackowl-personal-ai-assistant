@@ -257,3 +257,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         owl_registry=deps.owl_registry,
         event_bus=deps.event_bus,
     ))
+
+    # /reset
+    from stackowl.commands.reset import ResetCommand
+    registry.register(ResetCommand(bridge=deps.bridge))
