@@ -199,22 +199,41 @@ async def test_disconnect_command_unknown_service() -> None:
 
 
 @pytest.mark.asyncio
-async def test_disconnect_command_known_service_calls_oauth_delete() -> None:
-    """handle with a known service calls _oauth.delete() on the adapter."""
-    oauth_mock = MagicMock()
-    oauth_mock.delete = MagicMock()
+async def test_disconnect_command_known_service_calls_delete_credentials() -> None:
+    """handle calls the PUBLIC delete_credentials() (not private _oauth.delete).
+
+    The command no longer reaches into the adapter's private ``_oauth`` — it
+    uses the public ``delete_credentials() -> bool`` protocol method and reports
+    'credentials removed' only when it returns True.
+    """
+    from unittest.mock import AsyncMock
 
     adapter = MagicMock()
-    adapter._oauth = oauth_mock
-    # adapter has no 'disconnect' method to avoid async issues
-    del adapter.disconnect  # remove it so hasattr returns False
+    adapter.disconnect = AsyncMock()
+    adapter.delete_credentials = AsyncMock(return_value=True)
 
     cmd = _make_disconnect_command({"gmail": adapter})
     result = await cmd.handle("gmail", _make_pipeline_state())
 
-    oauth_mock.delete.assert_called_once()
+    adapter.delete_credentials.assert_awaited_once()
     assert "gmail" in result
-    assert "disconnected" in result.lower() or "✓" in result
+    assert "removed" in result.lower() or "✓" in result
+
+
+@pytest.mark.asyncio
+async def test_disconnect_command_honest_when_no_credentials() -> None:
+    """When delete_credentials() returns False, the command must NOT claim removal."""
+    from unittest.mock import AsyncMock
+
+    adapter = MagicMock()
+    adapter.disconnect = AsyncMock()
+    adapter.delete_credentials = AsyncMock(return_value=False)
+
+    cmd = _make_disconnect_command({"gmail": adapter})
+    result = await cmd.handle("gmail", _make_pipeline_state())
+
+    adapter.delete_credentials.assert_awaited_once()
+    assert "no stored credentials" in result.lower() or "no credentials" in result.lower()
 
 
 # ---------------------------------------------------------------------------
