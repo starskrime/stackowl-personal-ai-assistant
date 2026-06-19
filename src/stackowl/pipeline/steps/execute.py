@@ -27,6 +27,7 @@ from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
+from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, StepError, ToolCall
@@ -435,6 +436,15 @@ _WINDOW_PROBE_DEADLINE_S = 5.0
 # upper bound on stop latency contributed by a single in-flight tool.
 _TOOL_DEADLINE_S = 180.0
 
+# Incident P2 — same-tool repeated-failure circuit breaker. After this many
+# CONSECUTIVE genuine execution failures of the SAME tool within one turn, the
+# tool is bounced for the rest of the turn so a weak model cannot spiral on it
+# (the pictures-overclaim incident: 9 failing `shell` calls burned budget to the
+# 120s wall). One below LoopGuard's identical-args break_at=4 because this
+# breaker's scope is broader (any args, by tool name). Host-agnostic fixed N —
+# never tuned to a model/box (see feedback_never_pull_models_local_jetson).
+SAME_TOOL_FAILURE_THRESHOLD = 3
+
 
 async def _resolve_execute_window(state: PipelineState, provider: ModelProvider) -> int:
     """Resolve THIS turn's context window for the tool-loop budget — single probe.
@@ -549,6 +559,19 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         return state
 
 
+def _circuit_open_refusal(name: str) -> str:
+    """Stable, model-readable refusal for a tool whose same-tool failure breaker
+    tripped this turn (incident P2). Steers the model to change approach or stop;
+    carries NO case-specifics. NOT prefixed with TOOL_FAILED_MARKER — a bounce is
+    containment, not a tool failure, so the give-up judge must not read it as a
+    failed consequential action (mirrors the denied_this_run bounce)."""
+    return (
+        f"The action '{name}' has failed repeatedly this turn and is no longer "
+        f"available. Do not call it again — try a different approach, or if no "
+        f"alternative remains, stop and tell the user what you could not do."
+    )
+
+
 async def _run_with_tools(
     state: PipelineState,
     provider: ModelProvider,
@@ -651,6 +674,14 @@ async def _run_with_tools(
     # per capability per turn; a second failure of the same class falls through to
     # the honest TOOL_FAILED marker rather than substituting again).
     substituted_tags: set[str] = set()
+    # Incident P2 — same-tool repeated-failure circuit breaker. Per-turn, keyed by
+    # tool NAME (v1: shell/execute_code have no capability_tag, so name is the only
+    # key that catches the incident). A genuine execution failure increments the
+    # streak; a success resets it; at SAME_TOOL_FAILURE_THRESHOLD the tool is added
+    # to circuit_open and bounced at the top of _dispatch for the rest of the turn.
+    # A pre-execution refusal/deny (side_effect_committed=False) is NOT counted.
+    fail_streak: dict[str, int] = {}
+    circuit_open: set[str] = set()
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
@@ -666,6 +697,19 @@ async def _run_with_tools(
                 f"The action '{name}' was already declined this turn. Do not call it again — "
                 "respond to the user instead."
             )
+        # Incident P2 — circuit-open bounce. A tool that failed
+        # SAME_TOOL_FAILURE_THRESHOLD times in a row this turn is unavailable for
+        # the rest of the turn. This is a PRE-EXECUTION REFUSAL (like
+        # denied_this_run): it records NOTHING in the outcome ledger, so it cannot
+        # trip the consequential give-up floor (P0 honesty invariant). Steer the
+        # model to change approach or stop; the string carries no case-specifics.
+        if name in circuit_open:
+            log.engine.warning(
+                "[pipeline] execute: circuit open — tool bounced for remainder of turn",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                   "threshold": SAME_TOOL_FAILURE_THRESHOLD}},
+            )
+            return _circuit_open_refusal(name)
         # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
         # child (delegation_depth>0) is refused these tools even if it names one the
         # presented schema omitted: presentation gating is not authorization, so the
@@ -799,8 +843,6 @@ async def _run_with_tools(
         # no exactly-once concern); a consequential/write tool is left to run so an
         # in-flight effect is not abandoned half-way (exactly-once integrity > a few
         # hundred ms of stop latency). Fail-safe: any registry miss → proceed.
-        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
-
         _reg = get_services().turn_registry
         if _reg is not None and t.manifest.action_severity != "consequential":
             _turn = _reg.get(state.trace_id)
@@ -888,6 +930,26 @@ async def _run_with_tools(
             # honest give-up floor as if a real consequential action had failed.
             side_effect_committed=tr.side_effect_committed,
         )
+        # Incident P2 — update the same-tool circuit-breaker streak from this REAL
+        # tool run (a completed dispatch, not a pre-exec refusal/bounce). A success
+        # resets; a GENUINE execution failure (ran and failed, side-effect boundary
+        # crossed-or-maybe — i.e. NOT a validation refusal, which sets
+        # side_effect_committed=False) advances toward the cutoff. Severity-agnostic
+        # on purpose: the breaker contains spirals on ANY tool, not only write/
+        # consequential ones (shell=write, execute_code=consequential are both
+        # covered; a read-only tool that keeps failing is contained too).
+        if tr.success:
+            fail_streak[name] = 0
+        elif tr.side_effect_committed:
+            fail_streak[name] = fail_streak.get(name, 0) + 1
+            if fail_streak[name] >= SAME_TOOL_FAILURE_THRESHOLD:
+                circuit_open.add(name)
+                log.engine.warning(
+                    "[pipeline] execute: same-tool failure threshold reached — circuit open",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                       "streak": fail_streak[name],
+                                       "threshold": SAME_TOOL_FAILURE_THRESHOLD}},
+                )
         # F038 — DEMOTED: the old per-call matcher did a heuristic DB lookup +
         # emitted a learning event on the bus, but NO production subscriber existed
         # (only test files). Both were dead weight on the hot path. Replace with an
