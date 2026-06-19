@@ -1286,10 +1286,10 @@ async def _run_with_tools(
             f"durable:park:uncertain:task={exc.task_id}:"
             f"iteration={exc.step_index}:tool={exc.tool_name}"
         )
-        return state.evolve(
+        return _stamp_progress(state.evolve(
             durable_parked=True,
             errors=(*state.errors, marker),
-        )
+        ))
     except TurnStopped as exc:
         # Cooperative STOP (concurrent-msg §5.3) — the steering callback honored the
         # turn's stop_requested FLAG at an iteration boundary and raised this to END
@@ -1340,11 +1340,11 @@ async def _run_with_tools(
             )
             for rc in _stopped_raw
         )
-        return state.evolve(
+        return _stamp_progress(state.evolve(
             responses=(*state.responses, *_stopped_chunks),
             tool_calls=(*state.tool_calls, *_stopped_tool_records),
             errors=(*state.errors, f"turn:stopped:{exc.request_id}"),
-        )
+        ))
     except BudgetBreach as exc:
         log.engine.info(
             "[pipeline] execute: budget cap reached — stopping with partial",
