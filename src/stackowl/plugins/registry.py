@@ -153,6 +153,31 @@ class PluginRegistry:
         log.debug("[plugins] registry.list: exit", extra={"_fields": {"count": len(manifests)}})
         return manifests
 
+    def exists(self, name: str) -> bool:
+        """Return True when a plugin named *name* is installed (enabled or disabled).
+
+        Used by /plugins enable|disable to distinguish "plugin not found" from
+        "plugin already in the requested state" — prevents false-success responses.
+        """
+        # 1. ENTRY
+        log.debug("[plugins] registry.exists: entry", extra={"_fields": {"name": name}})
+        try:
+            conn = sqlite3.connect(self._db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM plugins WHERE name = ? LIMIT 1", (name,)
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception as exc:
+            log.error("[plugins] registry.exists: query failed", exc_info=exc)
+            raise
+        result = row is not None
+        # 4. EXIT
+        log.debug("[plugins] registry.exists: exit", extra={"_fields": {"name": name, "found": result}})
+        return result
+
     async def set_enabled(self, name: str, enabled: bool) -> None:
         """Enable or disable a plugin by name."""
         # 1. ENTRY

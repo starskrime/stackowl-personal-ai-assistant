@@ -274,6 +274,10 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.reset import ResetCommand
     registry.register(ResetCommand(bridge=deps.bridge))
 
+    # /plugins
+    from stackowl.commands.plugins_command import PluginsCommand
+    registry.register(PluginsCommand(plugin_registry=deps.plugin_registry))
+
     # /staged
     from stackowl.commands.staged_command import StagedCommand
     registry.register(StagedCommand(
