@@ -29,7 +29,7 @@ _EMPTY_FALLBACK = "(no brief content)"
 class BriefCommand(SlashCommand):
     """``/brief`` — deliver the morning brief to the current channel now."""
 
-    def __init__(self, handler: MorningBriefHandler) -> None:
+    def __init__(self, handler: MorningBriefHandler | None = None) -> None:
         self._handler = handler
 
     @property
@@ -41,6 +41,8 @@ class BriefCommand(SlashCommand):
         return "Deliver the morning brief to the current channel immediately."
 
     async def handle(self, args: str, state: PipelineState) -> str:
+        if self._handler is None:
+            return "✗ /brief: not configured"
         # 1. ENTRY
         log.gateway.debug(
             "[commands] brief.handle: entry",

@@ -204,3 +204,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /audit
     from stackowl.commands.audit import AuditCommand
     registry.register(AuditCommand(audit_logger=deps.audit_logger))
+
+    # /brief
+    from stackowl.commands.brief_command import BriefCommand
+    registry.register(BriefCommand(handler=deps.morning_brief_handler))
