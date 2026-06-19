@@ -16,7 +16,7 @@ and registered explicitly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from stackowl.infra.observability import log
 
@@ -202,7 +202,6 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     registry.register(WhoamiCommand(owl_registry=deps.owl_registry))
 
     # /audit
-    from typing import cast
 
     from stackowl.audit.logger import AuditLogger
     from stackowl.commands.audit import AuditCommand

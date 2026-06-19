@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -36,6 +37,12 @@ class WhoamiCommand(SlashCommand):
                 lines.append(f"Model tier: {manifest.model_tier}")
                 if manifest.provider_name:
                     lines.append(f"Provider: {manifest.provider_name}")
-            except Exception:
-                pass  # registry lookup failed — show what we have
+            except Exception as exc:
+                # Registry lookup failed — degrade to basic info, but never hide
+                # the error (project rule: no silent excepts).
+                log.gateway.debug(
+                    "[commands] whoami.handle: registry lookup failed — showing basic info",
+                    exc_info=exc,
+                    extra={"_fields": {"owl_name": state.owl_name}},
+                )
         return "\n".join(lines)

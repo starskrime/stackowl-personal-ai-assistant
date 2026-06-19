@@ -32,3 +32,13 @@ async def test_whoami_includes_role_and_tier() -> None:
 async def test_whoami_not_found_when_not_registered() -> None:
     with pytest.raises(CommandNotFoundError):
         await CommandRegistry.instance().dispatch("whoami", "", make_state())
+
+
+async def test_whoami_degrades_without_registry() -> None:
+    """With no owl_registry, /whoami still returns basic identity (no crash,
+    no silent failure) — covers the honest-degradation path."""
+    register_all_commands(CommandDeps(owl_registry=None), registry=CommandRegistry.instance())
+    result = await CommandRegistry.instance().dispatch("whoami", "", make_state())
+    assert "Owl:" in result
+    assert "Channel:" in result
+    assert "Session:" in result

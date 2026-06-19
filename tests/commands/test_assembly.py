@@ -14,7 +14,6 @@ from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
 from stackowl.notifications.router import NotificationRouter
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -56,34 +55,33 @@ def test_register_all_commands_returns_registry() -> None:
     assert result is reg
 
 
-def test_register_all_commands_all_none_deps_yields_all_15_live() -> None:
-    """Registration is dep-INDEPENDENT: with all-None deps, all 15 currently-live
-    commands still register (8 Pattern-A + 7 DI). This is the core invariant —
-    "shipped ⟺ registered" must not depend on runtime wiring, so the reachability
-    guard (which runs with empty deps) is a true proxy for production reachability.
-    """
+# The 15 commands that were live before the Epic B wiring campaign began.
+# Registration is dep-INDEPENDENT, so these must register even with empty deps.
+# (The EXACT full-set contract — all 29 — is owned by the reachability guard in
+# tests/journeys/commands/; this test only locks the core invariant that the
+# original 15 never regress as Epic B adds more.)
+_CORE_15 = {
+    "help", "config", "settings", "cost", "tools", "provider", "tier", "browser",
+    "skill", "memory", "owls", "focus", "urgent", "quiet", "notifications",
+}
+
+
+def test_register_all_commands_core_15_register_with_none_deps() -> None:
+    """Dep-INDEPENDENT registration: with all-None deps, the original 15 live
+    commands still register (8 Pattern-A + 7 DI). "shipped ⟺ registered" must not
+    depend on runtime wiring, so the reachability guard (empty deps) is a true
+    proxy for production reachability."""
     reg = _fresh_registry()
     register_all_commands(CommandDeps(), registry=reg)
     names = {c.command for c in reg.list()}
-    expected_live = {
-        "help", "config", "settings", "cost", "tools", "provider", "tier", "browser",
-        "skill", "memory", "owls", "focus", "urgent", "quiet", "notifications",
-    }
-    assert names == expected_live, (
-        f"extra={names - expected_live} missing={expected_live - names}"
-    )
+    assert names >= _CORE_15, f"missing core commands: {_CORE_15 - names}"
 
 
-def test_register_all_commands_with_full_deps_yields_15_live_commands(
+def test_register_all_commands_with_full_deps_includes_core_15(
     tmp_path: Any,
 ) -> None:
-    """Providing all deps for the 7 DI commands yields exactly the 15 live names."""
-    import asyncio
-    from pathlib import Path
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from stackowl.commands.assembly import CommandDeps, register_all_commands
-    from stackowl.commands.registry import CommandRegistry
+    """Providing real deps registers (at least) the core 15 with no duplicates."""
+    from unittest.mock import AsyncMock, MagicMock
 
     # Build minimal fake deps
     fake_db = MagicMock()
@@ -114,17 +112,11 @@ def test_register_all_commands_with_full_deps_yields_15_live_commands(
 
     reg = _fresh_registry()
     register_all_commands(deps, registry=reg)
-    names = {c.command for c in reg.list()}
+    all_cmds = [c.command for c in reg.list()]
+    names = set(all_cmds)
 
-    expected_live: set[str] = {
-        # Pattern A
-        "help", "config", "settings", "cost", "tools", "provider", "tier", "browser",
-        # Pattern B (DI)
-        "skill", "memory", "owls", "focus", "urgent", "quiet", "notifications",
-    }
-    assert names == expected_live, (
-        f"Registry mismatch.\n  extra={names - expected_live}\n  missing={expected_live - names}"
-    )
+    assert names >= _CORE_15, f"missing core commands: {_CORE_15 - names}"
+    assert len(all_cmds) == len(names), "duplicate command registrations detected"
 
 
 def test_register_all_commands_idempotent_on_second_call() -> None:
@@ -180,7 +172,6 @@ def test_registered_commands_are_correct_types(
     tmp_path: Any,
 ) -> None:
     """Each registry slot must hold the correct concrete type — catches swap regressions."""
-    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock
 
     from stackowl.commands.focus_command import FocusCommand
