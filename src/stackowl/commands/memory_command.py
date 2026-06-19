@@ -187,20 +187,28 @@ class MemoryCommand(SlashCommand):
         if not args:
             return "Usage: /memory delete <fact_id> [YES]"
         parts = args.split(maxsplit=1)
-        fact_id = parts[0]
+        prefix = parts[0]
         confirmation = parts[1].strip() if len(parts) > 1 else ""
+        # Resolve prefix → full fact, mirroring _forget so that short IDs work.
+        fact = await find_staged_by_id(self._bridge, prefix)
+        if fact is None:
+            log.memory.debug(
+                "[commands] memory.delete: no match",
+                extra={"_fields": {"prefix": prefix[:16]}},
+            )
+            return f"✗ /memory delete: no fact matches prefix '{prefix}'"
         if confirmation != _CONFIRMATION:
             log.memory.debug("[commands] memory.delete: decision — missing YES")
             return (
-                f"Confirm deletion of '{fact_id}'.\n"
-                f"Type '/memory delete {fact_id} YES' to proceed."
+                f"Confirm deletion of {fact.fact_id[:8]} ('{fact.content[:40]}...').\n"
+                f"Type '/memory delete {fact.fact_id} YES' to proceed."
             )
-        await forget_fact(self._bridge, fact_id, actor="user:delete")
+        await forget_fact(self._bridge, fact.fact_id, actor="user:delete")
         log.memory.info(
             "[commands] memory.delete: exit",
-            extra={"_fields": {"fact_id": fact_id}},
+            extra={"_fields": {"fact_id": fact.fact_id}},
         )
-        return f"✓ Deleted {fact_id}"
+        return f"✓ Deleted {fact.fact_id}"
 
     async def _budget(self) -> str:
         log.memory.debug("[commands] memory.budget: entry")
