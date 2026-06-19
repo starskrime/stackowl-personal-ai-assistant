@@ -674,14 +674,20 @@ async def _run_with_tools(
     # per capability per turn; a second failure of the same class falls through to
     # the honest TOOL_FAILED marker rather than substituting again).
     substituted_tags: set[str] = set()
-    # Incident P2 — same-tool repeated-failure circuit breaker. Per-turn, keyed by
-    # tool NAME (v1: shell/execute_code have no capability_tag, so name is the only
-    # key that catches the incident). A genuine execution failure increments the
-    # streak; a success resets it; at SAME_TOOL_FAILURE_THRESHOLD the tool is added
-    # to circuit_open and bounced at the top of _dispatch for the rest of the turn.
-    # A pre-execution refusal/deny (side_effect_committed=False) is NOT counted.
-    fail_streak: dict[str, int] = {}
-    circuit_open: set[str] = set()
+    # TurnProgressTracker — unified replacement for the P2 fail_streak/circuit_open
+    # pair. Closes G1 (timeout) and G2 (no-op refusal) spiral gaps in addition to
+    # the original same-tool repeated-failure containment. Window-scaled threshold:
+    # lean models get a tighter cap (2 vs 3) so they're contained faster.
+    from stackowl.pipeline.progress_tracker import TurnProgressTracker, resolve_no_progress_threshold
+    _np_threshold = resolve_no_progress_threshold(state.model_window)
+    progress = TurnProgressTracker(threshold=_np_threshold)
+
+    def _stamp_progress(st: PipelineState) -> PipelineState:
+        """Stamp turn-progress summary onto state at every _run_with_tools exit."""
+        return st.evolve(
+            turn_made_progress=progress.made_progress,
+            no_progress_tools=progress.opened_tools,
+        )
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
@@ -703,11 +709,11 @@ async def _run_with_tools(
         # denied_this_run): it records NOTHING in the outcome ledger, so it cannot
         # trip the consequential give-up floor (P0 honesty invariant). Steer the
         # model to change approach or stop; the string carries no case-specifics.
-        if name in circuit_open:
+        if progress.is_open(name):
             log.engine.warning(
                 "[pipeline] execute: circuit open — tool bounced for remainder of turn",
                 extra={"_fields": {"tool": name, "trace_id": state.trace_id,
-                                   "threshold": SAME_TOOL_FAILURE_THRESHOLD}},
+                                   "threshold": _np_threshold}},
             )
             return _circuit_open_refusal(name)
         # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
@@ -889,6 +895,9 @@ async def _run_with_tools(
                     name=name, action_severity=t.manifest.action_severity, success=False,
                     side_effect_committed=False,
                 )
+                # G2 — a missing-param refusal is zero-progress: advance the streak so
+                # a weak model that omits a required arg on every call gets bounced.
+                progress.record_no_progress(name)
                 _req = ", ".join(str(p) for p in _required)
                 return (
                     f"{TOOL_FAILED_MARKER}The call to '{name}' is missing required "
@@ -919,6 +928,9 @@ async def _run_with_tools(
             tool_outcome_ledger.record_tool_outcome(
                 name=name, action_severity=t.manifest.action_severity, success=False,
             )
+            # G1 — a timeout is zero-progress: advance the streak so a tool that
+            # keeps timing out gets bounced rather than spiralling through the budget.
+            progress.record_no_progress(name)
             return (
                 f"{TOOL_FAILED_MARKER}The action '{name}' was cancelled after exceeding the "
                 f"{_TOOL_DEADLINE_S:.0f}s per-tool time limit and did not complete."
@@ -930,25 +942,22 @@ async def _run_with_tools(
             # honest give-up floor as if a real consequential action had failed.
             side_effect_committed=tr.side_effect_committed,
         )
-        # Incident P2 — update the same-tool circuit-breaker streak from this REAL
-        # tool run (a completed dispatch, not a pre-exec refusal/bounce). A success
-        # resets; a GENUINE execution failure (ran and failed, side-effect boundary
-        # crossed-or-maybe — i.e. NOT a validation refusal, which sets
-        # side_effect_committed=False) advances toward the cutoff. Severity-agnostic
-        # on purpose: the breaker contains spirals on ANY tool, not only write/
-        # consequential ones (shell=write, execute_code=consequential are both
-        # covered; a read-only tool that keeps failing is contained too).
+        # TurnProgressTracker — update from this REAL completed dispatch (not a
+        # pre-exec refusal/bounce, which are counted in their own blocks above).
+        # A success resets the streak; ANY non-success (regardless of
+        # side_effect_committed) is zero-progress — that's the G2 design: the ledger
+        # above already uses committed-awareness for the honest floor; this counter
+        # is the INDEPENDENT containment signal (severity-agnostic: contains spirals
+        # on ANY tool, not only write/consequential ones).
         if tr.success:
-            fail_streak[name] = 0
-        elif tr.side_effect_committed:
-            fail_streak[name] = fail_streak.get(name, 0) + 1
-            if fail_streak[name] >= SAME_TOOL_FAILURE_THRESHOLD:
-                circuit_open.add(name)
+            progress.record_progress(name)
+        else:
+            opened = progress.record_no_progress(name)
+            if opened:
                 log.engine.warning(
                     "[pipeline] execute: same-tool failure threshold reached — circuit open",
                     extra={"_fields": {"tool": name, "trace_id": state.trace_id,
-                                       "streak": fail_streak[name],
-                                       "threshold": SAME_TOOL_FAILURE_THRESHOLD}},
+                                       "threshold": _np_threshold}},
                 )
         # F038 — DEMOTED: the old per-call matcher did a heuristic DB lookup +
         # emitted a learning event on the bus, but NO production subscriber existed
@@ -1368,12 +1377,12 @@ async def _run_with_tools(
                 # terminal honest floor decides on IMMUTABLE state (the ledger ContextVar
                 # may be torn down by the time the floor runs — F099). budget_capped=True
                 # arms the floor's goal-relevant (delivered-only) accounting (D1).
-                return _snapshot_consequential(state).evolve(
+                return _stamp_progress(_snapshot_consequential(state).evolve(
                     responses=(*state.responses, *_breach_chunks),
                     tool_calls=(*state.tool_calls, *_breach_tool_records),
                     errors=(*state.errors, marker),
                     budget_capped=True,
-                )
+                ))
             # Empty partial under the default backstop → graceful slot-free floor
             # (no raw budget error / blank capability fields surfaced to the user).
             floor = synthesize_floor(
@@ -1390,12 +1399,12 @@ async def _run_with_tools(
                 owl_name=state.owl_name,
                 is_floor=True,
             )
-            return _snapshot_consequential(state).evolve(
+            return _stamp_progress(_snapshot_consequential(state).evolve(
                 responses=(*state.responses, floor_chunk),
                 tool_calls=(*state.tool_calls, *_breach_tool_records),
                 errors=(*state.errors, marker),
                 budget_capped=True,
-            )
+            ))
         # Explicit cap: deliver partial with a human-visible budget note.
         note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
         _stop_content = (exc.partial_text + note) if exc.partial_text else note
@@ -1403,12 +1412,12 @@ async def _run_with_tools(
             content=_stop_content, is_final=False, chunk_index=0,
             trace_id=state.trace_id, owl_name=state.owl_name,
         ),)
-        return _snapshot_consequential(state).evolve(
+        return _stamp_progress(_snapshot_consequential(state).evolve(
             responses=(*state.responses, *_breach_chunks),
             tool_calls=(*state.tool_calls, *_breach_tool_records),
             errors=(*state.errors, marker),
             budget_capped=True,
-        )
+        ))
     except Exception as exc:
         log.engine.error(
             "[pipeline] execute: tool_loop failed",
@@ -1492,10 +1501,10 @@ async def _run_with_tools(
             "duration_ms": duration_ms,
         }},
     )
-    return state.evolve(
+    return _stamp_progress(state.evolve(
         responses=(*state.responses, *chunks),
         tool_calls=(*state.tool_calls, *tool_records),
-    )
+    ))
 
 
 def _resolve_manifest(owl_name: str) -> OwlAgentManifest | None:
