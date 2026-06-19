@@ -1447,12 +1447,12 @@ async def _run_with_tools(
             owl_name=state.owl_name,
             is_floor=True,
         )
-        return state.evolve(
+        return _stamp_progress(state.evolve(
             responses=(*state.responses, floor_chunk),
             errors=(*state.errors, format_step_error("execute", exc)),
             step_errors=(*state.step_errors,
                          StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
-        )
+        ))
 
     duration_ms = (time.monotonic() - t0) * 1000
     tool_records = tuple(
