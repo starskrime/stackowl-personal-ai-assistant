@@ -21,7 +21,6 @@ from typing import Any
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
-from stackowl.commands.registry import register_command
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_writer import store_secret
 from stackowl.events.bus import EventBus
@@ -296,4 +295,7 @@ class ProviderCommand(SlashCommand):
         return f"✓ Provider '{name}' tier set to {tier} — applies on the next reload/restart"
 
 
-_CMD = register_command(ProviderCommand())
+# Pattern-A self-registration removed (Epic C1): ProviderCommand is now a DI
+# command wired with the live event_bus via assembly._register_di_commands.
+# A module-level _CMD = register_command(ProviderCommand()) would permanently
+# fix event_bus=None on the registered instance, silencing all _emit_* calls.

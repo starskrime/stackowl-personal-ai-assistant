@@ -25,7 +25,6 @@ from stackowl.commands.config_helpers import (
     set_nested,
     stringify,
 )
-from stackowl.commands.registry import register_command
 from stackowl.config.settings import Settings
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
@@ -205,4 +204,7 @@ class ConfigCommand(SlashCommand):
         return text
 
 
-_CMD = register_command(ConfigCommand())
+# Pattern-A self-registration removed (Epic C1): ConfigCommand is now a DI
+# command wired with the live event_bus via assembly._register_di_commands.
+# A module-level _CMD = register_command(ConfigCommand()) would permanently fix
+# event_bus=None on the registered instance, silencing all _emit_* calls.

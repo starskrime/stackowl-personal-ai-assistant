@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml, set_nested
-from stackowl.commands.registry import register_command
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
@@ -96,4 +95,7 @@ class SettingsCommand(SlashCommand):
         return f"✓ autonomy_level = {level}"
 
 
-_CMD = register_command(SettingsCommand())
+# Pattern-A self-registration removed (Epic C1): SettingsCommand is now a DI
+# command wired with the live event_bus via assembly._register_di_commands.
+# A module-level _CMD = register_command(SettingsCommand()) would permanently
+# fix event_bus=None on the registered instance, silencing all _emit_* calls.

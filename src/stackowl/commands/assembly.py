@@ -282,3 +282,15 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         promoter=deps.promoter,
         event_bus=deps.event_bus,
     ))
+
+    # /config — moved from Pattern-A to DI so the live event_bus is wired (C1)
+    from stackowl.commands.config_command import ConfigCommand
+    registry.register(ConfigCommand(event_bus=deps.event_bus))
+
+    # /settings — moved from Pattern-A to DI so the live event_bus is wired (C1)
+    from stackowl.commands.settings_command import SettingsCommand
+    registry.register(SettingsCommand(event_bus=deps.event_bus))
+
+    # /provider — moved from Pattern-A to DI so the live event_bus is wired (C1)
+    from stackowl.commands.provider_command import ProviderCommand
+    registry.register(ProviderCommand(event_bus=deps.event_bus))
