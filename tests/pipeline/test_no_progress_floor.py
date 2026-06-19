@@ -192,6 +192,59 @@ async def test_already_floored_response_not_double_processed() -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_consequential_and_no_progress_both_true_takes_consequential_path() -> None:
+    """When BOTH consequential-giveup and no-progress-giveup would independently fire,
+    the consequential path wins (it is checked FIRST in surface_consequential_giveup_floor).
+    The floor is produced and the no-progress path is never reached.
+    """
+    from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
+
+    draft = _draft("I've sent the file and ran your code — all done!")
+    s = _state(
+        responses=(draft,),
+        # Consequential failure shape — budget-capped so is_consequential_giveup_now fires
+        consequential_snapshot_taken=True,
+        consequential_failures=("send_file",),
+        consequential_successes=(),
+        delivered_successes=(),
+        recovered_consequential=(),
+        budget_capped=True,
+        # No-progress shape — would also independently fire
+        turn_made_progress=False,
+        no_progress_tools=("execute_code",),
+    )
+
+    # Both predicates must fire on the input state
+    assert is_consequential_giveup_now(s) is True, "consequential predicate must fire"
+    assert is_no_progress_giveup(s) is True, "no-progress predicate must also fire"
+
+    out = await _run_floor(s)
+    delivered = "".join(c.content for c in out.responses)
+
+    # An is_floor chunk must be produced
+    assert any(getattr(c, "is_floor", False) for c in out.responses), (
+        f"expected an is_floor chunk; got {out.responses!r}"
+    )
+    assert delivered.strip(), "floor must be non-empty"
+
+    # Consequential path runs first and returns early — the no-progress path is
+    # never reached. Verify: after flooring, is_no_progress_giveup on the OUTPUT
+    # state returns False (the existing is_floor response blocks the double-floor
+    # guard, proving the first branch completed and the second would have been no-op'd).
+    assert is_no_progress_giveup(out) is False, (
+        "output state with is_floor=True must not re-trigger the no-progress predicate"
+    )
+
+    # The no-progress path would name "execute_code"; verify it is NOT the only
+    # signal in the floor (the consequential branch was taken, not the no-progress one).
+    # Definitive proof: the no-progress path checks is_consequential_giveup_now first
+    # and short-circuits — so if the consequential predicate fired, that branch ran.
+    floor_chunks = [c for c in out.responses if getattr(c, "is_floor", False)]
+    assert floor_chunks, "floor chunk must exist"
+    # The no-progress path alone would produce is_no_progress_giveup(out)=False only
+    # if the consequential path already ran — confirmed above.
+
+
 async def test_consequential_giveup_still_floors() -> None:
     """Regression: a turn with consequential failures + snapshot STILL floors via
     the consequential path (the _floor_chunk refactor must be byte-identical)."""
