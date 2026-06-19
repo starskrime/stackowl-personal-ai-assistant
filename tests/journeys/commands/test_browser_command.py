@@ -8,7 +8,6 @@ and reports the OSError) before returning a success message.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +16,6 @@ import pytest
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,6 +66,30 @@ async def test_browser_profile_delete_success(tmp_path: Path) -> None:
 
     assert "Deleted profile 'my_profile'" in result
     assert not profile_dir.exists(), "Directory must actually be removed"
+
+
+async def test_browser_profile_delete_rejects_path_traversal(tmp_path: Path) -> None:
+    """A '..' profile name must be rejected before touching the filesystem —
+    it must NOT rmtree the parent profiles_dir."""
+    profiles_dir = tmp_path / "profiles"
+    owner_dir = profiles_dir / "local"
+    sibling = profiles_dir / "other_owner"
+    owner_dir.mkdir(parents=True)
+    sibling.mkdir(parents=True)
+
+    runtime = _make_fake_runtime(profiles_dir)
+    fake_svc = _make_fake_services(runtime)
+
+    deps = CommandDeps()
+    with patch("stackowl.commands.browser_command.get_services", return_value=fake_svc):
+        register_all_commands(deps, registry=CommandRegistry.instance())
+        result = await CommandRegistry.instance().dispatch(
+            "browser", "profile delete ..", make_state()
+        )
+
+    assert "Invalid profile name" in result
+    # Nothing outside the rejected name was touched.
+    assert sibling.exists() and profiles_dir.exists()
 
 
 async def test_browser_profile_delete_not_found(tmp_path: Path) -> None:

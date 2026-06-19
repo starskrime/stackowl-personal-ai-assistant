@@ -157,7 +157,17 @@ class BrowserCommand(SlashCommand):
                 return f"No profiles for {owner_key}."
             return f"Profiles for {owner_key}:\n  " + "\n  ".join(entries)
         if sub == "delete" and len(args) >= 2:
-            target = args[1].replace(":", "_").replace("/", "_")
+            raw_name = args[1]
+            # Path-traversal guard: a name with '..' or a path separator could
+            # escape owner_dir and rmtree something outside it (e.g. '..' →
+            # the parent profiles_dir). Reject before touching the filesystem.
+            if ".." in raw_name or "/" in raw_name or "\\" in raw_name:
+                log.gateway.warning(
+                    "[commands] browser.profile_delete: rejected unsafe profile name",
+                    extra={"_fields": {"name": raw_name}},
+                )
+                return f"✗ Invalid profile name '{raw_name}'."
+            target = raw_name.replace(":", "_")
             target_dir = owner_dir / target
             if not target_dir.exists():
                 return f"Profile '{args[1]}' not found for {owner_key}."

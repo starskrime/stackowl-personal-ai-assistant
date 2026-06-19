@@ -21,8 +21,10 @@ from typing import TYPE_CHECKING, cast
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
+    from collections.abc import Callable
     from pathlib import Path
 
+    from stackowl.commands.base import SlashCommand
     from stackowl.commands.registry import CommandRegistry
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
@@ -36,6 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
     from stackowl.owls.registry import OwlRegistry
     from stackowl.parliament.orchestrator import ParliamentOrchestrator
     from stackowl.plugins.registry import PluginRegistry
+    from stackowl.scheduler.scheduler import JobScheduler
     from stackowl.skills.loader import SkillLoader
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.registry import ToolRegistry
@@ -140,6 +143,34 @@ def register_all_commands(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _safe_register(
+    registry: CommandRegistry,
+    label: str,
+    factory: Callable[[], SlashCommand],
+) -> None:
+    """Construct + register ONE command, isolating its failure from the rest.
+
+    Registration is dep-INDEPENDENT (factories are called even with None deps),
+    so the reachability guard (run with empty deps) is a true proxy for
+    production reachability. But a future command whose ``__init__`` does eager
+    I/O could raise at construction; without isolation that single failure would
+    abort registration of every command after it — silently vanishing a whole
+    swath of the surface into "Unknown slash command" (the exact
+    "looks-wired-but-never-fires" bug this overhaul exists to kill). So each
+    command is constructed in its own try/except: a failure is logged + skipped,
+    the others still register, and the ``== SHIPPED_COMMANDS`` guard flags the
+    one that went missing.
+    """
+    try:
+        registry.register(factory())
+    except Exception as exc:  # noqa: BLE001 — one bad command must not abort the rest
+        log.gateway.error(
+            "[commands] assembly: command failed to construct/register — skipped",
+            exc_info=exc,
+            extra={"_fields": {"command": label}},
+        )
+
+
 def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     """Construct and register each DI command using deps.
 
@@ -151,12 +182,13 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     registers and emits an honest "not configured" message at dispatch time —
     rather than silently vanishing into "Unknown slash command" (the exact
     "looks-wired-but-never-fires" bug this whole overhaul exists to kill).
-    All command ``__init__`` methods tolerate None deps (verified).
+    All command ``__init__`` methods tolerate None deps (verified). Each
+    construction is isolated via :func:`_safe_register`.
     """
 
     # /skill
     from stackowl.commands.skill_command import SkillCommand
-    registry.register(SkillCommand(
+    _safe_register(registry, "skill", lambda: SkillCommand(
         store=deps.skills_store,
         loader=deps.skills_loader,
         skills_root=deps.skills_root,
@@ -165,7 +197,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /memory
     from stackowl.commands.memory_command import MemoryCommand
-    registry.register(MemoryCommand(
+    _safe_register(registry, "memory", lambda: MemoryCommand(
         bridge=deps.bridge,
         settings=deps.settings,
         db=deps.db,
@@ -177,7 +209,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /owls
     from stackowl.commands.owls_command import OwlsCommand
-    registry.register(OwlsCommand(
+    _safe_register(registry, "owls", lambda: OwlsCommand(
         owl_registry=deps.owl_registry,
         db=deps.db,
         event_bus=deps.event_bus,
@@ -186,33 +218,33 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /focus
     from stackowl.commands.focus_command import FocusCommand
-    registry.register(FocusCommand(router=deps.router, event_bus=deps.event_bus))
+    _safe_register(registry, "focus", lambda: FocusCommand(router=deps.router, event_bus=deps.event_bus))
 
     # /urgent
     from stackowl.commands.urgent_command import UrgentCommand
-    registry.register(UrgentCommand(router=deps.router))
+    _safe_register(registry, "urgent", lambda: UrgentCommand(router=deps.router))
 
     # /quiet
     from stackowl.commands.quiet_command import QuietHoursCommand
-    registry.register(QuietHoursCommand(db=deps.db))
+    _safe_register(registry, "quiet", lambda: QuietHoursCommand(db=deps.db))
 
     # /notifications
     from stackowl.commands.notifications_command import NotificationsMissedCommand
-    registry.register(NotificationsMissedCommand(db=deps.db))
+    _safe_register(registry, "notifications", lambda: NotificationsMissedCommand(db=deps.db))
 
     # /why
     from stackowl.commands.why import WhyCommand
-    registry.register(WhyCommand())
+    _safe_register(registry, "why", lambda: WhyCommand())
 
     # /whoami
     from stackowl.commands.whoami import WhoamiCommand
-    registry.register(WhoamiCommand(owl_registry=deps.owl_registry))
+    _safe_register(registry, "whoami", lambda: WhoamiCommand(owl_registry=deps.owl_registry))
 
     # /audit (and /audit export subcommand)
     from stackowl.audit.logger import AuditLogger
     from stackowl.commands.audit import AuditCommand
     _export_key = deps.settings.governance.audit_export_key if deps.settings is not None else ""
-    registry.register(AuditCommand(
+    _safe_register(registry, "audit", lambda: AuditCommand(
         audit_logger=cast("AuditLogger | None", deps.audit_logger),
         export_key=_export_key,
     ))
@@ -220,15 +252,16 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /brief
     from stackowl.commands.brief_command import BriefCommand
     from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
-    registry.register(BriefCommand(handler=cast("MorningBriefHandler | None", deps.morning_brief_handler)))
+    _safe_register(registry, "brief", lambda: BriefCommand(
+        handler=cast("MorningBriefHandler | None", deps.morning_brief_handler)))
 
     # /webhook
     from stackowl.commands.webhook_command import WebhookCommand
-    registry.register(WebhookCommand(db=deps.db, settings=deps.settings))
+    _safe_register(registry, "webhook", lambda: WebhookCommand(db=deps.db, settings=deps.settings))
 
     # /permissions
     from stackowl.commands.permissions import PermissionsCommand
-    registry.register(PermissionsCommand(
+    _safe_register(registry, "permissions", lambda: PermissionsCommand(
         settings=deps.settings,
         integration_registry=deps.integration_registry,
         plugin_registry=deps.plugin_registry,
@@ -236,8 +269,8 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /agents
     from stackowl.commands.agents_command import AgentsCommand
-    registry.register(AgentsCommand(
-        scheduler=deps.scheduler,
+    _safe_register(registry, "agents", lambda: AgentsCommand(
+        scheduler=cast("JobScheduler | None", deps.scheduler),
         db=deps.db,
         event_bus=deps.event_bus,
     ))
@@ -245,8 +278,8 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /agent
     from stackowl.commands.agent_create_command import AgentCreateCommand
     from stackowl.providers.registry import ProviderRegistry
-    registry.register(AgentCreateCommand(
-        scheduler=deps.scheduler,
+    _safe_register(registry, "agent", lambda: AgentCreateCommand(
+        scheduler=cast("JobScheduler | None", deps.scheduler),
         provider_registry=cast("ProviderRegistry | None", deps.provider_registry),
         db=deps.db,
         event_bus=deps.event_bus,
@@ -255,7 +288,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /parliament
     from stackowl.commands.parliament_command import ParliamentCommand
     from stackowl.parliament.session_store import SessionStore
-    registry.register(ParliamentCommand(
+    _safe_register(registry, "parliament", lambda: ParliamentCommand(
         orchestrator=deps.parliament_orchestrator,
         session_store=cast("SessionStore | None", deps.parliament_session_store),
         owl_registry=deps.owl_registry,
@@ -264,20 +297,20 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /reset
     from stackowl.commands.reset import ResetCommand
-    registry.register(ResetCommand(bridge=deps.bridge))
+    _safe_register(registry, "reset", lambda: ResetCommand(bridge=deps.bridge))
 
     # /connect + /disconnect
     from stackowl.commands.connect_command import ConnectCommand, DisconnectCommand
-    registry.register(ConnectCommand(integration_registry=deps.integration_registry))
-    registry.register(DisconnectCommand(integration_registry=deps.integration_registry))
+    _safe_register(registry, "connect", lambda: ConnectCommand(integration_registry=deps.integration_registry))
+    _safe_register(registry, "disconnect", lambda: DisconnectCommand(integration_registry=deps.integration_registry))
 
     # /plugins
     from stackowl.commands.plugins_command import PluginsCommand
-    registry.register(PluginsCommand(plugin_registry=deps.plugin_registry))
+    _safe_register(registry, "plugins", lambda: PluginsCommand(plugin_registry=deps.plugin_registry))
 
     # /staged
     from stackowl.commands.staged_command import StagedCommand
-    registry.register(StagedCommand(
+    _safe_register(registry, "staged", lambda: StagedCommand(
         bridge=deps.bridge,
         promoter=deps.promoter,
         event_bus=deps.event_bus,
@@ -285,12 +318,12 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /config — moved from Pattern-A to DI so the live event_bus is wired (C1)
     from stackowl.commands.config_command import ConfigCommand
-    registry.register(ConfigCommand(event_bus=deps.event_bus))
+    _safe_register(registry, "config", lambda: ConfigCommand(event_bus=deps.event_bus))
 
     # /settings — moved from Pattern-A to DI so the live event_bus is wired (C1)
     from stackowl.commands.settings_command import SettingsCommand
-    registry.register(SettingsCommand(event_bus=deps.event_bus))
+    _safe_register(registry, "settings", lambda: SettingsCommand(event_bus=deps.event_bus))
 
     # /provider — moved from Pattern-A to DI so the live event_bus is wired (C1)
     from stackowl.commands.provider_command import ProviderCommand
-    registry.register(ProviderCommand(event_bus=deps.event_bus))
+    _safe_register(registry, "provider", lambda: ProviderCommand(event_bus=deps.event_bus))

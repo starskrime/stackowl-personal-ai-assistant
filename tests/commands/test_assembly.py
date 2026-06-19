@@ -55,6 +55,37 @@ def test_register_all_commands_returns_registry() -> None:
     assert result is reg
 
 
+def test_safe_register_isolates_a_failing_construction() -> None:
+    """One command whose construction raises must NOT abort the others.
+
+    Reinforces the core invariant: a future eager-I/O command that throws at
+    __init__ is skipped + logged, the rest still register, and the reachability
+    guard (== SHIPPED) flags the one that went missing — instead of a single
+    failure silently vanishing a whole swath of the surface.
+    """
+    from unittest.mock import patch
+
+    reg = _fresh_registry()
+    real_skill = __import__("stackowl.commands.skill_command", fromlist=["SkillCommand"]).SkillCommand
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("simulated eager-I/O failure at construction")
+
+    # Make ONLY /skill construction blow up; everything else must still register.
+    with patch.object(
+        __import__("stackowl.commands.skill_command", fromlist=["SkillCommand"]),
+        "SkillCommand",
+        side_effect=_boom,
+    ):
+        register_all_commands(CommandDeps(), registry=reg)
+
+    names = {c.command for c in reg.list()}
+    assert "skill" not in names, "the failing command must be skipped"
+    # The rest of the core set still registered despite the failure.
+    assert (_CORE_15 - {"skill"}) <= names
+    assert real_skill is not None  # sanity: symbol exists
+
+
 # The 15 commands that were live before the Epic B wiring campaign began.
 # Registration is dep-INDEPENDENT, so these must register even with empty deps.
 # (The EXACT full-set contract — all 29 — is owned by the reachability guard in
