@@ -192,3 +192,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /notifications
     from stackowl.commands.notifications_command import NotificationsMissedCommand
     registry.register(NotificationsMissedCommand(db=deps.db))
+
+    # /why
+    from stackowl.commands.why import WhyCommand
+    registry.register(WhyCommand())
