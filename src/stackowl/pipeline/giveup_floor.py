@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
+from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
 from stackowl.pipeline.persistence import is_unachieved_consequential_giveup
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
@@ -99,7 +100,17 @@ def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk
     """Build an is_floor=True honest-floor ResponseChunk naming ``failed_name``.
 
     Pure, deterministic, no model call. Shared by the consequential-giveup path and
-    the no-progress-giveup path (Task 4) so the chunk shape stays byte-identical."""
+    the no-progress-giveup path (Task 4) so the chunk shape stays byte-identical.
+
+    When ``state.model_window`` is set and ≤ ``LEAN_WINDOW_THRESHOLD``, passes
+    ``lean=True`` to :func:`synthesize_floor` so the message includes a
+    capability-honest acknowledgement that the model's limited context window may
+    have contributed to the failure. On a normal or unknown window ``lean=False``
+    preserves byte-identical output."""
+    _lean = (
+        state.model_window is not None
+        and state.model_window <= LEAN_WINDOW_THRESHOLD
+    )
     floor_text = synthesize_floor(
         goal=state.input_text,
         error=None,
@@ -107,6 +118,7 @@ def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk
         partial=None,
         failed_capability=failed_name,
         lang=state.language,  # F089/F098 — localize the provider-down floor
+        lean=_lean,
     )
     return ResponseChunk(
         content=floor_text,

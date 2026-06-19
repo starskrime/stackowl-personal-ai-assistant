@@ -152,6 +152,7 @@ def synthesize_floor(
     *,
     failed_capability: str | None = None,
     lang: str = "en",
+    lean: bool = False,
 ) -> str:
     """Pure, deterministic never-empty honest floor message — NO model, NO await, NO I/O.
 
@@ -163,6 +164,11 @@ def synthesize_floor(
 
     ``failed_capability`` — when ``None`` it is derived from ``attempts[0]``;
     :func:`synthesize_from_calls` passes the precise failed tool name.
+
+    ``lean`` — when ``True`` (model window ≤ ``LEAN_WINDOW_THRESHOLD``), a
+    capability-honest suffix is appended via the localization layer
+    (``self_heal_floor_lean_suffix``). When ``False`` (default), output is
+    BYTE-IDENTICAL to the previous behaviour — no suffix is ever added.
 
     This function ONLY produces a string — it never touches ``errors`` or
     pipeline state (the responses-only invariant is enforced at the call sites).
@@ -177,6 +183,7 @@ def synthesize_floor(
                 "has_partial": bool(partial),
                 "failed_capability": failed_capability,
                 "lang": lang,
+                "lean": lean,
             }
         },
     )
@@ -209,9 +216,19 @@ def synthesize_floor(
         )
         if not result:
             raise ValueError("empty floor result")
+        # Lean-window capability-honest suffix: appended only when lean=True so
+        # that lean=False output is BYTE-IDENTICAL to the previous behaviour.
+        if lean:
+            suffix = localize("self_heal_floor_lean_suffix", lang)
+            if suffix:
+                result = result + " " + suffix
+                log.engine.debug(
+                    "supervisor.synthesize_floor: lean suffix appended",
+                    extra={"_fields": {"lang": lang, "suffix_len": len(suffix)}},
+                )
         log.engine.debug(
             "supervisor.synthesize_floor: exit",
-            extra={"_fields": {"result_len": len(result)}},
+            extra={"_fields": {"result_len": len(result), "lean": lean}},
         )
         return result
     except Exception as exc:  # noqa: BLE001
