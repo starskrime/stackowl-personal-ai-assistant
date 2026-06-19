@@ -1,4 +1,4 @@
-"""Story 7.2 — command-surface tests (AgentCreateCommand + AgentsCommand).
+"""Story 7.2 — command-surface tests (AgentCommand + AgentCommand).
 
 Split from :mod:`tests.test_story_7_2` to keep both test files inside the
 B2 300-line cap.
@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from stackowl.commands.agent_create_command import AgentCreateCommand
-from stackowl.commands.agents_command import AgentsCommand
+from stackowl.commands.agent_create_command import AgentCommand
+from stackowl.commands.agent_create_command import AgentCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job
@@ -98,14 +98,14 @@ class _StubProviderRegistry:
 
 
 # ---------------------------------------------------------------------------
-# B. AgentCreateCommand — 5 tests
+# B. AgentCommand — 5 tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestAgentCreateCommand:
+class TestAgentCommand:
     async def test_command_name_is_agent(self) -> None:
-        cmd = AgentCreateCommand()
+        cmd = AgentCommand()
         assert cmd.command == "agent"
 
     async def test_create_calls_llm_and_returns_proposal(self) -> None:
@@ -119,7 +119,7 @@ class TestAgentCreateCommand:
         )
         provider_registry = _StubProviderRegistry(canned_text=canned)
         scheduler = _StubScheduler()
-        cmd = AgentCreateCommand(
+        cmd = AgentCommand(
             scheduler=scheduler,  # type: ignore[arg-type]
             provider_registry=provider_registry,  # type: ignore[arg-type]
         )
@@ -142,7 +142,7 @@ class TestAgentCreateCommand:
         )
         provider_registry = _StubProviderRegistry(canned_text=canned)
         scheduler = _StubScheduler()
-        cmd = AgentCreateCommand(
+        cmd = AgentCommand(
             scheduler=scheduler,  # type: ignore[arg-type]
             provider_registry=provider_registry,  # type: ignore[arg-type]
         )
@@ -167,7 +167,7 @@ class TestAgentCreateCommand:
         )
         provider_registry = _StubProviderRegistry(canned_text=canned)
         scheduler = _StubScheduler()
-        cmd = AgentCreateCommand(
+        cmd = AgentCommand(
             scheduler=scheduler,  # type: ignore[arg-type]
             provider_registry=provider_registry,  # type: ignore[arg-type]
         )
@@ -185,7 +185,7 @@ class TestAgentCreateCommand:
     async def test_confirm_with_no_pending_returns_no_pending_message(self) -> None:
         scheduler = _StubScheduler()
         provider_registry = _StubProviderRegistry(canned_text="{}")
-        cmd = AgentCreateCommand(
+        cmd = AgentCommand(
             scheduler=scheduler,  # type: ignore[arg-type]
             provider_registry=provider_registry,  # type: ignore[arg-type]
         )
@@ -195,16 +195,16 @@ class TestAgentCreateCommand:
 
 
 # ---------------------------------------------------------------------------
-# C. AgentsCommand subcommands — 7 tests
+# C. AgentCommand subcommands — 7 tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestAgentsCommandSubcommands:
+class TestAgentCommandSubcommands:
     async def test_list_calls_scheduler_and_formats_table(self) -> None:
         jobs = [make_job("goal_execution"), make_job("morning_brief")]
         scheduler = _StubScheduler().with_jobs(jobs)
-        cmd = AgentsCommand(scheduler=scheduler)  # type: ignore[arg-type]
+        cmd = AgentCommand(scheduler=scheduler)  # type: ignore[arg-type]
 
         out = await cmd.handle("list", make_state())
         assert "handler" in out
@@ -213,7 +213,7 @@ class TestAgentsCommandSubcommands:
 
     async def test_pause_calls_scheduler_pause(self) -> None:
         scheduler = _StubScheduler()
-        cmd = AgentsCommand(scheduler=scheduler)  # type: ignore[arg-type]
+        cmd = AgentCommand(scheduler=scheduler)  # type: ignore[arg-type]
 
         out = await cmd.handle("pause job-123", make_state())
         assert scheduler.paused == ["job-123"]
@@ -221,7 +221,7 @@ class TestAgentsCommandSubcommands:
 
     async def test_resume_calls_scheduler_resume(self) -> None:
         scheduler = _StubScheduler()
-        cmd = AgentsCommand(scheduler=scheduler)  # type: ignore[arg-type]
+        cmd = AgentCommand(scheduler=scheduler)  # type: ignore[arg-type]
 
         out = await cmd.handle("resume job-456", make_state())
         assert scheduler.resumed == ["job-456"]
@@ -229,7 +229,7 @@ class TestAgentsCommandSubcommands:
 
     async def test_stop_prompts_confirmation_without_yes(self) -> None:
         scheduler = _StubScheduler()
-        cmd = AgentsCommand(scheduler=scheduler)  # type: ignore[arg-type]
+        cmd = AgentCommand(scheduler=scheduler)  # type: ignore[arg-type]
 
         out = await cmd.handle("stop job-789", make_state())
         assert scheduler.stopped == []
@@ -238,7 +238,7 @@ class TestAgentsCommandSubcommands:
 
     async def test_stop_with_yes_calls_scheduler_stop_job(self) -> None:
         scheduler = _StubScheduler()
-        cmd = AgentsCommand(scheduler=scheduler)  # type: ignore[arg-type]
+        cmd = AgentCommand(scheduler=scheduler)  # type: ignore[arg-type]
 
         out = await cmd.handle("stop job-789 YES", make_state())
         assert scheduler.stopped == ["job-789"]
@@ -260,7 +260,7 @@ class TestAgentsCommandSubcommands:
             },
         ]
         db = RecordingDb(fetch_returns=rows)
-        cmd = AgentsCommand(db=db)  # type: ignore[arg-type]
+        cmd = AgentCommand(db=db)  # type: ignore[arg-type]
 
         out = await cmd.handle("log job-abc", make_state())
         assert "result one" in out
@@ -269,7 +269,7 @@ class TestAgentsCommandSubcommands:
 
     async def test_log_returns_no_runs_when_empty(self) -> None:
         db = RecordingDb(fetch_returns=[])
-        cmd = AgentsCommand(db=db)  # type: ignore[arg-type]
+        cmd = AgentCommand(db=db)  # type: ignore[arg-type]
         out = await cmd.handle("log job-xyz", make_state())
         assert "No runs recorded" in out
         assert "job-xyz" in out

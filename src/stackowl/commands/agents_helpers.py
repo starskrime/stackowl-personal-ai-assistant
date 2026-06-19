@@ -1,4 +1,4 @@
-"""Helpers for :class:`AgentsCommand` (Story 7.2).
+"""Helpers for the unified `AgentCommand` (Story 7.2).
 
 Kept separate so the command file stays under the 300-line B2 cap and so
 the formatting helpers are unit-testable in isolation.
@@ -21,7 +21,7 @@ def _truncate(value: str | None, width: int) -> str:
 
 
 def format_jobs_table(jobs: list[Job]) -> str:
-    """Render a fixed-width table of registered jobs for ``/agents list``."""
+    """Render a fixed-width table of registered jobs for ``/agent list``."""
     if not jobs:
         return _NO_JOBS_MSG
     header = (
@@ -43,7 +43,7 @@ def format_jobs_table(jobs: list[Job]) -> str:
 
 
 def format_results_table(job_id: str, rows: list[dict[str, Any]]) -> str:
-    """Render the last-N runs of a single agent for ``/agents log <job_id>``."""
+    """Render the last-N runs of a single agent for ``/agent log <job_id>``."""
     if not rows:
         return _NO_RUNS_MSG.format(job_id=job_id)
     header = (

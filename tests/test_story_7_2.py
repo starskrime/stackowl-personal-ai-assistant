@@ -1,6 +1,6 @@
 """Story 7.2 — GoalExecutionHandler full implementation + helper unit tests.
 
-The command-surface tests (AgentCreateCommand, AgentsCommand subcommands)
+The command-surface tests (AgentCommand, AgentCommand subcommands)
 live in :mod:`tests.test_story_7_2b` so neither file crosses the B2
 300-line cap.
 """

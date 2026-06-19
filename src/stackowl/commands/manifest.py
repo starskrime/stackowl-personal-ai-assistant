@@ -36,7 +36,7 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "quiet",
     "notifications",
     # ── DI commands to be wired in Epic B ──────────────────────────────────
-    "agents",
+    # NOTE: the former /agents (manage) is merged into /agent (create + manage).
     "agent",
     "reset",
     "permissions",

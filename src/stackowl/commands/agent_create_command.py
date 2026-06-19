@@ -1,17 +1,26 @@
-"""AgentCreateCommand — ``/agent`` slash command for natural-language agent creation.
+"""AgentCommand — the unified ``/agent`` slash command for background agents.
 
-Story 7.2 ships a two-step handshake:
+Merges the former ``/agent`` (create) and ``/agents`` (manage) commands into a
+single surface so users don't have to remember a singular/plural distinction.
+Two lifecycle halves, no overlapping subcommands:
 
+CREATE (two-step handshake, scoped per ``session_id``):
 * ``/agent create <intent>`` — sends the intent through an LLM with the
   ``agent_intent.j2`` template, parses the structured response, and **proposes**
-  the resulting agent definition (handler / schedule / params). No job row
-  is written until the user confirms.
-* ``/agent confirm`` — turns the proposal stored under the current session
-  into a real ``jobs`` row via :meth:`JobScheduler.create_job`.
-* ``/agent cancel`` — discards the pending proposal.
+  the agent definition (handler / schedule / params). No job row is written
+  until confirmed.
+* ``/agent confirm`` — turns the pending proposal into a real ``jobs`` row via
+  :meth:`JobScheduler.create_job`.
+* ``/agent cancel`` — discards the pending (unconfirmed) proposal. NOTE: this is
+  distinct from ``stop`` — ``cancel`` drops a proposal that was never created;
+  ``stop`` removes an agent that already exists.
 
-Pending proposals are scoped per ``session_id`` so concurrent CLI / Telegram
-sessions don't collide.
+MANAGE (operate on already-created agents):
+* ``/agent list`` — show registered agents.
+* ``/agent log <job_id>`` — last 10 recorded runs.
+* ``/agent pause|resume <job_id>`` — pause / resume an agent.
+* ``/agent acknowledge <job_id>`` — clear failures and re-arm an agent.
+* ``/agent stop <job_id>`` — permanently remove an agent (asks YES).
 """
 
 from __future__ import annotations
@@ -25,11 +34,13 @@ from stackowl.commands.agent_create_helpers import (
     format_proposal,
     parse_intent_response,
 )
+from stackowl.commands.agents_helpers import format_jobs_table, format_results_table
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
 from stackowl.providers.base import Message
+from stackowl.scheduler.scheduler_helpers import compute_next_run, write_audit
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
@@ -46,19 +57,26 @@ _TEMPLATE_NAME = "agent_intent.j2"
 _FAST_TIER = "fast"
 
 _USAGE = (
-    "Usage: /agent <create|confirm|cancel> [args]\n"
-    "  /agent create <intent>  — propose a new background agent from natural language\n"
-    "  /agent confirm          — confirm the pending proposal and create the job\n"
-    "  /agent cancel           — discard the pending proposal"
+    "Usage: /agent <subcommand> [args]\n"
+    "  create <intent>      — propose a new background agent from natural language\n"
+    "  confirm              — confirm the pending proposal and create the agent\n"
+    "  cancel               — discard the pending (unconfirmed) proposal\n"
+    "  list                 — show registered background agents\n"
+    "  log <job_id>         — show the last 10 recorded runs\n"
+    "  pause <job_id>       — pause an agent\n"
+    "  resume <job_id>      — resume a paused agent\n"
+    "  acknowledge <job_id> — clear failures and re-arm an agent\n"
+    "  stop <job_id>        — permanently remove an agent (asks YES)"
 )
 
 _NO_PENDING = "No pending agent proposal for this session — run /agent create <intent> first."
 _NO_PROVIDER = "Provider registry not configured — cannot create agents."
-_NO_SCHEDULER = "Scheduler not configured — cannot create agents."
+_NO_SCHEDULER = "✗ scheduler not wired — cannot manage agents."
+_NO_DB = "✗ no database wired — cannot read agent history."
 
 
-class AgentCreateCommand(SlashCommand):
-    """Implements ``/agent [create|confirm|cancel]``."""
+class AgentCommand(SlashCommand):
+    """Implements the unified ``/agent`` (create + manage) command."""
 
     def __init__(
         self,
@@ -86,7 +104,7 @@ class AgentCreateCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Create background agents from natural-language intents."
+        return "Create and manage background agents (create/confirm/cancel, list/pause/resume/stop/log/acknowledge)."
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.scheduler.debug(
@@ -97,12 +115,26 @@ class AgentCreateCommand(SlashCommand):
         sub = parts[0].lower() if parts else ""
         rest = parts[1] if len(parts) > 1 else ""
         try:
+            # --- create half (proposal handshake) ---
             if sub == "create":
                 result = await self._create(rest.strip(), state)
             elif sub == "confirm":
                 result = await self._confirm(state)
             elif sub == "cancel":
                 result = self._cancel(state)
+            # --- manage half (existing agents) ---
+            elif sub == "list":
+                result = await self._list()
+            elif sub == "log":
+                result = await self._log(rest)
+            elif sub == "pause":
+                result = await self._pause(rest)
+            elif sub == "resume":
+                result = await self._resume(rest)
+            elif sub == "acknowledge":
+                result = await self._acknowledge(rest)
+            elif sub == "stop":
+                result = await self._stop(rest)
             else:
                 log.scheduler.debug(
                     "[commands] agent.handle: unknown subcommand",
@@ -127,7 +159,10 @@ class AgentCreateCommand(SlashCommand):
         )
         return result
 
-    # --------------------------------------------------------------- create
+    # =====================================================================
+    # CREATE half
+    # =====================================================================
+
     async def _create(self, intent: str, state: PipelineState) -> str:
         log.scheduler.debug(
             "[commands] agent.create: entry",
@@ -190,7 +225,6 @@ class AgentCreateCommand(SlashCommand):
         )
         return format_proposal(parsed)
 
-    # -------------------------------------------------------------- confirm
     async def _confirm(self, state: PipelineState) -> str:
         log.scheduler.debug(
             "[commands] agent.confirm: entry",
@@ -249,7 +283,6 @@ class AgentCreateCommand(SlashCommand):
             f"  Next run: {job.next_run_at}"
         )
 
-    # --------------------------------------------------------------- cancel
     def _cancel(self, state: PipelineState) -> str:
         log.scheduler.debug(
             "[commands] agent.cancel: entry",
@@ -268,7 +301,177 @@ class AgentCreateCommand(SlashCommand):
         )
         return "✓ Pending agent proposal discarded."
 
-    # --------------------------------------------------------------- factory
+    # =====================================================================
+    # MANAGE half
+    # =====================================================================
+
+    async def _list(self) -> str:
+        log.scheduler.debug("[commands] agent.list: entry")
+        if self._scheduler is None:
+            return _NO_SCHEDULER
+        jobs = await self._scheduler.list_jobs()
+        rendered = format_jobs_table(jobs)
+        log.scheduler.debug(
+            "[commands] agent.list: exit",
+            extra={"_fields": {"count": len(jobs)}},
+        )
+        return rendered
+
+    async def _acknowledge(self, rest: str) -> str:
+        log.scheduler.debug(
+            "[commands] agent.acknowledge: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._db is None:
+            return _NO_DB
+        job_id = rest.strip()
+        if not job_id:
+            raise CommandParseError("agent", "missing <job_id>")
+        rows = await self._db.fetch_all(
+            "SELECT schedule FROM jobs WHERE job_id = ?", (job_id,)
+        )
+        if not rows:
+            log.scheduler.warning(
+                "[commands] agent.acknowledge: job not found",
+                extra={"_fields": {"job_id": job_id}},
+            )
+            return f"✗ /agent acknowledge: no job with id '{job_id}'"
+        next_run = compute_next_run(rows[0]["schedule"])
+        await self._db.execute(
+            "UPDATE jobs SET status = 'pending', failure_count = 0, "
+            "last_error = NULL, enabled = 1, next_run_at = ? WHERE job_id = ?",
+            (next_run, job_id),
+        )
+        await write_audit(
+            self._db,
+            "job_resumed",
+            job_id,
+            details={"trigger": "agent_acknowledge", "next_run_at": next_run},
+        )
+        if self._bus is not None:
+            self._bus.emit("agent_acknowledged", {"job_id": job_id})
+        log.scheduler.info(
+            "[commands] agent.acknowledge: exit",
+            extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
+        )
+        return f"✓ agent '{job_id}' acknowledged — next run {next_run}"
+
+    async def _pause(self, rest: str) -> str:
+        log.scheduler.debug(
+            "[commands] agent.pause: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._scheduler is None:
+            return _NO_SCHEDULER
+        job_id = rest.strip()
+        if not job_id:
+            raise CommandParseError("agent", "missing <job_id>")
+        await self._scheduler.pause(job_id)
+        if self._bus is not None:
+            try:
+                self._bus.emit("agent_paused", {"job_id": job_id})
+            except Exception as exc:  # B5
+                log.scheduler.warning(
+                    "[commands] agent.pause: event emit failed",
+                    exc_info=exc,
+                    extra={"_fields": {"job_id": job_id}},
+                )
+        log.scheduler.info(
+            "[commands] agent.pause: exit",
+            extra={"_fields": {"job_id": job_id}},
+        )
+        return f"✓ agent '{job_id}' paused"
+
+    async def _resume(self, rest: str) -> str:
+        log.scheduler.debug(
+            "[commands] agent.resume: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._scheduler is None:
+            return _NO_SCHEDULER
+        job_id = rest.strip()
+        if not job_id:
+            raise CommandParseError("agent", "missing <job_id>")
+        await self._scheduler.resume(job_id)
+        if self._bus is not None:
+            try:
+                self._bus.emit("agent_resumed", {"job_id": job_id})
+            except Exception as exc:  # B5
+                log.scheduler.warning(
+                    "[commands] agent.resume: event emit failed",
+                    exc_info=exc,
+                    extra={"_fields": {"job_id": job_id}},
+                )
+        log.scheduler.info(
+            "[commands] agent.resume: exit",
+            extra={"_fields": {"job_id": job_id}},
+        )
+        return f"✓ agent '{job_id}' resumed"
+
+    async def _stop(self, rest: str) -> str:
+        log.scheduler.debug(
+            "[commands] agent.stop: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._scheduler is None:
+            return _NO_SCHEDULER
+        tokens = rest.split()
+        if not tokens:
+            raise CommandParseError("agent", "missing <job_id>")
+        job_id = tokens[0]
+        confirmed = len(tokens) > 1 and tokens[1] == "YES"
+        if not confirmed:
+            log.scheduler.debug(
+                "[commands] agent.stop: awaiting confirmation",
+                extra={"_fields": {"job_id": job_id}},
+            )
+            return (
+                f"⚠ Stop agent {job_id[:8]}? This permanently removes the schedule.\n"
+                f"   Type: /agent stop {job_id} YES to confirm."
+            )
+        await self._scheduler.stop_job(job_id)
+        if self._bus is not None:
+            try:
+                self._bus.emit("agent_stopped", {"job_id": job_id})
+            except Exception as exc:  # B5
+                log.scheduler.warning(
+                    "[commands] agent.stop: event emit failed",
+                    exc_info=exc,
+                    extra={"_fields": {"job_id": job_id}},
+                )
+        log.scheduler.info(
+            "[commands] agent.stop: exit",
+            extra={"_fields": {"job_id": job_id}},
+        )
+        return f"✓ agent '{job_id}' stopped"
+
+    async def _log(self, rest: str) -> str:
+        log.scheduler.debug(
+            "[commands] agent.log: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._db is None:
+            return _NO_DB
+        job_id = rest.strip()
+        if not job_id:
+            raise CommandParseError("agent", "missing <job_id>")
+        rows = await self._db.fetch_all(
+            "SELECT run_at, status, result_text, duration_ms "
+            "FROM job_results WHERE job_id = ? "
+            "ORDER BY run_at DESC LIMIT 10",
+            (job_id,),
+        )
+        rendered = format_results_table(job_id, rows)
+        log.scheduler.debug(
+            "[commands] agent.log: exit",
+            extra={"_fields": {"job_id": job_id, "rows": len(rows)}},
+        )
+        return rendered
+
+    # =====================================================================
+    # factory
+    # =====================================================================
+
     @classmethod
     def create_and_register(
         cls,
@@ -276,8 +479,8 @@ class AgentCreateCommand(SlashCommand):
         provider_registry: ProviderRegistry | None = None,
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
-    ) -> AgentCreateCommand:
-        """Construct an :class:`AgentCreateCommand` and register it on the singleton."""
+    ) -> AgentCommand:
+        """Construct an :class:`AgentCommand` and register it on the singleton."""
         cmd = cls(
             scheduler=scheduler,
             provider_registry=provider_registry,
