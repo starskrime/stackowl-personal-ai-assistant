@@ -1,10 +1,12 @@
 """Reachability guard — every SHIPPED_COMMANDS entry must be reachable via the registry.
 
-This test is the enforcement gate for the Epic A → Epic B burndown.
-It is marked xfail(strict=True) because only 15 of 29 commands are wired today.
-When Epic B finishes wiring all 29, remove the xfail marker and the test becomes
-a hard CI gate: if it unexpectedly passes early (strict=True), CI fails — that
-is intentional behaviour so we don't silently ship a "95% complete" registry.
+This is the permanent enforcement gate for "shipped ⟺ reachable". All 29
+commands are wired (Epic B complete), so this is a hard CI gate. Because
+registration is dep-INDEPENDENT (register_all_commands registers every command
+even with empty deps), driving it with empty CommandDeps is a true proxy for
+production reachability — a command that fails to register here would silently
+become "Unknown slash command" in production. Set equality (==) catches BOTH a
+dead command (shipped but unwired) and a stale one (wired but retired).
 
 RULE: this test MUST call register_all_commands — never hand-build a registry
 or construct command objects directly in this file.
@@ -29,19 +31,8 @@ def _isolate_registry():  # type: ignore[no-untyped-def]
         CommandRegistry.instance().register(cmd)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "burndown: slash-command-overhaul Epic B wires the remaining commands; "
-        "remove this marker in the final Epic B wiring commit"
-    ),
-)
 def test_every_shipped_command_is_reachable() -> None:
-    """Registry must contain EXACTLY SHIPPED_COMMANDS — no more, no fewer.
-
-    Today only 15 of 29 are wired so this assertion fails (xfail).
-    When all 29 are wired, remove the xfail marker.
-    """
+    """Registry must contain EXACTLY SHIPPED_COMMANDS — no more, no fewer."""
     CommandRegistry.reset()
     register_all_commands(CommandDeps())
     live = {c.command for c in CommandRegistry.instance().list()}
