@@ -49,3 +49,15 @@ def test_scoped_per_tool() -> None:
         t.record_no_progress("shell")
     assert t.is_open("shell") is True
     assert t.is_open("http") is False
+
+
+def test_state_progress_defaults_are_byte_identical() -> None:
+    from stackowl.pipeline.state import PipelineState
+    s = PipelineState(trace_id="t", session_id="s", input_text="x", channel="cli",
+                      owl_name="o", pipeline_step="execute")
+    # Default True ⇒ a turn that never entered the tracker is NEVER floored by it.
+    assert s.turn_made_progress is True
+    assert s.no_progress_tools == ()
+    s2 = s.evolve(turn_made_progress=False, no_progress_tools=("shell",))
+    assert s2.turn_made_progress is False
+    assert s2.no_progress_tools == ("shell",)
