@@ -674,6 +674,14 @@ async def _run_with_tools(
     # per capability per turn; a second failure of the same class falls through to
     # the honest TOOL_FAILED marker rather than substituting again).
     substituted_tags: set[str] = set()
+    # Incident P2 — same-tool repeated-failure circuit breaker. Per-turn, keyed by
+    # tool NAME (v1: shell/execute_code have no capability_tag, so name is the only
+    # key that catches the incident). A genuine execution failure increments the
+    # streak; a success resets it; at SAME_TOOL_FAILURE_THRESHOLD the tool is added
+    # to circuit_open and bounced at the top of _dispatch for the rest of the turn.
+    # A pre-execution refusal/deny (side_effect_committed=False) is NOT counted.
+    fail_streak: dict[str, int] = {}
+    circuit_open: set[str] = set()
 
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
@@ -689,6 +697,19 @@ async def _run_with_tools(
                 f"The action '{name}' was already declined this turn. Do not call it again — "
                 "respond to the user instead."
             )
+        # Incident P2 — circuit-open bounce. A tool that failed
+        # SAME_TOOL_FAILURE_THRESHOLD times in a row this turn is unavailable for
+        # the rest of the turn. This is a PRE-EXECUTION REFUSAL (like
+        # denied_this_run): it records NOTHING in the outcome ledger, so it cannot
+        # trip the consequential give-up floor (P0 honesty invariant). Steer the
+        # model to change approach or stop; the string carries no case-specifics.
+        if name in circuit_open:
+            log.engine.warning(
+                "[pipeline] execute: circuit open — tool bounced for remainder of turn",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                   "threshold": SAME_TOOL_FAILURE_THRESHOLD}},
+            )
+            return _circuit_open_refusal(name)
         # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
         # child (delegation_depth>0) is refused these tools even if it names one the
         # presented schema omitted: presentation gating is not authorization, so the
@@ -909,6 +930,26 @@ async def _run_with_tools(
             # honest give-up floor as if a real consequential action had failed.
             side_effect_committed=tr.side_effect_committed,
         )
+        # Incident P2 — update the same-tool circuit-breaker streak from this REAL
+        # tool run (a completed dispatch, not a pre-exec refusal/bounce). A success
+        # resets; a GENUINE execution failure (ran and failed, side-effect boundary
+        # crossed-or-maybe — i.e. NOT a validation refusal, which sets
+        # side_effect_committed=False) advances toward the cutoff. Severity-agnostic
+        # on purpose: the breaker contains spirals on ANY tool, not only write/
+        # consequential ones (shell=write, execute_code=consequential are both
+        # covered; a read-only tool that keeps failing is contained too).
+        if tr.success:
+            fail_streak[name] = 0
+        elif tr.side_effect_committed:
+            fail_streak[name] = fail_streak.get(name, 0) + 1
+            if fail_streak[name] >= SAME_TOOL_FAILURE_THRESHOLD:
+                circuit_open.add(name)
+                log.engine.warning(
+                    "[pipeline] execute: same-tool failure threshold reached — circuit open",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                       "streak": fail_streak[name],
+                                       "threshold": SAME_TOOL_FAILURE_THRESHOLD}},
+                )
         # F038 — DEMOTED: the old per-call matcher did a heuristic DB lookup +
         # emitted a learning event on the bus, but NO production subscriber existed
         # (only test files). Both were dead weight on the hot path. Replace with an
