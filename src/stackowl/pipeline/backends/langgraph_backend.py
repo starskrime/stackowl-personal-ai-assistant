@@ -30,6 +30,7 @@ from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
@@ -56,6 +57,10 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     # naming the failed capability. Runs BEFORE surface_critical_failure so the
     # critical-failure cascade sees an honest state (never hides behind a giveup).
     surfaced = await surface_consequential_giveup_floor(surfaced)
+    # Overclaim delivery-gate (Task 6): structural gate that replaces a confident
+    # non-floor draft with the honest floor when nothing was delivered and a tool
+    # failed/bounced. Parity with AsyncioBackend. Never raises.
+    surfaced = await surface_overclaim_gate(surfaced)
     surfaced = await surface_critical_failure(surfaced, get_services())
     # F088 — persist AFTER the honest floor band (parity with AsyncioBackend),
     # synchronously inside the ledger ContextVar binding established by run().
