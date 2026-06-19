@@ -274,6 +274,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.reset import ResetCommand
     registry.register(ResetCommand(bridge=deps.bridge))
 
+    # /connect + /disconnect
+    from stackowl.commands.connect_command import ConnectCommand, DisconnectCommand
+    registry.register(ConnectCommand(integration_registry=deps.integration_registry))
+    registry.register(DisconnectCommand(integration_registry=deps.integration_registry))
+
     # /plugins
     from stackowl.commands.plugins_command import PluginsCommand
     registry.register(PluginsCommand(plugin_registry=deps.plugin_registry))

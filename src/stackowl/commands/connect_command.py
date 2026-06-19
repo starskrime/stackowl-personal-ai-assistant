@@ -24,7 +24,7 @@ class ConnectCommand(SlashCommand):
     With a service name, initiates the OAuth flow for that service.
     """
 
-    def __init__(self, integration_registry: IntegrationRegistry) -> None:
+    def __init__(self, integration_registry: IntegrationRegistry | None) -> None:
         log.gateway.debug("connect_command.__init__: entry")
         self._registry = integration_registry
         log.gateway.debug("connect_command.__init__: exit")
@@ -42,6 +42,9 @@ class ConnectCommand(SlashCommand):
             "connect_command.handle: entry",
             extra={"_fields": {"args": args[:40], "session": state.session_id}},
         )
+        if self._registry is None:
+            log.gateway.warning("connect_command.handle: integration_registry not configured")
+            return "✗ /connect: not configured (integration registry unavailable)"
         service = args.strip()
         if not service:
             result = await self._handle_list()
@@ -55,6 +58,7 @@ class ConnectCommand(SlashCommand):
 
     async def _handle_list(self) -> str:
         """Return a formatted list of all registered integrations with their status."""
+        assert self._registry is not None  # guarded by handle()
         log.gateway.debug("connect_command._handle_list: entry")
         adapters = self._registry.list_all()
         if not adapters:
@@ -81,6 +85,7 @@ class ConnectCommand(SlashCommand):
 
     async def _handle_connect(self, service: str) -> str:
         """Initiate the OAuth flow for the named service."""
+        assert self._registry is not None  # guarded by handle()
         from stackowl.exceptions import IntegrationNotFoundError
 
         log.gateway.debug(
@@ -118,7 +123,7 @@ class ConnectCommand(SlashCommand):
 class DisconnectCommand(SlashCommand):
     """``/disconnect`` slash command — remove an integration connection."""
 
-    def __init__(self, integration_registry: IntegrationRegistry) -> None:
+    def __init__(self, integration_registry: IntegrationRegistry | None) -> None:
         log.gateway.debug("disconnect_command.__init__: entry")
         self._registry = integration_registry
         log.gateway.debug("disconnect_command.__init__: exit")
@@ -137,6 +142,9 @@ class DisconnectCommand(SlashCommand):
             "disconnect_command.handle: entry",
             extra={"_fields": {"args": args[:40]}},
         )
+        if self._registry is None:
+            log.gateway.warning("disconnect_command.handle: integration_registry not configured")
+            return "✗ /disconnect: not configured (integration registry unavailable)"
         service = args.strip()
         if not service:
             log.gateway.debug("disconnect_command.handle: exit — no args, returning usage")
@@ -157,17 +165,20 @@ class DisconnectCommand(SlashCommand):
                 "Run /connect to see available integrations."
             )
 
-        # 3. STEP — disconnect + delete credentials
+        # 3. STEP — disconnect via public protocol, then delete credentials via
+        #    public delete_credentials() — never reach into private _oauth directly
         try:
             if hasattr(adapter, "disconnect"):
                 await adapter.disconnect()
-            if hasattr(adapter, "_oauth"):
-                adapter._oauth.delete()
+            creds_removed = await adapter.delete_credentials()
             log.gateway.info(
                 "disconnect_command.handle: step — disconnected",
-                extra={"_fields": {"service": service}},
+                extra={"_fields": {"service": service, "creds_removed": creds_removed}},
             )
-            result = f"✓ {service} disconnected and credentials removed."
+            if creds_removed:
+                result = f"✓ {service} disconnected and credentials removed."
+            else:
+                result = f"✓ {service} disconnected (no stored credentials to remove)."
         except Exception as exc:
             log.gateway.error(
                 "disconnect_command.handle: disconnect failed",

@@ -58,6 +58,18 @@ class IntegrationAdapter(ABC):
         """Execute a named action with params. Raises UnsupportedActionError for unknown actions."""
         ...
 
+    async def delete_credentials(self) -> bool:
+        """Remove stored credentials for this integration.
+
+        Returns ``True`` when credentials were present and removed, ``False``
+        when nothing was stored (so no credentials were actually deleted).
+
+        Default implementation returns ``False`` (no credentials to remove).
+        Concrete adapters that own an OAuthManager override this to delegate
+        to ``self._oauth.delete()`` and return based on whether creds existed.
+        """
+        return False
+
     # HealthContributor structural compliance
     @property
     def contributor_name(self) -> str:
