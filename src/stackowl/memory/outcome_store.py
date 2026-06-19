@@ -97,6 +97,7 @@ class TaskOutcomeStore(OwnedRepository):
         response_text: str,
         tool_sequence: tuple[str, ...] = (),
         dna_snapshot: dict[str, float] | None = None,
+        overclaim_blocked: bool = False,
     ) -> None:
         """Insert a new outcome row. quality_score / scored_at start NULL.
 
@@ -117,8 +118,8 @@ class TaskOutcomeStore(OwnedRepository):
                    trace_id, session_id, owl_name, channel, success,
                    latency_ms, tool_call_count, failure_class,
                    step_durations, input_text, response_text, captured_at,
-                   tool_sequence, dna_snapshot, owner_id
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   tool_sequence, dna_snapshot, owner_id, overclaim_blocked
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_id, owl_name, channel, int(success),
@@ -128,6 +129,7 @@ class TaskOutcomeStore(OwnedRepository):
                 json.dumps(list(tool_sequence), separators=(",", ":")),
                 json.dumps(dna_snapshot or {}, separators=(",", ":")),
                 self._owner_id,
+                int(overclaim_blocked),
             ),
         )
         log.memory.info(

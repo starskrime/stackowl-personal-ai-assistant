@@ -203,6 +203,17 @@ class PipelineState(BaseModel, frozen=True):
     # Empty/False = no change to today's paths.
     delivered_successes: tuple[str, ...] = ()
     budget_capped: bool = False
+    # Turn-progress supervisor (TPS). ``turn_made_progress`` defaults True so any
+    # non-tool path is byte-identical (never floored as no-progress). execute stamps
+    # False + ``no_progress_tools`` when the tracker saw no PROGRESS dispatch.
+    # INDEPENDENT of the consequential ledger.
+    turn_made_progress: bool = True
+    no_progress_tools: tuple[str, ...] = ()
+    # Overclaim delivery-gate (Task 6). Stamped True by surface_overclaim_gate
+    # when it replaces a confident non-floor draft with the honest floor because
+    # nothing was delivered while a tool failed/bounced. Default False = byte-identical
+    # on every normal turn; persisted to task_outcomes.overclaim_blocked.
+    overclaim_blocked: bool = False
     # Per-pipeline-step elapsed time in milliseconds, keyed by step name.
     # Populated by the backend's step loop; consumed by the outcome-capture
     # helper at end-of-run. Frozen tuple-of-tuples to keep PipelineState

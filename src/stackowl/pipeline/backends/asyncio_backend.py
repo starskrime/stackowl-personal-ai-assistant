@@ -13,6 +13,7 @@ from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -106,6 +107,10 @@ class AsyncioBackend(OrchestratorBackend):
             # naming the failed capability. Runs BEFORE surface_critical_failure so the
             # critical-failure cascade sees an honest state (never hides behind a giveup).
             current = await surface_consequential_giveup_floor(current)
+            # Overclaim delivery-gate (Task 6): if the draft is confident but nothing
+            # was delivered while a tool failed/bounced, replace it with the honest
+            # floor. Structural — reads ledger state, not response text. Never raises.
+            current = await surface_overclaim_gate(current)
             # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
@@ -247,6 +252,7 @@ async def _capture_outcome(
             response_text=response_text,
             tool_sequence=tuple(tc.tool_name for tc in state.tool_calls),
             dna_snapshot=dna_snapshot,
+            overclaim_blocked=state.overclaim_blocked,
         )
     except Exception as exc:  # B5 — log, never raise from telemetry
         log.engine.warning(

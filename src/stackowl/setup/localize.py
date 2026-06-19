@@ -119,6 +119,25 @@ _STRINGS: dict[tuple[str, str], str] = {
         "Tuve un problema al completar esto y no pude terminar; "
         "el detalle técnico está en los registros."
     ),
+    # Lean-window capability-honest floor suffix (appended to self_heal_floor when lean=True).
+    # Appended with a space separator. No slots — must be safe as a static clause.
+    # Informs the user that the current model's capacity was a factor in the failure.
+    ("self_heal_floor_lean_suffix", "en"): (
+        "Note: the current model has a limited context window, "
+        "which may have contributed to this limitation."
+    ),
+    ("self_heal_floor_lean_suffix", "de"): (
+        "Hinweis: Das aktuelle Modell verfügt über ein begrenztes Kontextfenster, "
+        "was zu dieser Einschränkung beigetragen haben kann."
+    ),
+    ("self_heal_floor_lean_suffix", "fr"): (
+        "Remarque : le modèle actuel dispose d'une fenêtre de contexte limitée, "
+        "ce qui a pu contribuer à cette limitation."
+    ),
+    ("self_heal_floor_lean_suffix", "es"): (
+        "Nota: el modelo actual tiene una ventana de contexto limitada, "
+        "lo que puede haber contribuido a esta limitación."
+    ),
     # Graceful floor for a give-up with NO real capability data (e.g. a bare
     # time/step backstop timeout): warm + honest, NO slots so nothing internal
     # (raw error, blank fields) can leak. Used by synthesize_floor's no-data branch.
