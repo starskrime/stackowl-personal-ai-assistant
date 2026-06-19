@@ -754,6 +754,9 @@ class StartupOrchestrator:
         from stackowl.integrations.registry import IntegrationRegistry
         from stackowl.plugins.registry import PluginRegistry
 
+        # Cooperative shutdown event — created here so /bye can trip it; the
+        # signal handlers below (SIGTERM/SIGINT) set the SAME event.
+        stop_event = asyncio.Event()
         register_all_commands(CommandDeps(
             event_bus=event_bus,
             db=db_pool,
@@ -777,6 +780,7 @@ class StartupOrchestrator:
             integration_registry=IntegrationRegistry.instance(),
             provider_registry=provider_registry,
             parliament_session_store=parliament_session_store,
+            shutdown_event=stop_event,
         ))
 
         # Plugin index — discover installed plugins from ~/.stackowl/plugins/.
@@ -2181,7 +2185,8 @@ class StartupOrchestrator:
         # signal handler; Windows (no add_signal_handler) falls back to signal.signal
         # that ONLY trips the event (never raises SystemExit), with a warning.
         loop = asyncio.get_running_loop()
-        stop_event = asyncio.Event()
+        # stop_event was created earlier (before register_all_commands) so /bye
+        # can trip the SAME event the signal handlers below set.
         self._shutting_down = False
 
         def _request_stop(signame: str) -> None:

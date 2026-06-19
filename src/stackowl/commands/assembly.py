@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, cast
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
+    import asyncio
     from collections.abc import Callable
     from pathlib import Path
 
@@ -92,6 +93,9 @@ class CommandDeps:
 
     # Parliament session store (for /parliament log)
     parliament_session_store: object | None = None  # SessionStore — avoid heavy import
+
+    # Cooperative shutdown event (for /bye) — the orchestrator's stop_event.
+    shutdown_event: asyncio.Event | None = None
 
 
 
@@ -321,3 +325,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /provider — moved from Pattern-A to DI so the live event_bus is wired (C1)
     from stackowl.commands.provider_command import ProviderCommand
     _safe_register(registry, "provider", lambda: ProviderCommand(event_bus=deps.event_bus))
+
+    # /bye — graceful server shutdown via the orchestrator's stop_event
+    from stackowl.commands.bye_command import ByeCommand
+    _safe_register(registry, "bye", lambda: ByeCommand(shutdown_event=deps.shutdown_event))
