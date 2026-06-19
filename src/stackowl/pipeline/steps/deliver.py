@@ -31,6 +31,20 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state
 
+    # A non-interactive producer (a scheduler handler — goal_execution,
+    # website_watch) runs the full pipeline but OWNS delivery itself via the
+    # durable seam (ProactiveJobDeliverer, addressed from jobs.target_*). Such a
+    # turn has no live user stream, so the deliver step must NOT also attempt a
+    # send (the stream-miss proactive fallback would otherwise fire a SECOND,
+    # unledgered copy). defer_delivery makes deliver a no-op for that turn; the
+    # handler delivers exactly-once after the pipeline returns.
+    if state.defer_delivery:
+        log.gateway.debug(
+            "[pipeline] deliver: defer_delivery — producer owns delivery, skipping",
+            extra={"_fields": {"session_id": state.session_id}},
+        )
+        return state
+
     services = get_services()
     registry = services.stream_registry
     log.gateway.info(

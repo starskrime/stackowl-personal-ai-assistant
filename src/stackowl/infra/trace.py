@@ -19,6 +19,7 @@ class _TraceToken(NamedTuple):
     session: Token[str | None]
     interactive: Token[bool]
     channel: Token[str | None]
+    reply_target: Token[str | int | None]
     delegation_depth: Token[int]
     delegation_chain: Token[tuple[str, ...]]
     owl_name: Token[str | None]
@@ -36,6 +37,11 @@ class TraceContext:
     _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
     _interactive: ContextVar[bool] = ContextVar("interactive", default=False)
     _channel: ContextVar[str | None] = ContextVar("channel", default=None)
+    # Per-turn delivery target (a Telegram chat_id / Slack channel id) mirrored
+    # from PipelineState.reply_target so producer paths (e.g. a scheduler handler)
+    # that reach tools via TraceContext can address their durable send. A primitive
+    # chat id — LOG-SAFE, included in get() like ``channel``. Default None.
+    _reply_target: ContextVar[str | int | None] = ContextVar("reply_target", default=None)
     # E8-S1 — delegation recursion depth of the current (sub-)pipeline. 0 for a
     # top-level user turn; one per A2ADelegator spawn level. delegate_task reads
     # this off TraceContext (tools never see PipelineState) for its depth
@@ -76,6 +82,7 @@ class TraceContext:
         trace_id: str | None = None,
         interactive: bool = False,
         channel: str | None = None,
+        reply_target: str | int | None = None,
         delegation_depth: int = 0,
         delegation_chain: tuple[str, ...] = (),
         owl_name: str | None = None,
@@ -103,6 +110,7 @@ class TraceContext:
             session=cls._session_id.set(session_id),
             interactive=cls._interactive.set(interactive),
             channel=cls._channel.set(channel),
+            reply_target=cls._reply_target.set(reply_target),
             delegation_depth=cls._delegation_depth.set(delegation_depth),
             delegation_chain=cls._delegation_chain.set(delegation_chain),
             owl_name=cls._owl_name.set(owl_name),
@@ -120,6 +128,7 @@ class TraceContext:
         cls._session_id.reset(token.session)
         cls._interactive.reset(token.interactive)
         cls._channel.reset(token.channel)
+        cls._reply_target.reset(token.reply_target)
         cls._delegation_depth.reset(token.delegation_depth)
         cls._delegation_chain.reset(token.delegation_chain)
         cls._owl_name.reset(token.owl_name)
@@ -177,6 +186,7 @@ class TraceContext:
             "session_id": cls._session_id.get(),
             "interactive": cls._interactive.get(),
             "channel": cls._channel.get(),
+            "reply_target": cls._reply_target.get(),
             "delegation_depth": cls._delegation_depth.get(),
             "delegation_chain": cls._delegation_chain.get(),
             "owl_name": cls._owl_name.get(),

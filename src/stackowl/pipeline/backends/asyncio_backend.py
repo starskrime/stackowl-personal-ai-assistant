@@ -52,6 +52,7 @@ class AsyncioBackend(OrchestratorBackend):
             trace_id=state.trace_id,
             interactive=state.interactive,
             channel=state.channel,
+            reply_target=state.reply_target,
             delegation_depth=state.delegation_depth,
             delegation_chain=state.delegation_chain,
             owl_name=state.owl_name,

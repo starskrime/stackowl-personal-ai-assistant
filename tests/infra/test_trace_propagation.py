@@ -88,6 +88,78 @@ async def test_asyncio_backend_sets_trace_context_during_run() -> None:
     assert TraceContext.get()["trace_id"] is None
 
 
+def test_trace_context_propagates_reply_target_int() -> None:
+    """WS-A — start(reply_target=<chat_id>) surfaces in get() (log-safe primitive)."""
+    token = TraceContext.start("sess-rt", reply_target=12345)
+    try:
+        assert TraceContext.get()["reply_target"] == 12345
+    finally:
+        TraceContext.reset(token)
+    # Resets cleanly back to the None default.
+    assert TraceContext.get()["reply_target"] is None
+
+
+def test_trace_context_propagates_reply_target_str() -> None:
+    """WS-A — a str native target (slack channel/thread id) round-trips too."""
+    token = TraceContext.start("sess-rt", reply_target="C0ABC")
+    try:
+        assert TraceContext.get()["reply_target"] == "C0ABC"
+    finally:
+        TraceContext.reset(token)
+
+
+def test_trace_context_reply_target_defaults_none() -> None:
+    """WS-A — omitting reply_target leaves it None (byte-identical default)."""
+    token = TraceContext.start("sess-rt")
+    try:
+        assert TraceContext.get()["reply_target"] is None
+    finally:
+        TraceContext.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_asyncio_backend_surfaces_reply_target_during_run() -> None:
+    """WS-A — a PipelineState.reply_target surfaces in TraceContext.get() in-run."""
+    seen: dict[str, str | int | None] = {}
+
+    async def _capturing_step(state: PipelineState) -> PipelineState:
+        seen["reply_target"] = TraceContext.get()["reply_target"]
+        return state
+
+    from stackowl.pipeline import registry as reg_module
+
+    orig_steps = list(reg_module.PIPELINE_STEPS)
+    reg_module.PIPELINE_STEPS[:] = [("capture", _capturing_step)]
+    from stackowl.pipeline.steps import deliver as deliver_module
+
+    orig_deliver_run = deliver_module.run
+
+    async def _noop_deliver(s: PipelineState) -> PipelineState:
+        return s
+
+    deliver_module.run = _noop_deliver  # type: ignore[assignment]
+
+    try:
+        backend = AsyncioBackend(services=StepServices())
+        state = PipelineState(
+            trace_id="trace-rt",
+            session_id="session-rt",
+            input_text="hello",
+            channel="telegram",
+            owl_name="secretary",
+            pipeline_step="start",
+            reply_target=98765,
+        )
+        await backend.run(state)
+    finally:
+        reg_module.PIPELINE_STEPS[:] = orig_steps
+        deliver_module.run = orig_deliver_run  # type: ignore[assignment]
+
+    assert seen["reply_target"] == 98765
+    # After run() returns, context is reset.
+    assert TraceContext.get()["reply_target"] is None
+
+
 @pytest.mark.asyncio
 async def test_jsonl_formatter_writes_trace_id_when_context_is_set() -> None:
     token = TraceContext.start("sess-fmt", trace_id="trace-fmt-test")
