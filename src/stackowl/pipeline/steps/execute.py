@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+__all__ = [
+    "SAME_TOOL_FAILURE_THRESHOLD",
+    "TOOL_FAILED_MARKER",
+    "_circuit_open_refusal",
+    "build_persistence_check",
+    "run",
+]
+
 import asyncio
 import json
 import time
@@ -27,6 +35,7 @@ from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
+from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, StepError, ToolCall
@@ -435,6 +444,15 @@ _WINDOW_PROBE_DEADLINE_S = 5.0
 # upper bound on stop latency contributed by a single in-flight tool.
 _TOOL_DEADLINE_S = 180.0
 
+# Incident P2 — same-tool repeated-failure circuit breaker. After this many
+# CONSECUTIVE genuine execution failures of the SAME tool within one turn, the
+# tool is bounced for the rest of the turn so a weak model cannot spiral on it
+# (the pictures-overclaim incident: 9 failing `shell` calls burned budget to the
+# 120s wall). One below LoopGuard's identical-args break_at=4 because this
+# breaker's scope is broader (any args, by tool name). Host-agnostic fixed N —
+# never tuned to a model/box (see feedback_never_pull_models_local_jetson).
+SAME_TOOL_FAILURE_THRESHOLD = 3
+
 
 async def _resolve_execute_window(state: PipelineState, provider: ModelProvider) -> int:
     """Resolve THIS turn's context window for the tool-loop budget — single probe.
@@ -547,6 +565,19 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
         return state
+
+
+def _circuit_open_refusal(name: str) -> str:
+    """Stable, model-readable refusal for a tool whose same-tool failure breaker
+    tripped this turn (incident P2). Steers the model to change approach or stop;
+    carries NO case-specifics. NOT prefixed with TOOL_FAILED_MARKER — a bounce is
+    containment, not a tool failure, so the give-up judge must not read it as a
+    failed consequential action (mirrors the denied_this_run bounce)."""
+    return (
+        f"The action '{name}' has failed repeatedly this turn and is no longer "
+        f"available. Do not call it again — try a different approach, or if no "
+        f"alternative remains, stop and tell the user what you could not do."
+    )
 
 
 async def _run_with_tools(
@@ -799,8 +830,6 @@ async def _run_with_tools(
         # no exactly-once concern); a consequential/write tool is left to run so an
         # in-flight effect is not abandoned half-way (exactly-once integrity > a few
         # hundred ms of stop latency). Fail-safe: any registry miss → proceed.
-        from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
-
         _reg = get_services().turn_registry
         if _reg is not None and t.manifest.action_severity != "consequential":
             _turn = _reg.get(state.trace_id)
