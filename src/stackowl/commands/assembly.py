@@ -196,3 +196,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /why
     from stackowl.commands.why import WhyCommand
     registry.register(WhyCommand())
+
+    # /whoami
+    from stackowl.commands.whoami import WhoamiCommand
+    registry.register(WhoamiCommand(owl_registry=deps.owl_registry))
