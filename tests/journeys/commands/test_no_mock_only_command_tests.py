@@ -1,14 +1,19 @@
 """Anti-mock lint — gateway command tests must drive registry.dispatch, not .handle().
 
 This guard prevents regression to mock-only tests in tests/journeys/commands/.
-Any new test file in this directory must:
-  - Drive commands via CommandRegistry.dispatch (or register_all_commands),
-    NOT by calling command.handle() directly.
-  - NOT construct EventBus() directly (that leaks implementation detail;
-    use fakes or MagicMock instead).
+Any new test file in this directory must drive commands via
+CommandRegistry.dispatch (or register_all_commands), NOT by calling
+command.handle() directly. A direct .handle() call bypasses the registry +
+assembler — the exact way the old provider test masked the dead-bus bug.
+
+NOTE on EventBus: passing a REAL ``EventBus()`` through
+``CommandDeps(event_bus=...)`` and then dispatching is the CORRECT
+production-path test (it proves the assembler-wired command emits on the real
+bus). So EventBus construction is NOT banned here — only ``.handle(`` is. The
+"tell" of a mock-only test is the dispatch bypass, not the bus.
 
 Implementation: read the .py files in this directory and assert the banned
-substrings are absent, excluding this meta-test itself.
+substring is absent, excluding this meta-test itself.
 """
 
 from __future__ import annotations
@@ -17,13 +22,12 @@ from pathlib import Path
 
 _THIS_FILE = Path(__file__).name
 _BANNED_SUBSTRINGS = (
-    ".handle(",   # direct handle() call bypasses registry dispatch
-    "EventBus(",  # direct EventBus construction in gateway tests
+    ".handle(",   # direct handle() call bypasses registry dispatch + assembler
 )
 
 
 def test_no_direct_handle_or_eventbus_in_gateway_command_tests() -> None:
-    """No file in this directory (besides this one) may call .handle( or EventBus(."""
+    """No file in this directory (besides this one) may call .handle( directly."""
     this_dir = Path(__file__).parent
     py_files = [
         f for f in this_dir.glob("*.py")
