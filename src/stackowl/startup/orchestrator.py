@@ -422,26 +422,6 @@ class StartupOrchestrator:
         notification_router = notification_components.router
         proactive_deliverer = notification_components.proactive_deliverer
 
-        # Single registration point for ALL slash commands (Epic A spine).
-        # Must run AFTER NotificationAssembly.build() so router exists,
-        # and BEFORE channel loops / Telegram setMyCommands.
-        from stackowl.commands.assembly import CommandDeps, register_all_commands
-
-        register_all_commands(CommandDeps(
-            event_bus=event_bus,
-            db=db_pool,
-            router=notification_router,
-            settings=self._settings,
-            owl_registry=owl_registry,
-            tool_registry=tool_registry,
-            bridge=memory_bridge,
-            lancedb=memory_components.lancedb,
-            promoter=memory_components.promoter,
-            embedding_registry=memory_components.embedding_registry,
-            skills_store=skills_components.store,
-            skills_loader=skills_components.loader,
-            skills_root=StackowlHome.skills_dir(),
-        ))
 
         # Browser runtime — only start if the binary is present (libs/xvfb are advisory).
         browser_runtime: CamoufoxRuntime | None = None
@@ -765,6 +745,36 @@ class StartupOrchestrator:
             # batch's concurrent fan-out shares the single in-flight budget.
             delegation_governor=delegation_governor,
         )
+
+        # Single registration point for ALL slash commands (Epic A spine).
+        # Must run AFTER SchedulerAssembly.build() so morning_brief_handler
+        # and scheduler are available. See Epic B batch-1.
+        from stackowl.commands.assembly import CommandDeps, register_all_commands
+        from stackowl.plugins.registry import PluginRegistry
+        from stackowl.integrations.registry import IntegrationRegistry
+
+        register_all_commands(CommandDeps(
+            event_bus=event_bus,
+            db=db_pool,
+            router=notification_router,
+            settings=self._settings,
+            owl_registry=owl_registry,
+            tool_registry=tool_registry,
+            bridge=memory_bridge,
+            lancedb=memory_components.lancedb,
+            promoter=memory_components.promoter,
+            embedding_registry=memory_components.embedding_registry,
+            skills_store=skills_components.store,
+            skills_loader=skills_components.loader,
+            skills_root=StackowlHome.skills_dir(),
+            audit_logger=audit_logger,
+            parliament_orchestrator=parliament,
+            scheduler=scheduler_components.scheduler,
+            morning_brief_handler=scheduler_components.morning_brief_handler,
+            preference_store=preference_store,
+            plugin_registry=PluginRegistry(default_db_path()),
+            integration_registry=IntegrationRegistry.instance(),
+        ))
 
         # Plugin index — discover installed plugins from ~/.stackowl/plugins/.
         # Failures log a warning but do not abort the gateway phase.
