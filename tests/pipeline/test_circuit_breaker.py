@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
+from stackowl.authz.bounds import BoundsSpec, ResourceCaps
+from stackowl.config.test_mode import TestModeGuard
+from stackowl.infra import recovery_context, tool_outcome_ledger
+from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.registry import OwlRegistry
+from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import (
     SAME_TOOL_FAILURE_THRESHOLD,
+    TOOL_FAILED_MARKER,
     _circuit_open_refusal,
+    _run_with_tools,
 )
+from stackowl.pipeline.streaming import StreamRegistry
+from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 
 def test_threshold_is_three() -> None:
@@ -24,26 +40,7 @@ def test_circuit_open_refusal_mentions_tool_and_steers_to_stop() -> None:
 def test_circuit_open_refusal_is_not_a_tool_failure_marker() -> None:
     # A bounce is containment, not a tool failure: it must NOT carry the marker
     # the give-up judge counts as a failed action (mirrors denied_this_run).
-    from stackowl.pipeline.steps.execute import TOOL_FAILED_MARKER
-
     assert TOOL_FAILED_MARKER not in _circuit_open_refusal("shell")
-
-
-import pytest
-from typing import Any
-
-from stackowl.authz.bounds import BoundsSpec, ResourceCaps
-from stackowl.config.test_mode import TestModeGuard
-from stackowl.infra import recovery_context, tool_outcome_ledger
-from stackowl.owls.manifest import OwlAgentManifest
-from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.services import StepServices, reset_services, set_services
-from stackowl.pipeline.state import PipelineState
-from stackowl.pipeline.steps.execute import _run_with_tools
-from stackowl.pipeline.streaming import StreamRegistry
-from stackowl.providers.react_callback import ReActIterationState
-from stackowl.tools.base import Tool, ToolManifest, ToolResult
-from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 _OWL = "breaker_owl"
 

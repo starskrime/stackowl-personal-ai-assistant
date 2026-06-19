@@ -231,8 +231,8 @@ async def test_transient_failure_then_success_is_not_bounced() -> None:
     assert "ok" in provider.rendered[2], "the successful 3rd call's output is delivered"
     # A succeeding final consequential/write outcome → no honest floor.
     delivered = "".join(c.content for c in out.responses)
-    assert "Done." in delivered or not any(
-        getattr(c, "is_floor", False) for c in out.responses
+    assert "Done." in delivered, (
+        f"a fail-fail-success turn must deliver its partial, not a floor. delivered={delivered!r}"
     )
 
 
