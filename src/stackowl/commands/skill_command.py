@@ -526,13 +526,20 @@ class SkillCommand(SlashCommand):
 
 
 def _looks_like_git_repo(url: str) -> bool:
-    """Heuristic: github/gitlab/bitbucket repo path looks like ``host/owner/repo``."""
+    """Heuristic: treat a URL as a git repo if it ends in ``.git``, starts with
+    ``git@``, or its host is a known git forge with at least two non-empty path
+    segments (owner/repo).  Trailing slashes and extra path segments (e.g.
+    ``.../owner/repo/tree/main``) are tolerated.
+    """
+    # Explicit git markers take priority over archive extensions.
+    if url.endswith(".git") or url.startswith("git@"):
+        return True
     git_hosts = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org")
     for host in git_hosts:
         if f"://{host}/" in url:
             tail = url.split(f"://{host}/", 1)[1].rstrip("/")
-            # owner/repo (exactly two path segments) → repo URL
+            # owner/repo or deeper (e.g. owner/repo/tree/main) → repo URL
             segs = [s for s in tail.split("/") if s]
-            if len(segs) == 2:
+            if len(segs) >= 2:
                 return True
     return False
