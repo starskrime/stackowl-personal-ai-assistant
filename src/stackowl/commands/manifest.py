@@ -56,9 +56,4 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
 # Exempt — SlashCommand subclasses that exist in stackowl.commands but are
 # intentionally NOT shipped (transitional / folded into another command).
 # ---------------------------------------------------------------------------
-EXEMPT_COMMANDS: frozenset[str] = frozenset({
-    # AuditExportCommand — being folded into /audit in Epic B.
-    # The ".command" value is "audit export" (with a space), which the scanner
-    # cannot match anyway; it will be deleted/merged in Epic B.
-    "audit export",
-})
+EXEMPT_COMMANDS: frozenset[str] = frozenset()

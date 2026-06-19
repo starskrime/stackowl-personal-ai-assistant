@@ -90,6 +90,9 @@ class CommandDeps:
     # Parliament session store (for /parliament log)
     parliament_session_store: object | None = None  # SessionStore — avoid heavy import
 
+    # Audit export signing key (overrides settings.governance.audit_export_key when set)
+    export_key: str | None = None
+
 
 def register_all_commands(
     deps: CommandDeps,
@@ -207,11 +210,20 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.whoami import WhoamiCommand
     registry.register(WhoamiCommand(owl_registry=deps.owl_registry))
 
-    # /audit
-
+    # /audit (and /audit export subcommand)
     from stackowl.audit.logger import AuditLogger
     from stackowl.commands.audit import AuditCommand
-    registry.register(AuditCommand(audit_logger=cast("AuditLogger | None", deps.audit_logger)))
+    # Prefer explicit deps.export_key (test injection); fall back to settings.
+    if deps.export_key is not None:
+        _export_key = deps.export_key
+    elif deps.settings is not None:
+        _export_key = deps.settings.governance.audit_export_key
+    else:
+        _export_key = ""
+    registry.register(AuditCommand(
+        audit_logger=cast("AuditLogger | None", deps.audit_logger),
+        export_key=_export_key,
+    ))
 
     # /brief
     from stackowl.commands.brief_command import BriefCommand
