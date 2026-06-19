@@ -273,3 +273,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /reset
     from stackowl.commands.reset import ResetCommand
     registry.register(ResetCommand(bridge=deps.bridge))
+
+    # /staged
+    from stackowl.commands.staged_command import StagedCommand
+    registry.register(StagedCommand(
+        bridge=deps.bridge,
+        promoter=deps.promoter,
+        event_bus=deps.event_bus,
+    ))

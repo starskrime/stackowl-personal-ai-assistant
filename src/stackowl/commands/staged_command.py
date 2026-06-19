@@ -46,8 +46,8 @@ class StagedCommand(SlashCommand):
 
     def __init__(
         self,
-        bridge: MemoryBridge,
-        promoter: FactPromoter,
+        bridge: MemoryBridge | None,
+        promoter: FactPromoter | None,
         event_bus: EventBus | None = None,
     ) -> None:
         # 1. ENTRY
@@ -72,6 +72,9 @@ class StagedCommand(SlashCommand):
             "[commands] staged.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        if self._bridge is None:
+            log.memory.warning("[commands] staged.handle: bridge not configured")
+            return "✗ /staged: not configured (memory bridge unavailable)"
         stripped = args.strip()
         if not stripped:
             return _USAGE
@@ -112,6 +115,7 @@ class StagedCommand(SlashCommand):
     # --- subcommands ---------------------------------------------------------
 
     async def _list(self, rest: str) -> str:
+        assert self._bridge is not None  # guarded by handle()
         log.memory.debug(
             "[commands] staged.list: entry",
             extra={"_fields": {"rest_len": len(rest)}},
@@ -134,6 +138,7 @@ class StagedCommand(SlashCommand):
         return out
 
     async def _review(self, rest: str) -> str:
+        assert self._bridge is not None  # guarded by handle()
         log.memory.debug(
             "[commands] staged.review: entry",
             extra={"_fields": {"rest_len": len(rest)}},
@@ -155,6 +160,7 @@ class StagedCommand(SlashCommand):
         return out
 
     async def _reject(self, rest: str) -> str:
+        assert self._bridge is not None  # guarded by handle()
         log.memory.debug(
             "[commands] staged.reject: entry",
             extra={"_fields": {"rest_len": len(rest)}},
@@ -173,6 +179,14 @@ class StagedCommand(SlashCommand):
                 f"Reject fact {fact_id[:8]}? [y/N]\n"
                 f"   Type: /staged reject {fact_id} YES to confirm."
             )
+        # Existence check before delete — avoid false "Rejected" for bogus ids
+        fact = await find_staged_by_id(self._bridge, fact_id)
+        if fact is None:
+            log.memory.debug(
+                "[commands] staged.reject: not found — honest refusal",
+                extra={"_fields": {"fact_id_prefix": fact_id[:16]}},
+            )
+            return f"✗ Staged fact not found: '{fact_id}'"
         await self._bridge.delete(fact_id)
         log.memory.info(
             "[commands] staged.reject: exit",
@@ -187,6 +201,9 @@ class StagedCommand(SlashCommand):
         )
         if not rest:
             return "Usage: /staged promote <fact_id>"
+        if self._promoter is None:
+            log.memory.warning("[commands] staged.promote: promoter not configured")
+            return "✗ /staged promote: not configured (promoter unavailable)"
         promoted = await self._promoter.force_promote(rest.strip())
         if not promoted:
             log.memory.warning(
@@ -205,8 +222,8 @@ class StagedCommand(SlashCommand):
     @classmethod
     def create_and_register(
         cls,
-        bridge: MemoryBridge,
-        promoter: FactPromoter,
+        bridge: MemoryBridge | None,
+        promoter: FactPromoter | None,
         event_bus: EventBus | None = None,
     ) -> StagedCommand:
         """Construct a :class:`StagedCommand` and register it on the singleton."""
