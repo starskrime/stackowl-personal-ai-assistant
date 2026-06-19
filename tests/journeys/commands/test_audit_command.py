@@ -9,8 +9,8 @@ import pytest
 
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandNotFoundError, CommandRegistry
+from stackowl.config.settings import Settings
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
-
 
 # ---------------------------------------------------------------------------
 # Fake logger for /audit tail tests (no disk required)
@@ -95,12 +95,15 @@ async def test_audit_not_found_when_not_registered() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_audit_export_writes_json_and_sig(tmp_path: Path) -> None:
+async def test_audit_export_writes_json_and_sig(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """dispatch('audit', 'export --output <path>') writes JSON + .sig when key configured."""
     logger = _make_real_logger(tmp_path / "audit.db")
     out_path = tmp_path / "export.json"
 
-    deps = CommandDeps(audit_logger=logger, export_key="test-signing-key")
+    monkeypatch.setenv("STACKOWL_GOVERNANCE__AUDIT_EXPORT_KEY", "test-signing-key")
+    deps = CommandDeps(audit_logger=logger, settings=Settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = await CommandRegistry.instance().dispatch(
@@ -133,8 +136,8 @@ async def test_audit_export_empty_key_refused(tmp_path: Path) -> None:
     logger = _make_real_logger(tmp_path / "audit.db")
     out_path = tmp_path / "should_not_exist.json"
 
-    # export_key defaults to "" — not configured
-    deps = CommandDeps(audit_logger=logger)
+    # governance.audit_export_key defaults to "" — not configured; no env override
+    deps = CommandDeps(audit_logger=logger, settings=Settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = await CommandRegistry.instance().dispatch(
@@ -147,9 +150,12 @@ async def test_audit_export_empty_key_refused(tmp_path: Path) -> None:
     assert not out_path.exists(), "No export file should be written when key is empty"
 
 
-async def test_audit_export_not_configured_when_logger_none() -> None:
+async def test_audit_export_not_configured_when_logger_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """dispatch('audit', 'export ...') with no logger returns not-configured."""
-    deps = CommandDeps(audit_logger=None, export_key="some-key")
+    monkeypatch.setenv("STACKOWL_GOVERNANCE__AUDIT_EXPORT_KEY", "some-key")
+    deps = CommandDeps(audit_logger=None, settings=Settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = await CommandRegistry.instance().dispatch("audit", "export", make_state())

@@ -160,7 +160,7 @@ class AuditCommand(SlashCommand):
         """Return all audit_log rows ordered by audit_id ASC."""
         assert self._logger is not None  # guarded by caller
         log.gateway.debug("[commands] audit._fetch_all_audit_rows: entry")
-        db_path: Path = self._logger._db_path  # noqa: SLF001 — we own the logger
+        db_path: Path = self._logger.db_path
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         try:

@@ -96,5 +96,5 @@ async def test_staged_not_configured_when_bridge_none() -> None:
 
     result = await reg.dispatch("staged", "list", state)
 
-    # Must not crash; should surface a not-configured or error message
-    assert result  # non-empty
+    # Must not crash; must surface an honest not-configured message
+    assert "not configured" in result.lower() or "✗" in result

@@ -129,6 +129,11 @@ class AuditLogger:
         # 4. EXIT
         log.debug("[audit] logger.init: exit")
 
+    @property
+    def db_path(self) -> Path:
+        """Public read-only path to the underlying SQLite database file."""
+        return self._db_path
+
     # ------------------------------------------------------------------
     # Schema (self-healing)
     # ------------------------------------------------------------------
