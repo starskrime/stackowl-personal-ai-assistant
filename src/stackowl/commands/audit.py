@@ -3,28 +3,26 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.audit.logger import AuditLogger
     from stackowl.pipeline.state import PipelineState
 
-log = logging.getLogger("stackowl.audit")
-
 
 class AuditCommand(SlashCommand):
     """``/audit`` slash command — show last 50 audit log entries with integrity status."""
 
-    def __init__(self, audit_logger: AuditLogger) -> None:
+    def __init__(self, audit_logger: AuditLogger | None = None) -> None:
         # 1. ENTRY
-        log.debug("[commands] audit.init: entry")
+        log.gateway.debug("[commands] audit.init: entry")
         self._logger = audit_logger
         # 4. EXIT
-        log.debug("[commands] audit.init: exit")
+        log.gateway.debug("[commands] audit.init: exit")
 
     @property
     def command(self) -> str:
@@ -36,14 +34,16 @@ class AuditCommand(SlashCommand):
 
     async def handle(self, args: str, state: PipelineState) -> str:
         """Execute /audit — fetch tail and render as a text table."""
+        if self._logger is None:
+            return "✗ /audit: not configured"
         # 1. ENTRY
-        log.debug(
+        log.gateway.debug(
             "[commands] audit.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
         try:
             # 2. DECISION
-            log.debug("[commands] audit.handle: decision — fetching tail(50) and verifying chain")
+            log.gateway.debug("[commands] audit.handle: decision — fetching tail(50) and verifying chain")
             # 3. STEP
             rows = self._logger.tail(50)
             intact, broken_id = self._logger.verify_chain()
@@ -54,11 +54,11 @@ class AuditCommand(SlashCommand):
                 lines.append(f"✗ Chain broken at record {broken_id}")
             result = "\n".join(lines)
         except Exception as exc:
-            log.error("[commands] audit.handle: failed", exc_info=exc)
+            log.gateway.error("[commands] audit.handle: failed", exc_info=exc)
             return f"✗ /audit: {exc}"
 
         # 4. EXIT
-        log.debug(
+        log.gateway.debug(
             "[commands] audit.handle: exit",
             extra={"_fields": {"row_count": len(rows), "intact": intact}},
         )

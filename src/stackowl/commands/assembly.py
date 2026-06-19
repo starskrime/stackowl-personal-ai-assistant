@@ -200,3 +200,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /whoami
     from stackowl.commands.whoami import WhoamiCommand
     registry.register(WhoamiCommand(owl_registry=deps.owl_registry))
+
+    # /audit
+    from stackowl.commands.audit import AuditCommand
+    registry.register(AuditCommand(audit_logger=deps.audit_logger))
