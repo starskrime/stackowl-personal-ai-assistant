@@ -94,6 +94,11 @@ async def test_config_set_emits_on_production_bus(tmp_yaml: Path) -> None:
     spy.emit.assert_called_once()
     emitted_event = spy.emit.call_args[0][0]
     assert emitted_event == "settings_reloaded"
+    # NOTE: this gates the dead-bus regression — the event now reaches the
+    # production bus (was a no-op when bus=None). The ACTUAL hot-reload is
+    # driven by the ConfigWatcher re-reading the file (which emits a real
+    # Settings payload the reload handler consumes), NOT by this dict payload —
+    # so this asserts the emit fires, not that a reload occurred.
 
 
 async def test_config_set_no_bus_does_not_crash(tmp_yaml: Path) -> None:

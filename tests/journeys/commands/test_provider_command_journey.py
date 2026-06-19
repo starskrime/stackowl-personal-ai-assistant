@@ -90,6 +90,9 @@ async def test_provider_add_emits_on_production_bus(tmp_yaml: Path) -> None:
     assert emitted_event == "settings_reloaded"
     assert isinstance(emitted_payload, dict)
     assert emitted_payload.get("provider") == "acme"
+    # NOTE: gates the dead-bus regression (emit now reaches the production bus).
+    # The live provider reload is driven by the ConfigWatcher (real Settings
+    # payload), NOT this dict — so this asserts the emit fires, not a reload.
 
 
 async def test_provider_remove_emits_on_production_bus(tmp_yaml: Path) -> None:
