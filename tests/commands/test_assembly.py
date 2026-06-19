@@ -56,14 +56,22 @@ def test_register_all_commands_returns_registry() -> None:
     assert result is reg
 
 
-def test_register_all_commands_all_none_deps_yields_pattern_a_only() -> None:
-    """With all-None deps, only the 8 dependency-free commands register."""
+def test_register_all_commands_all_none_deps_yields_all_15_live() -> None:
+    """Registration is dep-INDEPENDENT: with all-None deps, all 15 currently-live
+    commands still register (8 Pattern-A + 7 DI). This is the core invariant —
+    "shipped ⟺ registered" must not depend on runtime wiring, so the reachability
+    guard (which runs with empty deps) is a true proxy for production reachability.
+    """
     reg = _fresh_registry()
     register_all_commands(CommandDeps(), registry=reg)
     names = {c.command for c in reg.list()}
-    # Pattern-A commands must always be present
-    pattern_a = {"help", "config", "settings", "cost", "tools", "provider", "tier", "browser"}
-    assert pattern_a.issubset(names), f"Missing pattern-A commands: {pattern_a - names}"
+    expected_live = {
+        "help", "config", "settings", "cost", "tools", "provider", "tier", "browser",
+        "skill", "memory", "owls", "focus", "urgent", "quiet", "notifications",
+    }
+    assert names == expected_live, (
+        f"extra={names - expected_live} missing={expected_live - names}"
+    )
 
 
 def test_register_all_commands_with_full_deps_yields_15_live_commands(
@@ -137,15 +145,21 @@ def test_owls_command_registers_with_none_deps() -> None:
     assert "owls" in names
 
 
-def test_focus_quiet_notifications_absent_without_router_and_db() -> None:
-    """focus/urgent/quiet/notifications do NOT register when their deps are None."""
+def test_di_commands_register_unconditionally_even_with_none_deps() -> None:
+    """focus/urgent/quiet/notifications register even when their deps are None.
+
+    Deliberate: a command that fails to register because the orchestrator forgot
+    to populate a dep would silently vanish into "Unknown slash command" — the
+    exact "looks-wired-but-never-fires" bug this overhaul kills. Instead they
+    always register and emit an honest "not configured" message at dispatch time.
+    """
     reg = _fresh_registry()
     register_all_commands(CommandDeps(), registry=reg)
     names = {c.command for c in reg.list()}
-    assert "focus" not in names
-    assert "urgent" not in names
-    assert "quiet" not in names
-    assert "notifications" not in names
+    assert "focus" in names
+    assert "urgent" in names
+    assert "quiet" in names
+    assert "notifications" in names
 
 
 def test_focus_and_urgent_register_with_router() -> None:

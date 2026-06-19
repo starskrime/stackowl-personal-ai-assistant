@@ -67,9 +67,9 @@ class SkillCommand(SlashCommand):
 
     def __init__(
         self,
-        store: SkillIndexStore,
-        loader: SkillLoader,
-        skills_root: Path,
+        store: SkillIndexStore | None = None,
+        loader: SkillLoader | None = None,
+        skills_root: Path | None = None,
         *,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
@@ -81,9 +81,9 @@ class SkillCommand(SlashCommand):
                 "has_embedding": embedding_registry is not None,
             }},
         )
-        self._store = store
-        self._loader = loader
-        self._root = skills_root
+        self._store: SkillIndexStore = store  # type: ignore[assignment]  # guarded in handle()
+        self._loader: SkillLoader = loader  # type: ignore[assignment]  # guarded in handle()
+        self._root: Path = skills_root  # type: ignore[assignment]  # guarded in handle()
         self._embedding_registry = embedding_registry
         # 4. EXIT
         log.skills.debug("[commands] skill.init: exit")
@@ -105,6 +105,8 @@ class SkillCommand(SlashCommand):
             "[commands] skill.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        if self._store is None or self._loader is None or self._root is None:
+            return "✗ /skill: not configured"
         stripped = args.strip()
         if not stripped:
             return _USAGE

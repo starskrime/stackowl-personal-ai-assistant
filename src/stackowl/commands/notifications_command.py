@@ -34,8 +34,8 @@ _USAGE = (
 class NotificationsMissedCommand(SlashCommand):
     """View notification history pulled from ``notification_log``."""
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    def __init__(self, db: DbPool | None = None) -> None:
+        self._db: DbPool = db  # type: ignore[assignment]  # guarded in handle()
 
     @property
     def command(self) -> str:
@@ -50,6 +50,8 @@ class NotificationsMissedCommand(SlashCommand):
             "[notifications] notifications.handle: entry",
             extra={"_fields": {"args": args[:40], "session": state.session_id}},
         )
+        if self._db is None:
+            return "✗ /notifications: not configured"
         sub = args.strip()
         if sub != "missed":
             log.notifications.debug(

@@ -28,10 +28,10 @@ class UrgentCommand(SlashCommand):
 
     def __init__(
         self,
-        router: NotificationRouter,
+        router: NotificationRouter | None = None,
         channels: list[str] | None = None,
     ) -> None:
-        self._router = router
+        self._router: NotificationRouter = router  # type: ignore[assignment]  # guarded in handle()
         self._channels: list[str] = list(channels) if channels else ["cli"]
 
     @property
@@ -53,6 +53,8 @@ class UrgentCommand(SlashCommand):
                 }
             },
         )
+        if self._router is None:
+            return "✗ /urgent: not configured"
         message = args.strip()
         if not message:
             log.notifications.debug("[notifications] urgent.handle: empty message")

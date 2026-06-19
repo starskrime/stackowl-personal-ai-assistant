@@ -134,30 +134,39 @@ def register_all_commands(
 # ---------------------------------------------------------------------------
 
 def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
-    """Construct and register each DI command using deps."""
+    """Construct and register each DI command using deps.
+
+    Registration is UNCONDITIONAL — a command is registered even when one of
+    its deps is None.  This is deliberate: it makes "shipped ⟺ registered" an
+    invariant that does NOT depend on runtime wiring, so the reachability guard
+    (which runs with empty deps) is a true proxy for production reachability.
+    If the orchestrator ever forgets to populate a dep, the command still
+    registers and emits an honest "not configured" message at dispatch time —
+    rather than silently vanishing into "Unknown slash command" (the exact
+    "looks-wired-but-never-fires" bug this whole overhaul exists to kill).
+    All command ``__init__`` methods tolerate None deps (verified).
+    """
 
     # /skill
-    if deps.skills_store is not None and deps.skills_loader is not None and deps.skills_root is not None:
-        from stackowl.commands.skill_command import SkillCommand
-        registry.register(SkillCommand(
-            store=deps.skills_store,
-            loader=deps.skills_loader,
-            skills_root=deps.skills_root,
-            embedding_registry=deps.embedding_registry,
-        ))
+    from stackowl.commands.skill_command import SkillCommand
+    registry.register(SkillCommand(
+        store=deps.skills_store,
+        loader=deps.skills_loader,
+        skills_root=deps.skills_root,
+        embedding_registry=deps.embedding_registry,
+    ))
 
     # /memory
-    if deps.bridge is not None and deps.settings is not None and deps.db is not None and deps.event_bus is not None:
-        from stackowl.commands.memory_command import MemoryCommand
-        registry.register(MemoryCommand(
-            bridge=deps.bridge,
-            settings=deps.settings,
-            db=deps.db,
-            event_bus=deps.event_bus,
-            lancedb=deps.lancedb,
-            promoter=deps.promoter,
-            embedding_registry=deps.embedding_registry,
-        ))
+    from stackowl.commands.memory_command import MemoryCommand
+    registry.register(MemoryCommand(
+        bridge=deps.bridge,
+        settings=deps.settings,
+        db=deps.db,
+        event_bus=deps.event_bus,
+        lancedb=deps.lancedb,
+        promoter=deps.promoter,
+        embedding_registry=deps.embedding_registry,
+    ))
 
     # /owls
     from stackowl.commands.owls_command import OwlsCommand
@@ -168,22 +177,18 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         tool_registry=deps.tool_registry,
     ))
 
-    # /focus — requires router + event_bus
-    if deps.router is not None and deps.event_bus is not None:
-        from stackowl.commands.focus_command import FocusCommand
-        registry.register(FocusCommand(router=deps.router, event_bus=deps.event_bus))
+    # /focus
+    from stackowl.commands.focus_command import FocusCommand
+    registry.register(FocusCommand(router=deps.router, event_bus=deps.event_bus))
 
-    # /urgent — requires router
-    if deps.router is not None:
-        from stackowl.commands.urgent_command import UrgentCommand
-        registry.register(UrgentCommand(router=deps.router))
+    # /urgent
+    from stackowl.commands.urgent_command import UrgentCommand
+    registry.register(UrgentCommand(router=deps.router))
 
-    # /quiet — requires db
-    if deps.db is not None:
-        from stackowl.commands.quiet_command import QuietHoursCommand
-        registry.register(QuietHoursCommand(db=deps.db))
+    # /quiet
+    from stackowl.commands.quiet_command import QuietHoursCommand
+    registry.register(QuietHoursCommand(db=deps.db))
 
-    # /notifications — requires db
-    if deps.db is not None:
-        from stackowl.commands.notifications_command import NotificationsMissedCommand
-        registry.register(NotificationsMissedCommand(db=deps.db))
+    # /notifications
+    from stackowl.commands.notifications_command import NotificationsMissedCommand
+    registry.register(NotificationsMissedCommand(db=deps.db))

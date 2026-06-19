@@ -41,8 +41,8 @@ _USAGE = (
 class QuietHoursCommand(SlashCommand):
     """Insert a per-session quiet-hours override row."""
 
-    def __init__(self, db: DbPool) -> None:
-        self._db = db
+    def __init__(self, db: DbPool | None = None) -> None:
+        self._db: DbPool = db  # type: ignore[assignment]  # guarded in handle()
 
     @property
     def command(self) -> str:
@@ -57,6 +57,8 @@ class QuietHoursCommand(SlashCommand):
             "[notifications] quiet.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        if self._db is None:
+            return "✗ /quiet: not configured"
         parts = args.strip().split()
         if not parts:
             log.notifications.debug("[notifications] quiet.handle: usage shown — empty args")
