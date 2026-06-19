@@ -43,7 +43,7 @@ class NotificationsMissedCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "View notification history."
+        return "View missed notifications."
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
