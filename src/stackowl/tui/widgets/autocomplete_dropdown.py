@@ -37,11 +37,18 @@ class AutocompleteDropdown(Static):
     never wrap (top/bottom are sticky), which keeps the keyboard model obvious.
     """
 
+    # Visible row budget. The dropdown is a Static (no native scroll), so when
+    # there are more candidates than this we render a sliding window that keeps
+    # the highlighted row on screen — see :meth:`visible_range` / :meth:`render`.
+    # The CSS ``max-height`` must fit this window plus the two ``N more`` hint
+    # rows and the round border: 9 items + 2 hints + 2 border = 13.
+    _VISIBLE_ROWS = 9
+
     DEFAULT_CSS = """
     AutocompleteDropdown {
         width: 100%;
         height: auto;
-        max-height: 10;
+        max-height: 13;
         border: round $color-accent;
         background: $color-bg-elevated;
         padding: 0 1;
@@ -57,6 +64,9 @@ class AutocompleteDropdown(Static):
             extra={"_fields": {"id": id}},
         )
         self._items: list[tuple[str, str | None]] = []
+        # Index of the first row currently shown — the scroll offset that keeps
+        # the highlight inside the visible window (move_up/move_down adjust it).
+        self._offset: int = 0
 
     # ------------------------------------------------------------------ data
     def set_items(self, items: list[tuple[str, str | None]]) -> None:
@@ -66,8 +76,9 @@ class AutocompleteDropdown(Static):
             extra={"_fields": {"count": len(items)}},
         )
         self._items = list(items)
-        # Reset highlight; assigning the same value (0 == 0) still needs an
-        # explicit re-render, so refresh unconditionally below.
+        # Reset highlight + scroll window; assigning the same value (0 == 0)
+        # still needs an explicit re-render, so refresh unconditionally below.
+        self._offset = 0
         self.highlight = 0
         self.refresh(layout=True)
         log.tui.debug(
@@ -113,6 +124,7 @@ class AutocompleteDropdown(Static):
             extra={"_fields": {"from": self.highlight, "to": new_index}},
         )
         self.highlight = new_index
+        self._scroll_into_view()
 
     def move_up(self) -> None:
         """Move the highlight up one row (clamped at the top, no wrap)."""
@@ -124,6 +136,24 @@ class AutocompleteDropdown(Static):
             extra={"_fields": {"from": self.highlight, "to": new_index}},
         )
         self.highlight = new_index
+        self._scroll_into_view()
+
+    def _scroll_into_view(self) -> None:
+        """Nudge the scroll offset so the highlighted row stays on screen."""
+        if self.highlight < self._offset:
+            self._offset = self.highlight
+        elif self.highlight >= self._offset + self._VISIBLE_ROWS:
+            self._offset = self.highlight - self._VISIBLE_ROWS + 1
+
+    def visible_range(self) -> tuple[int, int]:
+        """``(start, end)`` half-open index range currently rendered.
+
+        ``end`` is exclusive and clamped to the item count.  The highlighted
+        index is always within ``[start, end)`` — the scroll-window invariant.
+        """
+        start = max(0, min(self._offset, max(0, len(self._items) - self._VISIBLE_ROWS)))
+        end = min(start + self._VISIBLE_ROWS, len(self._items))
+        return (start, end)
 
     # ------------------------------------------------------------------ render
     def watch_highlight(self, _old: int, _new: int) -> None:
@@ -131,12 +161,22 @@ class AutocompleteDropdown(Static):
         self.refresh(layout=True)
 
     def render(self) -> RenderableType:
-        """Render the candidate rows; the highlighted row gets a ``▶ `` accent."""
+        """Render the visible candidate window; highlighted row gets a ``▶ `` accent.
+
+        Only the ``visible_range`` slice is drawn so a list larger than
+        :attr:`_VISIBLE_ROWS` (e.g. all ~29 slash commands) scrolls with the
+        highlight rather than being clipped.  A dim ``↑``/``↓`` counter is shown
+        on the first/last row when rows are hidden above/below.
+        """
         if not self._items:
             return Text("")
         idx = max(0, min(self.highlight, len(self._items) - 1))
+        start, end = self.visible_range()
         rows: list[Text] = []
-        for i, (name, description) in enumerate(self._items):
+        if start > 0:
+            rows.append(Text(f"  ↑ {start} more", style="dim"))
+        for i in range(start, end):
+            name, description = self._items[i]
             selected = i == idx
             marker = "▶ " if selected else "  "
             row_style = "bold reverse" if selected else ""
@@ -146,4 +186,7 @@ class AutocompleteDropdown(Static):
                 line.append(" — ", style="dim")
                 line.append(description, style="dim")
             rows.append(line)
+        hidden_below = len(self._items) - end
+        if hidden_below > 0:
+            rows.append(Text(f"  ↓ {hidden_below} more", style="dim"))
         return Group(*rows)

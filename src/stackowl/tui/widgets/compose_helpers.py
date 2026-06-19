@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+# Default candidate cap. Must comfortably exceed the full shipped slash-command
+# surface (~29) so an empty "/" prefix lists EVERY command rather than the first
+# handful — the dropdown scrolls the highlight into view (see AutocompleteDropdown),
+# so a large list stays navigable. Kept finite as a guard against a pathological
+# owl roster.
+_DEFAULT_LIMIT = 100
+
 
 class AutocompleteKind(Enum):
     """Discriminator for the kind of completion being shown."""
@@ -48,7 +55,9 @@ def detect_kind(value: str) -> tuple[AutocompleteKind, str]:
     return (AutocompleteKind.NONE, "")
 
 
-def filter_candidates(prefix: str, names: list[str], limit: int = 8) -> tuple[str, ...]:
+def filter_candidates(
+    prefix: str, names: list[str], limit: int = _DEFAULT_LIMIT
+) -> tuple[str, ...]:
     """Return up to ``limit`` candidates whose name starts with ``prefix``.
 
     Case-insensitive, Unicode-safe (relies on ``str.casefold``).  Preserves
@@ -72,7 +81,7 @@ class CommandInfo:
 
 
 def filter_command_infos(
-    prefix: str, infos: list[CommandInfo], limit: int = 8
+    prefix: str, infos: list[CommandInfo], limit: int = _DEFAULT_LIMIT
 ) -> tuple[CommandInfo, ...]:
     """Up to ``limit`` CommandInfos whose ``name`` starts with ``prefix``.
 
