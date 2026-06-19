@@ -223,3 +223,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         integration_registry=deps.integration_registry,
         plugin_registry=deps.plugin_registry,
     ))
+
+    # /agents
+    from stackowl.commands.agents_command import AgentsCommand
+    registry.register(AgentsCommand(
+        scheduler=deps.scheduler,
+        db=deps.db,
+        event_bus=deps.event_bus,
+    ))
