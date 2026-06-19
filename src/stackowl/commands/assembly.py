@@ -208,3 +208,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /brief
     from stackowl.commands.brief_command import BriefCommand
     registry.register(BriefCommand(handler=deps.morning_brief_handler))
+
+    # /webhook
+    from stackowl.commands.webhook_command import WebhookCommand
+    registry.register(WebhookCommand(db=deps.db, settings=deps.settings))

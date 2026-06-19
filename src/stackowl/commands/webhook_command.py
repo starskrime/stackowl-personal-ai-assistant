@@ -41,7 +41,7 @@ _LIST_SQL = (
 class WebhookCommand(SlashCommand):
     """``/webhook`` — manage webhook sources via YAML hints + audit-log writes."""
 
-    def __init__(self, db: DbPool, settings: Settings) -> None:
+    def __init__(self, db: DbPool | None = None, settings: Settings | None = None) -> None:
         self._db = db
         self._settings = settings
 
@@ -57,9 +57,11 @@ class WebhookCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Manage webhook sources"
+        return "Show webhook source config instructions and audit disable requests"
 
     async def handle(self, args: str, state: PipelineState) -> str:
+        if self._db is None or self._settings is None:
+            return "✗ /webhook: not configured"
         # 1. ENTRY
         log.webhook.debug(
             "[webhook] command.handle: entry",
