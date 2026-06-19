@@ -33,8 +33,11 @@ def _is_overclaim(state: PipelineState) -> tuple[bool, str | None]:
         # Something crossed the OUT boundary — legitimate delivery.
         return (False, None)
     unrecovered = _unrecovered_consequential_failures(state)
-    stuck = set(state.no_progress_tools)
-    culprit = next(iter(unrecovered), None) or next(iter(stuck), None)
+    stuck_tools = state.no_progress_tools
+    culprit = (
+        next((n for n in state.consequential_failures if n in unrecovered), None)
+        or (stuck_tools[0] if stuck_tools else None)
+    )
     if culprit is None:
         # No tool failed and no tool bounced — not an overclaim.
         return (False, None)
@@ -52,7 +55,7 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
     try:
         is_oc, culprit = _is_overclaim(state)
         if not is_oc:
-            log.engine.info(
+            log.engine.debug(
                 "overclaim.cleared",
                 extra={"_fields": {"trace_id": state.trace_id}},
             )

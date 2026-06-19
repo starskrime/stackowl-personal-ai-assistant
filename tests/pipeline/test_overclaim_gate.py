@@ -131,3 +131,18 @@ async def test_already_floor_not_double_processed() -> None:
     result = await surface_overclaim_gate(state)
     assert result.overclaim_blocked is False
     assert result.responses[0] is floor_chunk
+
+
+@pytest.mark.asyncio
+async def test_empty_response_not_blocked() -> None:
+    """Empty/whitespace-only response + consequential failure → CLEARED (no overclaim)."""
+    state = _state(
+        responses=(_draft("   "),),  # whitespace only
+        consequential_failures=("send_image",),
+        consequential_snapshot_taken=True,
+        delivered_successes=(),
+    )
+    result = await surface_overclaim_gate(state)
+    # Empty response guard clears it before the failure check
+    assert result.overclaim_blocked is False
+    assert result.responses[0].content == "   "
