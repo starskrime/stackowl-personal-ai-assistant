@@ -44,7 +44,7 @@ async def test_agents_no_subcommand_returns_usage() -> None:
     deps = CommandDeps(scheduler=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
     result = await CommandRegistry.instance().dispatch("agents", "", make_state())
-    assert "Usage:" in result or "list" in result
+    assert "Usage:" in result
 
 
 async def test_agents_not_found_when_not_registered() -> None:

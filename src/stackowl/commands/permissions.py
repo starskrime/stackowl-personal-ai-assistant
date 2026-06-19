@@ -55,7 +55,7 @@ class PermissionsCommand(SlashCommand):
             lines: list[str] = ["=== Permissions ===", ""]
 
             # Autonomy level
-            autonomy = getattr(self._settings, "autonomy_level", "medium")
+            autonomy = self._settings.autonomy_level if self._settings is not None else "medium"
             lines.append(f"Autonomy level: {autonomy}")
             lines.append("")
 

@@ -717,9 +717,10 @@ class StartupOrchestrator:
 
         services.a2a_delegator = A2ADelegator(a2a_queue=a2a_queue, services=services)
         backend = create_backend(self._settings.orchestrator.backend, services=services)
+        parliament_session_store = SessionStore(db_pool)
         parliament = ParliamentOrchestrator(
             backend=backend,
-            session_store=SessionStore(db_pool),
+            session_store=parliament_session_store,
             delegation_governor=delegation_governor,
         )
         scanner = GatewayScanner(owl_registry=owl_registry)
@@ -774,6 +775,8 @@ class StartupOrchestrator:
             preference_store=preference_store,
             plugin_registry=PluginRegistry(default_db_path()),
             integration_registry=IntegrationRegistry.instance(),
+            provider_registry=provider_registry,
+            parliament_session_store=parliament_session_store,
         ))
 
         # Plugin index — discover installed plugins from ~/.stackowl/plugins/.

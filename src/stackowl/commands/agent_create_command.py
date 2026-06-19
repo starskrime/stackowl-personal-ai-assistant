@@ -147,7 +147,15 @@ class AgentCreateCommand(SlashCommand):
             return _NO_PROVIDER
 
         if self._template is None:
-            self._template = self._template_env.get_template(_TEMPLATE_NAME)
+            try:
+                self._template = self._template_env.get_template(_TEMPLATE_NAME)
+            except Exception as exc:
+                log.scheduler.error(
+                    "[commands] agent._create: template load failed",
+                    exc_info=exc,
+                    extra={"_fields": {"template": _TEMPLATE_NAME, "prompt_dir": str(_PROMPT_DIR)}},
+                )
+                raise
         prompt = self._template.render(user_intent=intent)
         provider = self._providers.get_by_tier(_FAST_TIER)
         log.scheduler.debug(

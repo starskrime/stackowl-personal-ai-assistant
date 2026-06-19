@@ -21,7 +21,7 @@ async def test_parliament_no_args_returns_usage() -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
     result = await CommandRegistry.instance().dispatch("parliament", "", make_state())
-    assert "Usage:" in result or "/parliament" in result
+    assert "Usage:" in result
 
 
 async def test_parliament_log_no_store() -> None:
