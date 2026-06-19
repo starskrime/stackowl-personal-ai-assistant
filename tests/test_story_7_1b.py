@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from stackowl.commands.agents_command import AgentsCommand
+from stackowl.commands.agent_create_command import AgentCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.db.pool import DbPool
 from stackowl.pipeline.state import PipelineState
@@ -58,13 +58,13 @@ def _reset_singletons() -> Any:
 
 
 @pytest.mark.asyncio
-class TestAgentsCommand:
+class TestAgentCommand:
     async def test_command_name(self) -> None:
-        cmd = AgentsCommand()
-        assert cmd.command == "agents"
+        cmd = AgentCommand()
+        assert cmd.command == "agent"
 
     async def test_help_when_no_subcommand(self) -> None:
-        cmd = AgentsCommand()
+        cmd = AgentCommand()
         result = await cmd.handle("", _state())
         assert "Usage:" in result
 
@@ -77,7 +77,7 @@ class TestAgentsCommand:
             enabled=False,
         )
         await insert_job(tmp_db, job)
-        cmd = AgentsCommand(db=tmp_db)
+        cmd = AgentCommand(db=tmp_db)
         result = await cmd.handle(f"acknowledge {job.job_id}", _state())
         assert "acknowledged" in result
         rows = await tmp_db.fetch_all(
@@ -92,7 +92,7 @@ class TestAgentsCommand:
     async def test_acknowledge_writes_audit_row(self, tmp_db: DbPool) -> None:
         job = _job(status="failed", failure_count=2)
         await insert_job(tmp_db, job)
-        cmd = AgentsCommand(db=tmp_db)
+        cmd = AgentCommand(db=tmp_db)
         await cmd.handle(f"acknowledge {job.job_id}", _state())
         audit_rows = await tmp_db.fetch_all(
             "SELECT event_type, target FROM audit_log WHERE target = ?",
@@ -101,13 +101,13 @@ class TestAgentsCommand:
         assert any(r["event_type"] == "job_resumed" for r in audit_rows)
 
     async def test_acknowledge_unknown_job_reports_error(self, tmp_db: DbPool) -> None:
-        cmd = AgentsCommand(db=tmp_db)
+        cmd = AgentCommand(db=tmp_db)
         result = await cmd.handle("acknowledge no-such-job", _state())
         assert "no job" in result.lower() or "✗" in result
 
     async def test_create_and_register_adds_to_registry(self) -> None:
         CommandRegistry.reset()
-        cmd = AgentsCommand.create_and_register()
+        cmd = AgentCommand.create_and_register()
         assert CommandRegistry.instance().list() == [cmd]
 
 

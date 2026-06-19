@@ -199,7 +199,7 @@ class BrowserCommand(SlashCommand):
             return (
                 "Website watches are persisted as scheduler jobs. "
                 "Ask an owl to 'watch <url> daily' to register one. "
-                "Use /agents to see scheduler activity."
+                "Use /agent list to see scheduler activity."
             )
         return "Usage: /browser watch list (use natural language to add/remove watches)"
 

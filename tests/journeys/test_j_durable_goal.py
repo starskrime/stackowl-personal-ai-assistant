@@ -5,7 +5,7 @@ through the durable pipeline (gated by ``settings.durable.goals``) and prove the
 fresh durable-goal path end-to-end with ONLY the AI provider mocked.
 
 The drive is the GENUINE user→goal→dispatch path: a goal job is persisted exactly
-as :class:`~stackowl.commands.agent_create_command.AgentCreateCommand` persists it
+as :class:`~stackowl.commands.agent_create_command.AgentCommand` persists it
 (``JobScheduler.create_job(handler_name="goal_execution", ...)``), then the REAL
 scheduler dispatch entry (``JobScheduler.run_now``) claims and runs it through the
 REAL :class:`~stackowl.scheduler.handlers.goal_execution.GoalExecutionHandler` →
@@ -39,7 +39,7 @@ Business-outcome assertions (NOT tool return-shapes):
        written — durability is genuinely gated off.
 
 NOTE on scope (FR13 follow-up): a true user→gateway→goal-creation path DOES exist
-(``/agent-create`` → ``AgentCreateCommand`` → ``scheduler.create_job`` →
+(``/agent-create`` → ``AgentCommand`` → ``scheduler.create_job`` →
 ``goal_execution`` job). It persists a job the scheduler later dispatches; the goal
 runs under ``DEFAULT_PRINCIPAL_ID`` (there is no per-user goal ASSIGNMENT yet — that
 multi-tenant owner thread-point is the documented FR13 follow-up). This smoke drives
@@ -248,7 +248,7 @@ def _backend(
 
 
 async def _make_goal_job(scheduler: JobScheduler) -> str:
-    """Persist a goal job exactly as AgentCreateCommand → create_job does."""
+    """Persist a goal job exactly as AgentCommand → create_job does."""
     job = await scheduler.create_job(
         handler_name="goal_execution",
         schedule="daily@09:00",

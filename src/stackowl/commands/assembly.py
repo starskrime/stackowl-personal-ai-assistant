@@ -267,18 +267,12 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         plugin_registry=deps.plugin_registry,
     ))
 
-    # /agents
-    from stackowl.commands.agents_command import AgentsCommand
-    _safe_register(registry, "agents", lambda: AgentsCommand(
-        scheduler=cast("JobScheduler | None", deps.scheduler),
-        db=deps.db,
-        event_bus=deps.event_bus,
-    ))
-
-    # /agent
-    from stackowl.commands.agent_create_command import AgentCreateCommand
+    # /agent — unified create (create/confirm/cancel) + manage
+    # (list/log/pause/resume/stop/acknowledge). Replaces the old split
+    # /agent + /agents surfaces.
+    from stackowl.commands.agent_create_command import AgentCommand
     from stackowl.providers.registry import ProviderRegistry
-    _safe_register(registry, "agent", lambda: AgentCreateCommand(
+    _safe_register(registry, "agent", lambda: AgentCommand(
         scheduler=cast("JobScheduler | None", deps.scheduler),
         provider_registry=cast("ProviderRegistry | None", deps.provider_registry),
         db=deps.db,

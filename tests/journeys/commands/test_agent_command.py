@@ -12,7 +12,7 @@ from stackowl.config.settings import Settings
 from stackowl.providers.registry import ProviderRegistry
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
 
-_USAGE_MARKER = "/agent create"
+_USAGE_MARKER = "Usage: /agent"
 _NO_PENDING = "No pending agent proposal"
 
 

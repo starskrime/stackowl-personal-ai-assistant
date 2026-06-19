@@ -1,4 +1,4 @@
-"""Positive reachability test — all 29 shipped commands register (Epic B campaign goal).
+"""Positive reachability test — every shipped command registers (Epic B campaign goal).
 
 This test is NOT marked xfail.  It proves the reachability campaign's goal is met:
 after all Epic B wiring commits, register_all_commands(CommandDeps()) produces
@@ -28,7 +28,7 @@ def _isolate_registry():  # type: ignore[no-untyped-def]
         CommandRegistry.instance().register(cmd)
 
 
-def test_all_29_shipped_commands_register() -> None:
+def test_all_shipped_commands_register() -> None:
     """register_all_commands(CommandDeps()) must produce exactly SHIPPED_COMMANDS.
 
     This is the positive gate that proves Epic B's reachability goal is fully met.
