@@ -84,6 +84,12 @@ class CommandDeps:
     parliament_orchestrator: ParliamentOrchestrator | None = None
     morning_brief_handler: object | None = None  # MorningBriefHandler
 
+    # Provider registry (for /agent create)
+    provider_registry: object | None = None  # ProviderRegistry — avoid heavy import
+
+    # Parliament session store (for /parliament log)
+    parliament_session_store: object | None = None  # SessionStore — avoid heavy import
+
 
 def register_all_commands(
     deps: CommandDeps,
@@ -215,3 +221,39 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /webhook
     from stackowl.commands.webhook_command import WebhookCommand
     registry.register(WebhookCommand(db=deps.db, settings=deps.settings))
+
+    # /permissions
+    from stackowl.commands.permissions import PermissionsCommand
+    registry.register(PermissionsCommand(
+        settings=deps.settings,
+        integration_registry=deps.integration_registry,
+        plugin_registry=deps.plugin_registry,
+    ))
+
+    # /agents
+    from stackowl.commands.agents_command import AgentsCommand
+    registry.register(AgentsCommand(
+        scheduler=deps.scheduler,
+        db=deps.db,
+        event_bus=deps.event_bus,
+    ))
+
+    # /agent
+    from stackowl.commands.agent_create_command import AgentCreateCommand
+    from stackowl.providers.registry import ProviderRegistry
+    registry.register(AgentCreateCommand(
+        scheduler=deps.scheduler,
+        provider_registry=cast("ProviderRegistry | None", deps.provider_registry),
+        db=deps.db,
+        event_bus=deps.event_bus,
+    ))
+
+    # /parliament
+    from stackowl.commands.parliament_command import ParliamentCommand
+    from stackowl.parliament.session_store import SessionStore
+    registry.register(ParliamentCommand(
+        orchestrator=deps.parliament_orchestrator,
+        session_store=cast("SessionStore | None", deps.parliament_session_store),
+        owl_registry=deps.owl_registry,
+        event_bus=deps.event_bus,
+    ))

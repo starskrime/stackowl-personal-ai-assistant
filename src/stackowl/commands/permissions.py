@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.config.settings import Settings
     from stackowl.integrations.registry import IntegrationRegistry
     from stackowl.pipeline.state import PipelineState
     from stackowl.plugins.registry import PluginRegistry
-
-log = logging.getLogger("stackowl.gateway")
 
 
 class PermissionsCommand(SlashCommand):
@@ -23,17 +21,17 @@ class PermissionsCommand(SlashCommand):
 
     def __init__(
         self,
-        settings: Settings,
-        integration_registry: IntegrationRegistry,
-        plugin_registry: PluginRegistry,
+        settings: Settings | None,
+        integration_registry: IntegrationRegistry | None,
+        plugin_registry: PluginRegistry | None,
     ) -> None:
         # 1. ENTRY
-        log.debug("[commands] permissions.init: entry")
+        log.gateway.debug("[commands] permissions.init: entry")
         self._settings = settings
         self._integration_registry = integration_registry
         self._plugin_registry = plugin_registry
         # 4. EXIT
-        log.debug("[commands] permissions.init: exit")
+        log.gateway.debug("[commands] permissions.init: exit")
 
     @property
     def command(self) -> str:
@@ -46,13 +44,13 @@ class PermissionsCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         """Execute /permissions — return a read-only permissions summary."""
         # 1. ENTRY
-        log.debug(
+        log.gateway.debug(
             "[commands] permissions.handle: entry",
             extra={"_fields": {"session": state.session_id}},
         )
         try:
             # 2. DECISION — gather all data sources
-            log.debug("[commands] permissions.handle: decision — assembling permissions view")
+            log.gateway.debug("[commands] permissions.handle: decision — assembling permissions view")
 
             lines: list[str] = ["=== Permissions ===", ""]
 
@@ -82,8 +80,8 @@ class PermissionsCommand(SlashCommand):
             lines.append("")
 
             # 3. STEP — integrations
-            log.debug("[commands] permissions.handle: step — listing integrations")
-            integrations = self._integration_registry.list_all()
+            log.gateway.debug("[commands] permissions.handle: step — listing integrations")
+            integrations = self._integration_registry.list_all() if self._integration_registry is not None else []
             if integrations:
                 lines.append("Connected integrations:")
                 for adapter in integrations:
@@ -93,11 +91,11 @@ class PermissionsCommand(SlashCommand):
             lines.append("")
 
             # Active plugins
-            log.debug("[commands] permissions.handle: step — listing plugins")
+            log.gateway.debug("[commands] permissions.handle: step — listing plugins")
             try:
-                plugins = self._plugin_registry.list()
+                plugins = self._plugin_registry.list() if self._plugin_registry is not None else []
             except Exception as exc:
-                log.warning(
+                log.gateway.warning(
                     "[commands] permissions.handle: plugin list failed",
                     exc_info=exc,
                 )
@@ -112,11 +110,11 @@ class PermissionsCommand(SlashCommand):
             result = "\n".join(lines)
 
         except Exception as exc:
-            log.error("[commands] permissions.handle: failed", exc_info=exc)
+            log.gateway.error("[commands] permissions.handle: failed", exc_info=exc)
             return f"Error reading permissions: {exc}"
 
         # 4. EXIT
-        log.debug(
+        log.gateway.debug(
             "[commands] permissions.handle: exit",
             extra={"_fields": {"result_len": len(result)}},
         )
