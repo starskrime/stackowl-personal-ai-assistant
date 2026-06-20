@@ -11,7 +11,7 @@ import time
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
-from stackowl.scheduler.base import JobHandler
+from stackowl.scheduler.base import JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 
 
@@ -21,6 +21,14 @@ class ToolPruningHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return "tool_pruning"
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # Register-only stub (Epic 8 implements). SchedulerAssembly registers it
+        # but seeds NO standing jobs row — it is enqueued on demand once the
+        # pruner exists. Declares on_demand so the wiring audit does not flag the
+        # (correctly) unseeded stub as a dangling never-fires handler.
+        return "on_demand"
 
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY

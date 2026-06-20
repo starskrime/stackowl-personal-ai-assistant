@@ -2164,6 +2164,47 @@ class StartupOrchestrator:
                 exc_info=exc,
                 extra={"_fields": {}},
             )
+
+        # WS-E — STARTUP WIRING-CLOSURE audit. Runs AFTER recover() so seeded rows
+        # exist, then warns loudly (never fails startup) when a registered "seeded"
+        # handler has no standing jobs row (it would never fire) or a subscribed
+        # bus event has no declared publisher. Advisory guard against the class of
+        # "dangling half-edge" bug (registered-but-unreachable) that shipped green
+        # for check_in / event_bridge / goal_execution.
+        #
+        # DECLARED_EVENT_PUBLISHERS — the set of bus events some module actually
+        # EMITS. It is empty today: event_bridge._ALLOWED_EVENTS is empty (WS-D
+        # moved proactivity onto the durable seam). Re-adding a bridge subscriber
+        # (an event in _ALLOWED_EVENTS) REQUIRES adding its publisher name here,
+        # or the audit will (correctly) flag it as a dangling subscription.
+        try:
+            from stackowl.notifications.event_bridge import _ALLOWED_EVENTS
+            from stackowl.scheduler.base import HandlerRegistry
+            from stackowl.startup.wiring_audit import audit_scheduler_wiring
+
+            declared_event_publishers: frozenset[str] = frozenset()
+            wiring_report = await audit_scheduler_wiring(
+                db_pool,
+                HandlerRegistry.instance(),
+                allowed_events=_ALLOWED_EVENTS,
+                declared_publishers=declared_event_publishers,
+            )
+            log.info(
+                "[startup] gateway: scheduler wiring audited",
+                extra={"_fields": {
+                    "dangling_handlers": wiring_report.dangling_handlers,
+                    "dangling_events": wiring_report.dangling_events,
+                    "total_handlers": wiring_report.total_handlers,
+                }},
+            )
+        except Exception as exc:
+            # The audit is advisory + already no-raise; this is belt-and-braces so
+            # an unexpected import/wiring error can NEVER block startup.
+            log.error(
+                "[startup] gateway: wiring audit failed — starting anyway",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
         # Durable-task recovery (B4): reap tasks left 'running' OR 'recovering' by
         # a crash (at startup the prior process is dead, so both are orphans). The
         # AWAITED fast pass atomically claims each (CAS) and reconstructs its

@@ -248,15 +248,13 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(tool_outcome_miner_handler)
 
+        # Report the ACTUAL registered set (self-maintaining — a hardcoded count
+        # had drifted, omitting reflection_writer/skill_synthesizer/
+        # tool_outcome_miner). Honest wiring logs are the whole point of this arc.
+        _registered = sorted(h.handler_name for h in HandlerRegistry.instance().list())
         log.scheduler.info(
-            "[scheduler] assembly: 7 orphaned handlers registered",
-            extra={"_fields": {
-                "handlers": [
-                    "morning_brief", "check_in", "knowledge_prune",
-                    "tool_pruning", "goal_execution", "evolution",
-                    "critic_scorer",
-                ],
-            }},
+            "[scheduler] assembly: handlers registered",
+            extra={"_fields": {"count": len(_registered), "handlers": _registered}},
         )
 
         # 4) Auto-schedule three per operator vote (morning_brief, evolution,

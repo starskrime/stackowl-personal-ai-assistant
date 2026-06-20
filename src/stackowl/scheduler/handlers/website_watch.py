@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
-from stackowl.scheduler.base import HandlerRegistry, JobHandler
+from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.tools.browser._extraction import extract_markdown
 from stackowl.tools.browser._logging import url_path_only
@@ -50,6 +50,13 @@ class WebsiteWatchHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return "website_watch"
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # Created by the cronjob `watch` action on a user request — no standing
+        # SchedulerAssembly seed. Declares on_demand so the wiring audit does not
+        # flag it as dangling.
+        return "on_demand"
 
     def _state_file(self, url: str) -> Path:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]

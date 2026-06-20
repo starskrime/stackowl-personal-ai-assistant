@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
-from stackowl.scheduler.base import JobHandler
+from stackowl.scheduler.base import JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -70,6 +70,13 @@ class GoalExecutionHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return "goal_execution"
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # Created by the cronjob tool on a user action (e.g. /goal-add) — there
+        # is NO standing seed in SchedulerAssembly. Declares on_demand so the
+        # wiring audit does not flag it as a dangling never-seeded handler.
+        return "on_demand"
 
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY

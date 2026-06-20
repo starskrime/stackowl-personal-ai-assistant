@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Literal
 
 from stackowl.infra.observability import log
 from stackowl.scheduler.job import Job, JobResult
+
+TriggerKind = Literal["seeded", "on_demand", "event"]
 
 
 class JobHandler(ABC):
@@ -14,6 +17,25 @@ class JobHandler(ABC):
     @property
     @abstractmethod
     def handler_name(self) -> str: ...
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        """How this handler's jobs come to exist — declares its wiring contract.
+
+        * ``"seeded"`` (DEFAULT) — expects a standing ``jobs`` row created by
+          ``SchedulerAssembly`` seeding. The wiring audit treats a "seeded"
+          handler with NO row as DANGLING: it is registered but the poll loop
+          will never dispatch it.
+        * ``"on_demand"`` — created by a user/tool action (e.g. the cronjob
+          tool), so NO standing row is expected at boot.
+        * ``"event"`` — fired by an event, not the poll loop.
+
+        Defaulting to ``"seeded"`` is FAIL-LOUD on purpose: a new handler that
+        forgets to seed itself AND forgets to declare ``on_demand``/``event``
+        gets flagged by :func:`audit_scheduler_wiring`, so a dangling
+        registered-but-unreachable handler can never silently ship.
+        """
+        return "seeded"
 
     @abstractmethod
     async def execute(self, job: Job) -> JobResult: ...

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 from stackowl.exceptions import DuplicateFactError
 from stackowl.infra.observability import log
 from stackowl.providers.base import Message
-from stackowl.scheduler.base import JobHandler
+from stackowl.scheduler.base import JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -64,6 +64,13 @@ class FactExtractionJobHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return self._handler_name
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # Enqueued per-session ON DEMAND (idempotency key fact_extraction:<sid>)
+        # after N messages — there is NO standing SchedulerAssembly seed. Declares
+        # on_demand so the wiring audit does not flag the absence of a row.
+        return "on_demand"
 
     async def execute(self, job: Job) -> JobResult:
         """Extract facts from session messages and stage them."""
