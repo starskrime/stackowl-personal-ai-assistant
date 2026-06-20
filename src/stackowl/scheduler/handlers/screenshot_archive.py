@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
-from stackowl.scheduler.base import HandlerRegistry, JobHandler
+from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.tools.browser._logging import url_path_only
 
@@ -33,6 +33,13 @@ class ScreenshotArchiveHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return "screenshot_archive"
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # ON_DEMAND, not seeded: execute() REQUIRES params['urls']; a standing
+        # blank-param row would fail every poll. Jobs are enqueued per
+        # user-configured URL list, so no boot-time row is expected (WS-G).
+        return "on_demand"
 
     async def execute(self, job: Job) -> JobResult:
         t0 = time.monotonic()

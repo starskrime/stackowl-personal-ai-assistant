@@ -533,6 +533,65 @@ async def _seed_daily_schedule(
     )
 
 
+async def seed_browser_maintenance_schedules(db: DbPool) -> None:
+    """Idempotently seed the LOCAL browser-maintenance jobs (WS-G).
+
+    Three fully-built handlers (``profile_backup``, ``browser_cache_eviction``,
+    ``browser_recycle``) are registered ONLY when a browser runtime is available
+    (see ``startup/orchestrator.py``), but nothing ever produced their ``jobs``
+    rows — so the poll loop never dispatched them and the WS-E wiring audit
+    flagged all three as DANGLING. These are LOCAL maintenance jobs: NO delivery
+    target (no ``target_channels`` / ``target_addresses``), fixed daily cadence,
+    empty params (each handler runs correctly with its built-in defaults).
+
+    MUST be called from the same browser-available block that REGISTERS these
+    handlers — never seed a row for a handler that isn't registered (the scheduler
+    would error every poll on an unknown handler). Idempotent by ``handler_name``
+    (``_seed_daily_schedule`` early-returns if a row exists), so boot re-runs are
+    safe.
+
+    Cadence (all daily, overnight, STAGGERED to avoid runtime contention):
+
+    * ``profile_backup`` @01:00 — tars persistent profile dirs (login state) and
+      prunes to the handler's retention default. Daily is conservative: a
+      logged-in profile that breaks/gets deleted is recoverable from a ≤24h-old
+      archive. Runs first (before recycle/eviction touch anything).
+    * ``browser_recycle`` @03:00 — backstop forced runtime recycle + idle-session
+      evict. The runtime already self-recycles on nav-count/idle and the live
+      session sweep runs every 10m, so this is purely a low-traffic (overnight)
+      belt-and-suspenders tick — daily is the right, non-aggressive cadence.
+    * ``browser_cache_eviction`` @04:30 — prunes cache (>7d) + screenshots (>30d)
+      by the handler's age defaults. Daily keeps disk bounded; runs LAST so the
+      day's recycle/backup artifacts settle before the prune pass.
+
+    NOT seeded here (deliberate): ``screenshot_archive`` and
+    ``credential_rotation`` REQUIRE per-job ``params`` (a URL list; a
+    profile+check_url) and would return ``success=False`` on EVERY poll if seeded
+    blank. They are genuinely ``on_demand`` — enqueued per user-configured target,
+    exactly like ``goal_execution`` — and declare ``trigger_kind='on_demand'`` so
+    the WS-E audit does not flag them as dangling. Seeding a perpetually-failing
+    blank row would be the very anti-pattern this arc exists to kill.
+    """
+    log.scheduler.info("[scheduler] seed_browser_maintenance_schedules: entry")
+    # profile_backup @01:00 — recover login state from a ≤24h-old archive.
+    await _seed_daily_schedule(
+        db, handler_name="profile_backup",
+        schedule="daily@01:00", next_hour=1,
+    )
+    # browser_recycle @03:00 — low-traffic backstop for the FF RSS leak; the
+    # runtime + 10m session sweep already self-recycle, so daily is sufficient.
+    await _seed_daily_schedule(
+        db, handler_name="browser_recycle",
+        schedule="daily@03:00", next_hour=3,
+    )
+    # browser_cache_eviction @04:30 — bound disk; runs after backup/recycle settle.
+    await _seed_daily_schedule(
+        db, handler_name="browser_cache_eviction",
+        schedule="daily@04:30", next_hour=4,
+    )
+    log.scheduler.info("[scheduler] seed_browser_maintenance_schedules: exit — 3 seeded")
+
+
 async def _seed_minutes_schedule(
     db: DbPool, *, handler_name: str, schedule: str, interval_minutes: int,
 ) -> None:

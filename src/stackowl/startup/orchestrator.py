@@ -492,6 +492,20 @@ class StartupOrchestrator:
                     browser_runtime, browser_settings.browser_cache_dir / "credential_rotation",
                 )
                 register_profile_backup_handler(browser_settings.profiles_dir, profile_backups_dir)
+                # WS-G — seed the LOCAL browser-maintenance jobs (profile_backup,
+                # browser_recycle, browser_cache_eviction) so the poll loop actually
+                # dispatches them. CO-LOCATED with the register_* calls above and
+                # guarded by the same browser-available block: a browser-less box
+                # neither registers NOR seeds them (never a seeded-but-unregistered
+                # row that errors every poll). The two param-required handlers
+                # (screenshot_archive, credential_rotation) are on_demand and are
+                # deliberately NOT seeded here. db_pool is ready (WS-D already used
+                # it for the DeliveryLedger above).
+                from stackowl.scheduler.assembly import (
+                    seed_browser_maintenance_schedules,
+                )
+
+                await seed_browser_maintenance_schedules(db_pool)
         else:
             reason = "binary not found" if probe is not None else "probe did not run"
             log.warning("[startup] gateway: browser runtime skipped — %s", reason)
