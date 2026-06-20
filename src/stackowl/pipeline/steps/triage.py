@@ -119,4 +119,5 @@ async def run(state: PipelineState) -> PipelineState:
         intent_class=result.intent_class,
         clarify_question=result.clarify_question,
         language=language,
+        intent_classified=True,
     )

@@ -56,6 +56,12 @@ class PipelineState(BaseModel, frozen=True):
     # "conversational" marks trivial greetings/small-talk (no task) so downstream
     # steps can choose a lean path and skip heavy prompt assembly.
     intent_class: Literal["conversational", "standard", "clarify"] = "standard"
+    #: True only once the SecretaryRouter has POSITIVELY classified this turn
+    #: (work/standard/conversational/clarify). Stays False on the direct-address
+    #: path (triage returns before the router runs) and on any router error —
+    #: so failure-history admission can fail CLOSED rather than treating the
+    #: untouched ``intent_class="standard"`` default as a confirmed work turn.
+    intent_classified: bool = False
     # The ONE clarifying question to surface when intent_class == "clarify"
     # (router-authored, same fast-tier call). None for every other class.
     clarify_question: str | None = None
