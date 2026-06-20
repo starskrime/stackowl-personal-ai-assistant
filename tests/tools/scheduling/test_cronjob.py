@@ -438,6 +438,99 @@ async def test_create_without_target_signals_unreachable(
     assert persisted.target_addresses == {}
 
 
+# --------------------------------------------------------------------------- WS-D
+# The `watch` action creates a `website_watch` job (the ONLY path that can — the
+# `cronjob` tool is extended rather than a new tool built). Mirrors `_create`'s
+# durable-target capture so a change notification can be routed back.
+
+
+async def test_watch_creates_website_watch_job_with_durable_target(
+    migrated_db: DbPool,
+) -> None:
+    await _seed_session(migrated_db)
+    token = set_services(StepServices(db_pool=migrated_db))
+    ttoken = TraceContext.start(
+        session_id=_SESSION,
+        interactive=True,
+        channel="telegram",
+        reply_target=12345,
+    )
+    try:
+        result = await CronjobTool().execute(
+            action="watch",
+            watch_url="https://example.com/page",
+            schedule="every 30m",
+        )
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+    assert result.success
+    body = _payload(result)
+    assert body["created"] is True
+    assert body.get("created_but_unreachable") is not True
+
+    persisted = {
+        j.job_id: j for j in await JobScheduler(db=migrated_db).list_jobs()
+    }[body["job_id"]]
+    assert persisted.handler_name == "website_watch"
+    assert persisted.params["url"] == "https://example.com/page"
+    assert persisted.params["created_by"] == "cronjob"
+    assert persisted.params["owl"] == _OWL
+    assert persisted.target_channels == ["telegram"]
+    assert persisted.target_addresses == {"telegram": 12345}
+
+
+async def test_watch_requires_url_and_schedule(migrated_db: DbPool) -> None:
+    await _seed_session(migrated_db)
+    # Missing watch_url.
+    r1 = await _run(migrated_db, action="watch", schedule="every 30m")
+    assert r1.success is False
+    assert r1.error is not None and "watch_url" in r1.error
+    # Missing schedule.
+    r2 = await _run(
+        migrated_db, action="watch", watch_url="https://example.com"
+    )
+    assert r2.success is False
+    assert r2.error is not None and "schedule" in r2.error
+    # Nothing persisted.
+    assert await JobScheduler(db=migrated_db).list_jobs() == []
+
+
+async def test_watch_malformed_schedule_no_persist(migrated_db: DbPool) -> None:
+    await _seed_session(migrated_db)
+    result = await _run(
+        migrated_db,
+        action="watch",
+        watch_url="https://example.com",
+        schedule="not-a-cron",
+    )
+    assert result.success is False
+    assert result.error is not None and "unparseable schedule" in result.error
+    assert await JobScheduler(db=migrated_db).list_jobs() == []
+
+
+async def test_watch_without_target_signals_unreachable(migrated_db: DbPool) -> None:
+    await _seed_session(migrated_db)
+    # channel="cli" + no reply_target + no telegram owner → unresolvable.
+    result = await _run(
+        migrated_db,
+        action="watch",
+        watch_url="https://example.com/changelog",
+        schedule="every 1h",
+    )
+    assert result.success  # plumbing success preserved
+    body = _payload(result)
+    assert body["created"] is True
+    assert body.get("created_but_unreachable") is True
+
+    persisted = {
+        j.job_id: j for j in await JobScheduler(db=migrated_db).list_jobs()
+    }[body["job_id"]]
+    assert persisted.handler_name == "website_watch"
+    assert persisted.target_channels == []
+    assert persisted.target_addresses == {}
+
+
 async def test_cross_owl_cannot_hijack_anothers_job(migrated_db: DbPool) -> None:
     # Owl 'scout' creates a job in its own session.
     await _seed_session(migrated_db, _SESSION, _OWL)

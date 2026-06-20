@@ -32,12 +32,16 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # Allow-list of proactive event names a user PING is permitted for. Internal /
 # telemetry events (e.g. ``morning_brief_rendered``, ``settings_reloaded``) are
 # deliberately ABSENT — they must never drive a user-facing send.
-_ALLOWED_EVENTS = frozenset(
-    {
-        "website_watch.changed",
-        "perch.file_landed",
-    }
-)
+#
+# It is currently EMPTY by design:
+#   * ``website_watch.changed`` is delivered via the DURABLE exactly-once seam
+#     (the handler calls ``ProactiveJobDeliverer.deliver_for_job`` directly), not
+#     this unledgered bridge — so it is no longer routed here (WS-D).
+#   * ``perch.file_landed`` is dead v1 vocabulary — no module/emitter exists.
+# The :class:`EventDeliveryBridge` machinery is kept intact (and unit-tested) so a
+# genuinely bus-native proactive event can be added here in the future; until then
+# the bridge registers no subscriptions and logs a clean dormant state.
+_ALLOWED_EVENTS: frozenset[str] = frozenset()
 _DEFAULT_CATEGORY = "proactive_event"
 # Bound concurrent event-driven sends so an event burst cannot fan out unbounded.
 _MAX_INFLIGHT = 16
@@ -57,11 +61,22 @@ class EventDeliveryBridge:
         self._inflight = 0
 
     def register(self, bus: EventBus) -> None:
-        """Subscribe this bridge's async handler for every allow-listed event."""
+        """Subscribe this bridge's async handler for every allow-listed event.
+
+        With an EMPTY allow-list (the current state — see ``_ALLOWED_EVENTS``) this
+        is a clean DORMANT no-op: nothing is subscribed and the log says so plainly
+        rather than claiming "subscribed N events".
+        """
         log.notifications.debug(
             "[notifications] event_bridge.register: entry",
             extra={"_fields": {"events": sorted(_ALLOWED_EVENTS)}},
         )
+        if not _ALLOWED_EVENTS:
+            log.notifications.info(
+                "[notifications] event_bridge.register: no proactive bus events to "
+                "subscribe — bridge dormant (durable seams handle proactivity)",
+            )
+            return
         for event in _ALLOWED_EVENTS:
             bus.subscribe(event, self._on_event)
         log.notifications.info(

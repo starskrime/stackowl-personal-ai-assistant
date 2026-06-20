@@ -463,7 +463,26 @@ class StartupOrchestrator:
                 watch_state_dir = browser_settings.browser_cache_dir / "watch"
                 screenshot_archive_dir = StackowlHome.knowledge_dir() / "screenshots"
                 profile_backups_dir = StackowlHome.home() / "backups" / "browser-profiles"
-                register_website_watch_handler(browser_runtime, watch_state_dir)
+                # WS-D — give the website_watch handler the SAME durable, exactly-
+                # once delivery seam goal_execution/check_in/morning_brief use so a
+                # detected change is actually pinged back to the chat the watch was
+                # scheduled from (addressed from the job's durable target). The
+                # ledger is constructed identically to SchedulerAssembly's. Wired
+                # only when a real deliverer exists; absent it, a change is recorded
+                # honestly without a send (never a fake "delivered").
+                watch_job_deliverer = None
+                if proactive_deliverer is not None:
+                    from stackowl.notifications.delivery_ledger import DeliveryLedger
+                    from stackowl.notifications.proactive_job import (
+                        ProactiveJobDeliverer,
+                    )
+
+                    watch_job_deliverer = ProactiveJobDeliverer(
+                        proactive_deliverer, DeliveryLedger(db=db_pool)
+                    )
+                register_website_watch_handler(
+                    browser_runtime, watch_state_dir, watch_job_deliverer
+                )
                 register_screenshot_archive_handler(browser_runtime, screenshot_archive_dir)
                 register_browser_recycle_handler(browser_runtime, browser_sessions)
                 register_browser_cache_eviction_handler(
