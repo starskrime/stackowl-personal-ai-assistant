@@ -463,6 +463,7 @@ class ToolRegistry:
         from stackowl.tools.scheduling.send_message import SendMessageTool
         from stackowl.tools.search.web_search import WebSearchTool
         from stackowl.tools.system.shell import ShellTool
+        from stackowl.tools.tasks.task_status import TaskStatusTool
 
         registry = cls()
         registry.register(ReadFileTool())
@@ -504,6 +505,7 @@ class ToolRegistry:
         # (no constructor wiring; the depth/width rails live in the tool). The S0
         # execution gate withholds it at delegation_depth>0 (E8-S1).
         registry.register(DelegateTaskTool())
+        registry.register(TaskStatusTool())
         # mixture_of_agents — fans one hard question across healthy_distinct()
         # providers, then synthesizes via the parliament synthesizer. Reads
         # provider_registry/db_pool/event_bus off get_services() at execute time
