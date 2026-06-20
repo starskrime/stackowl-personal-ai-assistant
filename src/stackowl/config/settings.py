@@ -33,7 +33,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -565,6 +565,29 @@ class SystemSettings(BaseModel):
     )
 
 
+class IdentitySettings(BaseModel):
+    """Cross-channel identity alias map.
+
+    Maps a stable ``identity_key`` (e.g. ``"owner-primary"``) to a list of
+    per-channel handles (e.g. ``["telegram:123456", "slack:U0ABC"]``).  An
+    empty map (the default) means every handle resolves to itself — behavior
+    is byte-identical to before this feature existed.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    aliases: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Map of identity_key → list of channel handles. "
+            "Example: {\"owner-primary\": [\"telegram:123\", \"slack:U9\"]}"
+        ),
+        # hot_reload=False: the identity resolver is snapshotted at startup;
+        # alias changes require a restart to take effect.
+        json_schema_extra={"hot_reload": False},
+    )
+
+
 class GovernanceSettings(BaseModel):
     """Audit and governance parameters (Story 12.4)."""
 
@@ -670,6 +693,7 @@ class Settings(BaseSettings):
     image: ImageSettings = Field(default_factory=ImageSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     clarify: ClarifySettings = Field(default_factory=ClarifySettings)
+    identity: IdentitySettings = Field(default_factory=IdentitySettings)
 
     @classmethod
     def settings_customise_sources(

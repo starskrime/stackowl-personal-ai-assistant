@@ -22,8 +22,20 @@ from stackowl.service.watchdog import WatchdogService
 from stackowl.startup.browser_probe import BrowserProbe, BrowserProbeResult
 from stackowl.startup.fs_probe import FilesystemProbe
 from stackowl.startup.provider_probe import ProviderProbe
+from stackowl.tenancy.identity import load_identity_resolver
 
 log = logging.getLogger("stackowl.startup")
+
+
+def _resolve_identity_key(services: StepServices, session_id: str) -> str:
+    """Resolve the inbound channel handle to a cross-channel identity_key.
+
+    Returns "" when no resolver is wired (consumers fall back to session_id),
+    and the handle unchanged when the resolver has no alias for it.
+    """
+    if services.identity_resolver is None:
+        return ""
+    return services.identity_resolver.resolve(session_id)
 
 
 def resolve_reply_to_inflight(*, is_reply: bool, turn_running: bool) -> bool:
@@ -82,6 +94,7 @@ async def _run_until_signal(adapter: object, stop_event: asyncio.Event) -> None:
 _drain_tasks: set[asyncio.Task[object]] = set()
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
+    from stackowl.pipeline.services import StepServices
     from stackowl.pipeline.streaming import ResponseChunk
 
 
@@ -741,6 +754,7 @@ class StartupOrchestrator:
             sandbox_governor=sandbox_governor,
             turn_registry=turn_registry,
             settings=self._settings,
+            identity_resolver=load_identity_resolver(),
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
@@ -1005,6 +1019,7 @@ class StartupOrchestrator:
                     pipeline_step="start",
                     interactive=True,  # real user typed a slash command
                     reply_target=msg.chat_id,
+                    identity_key=_resolve_identity_key(services, msg.session_id),
                 )
                 cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
                 producer = asyncio.create_task(
@@ -1022,6 +1037,7 @@ class StartupOrchestrator:
                     pipeline_step="start",
                     interactive=True,  # real user turn
                     reply_target=msg.chat_id,  # §4.5 — route the reply to ITS chat
+                    identity_key=_resolve_identity_key(services, msg.session_id),
                 )
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)

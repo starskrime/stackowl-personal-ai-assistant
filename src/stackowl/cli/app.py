@@ -23,6 +23,7 @@ mcp_app = typer.Typer(help="MCP server operations.")
 plugins_app = typer.Typer(help="Plugin management commands.")
 integrations_app = typer.Typer(help="External integration management.")
 
+from stackowl.cli.identity_cli import identity_app  # noqa: E402
 from stackowl.cli.models import models_app  # noqa: E402
 from stackowl.cli.providers_cli import providers_app  # noqa: E402
 
@@ -34,6 +35,7 @@ app.add_typer(models_app, name="models")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(integrations_app, name="integrations")
+app.add_typer(identity_app, name="identity")
 
 
 def _version_callback(value: bool) -> None:

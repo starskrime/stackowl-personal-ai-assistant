@@ -17,6 +17,7 @@ from stackowl.infra.observability import log
 from stackowl.memory.models import StagedFact
 from stackowl.memory.trust import Trust, trust_for_source
 from stackowl.providers.base import Message
+from stackowl.tenancy.identity import IdentityResolver
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
@@ -62,6 +63,7 @@ class FactExtractor:
         embedding_registry: EmbeddingRegistry | None = None,
         event_bus: EventBus | None = None,
         sensitive_categories: list[str] | None = None,
+        identity_resolver: IdentityResolver | None = None,
     ) -> None:
         # 1. ENTRY
         log.memory.debug(
@@ -71,6 +73,7 @@ class FactExtractor:
                     "has_embeddings": embedding_registry is not None,
                     "has_event_bus": event_bus is not None,
                     "sensitive_count": len(sensitive_categories or []),
+                    "has_identity_resolver": identity_resolver is not None,
                 }
             },
         )
@@ -78,6 +81,9 @@ class FactExtractor:
         self._embeddings = embedding_registry
         self._event_bus = event_bus
         self._sensitive_categories = list(sensitive_categories or [])
+        # When no resolver is supplied, default to an empty one so resolve(x)==x
+        # — preserves byte-identical behaviour for unconfigured deployments.
+        self._identity_resolver: IdentityResolver = identity_resolver or IdentityResolver({})
         self._sensitive_patterns = [
             re.compile(pattern, re.UNICODE | re.IGNORECASE)
             for pattern in self._sensitive_categories
@@ -161,13 +167,29 @@ class FactExtractor:
             },
         )
 
+        # Re-key the source_ref through the identity resolver so that facts from
+        # different channels belonging to the same user reinforce each other.
+        # When no resolver is configured (or handles are unmapped) resolve() returns
+        # the session_id unchanged — byte-identical to today's behaviour.
+        identity_ref = self._identity_resolver.resolve(session_id)
+        log.memory.debug(
+            "[memory] fact_extractor.extract: identity ref resolved",
+            extra={
+                "_fields": {
+                    "session_id": session_id,
+                    "identity_ref": identity_ref,
+                    "cross_channel": identity_ref != session_id,
+                }
+            },
+        )
+
         facts: list[StagedFact] = []
         for draft, embedding in zip(kept, embeddings, strict=True):
             facts.append(
                 StagedFact(
                     content=draft.content,
                     source_type=EXTRACTED_FACT_SOURCE_TYPE,
-                    source_ref=session_id,
+                    source_ref=identity_ref,
                     confidence=draft.confidence,
                     trust=batch_trust,
                     embedding=embedding,

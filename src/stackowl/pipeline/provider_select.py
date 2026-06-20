@@ -213,7 +213,9 @@ def select_tool_provider(
             )
 
     # --- Step 3: Determine desired tier (session pref > manifest > default) ---
-    session_tier = get_session_tier(state.session_id)
+    # Use identity_key when set so cross-channel /tier takes effect: the tier
+    # is written under identity_key or session_id (see tier_command._owner_key_for_state).
+    session_tier = get_session_tier(state.identity_key or state.session_id)
     if session_tier:
         desired = session_tier
         tier_source = "session"

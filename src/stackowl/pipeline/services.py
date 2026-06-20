@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from stackowl.sandbox.governor import SandboxGovernor
     from stackowl.sandbox.selector import SandboxSelector
     from stackowl.skills.store import SkillIndexStore
+    from stackowl.tenancy.identity import IdentityResolver
     from stackowl.tools.browser.runtime import CamoufoxRuntime
     from stackowl.tools.browser.sessions import BrowserSessionRegistry
     from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
@@ -121,6 +122,11 @@ class StepServices:
     # without a global settings singleton. None in non-orchestrated unit tests →
     # callers fall back to documented defaults (resolve_clarify_wait_timeout → 120s).
     settings: Settings | None = field(default=None)
+    # Cross-channel identity — maps per-channel handles (e.g. "telegram:123") to a
+    # stable identity_key so durable knowledge (preferences, facts) follows the user
+    # across channels. None → unconfigured; callers degrade to session_id (per-channel
+    # behavior, byte-identical to before this feature existed).
+    identity_resolver: IdentityResolver | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")
