@@ -582,7 +582,9 @@ class IdentitySettings(BaseModel):
             "Map of identity_key → list of channel handles. "
             "Example: {\"owner-primary\": [\"telegram:123\", \"slack:U9\"]}"
         ),
-        json_schema_extra={"hot_reload": True},
+        # hot_reload=False: the identity resolver is snapshotted at startup;
+        # alias changes require a restart to take effect.
+        json_schema_extra={"hot_reload": False},
     )
 
 

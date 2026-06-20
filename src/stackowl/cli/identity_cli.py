@@ -25,17 +25,18 @@ def relink(
     *,
     dry_run: bool,
 ) -> dict[str, int]:
-    """Re-key user_preferences.owner_key + staged_facts.source_ref (source_type!='conversation')
+    """Re-key user_preferences.owner_key, staged_facts.source_ref, and
+    committed_facts.source_ref (source_type != 'conversation' in all cases)
     from each per-channel handle to its configured identity. Owner-scoped. Idempotent.
 
-    Returns counts {'preferences': N, 'facts': M}.
+    Returns counts {'preferences': N, 'facts': M, 'committed': K}.
     dry_run rolls back (reports would-change counts without modifying the DB).
 
-    Only re-keys rows whose source_type is NOT 'conversation' in staged_facts —
-    conversation turns remain keyed on their per-session session_id so chat history
-    stays channel-isolated.
+    Only re-keys rows whose source_type is NOT 'conversation' in staged_facts and
+    committed_facts — conversation turns remain keyed on their per-session session_id
+    so chat history stays channel-isolated.
     """
-    counts: dict[str, int] = {"preferences": 0, "facts": 0}
+    counts: dict[str, int] = {"preferences": 0, "facts": 0, "committed": 0}
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("BEGIN")
@@ -52,6 +53,12 @@ def relink(
                     (identity_key, owner_id, handle),
                 )
                 counts["facts"] += cur2.rowcount
+                cur3 = conn.execute(
+                    "UPDATE committed_facts SET source_ref=?"
+                    " WHERE owner_id=? AND source_ref=? AND source_type != 'conversation'",
+                    (identity_key, owner_id, handle),
+                )
+                counts["committed"] += cur3.rowcount
         if dry_run:
             conn.rollback()
         else:
@@ -90,5 +97,6 @@ def identity_link(
     mode = "would change" if dry_run else "updated"
     typer.echo(
         f"✓ identity link: {mode} {counts['preferences']} preference row(s),"
-        f" {counts['facts']} fact row(s)"
+        f" {counts['facts']} staged fact row(s),"
+        f" {counts['committed']} committed fact row(s)"
     )

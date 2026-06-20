@@ -10,6 +10,9 @@ Invariants under test:
   3. staged_facts rows with source_type == 'conversation' are NEVER re-keyed.
   4. A second relink() call returns zero counts (idempotent).
   5. dry_run=True reports nonzero counts but leaves the DB unchanged.
+  6. relink() re-keys committed_facts.source_ref for source_type != 'conversation'.
+  7. committed_facts rows with source_type == 'conversation' are NEVER re-keyed.
+  8. A second relink() on committed_facts returns zero 'committed' count (idempotent).
 """
 from __future__ import annotations
 
@@ -41,12 +44,33 @@ CREATE TABLE IF NOT EXISTS staged_facts (
 )
 """
 
+# committed_facts mirrors the real schema from migration 0014 + 0043 + 0052 + 0062.
+# committed_facts has NO source_type CHECK constraint (only staged_facts does),
+# so source_type='conversation' is a valid value here and must be excluded by the
+# relink() WHERE clause, not by a schema guard.
+_DDL_COMMITTED_FACTS = """
+CREATE TABLE IF NOT EXISTS committed_facts (
+    fact_id             TEXT    NOT NULL PRIMARY KEY,
+    content             TEXT    NOT NULL,
+    embedding           BLOB    NOT NULL,
+    embedding_model     TEXT    NOT NULL,
+    committed_at        TEXT    NOT NULL,
+    source_type         TEXT    NOT NULL,
+    source_ref          TEXT    NOT NULL,
+    tags                TEXT    NOT NULL DEFAULT '[]',
+    owner_id            TEXT    NOT NULL DEFAULT 'principal-default',
+    trust               TEXT    NOT NULL DEFAULT 'untrusted',
+    reinforcement_count INTEGER NOT NULL DEFAULT 0
+)
+"""
+
 
 def _make_db(path: Path) -> str:
-    """Create the two tables and return the path as a string."""
+    """Create the three tables and return the path as a string."""
     conn = sqlite3.connect(str(path))
     conn.execute(_DDL_PREFERENCES)
     conn.execute(_DDL_FACTS)
+    conn.execute(_DDL_COMMITTED_FACTS)
     conn.commit()
     conn.close()
     return str(path)
@@ -131,7 +155,7 @@ def test_relink_idempotent(tmp_path: Path) -> None:
     relink(db, {"owner-primary": ["telegram:123"]}, "principal-default", dry_run=False)
     counts2 = relink(db, {"owner-primary": ["telegram:123"]}, "principal-default", dry_run=False)
 
-    assert counts2 == {"preferences": 0, "facts": 0}, (
+    assert counts2 == {"preferences": 0, "facts": 0, "committed": 0}, (
         f"second relink must be zero-op; got {counts2}"
     )
 
@@ -168,7 +192,7 @@ def test_relink_empty_aliases_returns_zero(tmp_path: Path) -> None:
 
     counts = relink(db, {}, "principal-default", dry_run=False)
 
-    assert counts == {"preferences": 0, "facts": 0}
+    assert counts == {"preferences": 0, "facts": 0, "committed": 0}
 
 
 def test_relink_owner_scoped_does_not_touch_other_owners(tmp_path: Path) -> None:
@@ -189,3 +213,112 @@ def test_relink_owner_scoped_does_not_touch_other_owners(tmp_path: Path) -> None
     # other-owner's row is unchanged
     keys = _fetch(db, "user_preferences", "owner_key", "owner_id=?", ("other-owner",))
     assert keys == ["telegram:123"]
+
+
+# ── committed_facts tests (FIX I1) ────────────────────────────────────────────
+
+
+def _seed_committed(db_str: str, *, include_conversation_row: bool = True) -> None:
+    """Seed committed_facts rows for FIX I1 tests."""
+    conn = sqlite3.connect(db_str)
+    # A promoted fact from a Telegram channel — should be re-keyed.
+    conn.execute(
+        "INSERT INTO committed_facts"
+        " (fact_id, content, embedding, embedding_model, committed_at,"
+        "  source_type, source_ref, owner_id)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "cf1",
+            "likes dark mode",
+            b"\x00" * 4,  # minimal valid blob
+            "test-model",
+            "2026-01-01T00:00:00",
+            "conversation_fact",
+            "telegram:123",
+            "principal-default",
+        ),
+    )
+    if include_conversation_row:
+        # A conversation row — committed_facts has NO source_type CHECK constraint
+        # so this is valid; the relink WHERE clause must exclude it explicitly.
+        conn.execute(
+            "INSERT INTO committed_facts"
+            " (fact_id, content, embedding, embedding_model, committed_at,"
+            "  source_type, source_ref, owner_id)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "cf2",
+                "raw turn",
+                b"\x00" * 4,
+                "test-model",
+                "2026-01-01T00:00:00",
+                "conversation",
+                "telegram:123",
+                "principal-default",
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_relink_re_keys_committed_facts(tmp_path: Path) -> None:
+    """relink() updates committed_facts.source_ref from handle to identity."""
+    db = _make_db(tmp_path / "test.db")
+    _seed_committed(db, include_conversation_row=False)
+
+    counts = relink(
+        db, {"owner-primary": ["telegram:123"]}, "principal-default", dry_run=False
+    )
+
+    assert "committed" in counts, f"return dict must include 'committed' key; got {counts}"
+    assert counts["committed"] == 1, f"expected 1 committed row re-keyed; got {counts['committed']}"
+
+    refs = _fetch(
+        db, "committed_facts", "source_ref",
+        "fact_id=? AND source_type=?", ("cf1", "conversation_fact"),
+    )
+    assert refs == ["owner-primary"], (
+        f"committed_facts source_ref must be re-keyed to identity; got {refs}"
+    )
+
+
+def test_relink_committed_facts_idempotent(tmp_path: Path) -> None:
+    """A second relink() on committed_facts returns zero 'committed' count."""
+    db = _make_db(tmp_path / "test.db")
+    _seed_committed(db, include_conversation_row=False)
+
+    relink(db, {"owner-primary": ["telegram:123"]}, "principal-default", dry_run=False)
+    counts2 = relink(db, {"owner-primary": ["telegram:123"]}, "principal-default", dry_run=False)
+
+    assert counts2.get("committed", 0) == 0, (
+        f"second relink must be zero-op on committed_facts; got {counts2}"
+    )
+
+
+def test_relink_committed_facts_excludes_conversation_rows(tmp_path: Path) -> None:
+    """committed_facts rows with source_type='conversation' must NOT be re-keyed.
+
+    committed_facts has no source_type CHECK constraint (unlike staged_facts),
+    so source_type='conversation' is a valid value. The relink WHERE clause
+    must explicitly exclude it.
+    """
+    db = _make_db(tmp_path / "test.db")
+    _seed_committed(db, include_conversation_row=True)
+
+    counts = relink(
+        db, {"owner-primary": ["telegram:123"]}, "principal-default", dry_run=False
+    )
+
+    # Only cf1 (conversation_fact) should be re-keyed; cf2 (conversation) must not.
+    assert counts.get("committed", 0) == 1, (
+        f"only the non-conversation committed row should be re-keyed; got {counts}"
+    )
+
+    # conversation row untouched
+    ctrl_refs = _fetch(
+        db, "committed_facts", "source_ref",
+        "fact_id=? AND source_type=?", ("cf2", "conversation"),
+    )
+    assert ctrl_refs == ["telegram:123"], (
+        f"committed_facts conversation row must NOT be re-keyed; got {ctrl_refs}"
+    )
