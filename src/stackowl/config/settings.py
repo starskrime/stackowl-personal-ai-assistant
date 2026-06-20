@@ -33,7 +33,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -622,6 +622,34 @@ class SandboxSettings(BaseModel):
     )
 
 
+class IdentitySettings(BaseModel):
+    """Cross-channel identity alias map.
+
+    Maps a stable ``identity_key`` to the list of per-channel handles that
+    belong to the same person.  Example::
+
+        identity:
+          aliases:
+            owner-primary:
+              - telegram:123
+              - slack:U0ABC
+              - local
+
+    When absent (default), the map is empty and every handle resolves to itself
+    — byte-identical to pre-identity behaviour.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    aliases: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Map of identity_key → list of per-channel handles. "
+            "Absent or empty = every handle resolves to itself."
+        ),
+    )
+
+
 class Settings(BaseSettings):
     """Application-wide settings.
 
@@ -670,6 +698,7 @@ class Settings(BaseSettings):
     image: ImageSettings = Field(default_factory=ImageSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     clarify: ClarifySettings = Field(default_factory=ClarifySettings)
+    identity: IdentitySettings = Field(default_factory=IdentitySettings)
 
     @classmethod
     def settings_customise_sources(
