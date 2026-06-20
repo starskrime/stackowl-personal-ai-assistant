@@ -21,7 +21,55 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only import
+    from stackowl.config.settings import Settings
     from stackowl.scheduler.job import Job
+
+
+def resolve_owner_addresses(
+    settings: Settings, channels: list[str]
+) -> dict[str, str | int]:
+    """Resolve each proactive channel's DURABLE owner destination from config.
+
+    A cron-born brief has no live session, so its recipient must come from durable
+    config. For a single-user personal assistant the owner's telegram chat id IS
+    the (sole) allowed user id — a Telegram private chat's ``chat_id`` equals the
+    user's id. A channel with no resolvable owner token is OMITTED here: the
+    :class:`DeliverySpec` resolver then reports it ``undeliverable`` loudly (never a
+    fake ``delivered``, never a ``_last_*`` guess). No hardcoded channel names
+    drive LOGIC beyond the per-adapter native-token shape.
+
+    Lives next to :class:`DeliverySpec` so every producer path (scheduler,
+    website_watch, goal_execution) shares ONE owner→native-target resolver.
+    """
+    addresses: dict[str, str | int] = {}
+    for channel in channels:
+        # TODO(channels): replace the telegram-only branch with a per-channel
+        # native-token resolver registry as channels grow.
+        if channel == "telegram":
+            allowed = sorted(settings.telegram_channel.allowed_user_ids)
+            # Only a SINGLE unambiguous owner yields a durable address — a multi-
+            # user allowlist has no single proactive recipient (left undeliverable).
+            if len(allowed) == 1:
+                addresses[channel] = allowed[0]
+            elif allowed:
+                log.notifications.warning(
+                    "[notifications] resolve_owner_addresses: telegram has multiple "
+                    "allowed users — no single proactive recipient (undeliverable)",
+                    extra={"_fields": {"count": len(allowed)}},
+                )
+            else:
+                log.notifications.warning(
+                    "[notifications] resolve_owner_addresses: telegram has no allowed "
+                    "user id — brief recipient unresolved (undeliverable)",
+                )
+        else:
+            # Other channels have no durable owner token at seed time; the brief
+            # for them is recorded undeliverable until a real recipient is wired.
+            log.notifications.debug(
+                "[notifications] resolve_owner_addresses: no durable owner token",
+                extra={"_fields": {"channel": channel}},
+            )
+    return addresses
 
 
 @dataclass(frozen=True)

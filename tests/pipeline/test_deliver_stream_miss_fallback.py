@@ -101,6 +101,41 @@ async def test_stream_miss_no_target_does_not_proactive(monkeypatch) -> None:
     assert deliverer.delivered == []
 
 
+async def test_defer_delivery_skips_proactive_fallback(monkeypatch) -> None:
+    """A defer_delivery turn owns delivery itself — deliver must NOT proactive-send.
+
+    A scheduler producer (goal_execution/website_watch) runs the full pipeline
+    with defer_delivery=True and delivers exactly-once afterwards via the durable
+    seam. Even with a resolvable reply_target and a stream-miss, the deliver step
+    must stay silent so there is no SECOND (unledgered) send.
+    """
+    deliverer = _RecordingDeliverer()
+    svc = StepServices(stream_registry=StreamRegistry(), proactive_deliverer=deliverer)  # type: ignore[arg-type]
+    monkeypatch.setattr(deliver_step, "get_services", lambda: svc)
+
+    state = _state(trace_id="defer-1", target=4242).evolve(defer_delivery=True)
+    out = await deliver_step.run(state)
+
+    assert out is state
+    assert deliverer.delivered == []  # producer owns delivery; no double-send
+
+
+async def test_defer_delivery_skips_stream_write(monkeypatch) -> None:
+    """defer_delivery short-circuits BEFORE the stream path, even if a writer exists."""
+    deliverer = _RecordingDeliverer()
+    registry = StreamRegistry()
+    svc = StepServices(stream_registry=registry, proactive_deliverer=deliverer)  # type: ignore[arg-type]
+    monkeypatch.setattr(deliver_step, "get_services", lambda: svc)
+
+    state = _state(trace_id="defer-2", target=7).evolve(defer_delivery=True)
+    writer, _reader = registry.create(state.trace_id)
+    await deliver_step.run(state)
+
+    # No chunk was written and the writer was not closed by deliver.
+    assert deliverer.delivered == []
+    assert registry.get_writer("defer-2") is writer  # untouched
+
+
 async def test_writer_present_does_not_proactive(monkeypatch) -> None:
     """When a writer IS registered the normal stream path runs — no proactive send."""
     deliverer = _RecordingDeliverer()

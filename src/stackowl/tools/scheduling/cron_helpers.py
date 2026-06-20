@@ -130,15 +130,25 @@ def is_valid_schedule(schedule: str) -> bool:
 
 
 def job_summary(job: Job) -> dict[str, object]:
-    """Render a single :class:`Job` as a JSON-safe summary for tool output."""
-    return {
+    """Render a single :class:`Job` as a JSON-safe summary for tool output.
+
+    Handler-aware so a website_watch job is not misrepresented as a goal job with
+    an empty ``goal``: it surfaces a ``type`` discriminator and, for watches, the
+    watched ``url`` (the field the handler actually reads) instead of a blank goal.
+    """
+    summary: dict[str, object] = {
         "job_id": job.job_id,
-        "goal": str(job.params.get("goal", "")),
+        "type": job.handler_name,
         "schedule": job.schedule,
         "recurrence": render_recurrence(job.schedule),
         "enabled": job.enabled,
         "next_run_at": job.next_run_at,
     }
+    if job.handler_name == "website_watch":
+        summary["url"] = str(job.params.get("url", ""))
+    else:
+        summary["goal"] = str(job.params.get("goal", ""))
+    return summary
 
 
 def count_owl_jobs(jobs: list[Job], owl: str) -> int:

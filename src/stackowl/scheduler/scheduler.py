@@ -294,8 +294,16 @@ class JobScheduler(SupervisedTask):
         params: dict[str, object] | None = None,
         replay_missed: bool = False,
         primary_channel: str | None = None,
+        target_channels: list[str] | None = None,
+        target_addresses: dict[str, str | int] | None = None,
     ) -> Job:
-        """Insert and return a new ``jobs`` row."""
+        """Insert and return a new ``jobs`` row.
+
+        ``target_channels`` / ``target_addresses`` stamp the DURABLE delivery
+        recipient onto the job row at creation (C1/F104) so a cron-born poll (no
+        session, no TraceContext) can address its send from durable state. Both
+        default to empty — every existing caller stays byte-identical.
+        """
         log.scheduler.debug(
             "[scheduler] create_job: entry",
             extra={"_fields": {"handler": handler_name, "schedule": schedule}},
@@ -313,6 +321,8 @@ class JobScheduler(SupervisedTask):
             params=dict(params or {}),
             replay_missed=replay_missed,
             primary_channel=primary_channel,
+            target_channels=list(target_channels or []),
+            target_addresses=dict(target_addresses or {}),
         )
         await insert_job(self._db, job)
         log.scheduler.info(

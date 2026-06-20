@@ -463,7 +463,26 @@ class StartupOrchestrator:
                 watch_state_dir = browser_settings.browser_cache_dir / "watch"
                 screenshot_archive_dir = StackowlHome.knowledge_dir() / "screenshots"
                 profile_backups_dir = StackowlHome.home() / "backups" / "browser-profiles"
-                register_website_watch_handler(browser_runtime, watch_state_dir)
+                # WS-D — give the website_watch handler the SAME durable, exactly-
+                # once delivery seam goal_execution/check_in/morning_brief use so a
+                # detected change is actually pinged back to the chat the watch was
+                # scheduled from (addressed from the job's durable target). The
+                # ledger is constructed identically to SchedulerAssembly's. Wired
+                # only when a real deliverer exists; absent it, a change is recorded
+                # honestly without a send (never a fake "delivered").
+                watch_job_deliverer = None
+                if proactive_deliverer is not None:
+                    from stackowl.notifications.delivery_ledger import DeliveryLedger
+                    from stackowl.notifications.proactive_job import (
+                        ProactiveJobDeliverer,
+                    )
+
+                    watch_job_deliverer = ProactiveJobDeliverer(
+                        proactive_deliverer, DeliveryLedger(db=db_pool)
+                    )
+                register_website_watch_handler(
+                    browser_runtime, watch_state_dir, watch_job_deliverer
+                )
                 register_screenshot_archive_handler(browser_runtime, screenshot_archive_dir)
                 register_browser_recycle_handler(browser_runtime, browser_sessions)
                 register_browser_cache_eviction_handler(
@@ -473,6 +492,20 @@ class StartupOrchestrator:
                     browser_runtime, browser_settings.browser_cache_dir / "credential_rotation",
                 )
                 register_profile_backup_handler(browser_settings.profiles_dir, profile_backups_dir)
+                # WS-G — seed the LOCAL browser-maintenance jobs (profile_backup,
+                # browser_recycle, browser_cache_eviction) so the poll loop actually
+                # dispatches them. CO-LOCATED with the register_* calls above and
+                # guarded by the same browser-available block: a browser-less box
+                # neither registers NOR seeds them (never a seeded-but-unregistered
+                # row that errors every poll). The two param-required handlers
+                # (screenshot_archive, credential_rotation) are on_demand and are
+                # deliberately NOT seeded here. db_pool is ready (WS-D already used
+                # it for the DeliveryLedger above).
+                from stackowl.scheduler.assembly import (
+                    seed_browser_maintenance_schedules,
+                )
+
+                await seed_browser_maintenance_schedules(db_pool)
         else:
             reason = "binary not found" if probe is not None else "probe did not run"
             log.warning("[startup] gateway: browser runtime skipped — %s", reason)
@@ -2142,6 +2175,47 @@ class StartupOrchestrator:
         except Exception as exc:
             log.error(
                 "[startup] gateway: scheduler.recover() failed — starting anyway",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
+
+        # WS-E — STARTUP WIRING-CLOSURE audit. Runs AFTER recover() so seeded rows
+        # exist, then warns loudly (never fails startup) when a registered "seeded"
+        # handler has no standing jobs row (it would never fire) or a subscribed
+        # bus event has no declared publisher. Advisory guard against the class of
+        # "dangling half-edge" bug (registered-but-unreachable) that shipped green
+        # for check_in / event_bridge / goal_execution.
+        #
+        # DECLARED_EVENT_PUBLISHERS — the set of bus events some module actually
+        # EMITS. It is empty today: event_bridge._ALLOWED_EVENTS is empty (WS-D
+        # moved proactivity onto the durable seam). Re-adding a bridge subscriber
+        # (an event in _ALLOWED_EVENTS) REQUIRES adding its publisher name here,
+        # or the audit will (correctly) flag it as a dangling subscription.
+        try:
+            from stackowl.notifications.event_bridge import _ALLOWED_EVENTS
+            from stackowl.scheduler.base import HandlerRegistry
+            from stackowl.startup.wiring_audit import audit_scheduler_wiring
+
+            declared_event_publishers: frozenset[str] = frozenset()
+            wiring_report = await audit_scheduler_wiring(
+                db_pool,
+                HandlerRegistry.instance(),
+                allowed_events=_ALLOWED_EVENTS,
+                declared_publishers=declared_event_publishers,
+            )
+            log.info(
+                "[startup] gateway: scheduler wiring audited",
+                extra={"_fields": {
+                    "dangling_handlers": wiring_report.dangling_handlers,
+                    "dangling_events": wiring_report.dangling_events,
+                    "total_handlers": wiring_report.total_handlers,
+                }},
+            )
+        except Exception as exc:
+            # The audit is advisory + already no-raise; this is belt-and-braces so
+            # an unexpected import/wiring error can NEVER block startup.
+            log.error(
+                "[startup] gateway: wiring audit failed — starting anyway",
                 exc_info=exc,
                 extra={"_fields": {}},
             )

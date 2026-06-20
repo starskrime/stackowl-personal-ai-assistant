@@ -87,6 +87,10 @@ class PipelineState(BaseModel, frozen=True):
     # byte-for-byte unchanged.
     # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.
     reply_target: int | str | None = None
+    # When True, the deliver step performs NO send for this turn — a non-interactive
+    # producer (e.g. a scheduler handler) owns delivery via the durable seam.
+    # Prevents double-send. Default False = unchanged behavior.
+    defer_delivery: bool = False
     # Recursion depth of this (sub-)pipeline in the delegation tree. 0 for a
     # top-level user turn; incremented by one each time A2ADelegator spawns a
     # specialist child (see _run_specialist). Carried across evolve() like every

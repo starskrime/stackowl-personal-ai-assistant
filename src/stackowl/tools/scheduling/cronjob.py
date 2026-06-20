@@ -1,10 +1,13 @@
 """CronjobTool — the agent-callable interface to scheduled agent-goal jobs.
 
-A single action-oriented tool (create / list / update / pause / resume / remove /
-run) that lets an owl schedule a natural-language GOAL to run on a recurrence. The
-prompt becomes ``params['goal']`` on a ``goal_execution`` job, which runs the
-standard pipeline with ``interactive=False`` (a cron tick has no user to answer a
-clarify). It reuses the existing ``goal_execution`` handler — no new handler (B9).
+A single action-oriented tool (create / watch / list / update / pause / resume /
+remove / run) that lets an owl schedule a natural-language GOAL to run on a
+recurrence. The prompt becomes ``params['goal']`` on a ``goal_execution`` job,
+which runs the standard pipeline with ``interactive=False`` (a cron tick has no
+user to answer a clarify). It reuses the existing ``goal_execution`` handler — no
+new handler (B9). The ``watch`` action reuses the SAME tool to create a
+``website_watch`` job (``params['url']``) that polls a page and pings the user on
+change via the durable proactive-delivery seam — again no new tool.
 
 Safety: every create AND update re-scans the prompt (:func:`scan_cron_prompt`) and
 blocks a flagged prompt; a malformed schedule is rejected pre-persist; a per-owl
@@ -25,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.pipeline.services import get_services
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -41,7 +45,8 @@ from stackowl.tools.scheduling.cron_security import scan_cron_prompt
 _TOOLSET_GROUP = "scheduling"
 _DEFAULT_SOFT_CAP = 20
 _HANDLER = "goal_execution"
-_ACTIONS = ("create", "list", "update", "pause", "resume", "remove", "run")
+_WATCH_HANDLER = "website_watch"
+_ACTIONS = ("create", "list", "update", "pause", "resume", "remove", "run", "watch")
 
 
 class CronjobArgs(BaseModel):
@@ -49,10 +54,15 @@ class CronjobArgs(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    action: Literal["create", "list", "update", "pause", "resume", "remove", "run"]
+    action: Literal[
+        "create", "list", "update", "pause", "resume", "remove", "run", "watch"
+    ]
     prompt: str | None = Field(default=None, description="The goal to schedule (create/update).")
     schedule: str | None = Field(default=None, description="cron / 'every Nm' / 'daily@HH:MM'.")
     job_id: str | None = Field(default=None, description="Target job (update/pause/resume/remove/run).")
+    watch_url: str | None = Field(
+        default=None, description="The URL to watch for changes (watch action)."
+    )
 
 
 class CronjobTool(Tool):
@@ -69,9 +79,11 @@ class CronjobTool(Tool):
     def description(self) -> str:
         return (
             "SCHEDULE a natural-language goal to run automatically on a recurrence. "
-            "Actions: create (needs 'prompt' + 'schedule'), list (your scheduled "
-            "jobs), update (by 'job_id'; re-checks the prompt), pause, resume, "
-            "remove, run (execute one job now) — the last four take 'job_id'. "
+            "Actions: create (needs 'prompt' + 'schedule'), watch (needs "
+            "'watch_url' + 'schedule' — poll a page and ping you when it changes), "
+            "list (your scheduled jobs), update (by 'job_id'; re-checks the "
+            "prompt), pause, resume, remove, run (execute one job now) — the last "
+            "four take 'job_id'. "
             "'schedule' accepts 5-field cron ('0 9 * * *'), 'every 30m'/'every 2h', "
             "or 'daily@09:00'. A flagged prompt (injection/exfil) is BLOCKED with a "
             "reason; relay it and do not retry verbatim. LANE: durable, recurring "
@@ -94,6 +106,10 @@ class CronjobTool(Tool):
                 "job_id": {
                     "type": "string",
                     "description": "Target job id (update/pause/resume/remove/run).",
+                },
+                "watch_url": {
+                    "type": "string",
+                    "description": "URL to watch for changes (watch action).",
                 },
             },
             "required": ["action"],
@@ -160,6 +176,8 @@ class CronjobTool(Tool):
     ) -> ToolResult:
         if args.action == "create":
             return await self._create(args, scheduler, owl, channel, t0)
+        if args.action == "watch":
+            return await self._watch(args, scheduler, owl, channel, t0)
         if args.action == "list":
             return await self._list(scheduler, owl, t0)
         if args.action == "update":
@@ -206,13 +224,157 @@ class CronjobTool(Tool):
                 t0,
             )
 
+        # WS-B/C1 — capture the ORIGIN delivery target at create time so the
+        # goal_execution handler can route its produced answer back to the chat
+        # the goal was scheduled from. A cron poll has no live session, so the
+        # recipient MUST be persisted on the job row now (durable target columns).
+        target_channels, target_addresses = self._resolve_durable_target(channel)
+        unreachable = not target_channels
+
         job = await scheduler.create_job(
             handler_name=_HANDLER,
             schedule=schedule,
             params={"goal": prompt, "created_by": CREATED_BY_TAG, "owl": owl},
             primary_channel=channel,
+            target_channels=target_channels,
+            target_addresses=target_addresses,
         )
-        return self._ok({"created": True, **job_summary(job)}, t0)
+        payload: dict[str, object] = {"created": True, **job_summary(job)}
+        if unreachable:
+            # HONESTY — never a bare "scheduled ✓". The job is created (plumbing
+            # success preserved), but its answer can't be auto-delivered on this
+            # channel, so the user is told plainly.
+            payload["created_but_unreachable"] = True
+            payload["warning"] = (
+                "Scheduled — but results can't be auto-delivered on this channel. "
+                "Use /agents log to read each run, or schedule from a chat channel "
+                "(e.g. Telegram) to receive the answer."
+            )
+            log.tool.warning(
+                "cronjob.create: no durable delivery target — results unreachable",
+                extra={"_fields": {"job_id": job.job_id, "channel": channel}},
+            )
+        return self._ok(payload, t0)
+
+    async def _watch(
+        self,
+        args: CronjobArgs,
+        scheduler: JobScheduler,
+        owl: str,
+        channel: str | None,
+        t0: float,
+    ) -> ToolResult:
+        """Create a ``website_watch`` job — poll a URL, ping on change.
+
+        Mirrors :meth:`_create` (durable-target capture, soft cap, honest
+        unreachable result) but builds a ``website_watch`` job instead of a goal.
+
+        URL SAFETY: a watch URL is persisted and echoed back to the user in the
+        change ping, so it is NOT bypassed — it is run through the SAME
+        :func:`scan_cron_prompt` security gate as a goal prompt. A URL is not a
+        natural-language goal, but the scanner is total/no-raise and rejects the
+        injection/exfil command shapes (and the invisible-unicode / over-length
+        cases) that could otherwise be smuggled into durable, later-rendered job
+        state. This is a defence-in-depth reuse, not a new bespoke validator.
+        """
+        watch_url = (args.watch_url or "").strip()
+        schedule = (args.schedule or "").strip()
+        if not watch_url or not schedule:
+            return self._err("watch requires both 'watch_url' and 'schedule'", t0)
+
+        ok, reason = scan_cron_prompt(watch_url)
+        if not ok:
+            log.tool.warning(
+                "cronjob.watch: url blocked", extra={"_fields": {"reason": reason}}
+            )
+            return self._err(f"blocked: {reason}", t0)
+
+        if not is_valid_schedule(schedule):
+            return self._err(
+                f"unparseable schedule {schedule!r} — use 5-field cron, "
+                "'every Nm'/'every Nh', or 'daily@HH:MM'",
+                t0,
+            )
+
+        # Soft cap is an advisory NUDGE (fork C), not enforcement.
+        existing = filter_owl_jobs(await scheduler.list_jobs(), owl)
+        if len(existing) >= self._soft_cap:
+            return self._ok(
+                {
+                    "nudge": f"you already have {len(existing)} scheduled job(s) "
+                    f"(soft cap {self._soft_cap}). Review or remove some before adding more.",
+                    "active_count": len(existing),
+                    "created": False,
+                },
+                t0,
+            )
+
+        # Capture the ORIGIN delivery target at create time so the website_watch
+        # handler can route a change ping back to the chat it was scheduled from
+        # (a cron poll has no live session — the recipient MUST be durable now).
+        target_channels, target_addresses = self._resolve_durable_target(channel)
+        unreachable = not target_channels
+
+        job = await scheduler.create_job(
+            handler_name=_WATCH_HANDLER,
+            schedule=schedule,
+            params={"url": watch_url, "created_by": CREATED_BY_TAG, "owl": owl},
+            primary_channel=channel,
+            target_channels=target_channels,
+            target_addresses=target_addresses,
+        )
+        payload: dict[str, object] = {"created": True, **job_summary(job)}
+        if unreachable:
+            # HONESTY — never a bare "watching ✓". The job is created, but a change
+            # ping can't be auto-delivered on this channel, so say so plainly.
+            payload["created_but_unreachable"] = True
+            payload["warning"] = (
+                "Watching — but change alerts can't be auto-delivered on this "
+                "channel. Use /agents log to read each poll, or schedule from a "
+                "chat channel (e.g. Telegram) to receive the alert."
+            )
+            log.tool.warning(
+                "cronjob.watch: no durable delivery target — alerts unreachable",
+                extra={"_fields": {"job_id": job.job_id, "channel": channel}},
+            )
+        return self._ok(payload, t0)
+
+    def _resolve_durable_target(
+        self, channel: str | None
+    ) -> tuple[list[str], dict[str, str | int]]:
+        """Resolve the job's durable ``(target_channels, target_addresses)``.
+
+        Precedence:
+        1. The live request's ``reply_target`` (the exact chat the goal was
+           scheduled from) — native int/str preserved, never stringified.
+        2. The shared owner fallback (:func:`resolve_owner_addresses`) using
+           ``settings`` from services, when no per-request target is available.
+        3. Neither resolvable → empty target (caller signals "unreachable").
+        """
+        ctx = TraceContext.get()
+        reply_target = ctx.get("reply_target")
+        if reply_target is not None and channel:
+            log.tool.debug(
+                "cronjob.create: durable target from request reply_target",
+                extra={"_fields": {"channel": channel}},
+            )
+            return [channel], {channel: reply_target}
+
+        settings = get_services().settings
+        if settings is not None and channel:
+            addresses = resolve_owner_addresses(settings, [channel])
+            if addresses:
+                log.tool.debug(
+                    "cronjob.create: durable target from owner fallback",
+                    extra={"_fields": {"channel": channel}},
+                )
+                return [channel], dict(addresses)
+
+        log.tool.debug(
+            "cronjob.create: no durable target resolved",
+            extra={"_fields": {"channel": channel}},
+        )
+        return [], {}
 
     async def _list(self, scheduler: JobScheduler, owl: str, t0: float) -> ToolResult:
         jobs = filter_owl_jobs(await scheduler.list_jobs(), owl)
@@ -298,4 +460,11 @@ class CronjobTool(Tool):
             "cronjob.execute: exit",
             extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        # Every _err path is a PRE-PERSIST rejection (bad args, blocked prompt,
+        # no-such-job, scheduler/DB unavailable) — nothing was written. Mark the
+        # failure non-committing so a bad argument never trips the no-progress
+        # "capability failed" floor as if a real consequential write had failed.
+        return ToolResult(
+            success=False, output="", error=msg, duration_ms=duration_ms,
+            side_effect_committed=False,
+        )

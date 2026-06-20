@@ -16,12 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
-from stackowl.scheduler.base import HandlerRegistry, JobHandler
+from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.tools.browser._extraction import extract_markdown
 from stackowl.tools.browser._logging import url_path_only
 
 if TYPE_CHECKING:
+    from stackowl.notifications.proactive_job import ProactiveJobDeliverer
     from stackowl.tools.browser.runtime import CamoufoxRuntime
 
 
@@ -32,14 +33,30 @@ class WebsiteWatchHandler(JobHandler):
     Optional: ``{"selector": "css-selector", "mode": "text" | "dom_hash"}``.
     """
 
-    def __init__(self, runtime: CamoufoxRuntime, state_dir: Path) -> None:
+    def __init__(
+        self,
+        runtime: CamoufoxRuntime,
+        state_dir: Path,
+        job_deliverer: ProactiveJobDeliverer | None = None,
+    ) -> None:
         self._runtime = runtime
         self._state_dir = state_dir
         self._state_dir.mkdir(parents=True, exist_ok=True)
+        # The shared cron-born delivery loop (single seam + exactly-once ledger).
+        # Absent it, a detected change is recorded honestly but never sent (no fake
+        # "delivered") — same wiring-gap honesty the other proactive handlers use.
+        self._job_deliverer = job_deliverer
 
     @property
     def handler_name(self) -> str:
         return "website_watch"
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # Created by the cronjob `watch` action on a user request — no standing
+        # SchedulerAssembly seed. Declares on_demand so the wiring audit does not
+        # flag it as dangling.
+        return "on_demand"
 
     def _state_file(self, url: str) -> Path:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
@@ -126,6 +143,33 @@ class WebsiteWatchHandler(JobHandler):
         new_state = {"content_hash": current_hash, "last_seen_at": time.time(), "url": url}
         self._save_state(url, new_state)
 
+        # On a REAL change (never the first poll) deliver a concise human ping
+        # through the SAME durable, exactly-once seam goal_execution/check_in use —
+        # addressed from the job's persisted target (no _last_* guess). The first
+        # poll establishes a baseline (changed=False) so no spurious ping fires.
+        delivery: str | None = None
+        if changed and self._job_deliverer is not None:
+            msg = f"🔔 The page you're watching changed: {url}"
+            outcome = await self._job_deliverer.deliver_for_job(
+                job, message=msg, category="website_watch", urgency="normal"
+            )
+            # HONESTY — record the real rollup; never claim a change-notify was
+            # sent when it was undeliverable/failed/suppressed.
+            delivery = outcome.rollup
+            log.scheduler.info(
+                "[scheduler] website_watch.execute: change delivered",
+                extra={"_fields": {"job_id": job.job_id, "delivery": delivery}},
+            )
+        elif changed and self._job_deliverer is None:
+            # Detected a change but nothing is wired to send it — surface the gap
+            # honestly rather than pretending it went out.
+            delivery = "no_deliverer"
+            log.scheduler.warning(
+                "[scheduler] website_watch.execute: change detected but no "
+                "deliverer wired — not sent (honest)",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+
         duration_ms = (time.monotonic() - t0) * 1000
         log.scheduler.info(
             "[scheduler] website_watch.execute: exit",
@@ -134,23 +178,42 @@ class WebsiteWatchHandler(JobHandler):
                 "url": url_path_only(url),
                 "changed": changed,
                 "first_seen": prev_hash is None,
+                "delivery": delivery,
                 "duration_ms": duration_ms,
             }},
         )
+        metadata: dict[str, Any] = {
+            "changed": changed,
+            "first_seen": prev_hash is None,
+            "content_hash": current_hash,
+        }
+        if delivery is not None:
+            metadata["delivery"] = delivery
         return JobResult(
             job_id=job.job_id,
             success=True,
             output=f"changed={changed} hash={current_hash[:12]}",
             error=None,
             duration_ms=duration_ms,
-            metadata={"changed": changed, "first_seen": prev_hash is None, "content_hash": current_hash},
+            metadata=metadata,
         )
 
 
-def register_website_watch_handler(runtime: CamoufoxRuntime, state_dir: Path) -> None:
-    handler = WebsiteWatchHandler(runtime=runtime, state_dir=state_dir)
+def register_website_watch_handler(
+    runtime: CamoufoxRuntime,
+    state_dir: Path,
+    job_deliverer: ProactiveJobDeliverer | None = None,
+) -> None:
+    handler = WebsiteWatchHandler(
+        runtime=runtime, state_dir=state_dir, job_deliverer=job_deliverer
+    )
     HandlerRegistry.instance().register(handler)
     log.scheduler.info(
         "[scheduler] website_watch handler registered",
-        extra={"_fields": {"handler": handler.handler_name}},
+        extra={
+            "_fields": {
+                "handler": handler.handler_name,
+                "delivery_wired": job_deliverer is not None,
+            }
+        },
     )

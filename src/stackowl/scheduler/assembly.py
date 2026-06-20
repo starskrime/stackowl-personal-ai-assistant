@@ -164,8 +164,23 @@ class SchedulerAssembly:
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
 
+        # WS-B/C1 — share the SAME delivery seam morning_brief/check_in use so a
+        # user-created goal's answer is routed back to the chat it was scheduled
+        # from, exactly-once. Wired only when a real deliverer exists; absent it,
+        # goal_execution records results without a send (never a fake "delivered").
+        goal_job_deliverer = None
+        if proactive_deliverer is not None:
+            from stackowl.notifications.proactive_job import ProactiveJobDeliverer
+
+            goal_job_deliverer = ProactiveJobDeliverer(
+                proactive_deliverer, delivery_ledger
+            )
+
         goal_execution_handler = GoalExecutionHandler(
-            backend=backend, db=db, settings=settings,
+            backend=backend,
+            db=db,
+            settings=settings,
+            job_deliverer=goal_job_deliverer,
         )
         HandlerRegistry.instance().register(goal_execution_handler)
 
@@ -233,15 +248,13 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(tool_outcome_miner_handler)
 
+        # Report the ACTUAL registered set (self-maintaining — a hardcoded count
+        # had drifted, omitting reflection_writer/skill_synthesizer/
+        # tool_outcome_miner). Honest wiring logs are the whole point of this arc.
+        _registered = sorted(h.handler_name for h in HandlerRegistry.instance().list())
         log.scheduler.info(
-            "[scheduler] assembly: 7 orphaned handlers registered",
-            extra={"_fields": {
-                "handlers": [
-                    "morning_brief", "check_in", "knowledge_prune",
-                    "tool_pruning", "goal_execution", "evolution",
-                    "critic_scorer",
-                ],
-            }},
+            "[scheduler] assembly: handlers registered",
+            extra={"_fields": {"count": len(_registered), "handlers": _registered}},
         )
 
         # 4) Auto-schedule three per operator vote (morning_brief, evolution,
@@ -254,6 +267,45 @@ class SchedulerAssembly:
             target_channels=brief_channels,
             target_addresses=_resolve_owner_addresses(settings, brief_channels),
         )
+        # WS-C — check_in is a built+registered+honest-delivering handler that had
+        # NO producer: nothing ever seeded its jobs row, so the scheduler never
+        # dispatched it (a promised periodic outreach that never fired). Seed it
+        # exactly like morning_brief, gated on settings.check_in.enabled.
+        if settings.check_in.enabled:
+            check_in_channels = list(settings.check_in.channels)
+            check_in_addresses = _resolve_owner_addresses(settings, check_in_channels)
+            if check_in_addresses:
+                # check_in.schedule is USER-CONFIGURABLE (unlike the hardcoded
+                # daily@HH:MM constants of the other seeds), so derive the first-run
+                # hour FROM it — never hardcode a next_hour that could diverge from
+                # the stored schedule string. Falls back to 18 for a non-daily@ value.
+                check_in_hour = _daily_schedule_hour(settings.check_in.schedule, 18)
+                await _seed_daily_schedule(
+                    db, handler_name="check_in",
+                    schedule=settings.check_in.schedule, next_hour=check_in_hour,
+                    target_channels=check_in_channels,
+                    target_addresses=check_in_addresses,
+                )
+            else:
+                # HONESTY: never seed a target-less, permanently-undeliverable row.
+                # Unlike morning_brief (which seeds a row even with empty addresses),
+                # check_in only schedules a DELIVERABLE occurrence — a no-recipient
+                # row would be a silent no-op every poll. Warn loudly instead.
+                log.scheduler.warning(
+                    "[scheduler] check_in enabled but has no resolvable recipient — "
+                    "NOT scheduled. Cause: no single resolvable owner for these "
+                    "channels (e.g. a non-telegram channel like 'cli' has no durable "
+                    "proactive address, or the telegram allowlist is empty/ambiguous)",
+                    extra={"_fields": {"channels": check_in_channels}},
+                )
+        else:
+            log.scheduler.debug(
+                "[scheduler] check_in disabled — skipping seed",
+            )
+        # LANDMINE: _seed_daily_schedule is idempotent by handler_name (early-returns
+        # if a row exists). So flipping enabled OFF→ON (or fixing the recipient) AFTER
+        # a row already exists will NOT re-stamp the durable target. Since we only ever
+        # seed deliverable rows this is safe today; documented, not fixed (out of scope).
         # EvolutionCoordinator registers itself under handler_name="evolution_batch".
         await _seed_daily_schedule(
             db, handler_name="evolution_batch",
@@ -363,45 +415,36 @@ class SchedulerAssembly:
 def _resolve_owner_addresses(
     settings: Settings, channels: list[str]
 ) -> dict[str, str | int]:
-    """Resolve each proactive channel's DURABLE owner destination from config.
+    """Thin wrapper — delegates to the shared ``notifications.recipient`` resolver.
 
-    A cron-born brief has no live session, so its recipient must come from durable
-    config. For a single-user personal assistant the owner's telegram chat id IS
-    the (sole) allowed user id — a Telegram private chat's ``chat_id`` equals the
-    user's id. A channel with no resolvable owner token is OMITTED here: the
-    DeliverySpec resolver then reports it ``undeliverable`` loudly (never a fake
-    ``delivered``, never a ``_last_*`` guess). No hardcoded channel names drive
-    LOGIC beyond the per-adapter native-token shape.
+    The owner→native-target logic moved into :mod:`stackowl.notifications.recipient`
+    (next to :class:`DeliverySpec`) so every producer path shares ONE resolver. This
+    wrapper preserves the in-package call sites; behavior is identical.
     """
-    addresses: dict[str, str | int] = {}
-    for channel in channels:
-        # TODO(channels): replace the telegram-only branch with a per-channel
-        # native-token resolver registry as channels grow.
-        if channel == "telegram":
-            allowed = sorted(settings.telegram_channel.allowed_user_ids)
-            # Only a SINGLE unambiguous owner yields a durable address — a multi-
-            # user allowlist has no single proactive recipient (left undeliverable).
-            if len(allowed) == 1:
-                addresses[channel] = allowed[0]
-            elif allowed:
-                log.scheduler.warning(
-                    "[scheduler] _resolve_owner_addresses: telegram has multiple "
-                    "allowed users — no single proactive recipient (undeliverable)",
-                    extra={"_fields": {"count": len(allowed)}},
-                )
-            else:
-                log.scheduler.warning(
-                    "[scheduler] _resolve_owner_addresses: telegram has no allowed "
-                    "user id — brief recipient unresolved (undeliverable)",
-                )
-        else:
-            # Other channels have no durable owner token at seed time; the brief
-            # for them is recorded undeliverable until a real recipient is wired.
-            log.scheduler.debug(
-                "[scheduler] _resolve_owner_addresses: no durable owner token",
-                extra={"_fields": {"channel": channel}},
-            )
-    return addresses
+    from stackowl.notifications.recipient import resolve_owner_addresses
+
+    return resolve_owner_addresses(settings, channels)
+
+
+def _daily_schedule_hour(schedule: str, default: int) -> int:
+    """Parse the HH from a ``daily@HH:MM`` schedule; ``default`` if not that shape.
+
+    Used to keep a seeded job's first-run hour in lockstep with a
+    user-configurable ``daily@HH:MM`` schedule string (so they can never diverge).
+    A non-daily@ schedule (e.g. an interval) returns ``default``.
+    """
+    if schedule.startswith("daily@"):
+        try:
+            hour = int(schedule[len("daily@"):].split(":")[0])
+        except (ValueError, IndexError):
+            return default
+        # Guard the range: _next_local_hour_iso → datetime.replace(hour=) raises
+        # for hour>23, which would abort assembly. (CheckInSettings already
+        # validates this; belt-and-suspenders for any other caller.)
+        if 0 <= hour <= 23:
+            return hour
+        return default
+    return default
 
 
 def _next_local_hour_iso(hour: int) -> str:
@@ -488,6 +531,65 @@ async def _seed_daily_schedule(
         "[scheduler] schedule seeded",
         extra={"_fields": {"handler": handler_name, "schedule": schedule, "job_id": job_id}},
     )
+
+
+async def seed_browser_maintenance_schedules(db: DbPool) -> None:
+    """Idempotently seed the LOCAL browser-maintenance jobs (WS-G).
+
+    Three fully-built handlers (``profile_backup``, ``browser_cache_eviction``,
+    ``browser_recycle``) are registered ONLY when a browser runtime is available
+    (see ``startup/orchestrator.py``), but nothing ever produced their ``jobs``
+    rows — so the poll loop never dispatched them and the WS-E wiring audit
+    flagged all three as DANGLING. These are LOCAL maintenance jobs: NO delivery
+    target (no ``target_channels`` / ``target_addresses``), fixed daily cadence,
+    empty params (each handler runs correctly with its built-in defaults).
+
+    MUST be called from the same browser-available block that REGISTERS these
+    handlers — never seed a row for a handler that isn't registered (the scheduler
+    would error every poll on an unknown handler). Idempotent by ``handler_name``
+    (``_seed_daily_schedule`` early-returns if a row exists), so boot re-runs are
+    safe.
+
+    Cadence (all daily, overnight, STAGGERED to avoid runtime contention):
+
+    * ``profile_backup`` @01:00 — tars persistent profile dirs (login state) and
+      prunes to the handler's retention default. Daily is conservative: a
+      logged-in profile that breaks/gets deleted is recoverable from a ≤24h-old
+      archive. Runs first (before recycle/eviction touch anything).
+    * ``browser_recycle`` @03:00 — backstop forced runtime recycle + idle-session
+      evict. The runtime already self-recycles on nav-count/idle and the live
+      session sweep runs every 10m, so this is purely a low-traffic (overnight)
+      belt-and-suspenders tick — daily is the right, non-aggressive cadence.
+    * ``browser_cache_eviction`` @04:30 — prunes cache (>7d) + screenshots (>30d)
+      by the handler's age defaults. Daily keeps disk bounded; runs LAST so the
+      day's recycle/backup artifacts settle before the prune pass.
+
+    NOT seeded here (deliberate): ``screenshot_archive`` and
+    ``credential_rotation`` REQUIRE per-job ``params`` (a URL list; a
+    profile+check_url) and would return ``success=False`` on EVERY poll if seeded
+    blank. They are genuinely ``on_demand`` — enqueued per user-configured target,
+    exactly like ``goal_execution`` — and declare ``trigger_kind='on_demand'`` so
+    the WS-E audit does not flag them as dangling. Seeding a perpetually-failing
+    blank row would be the very anti-pattern this arc exists to kill.
+    """
+    log.scheduler.info("[scheduler] seed_browser_maintenance_schedules: entry")
+    # profile_backup @01:00 — recover login state from a ≤24h-old archive.
+    await _seed_daily_schedule(
+        db, handler_name="profile_backup",
+        schedule="daily@01:00", next_hour=1,
+    )
+    # browser_recycle @03:00 — low-traffic backstop for the FF RSS leak; the
+    # runtime + 10m session sweep already self-recycle, so daily is sufficient.
+    await _seed_daily_schedule(
+        db, handler_name="browser_recycle",
+        schedule="daily@03:00", next_hour=3,
+    )
+    # browser_cache_eviction @04:30 — bound disk; runs after backup/recycle settle.
+    await _seed_daily_schedule(
+        db, handler_name="browser_cache_eviction",
+        schedule="daily@04:30", next_hour=4,
+    )
+    log.scheduler.info("[scheduler] seed_browser_maintenance_schedules: exit — 3 seeded")
 
 
 async def _seed_minutes_schedule(
