@@ -65,3 +65,10 @@ def test_format_plain_still_escapes_everything() -> None:
     # format_plain is the escape-only path (untrusted text); markup stays literal.
     out = TelegramMarkdownFormatter().format_plain("a **bold** word")
     assert r"\*\*bold\*\*" in out
+
+
+def test_table_does_not_leak_raw_pipes() -> None:
+    src = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+    out = to_telegram_markdownv2(src)
+    assert "1" in out and "2" in out and "A" in out
+    assert r"\|" not in out          # no escaped-pipe table wreckage

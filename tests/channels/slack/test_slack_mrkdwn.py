@@ -136,3 +136,10 @@ def test_italic_inside_code_span_stays_literal() -> None:
 
 def test_underscore_italic_still_untouched_after_chan2() -> None:
     assert to_slack_mrkdwn("_italic_") == "_italic_"
+
+
+def test_table_does_not_leak_raw_pipes() -> None:
+    src = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+    out = to_slack_mrkdwn(src)
+    assert "1" in out and "2" in out and "A" in out
+    assert "| --- |" not in out   # delimiter row must not survive as broken pipe syntax

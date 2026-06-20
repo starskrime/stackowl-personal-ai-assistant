@@ -117,6 +117,9 @@ def to_telegram_markdownv2(text: str) -> str:
             extra={"_fields": {"stripped_count": stripped}},
         )
 
+    from stackowl.channels._format import flatten_gfm_tables
+    text = flatten_gfm_tables(text)
+
     protected: list[str] = []
 
     def _stash(rendered: str) -> str:
