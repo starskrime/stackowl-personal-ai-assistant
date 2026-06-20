@@ -17,7 +17,7 @@ class IdentityResolver:
         self._handle_to_identity: dict[str, str] = {}
         for identity, handles in (aliases or {}).items():
             if not isinstance(handles, list):
-                log.engine.error(
+                log.tenancy.error(
                     "[identity] malformed alias value — skipping",
                     extra={"_fields": {"identity": identity}},
                 )
@@ -42,10 +42,10 @@ def load_identity_resolver() -> IdentityResolver:
 
         aliases = Settings().identity.aliases
     except Exception as exc:
-        log.engine.error(
+        log.tenancy.error(
             "[identity] failed to load settings — using empty alias map",
             exc_info=exc,
-            extra={"_fields": {}},
+            extra={"_fields": {"exc_type": type(exc).__name__}},
         )
         aliases = {}
     return IdentityResolver(aliases)

@@ -1,6 +1,8 @@
 """Tests for IdentityResolver and load_identity_resolver() (Task 1)."""
 from __future__ import annotations
 
+import pytest
+
 from stackowl.tenancy.identity import IdentityResolver, load_identity_resolver
 
 
@@ -31,3 +33,22 @@ def test_load_identity_resolver_unconfigured_is_identity() -> None:
     assert resolver.resolve("telegram:999") == "telegram:999"
     assert resolver.resolve("slack:U0ABC") == "slack:U0ABC"
     assert resolver.resolve("local") == "local"
+
+
+def test_load_identity_resolver_degrades_when_settings_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """load_identity_resolver() must not raise when Settings() construction fails.
+
+    It should return an identity-behaving IdentityResolver({}) so callers are
+    never broken by a config failure (no-hidden-errors invariant).
+    """
+    def _boom() -> None:
+        raise RuntimeError("settings DB corrupted")
+
+    monkeypatch.setattr("stackowl.config.settings.Settings", _boom)
+
+    # Must not raise
+    resolver = load_identity_resolver()
+
+    # Identity behaviour: unmapped handle returns itself
+    assert resolver.resolve("telegram:1") == "telegram:1"
+    assert resolver.resolve("slack:XYZ") == "slack:XYZ"
