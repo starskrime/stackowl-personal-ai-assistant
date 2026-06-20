@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from stackowl.channels._format import flatten_gfm_tables
 from stackowl.infra.observability import log
 from stackowl.tui.i18n import localize
 
@@ -144,7 +145,6 @@ def to_slack_mrkdwn(text: str) -> str:
             extra={"_fields": {"stripped_count": stripped}},
         )
 
-    from stackowl.channels._format import flatten_gfm_tables
     text = flatten_gfm_tables(text)
 
     # 1. Protect code (fences first, then inline) so their contents are never

@@ -16,7 +16,7 @@ _DELIM_CELL = re.compile(r"^\s*:?-{1,}:?\s*$")
 
 
 def _is_table_row(line: str) -> bool:
-    return line.strip().startswith("|") or "|" in line.strip()
+    return line.strip().startswith("|")
 
 
 def _cells(line: str) -> list[str]:
@@ -24,6 +24,8 @@ def _cells(line: str) -> list[str]:
 
 
 def _is_delimiter_row(line: str) -> bool:
+    if "|" not in line:
+        return False
     cells = _cells(line)
     return len(cells) >= 1 and all(_DELIM_CELL.match(c) for c in cells)
 
@@ -51,7 +53,19 @@ def flatten_gfm_tables(text: str) -> str:
     out: list[str] = []
     i = 0
     n = len(lines)
+    in_fence = False
     while i < n:
+        # Track fenced code blocks (``` or ~~~); skip table detection inside them.
+        stripped = lines[i].strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            out.append(lines[i])
+            i += 1
+            continue
+        if in_fence:
+            out.append(lines[i])
+            i += 1
+            continue
         # A table = header row, then a delimiter row, then >=0 body rows.
         if (
             i + 1 < n
@@ -83,6 +97,6 @@ def _render_block(header: list[str], body: list[list[str]]) -> str:
     def fmt(r: list[str]) -> str:
         return "  ".join(r[c].ljust(cols[c]) for c in range(width)).rstrip()
 
-    lines = [fmt(header), "  ".join("-" * cols[c] for c in range(width)).rstrip()]
-    lines += [fmt(r) for r in body]
+    lines = [fmt(norm[0]), "  ".join("-" * cols[c] for c in range(width)).rstrip()]
+    lines += [fmt(r) for r in norm[1:]]
     return "```\n" + "\n".join(lines) + "\n```"

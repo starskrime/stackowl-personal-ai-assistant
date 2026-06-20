@@ -72,3 +72,4 @@ def test_table_does_not_leak_raw_pipes() -> None:
     out = to_telegram_markdownv2(src)
     assert "1" in out and "2" in out and "A" in out
     assert r"\|" not in out          # no escaped-pipe table wreckage
+    assert "```" in out              # table must be wrapped in a fenced block

@@ -143,3 +143,4 @@ def test_table_does_not_leak_raw_pipes() -> None:
     out = to_slack_mrkdwn(src)
     assert "1" in out and "2" in out and "A" in out
     assert "| --- |" not in out   # delimiter row must not survive as broken pipe syntax
+    assert "```" in out           # table must be wrapped in a fenced block
