@@ -22,6 +22,7 @@ from stackowl.service.watchdog import WatchdogService
 from stackowl.startup.browser_probe import BrowserProbe, BrowserProbeResult
 from stackowl.startup.fs_probe import FilesystemProbe
 from stackowl.startup.provider_probe import ProviderProbe
+from stackowl.tenancy.identity import load_identity_resolver
 
 log = logging.getLogger("stackowl.startup")
 
@@ -741,6 +742,7 @@ class StartupOrchestrator:
             sandbox_governor=sandbox_governor,
             turn_registry=turn_registry,
             settings=self._settings,
+            identity_resolver=load_identity_resolver(),
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
@@ -1005,6 +1007,11 @@ class StartupOrchestrator:
                     pipeline_step="start",
                     interactive=True,  # real user typed a slash command
                     reply_target=msg.chat_id,
+                    identity_key=(
+                        services.identity_resolver.resolve(msg.session_id)
+                        if services.identity_resolver is not None
+                        else ""
+                    ),
                 )
                 cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
                 producer = asyncio.create_task(
@@ -1022,6 +1029,11 @@ class StartupOrchestrator:
                     pipeline_step="start",
                     interactive=True,  # real user turn
                     reply_target=msg.chat_id,  # §4.5 — route the reply to ITS chat
+                    identity_key=(
+                        services.identity_resolver.resolve(msg.session_id)
+                        if services.identity_resolver is not None
+                        else ""
+                    ),
                 )
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)

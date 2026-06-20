@@ -565,6 +565,27 @@ class SystemSettings(BaseModel):
     )
 
 
+class IdentitySettings(BaseModel):
+    """Cross-channel identity alias map.
+
+    Maps a stable ``identity_key`` (e.g. ``"owner-primary"``) to a list of
+    per-channel handles (e.g. ``["telegram:123456", "slack:U0ABC"]``).  An
+    empty map (the default) means every handle resolves to itself — behavior
+    is byte-identical to before this feature existed.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    aliases: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Map of identity_key → list of channel handles. "
+            "Example: {\"owner-primary\": [\"telegram:123\", \"slack:U9\"]}"
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+
+
 class GovernanceSettings(BaseModel):
     """Audit and governance parameters (Story 12.4)."""
 
@@ -619,34 +640,6 @@ class SandboxSettings(BaseModel):
             "Docker-only; if both are false, code execution is unavailable."
         ),
         json_schema_extra={"hot_reload": True},
-    )
-
-
-class IdentitySettings(BaseModel):
-    """Cross-channel identity alias map.
-
-    Maps a stable ``identity_key`` to the list of per-channel handles that
-    belong to the same person.  Example::
-
-        identity:
-          aliases:
-            owner-primary:
-              - telegram:123
-              - slack:U0ABC
-              - local
-
-    When absent (default), the map is empty and every handle resolves to itself
-    — byte-identical to pre-identity behaviour.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    aliases: dict[str, list[str]] = Field(
-        default_factory=dict,
-        description=(
-            "Map of identity_key → list of per-channel handles. "
-            "Absent or empty = every handle resolves to itself."
-        ),
     )
 
 

@@ -51,6 +51,11 @@ class PipelineState(BaseModel, frozen=True):
     channel: str
     owl_name: str
     pipeline_step: str
+    #: Stable cross-channel identity for durable-knowledge scoping (preferences,
+    #: extracted facts). Resolved at the gateway from the channel handle via the
+    #: IdentityResolver. Empty ⇒ consumers fall back to session_id (per-channel),
+    #: i.e. unconfigured behavior is byte-identical.
+    identity_key: str = ""
     # Coarse turn classification stamped by the triage step via SecretaryRouter.
     # Fail-safe default "standard" = byte-identical to pre-classification behavior.
     # "conversational" marks trivial greetings/small-talk (no task) so downstream
