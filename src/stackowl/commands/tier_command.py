@@ -1,13 +1,15 @@
-"""TierCommand — /tier slash command for per-session provider preference.
+"""TierCommand — /tier slash command for per-identity provider preference.
 
 Persists the preferred provider tier (``fast`` | ``standard`` | ``powerful`` |
 ``local``) via :class:`PreferenceStore` so it survives ``stackowl serve``
-restarts within the same session.  The preference is keyed by
-``state.session_id``, so it is session-scoped — a Telegram session and a CLI
-session are independent even for the same physical user.  Cross-channel
-owner threading is a future enhancement; until then each session has its own
-preference.  Falls back to an in-memory dict when the store is unavailable
-(e.g. unit tests).
+restarts.  The preference is keyed by the resolved identity: when
+``state.identity_key`` is set (cross-channel identity threading is active) the
+preference follows the user across channels — a Telegram session and a Slack
+session that resolve to the same identity share one tier preference.  When
+``identity_key`` is empty (channel not yet configured for cross-channel
+identity) the preference falls back to ``state.session_id``, which is
+byte-identical to prior behaviour.  Falls back to an in-memory dict when the
+store is unavailable (e.g. unit tests).
 """
 
 from __future__ import annotations
@@ -28,10 +30,14 @@ _fallback_prefs: dict[str, str] = {}
 
 
 def _owner_key_for_state(state: PipelineState) -> str:
-    """Derive the owner_key for preference scoping from a PipelineState."""
-    # Per [[project_v2_codebase_overview]]: CLI → "local", channels add prefix.
-    # Until per-channel owner_key threading lands, scope by session_id.
-    return state.session_id
+    """Derive the owner_key for preference scoping from a PipelineState.
+
+    Returns ``state.identity_key`` when set — the resolved cross-channel
+    identity so preferences follow the user across Telegram, Slack, CLI, etc.
+    Falls back to ``state.session_id`` for channels not yet configured for
+    cross-channel identity (byte-identical to prior behaviour).
+    """
+    return state.identity_key or state.session_id
 
 
 class TierCommand(SlashCommand):
@@ -41,7 +47,7 @@ class TierCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Set the preferred provider tier for this session (session-scoped, not cross-channel)."
+        return "Set the preferred provider tier (session-scoped; follows identity across channels when configured)."
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.engine.debug(

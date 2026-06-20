@@ -86,8 +86,13 @@ async def _gather_graph_context(query: str) -> str:
     return "\n".join(lines)
 
 
-async def _gather_preferences(session_id: str) -> str:
+async def _gather_preferences(owner_key: str) -> str:
     """Best-effort: load persisted preferences for the owner and format for the prompt.
+
+    ``owner_key`` is the resolved identity key: ``state.identity_key`` when set
+    (cross-channel identity threading has landed), falling back to
+    ``state.session_id`` for unconfigured channels (byte-identical to prior
+    behaviour).
 
     Failures (store missing, DB error) return ``""`` — preferences are
     enhancement, not gating. Never blocks the pipeline.
@@ -97,13 +102,11 @@ async def _gather_preferences(session_id: str) -> str:
     if store is None:
         return ""
     try:
-        # owner_key currently maps to session_id; will become channel-prefixed
-        # when per-channel threading lands. Both paths read from the same store.
-        prefs = await store.list_for_owner(session_id)
+        prefs = await store.list_for_owner(owner_key)
     except Exception as exc:
         log.engine.warning(
             "[pipeline] classify: preference load failed — skipping",
-            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+            exc_info=exc, extra={"_fields": {"owner_key": owner_key}},
         )
         return ""
     if not prefs:
@@ -508,7 +511,9 @@ async def run(state: PipelineState) -> PipelineState:
     # Long-term graph context.
     graph_context = "" if _lean else await _gather_graph_context(state.input_text)
     # Persisted user preferences (high priority — pin to top, always included).
-    prefs_block = await _gather_preferences(state.session_id)
+    # Use identity_key when resolved (cross-channel identity) so preferences
+    # follow the user across channels; fall back to session_id when unconfigured.
+    prefs_block = await _gather_preferences(state.identity_key or state.session_id)
     # Reflexion-style learnings from past failures (Commit 2).
     _surface_failures = _should_surface_failure_history(state)
     reflections_block = await _gather_recent_reflections(state.owl_name, limit=3) if _surface_failures else ""
