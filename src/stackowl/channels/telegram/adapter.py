@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from stackowl.channels.base import ChannelAdapter
@@ -256,12 +257,37 @@ class TelegramChannelAdapter(ChannelAdapter):
                 "[telegram] adapter.send_text: step part_dispatched",
                 extra={"_fields": {"idx": idx, "len": len(part)}},
             )
+            await self._send_part(target, part, idx)
+        log.telegram.debug("[telegram] adapter.send_text: exit")
+
+    async def _send_part(self, target: int, part: str, idx: int) -> None:
+        """Send one message part, MarkdownV2-first with a plain-text fallback.
+
+        Telegram rejects malformed MarkdownV2 with a ``BadRequest``. A formatter
+        bug or an exotic character must NEVER cost the user the whole message —
+        so on a parse rejection we log loudly (no hidden error) and re-send the
+        SAME part as plain text. The content always lands; only the markup is
+        sacrificed. Any non-parse error (network, auth, chat-not-found) is a real
+        delivery failure and propagates unchanged.
+        """
+        assert self._bot_app is not None  # caller guarantees a resolved app+target
+        try:
             await self._bot_app.bot.send_message(
                 chat_id=target,
                 text=part,
                 parse_mode="MarkdownV2",
             )
-        log.telegram.debug("[telegram] adapter.send_text: exit")
+        except BadRequest as exc:
+            log.telegram.error(
+                "[telegram] adapter.send_text: MarkdownV2 rejected — retrying as plain text",
+                exc_info=exc,
+                extra={"_fields": {"idx": idx, "len": len(part)}},
+            )
+            await self._bot_app.bot.send_message(
+                chat_id=target,
+                text=part,
+                parse_mode=None,
+            )
 
     async def send_inline_keyboard(
         self,
