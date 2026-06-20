@@ -86,7 +86,7 @@ class TaskStatusTool(Tool):
             "task_status.execute: exit",
             extra={"_fields": {"success": True, "duration_ms": dt}},
         )
-        return ToolResult(success=True, output=out, duration_ms=dt)
+        return ToolResult(success=True, output=out, duration_ms=dt, side_effect_committed=False)
 
     def _err(self, msg: str, t0: float) -> ToolResult:
         dt = (time.monotonic() - t0) * 1000

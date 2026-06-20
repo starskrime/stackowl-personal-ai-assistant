@@ -71,6 +71,8 @@ async def test_returns_status_for_known_task(task_env: DbPool) -> None:
     res = await TaskStatusTool().execute(task_id="t1")
     assert res.success is True
     assert "running" in res.output and "t1" in res.output
+    # A pure read must never report a committed side effect.
+    assert res.side_effect_committed is False
 
 
 async def test_unknown_task_is_honest_not_found(task_env: DbPool) -> None:
