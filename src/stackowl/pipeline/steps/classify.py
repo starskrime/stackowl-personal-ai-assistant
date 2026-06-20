@@ -435,6 +435,27 @@ def _parse_turns_to_messages(contents: list[str]) -> list[Message]:
     return msgs
 
 
+def _dedup_assistant_history(messages: list[Message]) -> list[Message]:
+    """Collapse repeated assistant turns to their most-recent occurrence.
+
+    A weak model that re-sends the same correction/apology turn after turn gets
+    that prose persisted and re-fed (window 6), which reinforces the loop. We
+    keep USER turns verbatim (the real conversation) and, for assistant turns,
+    drop every earlier occurrence of a content that recurs later in the window
+    — deterministic, content-keyed, no natural-language apology detection.
+    """
+    seen_later: dict[str, int] = {}
+    for i, m in enumerate(messages):
+        if m.role == "assistant":
+            seen_later[m.content.strip()] = i  # last index wins
+    out: list[Message] = []
+    for i, m in enumerate(messages):
+        if m.role == "assistant" and seen_later.get(m.content.strip(), i) != i:
+            continue  # an identical assistant turn appears later — drop this earlier one
+        out.append(m)
+    return out
+
+
 async def _gather_history(session_id: str, limit: int) -> list[Message]:
     """Fetch the last ``limit`` staged conversation turns as real Message objects.
 
@@ -453,7 +474,7 @@ async def _gather_history(session_id: str, limit: int) -> list[Message]:
             exc_info=exc, extra={"_fields": {"session_id": session_id}},
         )
         return []
-    return _parse_turns_to_messages([t.content for t in turns])
+    return _dedup_assistant_history(_parse_turns_to_messages([t.content for t in turns]))
 
 
 async def run(state: PipelineState) -> PipelineState:

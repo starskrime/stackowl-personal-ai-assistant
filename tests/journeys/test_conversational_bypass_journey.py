@@ -127,6 +127,9 @@ class _ScriptedProvider(ModelProvider):
         Signature-robust (``*args``/``**kwargs``) so a future param on the real
         contract cannot silently break the double.
         """
+        # Capture the history messages handed to the provider on this call so
+        # cross-turn journey tests can assert on what context was assembled.
+        self.calls.append(list(kwargs.get("history") or []))  # type: ignore[arg-type]
         idx = min(self._i, len(self._replies) - 1)
         text = self._replies[idx]
         self._i += 1
