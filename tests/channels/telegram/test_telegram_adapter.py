@@ -350,3 +350,50 @@ async def test_edit_message_noop_when_bot_uninitialised() -> None:
     assert adapter._bot_app is None
     ok = await adapter.edit_message(1, 2, "text")
     assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# send_text — MarkdownV2 rejection falls back to plain text (never lose the msg)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_text_falls_back_to_plain_on_markdownv2_rejection() -> None:
+    """A malformed-MarkdownV2 BadRequest must not drop the message — the same
+    content is re-sent as plain text so the user always receives it."""
+    from telegram.error import BadRequest
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(
+        side_effect=[BadRequest("can't parse entities"), None]
+    )
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    await adapter.send_text("oops *bad markup", chat_id=555)
+
+    assert bot.send_message.await_count == 2
+    first = bot.send_message.await_args_list[0].kwargs
+    second = bot.send_message.await_args_list[1].kwargs
+    assert first["parse_mode"] == "MarkdownV2"
+    # Fallback: same chat, same text, markup dropped.
+    assert second["parse_mode"] is None
+    assert second["chat_id"] == 555
+    assert second["text"] == first["text"] == "oops *bad markup"
+
+
+@pytest.mark.asyncio
+async def test_send_text_propagates_non_parse_errors() -> None:
+    """A non-parse error (network/auth/chat-not-found) is a real delivery
+    failure — it propagates, it is NOT swallowed by the plain-text fallback."""
+    from telegram.error import NetworkError
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(side_effect=NetworkError("connection reset"))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    with pytest.raises(NetworkError):
+        await adapter.send_text("hello", chat_id=555)
+    # Only the MarkdownV2 attempt — no plain-text retry on a non-parse error.
+    assert bot.send_message.await_count == 1
