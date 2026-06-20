@@ -107,8 +107,16 @@ async def _write_tier(store: object, owner_key: str, tier: str) -> None:
     _fallback_prefs[owner_key] = tier
 
 
-def get_session_tier(session_id: str) -> str | None:
-    """Return the cached tier for ``session_id`` or ``None`` if unset.
+def get_session_tier(owner_key: str) -> str | None:
+    """Return the cached tier for ``owner_key`` or ``None`` if unset.
+
+    ``owner_key`` must be the *resolved* preference key — i.e.
+    ``state.identity_key or state.session_id`` — matching the key used by
+    :func:`_write_tier` via :func:`_owner_key_for_state`.  When
+    ``identity_key`` is set, the same tier is returned regardless of which
+    channel (Telegram, Slack, CLI …) the lookup originates from.  When
+    ``identity_key`` is empty, ``session_id`` is used as the key, which is
+    byte-identical to the prior behaviour.
 
     Reads from the in-memory fallback dict only — synchronous callers like the
     router can't await the PreferenceStore. The fallback is populated whenever
@@ -116,9 +124,9 @@ def get_session_tier(session_id: str) -> str | None:
     tier this turn or since boot, this returns the current value.
 
     For cross-restart preference recovery, callers should also call
-    :func:`hydrate_from_store` at startup once per known session.
+    :func:`hydrate_from_store` at startup once per known identity/session key.
     """
-    return _fallback_prefs.get(session_id)
+    return _fallback_prefs.get(owner_key)
 
 
 async def hydrate_from_store(store: object, owner_key: str) -> None:
