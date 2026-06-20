@@ -209,12 +209,14 @@ class MemoryAssembly:
         # Embedding registry is passed so extracted facts can be embedded for
         # downstream semantic recall.
         from stackowl.providers.base import ModelProvider
+        from stackowl.tenancy.identity import load_identity_resolver
 
         extraction_provider: ModelProvider = provider_registry.get_with_cascade("powerful")
         fact_extractor = FactExtractor(
             provider=extraction_provider,
             embedding_registry=embedding_registry,
             sensitive_categories=mem.sensitive_categories,
+            identity_resolver=load_identity_resolver(),
         )
 
         # 7a) ConversationMiner — wired here so DreamWorker can run it each pass.
