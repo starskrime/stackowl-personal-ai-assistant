@@ -113,6 +113,20 @@ async def _gather_preferences(session_id: str) -> str:
     return "\n".join(lines)
 
 
+def _should_surface_failure_history(state: PipelineState) -> bool:
+    """Fail-closed admission gate for failure-history prompt blocks.
+
+    Past-failure context (``## Recent Reflections`` / ``## What You Did
+    Recently``) is admitted ONLY on a turn the router POSITIVELY classified as
+    standard/work. A greeting that lands as ``standard`` by default — the
+    direct-address bypass, or any router error — is NOT a confirmed work turn,
+    so its failure history is withheld. Trade chosen deliberately: omitting a
+    reflection on a true work turn is mild degradation; injecting phantom
+    failure-history into a greeting is trust-destroying. Fail toward silence.
+    """
+    return state.intent_class == "standard" and state.intent_classified
+
+
 async def _gather_recent_reflections(owl_name: str, limit: int = 3) -> str:
     """Best-effort: surface the agent's most recent reflections for this owl.
 
@@ -421,6 +435,27 @@ def _parse_turns_to_messages(contents: list[str]) -> list[Message]:
     return msgs
 
 
+def _dedup_assistant_history(messages: list[Message]) -> list[Message]:
+    """Collapse repeated assistant turns to their most-recent occurrence.
+
+    A weak model that re-sends the same correction/apology turn after turn gets
+    that prose persisted and re-fed (window 6), which reinforces the loop. We
+    keep USER turns verbatim (the real conversation) and, for assistant turns,
+    drop every earlier occurrence of a content that recurs later in the window
+    — deterministic, content-keyed, no natural-language apology detection.
+    """
+    seen_later: dict[str, int] = {}
+    for i, m in enumerate(messages):
+        if m.role == "assistant":
+            seen_later[m.content.strip()] = i  # last index wins
+    out: list[Message] = []
+    for i, m in enumerate(messages):
+        if m.role == "assistant" and seen_later.get(m.content.strip(), i) != i:
+            continue  # an identical assistant turn appears later — drop this earlier one
+        out.append(m)
+    return out
+
+
 async def _gather_history(session_id: str, limit: int) -> list[Message]:
     """Fetch the last ``limit`` staged conversation turns as real Message objects.
 
@@ -439,7 +474,7 @@ async def _gather_history(session_id: str, limit: int) -> list[Message]:
             exc_info=exc, extra={"_fields": {"session_id": session_id}},
         )
         return []
-    return _parse_turns_to_messages([t.content for t in turns])
+    return _dedup_assistant_history(_parse_turns_to_messages([t.content for t in turns]))
 
 
 async def run(state: PipelineState) -> PipelineState:
@@ -475,12 +510,13 @@ async def run(state: PipelineState) -> PipelineState:
     # Persisted user preferences (high priority — pin to top, always included).
     prefs_block = await _gather_preferences(state.session_id)
     # Reflexion-style learnings from past failures (Commit 2).
-    reflections_block = "" if _lean else await _gather_recent_reflections(state.owl_name, limit=3)
+    _surface_failures = _should_surface_failure_history(state)
+    reflections_block = await _gather_recent_reflections(state.owl_name, limit=3) if _surface_failures else ""
     # Live action recall — what the agent DID on prior turns this session
     # (excludes the in-flight turn). Lets it answer "what did you just do?".
-    actions_block = "" if _lean else await _gather_recent_actions(
+    actions_block = await _gather_recent_actions(
         state.session_id, state.trace_id, limit=3,
-    )
+    ) if _surface_failures else ""
     # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
     # Suppress owned skills so they don't appear at two altitudes.
     # Owned-skill lookup is only used by _gather_relevant_skills — skip on lean.

@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from stackowl.channels._format import flatten_gfm_tables
 from stackowl.infra.observability import log
 from stackowl.tui.i18n import localize
 
@@ -143,6 +144,8 @@ def to_slack_mrkdwn(text: str) -> str:
             "[slack] to_slack_mrkdwn: step stripped sentinel from input",
             extra={"_fields": {"stripped_count": stripped}},
         )
+
+    text = flatten_gfm_tables(text)
 
     # 1. Protect code (fences first, then inline) so their contents are never
     #    transformed and never accidentally re-matched.

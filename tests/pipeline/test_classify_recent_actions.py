@@ -54,6 +54,7 @@ async def test_classify_surfaces_recent_actions_excluding_in_flight(tmp_db: DbPo
             trace_id="inflight-trace", session_id="sess-1",
             input_text="what did you just do?", channel="cli",
             owl_name="secretary", pipeline_step="classify",
+            intent_class="standard", intent_classified=True,
         )
         out = await classify.run(state)
     finally:

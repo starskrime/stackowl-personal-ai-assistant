@@ -126,9 +126,21 @@ async def test_standard_still_gathers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(classify, "_gather_graph_context", _yes_graph)
     monkeypatch.setattr(classify, "_gather_recent_actions", _yes_actions)
 
+    # A positively-classified standard work turn must have intent_classified=True;
+    # without it the fail-closed gate suppresses the failure-history blocks.
+    classified_standard = PipelineState(
+        trace_id="t",
+        session_id="s",
+        input_text="hi",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="classify",
+        intent_class="standard",
+        intent_classified=True,
+    )
     token = set_services(StepServices(memory_bridge=_StubBridge()))
     try:
-        out = await classify.run(_state("standard"))
+        out = await classify.run(classified_standard)
     finally:
         reset_services(token)
 

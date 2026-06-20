@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+from stackowl.channels._format import flatten_gfm_tables
 from stackowl.infra.observability import log
 from stackowl.tui.i18n import localize
 
@@ -116,6 +117,8 @@ def to_telegram_markdownv2(text: str) -> str:
             "[telegram] to_telegram_markdownv2: step stripped sentinel from input",
             extra={"_fields": {"stripped_count": stripped}},
         )
+
+    text = flatten_gfm_tables(text)
 
     protected: list[str] = []
 
