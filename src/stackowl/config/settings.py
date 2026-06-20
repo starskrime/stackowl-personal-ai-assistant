@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
@@ -33,7 +33,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -491,6 +491,68 @@ class BriefSettings(BaseModel):
     )
 
 
+class CheckInSettings(BaseModel):
+    """Configuration for the proactive check-in (heartbeat) job.
+
+    Mirrors :class:`BriefSettings`. The morning brief has no ``enabled`` flag —
+    it is effectively always on (unconditionally seeded). The check-in adds an
+    explicit toggle so an operator can turn the periodic outreach off, but it
+    DEFAULTS ON so the promised feature actually fires out of the box. The seed
+    is HONEST: even when ``enabled`` is True, a row is only created when a single
+    resolvable owner recipient exists — a default empty telegram allowlist seeds
+    nothing (and warns) rather than a dead, permanently-undeliverable row.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether the proactive check-in job is scheduled. ON by default so the "
+            "promised periodic outreach fires; the seed still only creates a row "
+            "when a single resolvable recipient exists (never a dead no-op row)."
+        ),
+        json_schema_extra={"hot_reload": False},
+    )
+    schedule: str = Field(
+        default="daily@18:00",
+        description="Delivery cadence for the check-in job, as daily@HH:MM (24h).",
+        json_schema_extra={"hot_reload": False},
+    )
+    # Default to telegram, the only channel with a durable proactive recipient
+    # resolver today — "cli" has no durable address, so it would leave the
+    # (default-on) check-in permanently undeliverable. A cli/other-only operator
+    # still gets the honest "no resolvable recipient" no-seed path.
+    channels: list[str] = Field(
+        default_factory=lambda: ["telegram"],
+        description="Channel identifiers that should receive the check-in.",
+        json_schema_extra={"hot_reload": True},
+    )
+
+    @field_validator("schedule")
+    @classmethod
+    def _validate_schedule(cls, value: str) -> str:
+        """Reject a malformed schedule at config-load (fail loud, not at seed time).
+
+        Only ``daily@HH:MM`` with a valid 24h time is accepted. A bad value here
+        would otherwise flow into the seed and produce a wrong (or assembly-
+        crashing out-of-range) first-run hour.
+        """
+        if not value.startswith("daily@"):
+            raise ValueError("check_in.schedule must be of the form 'daily@HH:MM'")
+        body = value[len("daily@"):]
+        parts = body.split(":")
+        if len(parts) != 2:
+            raise ValueError("check_in.schedule must be 'daily@HH:MM'")
+        try:
+            hour, minute = int(parts[0]), int(parts[1])
+        except ValueError as exc:
+            raise ValueError("check_in.schedule HH and MM must be integers") from exc
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("check_in.schedule HH must be 0-23 and MM 0-59")
+        return value
+
+
 class SystemSettings(BaseModel):
     """Process-level system parameters (locale, timezone)."""
 
@@ -584,6 +646,7 @@ class Settings(BaseSettings):
     memory: MemorySettings = Field(default_factory=MemorySettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     brief: BriefSettings = Field(default_factory=BriefSettings)
+    check_in: CheckInSettings = Field(default_factory=CheckInSettings)
     system: SystemSettings = Field(default_factory=SystemSettings)
     ui: UISettings = Field(default_factory=UISettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)

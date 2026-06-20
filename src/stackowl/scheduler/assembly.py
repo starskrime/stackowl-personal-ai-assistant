@@ -269,6 +269,45 @@ class SchedulerAssembly:
             target_channels=brief_channels,
             target_addresses=_resolve_owner_addresses(settings, brief_channels),
         )
+        # WS-C — check_in is a built+registered+honest-delivering handler that had
+        # NO producer: nothing ever seeded its jobs row, so the scheduler never
+        # dispatched it (a promised periodic outreach that never fired). Seed it
+        # exactly like morning_brief, gated on settings.check_in.enabled.
+        if settings.check_in.enabled:
+            check_in_channels = list(settings.check_in.channels)
+            check_in_addresses = _resolve_owner_addresses(settings, check_in_channels)
+            if check_in_addresses:
+                # check_in.schedule is USER-CONFIGURABLE (unlike the hardcoded
+                # daily@HH:MM constants of the other seeds), so derive the first-run
+                # hour FROM it — never hardcode a next_hour that could diverge from
+                # the stored schedule string. Falls back to 18 for a non-daily@ value.
+                check_in_hour = _daily_schedule_hour(settings.check_in.schedule, 18)
+                await _seed_daily_schedule(
+                    db, handler_name="check_in",
+                    schedule=settings.check_in.schedule, next_hour=check_in_hour,
+                    target_channels=check_in_channels,
+                    target_addresses=check_in_addresses,
+                )
+            else:
+                # HONESTY: never seed a target-less, permanently-undeliverable row.
+                # Unlike morning_brief (which seeds a row even with empty addresses),
+                # check_in only schedules a DELIVERABLE occurrence — a no-recipient
+                # row would be a silent no-op every poll. Warn loudly instead.
+                log.scheduler.warning(
+                    "[scheduler] check_in enabled but has no resolvable recipient — "
+                    "NOT scheduled. Cause: no single resolvable owner for these "
+                    "channels (e.g. a non-telegram channel like 'cli' has no durable "
+                    "proactive address, or the telegram allowlist is empty/ambiguous)",
+                    extra={"_fields": {"channels": check_in_channels}},
+                )
+        else:
+            log.scheduler.debug(
+                "[scheduler] check_in disabled — skipping seed",
+            )
+        # LANDMINE: _seed_daily_schedule is idempotent by handler_name (early-returns
+        # if a row exists). So flipping enabled OFF→ON (or fixing the recipient) AFTER
+        # a row already exists will NOT re-stamp the durable target. Since we only ever
+        # seed deliverable rows this is safe today; documented, not fixed (out of scope).
         # EvolutionCoordinator registers itself under handler_name="evolution_batch".
         await _seed_daily_schedule(
             db, handler_name="evolution_batch",
@@ -387,6 +426,27 @@ def _resolve_owner_addresses(
     from stackowl.notifications.recipient import resolve_owner_addresses
 
     return resolve_owner_addresses(settings, channels)
+
+
+def _daily_schedule_hour(schedule: str, default: int) -> int:
+    """Parse the HH from a ``daily@HH:MM`` schedule; ``default`` if not that shape.
+
+    Used to keep a seeded job's first-run hour in lockstep with a
+    user-configurable ``daily@HH:MM`` schedule string (so they can never diverge).
+    A non-daily@ schedule (e.g. an interval) returns ``default``.
+    """
+    if schedule.startswith("daily@"):
+        try:
+            hour = int(schedule[len("daily@"):].split(":")[0])
+        except (ValueError, IndexError):
+            return default
+        # Guard the range: _next_local_hour_iso → datetime.replace(hour=) raises
+        # for hour>23, which would abort assembly. (CheckInSettings already
+        # validates this; belt-and-suspenders for any other caller.)
+        if 0 <= hour <= 23:
+            return hour
+        return default
+    return default
 
 
 def _next_local_hour_iso(hour: int) -> str:

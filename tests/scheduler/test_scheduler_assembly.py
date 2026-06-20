@@ -159,11 +159,16 @@ async def test_turn_sweep_seed_is_idempotent(tmp_db: DbPool) -> None:
 
 
 async def test_register_only_handlers_have_no_seeded_schedule(tmp_db: DbPool) -> None:
-    """check_in, tool_pruning, goal_execution are register-only — no auto-schedule."""
+    """tool_pruning and goal_execution are register-only — no auto-schedule.
+
+    (check_in is no longer register-only as of WS-C: it is conditionally seeded
+    when enabled with a resolvable owner — covered by test_check_in_seed.py — so
+    it is deliberately excluded here to avoid an environment-dependent assertion.)
+    """
     await _build(tmp_db)
     rows = await tmp_db.fetch_all(
         "SELECT handler_name FROM jobs WHERE handler_name IN "
-        "('check_in', 'tool_pruning', 'goal_execution')", (),
+        "('tool_pruning', 'goal_execution')", (),
     )
     assert rows == []
 
