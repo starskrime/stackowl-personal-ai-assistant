@@ -32,6 +32,7 @@ from stackowl.scheduler.job import Job, JobResult
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
+    from stackowl.notifications.proactive_job import ProactiveJobDeliverer
     from stackowl.pipeline.backends.base import OrchestratorBackend
 
 
@@ -50,6 +51,7 @@ class GoalExecutionHandler(JobHandler):
         backend: OrchestratorBackend | None = None,
         db: DbPool | None = None,
         settings: Settings | None = None,
+        job_deliverer: ProactiveJobDeliverer | None = None,
     ) -> None:
         self._backend = backend
         self._db = db
@@ -57,6 +59,13 @@ class GoalExecutionHandler(JobHandler):
         # 7.1/7.2 test surface) or ``settings.durable.goals`` is False, goal
         # execution stays on the legacy ephemeral path — byte-for-byte unchanged.
         self._settings = settings
+        # WS-B/C1 — the shared cron-born delivery seam. When wired, a goal's
+        # produced answer is delivered back to the chat it was scheduled from
+        # (durable ``target_*`` columns), exactly-once. Constructor-injected
+        # (the scheduler poll thread has no get_services() context). When absent
+        # (legacy/Story 7.2 unit surface) the handler records the result WITHOUT
+        # a send — back-compat, never a fake "delivered".
+        self._job_deliverer = job_deliverer
 
     @property
     def handler_name(self) -> str:
@@ -124,18 +133,29 @@ class GoalExecutionHandler(JobHandler):
 
         # 3. STEP — build pipeline state and run
         trace_id = f"goal-{uuid.uuid4().hex[:8]}"
-        session_id = f"goal-{job.job_id[:8]}"
+        # FULL job_id in the session (not job_id[:8]): a "goal_execution-XXXX"
+        # job id truncated to 8 chars is always "goal_exe" for EVERY goal job —
+        # a collision that conflated distinct goals' sessions. The full id is
+        # unique per job.
+        session_id = f"goal-{job.job_id}"
         state = PipelineState(
             trace_id=trace_id,
             session_id=session_id,
             input_text=goal,
-            channel="cli",
-            owl_name="secretary",
+            # Deliver to the channel the goal was scheduled from (persisted on
+            # the job row), not a hardcoded "cli" that drops the answer.
+            channel=job.primary_channel or "cli",
+            owl_name=str(job.params.get("owl") or "secretary"),
             pipeline_step="",
             # Cron/scheduler goal execution has no user present to answer a
             # mid-turn clarify; default-deny so a clarify call never parks a
             # scheduler worker slot waiting for an answer that cannot come.
             interactive=False,
+            # THIS handler owns delivery via the durable seam — the pipeline
+            # deliver step must NOT also send (prevents a double-send). No
+            # reply_target is set: a cron poll has no live session, so the
+            # recipient comes from the job's durable target columns.
+            defer_delivery=True,
         )
 
         # 2. DECISION — durable routing. ONLY when settings.durable.goals is True
@@ -208,22 +228,35 @@ class GoalExecutionHandler(JobHandler):
             },
         )
 
-        # 3. STEP — persist row in job_results so /agents log can show history. A
-        #    parked durable task is recorded distinctly (status "parked" + a clear
-        #    blocker line) rather than a generic "failed".
+        # 3. STEP — DELIVER the produced answer back to the chat the goal was
+        #    scheduled from, then derive the HONEST status from the ACTUAL
+        #    transport outcome. result_text is ALWAYS the produced answer (it is
+        #    never lost from /agents log, even when delivery fails). Runs BEFORE
+        #    the run_once delete so the durable target is never lost.
+        delivery_failed = False
         if parked:
             blocker = "; ".join(final_state.errors) or "durable replay uncertain"
             status = "parked"
             result_text: str | None = f"PARKED awaiting input — {blocker}"
-        else:
-            status = "completed" if success else "failed"
+        elif not success:
+            status = "failed"
             result_text = response_text or (
                 "; ".join(final_state.errors) if final_state.errors else None
             )
+        else:
+            status, delivery_failed = await self._deliver_answer(job, response_text)
+            result_text = response_text or None
+
         await self._record_result(job.job_id, status, result_text, duration_ms)
 
+        # A transient delivery failure (failed/partial) must surface as a NOT-success
+        # JobResult so the scheduler retries — otherwise a recurring goal keeps
+        # producing an answer the user never receives while reporting success.
+        delivered_success = success and not delivery_failed
+
         # 3. STEP — fire-and-forget agents delete themselves after a successful run.
-        if success and bool(job.params.get("run_once")):
+        #    A transient delivery failure keeps the job so the retry can deliver.
+        if delivered_success and bool(job.params.get("run_once")):
             await self._delete_job(job.job_id)
 
         # 4. EXIT — a parked durable task surfaces a distinct, unambiguous signal
@@ -252,11 +285,14 @@ class GoalExecutionHandler(JobHandler):
                 duration_ms=duration_ms,
                 metadata={"goal": goal[:100], "parked": True, "blocker": blocker},
             )
+        error = "; ".join(final_state.errors) if final_state.errors else None
+        if delivery_failed and not error:
+            error = f"answer produced but delivery {status} — scheduler will retry"
         return JobResult(
             job_id=job.job_id,
-            success=success,
+            success=delivered_success,
             output=response_text or None,
-            error="; ".join(final_state.errors) if final_state.errors else None,
+            error=error,
             duration_ms=duration_ms,
             metadata={"goal": goal[:100]},
         )
@@ -310,6 +346,101 @@ class GoalExecutionHandler(JobHandler):
             }},
         )
         return final_state
+
+    async def _deliver_answer(self, job: Job, response_text: str) -> tuple[str, bool]:
+        """Deliver a successful goal's answer through the durable seam (WS-B).
+
+        Returns ``(status, transient_failure)`` — the HONEST ``job_results`` status
+        mapped from the actual transport outcome (never "completed" when a body
+        existed but nothing was delivered), plus whether delivery failed in a way
+        the scheduler should RETRY. ``transient_failure`` lifts the failure into
+        ``JobResult.success`` so a recurring goal doesn't keep dropping the answer
+        silently while reporting success.
+
+        * empty body                          → ("completed", False)  (nothing to send)
+        * no deliverer wired, job has targets  → ("undeliverable", False)  (wiring gap, honest)
+        * no deliverer wired, no targets (legacy) → ("completed", False)  (back-compat)
+        * outcome ``delivered``/``suppressed``  → ("completed", False)
+        * outcome ``undeliverable``           → ("undeliverable", False)  (no target — retry won't help)
+        * outcome ``partial``                 → ("partial", True)  (some channels failed — retry)
+        * outcome ``failed``                  → ("failed", True)  (transient transport/ledger — retry)
+        * any other rollup                    → (rollup, False)  (echoed honestly)
+        """
+        if not response_text:
+            log.scheduler.debug(
+                "[scheduler] goal_execution._deliver_answer: empty answer — nothing to deliver",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return "completed", False
+        if self._job_deliverer is None:
+            # HONESTY — no deliverer wired. If the job was created WITH a delivery
+            # target, delivery was expected and this is a wiring gap: record
+            # "undeliverable" (never a fake "completed"). With no targets (the
+            # legacy Story 7.2 surface) there was nothing to deliver — keep
+            # "completed". Neither case is a transient failure to retry.
+            if job.target_channels:
+                log.scheduler.warning(
+                    "[scheduler] goal_execution._deliver_answer: targets present but "
+                    "NO deliverer wired — answer NOT sent (recorded undeliverable)",
+                    extra={"_fields": {"job_id": job.job_id,
+                                       "channels": list(job.target_channels)}},
+                )
+                return "undeliverable", False
+            log.scheduler.warning(
+                "[scheduler] goal_execution._deliver_answer: no deliverer wired and "
+                "no targets — nothing to deliver (legacy back-compat)",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return "completed", False
+
+        log.scheduler.debug(
+            "[scheduler] goal_execution._deliver_answer: delivering",
+            extra={
+                "_fields": {
+                    "job_id": job.job_id,
+                    "answer_len": len(response_text),
+                    "channels": list(job.target_channels),
+                }
+            },
+        )
+        outcome = await self._job_deliverer.deliver_for_job(
+            job,
+            message=response_text,
+            category="goal_answer",
+            urgency="critical",
+        )
+        # HONESTY INVARIANT — map the transport rollup to a job_results status AND
+        # a retry signal. delivered/suppressed → completed; an undeliverable body is
+        # NEVER recorded "completed". A transient delivery failure (failed/partial)
+        # sets transient_failure so JobResult.success becomes False and the
+        # scheduler retries; an undeliverable (no resolvable target) does NOT retry
+        # (the create-time honesty warning + visible status already surface it, and
+        # retrying a config problem only spams).
+        transient_failure = False
+        if outcome.rollup in ("delivered", "suppressed"):
+            status = "completed"
+        elif outcome.rollup == "undeliverable":
+            status = "undeliverable"
+        elif outcome.rollup == "partial":
+            status = "partial"
+            transient_failure = True
+        elif outcome.rollup == "failed":
+            status = "failed"
+            transient_failure = True
+        else:
+            status = outcome.rollup
+        log.scheduler.info(
+            "[scheduler] goal_execution._deliver_answer: delivered",
+            extra={
+                "_fields": {
+                    "job_id": job.job_id,
+                    "rollup": outcome.rollup,
+                    "status": status,
+                    "transient_failure": transient_failure,
+                }
+            },
+        )
+        return status, transient_failure
 
     async def _record_result(
         self,

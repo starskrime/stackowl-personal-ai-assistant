@@ -164,8 +164,23 @@ class SchedulerAssembly:
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
 
+        # WS-B/C1 — share the SAME delivery seam morning_brief/check_in use so a
+        # user-created goal's answer is routed back to the chat it was scheduled
+        # from, exactly-once. Wired only when a real deliverer exists; absent it,
+        # goal_execution records results without a send (never a fake "delivered").
+        goal_job_deliverer = None
+        if proactive_deliverer is not None:
+            from stackowl.notifications.proactive_job import ProactiveJobDeliverer
+
+            goal_job_deliverer = ProactiveJobDeliverer(
+                proactive_deliverer, delivery_ledger
+            )
+
         goal_execution_handler = GoalExecutionHandler(
-            backend=backend, db=db, settings=settings,
+            backend=backend,
+            db=db,
+            settings=settings,
+            job_deliverer=goal_job_deliverer,
         )
         HandlerRegistry.instance().register(goal_execution_handler)
 

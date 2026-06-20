@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.pipeline.services import get_services
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -206,13 +207,74 @@ class CronjobTool(Tool):
                 t0,
             )
 
+        # WS-B/C1 — capture the ORIGIN delivery target at create time so the
+        # goal_execution handler can route its produced answer back to the chat
+        # the goal was scheduled from. A cron poll has no live session, so the
+        # recipient MUST be persisted on the job row now (durable target columns).
+        target_channels, target_addresses = self._resolve_durable_target(channel)
+        unreachable = not target_channels
+
         job = await scheduler.create_job(
             handler_name=_HANDLER,
             schedule=schedule,
             params={"goal": prompt, "created_by": CREATED_BY_TAG, "owl": owl},
             primary_channel=channel,
+            target_channels=target_channels,
+            target_addresses=target_addresses,
         )
-        return self._ok({"created": True, **job_summary(job)}, t0)
+        payload: dict[str, object] = {"created": True, **job_summary(job)}
+        if unreachable:
+            # HONESTY — never a bare "scheduled ✓". The job is created (plumbing
+            # success preserved), but its answer can't be auto-delivered on this
+            # channel, so the user is told plainly.
+            payload["created_but_unreachable"] = True
+            payload["warning"] = (
+                "Scheduled — but results can't be auto-delivered on this channel. "
+                "Use /agents log to read each run, or schedule from a chat channel "
+                "(e.g. Telegram) to receive the answer."
+            )
+            log.tool.warning(
+                "cronjob.create: no durable delivery target — results unreachable",
+                extra={"_fields": {"job_id": job.job_id, "channel": channel}},
+            )
+        return self._ok(payload, t0)
+
+    def _resolve_durable_target(
+        self, channel: str | None
+    ) -> tuple[list[str], dict[str, str | int]]:
+        """Resolve the job's durable ``(target_channels, target_addresses)``.
+
+        Precedence:
+        1. The live request's ``reply_target`` (the exact chat the goal was
+           scheduled from) — native int/str preserved, never stringified.
+        2. The shared owner fallback (:func:`resolve_owner_addresses`) using
+           ``settings`` from services, when no per-request target is available.
+        3. Neither resolvable → empty target (caller signals "unreachable").
+        """
+        ctx = TraceContext.get()
+        reply_target = ctx.get("reply_target")
+        if reply_target is not None and channel:
+            log.tool.debug(
+                "cronjob.create: durable target from request reply_target",
+                extra={"_fields": {"channel": channel}},
+            )
+            return [channel], {channel: reply_target}
+
+        settings = get_services().settings
+        if settings is not None and channel:
+            addresses = resolve_owner_addresses(settings, [channel])
+            if addresses:
+                log.tool.debug(
+                    "cronjob.create: durable target from owner fallback",
+                    extra={"_fields": {"channel": channel}},
+                )
+                return [channel], dict(addresses)
+
+        log.tool.debug(
+            "cronjob.create: no durable target resolved",
+            extra={"_fields": {"channel": channel}},
+        )
+        return [], {}
 
     async def _list(self, scheduler: JobScheduler, owl: str, t0: float) -> ToolResult:
         jobs = filter_owl_jobs(await scheduler.list_jobs(), owl)
