@@ -61,9 +61,11 @@ from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 # --------------------------------------------------------------------------- #
 # _ScriptedProvider — directly implements ModelProvider with canned responses.
 #
-# Returns CompletionResult directly — compatible with complete() (router/judge),
-# stream() (conversational answer delivery), and the base-class
-# complete_with_tools() default (which delegates to complete()).
+# Returns CompletionResult directly for complete() (router/judge) and stream()
+# (conversational answer delivery), and overrides complete_with_tools() to be
+# genuinely tool-capable (the base default now RAISES on a tool schema — F120,
+# no silent degrade — so a standard turn entering the tool loop needs a real
+# tool-capable double, mirroring production openai/anthropic/ollama providers).
 # --------------------------------------------------------------------------- #
 
 
@@ -108,6 +110,27 @@ class _ScriptedProvider(ModelProvider):
         text = self._replies[idx]
         self._i += 1
         yield text
+
+    async def complete_with_tools(
+        self, *args: object, **kwargs: object
+    ) -> tuple[str, list[object]]:
+        """Tool-CAPABLE: enter the loop, return the scripted final answer + NO tool
+        calls so the agentic loop terminates cleanly on the first pass.
+
+        Required because the base ``complete_with_tools`` (F120,
+        providers/base.py) RAISES ``ToolUseUnsupportedError`` when handed a tool
+        schema by a provider that does not override it — it refuses to silently
+        degrade. A standard turn entering the tool loop with a registered tool
+        therefore needs a genuinely tool-capable double (real openai/anthropic/
+        ollama providers all override this). The empty tool-call list is what
+        makes the loop dispatch nothing and finish with the direct answer.
+        Signature-robust (``*args``/``**kwargs``) so a future param on the real
+        contract cannot silently break the double.
+        """
+        idx = min(self._i, len(self._replies) - 1)
+        text = self._replies[idx]
+        self._i += 1
+        return text, []
 
 
 # --------------------------------------------------------------------------- #
