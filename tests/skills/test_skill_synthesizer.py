@@ -20,6 +20,7 @@ from stackowl.skills.synthesizer import (
     SkillSynthesizer,
     SkillSynthesizerPromptBuilder,
     ToolSequenceCluster,
+    _DEFAULT_VERIFICATION_SECTION,
     cluster_outcomes_by_tool_sequence,
     parse_new_skill_response,
     parse_refined_body,
@@ -62,7 +63,9 @@ def test_parse_new_skill_response_round_trip() -> None:
     parsed = parse_new_skill_response(raw)
     assert parsed is not None
     assert parsed["name"] == "my-skill"
-    assert parsed["body"] == "# step 1"
+    # Body always contains ## Verification (appended when absent).
+    assert "## Verification" in parsed["body"]
+    assert "# step 1" in parsed["body"]
 
 
 def test_parse_new_skill_response_coerces_name() -> None:
@@ -392,3 +395,55 @@ async def test_run_all_aggregates_counts(synth_env) -> None:
     assert report.created == 1
     assert report.refined == 0
     assert report.deprecated == 0
+
+
+# ---------- Task-4: Verification section guarantee -------------------------
+
+def test_prompt_system_mentions_verification() -> None:
+    """The author prompt must instruct the model to include a Verification section."""
+    system = SkillSynthesizerPromptBuilder._SYSTEM
+    assert "Verification" in system, (
+        "_SYSTEM prompt must mention 'Verification' so the model knows to include it"
+    )
+
+
+def test_parse_new_skill_response_idempotent_when_verification_present() -> None:
+    """When the model body already contains ## Verification, do not append another one."""
+    body_with_verification = (
+        "## Steps\n1. Do the thing.\n\n"
+        "## Verification\nCheck the output matches the goal.\n\n"
+        "## Pitfalls\nDon't skip step 1."
+    )
+    raw = json.dumps({
+        "name": "has-verification",
+        "description": "a skill with verification",
+        "when_to_use": "always",
+        "body": body_with_verification,
+    })
+    parsed = parse_new_skill_response(raw)
+    assert parsed is not None
+    body = parsed["body"]
+    count = body.count("## Verification")
+    assert count == 1, f"Expected exactly 1 '## Verification' heading, got {count}"
+
+
+def test_parse_new_skill_response_appends_default_verification_when_absent() -> None:
+    """When the model omits ## Verification, a default section is appended (fail-open)."""
+    body_without_verification = (
+        "## Steps\n1. Fetch the page.\n2. Shell-process the content.\n\n"
+        "## Pitfalls\nMind the rate-limits."
+    )
+    raw = json.dumps({
+        "name": "no-verification",
+        "description": "a skill without verification",
+        "when_to_use": "when needed",
+        "body": body_without_verification,
+    })
+    parsed = parse_new_skill_response(raw)
+    assert parsed is not None, "Skill must not be dropped (fail-open)"
+    body = parsed["body"]
+    assert "## Verification" in body, "Default Verification section must be appended"
+    count = body.count("## Verification")
+    assert count == 1, f"Expected exactly 1 '## Verification' heading, got {count}"
+    # The default text from the constant must be present.
+    assert _DEFAULT_VERIFICATION_SECTION.strip() in body

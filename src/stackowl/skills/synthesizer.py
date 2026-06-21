@@ -130,6 +130,18 @@ def cluster_outcomes_by_tool_sequence(
 # ---------- LLM-as-author prompt + parser -----------------------------------
 
 
+# Default Verification section appended when the LLM omits one.
+# Kept as a module-level constant so tests can assert its exact text.
+_DEFAULT_VERIFICATION_SECTION = (
+    "## Verification\n"
+    "Before claiming the task is done, re-check the result against the original goal "
+    "and cite concrete evidence (command output, file contents, API response, etc.). "
+    "If the outcome does not match the goal, say so honestly and describe what failed."
+)
+
+_VERIFICATION_HEADING = "## Verification"
+
+
 class SkillSynthesizerPromptBuilder:
     """Build the prompt that asks an LLM to author a new SKILL.md."""
 
@@ -139,12 +151,19 @@ class SkillSynthesizerPromptBuilder:
         "of tools and produced good outcomes, write a reusable Skill that "
         "captures the playbook so the agent can apply it next time it sees "
         "the same shape of task.\n\n"
+        "Structure the body with these sections in order:\n"
+        "  ## Steps — numbered, concrete actions the agent takes\n"
+        "  ## Verification — how to confirm success with evidence BEFORE claiming done\n"
+        "  ## Pitfalls — common failure modes and how to avoid them\n\n"
+        "The ## Verification section is MANDATORY. It must tell the agent how to "
+        "confirm the task succeeded with concrete evidence (command output, file "
+        "contents, API response, etc.) and what to say if it failed.\n\n"
         "Respond ONLY with a JSON object of this exact shape:\n"
         "{\n"
         '  "name": "kebab-case-name (max 40 chars, lowercase, [a-z0-9_-])",\n'
         '  "description": "one sentence — when this skill applies",\n'
         '  "when_to_use": "trigger conditions — what the user query looks like",\n'
-        '  "body": "markdown playbook — steps, failure recovery, why this beats naive prompting"\n'
+        '  "body": "markdown playbook with ## Steps, ## Verification, ## Pitfalls"\n'
         "}\n"
         "The body must be useful as raw markdown — NO frontmatter, NO triple-backtick fences.\n"
         "Keep body under 800 words. Be concrete and operational, not abstract."
@@ -207,7 +226,13 @@ class SkillSynthesizerPromptBuilder:
 
 
 def parse_new_skill_response(raw: str) -> dict[str, str] | None:
-    """Parse the LLM's new-skill JSON. Returns ``None`` if invalid."""
+    """Parse the LLM's new-skill JSON. Returns ``None`` if invalid.
+
+    Guarantee (fail-open): if the parsed body lacks a ``## Verification``
+    heading, a default Verification section is appended so every persisted
+    learned skill carries the verification discipline of the native catalog.
+    The skill is never dropped solely because the section is missing.
+    """
     obj = parse_json_response(
         raw, required_keys=["name", "description", "when_to_use", "body"],
     )
@@ -221,6 +246,13 @@ def parse_new_skill_response(raw: str) -> dict[str, str] | None:
     if not name or not name[0].isalpha():
         return None
     out["name"] = name[:40]
+    # 2. DECISION — ensure Verification section is present (idempotent).
+    if _VERIFICATION_HEADING not in out["body"]:
+        log.skills.debug(
+            "[synth] parse_new_skill_response: verification section absent — appending default",
+            extra={"_fields": {"name": out["name"]}},
+        )
+        out["body"] = out["body"].rstrip() + "\n\n" + _DEFAULT_VERIFICATION_SECTION
     return out
 
 
