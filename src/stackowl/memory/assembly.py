@@ -45,6 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.pruner import MemoryPruner
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
     from stackowl.providers.registry import ProviderRegistry
+    from stackowl.tenancy.identity import IdentityResolver
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ class MemoryAssembly:
         db: DbPool,
         settings: Settings,
         provider_registry: ProviderRegistry,
+        identity_resolver: IdentityResolver | None = None,
     ) -> MemoryComponents:
         """Construct every memory component and register scheduler handlers.
 
@@ -211,12 +213,16 @@ class MemoryAssembly:
         from stackowl.providers.base import ModelProvider
         from stackowl.tenancy.identity import load_identity_resolver
 
+        # Share the orchestrator's single IdentityResolver instance when provided
+        # so a live `settings_reloaded` alias edit (mutated in place) is seen here
+        # too; fall back to a fresh load for standalone/test callers.
+        resolver = identity_resolver if identity_resolver is not None else load_identity_resolver()
         extraction_provider: ModelProvider = provider_registry.get_with_cascade("powerful")
         fact_extractor = FactExtractor(
             provider=extraction_provider,
             embedding_registry=embedding_registry,
             sensitive_categories=mem.sensitive_categories,
-            identity_resolver=load_identity_resolver(),
+            identity_resolver=resolver,
         )
 
         # 7a) ConversationMiner — wired here so DreamWorker can run it each pass.

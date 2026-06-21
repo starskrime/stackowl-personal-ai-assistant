@@ -35,6 +35,31 @@ def test_load_identity_resolver_unconfigured_is_identity() -> None:
     assert resolver.resolve("local") == "local"
 
 
+def test_update_aliases_swaps_mapping_live() -> None:
+    # A live alias edit (settings reload) must replace the old map: new handles
+    # resolve, old ones revert to identity behaviour.
+    r = IdentityResolver({"id1": ["h1"]})
+    assert r.resolve("h1") == "id1"
+
+    r.update_aliases({"id2": ["h2"]})
+    assert r.resolve("h2") == "id2"          # new mapping active
+    assert r.resolve("h1") == "h1"           # old mapping gone → identity
+
+
+def test_update_aliases_to_empty_is_identity() -> None:
+    r = IdentityResolver({"id1": ["h1"]})
+    r.update_aliases({})
+    assert r.resolve("h1") == "h1"           # cleared → byte-identical behaviour
+
+
+def test_update_aliases_tolerates_malformed_value() -> None:
+    r = IdentityResolver({"id1": ["h1"]})
+    r.update_aliases({"bad": "not-a-list"})  # type: ignore[dict-item]
+    # The malformed row is skipped (not crashed); old mapping is replaced.
+    assert r.resolve("h1") == "h1"
+    assert r.resolve("not-a-list") == "not-a-list"
+
+
 def test_load_identity_resolver_degrades_when_settings_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """load_identity_resolver() must not raise when Settings() construction fails.
 
