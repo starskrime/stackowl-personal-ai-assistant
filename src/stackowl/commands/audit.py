@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -19,6 +20,36 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.pipeline.state import PipelineState
 
 _OUTPUT_RE = re.compile(r"--output\s+(\S+)")
+
+_AUDIT_META = CommandMeta(
+    grammar="verb",
+    group="Security & Governance",
+    subcommands=(
+        SubCommand(
+            name="export",
+            summary="Export the full audit log as signed JSON",
+            description=(
+                "You write the entire audit log to a file plus an HMAC-SHA256 "
+                "signature so it can be verified later. Refused if no signing "
+                "key is configured — an unsigned 'signed' export is worthless."
+            ),
+            args=(
+                Arg(
+                    name="--output",
+                    required=False,
+                    summary="destination path (default: knowledge dir)",
+                ),
+            ),
+            examples=(
+                Example(invocation="/audit export", note="Write to the default path"),
+                Example(
+                    invocation="/audit export --output /tmp/audit.json",
+                    note="Choose the destination",
+                ),
+            ),
+        ),
+    ),
+)
 
 
 class AuditCommand(SlashCommand):
@@ -45,8 +76,13 @@ class AuditCommand(SlashCommand):
     def description(self) -> str:
         return "Show the last 50 audit log entries with integrity status"
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _AUDIT_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
-        """Execute /audit or /audit export [--output <path>]."""
+        """Execute /audit (default), /audit export [--output <path>], or show
+        auto-generated usage for an unknown sub-command."""
         if self._logger is None:
             return "✗ /audit: not configured"
 
@@ -59,6 +95,16 @@ class AuditCommand(SlashCommand):
         stripped = args.strip()
         if stripped == "export" or stripped.startswith("export "):
             return await self._handle_export(stripped)
+
+        # An unrecognised token is a wrong sub-command — surface the auto-usage
+        # instead of silently dumping the chain (the historical discoverability
+        # gap). A bare `/audit` (no token) keeps the default tail view.
+        if stripped:
+            log.gateway.debug(
+                "[commands] audit.handle: unknown subcommand — returning usage",
+                extra={"_fields": {"token": stripped.split(maxsplit=1)[0]}},
+            )
+            return render_usage("audit", _AUDIT_META)
 
         try:
             # 2. DECISION

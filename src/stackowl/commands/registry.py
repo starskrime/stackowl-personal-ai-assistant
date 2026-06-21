@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import SubCommand, resolve_path
 from stackowl.exceptions import CommandNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
@@ -67,6 +70,25 @@ class CommandRegistry:
 
     def list(self) -> list[SlashCommand]:
         return sorted(self._commands.values(), key=lambda c: c.command)
+
+    def get(self, name: str) -> SlashCommand | None:
+        """Return the command registered under ``name`` (without '/'), or None."""
+        return self._commands.get(name)
+
+    def resolve(self, path: Sequence[str]) -> SubCommand | None:
+        """Resolve a ``[command, sub, sub-sub, ...]`` path to a SubCommand node.
+
+        The first token names the command; the remainder walks its sub-command
+        tree.  Returns ``None`` if the command is unknown or the path does not
+        match a declared node.  Used by both the parity contract test and (for
+        migrated commands) drive-mode dispatch.
+        """
+        if not path:
+            return None
+        cmd = self._commands.get(path[0])
+        if cmd is None:
+            return None
+        return resolve_path(cmd.meta.subcommands, path[1:])
 
 
 def register_command(cmd: SlashCommand) -> SlashCommand:
