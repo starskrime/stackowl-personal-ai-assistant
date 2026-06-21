@@ -155,6 +155,8 @@ async def test_approve_all_executes_every_action_and_audits(env) -> None:  # noq
         TraceContext.reset(trace)
 
     assert result.success is True
+    # Positive control: an executed batch reports success=True via _ok (committed True).
+    assert result.side_effect_committed is True
     # All three actions EXECUTED with their args.
     assert a.calls == [{"x": 1}] and b.calls == [{}] and c.calls == [{}]
     assert "3 succeeded" in result.output
@@ -298,6 +300,8 @@ async def test_unknown_tool_is_structured_no_prompt(env) -> None:  # noqa: ANN00
         TraceContext.reset(trace)
     assert result.success is False
     assert "unknown tool" in (result.error or "").lower()
+    # Pre-execution refusal (before any action runs) → not an effectful failure.
+    assert result.side_effect_committed is False
     # No prompt was ever sent (we reject before asking the user).
     assert len(_adapter(gw).calls) == 0
     assert a.calls == []
@@ -352,6 +356,7 @@ async def test_empty_actions_is_structured(env) -> None:  # noqa: ANN001
         TraceContext.reset(trace)
     assert result.success is False
     assert "invalid plan" in (result.error or "").lower()
+    assert result.side_effect_committed is False  # pre-exec refusal, nothing ran
 
 
 async def test_over_cap_is_structured(env) -> None:  # noqa: ANN001

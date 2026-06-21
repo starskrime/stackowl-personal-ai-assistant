@@ -296,4 +296,12 @@ class BatchApproveTool(Tool):
             "batch_approve.execute: exit",
             extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        # Every _err site is a PRE-EXECUTION refusal (invalid plan, no registry,
+        # unknown/nested tools, no channel/gateway, gateway error) reached BEFORE any
+        # action runs — the executed-batch path returns via _ok regardless of per-
+        # action outcomes. So nothing crossed the side-effect boundary here: this is
+        # not an effectful failure and must not trip the honest give-up floor.
+        return ToolResult(
+            success=False, output="", error=msg,
+            duration_ms=duration_ms, side_effect_committed=False,
+        )
