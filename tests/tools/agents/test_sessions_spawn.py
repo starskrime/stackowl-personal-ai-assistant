@@ -124,6 +124,8 @@ async def test_invalid_args_hard_failure() -> None:
     res = await SessionsSpawnTool().execute(label=123)  # type: ignore[arg-type]
     assert res.success is False
     assert "invalid arguments" in (res.error or "")
+    # Pre-execution refusal — nothing was spawned → not an effectful failure.
+    assert res.side_effect_committed is False
 
 
 def test_depth_gate_cross_check_sessions_spawn_excluded_for_children() -> None:

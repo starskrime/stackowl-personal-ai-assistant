@@ -132,13 +132,23 @@ def recovered_result(t0: float, *, original: str, via: str, result: str) -> Tool
 
 
 def error_result(msg: str, t0: float) -> ToolResult:
-    """A failed ToolResult for invalid-argument / hard-error cases (logs exit)."""
+    """A failed ToolResult for invalid-argument cases (logs exit).
+
+    Its sole call site is delegate_task's argument-validation failure — a PRE-
+    EXECUTION refusal where no specialist was ever invoked, so
+    side_effect_committed=False so it does not trip the give-up floor. (Mid-flight
+    delegations that may have acted use the honest_uncertain/offtopic builders,
+    which intentionally keep the default True.)
+    """
     duration_ms = (time.monotonic() - t0) * 1000
     log.tool.info(
         "delegate_task.execute: exit",
         extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
     )
-    return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+    return ToolResult(
+        success=False, output="", error=msg,
+        duration_ms=duration_ms, side_effect_committed=False,
+    )
 
 
 def _honest_failed_result(record: dict[str, object], msg: str, t0: float) -> ToolResult:

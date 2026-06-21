@@ -69,10 +69,18 @@ def error(t0: float, label: str, owl: str, status: str, detail: str) -> ToolResu
 
 
 def failed(msg: str, t0: float) -> ToolResult:
-    """A hard-failed ToolResult for invalid-argument cases (logs exit)."""
+    """A hard-failed ToolResult for invalid-argument cases (logs exit).
+
+    Invalid-args is a PRE-EXECUTION refusal (the only success=False path; error/
+    timeout use the success=True structured ``error`` builder) — nothing was sent,
+    so side_effect_committed=False so it does not trip the honest give-up floor.
+    """
     duration_ms = (time.monotonic() - t0) * 1000
     log.tool.info(
         "sessions_send.execute: exit",
         extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
     )
-    return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+    return ToolResult(
+        success=False, output="", error=msg,
+        duration_ms=duration_ms, side_effect_committed=False,
+    )

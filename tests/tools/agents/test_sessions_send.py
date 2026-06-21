@@ -238,6 +238,8 @@ async def test_invalid_args_hard_failure() -> None:
     res = await SessionsSendTool().execute(label=123)  # type: ignore[arg-type]
     assert res.success is False
     assert "invalid arguments" in (res.error or "")
+    # Pre-execution refusal — nothing was sent → not an effectful failure.
+    assert res.side_effect_committed is False
 
 
 async def test_no_spoof_origin_arg_rejected() -> None:
