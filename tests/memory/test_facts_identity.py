@@ -26,7 +26,6 @@ import pytest
 from stackowl.db.pool import DbPool
 from stackowl.memory.conversation_miner import ConversationMiner
 from stackowl.memory.fact_extractor import FactExtractor
-from stackowl.memory.models import StagedFact
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.tenancy.identity import IdentityResolver
@@ -65,7 +64,7 @@ class _StubProvider(ModelProvider):
     def stream(
         self, messages: list[Message], model: str, **kwargs: object
     ) -> AsyncIterator[str]:
-        raise NotImplementedError
+        raise NotImplementedError("stream() is unused by the fact-identity tests")
 
 
 def _bypass_test_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,9 +135,9 @@ async def test_cross_channel_fact_shares_source_ref_under_identity(
         message_limit=20,
     )
     # Mine telegram first — should stage 1 row under owner-primary
-    count1 = await miner.mine_session("telegram:123")
+    await miner.mine_session("telegram:123")
     # Mine slack — same content, same source_ref → reinforcement, not a new row
-    count2 = await miner.mine_session("slack:U0")
+    await miner.mine_session("slack:U0")
 
     rows = await tmp_db.fetch_all(
         "SELECT source_ref, reinforcement_count FROM staged_facts "

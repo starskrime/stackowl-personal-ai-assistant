@@ -6,11 +6,8 @@
 """
 from __future__ import annotations
 
-import pytest
-
 from stackowl.pipeline.state import PipelineState
 from stackowl.tenancy.identity import IdentityResolver
-
 
 # ────────────────────────────────────────────────────────────────── helpers
 
@@ -115,10 +112,10 @@ def test_services_identity_resolver_accepts_resolver() -> None:
     assert svc.identity_resolver.resolve("telegram:123") == "owner-primary"
 
 
-# ──────────────────────────────────────────────── (c) _resolve_identity_key helper
+# ──────────────────────────────────────────────── (c) resolve_identity_key helper
 
 class TestResolveIdentityKey:
-    """Drive _resolve_identity_key — the REAL seam the orchestrator calls.
+    """Drive resolve_identity_key — the REAL seam the orchestrator calls.
 
     These tests have teeth: if a build site hardcoded ``identity_key=""`` or
     returned ``session_id`` unconditionally, the mapped-handle case would fail.
@@ -126,26 +123,23 @@ class TestResolveIdentityKey:
 
     def test_none_resolver_returns_empty_string(self) -> None:
         """Returns '' when no resolver is wired (consumers fall back to session_id)."""
-        from stackowl.pipeline.services import StepServices
-        from stackowl.startup.orchestrator import _resolve_identity_key
+        from stackowl.pipeline.services import StepServices, resolve_identity_key
 
         svc = StepServices(identity_resolver=None)
-        assert _resolve_identity_key(svc, "telegram:123") == ""
+        assert resolve_identity_key(svc, "telegram:123") == ""
 
     def test_mapped_session_returns_identity_key(self) -> None:
         """A known handle resolves to its canonical identity_key."""
-        from stackowl.pipeline.services import StepServices
-        from stackowl.startup.orchestrator import _resolve_identity_key
+        from stackowl.pipeline.services import StepServices, resolve_identity_key
 
         resolver = IdentityResolver({"owner-primary": ["telegram:123"]})
         svc = StepServices(identity_resolver=resolver)
-        assert _resolve_identity_key(svc, "telegram:123") == "owner-primary"
+        assert resolve_identity_key(svc, "telegram:123") == "owner-primary"
 
     def test_unmapped_session_returns_session_id(self) -> None:
         """An unknown handle falls back to itself (byte-identical passthrough)."""
-        from stackowl.pipeline.services import StepServices
-        from stackowl.startup.orchestrator import _resolve_identity_key
+        from stackowl.pipeline.services import StepServices, resolve_identity_key
 
         resolver = IdentityResolver({"owner-primary": ["telegram:123"]})
         svc = StepServices(identity_resolver=resolver)
-        assert _resolve_identity_key(svc, "telegram:999") == "telegram:999"
+        assert resolve_identity_key(svc, "telegram:999") == "telegram:999"

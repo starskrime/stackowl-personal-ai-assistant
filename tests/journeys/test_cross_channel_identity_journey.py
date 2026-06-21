@@ -143,7 +143,7 @@ class _StubExtractorProvider(ModelProvider):
     async def stream(  # type: ignore[override]
         self, messages: list[Message], model: str, **kwargs: object
     ) -> AsyncIterator[str]:
-        raise NotImplementedError
+        raise NotImplementedError("stream() is unused by the cross-channel journey")
 
 
 # ---------------------------------------------------------------------------
