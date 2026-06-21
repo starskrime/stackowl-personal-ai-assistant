@@ -62,3 +62,20 @@ async def test_absolute_inside_workspace_allowed(workspace: Path) -> None:
     result = await WriteFileTool().execute(path=str(inside), content="ok")
     assert result.success is True
     assert inside.read_text() == "ok"
+
+
+async def test_traversal_refusal_is_not_an_effectful_failure(workspace: Path) -> None:
+    """A traversal-denied write is a PRE-EXEC refusal — nothing was written, so it
+    must NOT count as an effectful failure (else it wrongly trips the give-up floor)."""
+    escaping = str(workspace / ".." / "escape.txt")
+    result = await WriteFileTool().execute(path=escaping, content="nope")
+    assert result.success is False
+    assert result.side_effect_committed is False  # nothing crossed the boundary
+
+
+async def test_successful_write_stays_default_committed(workspace: Path) -> None:
+    """Positive control: a genuine write does not falsely clear the committed flag
+    (success=True makes the field irrelevant, but assert the value is unchanged)."""
+    result = await WriteFileTool().execute(path="ok.txt", content="x")
+    assert result.success is True
+    assert result.side_effect_committed is True
