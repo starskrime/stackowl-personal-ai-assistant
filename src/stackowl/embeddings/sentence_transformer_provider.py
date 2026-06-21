@@ -64,6 +64,14 @@ class SentenceTransformerProvider(EmbeddingProvider):
 
     def _load_model(self) -> None:
         """Load the sentence-transformers model (executed inside the thread pool)."""
+        # Keep loading local and quiet. The model is pre-cached (via
+        # `stackowl models pull`), so never reach out to the HF Hub at load
+        # time, and suppress the weight-download progress bar. setdefault so an
+        # explicit operator override still wins. Set before the import so the
+        # libraries read them as they initialise.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -76,9 +84,19 @@ class SentenceTransformerProvider(EmbeddingProvider):
 
         cache_dir = os.environ.get("STACKOWL_MODEL_CACHE_DIR")
         try:
-            self._model = SentenceTransformer(self._model_name, cache_folder=cache_dir)
+            # Pin CPU: this host's GPU driver is too old for the bundled torch
+            # build, so sentence-transformers would probe CUDA, warn, then fall
+            # back to CPU anyway. device="cpu" skips that probe. Scoped to this
+            # model only — image generation keeps its own CUDA path.
+            self._model = SentenceTransformer(self._model_name, cache_folder=cache_dir, device="cpu")
             assert self._model is not None
-            raw_dim: Any = self._model.get_sentence_embedding_dimension()
+            # get_sentence_embedding_dimension() was renamed to
+            # get_embedding_dimension(); prefer the new name, fall back for
+            # older library versions.
+            get_dim = getattr(self._model, "get_embedding_dimension", None)
+            raw_dim: Any = (
+                get_dim() if callable(get_dim) else self._model.get_sentence_embedding_dimension()
+            )
             if raw_dim is None:
                 raise RuntimeError(f"Model {self._model_name} reported no embedding dimension")
             dim: int = int(raw_dim)

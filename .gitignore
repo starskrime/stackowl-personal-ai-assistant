@@ -1,4 +1,7 @@
 .venv/
+# Machine-local uv config + relocated cache (host-specific absolute paths).
+uv.toml
+.uv-cache/
 __pycache__/
 *.pyc
 *.pyo
