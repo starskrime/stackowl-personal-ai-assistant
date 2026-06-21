@@ -327,6 +327,8 @@ async def test_invalid_args_rejected() -> None:
     res = await DelegateTaskTool().execute(goal="x", bogus="y")
     assert res.success is False
     assert "invalid arguments" in (res.error or "")
+    # Pre-execution refusal — no specialist invoked → not an effectful failure.
+    assert res.side_effect_committed is False
 
 
 def test_manifest_is_write_severity_in_agents_group() -> None:
@@ -606,6 +608,9 @@ async def test_write_capable_transport_failure_halts_no_retry() -> None:
     rec = _record(res.output)
     assert rec["status"] == "uncertain"
     assert "FAILED" in str(rec["result"])
+    # Positive control: the child MAY have acted mid-flight — committed stays True
+    # (this honest-uncertain path must NOT be cleared, unlike invalid-args).
+    assert res.side_effect_committed is True
     # No double side-effect: delegate() invoked EXACTLY ONCE (no retry, no fallback).
     assert len(fake.calls) == 1
     assert [c["to_owl"] for c in fake.calls] == ["analyst"]

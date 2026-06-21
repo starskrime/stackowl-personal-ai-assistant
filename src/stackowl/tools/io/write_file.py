@@ -68,7 +68,12 @@ class WriteFileTool(Tool):
         if not _guard(target):
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.warning("write_file.execute: path traversal denied", extra={"_fields": {"path": path_str}})
-            return ToolResult(success=False, output="", error="Path traversal denied", duration_ms=duration_ms)
+            # Pre-execution refusal — nothing was written, so this is NOT an
+            # effectful failure (it must not trip the honest give-up floor).
+            return ToolResult(
+                success=False, output="", error="Path traversal denied",
+                duration_ms=duration_ms, side_effect_committed=False,
+            )
         try:
             await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
             await asyncio.to_thread(target.write_text, content, encoding="utf-8")

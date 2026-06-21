@@ -294,10 +294,18 @@ def _error(t0: float, label: str, owl: str, detail: str) -> ToolResult:
 
 
 def _failed(msg: str, t0: float) -> ToolResult:
-    """A hard-failed ToolResult for invalid-argument cases (logs exit)."""
+    """A hard-failed ToolResult for invalid-argument cases (logs exit).
+
+    Invalid-args is a PRE-EXECUTION refusal (the only success=False path; spawn
+    error / dup-cap refusal use the success=True structured builders) — nothing was
+    spawned, so side_effect_committed=False so it does not trip the give-up floor.
+    """
     duration_ms = (time.monotonic() - t0) * 1000
     log.tool.info(
         "sessions_spawn.execute: exit",
         extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
     )
-    return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+    return ToolResult(
+        success=False, output="", error=msg,
+        duration_ms=duration_ms, side_effect_committed=False,
+    )

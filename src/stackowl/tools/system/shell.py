@@ -291,6 +291,9 @@ async def _gate_catastrophic(
                 f"reason: {reason}"
             ),
             duration_ms=0,
+            # Pre-execution refusal — the command was never spawned, so this is not
+            # an effectful failure (it must not trip the honest give-up floor).
+            side_effect_committed=False,
         )
 
     gate = get_services().consent_gate
@@ -304,6 +307,7 @@ async def _gate_catastrophic(
             output="",
             error=f"refused: catastrophic command and no consent gate available — reason: {reason}",
             duration_ms=0,
+            side_effect_committed=False,  # never spawned
         )
 
     try:
@@ -325,6 +329,7 @@ async def _gate_catastrophic(
             output="",
             error=f"refused: consent check failed — reason: {reason}",
             duration_ms=0,
+            side_effect_committed=False,  # gate error before any spawn
         )
 
     if not allowed:
@@ -337,6 +342,7 @@ async def _gate_catastrophic(
             output="",
             error=f"declined by user — reason: {reason}",
             duration_ms=0,
+            side_effect_committed=False,  # declined → never spawned
         )
 
     log.tool.info(
@@ -364,7 +370,10 @@ async def run_argv(
     """
     t0 = time.monotonic()
     if not argv:
-        return ToolResult(success=False, output="", error="Empty command", duration_ms=0)
+        return ToolResult(
+            success=False, output="", error="Empty command", duration_ms=0,
+            side_effect_committed=False,  # nothing to spawn
+        )
 
     cwd = workdir or _default_workspace_cwd()
     rendered = " ".join(argv)
@@ -500,7 +509,10 @@ class ShellTool(Tool):
         try:
             args = shlex.split(command)
         except ValueError as exc:
-            return ToolResult(success=False, output="", error=f"Invalid command syntax: {exc}", duration_ms=0)
+            return ToolResult(
+                success=False, output="", error=f"Invalid command syntax: {exc}", duration_ms=0,
+                side_effect_committed=False,  # unparseable — never spawned
+            )
         # The shared seam does the catastrophic-shape check + consent path, the
         # workspace-CWD default, create_subprocess_exec, timeout and OSError
         # handling (the learned-tool path runs the SAME seam).

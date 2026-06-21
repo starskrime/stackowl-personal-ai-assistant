@@ -19,6 +19,27 @@ from stackowl.infra.observability import JsonlFormatter
 from stackowl.infra.trace import TraceContext
 
 
+@pytest.fixture(autouse=True)
+def _restore_test_mode_guard() -> Generator[None, None, None]:
+    """Prevent the process-global TestModeGuard latch from leaking across tests.
+
+    ``Settings._post_init()`` calls ``TestModeGuard.activate()`` whenever a
+    loaded config has ``test_mode=True`` — a class-level flag with no symmetric
+    deactivation. Without this restore, any test that loads such a config (e.g.
+    tests/journeys/commands/) leaves the latch set for every later test in the
+    same process, breaking unrelated suites (tests/pipeline/ durable + drift)
+    that expect live-I/O guards inactive. Snapshot on setup, restore on teardown
+    so each test's mutation is invisible to the next.
+    """
+    from stackowl.config.test_mode import TestModeGuard
+
+    saved = TestModeGuard.is_active()
+    try:
+        yield
+    finally:
+        TestModeGuard._active = saved  # type: ignore[attr-defined]
+
+
 @pytest.fixture()
 async def tmp_db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
     """In-process DbPool backed by a temp file with all 8 migrations applied."""

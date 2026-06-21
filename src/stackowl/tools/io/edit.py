@@ -117,9 +117,9 @@ class EditTool(Tool):
         )
 
         if not path_str:
-            return self._err("Missing path", t0)
+            return self._err("Missing path", t0, committed=False)
         if not old_string:
-            return self._err("old_string cannot be empty", t0)
+            return self._err("old_string cannot be empty", t0, committed=False)
 
         # A relative path anchors UNDER the workspace (mirrors search_files hit
         # paths), so a relative hit piped straight in round-trips. Guard confines.
@@ -127,17 +127,17 @@ class EditTool(Tool):
         # Path guard FIRST — never touch a file outside the workspace.
         if not _guard(target):
             log.tool.warning("edit.execute: path traversal denied", extra={"_fields": {"path": path_str}})
-            return self._err("Path traversal denied", t0)
+            return self._err("Path traversal denied", t0, committed=False)
 
         # Read the file (self-healing on missing/unreadable). newline="" disables
         # universal-newline translation so the on-disk CRLF/LF survives detection.
         try:
             raw = target.read_text(encoding="utf-8", newline="")
         except FileNotFoundError:
-            return self._err(f"File not found: {path_str}", t0)
+            return self._err(f"File not found: {path_str}", t0, committed=False)
         except OSError as exc:
             log.tool.error("edit.execute: read failed", exc_info=exc, extra={"_fields": {"path": path_str}})
-            return self._err(f"Could not read {path_str}: {exc}", t0)
+            return self._err(f"Could not read {path_str}: {exc}", t0, committed=False)
 
         # 2. DECISION — detect and remember the file's line-ending style, then
         # work on an LF-normalized copy so the matcher's '\n' line splits are
@@ -235,11 +235,11 @@ class EditTool(Tool):
         # report verbatim, no "did you mean" noise.
         if base.startswith("Found ") and "matches" in base:
             log.tool.info("edit.execute: ambiguous match", extra={"_fields": {"path": path_str}})
-            return self._err(base, t0)
+            return self._err(base, t0, committed=False)
 
         # Escape-drift / identical-strings: surface verbatim, no nearest hint.
         if not base.startswith("Could not find"):
-            return self._err(base, t0)
+            return self._err(base, t0, committed=False)
 
         count = self._failures.observe((path_str, old_norm))
         nearest = self._nearest_candidate(old_norm, content)
@@ -259,7 +259,8 @@ class EditTool(Tool):
                 "(including exact whitespace/indentation) before retrying."
             )
         log.tool.info("edit.execute: no match", extra={"_fields": {"path": path_str, "attempt": count}})
-        return self._err(msg, t0)
+        # No match — file left untouched (no snapshot, no write): not effectful.
+        return self._err(msg, t0, committed=False)
 
     @staticmethod
     def _detect_newline(raw: str) -> str:
@@ -326,6 +327,13 @@ class EditTool(Tool):
         return "".join(diff)
 
     @staticmethod
-    def _err(msg: str, t0: float) -> ToolResult:
+    def _err(msg: str, t0: float, *, committed: bool = True) -> ToolResult:
+        """Structured failure. ``committed`` defaults True (conservative); callers
+        pass False ONLY at a pre-execution refusal / no-match where the file was
+        never touched (no snapshot, no write) so it does not trip the give-up floor.
+        A post-write failure keeps the default True (the boundary may be crossed)."""
         duration_ms = (time.monotonic() - t0) * 1000
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        return ToolResult(
+            success=False, output="", error=msg,
+            duration_ms=duration_ms, side_effect_committed=committed,
+        )

@@ -98,21 +98,24 @@ class ProcessTool(Tool):
                 "process.execute: invalid args",
                 extra={"_fields": {"errors": exc.error_count()}},
             )
-            return self._err(f"invalid arguments — {sanitized_errors(exc)!r}", t0)
+            return self._err(f"invalid arguments — {sanitized_errors(exc)!r}", t0, committed=False)
         log.tool.info(
             "process.execute: entry",
             extra={"_fields": {"action": args.action, "argv_len": len(args.command or [])}},
         )
         if args.action not in PROCESS_ACTIONS:
             return self._err(
-                f"unknown action {args.action!r} — must be one of {', '.join(PROCESS_ACTIONS)}", t0
+                f"unknown action {args.action!r} — must be one of {', '.join(PROCESS_ACTIONS)}",
+                t0, committed=False,
             )
 
         # 2. DECISION — resolve the registry; self-heal to a structured result if absent.
         registry = get_services().process_registry
         if registry is None:
             log.tool.warning("process.execute: no process_registry wired — unavailable")
-            return self._err("process substrate unavailable (no process registry configured)", t0)
+            return self._err(
+                "process substrate unavailable (no process registry configured)", t0, committed=False,
+            )
         session_id = self._session_id()
 
         # 3. STEP — dispatch; any registry error degrades to a structured result (B5).
@@ -145,7 +148,7 @@ class ProcessTool(Tool):
             return self._list(args, registry, session_id, t0)
         # All remaining actions are by-process_id.
         if not args.process_id:
-            return self._err(f"{args.action} requires 'process_id'", t0)
+            return self._err(f"{args.action} requires 'process_id'", t0, committed=False)
         pid = args.process_id
         if args.action == "poll":
             return await self._poll(registry, pid, session_id, t0)
@@ -162,7 +165,7 @@ class ProcessTool(Tool):
         self, args: ProcessArgs, registry: ProcessRegistry, session_id: str, t0: float
     ) -> ToolResult:
         if not args.command:
-            return self._err("start requires a non-empty 'command' argv list", t0)
+            return self._err("start requires a non-empty 'command' argv list", t0, committed=False)
         handle = await registry.start(
             args.command, session_id=session_id, cwd=args.cwd, env=args.env
         )
@@ -180,7 +183,7 @@ class ProcessTool(Tool):
     ) -> ToolResult:
         handle = await registry.poll(pid, session_id)
         if handle is None:
-            return self._err(f"no such process: {pid!r}", t0)
+            return self._err(f"no such process: {pid!r}", t0, committed=False)
         return self._ok(
             {"action": "poll", "process_id": pid, "status": handle.status,
              "running": handle.is_running, "exit_code": handle.exit_code,
@@ -195,11 +198,11 @@ class ProcessTool(Tool):
     ) -> ToolResult:
         snapshot = registry.read_log(pid, session_id)
         if snapshot is None:
-            return self._err(f"no such process: {pid!r}", t0)
+            return self._err(f"no such process: {pid!r}", t0, committed=False)
         stdout, stderr = snapshot
         stream = args.stream or "both"
         if stream not in ("stdout", "stderr", "both"):
-            return self._err(f"invalid stream {stream!r} — use stdout|stderr|both", t0)
+            return self._err(f"invalid stream {stream!r} — use stdout|stderr|both", t0, committed=False)
         tail = args.tail if (args.tail is not None and args.tail > 0) else _DEFAULT_LOG_TAIL
         payload: dict[str, object] = {"action": "log", "process_id": pid, "stream": stream}
         if stream in ("stdout", "both"):
@@ -214,16 +217,17 @@ class ProcessTool(Tool):
         # submit is a convenience over write: append a newline to feed a line to a REPL.
         if args.action == "submit":
             if args.line is None:
-                return self._err("submit requires 'line'", t0)
+                return self._err("submit requires 'line'", t0, committed=False)
             data = args.line + "\n"
         else:  # write
             if args.data is None:
-                return self._err("write requires 'data'", t0)
+                return self._err("write requires 'data'", t0, committed=False)
             data = args.data
         ok = await registry.write_stdin(pid, data, session_id)
         if not ok:
             return self._err(
-                f"could not write to {pid!r} (unknown, terminated, or stdin closed)", t0
+                f"could not write to {pid!r} (unknown, terminated, or stdin closed)",
+                t0, committed=False,
             )
         return self._ok({"action": args.action, "process_id": pid, "written": len(data)}, t0)
 
@@ -232,7 +236,7 @@ class ProcessTool(Tool):
     ) -> ToolResult:
         existed = await registry.kill(pid, session_id)
         if not existed:
-            return self._err(f"no such process: {pid!r}", t0)
+            return self._err(f"no such process: {pid!r}", t0, committed=False)
         return self._ok({"action": "kill", "process_id": pid, "killed": True}, t0)
 
     async def _close(
@@ -240,7 +244,7 @@ class ProcessTool(Tool):
     ) -> ToolResult:
         ok = await registry.close(pid, session_id)
         if not ok:
-            return self._err(f"could not close stdin of {pid!r} (unknown or no stdin)", t0)
+            return self._err(f"could not close stdin of {pid!r} (unknown or no stdin)", t0, committed=False)
         return self._ok({"action": "close", "process_id": pid, "closed": True}, t0)
 
     def _list(
@@ -291,10 +295,19 @@ class ProcessTool(Tool):
             error=None, duration_ms=duration_ms,
         )
 
-    def _err(self, msg: str, t0: float) -> ToolResult:
+    def _err(self, msg: str, t0: float, *, committed: bool = True) -> ToolResult:
+        """Structured failure. ``committed`` defaults True (conservative); callers
+        pass False at a pre-execution / no-op refusal (invalid args, unknown action,
+        registry unavailable, missing process_id, no-such-process, invalid stream,
+        missing data, stdin write/close that did nothing) — none of which spawned or
+        mutated a process. A post-dispatch exception (which may follow a partial
+        ``start`` spawn) keeps the default True."""
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "process.execute: exit",
             extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        return ToolResult(
+            success=False, output="", error=msg,
+            duration_ms=duration_ms, side_effect_committed=committed,
+        )

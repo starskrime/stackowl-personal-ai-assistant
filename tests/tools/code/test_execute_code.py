@@ -192,6 +192,8 @@ async def test_no_selector_wired_returns_unavailable_runs_nothing() -> None:
     assert res.success is False
     assert "unavailable" in (res.error or "")
     assert "host" in (res.error or "")
+    # Never-ran refusal — not an effectful failure (must not trip the give-up floor).
+    assert res.side_effect_committed is False
 
 
 async def test_selector_unavailable_returns_unavailable_runs_nothing() -> None:
@@ -209,6 +211,8 @@ async def test_backend_run_raising_degrades_structured_no_host_exec() -> None:
     assert res.success is False
     assert "host" in (res.error or "")
     assert backend.ran_spec is not None  # it reached the backend, which then raised
+    # Positive control: code may have started in the sandbox → committed stays True.
+    assert res.side_effect_committed is True
 
 
 # --------------------------------------------------------------- python-only
@@ -223,12 +227,14 @@ async def test_non_python_language_is_refused() -> None:
     assert res.success is False
     assert "not supported" in (res.error or "")
     assert backend.ran_spec is None  # never reached a backend
+    assert res.side_effect_committed is False  # never-ran refusal
 
 
 async def test_invalid_args_are_refused() -> None:
     res = await _run(ExecuteCodeTool(), _services_with(None), code="x", bogus=True)
     assert res.success is False
     assert "invalid arguments" in (res.error or "")
+    assert res.side_effect_committed is False  # pre-exec refusal
 
 
 # --------------------------------------------------------------- governor (E11-S6)
@@ -264,6 +270,7 @@ async def test_governor_saturated_refuses_and_never_runs_backend() -> None:
     assert res.success is False
     assert "too many code executions" in (res.error or "")
     assert backend.ran_spec is None  # the backend was NEVER reached — nothing ran
+    assert res.side_effect_committed is False  # nothing ran → not effectful
 
 
 async def test_governor_with_a_free_slot_runs_normally() -> None:

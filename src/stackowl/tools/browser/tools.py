@@ -88,13 +88,20 @@ def _audit_consequential(event_type: str, target: str | None, details: dict[str,
         )
 
 
-def _err(msg: str, t0: float, *, tool: str = "browser_tool") -> ToolResult:
+def _err(msg: str, t0: float, *, tool: str = "browser_tool", committed: bool = True) -> ToolResult:
+    """Structured failure. ``committed`` defaults True (conservative); callers pass
+    False at a pre-execution refusal (runtime/session unavailable, arg-validation,
+    missing local resource) reached BEFORE the page action runs, so it does not trip
+    the give-up floor. A failure AFTER the page action was attempted keeps True."""
     duration_ms = (time.monotonic() - t0) * 1000
     log.tool.info(
         f"{tool}.execute: exit",
         extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
     )
-    return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+    return ToolResult(
+        success=False, output="", error=msg,
+        duration_ms=duration_ms, side_effect_committed=committed,
+    )
 
 
 def _browser_failure(msg: str, exc: BaseException, t0: float, *, tool: str) -> ToolResult:
@@ -354,10 +361,13 @@ class BrowserClickTool(_BrowserTool):
             extra={"_fields": {"session_id": session_id, "by_ref": bool(ref), "target_len": len(target)}},
         )
         if not ref and not target:
-            return _err("Provide either ref (from browser_snapshot) or selector_or_text", t0, tool="browser_click")
+            return _err(
+                "Provide either ref (from browser_snapshot) or selector_or_text",
+                t0, tool="browser_click", committed=False,
+            )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, tool="browser_click")
+            return _err(err, t0, tool="browser_click", committed=False)
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
         except _BROWSER_ERRORS as exc:
@@ -368,7 +378,7 @@ class BrowserClickTool(_BrowserTool):
         # Preferred path: click by snapshot ref via the engine's aria-ref selector engine.
         if ref:
             if not self._REF_PATTERN.match(ref):
-                return _err(f"Invalid ref format: {ref!r}", t0, tool="browser_click")
+                return _err(f"Invalid ref format: {ref!r}", t0, tool="browser_click", committed=False)
             try:
                 await page.locator(f"aria-ref={ref}").click(timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
             except Exception as exc:
@@ -433,7 +443,7 @@ class BrowserTypeTool(_BrowserTool):
         )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             await page.fill(selector, text, timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
@@ -533,7 +543,7 @@ class BrowserScrollTool(_BrowserTool):
         amount = str(kwargs.get("amount", "page"))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             if direction == "top":
@@ -550,7 +560,7 @@ class BrowserScrollTool(_BrowserTool):
                     try:
                         px = str(int(amount))
                     except ValueError:
-                        return _err(f"Invalid scroll amount: {amount}", t0, tool="browser_scroll")
+                        return _err(f"Invalid scroll amount: {amount}", t0, tool="browser_scroll", committed=False)
                 await page.evaluate(f"() => window.scrollBy(0, {sign} * ({px}))")
         except _BROWSER_ERRORS as exc:
             return _browser_failure(
@@ -647,7 +657,7 @@ class BrowserEvalJsTool(_BrowserTool):
         )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             result = await page.evaluate(script)
@@ -701,10 +711,10 @@ class BrowserUploadTool(_BrowserTool):
         selector = str(kwargs.get("selector", ""))
         file_path = Path(str(kwargs.get("file_path", "")))
         if not file_path.exists():
-            return _err(f"File not found: {file_path}", t0)
+            return _err(f"File not found: {file_path}", t0, committed=False)
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             await page.set_input_files(selector, str(file_path))
@@ -756,7 +766,7 @@ class BrowserDownloadTool(_BrowserTool):
         max_bytes = int(max_bytes_raw) if isinstance(max_bytes_raw, int | str) else 10_485_760
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             downloads_dir: Path = runtime.settings.downloads_dir
@@ -849,7 +859,7 @@ class BrowserCookiesSetTool(_BrowserTool):
         cookies = kwargs.get("cookies", [])
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         cookies_list = list(cookies) if isinstance(cookies, list) else []
         try:
             sess = await sessions.get(session_id)
@@ -884,7 +894,7 @@ class BrowserCookiesClearTool(_BrowserTool):
         session_id = str(kwargs.get("session_id", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess = await sessions.get(session_id)
             await sess.context.clear_cookies()
@@ -970,7 +980,7 @@ class BrowserTabCloseTool(_BrowserTool):
         page_handle = str(kwargs.get("page_handle", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             sess = await sessions.get(session_id)
         except _BROWSER_ERRORS as exc:
@@ -1008,7 +1018,7 @@ class BrowserCloseTool(_BrowserTool):
         session_id = str(kwargs.get("session_id", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, committed=False)
         try:
             await sessions.close(session_id)
         except _BROWSER_ERRORS as exc:

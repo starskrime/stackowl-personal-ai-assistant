@@ -332,3 +332,59 @@ class TestFullMultiFileUndo:
         assert a.read_text() == "alpha\n"  # reverted
         assert b.read_text() == "beta\n"  # reverted
         assert not created.exists()  # created file removed by undo
+
+
+class TestSideEffectCommittedHonesty:
+    """A pre-execution refusal (bad/oversized/unparseable patch, no ops, traversal)
+    leaves nothing locked or written → side_effect_committed must be False so it
+    does not trip the give-up floor. A mid-apply failure (rolled back) ATTEMPTED
+    writes → must stay True (positive control)."""
+
+    async def test_missing_patch_not_effectful(self, home: Path, ws: Path) -> None:
+        result = await ApplyPatchTool(store=UndoStore()).execute(patch="")
+        assert result.success is False
+        assert result.side_effect_committed is False
+
+    async def test_parse_error_not_effectful(self, home: Path, ws: Path) -> None:
+        result = await ApplyPatchTool(store=UndoStore()).execute(patch="not a real patch")
+        assert result.success is False
+        assert result.side_effect_committed is False
+
+    async def test_traversal_refusal_not_effectful(
+        self, home: Path, ws: Path, tmp_path: Path
+    ) -> None:
+        escape = tmp_path / "escape.txt"
+        patch = _patch("*** Add File: " + str(escape), "+pwned")
+        result = await ApplyPatchTool(store=UndoStore()).execute(patch=patch)
+        assert result.success is False
+        assert result.side_effect_committed is False
+        assert not escape.exists()
+
+    async def test_rolled_back_apply_stays_committed(self, home: Path, ws: Path) -> None:
+        """Positive control: a mid-apply failure rolled back the writes it had
+        already issued — the boundary was crossed, so committed stays True."""
+        a = ws / "a.txt"
+        b = ws / "b.txt"
+        a.write_text("alpha\n")
+        b.write_text("beta\n")
+        patch = _patch(
+            "*** Update File: " + str(a),
+            "@@",
+            "-alpha",
+            "+ALPHA",
+            "*** Update File: " + str(b),
+            "@@",
+            "-THIS_LINE_DOES_NOT_EXIST",
+            "+whatever",
+        )
+        result = await ApplyPatchTool(store=UndoStore()).execute(patch=patch)
+        assert result.success is False
+        assert result.side_effect_committed is True
+
+    async def test_successful_patch_stays_committed(self, home: Path, ws: Path) -> None:
+        f = ws / "a.txt"
+        f.write_text("alpha\n")
+        patch = _patch("*** Update File: " + str(f), "@@", "-alpha", "+ALPHA")
+        result = await ApplyPatchTool(store=UndoStore()).execute(patch=patch)
+        assert result.success is True
+        assert result.side_effect_committed is True

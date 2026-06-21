@@ -210,6 +210,8 @@ async def test_catastrophic_denied_never_spawns(monkeypatch: pytest.MonkeyPatch)
     assert captured["called"] is False  # never spawned
     assert result.success is False
     assert "declined" in (result.error or "").lower()
+    # Declined → never spawned, so not an effectful failure (no give-up floor trip).
+    assert result.side_effect_committed is False
 
 
 @pytest.mark.asyncio
@@ -251,6 +253,7 @@ async def test_catastrophic_non_interactive_fails_closed(
     assert captured["called"] is False  # never spawned
     assert result.success is False
     assert "no user" in (result.error or "").lower()
+    assert result.side_effect_committed is False  # fail-closed, never spawned
 
 
 @pytest.mark.asyncio
@@ -268,6 +271,7 @@ async def test_catastrophic_no_gate_fails_closed(monkeypatch: pytest.MonkeyPatch
 
     assert captured["called"] is False
     assert result.success is False
+    assert result.side_effect_committed is False  # no gate → fail-closed, never spawned
 
 
 @pytest.mark.asyncio
@@ -374,3 +378,34 @@ async def test_explicit_workdir_overrides_workspace_default(
     assert (explicit / "marker.txt").exists()  # landed in the explicit dir
     assert not (ws / "marker.txt").exists()  # NOT the workspace
     assert Path((explicit / "marker.txt").read_text()).resolve() == explicit.resolve()
+
+
+# =========================================================================== #
+# 6. side_effect_committed honesty — pre-spawn refusals vs a real failed run
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+async def test_empty_command_is_not_an_effectful_failure() -> None:
+    """An empty command is never spawned → not an effectful failure."""
+    result = await ShellTool().execute(command="")
+    assert result.success is False
+    assert result.side_effect_committed is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_syntax_is_not_an_effectful_failure() -> None:
+    """An unparseable command (unbalanced quote) is never spawned → not effectful."""
+    result = await ShellTool().execute(command="echo 'unterminated")
+    assert result.success is False
+    assert "syntax" in (result.error or "").lower()
+    assert result.side_effect_committed is False
+
+
+@pytest.mark.asyncio
+async def test_real_failed_command_stays_committed() -> None:
+    """Positive control: a command that genuinely RAN and exited non-zero kept its
+    default side_effect_committed=True — the boundary was crossed (process spawned)."""
+    result = await ShellTool().execute(command=f"{sys.executable} -c \"import sys; sys.exit(3)\"")
+    assert result.success is False  # non-zero exit
+    assert result.side_effect_committed is True

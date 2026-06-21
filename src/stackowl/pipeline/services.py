@@ -147,3 +147,14 @@ def get_services() -> StepServices:
         return _ctx.get()
     except LookupError:
         return StepServices()
+
+
+def resolve_identity_key(services: StepServices, session_id: str) -> str:
+    """Resolve the inbound channel handle to a cross-channel identity_key.
+
+    Returns "" when no resolver is wired (consumers fall back to session_id),
+    and the handle unchanged when the resolver has no alias for it.
+    """
+    if services.identity_resolver is None:
+        return ""
+    return services.identity_resolver.resolve(session_id)
