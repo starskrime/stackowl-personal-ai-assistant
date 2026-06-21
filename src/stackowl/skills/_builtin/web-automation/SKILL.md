@@ -27,16 +27,17 @@ as successful without evidence that the page actually reached the expected state
    any dynamic content that has already loaded. Never act on assumptions from
    prior knowledge of a site; always read the current snapshot first.
 
-3. **Interact using `browser_click`, `browser_type`, `browser_fill_form`, or
-   `browser_select_option` as needed.** Identify targets from the snapshot
-   (use accessible labels or stable selectors, not positional offsets). Chain
-   interactions in the order the page expects them.
+3. **Interact using `browser_click` and `browser_type` as needed.** Fill a form
+   by typing into each field with `browser_type` and clicking the submit control
+   with `browser_click`; use `browser_press` for keystrokes like Enter. Identify
+   targets from the snapshot (use accessible labels or stable selectors, not
+   positional offsets). Chain interactions in the order the page expects them.
 
-4. **Extract data with `browser_snapshot` (re-read after interaction) or
-   `browser_evaluate` for complex structured extraction.** For images or
-   binary assets, use `browser_take_screenshot` to capture what the page
-   shows. Confirm the extracted data is non-empty and on-topic before
-   treating it as the final result.
+4. **Extract data with `browser_extract` (or re-read with `browser_snapshot`
+   after interaction); use `browser_eval_js` for complex structured extraction.**
+   For images, use `browser_get_images`; to capture what the page shows, use
+   `browser_screenshot`. Confirm the extracted data is non-empty and on-topic
+   before treating it as the final result.
 
 5. **Close or clean up the session when done.** Call `browser_close` if a
    long-lived browser context was opened, so it does not leak into subsequent
