@@ -83,6 +83,7 @@ async def test_start_returns_process_id_and_is_session_scoped() -> None:
         assert data["process_id"]
         assert data["pid"]
         assert data["status"] == "running"
+        assert res.side_effect_committed is True  # positive control: real spawn
         # The handle landed in the registry under the caller's session.
         scoped = ctx.registry.list("sess-1")
         assert any(h.process_id == data["process_id"] for h in scoped)
@@ -94,6 +95,8 @@ async def test_start_requires_command() -> None:
         res = await ctx.tool.execute(action="start")
         assert not res.success
         assert "command" in (res.error or "")
+        # Pre-exec refusal — nothing spawned → not an effectful failure.
+        assert res.side_effect_committed is False
 
 
 # ---------------------------------------------------------------------- poll
@@ -204,6 +207,7 @@ async def test_unknown_process_id_is_structured_error() -> None:
             res = await ctx.tool.execute(action=action, process_id="does-not-exist")
             assert not res.success
             assert "no such process" in (res.error or "")
+            assert res.side_effect_committed is False  # no-op — nothing mutated
 
 
 @pytest.mark.asyncio
@@ -220,6 +224,7 @@ async def test_unknown_action_is_structured_error() -> None:
         res = await ctx.tool.execute(action="frobnicate")
         assert not res.success
         assert "unknown action" in (res.error or "")
+        assert res.side_effect_committed is False
 
 
 @pytest.mark.asyncio
@@ -231,6 +236,7 @@ async def test_none_registry_is_structured_unavailable() -> None:
         res = await tool.execute(action="start", command=py("print('x')"))
         assert not res.success
         assert "unavailable" in (res.error or "")
+        assert res.side_effect_committed is False  # registry absent — nothing spawned
     finally:
         TraceContext.reset(trace)
         reset_services(token)
