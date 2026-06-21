@@ -28,6 +28,7 @@ from stackowl.commands.memory_helpers import (
     parse_export_args,
     remember_fact,
 )
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.staged_helpers import find_staged_by_id
 from stackowl.infra.observability import log
@@ -43,18 +44,114 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.pipeline.state import PipelineState
 
 
-_USAGE = (
-    "Usage:\n"
-    "  /memory stats\n"
-    "  /memory search <query>\n"
-    "  /memory delete <fact_id> [YES]\n"
-    "  /memory budget\n"
-    "  /memory reindex\n"
-    "  /memory remember <text>\n"
-    "  /memory forget <fact_id_prefix> [YES]\n"
-    "  /memory export [--format json|csv] [--output <path>]"
-)
 _CONFIRMATION = "YES"
+
+_MEMORY_META = CommandMeta(
+    grammar="verb",
+    group="Memory & Knowledge",
+    subcommands=(
+        SubCommand(
+            name="stats",
+            summary="Show fact counts and storage bytes",
+            description=(
+                "You see how many facts are committed and how much storage they "
+                "occupy. Use it to gauge memory size before pruning or reindexing."
+            ),
+            examples=(Example(invocation="/memory stats"),),
+        ),
+        SubCommand(
+            name="search",
+            summary="Find facts by meaning",
+            description=(
+                "You recall committed facts by semantic similarity to your query "
+                "rather than exact text match. Returns the top hits."
+            ),
+            args=(Arg(name="query", summary="natural-language query"),),
+            examples=(Example(invocation="/memory search where do I live"),),
+        ),
+        SubCommand(
+            name="delete",
+            summary="Delete a fact by id",
+            description=(
+                "You permanently remove a committed fact. Re-run with YES appended "
+                "to confirm — without it you only see a confirmation prompt."
+            ),
+            args=(
+                Arg(name="fact_id", summary="full or prefix fact id"),
+                Arg(name="YES", required=False, summary="confirm the deletion"),
+            ),
+            examples=(
+                Example(invocation="/memory delete a1b2c3d4"),
+                Example(invocation="/memory delete a1b2c3d4 YES", note="Skip the prompt"),
+            ),
+        ),
+        SubCommand(
+            name="budget",
+            summary="Show storage used versus the ceiling",
+            description=(
+                "You compare current per-user fact storage against the configured "
+                "ceiling so you know how much room is left."
+            ),
+            examples=(Example(invocation="/memory budget"),),
+        ),
+        SubCommand(
+            name="reindex",
+            summary="Push every committed fact to LanceDB",
+            description=(
+                "You rebuild the vector index from all committed facts. Use it after "
+                "an embedding-model change or if semantic search looks stale."
+            ),
+            examples=(Example(invocation="/memory reindex"),),
+        ),
+        SubCommand(
+            name="remember",
+            summary="Stage and promote a fact",
+            description=(
+                "You explicitly capture a piece of text as a durable fact, bypassing "
+                "the usual extraction flow."
+            ),
+            args=(Arg(name="text", summary="the fact text to store"),),
+            examples=(Example(invocation="/memory remember I prefer terse replies"),),
+        ),
+        SubCommand(
+            name="forget",
+            summary="Delete a fact by id prefix",
+            description=(
+                "You remove a committed fact matched by an id prefix. Append YES to "
+                "confirm — without it you only see a confirmation prompt."
+            ),
+            args=(
+                Arg(name="fact_id_prefix", summary="leading chars of the fact id"),
+                Arg(name="YES", required=False, summary="confirm the removal"),
+            ),
+            examples=(Example(invocation="/memory forget a1b2 YES"),),
+        ),
+        SubCommand(
+            name="export",
+            summary="Dump committed facts to a file",
+            description=(
+                "You write all committed facts to disk in JSON or CSV for backup or "
+                "inspection outside the assistant."
+            ),
+            args=(
+                Arg(
+                    name="--format",
+                    required=False,
+                    summary="output format",
+                    choices=("json", "csv"),
+                ),
+                Arg(name="--output", required=False, summary="destination path"),
+            ),
+            examples=(
+                Example(invocation="/memory export"),
+                Example(
+                    invocation="/memory export --format csv --output /tmp/facts.csv",
+                    note="Choose format and path",
+                ),
+            ),
+        ),
+    ),
+)
 
 
 class MemoryCommand(SlashCommand):
@@ -99,6 +196,10 @@ class MemoryCommand(SlashCommand):
     def description(self) -> str:
         return "Memory management commands (stats, search, delete, budget, reindex)."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _MEMORY_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         # 1. ENTRY
         log.memory.debug(
@@ -109,7 +210,7 @@ class MemoryCommand(SlashCommand):
             return "✗ /memory: not configured"
         stripped = args.strip()
         if not stripped:
-            return _USAGE
+            return render_usage("memory", _MEMORY_META)
         parts = stripped.split(maxsplit=1)
         sub = parts[0].lower()
         rest = parts[1] if len(parts) > 1 else ""
@@ -136,7 +237,7 @@ class MemoryCommand(SlashCommand):
                     "[commands] memory.handle: decision — unknown subcommand",
                     extra={"_fields": {"sub": sub[:40]}},
                 )
-                return _USAGE
+                return render_usage("memory", _MEMORY_META)
         except Exception as exc:
             # B5
             log.memory.error(

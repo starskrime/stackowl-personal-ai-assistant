@@ -10,15 +10,35 @@ from __future__ import annotations
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml, set_nested
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
 
 _VALID_AUTONOMY: frozenset[str] = frozenset({"low", "medium", "high"})
 
-_USAGE = (
+_AUTONOMY_USAGE = (
     "Usage: /settings autonomy <low|medium|high>\n"
     "  Sets how much autonomy owls have when invoking tools."
+)
+
+_SETTINGS_META = CommandMeta(
+    grammar="verb",
+    group="Configuration",
+    subcommands=(
+        SubCommand(
+            name="autonomy",
+            summary="Set how much autonomy owls have with tools",
+            description=(
+                "You set the autonomy level that controls how freely owls invoke "
+                "tools. The change is applied live without a restart."
+            ),
+            args=(
+                Arg(name="level", summary="autonomy level", choices=("low", "medium", "high")),
+            ),
+            examples=(Example(invocation="/settings autonomy medium"),),
+        ),
+    ),
 )
 
 
@@ -36,6 +56,10 @@ class SettingsCommand(SlashCommand):
     def description(self) -> str:
         return "Manage high-level user settings (autonomy level, …)."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _SETTINGS_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] settings.handle: entry",
@@ -44,7 +68,7 @@ class SettingsCommand(SlashCommand):
         parts = args.strip().split(maxsplit=1)
         if not parts:
             log.gateway.debug("[commands] settings.handle: no subcommand — returning usage")
-            return _USAGE
+            return render_usage("settings", _SETTINGS_META)
         sub = parts[0].lower()
         rest = parts[1].strip() if len(parts) > 1 else ""
         if sub != "autonomy":
@@ -52,7 +76,7 @@ class SettingsCommand(SlashCommand):
                 "[commands] settings.handle: unknown subcommand",
                 extra={"_fields": {"sub": sub}},
             )
-            return _USAGE
+            return render_usage("settings", _SETTINGS_META)
         try:
             result = self._set_autonomy(rest)
         except Exception as exc:
@@ -72,7 +96,7 @@ class SettingsCommand(SlashCommand):
         )
         level = value.lower()
         if not level:
-            return _USAGE
+            return _AUTONOMY_USAGE
         if level not in _VALID_AUTONOMY:
             log.gateway.warning(
                 "[commands] settings.set_autonomy: rejected invalid level",

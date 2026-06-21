@@ -4,16 +4,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, render_usage
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
     from stackowl.integrations.registry import IntegrationRegistry
     from stackowl.pipeline.state import PipelineState
 
-_USAGE = (
-    "Usage:\n"
-    "  /connect <service>      — start OAuth flow for a service\n"
-    "  /connect                — list all integrations and connection status"
+_CONNECT_META = CommandMeta(
+    grammar="flag",
+    group="Integrations",
+    args=(Arg("service", required=False, summary="integration service name"),),
+)
+_DISCONNECT_META = CommandMeta(
+    grammar="flag",
+    group="Integrations",
+    args=(Arg("service", required=False, summary="integration service name"),),
 )
 
 
@@ -36,6 +42,10 @@ class ConnectCommand(SlashCommand):
     @property
     def description(self) -> str:
         return "Connect an external integration (gmail, google_calendar, ...)"
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _CONNECT_META
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
@@ -136,6 +146,10 @@ class DisconnectCommand(SlashCommand):
     def description(self) -> str:
         return "Disconnect an external integration and remove stored credentials"
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _DISCONNECT_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         # 1. ENTRY
         log.gateway.debug(
@@ -148,7 +162,7 @@ class DisconnectCommand(SlashCommand):
         service = args.strip()
         if not service:
             log.gateway.debug("disconnect_command.handle: exit — no args, returning usage")
-            return "Usage: /disconnect <service>"
+            return render_usage("disconnect", _DISCONNECT_META)
 
         # 2. DECISION — look up the adapter
         from stackowl.exceptions import IntegrationNotFoundError

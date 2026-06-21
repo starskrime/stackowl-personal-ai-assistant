@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import CommandMeta, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.infra.observability import log
 
@@ -25,9 +26,19 @@ _SELECT_MISSED_SQL = (
     "WHERE delivery_status IN ('suppressed','batched','failed') "
     "ORDER BY created_at DESC LIMIT 20"
 )
-_USAGE = (
-    "Usage:\n"
-    "  /notifications missed   — show the 20 most-recent non-delivered notifications"
+_NOTIFICATIONS_META = CommandMeta(
+    grammar="verb",
+    group="Notifications",
+    subcommands=(
+        SubCommand(
+            name="missed",
+            summary="Show the 20 most-recent non-delivered alerts",
+            description=(
+                "You see the latest notifications that were suppressed, "
+                "batched, or failed instead of being delivered."
+            ),
+        ),
+    ),
 )
 
 
@@ -45,6 +56,10 @@ class NotificationsMissedCommand(SlashCommand):
     def description(self) -> str:
         return "View missed notifications."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _NOTIFICATIONS_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] notifications.handle: entry",
@@ -58,7 +73,7 @@ class NotificationsMissedCommand(SlashCommand):
                 "[notifications] notifications.handle: usage shown",
                 extra={"_fields": {"sub": sub[:40]}},
             )
-            return _USAGE
+            return render_usage("notifications", _NOTIFICATIONS_META)
 
         try:
             rows = await self._db.fetch_all(_SELECT_MISSED_SQL, ())

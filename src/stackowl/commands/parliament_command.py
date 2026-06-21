@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand
 from stackowl.commands.parliament_helpers import (
     format_rollcall,
     format_session_table,
@@ -54,6 +55,49 @@ _USAGE = (
     "  /parliament unsuppress          — re-enable proactive suggestions"
 )
 
+_PARLIAMENT_META = CommandMeta(
+    grammar="verb",
+    group="Owls",
+    subcommands=(
+        SubCommand(
+            name="log",
+            summary="List recent sessions or show one transcript",
+            description=(
+                "You list the most recent debate sessions, or show the full "
+                "transcript when you pass a session id."
+            ),
+            args=(Arg(name="session_id", required=False, summary="session to show in full"),),
+            examples=(
+                Example(invocation="/parliament log", note="List recent sessions"),
+                Example(invocation="/parliament log abc123", note="Show one transcript"),
+            ),
+        ),
+        SubCommand(
+            name="push",
+            summary="Queue an interjection on the active session",
+            description="You inject a message into the next round of the running debate.",
+            args=(Arg(name="message", summary="text to interject"),),
+            examples=(Example(invocation="/parliament push consider the cost angle"),),
+        ),
+        SubCommand(
+            name="expand",
+            summary="Re-debate a claim from the last session",
+            description=(
+                "You start a fresh debate on one claim, reusing the participants "
+                "from the most recent completed session."
+            ),
+            args=(Arg(name="claim", summary="claim to re-debate"),),
+            examples=(Example(invocation="/parliament expand the migration is reversible"),),
+        ),
+        SubCommand(
+            name="unsuppress",
+            summary="Re-enable proactive Parliament suggestions",
+            description="You turn proactive Parliament suggestions back on after muting them.",
+            examples=(Example(invocation="/parliament unsuppress"),),
+        ),
+    ),
+)
+
 
 class ParliamentCommand(SlashCommand):
     """Implements ``/parliament [log|push|expand|unsuppress|<topic>]``."""
@@ -77,6 +121,10 @@ class ParliamentCommand(SlashCommand):
     @property
     def description(self) -> str:
         return "Start or manage Parliament multi-owl debate sessions."
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _PARLIAMENT_META
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.owls_helpers import (
     build_owl_manifest,
     format_dna_display,
@@ -37,15 +38,70 @@ if TYPE_CHECKING:
     from stackowl.pipeline.state import PipelineState
     from stackowl.tools.registry import ToolRegistry
 
-_USAGE = (
-    "Usage: /owls <list|add|edit|remove|health|dna|reset-dna> [args]\n"
-    "  /owls list                              — show registered owls\n"
-    "  /owls add <name> --role <r> --tier <t>  — register a new owl\n"
-    "  /owls edit <name> [--tier <t> ...]      — update fields on an existing owl\n"
-    "  /owls remove <name>                     — start removal (asks for YES)\n"
-    "  /owls health                            — report registry health\n"
-    "  /owls dna <name>                        — show DNA traits (current vs authored)\n"
-    "  /owls reset-dna <name> YES              — revert evolved DNA to authored baseline"
+_OWLS_META = CommandMeta(
+    grammar="verb",
+    group="Owls",
+    subcommands=(
+        SubCommand(
+            name="list",
+            summary="Show registered owls",
+        ),
+        SubCommand(
+            name="add",
+            summary="Register a new owl",
+            description="You create a new owl persona and persist it to config.",
+            args=(
+                Arg(name="name", summary="owl name"),
+                Arg(name="--role", summary="owl role"),
+                Arg(name="--tier", summary="model tier"),
+            ),
+            examples=(
+                Example(
+                    invocation="/owls add Sage --role researcher --tier fast",
+                    note="Register a research owl",
+                ),
+            ),
+        ),
+        SubCommand(
+            name="edit",
+            summary="Update fields on an existing owl",
+            description="You change one or more fields on an owl and re-validate the manifest.",
+            args=(
+                Arg(name="name", summary="owl name"),
+                Arg(name="--tier", required=False, summary="model tier"),
+            ),
+            examples=(
+                Example(invocation="/owls edit Sage --tier powerful"),
+            ),
+        ),
+        SubCommand(
+            name="remove",
+            summary="Permanently remove an owl",
+            description="You deregister an owl and drop its config and DNA rows. Confirmed with YES.",
+            args=(Arg(name="name", summary="owl name"),),
+            examples=(
+                Example(invocation="/owls remove Sage YES", note="Confirm removal"),
+            ),
+        ),
+        SubCommand(
+            name="health",
+            summary="Report owl registry health",
+        ),
+        SubCommand(
+            name="dna",
+            summary="Show DNA traits, current versus authored",
+            args=(Arg(name="name", summary="owl name"),),
+        ),
+        SubCommand(
+            name="reset-dna",
+            summary="Revert evolved DNA to the authored baseline",
+            description="You discard accumulated evolution and restore the owl's authored DNA. Confirmed with YES.",
+            args=(Arg(name="name", summary="owl name"),),
+            examples=(
+                Example(invocation="/owls reset-dna Sage YES", note="Confirm reset"),
+            ),
+        ),
+    ),
 )
 
 _NO_REGISTRY = "(no owl registry wired — start StackOwl normally to manage owls)"
@@ -81,6 +137,10 @@ class OwlsCommand(SlashCommand):
     def description(self) -> str:
         return "Manage owl personas: list, add, remove, health, dna."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _OWLS_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] owls.handle: entry",
@@ -109,13 +169,13 @@ class OwlsCommand(SlashCommand):
                     "[commands] owls.handle: unknown subcommand",
                     extra={"_fields": {"sub": sub}},
                 )
-                return _USAGE
+                return render_usage("owls", _OWLS_META)
         except CommandParseError as exc:
             log.gateway.warning(
                 "[commands] owls.handle: parse error",
                 extra={"_fields": {"sub": sub, "error": str(exc)}},
             )
-            return f"✗ {exc}\n\n{_USAGE}"
+            return f"✗ {exc}\n\n{render_usage('owls', _OWLS_META)}"
         except (ManifestValidationError, OwlNotFoundError) as exc:
             log.gateway.warning(
                 "[commands] owls.handle: domain error",

@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.staged_helpers import (
     find_staged_by_id,
@@ -31,12 +32,46 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.pipeline.state import PipelineState
 
 
-_USAGE = (
-    "Usage:\n"
-    "  /staged list [--status staged|committed|rejected]\n"
-    "  /staged review <fact_id>\n"
-    "  /staged reject <fact_id> [YES]\n"
-    "  /staged promote <fact_id>"
+_STAGED_META = CommandMeta(
+    grammar="verb",
+    group="Memory & Knowledge",
+    subcommands=(
+        SubCommand(
+            name="list",
+            summary="Browse staged facts, optionally by status",
+            args=(
+                Arg(
+                    name="--status",
+                    required=False,
+                    summary="filter by status",
+                    choices=("staged", "committed", "rejected"),
+                ),
+            ),
+            examples=(
+                Example(invocation="/staged list --status committed"),
+            ),
+        ),
+        SubCommand(
+            name="review",
+            summary="Show full content and metadata for one fact",
+            args=(Arg(name="fact_id", summary="staged fact identifier"),),
+        ),
+        SubCommand(
+            name="reject",
+            summary="Delete a staged fact",
+            description="You discard a staged fact. Confirmed with YES.",
+            args=(Arg(name="fact_id", summary="staged fact identifier"),),
+            examples=(
+                Example(invocation="/staged reject a1b2c3 YES", note="Confirm rejection"),
+            ),
+        ),
+        SubCommand(
+            name="promote",
+            summary="Force-promote a fact, bypassing both gates",
+            description="You promote a staged fact to durable memory, skipping the usual gates.",
+            args=(Arg(name="fact_id", summary="staged fact identifier"),),
+        ),
+    ),
 )
 _CONFIRMATION = "YES"
 
@@ -66,6 +101,10 @@ class StagedCommand(SlashCommand):
     def description(self) -> str:
         return "Browse and manage staged facts awaiting promotion."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _STAGED_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         # 1. ENTRY
         log.memory.debug(
@@ -77,7 +116,7 @@ class StagedCommand(SlashCommand):
             return "✗ /staged: not configured (memory bridge unavailable)"
         stripped = args.strip()
         if not stripped:
-            return _USAGE
+            return render_usage("staged", _STAGED_META)
         parts = stripped.split(maxsplit=1)
         sub = parts[0].lower()
         rest = parts[1].strip() if len(parts) > 1 else ""
@@ -96,7 +135,7 @@ class StagedCommand(SlashCommand):
                     "[commands] staged.handle: unknown subcommand",
                     extra={"_fields": {"sub": sub[:40]}},
                 )
-                return _USAGE
+                return render_usage("staged", _STAGED_META)
         except Exception as exc:
             # B5
             log.memory.error(
