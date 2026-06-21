@@ -175,6 +175,7 @@ class ExecuteCodeTool(Tool):
                 "code execution is refused for a delegated sub-agent "
                 "(delegation_depth>0); only a top-level turn may run code.",
                 t0,
+                committed=False,
             )
 
         try:
@@ -184,7 +185,7 @@ class ExecuteCodeTool(Tool):
                 "execute_code.execute: validation failed",
                 extra={"_fields": {"errors": exc.error_count()}},
             )
-            return self._err(f"invalid arguments — {exc.errors()!r}", t0)
+            return self._err(f"invalid arguments — {exc.errors()!r}", t0, committed=False)
 
         # 2. DECISION — python-only for the MVP; refuse anything else clearly.
         if args.language != "python":
@@ -192,6 +193,7 @@ class ExecuteCodeTool(Tool):
                 f"language {args.language!r} is not supported yet — only 'python' "
                 "code can be executed.",
                 t0,
+                committed=False,
             )
 
         # The selector is the SINGLE source of truth for which backend runs (and
@@ -204,6 +206,7 @@ class ExecuteCodeTool(Tool):
                 "NEVER run on the host. Install bubblewrap (bwrap) or Docker, or "
                 "enable one in settings.",
                 t0,
+                committed=False,
             )
 
         spec = self._build_spec(args)
@@ -214,7 +217,7 @@ class ExecuteCodeTool(Tool):
                 "execute_code.execute: selector unavailable — refusing (no host exec)",
                 extra={"_fields": {"reason": reason}},
             )
-            return self._err(f"code execution unavailable — {reason}", t0)
+            return self._err(f"code execution unavailable — {reason}", t0, committed=False)
 
         backend = selection.backend
         log.tool.info(
@@ -239,6 +242,7 @@ class ExecuteCodeTool(Tool):
                 "too many code executions are running right now — nothing was run; "
                 "try again in a moment.",
                 t0,
+                committed=False,
             )
         except Exception as exc:  # B5 — contract says never, but never trust+host-exec
             log.tool.error(
@@ -308,12 +312,21 @@ class ExecuteCodeTool(Tool):
         )
 
     @staticmethod
-    def _err(msg: str, t0: float) -> ToolResult:
-        """Structured FAILED result (the model learns nothing ran). Never raises."""
+    def _err(msg: str, t0: float, *, committed: bool = True) -> ToolResult:
+        """Structured FAILED result (the model learns nothing ran). Never raises.
+
+        ``committed`` defaults True (conservative); callers pass False at a
+        pre-execution / never-ran refusal (child-excluded, invalid args, unsupported
+        language, no/unavailable sandbox, governor saturated) so it does not trip
+        the give-up floor. A post-attempt sandbox error (backend.run raised — code
+        may have started) keeps the default True."""
         msg = f"execute_code: {msg}"
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "execute_code.execute: exit",
             extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        return ToolResult(
+            success=False, output="", error=msg,
+            duration_ms=duration_ms, side_effect_committed=committed,
+        )
