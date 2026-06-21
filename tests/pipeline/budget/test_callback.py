@@ -14,7 +14,8 @@ class _GovStub:
         self._breach = breach
         self.raised: list[str] = []
 
-    def check(self, iteration: int) -> BudgetBreach | None:
+    def check(self, iteration: int, *, tool_calls: int | None = None) -> BudgetBreach | None:
+        self.last_tool_calls = tool_calls
         return self._breach
 
     def raise_caps(self, cap: str) -> None:

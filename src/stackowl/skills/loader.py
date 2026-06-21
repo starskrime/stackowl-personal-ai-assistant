@@ -47,6 +47,41 @@ if TYPE_CHECKING:
 _VALID_SOURCES: tuple[SkillSource, ...] = ("builtin", "installed", "user", "learned")
 _OWL_TRUSTED_SOURCES: frozenset[str] = frozenset({"builtin", "user"})
 _SKILL_MD_FILENAME = "SKILL.md"
+# A skill lives at <source>/<name>/ (flat) OR <source>/<category>/<name>/ (nested).
+# Scan both layouts; never deeper, so a skill's own subdirs (references/, tools/,
+# assets/) can't masquerade as nested skills.
+_MAX_SKILL_DEPTH = 2
+
+
+def _discover_skill_dirs(source_dir: Path, *, max_depth: int = _MAX_SKILL_DEPTH) -> list[Path]:
+    """Return every dir holding a ``SKILL.md`` at depth 1..``max_depth`` under ``source_dir``.
+
+    Leaf-stopping: once a directory contains ``SKILL.md`` it IS a skill and we do
+    not descend into it (so ``references/SKILL.md`` etc. are never picked up).
+    Dirs starting with ``_`` are reserved (``_deprecated``, ``__pycache__``) and
+    are neither loaded nor descended.
+    """
+    found: list[Path] = []
+
+    def _walk(directory: Path, depth: int) -> None:
+        for child in sorted(directory.iterdir()):
+            if not child.is_dir() or child.name.startswith("_"):
+                continue
+            if (child / _SKILL_MD_FILENAME).exists():
+                found.append(child)  # leaf skill — do not descend
+                continue
+            if depth < max_depth:
+                _walk(child, depth + 1)
+
+    _walk(source_dir, 1)
+    return found
+
+
+def _category_for(source_dir: Path, skill_dir: Path) -> str | None:
+    """Derive a skill's category from its path: ``<category>`` in
+    ``<source>/<category>/<name>/``; ``None`` for a flat ``<source>/<name>/``."""
+    rel = skill_dir.relative_to(source_dir)
+    return rel.parts[-2] if len(rel.parts) >= 2 else None
 
 
 @dataclass(frozen=True)
@@ -114,17 +149,16 @@ class SkillLoader:
         if builtin_seed_dir is not None:
             self._seed_builtins(builtin_seed_dir, skills_root / "builtin")
 
-        # 3. STEP — scan every source dir
+        # 3. STEP — scan every source dir (flat <name>/ AND nested <category>/<name>/)
         loaded: list[LoadedSkill] = []
         for source in _VALID_SOURCES:
             source_dir = skills_root / source
             if not source_dir.is_dir():
                 continue
-            for skill_dir in sorted(source_dir.iterdir()):
-                if not skill_dir.is_dir() or skill_dir.name.startswith("_"):
-                    continue
+            for skill_dir in _discover_skill_dirs(source_dir):
+                category = _category_for(source_dir, skill_dir)
                 try:
-                    result = self._load_one(skill_dir, source)
+                    result = self._load_one(skill_dir, source, category=category)
                 except SkillLoadError as exc:
                     # B5 — never silent
                     log.skills.warning(
@@ -169,7 +203,9 @@ class SkillLoader:
 
     # ----- internals --------------------------------------------------------
 
-    def _load_one(self, skill_dir: Path, source: SkillSource) -> LoadedSkill:
+    def _load_one(
+        self, skill_dir: Path, source: SkillSource, *, category: str | None = None,
+    ) -> LoadedSkill:
         """Load one skill directory. Raises SkillLoadError on validation failure."""
         # 1. ENTRY
         log.skills.debug(
@@ -189,9 +225,13 @@ class SkillLoader:
         except OSError as exc:
             raise SkillLoadError(f"cannot read {skill_md_path}: {exc}") from exc
 
-        # 2. DECISION — force source = dir so frontmatter can't lie
+        # 2. DECISION — force source = dir so frontmatter can't lie; derive
+        # category from the directory layout (<source>/<category>/<name>/) when
+        # nested. Flat skills keep any frontmatter-declared category.
         fm: dict[str, object] = dict(parsed.frontmatter)
         fm["source"] = source
+        if category is not None:
+            fm["category"] = category
         try:
             manifest = SkillManifest.model_validate(fm)
         except Exception as exc:

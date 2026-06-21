@@ -36,6 +36,11 @@ class SkillManifest(BaseModel):
     version: str = "0.1.0"
     source: SkillSource = "user"
     enabled: bool = True
+    # Category: when a skill lives at <source>/<category>/<name>/, the loader
+    # derives this from the directory segment so it round-trips into the index
+    # (skills_list reads it). Additive/defaulted → existing SKILL.md still validate
+    # under extra="forbid".
+    category: str | None = None
     tags: list[str] = Field(default_factory=list)
     # Learning bookkeeping — agent updates these for learned/ skills; humans
     # may leave them at defaults for hand-written user/ skills.

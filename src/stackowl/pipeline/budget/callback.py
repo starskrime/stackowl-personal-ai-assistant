@@ -88,7 +88,11 @@ def make_budget_callback(
     """
 
     async def _gate(iter_state: ReActIterationState) -> list[dict[str, Any]] | None:
-        breach = governor.check(iter_state.iteration)
+        # tool_call_records is the cumulative snapshot of all dispatches this turn,
+        # so the step cap counts individual tool calls (not just ReAct rounds).
+        breach = governor.check(
+            iter_state.iteration, tool_calls=len(iter_state.tool_call_records)
+        )
         if breach is None:
             return None  # no breach — fold nothing (Task 9 splice contract)
 

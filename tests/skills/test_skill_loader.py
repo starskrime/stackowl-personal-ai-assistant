@@ -156,6 +156,60 @@ async def test_loader_scans_all_four_source_dirs(tmp_path: Path) -> None:
     assert sources == ["builtin", "installed", "learned", "user"]
 
 
+async def test_loader_loads_categorized_nested_skill(tmp_path: Path) -> None:
+    """A skill nested under <source>/<category>/<name>/SKILL.md must load.
+
+    skill_manage writes categorized skills two levels deep; the loader must
+    descend to find them (regression anchor for the 1-level-scan bug).
+    """
+    _write_skill_md(tmp_path / "learned" / "media" / "dl-video", name="dl-video")
+    loader = SkillLoader()
+    loaded = await loader.load_all(tmp_path)
+    assert len(loaded) == 1
+    assert loaded[0].manifest.name == "dl-video"
+    assert loaded[0].manifest.source == "learned"
+    # Category round-trips from the directory segment into the manifest.
+    assert loaded[0].manifest.category == "media"
+
+
+async def test_loader_flat_and_nested_coexist(tmp_path: Path) -> None:
+    """Flat <source>/<name>/ and nested <source>/<category>/<name>/ both load."""
+    _write_skill_md(tmp_path / "learned" / "flat-skill", name="flat-skill")
+    _write_skill_md(tmp_path / "learned" / "greetings" / "hello", name="hello")
+    loader = SkillLoader()
+    loaded = await loader.load_all(tmp_path)
+    by_name = {s.manifest.name: s for s in loaded}
+    assert set(by_name) == {"flat-skill", "hello"}
+    assert by_name["flat-skill"].manifest.category is None
+    assert by_name["hello"].manifest.category == "greetings"
+
+
+async def test_loader_does_not_descend_into_skill_subdirs(tmp_path: Path) -> None:
+    """Leaf-stopping: a SKILL.md's own subdirs (references/, tools/) are not rescanned."""
+    skill_dir = tmp_path / "user" / "leaf"
+    _write_skill_md(skill_dir, name="leaf")
+    # A stray SKILL.md inside a reference subdir must NOT become a second skill.
+    _write_skill_md(skill_dir / "references", name="should-not-load")
+    loader = SkillLoader()
+    loaded = await loader.load_all(tmp_path)
+    assert [s.manifest.name for s in loaded] == ["leaf"]
+
+
+async def test_categorized_skill_indexed_and_visible_to_owner(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """End-to-end: nested skill is upserted AND visible via the owner-scoped store."""
+    _write_skill_md(tmp_path / "learned" / "media" / "dl-video", name="dl-video")
+    store = SkillIndexStore(tmp_db)
+    loader = SkillLoader()
+    loaded = await loader.load_all(tmp_path, store=store)
+    assert len(loaded) == 1
+    learned = await store.list_for_source("learned")
+    assert [s.name for s in learned] == ["dl-video"]
+    # Category survived into the persisted manifest_json (what skills_list reads).
+    assert learned[0].manifest_json.get("category") == "media"
+
+
 async def test_loader_skips_underscore_dirs(tmp_path: Path) -> None:
     """Dirs starting with ``_`` are reserved (e.g. _deprecated, __pycache__)."""
     _write_skill_md(tmp_path / "user" / "real", name="real")

@@ -313,6 +313,24 @@ class OrchestratorSettings(BaseModel):
     )
 
 
+class SkillsSettings(BaseModel):
+    """Skill subsystem behavior."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    global_catalog: bool = Field(
+        default=True,
+        description=(
+            "When True, every tool-using turn surfaces a CATALOG of installed "
+            "skills (names only) in the system prompt so an owl that does not own "
+            "a skill still knows it exists and can skill_view it. The default "
+            "Secretary owns no skills, so without this it never learns skills "
+            "exist. Set False to restore the byte-identical pre-feature baseline."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+
+
 class DurableSettings(BaseModel):
     """Feature flags for the durable-ReAct execution substrate (agentic-os Stage 1).
 
@@ -695,6 +713,7 @@ class Settings(BaseSettings):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     clarify: ClarifySettings = Field(default_factory=ClarifySettings)
     identity: IdentitySettings = Field(default_factory=IdentitySettings)
+    skills: SkillsSettings = Field(default_factory=SkillsSettings)
 
     @classmethod
     def settings_customise_sources(

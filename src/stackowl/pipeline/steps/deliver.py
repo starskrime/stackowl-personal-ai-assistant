@@ -46,6 +46,11 @@ async def run(state: PipelineState) -> PipelineState:
         return state
 
     services = get_services()
+    # Enforce the owner's stored output-format preferences (e.g. table-free output)
+    # at this single channel-agnostic seam, BEFORE both the live-stream write and
+    # the proactive fallback — so a recalled preference is an enforced constraint,
+    # not a hint the model may ignore. No-op (byte-identical) when no preference set.
+    state = await _enforce_output_prefs(state, services)
     registry = services.stream_registry
     log.gateway.info(
         "[pipeline] deliver: entry",
@@ -100,6 +105,51 @@ async def run(state: PipelineState) -> PipelineState:
         extra={"_fields": {"session_id": state.session_id, "chunks_written": len(state.responses)}},
     )
     return state
+
+
+async def _enforce_output_prefs(state: PipelineState, services: StepServices) -> PipelineState:
+    """Apply the owner's stored output-format preferences to the response text.
+
+    Channel-agnostic and fail-safe (B5): a missing store, no preferences, or any
+    error returns ``state`` unchanged — enforcement never crashes delivery. When a
+    preference actually rewrites the text (e.g. tables → plain list), the response
+    chunks are collapsed into one transformed content chunk (preserving the turn's
+    owl, target, and floor marker). owner_key mirrors classify: ``identity_key``
+    when set, else ``session_id``.
+    """
+    store = services.preference_store
+    if store is None or not state.responses:
+        return state
+    try:
+        owner_key = state.identity_key or state.session_id
+        prefs = await store.list_for_owner(owner_key)
+        if not prefs:
+            return state
+        from stackowl.channels._format import apply_output_preferences
+
+        combined = "".join(c.content for c in state.responses if c.content)
+        transformed = apply_output_preferences(combined, prefs)
+        if transformed == combined:
+            return state  # no preference rewrote anything → byte-identical
+        template = state.responses[0]
+        chunk = template.model_copy(update={
+            "content": transformed,
+            "is_final": False,
+            "chunk_index": 0,
+            "is_floor": any(c.is_floor for c in state.responses),
+        })
+        log.gateway.info(
+            "[pipeline] deliver: output preference enforced",
+            extra={"_fields": {"owner_key": owner_key, "before_len": len(combined),
+                               "after_len": len(transformed)}},
+        )
+        return state.evolve(responses=(chunk,))
+    except Exception as exc:  # B5 — enforcement must never crash delivery
+        log.gateway.error(
+            "[pipeline] deliver: output preference enforcement failed — sending as-is",
+            exc_info=exc, extra={"_fields": {"session_id": state.session_id}},
+        )
+        return state
 
 
 async def _proactive_fallback(state: PipelineState, services: StepServices) -> None:

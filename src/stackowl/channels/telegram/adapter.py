@@ -192,14 +192,34 @@ class TelegramChannelAdapter(ChannelAdapter):
                 target = None
             elif isinstance(raw, int):
                 target = raw
-        await self.send_text(self._formatter.format_response(buffer), chat_id=target)
+        # send_text is the single formatting chokepoint — pass RAW buffer.
+        await self.send_text(buffer, chat_id=target)
         log.telegram.info(
             "[telegram] adapter.send: exit",
             extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
         )
 
     async def send_text(self, text: str, *, chat_id: int | None = _UNSET) -> None:
-        """Split ``text`` per Telegram's limit and send each part.
+        """Format RAW text then deliver — THE single outbound formatting chokepoint.
+
+        Every caller of ``send_text`` (the on-turn reply, the proactive deliverer,
+        clarify prompts, queue notices) passes RAW assistant markdown and gets
+        consistent treatment: GFM tables flattened + MarkdownV2-escaped via
+        :meth:`format_response`. No delivery path may bypass this — that bypass is
+        exactly how proactive/notification table-corruption shipped. Callers that
+        already hold MarkdownV2 (the specialized notification formatters) use
+        :meth:`send_markdown` instead, to avoid double-escaping.
+        """
+        await self._deliver(self._formatter.format_response(text), chat_id=chat_id)
+
+    async def send_markdown(self, text: str, *, chat_id: int | None = _UNSET) -> None:
+        """Deliver text that is ALREADY MarkdownV2 (pre-escaped by a specialized
+        formatter). Skips :meth:`format_response` so per-field escaping is not
+        double-applied. Use :meth:`send_text` for raw assistant output."""
+        await self._deliver(text, chat_id=chat_id)
+
+    async def _deliver(self, text: str, *, chat_id: int | None = _UNSET) -> None:
+        """Split (already-formatted) ``text`` per Telegram's limit and send each part.
 
         ``chat_id`` targets a specific chat (the per-message target threaded from
         ``IngressMessage.chat_id`` → ``ResponseChunk.target``); when omitted it
