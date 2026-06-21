@@ -26,6 +26,7 @@ from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
+from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
 from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.provider_select import select_tool_provider
@@ -1060,6 +1061,8 @@ async def _run_with_tools(
         _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
         started_monotonic=time.monotonic(), clock=_MonotonicClock(),
         prior_cost_usd=_prior_cost_usd,
+        # Exclude time blocked waiting for a human clarify answer from the time cap.
+        human_wait_source=current_human_wait_seconds,
     )
     # STEER-7/F094 — the clarify Raise/Stop wait scales PER CHANNEL from settings
     # (120s fallback) so a slow mobile user isn't auto-Stopped before answering.

@@ -11,6 +11,7 @@ scoped to this drive and never persisted (durable raise is E2-S5).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 from stackowl.exceptions import BudgetBreach
@@ -40,6 +41,7 @@ class BudgetGovernor:
         started_monotonic: float,
         clock: _Clock,
         prior_cost_usd: float = 0.0,
+        human_wait_source: Callable[[], float] | None = None,
     ) -> None:
         self._max_steps = caps.max_steps
         self._max_time_s = caps.max_time_s
@@ -48,6 +50,10 @@ class BudgetGovernor:
         self._trace_id = trace_id
         self._t0 = started_monotonic
         self._clock = clock
+        # Time the turn spent BLOCKED waiting for a human answer (clarify) must not
+        # count against the compute-time cap. None → no subtraction (byte-identical
+        # legacy behavior). The source returns cumulative human-wait seconds so far.
+        self._human_wait_source = human_wait_source
         # F093 — spend already accumulated by PRIOR durable attempts of this task
         # (the in-memory cost ledger resets to 0 on resume). Seeding it makes the
         # cost ceiling CUMULATIVE across park/resume rather than per-attempt.
@@ -69,7 +75,7 @@ class BudgetGovernor:
         if self._max_steps is not None and steps_done >= self._max_steps:
             return BudgetBreach("steps", float(self._max_steps), float(steps_done))
         if self._max_time_s is not None:
-            elapsed = self._clock.monotonic() - self._t0
+            elapsed = self._compute_elapsed()
             if elapsed >= self._max_time_s:
                 return BudgetBreach("time", self._max_time_s, elapsed)
         if self._max_cost_usd is not None and self._cost is not None:
@@ -101,8 +107,19 @@ class BudgetGovernor:
         """
         if self._max_time_s is None:
             return None
+        return max(0.0, self._max_time_s - self._compute_elapsed())
+
+    def _compute_elapsed(self) -> float:
+        """Wall-clock since start MINUS time blocked waiting for a human answer.
+
+        The human-wait subtraction makes the time cap measure COMPUTE time, not a
+        slow human. None source → no subtraction (legacy). Floors at 0.0 so a
+        clock skew or over-counted wait can never produce negative elapsed.
+        """
         elapsed = self._clock.monotonic() - self._t0
-        return max(0.0, self._max_time_s - elapsed)
+        if self._human_wait_source is not None:
+            elapsed -= max(0.0, self._human_wait_source())
+        return max(0.0, elapsed)
 
     def raise_caps(self, cap: str) -> None:
         """In-memory raise of the breached cap (interactive Raise).
