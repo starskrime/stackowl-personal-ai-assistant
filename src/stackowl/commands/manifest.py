@@ -20,6 +20,7 @@ from __future__ import annotations
 SHIPPED_COMMANDS: frozenset[str] = frozenset({
     # ── Dependency-free module-level commands (Pattern A) ──────────────────
     "help",
+    "find",
     "config",
     "settings",
     "cost",
