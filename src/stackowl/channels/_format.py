@@ -11,6 +11,7 @@ anchors on a header row immediately followed by a delimiter row (cells of only
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Mapping
 
 _DELIM_CELL = re.compile(r"^\s*:?-{1,}:?\s*$")
 
@@ -47,6 +48,15 @@ def flatten_gfm_tables(text: str) -> str:
         Text with any detected GFM tables replaced by fenced aligned blocks;
         all other content is returned byte-for-byte unchanged.
     """
+    return _transform_tables(text, _render_block)
+
+
+def _transform_tables(
+    text: str, render: Callable[[list[str], list[list[str]]], str],
+) -> str:
+    """Detect GFM pipe-tables (fence-aware) and replace each with ``render(header,
+    body)``. Shared by :func:`flatten_gfm_tables` (fenced block) and
+    :func:`tables_to_plain_list` (plain list) so detection can never drift."""
     if "|" not in text:
         return text
     lines = text.split("\n")
@@ -80,12 +90,56 @@ def flatten_gfm_tables(text: str) -> str:
             while j < n and _is_table_row(lines[j]) and not _is_delimiter_row(lines[j]):
                 body.append(_cells(lines[j]))
                 j += 1
-            out.append(_render_block(header, body))
+            out.append(render(header, body))
             i = j
             continue
         out.append(lines[i])
         i += 1
     return "\n".join(out)
+
+
+# Preference values (casefolded) that DISABLE a feature. Boolean parsing, not an
+# NL word-list — multilingual/learned phrasing maps to a canonical key elsewhere.
+_OFF_VALUES = frozenset({"off", "false", "no", "0", "none", "disabled"})
+
+
+def _render_plain_list(header: list[str], body: list[list[str]]) -> str:
+    """Render a table as a plain bullet list — no pipes, no fence, no dashes."""
+    if not body:
+        return "- " + ", ".join(h for h in header if h)
+    out_lines: list[str] = []
+    for row in body:
+        pairs: list[str] = []
+        for idx, cell in enumerate(row):
+            head = header[idx] if idx < len(header) else ""
+            pairs.append(f"{head}: {cell}" if head else cell)
+        out_lines.append("- " + "; ".join(pairs))
+    return "\n".join(out_lines)
+
+
+def tables_to_plain_list(text: str) -> str:
+    """Convert GFM pipe-tables into a plain bullet list (table form removed).
+
+    Stronger than :func:`flatten_gfm_tables` (which keeps a fenced, aligned
+    block): this honors a stored "no tables" preference by removing the table
+    representation entirely. Non-table content is returned unchanged.
+    """
+    return _transform_tables(text, _render_plain_list)
+
+
+def apply_output_preferences(text: str, prefs: Mapping[str, str]) -> str:
+    """Deterministically ENFORCE an owner's stored output-format preferences.
+
+    Channel-agnostic, applied at the delivery seam so a recalled preference
+    becomes an enforced constraint (not a hint the model may ignore). Currently
+    honors the canonical ``output_tables`` key: a value in :data:`_OFF_VALUES`
+    converts tables to a plain list. No matching preference → text unchanged
+    (byte-identical baseline).
+    """
+    tables = prefs.get("output_tables")
+    if tables is not None and tables.strip().casefold() in _OFF_VALUES:
+        return tables_to_plain_list(text)
+    return text
 
 
 def _render_block(header: list[str], body: list[list[str]]) -> str:
