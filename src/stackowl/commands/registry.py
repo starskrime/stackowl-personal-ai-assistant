@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.dry_run import build_preview, strip_sigil
 from stackowl.commands.metadata import SubCommand, resolve_path
 from stackowl.exceptions import CommandNotFoundError
 from stackowl.infra.observability import log
@@ -58,6 +59,20 @@ class CommandRegistry:
     async def dispatch(self, name: str, args: str, state: PipelineState) -> str:
         if name not in self._commands:
             raise CommandNotFoundError(name)
+        cmd = self._commands[name]
+
+        # Dry-run: a trailing `??` previews what the command WOULD do without
+        # running the handler — honest by construction (no handler, no side
+        # effects, nothing committed). Intercepted here so every channel that
+        # dispatches through the registry gets it for free.
+        is_dry_run, cleaned = strip_sigil(args)
+        if is_dry_run:
+            log.gateway.debug(
+                "[commands] registry.dispatch: dry-run preview (handler NOT run)",
+                extra={"_fields": {"command": name}},
+            )
+            return build_preview(name, cmd, cleaned)
+
         # Log the LENGTH, never the raw args — a command's args can carry a
         # secret (e.g. `/provider add … token=…`) and the field-key redactor
         # can't scrub a secret embedded inside a value string. Mirrors the
@@ -66,7 +81,7 @@ class CommandRegistry:
             "[commands] registry.dispatch: dispatching",
             extra={"_fields": {"command": name, "args_len": len(args)}},
         )
-        return await self._commands[name].handle(args, state)
+        return await cmd.handle(args, state)
 
     def list(self) -> list[SlashCommand]:
         return sorted(self._commands.values(), key=lambda c: c.command)

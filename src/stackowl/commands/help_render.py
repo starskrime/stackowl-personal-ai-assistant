@@ -45,6 +45,7 @@ def render_index(commands: list[SlashCommand]) -> str:
             lines.append(f"  {label:<{width}}  {cmd.description}")
         lines.append("")
     lines.append("▸ has sub-commands.  Type  /help <command>  to go deeper.")
+    lines.append("Tip: end any command with ?? to preview what it would do without running it.")
     return "\n".join(lines)
 
 
