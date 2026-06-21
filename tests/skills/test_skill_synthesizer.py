@@ -21,6 +21,7 @@ from stackowl.skills.synthesizer import (
     SkillSynthesizerPromptBuilder,
     ToolSequenceCluster,
     _DEFAULT_VERIFICATION_SECTION,
+    _VERIFICATION_HEADING,
     cluster_outcomes_by_tool_sequence,
     parse_new_skill_response,
     parse_refined_body,
@@ -92,7 +93,12 @@ def test_parse_new_skill_response_rejects_empty_required_field() -> None:
 
 def test_parse_refined_body_basic() -> None:
     raw = json.dumps({"body": "new improved body"})
-    assert parse_refined_body(raw) == "new improved body"
+    body = parse_refined_body(raw)
+    # Body is returned (not None) and the original text is preserved.
+    # A default ## Verification section is appended when the input lacks one.
+    assert body is not None
+    assert "new improved body" in body
+    assert "## Verification" in body
 
 
 def test_parse_refined_body_rejects_empty() -> None:
@@ -447,3 +453,101 @@ def test_parse_new_skill_response_appends_default_verification_when_absent() -> 
     assert count == 1, f"Expected exactly 1 '## Verification' heading, got {count}"
     # The default text from the constant must be present.
     assert _DEFAULT_VERIFICATION_SECTION.strip() in body
+
+
+# ---------- Finding 1: REFINE path must also guarantee ## Verification ------
+
+def test_parse_refined_body_appends_verification_when_absent() -> None:
+    """parse_refined_body must append the default Verification section fail-open
+    when the LLM-refined body omits it — same guarantee as the new-skill path."""
+    raw = json.dumps({"body": "## Steps\n1. Do the thing.\n\n## Pitfalls\nMind the edge cases."})
+    body = parse_refined_body(raw)
+    assert body is not None, "Skill must not be dropped (fail-open)"
+    assert _VERIFICATION_HEADING in body, "Default Verification section must be appended"
+    count = body.count(_VERIFICATION_HEADING)
+    assert count == 1, f"Expected exactly 1 '{_VERIFICATION_HEADING}' heading, got {count}"
+    assert _DEFAULT_VERIFICATION_SECTION.strip() in body
+
+
+def test_parse_refined_body_idempotent_when_verification_present() -> None:
+    """parse_refined_body must NOT append a second ## Verification when one is already present."""
+    body_with = (
+        "## Steps\n1. Fetch.\n\n"
+        "## Verification\nCheck the output.\n\n"
+        "## Pitfalls\nDon't break things."
+    )
+    raw = json.dumps({"body": body_with})
+    body = parse_refined_body(raw)
+    assert body is not None
+    count = body.count(_VERIFICATION_HEADING)
+    assert count == 1, f"Expected exactly 1 '{_VERIFICATION_HEADING}' heading, got {count}"
+
+
+# ---------- Finding 2: case-insensitive heading detection -------------------
+
+def test_parse_new_skill_response_case_insensitive_detection() -> None:
+    """A model-emitted '## verification' (lowercase) must NOT cause a double-append."""
+    body_lowercase = "## Steps\n1. Do it.\n\n## verification\nCheck carefully.\n"
+    raw = json.dumps({
+        "name": "lower-verification",
+        "description": "tests case sensitivity",
+        "when_to_use": "always",
+        "body": body_lowercase,
+    })
+    parsed = parse_new_skill_response(raw)
+    assert parsed is not None
+    body = parsed["body"]
+    # Must not append another section on top of the lowercase one.
+    assert body.lower().count("## verification") == 1, (
+        "Detection must be case-insensitive — lowercase '## verification' should be recognised"
+    )
+
+
+def test_parse_refined_body_case_insensitive_detection() -> None:
+    """A model-emitted '## verification' (lowercase) must NOT cause a double-append
+    on the refine path either."""
+    body_lowercase = "## Steps\n1. Do it.\n\n## verification\nCheck carefully.\n"
+    raw = json.dumps({"body": body_lowercase})
+    body = parse_refined_body(raw)
+    assert body is not None
+    assert body.lower().count("## verification") == 1, (
+        "Refine path detection must be case-insensitive"
+    )
+
+
+def test_refine_prompt_mentions_verification() -> None:
+    """build_for_refine's system prompt must instruct the model to include/preserve
+    ## Steps / ## Verification / ## Pitfalls with Verification mandatory."""
+    # Build a minimal Skill-like object — use a real Skill dataclass from the store.
+    import time
+    from stackowl.skills.store import Skill
+
+    sk = Skill(
+        skill_id=1,
+        name="test-skill",
+        description="a test",
+        when_to_use="always",
+        source="learned",
+        version="0.1.0",
+        body_text="## Steps\n1. Go.\n\n## Verification\nCheck.\n",
+        path="/tmp/test-skill",
+        manifest_json={"name": "test-skill", "description": "a test", "when_to_use": "always",
+                       "source": "learned", "version": "0.1.0"},
+        enabled=True,
+        success_rate=0.6,
+        n_executions=5,
+        parent_traces=[],
+        embedding=None,
+        embedding_model=None,
+        summary=None,
+        summary_source=None,
+        summary_body_hash=None,
+        tool_names=(),
+        loaded_at=time.time(),
+        updated_at=time.time(),
+    )
+    msgs = SkillSynthesizerPromptBuilder().build_for_refine(sk, [])
+    system_content = msgs[0].content
+    assert "Verification" in system_content, (
+        "build_for_refine system prompt must mention 'Verification' so the model preserves it"
+    )

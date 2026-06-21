@@ -198,8 +198,15 @@ class SkillSynthesizerPromptBuilder:
         system = (
             "You are refining an existing agent Skill that's been performing "
             "in the mid tier (50-70% success). The frontmatter MUST stay the "
-            "same. ONLY the body markdown changes. Respond ONLY with JSON of "
-            "this shape:\n"
+            "same. ONLY the body markdown changes.\n\n"
+            "Preserve (or improve) the three-section structure:\n"
+            "  ## Steps — numbered, concrete actions the agent takes\n"
+            "  ## Verification — how to confirm success with evidence BEFORE claiming done\n"
+            "  ## Pitfalls — common failure modes and how to avoid them\n\n"
+            "The ## Verification section is MANDATORY. It must tell the agent how to "
+            "confirm the task succeeded with concrete evidence (command output, file "
+            "contents, API response, etc.) and what to say if it failed.\n\n"
+            "Respond ONLY with JSON of this shape:\n"
             '{ "body": "new markdown body — keep useful parts, fix what fails" }\n'
             "Keep body under 800 words."
         )
@@ -246,8 +253,8 @@ def parse_new_skill_response(raw: str) -> dict[str, str] | None:
     if not name or not name[0].isalpha():
         return None
     out["name"] = name[:40]
-    # 2. DECISION — ensure Verification section is present (idempotent).
-    if _VERIFICATION_HEADING not in out["body"]:
+    # 2. DECISION — ensure Verification section is present (idempotent, case-insensitive).
+    if _VERIFICATION_HEADING.lower() not in out["body"].lower():
         log.skills.debug(
             "[synth] parse_new_skill_response: verification section absent — appending default",
             extra={"_fields": {"name": out["name"]}},
@@ -257,12 +264,26 @@ def parse_new_skill_response(raw: str) -> dict[str, str] | None:
 
 
 def parse_refined_body(raw: str) -> str | None:
-    """Parse the LLM's refined-body JSON. Returns ``None`` if invalid."""
+    """Parse the LLM's refined-body JSON. Returns ``None`` if invalid.
+
+    Guarantee (fail-open): if the refined body lacks a ``## Verification``
+    heading (case-insensitive), the same default section appended by
+    :func:`parse_new_skill_response` is added — so old learned skills that
+    predate the Verification patch keep the discipline after a refine pass.
+    """
     obj = parse_json_response(raw, required_keys=["body"])
     if obj is None:
         return None
     body = str(obj.get("body", "")).strip()
-    return body or None
+    if not body:
+        return None
+    # 2. DECISION — ensure Verification section is present (idempotent, case-insensitive).
+    if _VERIFICATION_HEADING.lower() not in body.lower():
+        log.skills.debug(
+            "[synth] parse_refined_body: verification section absent — appending default",
+        )
+        body = body.rstrip() + "\n\n" + _DEFAULT_VERIFICATION_SECTION
+    return body
 
 
 # ---------- the synthesizer -------------------------------------------------
