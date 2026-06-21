@@ -59,6 +59,12 @@ class TaskStatusTool(Tool):
         if db is None:
             return self._unavailable("no database pool is configured", t0)
 
+        # Owner scope. StackOwl is single-user by design: no runtime path mints a
+        # non-default principal, so durable_owner_id() is always None here and this
+        # resolves to DEFAULT_PRINCIPAL_ID. The owner-scoped tool tests and the
+        # cross-channel identity journey rely on this None→DEFAULT alignment (a task
+        # written under the default owner is read back under it). This is the
+        # deliberate single-user invariant, NOT an unscoped multi-tenant gap.
         owner = TraceContext.durable_owner_id() or DEFAULT_PRINCIPAL_ID
         log.tool.debug(
             "task_status.execute: looking up task",

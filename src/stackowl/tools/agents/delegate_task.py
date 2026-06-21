@@ -118,6 +118,10 @@ async def _resolve_durable_child_scope(
             }},
         )
         return _DurableChildScope()
+    # Single-user invariant: no runtime path mints a non-default principal, so
+    # durable_owner is None here and this resolves to DEFAULT_PRINCIPAL_ID — the
+    # same owner the parent's durable rows carry. Deliberate single-user scoping,
+    # not an unscoped multi-tenant gap (see DEFAULT_PRINCIPAL_ID in tenancy.principal).
     owner = durable_owner or DEFAULT_PRINCIPAL_ID
     try:
         delegate_key = idempotency_key(
