@@ -6,7 +6,7 @@ import pytest
 
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
-from stackowl.commands.resolver import CommandResolver
+from stackowl.commands.resolver import CommandResolver, suggest_invocations
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +115,19 @@ async def test_no_hardcoded_language_assumption() -> None:
     # "olvidar" is rare/distinctive (high IDF); "mostrar" is in every entry (low
     # IDF) — so the forget-equivalent ranks first despite the shared generic word.
     assert out[0].invocation == "/memoria olvidar"
+
+
+@pytest.mark.asyncio
+async def test_suggest_invocations_for_unknown_command() -> None:
+    """The gateway helper: an unknown command's words point to real commands."""
+    hits = await suggest_invocations("remember this note", _commands(), limit=3)
+    assert "/memory remember" in hits
+    assert all(h.startswith("/") for h in hits)
+
+
+@pytest.mark.asyncio
+async def test_suggest_invocations_empty_query() -> None:
+    assert await suggest_invocations("", _commands()) == []
 
 
 @pytest.mark.asyncio
