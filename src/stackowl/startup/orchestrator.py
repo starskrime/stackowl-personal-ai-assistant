@@ -933,8 +933,16 @@ class StartupOrchestrator:
 
             owner_key = resolve_identity_key(services, cli_session_id) or cli_session_id
             sequence_provider = SequenceSuggestionProvider(sequence_store, owner_key)
-        semantic_resolver = None
-        if self._settings.ui.semantic_command_search:
+        # ONE CommandResolver (indexed over the command tree) shared by the TUI
+        # semantic panel (issue 2) and the pre-delivery NL→command hint (issue 3),
+        # built only when at least one of those flags is on. Mirrors /find's
+        # embeddings access (lexical-only fallback when no model). Both consumers
+        # are gated independently below.
+        command_resolver = None
+        if (
+            self._settings.ui.semantic_command_search
+            or self._settings.ui.command_hints
+        ):
             from stackowl.commands.resolver import CommandResolver
 
             _emb_registry = memory_components.embedding_registry
@@ -947,12 +955,19 @@ class StartupOrchestrator:
                 log.debug(
                     "[startup] gateway: resolver embeddings unavailable", exc_info=exc
                 )
-            semantic_resolver = CommandResolver(provider, semantic=semantic)
-            semantic_resolver.index(_commands)
+            command_resolver = CommandResolver(provider, semantic=semantic)
+            command_resolver.index(_commands)
             log.info(
-                "[startup] gateway: semantic command search enabled",
+                "[startup] gateway: command resolver built",
                 extra={"_fields": {"semantic": semantic}},
             )
+        semantic_resolver = (
+            command_resolver if self._settings.ui.semantic_command_search else None
+        )
+        if self._settings.ui.command_hints:
+            # Inject onto the SAME mutable StepServices the backend reads at
+            # execute time (mirrors a2a_delegator wiring above).
+            services.command_hint_resolver = command_resolver
 
         tui_components = TuiAssembly.build(
             event_bus=event_bus,
@@ -1129,6 +1144,9 @@ class StartupOrchestrator:
                     interactive=True,  # real user turn
                     reply_target=msg.chat_id,  # §4.5 — route the reply to ITS chat
                     identity_key=resolve_identity_key(services, msg.session_id),
+                    # WS-D issue 3 — carry the scanner's fuzzy routing correction so
+                    # the pre-delivery hint surfacer can show it (else it's dead).
+                    route_suggestion=decision.suggestion,
                 )
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)

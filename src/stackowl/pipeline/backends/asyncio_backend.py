@@ -11,6 +11,7 @@ from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
+from stackowl.pipeline.command_hint import surface_command_hint
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
@@ -116,6 +117,11 @@ class AsyncioBackend(OrchestratorBackend):
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).
             current = await surface_critical_failure(current, self._services)
+            # WS-D issue 3 — additively append a marked NL→command hint (and any
+            # routing-correction notice) to a REAL answer. Runs AFTER the honesty
+            # floors so it never decorates a floored/failed turn; gated by
+            # ui.command_hints (no-op + byte-identical when off). Never raises.
+            current = await surface_command_hint(current, self._services)
 
             # F088 — persist the turn AFTER the honest floor band, synchronously
             # inside the ledger ContextVar binding (persist_turn reads it). On a

@@ -28,6 +28,7 @@ from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
+from stackowl.pipeline.command_hint import surface_command_hint
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
@@ -62,6 +63,10 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     # failed/bounced. Parity with AsyncioBackend. Never raises.
     surfaced = await surface_overclaim_gate(surfaced)
     surfaced = await surface_critical_failure(surfaced, get_services())
+    # WS-D issue 3 — additive NL→command hint (+ routing-correction notice) on a
+    # REAL answer. Gated by ui.command_hints (no-op when off); parity with
+    # AsyncioBackend. Never raises.
+    surfaced = await surface_command_hint(surfaced, get_services())
     # F088 — persist AFTER the honest floor band (parity with AsyncioBackend),
     # synchronously inside the ledger ContextVar binding established by run().
     # Floored turns record the user utterance only — never the dressed-up draft.
