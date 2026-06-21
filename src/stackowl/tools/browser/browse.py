@@ -601,7 +601,12 @@ class BrowserBrowseTool(Tool):
 
 
 def _err(msg: str, t0: float) -> ToolResult:
+    # Every _err site is a PRE-LOOP refusal (missing task, runtime/provider not
+    # initialized, no provider, disallowed seed_url, failed to open session / allocate
+    # page) reached BEFORE the browse loop acts; the loop returns its own ToolResult.
+    # So nothing crossed the side-effect boundary here — not an effectful failure.
     return ToolResult(
         success=False, output="",
         error=msg, duration_ms=(time.monotonic() - t0) * 1000,
+        side_effect_committed=False,
     )
