@@ -322,6 +322,20 @@ class StartupOrchestrator:
         owl_registry.register_builtin_personas()
         db_pool = DbPool(default_db_path())
         await db_pool.open()
+
+        # WS-D command-sequence learning — durable per-owner "after A you usually
+        # do B". Gated by ui.command_suggestions: None when off, so there is no
+        # recording, no suggested lane, and the dropdown stays byte-identical to
+        # the deterministic baseline (honesty spine). Built here (after the pool
+        # opens, migration 0065 already applied in phase 1) so the command-stub
+        # closure below can capture it.
+        sequence_store = None
+        if self._settings.ui.command_suggestions:
+            from stackowl.commands.sequence_store import CommandSequenceStore
+
+            sequence_store = CommandSequenceStore(db_pool)
+            log.info("[startup] gateway: command-sequence learning enabled")
+
         from stackowl.owls.dna_authored import capture_authored_dna
 
         await capture_authored_dna(owl_registry, db_pool)
@@ -946,8 +960,10 @@ class StartupOrchestrator:
             registry = CommandRegistry.instance()
             # §4.1 stream re-key: fetch the writer under the stream key (trace_id).
             writer = stream_registry.get_writer(trace_id)
+            dispatched_ok = False
             try:
                 reply = await registry.dispatch(cmd, args, state)
+                dispatched_ok = True
             except CommandNotFoundError:
                 reply = f"Unknown slash command: '/{cmd}'. Try /help to see what's available."
                 # Surface the commands they likely meant, using the same resolver
@@ -964,6 +980,24 @@ class StartupOrchestrator:
             except Exception as exc:
                 log.error("[startup] gateway: slash command failed", exc_info=exc)
                 reply = f"Command '/{cmd}' failed: {exc}"
+            # WS-D — learn the command sequence (best-effort, only on a real
+            # successful dispatch; a `??` dry-run is skipped inside record_dispatch).
+            # owner_key matches the per-turn identity the TUI provider reads back,
+            # so within-session "after A you usually B" surfaces immediately.
+            if dispatched_ok and sequence_store is not None:
+                try:
+                    from stackowl.commands.sequence_store import record_dispatch
+
+                    cmd_obj = registry.get(cmd)
+                    if cmd_obj is not None:
+                        owner_key = state.identity_key or session_id
+                        await record_dispatch(
+                            sequence_store, cmd, cmd_obj.meta, args, owner_key
+                        )
+                except Exception as exc:  # learning is never load-bearing
+                    log.debug(
+                        "[startup] gateway: sequence record failed", exc_info=exc
+                    )
             if writer is not None:
                 await writer.write(ResponseChunk(
                     content=reply, is_final=False, chunk_index=0,
