@@ -361,11 +361,14 @@ class UndoWriteTool(Tool):
             if token is None:
                 duration_ms = (time.monotonic() - t0) * 1000
                 log.tool.info("undo_write.execute: nothing to undo")
+                # Pure no-op: no snapshot exists, so nothing was restored. This is
+                # not an effectful failure and must not trip the give-up floor.
                 return ToolResult(
                     success=False,
                     output="",
                     error="Nothing to undo: no snapshots are available.",
                     duration_ms=duration_ms,
+                    side_effect_committed=False,
                 )
 
         ok, message = self._store.restore(token)

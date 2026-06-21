@@ -138,7 +138,25 @@ class TestUndoWriteTool:
         assert result.success is False
         assert result.error is not None and "Nothing to undo" in result.error
 
+    async def test_nothing_to_undo_is_not_an_effectful_failure(self, home: Path) -> None:
+        """No snapshots exist — a pure no-op. Nothing was restored, so it must NOT
+        count as an effectful failure that trips the give-up floor."""
+        result = await UndoWriteTool(store=UndoStore()).execute()
+        assert result.success is False
+        assert result.side_effect_committed is False
+
     async def test_bad_token_is_structured_no_raise(self, home: Path) -> None:
         result = await UndoWriteTool(store=UndoStore()).execute(token="bogus")
         assert result.success is False
         assert result.error is not None and "Unknown undo token" in result.error
+
+    async def test_successful_undo_stays_default_committed(self, home: Path, ws: Path) -> None:
+        """Positive control: a real restore does not falsely clear the committed flag."""
+        store = UndoStore()
+        target = ws / "f.txt"
+        target.write_text("ORIGINAL")
+        store.snapshot(target, "ORIGINAL")
+        target.write_text("WRONG")
+        result = await UndoWriteTool(store=store).execute()
+        assert result.success is True
+        assert result.side_effect_committed is True
