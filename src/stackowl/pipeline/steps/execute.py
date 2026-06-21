@@ -27,7 +27,7 @@ from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
-from stackowl.pipeline.context_budget import RESPONSE_RESERVE_TOKENS
+from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP, RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
@@ -621,6 +621,15 @@ async def _run_with_tools(
     _fixed_cost = _est_tokens(state.system_prompt) + sum(
         _est_tokens(getattr(m, "content", "")) for m in state.history
     )
+    # Configurable per-turn tool-count cap (OrchestratorSettings.tool_count_cap):
+    # weak/quantized models derail when offered too many tools. Default 40 keeps the
+    # presented set byte-identical; lower it to lean the roster for weak models.
+    _svc_settings = get_services().settings
+    _max_tools = (
+        _svc_settings.orchestrator.tool_count_cap
+        if _svc_settings is not None
+        else HARD_TOOL_COUNT_CAP
+    )
     if restrict_to is not None:
         tool_schemas = tool_registry.to_provider_schema(
             provider.protocol, profile=profile, pins=pins, restrict_to=restrict_to
@@ -629,7 +638,11 @@ async def _run_with_tools(
         tool_schemas = tool_registry.to_provider_schema(
             provider.protocol, profile=profile, pins=pins,
             request_text=state.input_text,
-            budget={"window": _window, "fixed_cost_tokens": _fixed_cost},
+            budget={
+                "window": _window,
+                "fixed_cost_tokens": _fixed_cost,
+                "max_tools": _max_tools,
+            },
         )
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(
