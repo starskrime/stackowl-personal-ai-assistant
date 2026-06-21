@@ -104,31 +104,55 @@ async def run(state: PipelineState) -> PipelineState:
     # not carry needless playbook tokens in its system prompt.
     skills_block = ""
     store = services.skill_store
+    # Global catalog (skills.global_catalog, default ON) surfaces installed skills
+    # the owl does NOT own as a cheap CATALOG region, so the default Secretary —
+    # which owns no skills — still learns skills exist. Unconfigured (no settings
+    # wired, e.g. settings-less unit tests) ⇒ OFF ⇒ byte-identical baseline.
+    _settings = getattr(services, "settings", None)
+    global_catalog_enabled = (
+        bool(getattr(getattr(_settings, "skills", None), "global_catalog", True))
+        if _settings is not None
+        else False
+    )
+    owned_skills = tuple(manifest.skills) if manifest is not None else ()
     if (
         store is not None
-        and manifest is not None
-        and manifest.skills
         and state.intent_class not in TOOL_FREE_CLASSES
+        and (owned_skills or global_catalog_enabled)
     ):
         try:
-            owned = await store.get_many_by_name(manifest.skills)
-            pinned = set(manifest.pinned_skills) & set(manifest.skills)  # owned-only pins
+            owned = await store.get_many_by_name(owned_skills) if owned_skills else []
+            pinned = (
+                set(manifest.pinned_skills) & set(owned_skills) if manifest is not None else set()
+            )  # owned-only pins
             scores = None
             turn = None
-            if state.query_embedding is not None:
+            if owned and state.query_embedding is not None:
                 turn = FOCUS_TRACKER.begin_turn(state.owl_name, state.session_id)
                 scores = score_owned_skills(
                     owned, query_embedding=state.query_embedding, tracker=FOCUS_TRACKER,
                     owl=state.owl_name, session=state.session_id, turn=turn,
                 )
             tiered = assign_tiers(owned, scores, pinned=pinned)
-            skills_block = _skill_injector.render(state.owl_name, tiered)
+            # Append every OTHER enabled skill as a CATALOG entry (names only).
+            if global_catalog_enabled and hasattr(store, "list_enabled"):
+                owned_names = {sk.name for sk in owned}
+                tiered = tiered + [
+                    (sk, SkillTier.CATALOG, False)
+                    for sk in await store.list_enabled()
+                    if sk.name not in owned_names
+                ]
+            if tiered:
+                skills_block = _skill_injector.render(state.owl_name, tiered)
             if scores is not None and turn is not None:
                 full_names = [sk.name for sk, tier, _p in tiered if tier is SkillTier.FULL]
                 FOCUS_TRACKER.mark_active(state.owl_name, state.session_id, full_names, turn)
             log.engine.debug(
                 "[pipeline] assemble: skills block rendered",
-                extra={"_fields": {"owl": state.owl_name, "skills_len": len(skills_block)}},
+                extra={"_fields": {
+                    "owl": state.owl_name, "skills_len": len(skills_block),
+                    "global_catalog": global_catalog_enabled,
+                }},
             )
         except Exception as exc:  # no-hidden-errors: never crash the turn
             log.engine.error(

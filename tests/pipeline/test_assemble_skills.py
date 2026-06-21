@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from stackowl.owls.manifest import OwlAgentManifest
@@ -11,6 +13,20 @@ class _FakeStore:
     def __init__(self, skills): self._skills = skills
     async def get_many_by_name(self, names):
         return [s for s in self._skills if s.name in names]
+
+
+class _CatalogStore:
+    """Fake store that also answers list_enabled (for the global catalog path)."""
+    def __init__(self, owned, enabled):
+        self._owned, self._enabled = owned, enabled
+    async def get_many_by_name(self, names):
+        return [s for s in self._owned if s.name in names]
+    async def list_enabled(self):
+        return list(self._enabled)
+
+
+def _settings(global_catalog: bool):
+    return SimpleNamespace(skills=SimpleNamespace(global_catalog=global_catalog))
 
 
 class _Sk:
@@ -84,6 +100,61 @@ async def test_assemble_fallback_when_no_query_embedding():
     state = _state(owl_name="o", query_embedding=None)
     out = await assemble.run(state)
     assert "a" in (out.system_prompt or "")  # still injected via manifest-order fallback
+
+
+@pytest.mark.asyncio
+async def test_global_catalog_surfaced_for_default_owl_when_enabled():
+    """The default Secretary owns no skills, but with the catalog flag ON it must
+    still learn that installed skills exist (CATALOG region, names only)."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    store = _CatalogStore(
+        owned=[],
+        enabled=[_Sk("dl-video", "learned"), _Sk("hello", "learned")],
+    )
+    set_services(StepServices(owl_registry=reg, skill_store=store,
+                              settings=_settings(global_catalog=True)))
+    from stackowl.pipeline.steps import assemble
+    out = await assemble.run(_state(owl_name="secretary"))
+    sp = out.system_prompt or ""
+    assert "CATALOG" in sp
+    assert "dl-video" in sp and "hello" in sp
+    assert "skill_view" in sp
+
+
+@pytest.mark.asyncio
+async def test_global_catalog_off_is_byte_identical_to_no_block():
+    """Flag OFF → no skills block at all (byte-identical baseline preserved)."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    enabled = [_Sk("dl-video", "learned"), _Sk("hello", "learned")]
+
+    set_services(StepServices(owl_registry=reg,
+                              skill_store=_CatalogStore(owned=[], enabled=enabled),
+                              settings=_settings(global_catalog=False)))
+    from stackowl.pipeline.steps import assemble
+    off = (await assemble.run(_state(owl_name="secretary"))).system_prompt or ""
+
+    # Same owl, a store with nothing relevant and no catalog → the true baseline.
+    set_services(StepServices(owl_registry=reg,
+                              skill_store=_CatalogStore(owned=[], enabled=[]),
+                              settings=_settings(global_catalog=False)))
+    baseline = (await assemble.run(_state(owl_name="secretary"))).system_prompt or ""
+
+    assert "dl-video" not in off and "CATALOG" not in off
+    assert off == baseline
+
+
+@pytest.mark.asyncio
+async def test_global_catalog_skipped_when_settings_absent():
+    """Unconfigured (no settings wired) → feature OFF, baseline untouched."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    store = _CatalogStore(owned=[], enabled=[_Sk("dl-video", "learned")])
+    set_services(StepServices(owl_registry=reg, skill_store=store))  # settings=None
+    from stackowl.pipeline.steps import assemble
+    sp = (await assemble.run(_state(owl_name="secretary"))).system_prompt or ""
+    assert "dl-video" not in sp
 
 
 @pytest.mark.asyncio

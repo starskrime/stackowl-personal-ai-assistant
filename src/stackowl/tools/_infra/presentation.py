@@ -40,7 +40,12 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # can recall + durably preserve mid-turn regardless of its capability_profile; the
 # cap is bumped by 1 in lockstep so base growth does NOT shrink discretionary
 # per-turn headroom.
-_DEFAULT_CAP = 31
+# Skills-awareness fix adds the two skill DISCOVERY tools (skills_list / skill_view)
+# to the base set so a weak/small-window model can always discover and load a skill
+# (skill_manage authoring was already base, but discovery was prunable — the bug).
+# The cap is bumped by 2 in lockstep so base growth does NOT shrink discretionary
+# per-turn headroom.
+_DEFAULT_CAP = 33
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
@@ -54,6 +59,9 @@ _DEFAULT_CAP = 31
 _DEFAULT_BASE = frozenset({
     "read_file", "write_file", "shell", "web_fetch",
     "skill_manage", "reflect_now", "synthesize_skills",
+    # Skill DISCOVERY — read-only; must survive the budget so a weak model can
+    # always find (skills_list) and load (skill_view) an installed skill.
+    "skills_list", "skill_view",
     "send_file",
     # H4 — tool_build: every owl can author a new tool to overcome a capability
     # gap (consequential → still consent-gated at dispatch; surfacing ≠ bypass).
