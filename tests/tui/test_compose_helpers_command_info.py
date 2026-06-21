@@ -6,6 +6,7 @@ import dataclasses
 
 import pytest
 
+from stackowl.commands.metadata import CommandMeta
 from stackowl.tui.widgets.compose_helpers import CommandInfo, filter_command_infos
 
 pytestmark = pytest.mark.tui
@@ -20,7 +21,10 @@ def test_command_info_is_frozen_dataclass() -> None:
     ci = CommandInfo(name="help", description="List commands")
     assert dataclasses.is_dataclass(ci)
     params = dataclasses.fields(ci)
-    assert {f.name for f in params} == {"name", "description"}
+    # `meta` was added to carry the command's sub-command tree; it defaults to
+    # an empty CommandMeta so name-only callers are unaffected.
+    assert {f.name for f in params} == {"name", "description", "meta"}
+    assert ci.meta == CommandMeta()
     with pytest.raises(dataclasses.FrozenInstanceError):
         ci.name = "other"  # type: ignore[misc]
 
