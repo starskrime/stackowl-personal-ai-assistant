@@ -136,7 +136,7 @@ class ApplyPatchTool(Tool):
         log.tool.debug("apply_patch.execute: entry", extra={"_fields": {"patch_len": len(patch)}})
 
         if not patch:
-            return self._err("Missing patch", t0)
+            return self._err("Missing patch", t0, committed=False)
         # Max patch size guard — reject oversized input before any parsing/IO.
         patch_bytes = len(patch.encode("utf-8"))
         if patch_bytes > _MAX_PATCH_BYTES:
@@ -148,15 +148,16 @@ class ApplyPatchTool(Tool):
                 f"Patch too large ({patch_bytes} bytes; limit {_MAX_PATCH_BYTES}). "
                 "Split it into smaller patches.",
                 t0,
+                committed=False,
             )
 
         # Parse (pure — no IO yet).
         operations, parse_err = parse_v4a_patch(patch)
         if parse_err:
             log.tool.info("apply_patch.execute: parse error", extra={"_fields": {"err": parse_err}})
-            return self._err(f"Patch parse failed (nothing applied): {parse_err}", t0)
+            return self._err(f"Patch parse failed (nothing applied): {parse_err}", t0, committed=False)
         if not operations:
-            return self._err("Patch contained no operations.", t0)
+            return self._err("Patch contained no operations.", t0, committed=False)
 
         # 2. DECISION — collect EVERY target path and path-guard it BEFORE any lock
         # or write. This is the #1 security condition: an Add/Delete/Move target
@@ -172,6 +173,7 @@ class ApplyPatchTool(Tool):
                     f"Path traversal denied: '{tgt}' resolves outside the workspace. "
                     "No files were modified.",
                     t0,
+                    committed=False,
                 )
 
         # Resolve + sort the lock set (deadlock-free ordering). Lock both Move ends.
@@ -188,7 +190,7 @@ class ApplyPatchTool(Tool):
             return await self._apply_all(operations, t0)
 
         # Unreachable (AsyncExitStack body always returns), but satisfies typing.
-        return self._err("Internal error: apply context exited without a result.", t0)
+        return self._err("Internal error: apply context exited without a result.", t0, committed=False)
 
     # ------------------------------------------------------------------ apply core
 
@@ -486,9 +488,17 @@ class ApplyPatchTool(Tool):
         )
 
     @staticmethod
-    def _err(msg: str, t0: float) -> ToolResult:
+    def _err(msg: str, t0: float, *, committed: bool = True) -> ToolResult:
+        """Structured failure. ``committed`` defaults True (conservative); callers
+        pass False ONLY at a pre-execution refusal (missing/oversized/unparseable
+        patch, no operations, traversal) where NOTHING was locked or written. A
+        mid-apply failure (rolled back) keeps the default True — the writes were
+        attempted, so the boundary may have been crossed before rollback."""
         duration_ms = (time.monotonic() - t0) * 1000
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        return ToolResult(
+            success=False, output="", error=msg,
+            duration_ms=duration_ms, side_effect_committed=committed,
+        )
 
 
 class _ApplyError(Exception):
