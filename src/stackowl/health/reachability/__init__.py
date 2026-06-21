@@ -16,8 +16,8 @@ See :mod:`stackowl.health.reachability.census` for the registry and
 from __future__ import annotations
 
 from stackowl.health.reachability.census import (
-    ProbeResult,
     REQUIRED_PROBES,
+    ProbeResult,
     census_passes,
     reachability_probe,
     registered_probes,
