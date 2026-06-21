@@ -172,3 +172,64 @@ class TestPostWriteVerify:
         result = await tool.execute(path=str(f), old_string="old", new_string="new")
         assert result.success is False
         assert result.error is not None and "verification failed" in result.error.lower()
+
+    async def test_post_write_failure_stays_committed(
+        self, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Positive control: a post-write verify mismatch is a POST-ATTEMPT failure
+        (the write was issued, the boundary may be crossed) → committed stays True."""
+        f = workspace / "code.py"
+        f.write_text("keep\nold\n")
+        tool = EditTool()
+        real_read_text = Path.read_text
+        calls = {"n": 0}
+
+        def fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            calls["n"] += 1
+            if calls["n"] >= 2 and self == f:
+                return "keep\nold\n"
+            return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        result = await tool.execute(path=str(f), old_string="old", new_string="new")
+        assert result.success is False
+        assert result.side_effect_committed is True  # write was attempted
+
+
+class TestEditRefusalNotEffectful:
+    """Pre-execution refusals / no-match leave the file untouched (no snapshot, no
+    write) — they must NOT count as effectful failures that trip the give-up floor."""
+
+    async def test_missing_path_not_effectful(self, workspace: Path) -> None:
+        result = await EditTool().execute(path="", old_string="a", new_string="b")
+        assert result.success is False
+        assert result.side_effect_committed is False
+
+    async def test_empty_old_string_not_effectful(self, workspace: Path) -> None:
+        f = workspace / "code.py"
+        f.write_text("x\n")
+        result = await EditTool().execute(path=str(f), old_string="", new_string="b")
+        assert result.success is False
+        assert result.side_effect_committed is False
+
+    async def test_file_not_found_not_effectful(self, workspace: Path) -> None:
+        missing = workspace / "nope.py"
+        result = await EditTool().execute(path=str(missing), old_string="a", new_string="b")
+        assert result.success is False
+        assert result.side_effect_committed is False
+
+    async def test_no_match_not_effectful(self, workspace: Path) -> None:
+        f = workspace / "code.py"
+        f.write_text("alpha\nbeta\n")
+        before = f.read_text()
+        result = await EditTool().execute(path=str(f), old_string="zzz-absent", new_string="b")
+        assert result.success is False
+        assert result.side_effect_committed is False
+        assert f.read_text() == before  # file genuinely untouched
+
+    async def test_successful_edit_stays_committed(self, workspace: Path) -> None:
+        f = workspace / "code.py"
+        f.write_text("alpha\nbeta\n")
+        result = await EditTool().execute(path=str(f), old_string="beta", new_string="gamma")
+        assert result.success is True
+        assert result.side_effect_committed is True
