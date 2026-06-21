@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.commands.resolver import CommandResolver
+    from stackowl.commands.sequence_store import SequenceSuggestionProvider
     from stackowl.config.ui_settings import UISettings
     from stackowl.events.bus import EventBus
     from stackowl.tui.app import StackOwlApp
@@ -51,12 +53,16 @@ class TuiAssembly:
         owl_names: Iterable[str] | None = None,
         command_infos: Iterable[CommandInfo] | None = None,
         ui_settings: UISettings | None = None,
+        sequence_provider: SequenceSuggestionProvider | None = None,
+        semantic_resolver: CommandResolver | None = None,
     ) -> TuiComponents:
         """Construct the app and coordinator. Neither is started here.
 
         ``command_names`` and ``owl_names`` feed ``ComposeArea``'s
         autocomplete. Pass empty if not yet known — the adapter can call
-        ``app.set_command_names`` later.
+        ``app.set_command_names`` later. ``sequence_provider`` /
+        ``semantic_resolver`` are the (optional, off-by-default) WS-D AI lanes;
+        ``None`` keeps the dropdown byte-identical to the deterministic baseline.
         """
         log.tui.info("[tui] assembly.build: entry")
 
@@ -69,6 +75,8 @@ class TuiAssembly:
             command_names=command_names,
             command_infos=command_infos,
             owl_names=owl_names,
+            sequence_provider=sequence_provider,
+            semantic_resolver=semantic_resolver,
         )
         # UIStateCoordinator's annotation is `App[object]` but Textual's
         # generic is contravariant in practice — StackOwlApp(App[None]) is

@@ -322,6 +322,20 @@ class StartupOrchestrator:
         owl_registry.register_builtin_personas()
         db_pool = DbPool(default_db_path())
         await db_pool.open()
+
+        # WS-D command-sequence learning — durable per-owner "after A you usually
+        # do B". Gated by ui.command_suggestions: None when off, so there is no
+        # recording, no suggested lane, and the dropdown stays byte-identical to
+        # the deterministic baseline (honesty spine). Built here (after the pool
+        # opens, migration 0065 already applied in phase 1) so the command-stub
+        # closure below can capture it.
+        sequence_store = None
+        if self._settings.ui.command_suggestions:
+            from stackowl.commands.sequence_store import CommandSequenceStore
+
+            sequence_store = CommandSequenceStore(db_pool)
+            log.info("[startup] gateway: command-sequence learning enabled")
+
         from stackowl.owls.dna_authored import capture_authored_dna
 
         await capture_authored_dna(owl_registry, db_pool)
@@ -905,14 +919,67 @@ class StartupOrchestrator:
             for c in _commands
         ]
         owl_names = [m.name for m in owl_registry.list()]
+
+        # WS-D AI lanes for the local terminal. A stable CLI session id ties the
+        # suggested-lane owner_key to the SAME identity the command-stub records
+        # under (state.identity_key or session_id), so "after A you usually B"
+        # surfaces within the session. Both lanes are None unless their config
+        # flag is on → the dropdown stays byte-identical to the deterministic
+        # baseline (honesty spine).
+        cli_session_id = "cli-local"
+        sequence_provider = None
+        if sequence_store is not None:
+            from stackowl.commands.sequence_store import SequenceSuggestionProvider
+
+            owner_key = resolve_identity_key(services, cli_session_id) or cli_session_id
+            sequence_provider = SequenceSuggestionProvider(sequence_store, owner_key)
+        # ONE CommandResolver (indexed over the command tree) shared by the TUI
+        # semantic panel (issue 2) and the pre-delivery NL→command hint (issue 3),
+        # built only when at least one of those flags is on. Mirrors /find's
+        # embeddings access (lexical-only fallback when no model). Both consumers
+        # are gated independently below.
+        command_resolver = None
+        if (
+            self._settings.ui.semantic_command_search
+            or self._settings.ui.command_hints
+        ):
+            from stackowl.commands.resolver import CommandResolver
+
+            _emb_registry = memory_components.embedding_registry
+            provider = None
+            semantic = False
+            try:
+                provider = _emb_registry.get()
+                semantic = _emb_registry.is_semantic
+            except Exception as exc:  # lexical-only fallback is fine
+                log.debug(
+                    "[startup] gateway: resolver embeddings unavailable", exc_info=exc
+                )
+            command_resolver = CommandResolver(provider, semantic=semantic)
+            command_resolver.index(_commands)
+            log.info(
+                "[startup] gateway: command resolver built",
+                extra={"_fields": {"semantic": semantic}},
+            )
+        semantic_resolver = (
+            command_resolver if self._settings.ui.semantic_command_search else None
+        )
+        if self._settings.ui.command_hints:
+            # Inject onto the SAME mutable StepServices the backend reads at
+            # execute time (mirrors a2a_delegator wiring above).
+            services.command_hint_resolver = command_resolver
+
         tui_components = TuiAssembly.build(
             event_bus=event_bus,
             command_names=command_names,
             command_infos=command_infos,
             owl_names=owl_names,
             ui_settings=self._settings.ui,
+            sequence_provider=sequence_provider,
+            semantic_resolver=semantic_resolver,
         )
         adapter = CLIAdapter(
+            session_id=cli_session_id,
             tui_components=tui_components, event_bus=event_bus,
         )
         # E5 — let the clarify gateway deliver questions back over the CLI.
@@ -946,8 +1013,10 @@ class StartupOrchestrator:
             registry = CommandRegistry.instance()
             # §4.1 stream re-key: fetch the writer under the stream key (trace_id).
             writer = stream_registry.get_writer(trace_id)
+            dispatched_ok = False
             try:
                 reply = await registry.dispatch(cmd, args, state)
+                dispatched_ok = True
             except CommandNotFoundError:
                 reply = f"Unknown slash command: '/{cmd}'. Try /help to see what's available."
                 # Surface the commands they likely meant, using the same resolver
@@ -964,6 +1033,24 @@ class StartupOrchestrator:
             except Exception as exc:
                 log.error("[startup] gateway: slash command failed", exc_info=exc)
                 reply = f"Command '/{cmd}' failed: {exc}"
+            # WS-D — learn the command sequence (best-effort, only on a real
+            # successful dispatch; a `??` dry-run is skipped inside record_dispatch).
+            # owner_key matches the per-turn identity the TUI provider reads back,
+            # so within-session "after A you usually B" surfaces immediately.
+            if dispatched_ok and sequence_store is not None:
+                try:
+                    from stackowl.commands.sequence_store import record_dispatch
+
+                    cmd_obj = registry.get(cmd)
+                    if cmd_obj is not None:
+                        owner_key = state.identity_key or session_id
+                        await record_dispatch(
+                            sequence_store, cmd, cmd_obj.meta, args, owner_key
+                        )
+                except Exception as exc:  # learning is never load-bearing
+                    log.debug(
+                        "[startup] gateway: sequence record failed", exc_info=exc
+                    )
             if writer is not None:
                 await writer.write(ResponseChunk(
                     content=reply, is_final=False, chunk_index=0,
@@ -1057,6 +1144,9 @@ class StartupOrchestrator:
                     interactive=True,  # real user turn
                     reply_target=msg.chat_id,  # §4.5 — route the reply to ITS chat
                     identity_key=resolve_identity_key(services, msg.session_id),
+                    # WS-D issue 3 — carry the scanner's fuzzy routing correction so
+                    # the pre-delivery hint surfacer can show it (else it's dead).
+                    route_suggestion=decision.suggestion,
                 )
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)

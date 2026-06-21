@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from stackowl.audit.logger import AuditLogger
+    from stackowl.commands.resolver import CommandResolver
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
@@ -127,6 +128,12 @@ class StepServices:
     # across channels. None → unconfigured; callers degrade to session_id (per-channel
     # behavior, byte-identical to before this feature existed).
     identity_resolver: IdentityResolver | None = field(default=None)
+    # WS-D command-hint resolver (issue 3) — a CommandResolver indexed over the
+    # slash-command tree. The pre-delivery command-hint surfacer reads THIS to
+    # additively suggest a high-confidence slash command for a natural-language
+    # turn (marked, never auto-run). None → no hint (feature off); built only
+    # when ui.command_hints is enabled.
+    command_hint_resolver: CommandResolver | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

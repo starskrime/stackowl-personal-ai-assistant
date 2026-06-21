@@ -20,6 +20,8 @@ from stackowl.tui.messages import (
 )
 from stackowl.tui.widgets.autocomplete_dropdown import AutocompleteDropdown
 from stackowl.tui.widgets.compose_helpers import (
+    ROW_SEMANTIC,
+    ROW_SUGGESTED,
     AutocompleteKind,
     AutocompleteState,
     CommandInfo,
@@ -27,7 +29,10 @@ from stackowl.tui.widgets.compose_helpers import (
     build_state,
     command_dropdown_items,
     filter_candidates,
+    is_path_prefix,
+    mark_rows,
     parse_completion,
+    predict_next_token,
 )
 from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 
@@ -35,6 +40,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from textual.app import ComposeResult
+
+    from stackowl.commands.resolver import CommandResolver
+    from stackowl.commands.sequence_store import SequenceSuggestionProvider
 
 _INPUT_ID = "compose_input"
 _DROPDOWN_ID = "autocomplete_dropdown"
@@ -113,10 +121,20 @@ class ComposeArea(Vertical):
         command_names: Iterable[str] | None = None,
         command_infos: Iterable[CommandInfo] | None = None,
         owl_names: Iterable[str] | None = None,
+        sequence_provider: SequenceSuggestionProvider | None = None,
+        semantic_resolver: CommandResolver | None = None,
     ) -> None:
         super().__init__()
         infos: list[CommandInfo] = list(command_infos or [])
         self._command_infos: list[CommandInfo] = infos
+        # WS-D AI augmentation (both default None → byte-identical deterministic
+        # dropdown). The provider feeds the ☆-suggested lane (bare "/"); the
+        # resolver powers the prose semantic panel + is consulted nowhere else.
+        self._sequence_provider = sequence_provider
+        self._semantic_resolver = semantic_resolver
+        # Forward ghost-text: the predicted suffix to append on Right-arrow.
+        self._ghost_suffix: str = ""
+        self._parliament_active: bool = False
         self._desc_by_name: dict[str, str] = {ci.name: ci.description for ci in infos}
         self._command_names: list[str] = list(command_names or [])
         # Passing only command_infos still powers name autocomplete; an
@@ -217,6 +235,24 @@ class ComposeArea(Vertical):
             self.state = _STATE_COMPOSING
         else:
             self.state = _STATE_IDLE
+
+        # Gait-read (WS-D): a non-empty natural-language phrase that is NOT a
+        # command path switches the panel to resolver-ranked command candidates
+        # — but only when the semantic layer is enabled. Off → fall through to
+        # the deterministic path below (byte-identical legacy behaviour).
+        if (
+            self._semantic_resolver is not None
+            and value.strip()
+            and not is_path_prefix(value)
+        ):
+            self._clear_ghost()
+            self.run_worker(
+                self._show_semantic_panel(value),
+                exclusive=True,
+                group="ac_async",
+            )
+            return
+
         self._autocomplete_state = build_state(
             value=value,
             command_names=self._command_names,
@@ -228,6 +264,16 @@ class ComposeArea(Vertical):
             self._show_owl_autocomplete(self._autocomplete_state.prefix)
         else:
             self._hide_autocomplete()
+
+        # Forward ghost-text prediction (deterministic; path mode only).
+        self._update_ghost(value)
+
+        # ☆ suggested lane — only in the low-commitment window (just "/" typed).
+        # Collapses to zero the instant a narrowing keystroke makes value != "/".
+        if self._sequence_provider is not None and value == "/":
+            self.run_worker(
+                self._load_suggested_lane(), exclusive=True, group="ac_async"
+            )
 
     def on_submit_text_area_submitted(
         self, event: SubmitTextArea.Submitted
@@ -304,6 +350,9 @@ class ComposeArea(Vertical):
             "[tui] compose_area.set_parliament_active: entry",
             extra={"_fields": {"active": active}},
         )
+        self._parliament_active = active
+        if active:
+            self._clear_ghost()
         key = "compose.parliament_active" if active else "compose.hints"
         self._set_hint_text(localize(key))
 
@@ -396,6 +445,128 @@ class ComposeArea(Vertical):
         dropdown.display = True
         self._dropdown_open = True
 
+    def _editor(self) -> SubmitTextArea | None:
+        """Self-healing accessor for the compose editor."""
+        try:
+            return self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ WS-D async lanes
+    async def _load_suggested_lane(self) -> None:
+        """Fetch learned next-likely commands and fence them above the "/" list.
+
+        Runs only in the low-commitment window (the buffer is exactly "/"). If
+        the user has typed anything more by the time the DB answers, it bails —
+        the lane must collapse on the first narrowing keystroke. The suggested
+        rows are ☆-marked, never the default highlight, and never auto-fire.
+        """
+        provider = self._sequence_provider
+        if provider is None:
+            return
+        suggestions = await provider.suggest(limit=3)
+        editor = self._editor()
+        if editor is None or editor.text != "/" or not suggestions:
+            return
+        sug_rows = mark_rows(
+            [(s.invocation, "you usually do this next") for s in suggestions],
+            ROW_SUGGESTED,
+        )
+        _level, items = command_dropdown_items("/", self._command_infos)
+        dropdown = self._dropdown()
+        if dropdown is None:
+            return
+        dropdown.set_items([*sug_rows, *items])
+        dropdown.display = True
+        self._dropdown_open = True
+        self._completion_level = CompletionLevel.COMMAND
+        log.tui.debug(
+            "[tui] compose_area._load_suggested_lane: shown",
+            extra={"_fields": {"suggested": len(sug_rows)}},
+        )
+
+    async def _show_semantic_panel(self, value: str) -> None:
+        """Rank command candidates for a natural-language phrase (resolver).
+
+        The panel opens with NO row selected so Enter still SUBMITS the prose to
+        the owl — the user must deliberately arrow/Tab into a candidate, which
+        only POPULATES the box (never fires). Bails if the buffer changed while
+        the resolver ran.
+        """
+        resolver = self._semantic_resolver
+        if resolver is None:
+            return
+        candidates = await resolver.resolve(value, limit=6)
+        editor = self._editor()
+        if editor is None or editor.text != value:
+            return  # the user typed on — this result is stale
+        self._autocomplete_state = AutocompleteState(
+            kind=AutocompleteKind.NONE, prefix="", candidates=()
+        )
+        if not candidates:
+            self._hide_autocomplete()
+            return
+        rows = mark_rows(
+            [(c.invocation, c.summary) for c in candidates], ROW_SEMANTIC
+        )
+        dropdown = self._dropdown()
+        if dropdown is None:
+            return
+        dropdown.set_items(list(rows), allow_no_selection=True)
+        dropdown.display = True
+        self._dropdown_open = True
+        self._completion_level = CompletionLevel.NONE
+        log.tui.debug(
+            "[tui] compose_area._show_semantic_panel: shown",
+            extra={"_fields": {"candidates": len(rows)}},
+        )
+
+    # ------------------------------------------------------------------ ghost text
+    def _update_ghost(self, value: str) -> None:
+        """Recompute the forward ghost-text prediction and reflect it in the hint."""
+        if self.state == _STATE_MCP_DISABLED or self._parliament_active:
+            return
+        suffix = predict_next_token(value, self._command_infos) or ""
+        self._ghost_suffix = suffix
+        if suffix:
+            self._set_hint_text(f"→ {value}{suffix}     ·     → to accept")
+        else:
+            self._restore_hint()
+
+    def _clear_ghost(self) -> None:
+        """Drop any pending ghost-text and restore the default hint."""
+        self._ghost_suffix = ""
+        self._restore_hint()
+
+    def _restore_hint(self) -> None:
+        """Reset the hint line to its default (unless a state owns it)."""
+        if self.state == _STATE_MCP_DISABLED or self._parliament_active:
+            return
+        self._set_hint_text(localize("compose.hints"))
+
+    def _accept_ghost(self) -> bool:
+        """Append the predicted ghost suffix to the buffer (Right-arrow)."""
+        if not self._ghost_suffix:
+            return False
+        editor = self._editor()
+        if editor is None or not self._cursor_at_end(editor):
+            return False
+        new_text = f"{editor.text}{self._ghost_suffix}"
+        self._ghost_suffix = ""
+        editor.text = new_text
+        editor.move_cursor(editor.document.end)
+        self._autogrow(editor)
+        # Programmatic edits do not fire on_text_area_changed — recompute.
+        self._show_command_autocomplete(new_text)
+        self._update_ghost(new_text)
+        return True
+
+    def _cursor_at_end(self, editor: SubmitTextArea) -> bool:
+        try:
+            return editor.cursor_location == editor.document.end
+        except Exception:
+            return True
+
     def _hide_autocomplete(self) -> None:
         log.tui.debug(
             "[tui] compose_area._hide_autocomplete: step",
@@ -427,6 +598,11 @@ class ComposeArea(Vertical):
         dropdown does not own, returns ``False`` so the editor handles the key
         normally (and ``on_text_area_changed`` refreshes the candidate list).
         """
+        # Forward ghost-text accept (Right) — works whether or not the dropdown
+        # is open. Falls through (returns False) when there is no ghost or the
+        # cursor isn't at the end, so Right moves the cursor normally.
+        if key == "right" and self._ghost_suffix:
+            return self._accept_ghost()
         if not self._dropdown_open:
             return False
         dropdown = self._dropdown()
@@ -444,6 +620,13 @@ class ComposeArea(Vertical):
             dropdown.move_up()
             return True
         if key in ("tab", "enter"):
+            # Semantic panel rests with NO selection: Enter then SUBMITS the
+            # prose (return False), it never hijacks the message. Tab arms the
+            # first candidate. A deliberate Down+Enter selects.
+            if dropdown.current() is None:
+                if key == "enter":
+                    return False
+                dropdown.move_down()
             self._complete_current()
             return True
         if key == "escape":
@@ -466,6 +649,19 @@ class ComposeArea(Vertical):
         """
         dropdown = self._dropdown()
         if dropdown is None:
+            return
+        # AI-augmented rows (☆ suggested / semantic) carry the FULL invocation
+        # and only ever POPULATE the box as editable text — never auto-execute,
+        # never re-routed through the command/owl insertion logic below.
+        star_row = dropdown.current_row()
+        if star_row is not None and star_row.kind in (ROW_SUGGESTED, ROW_SEMANTIC):
+            star_editor = self._editor()
+            if star_editor is not None:
+                self._apply_completion(
+                    star_editor, f"{star_row.name} ", star_row.name, "command"
+                )
+            self._clear_ghost()
+            self._hide_autocomplete()
             return
         name = dropdown.current()
         if name is None:

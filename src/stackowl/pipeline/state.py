@@ -56,6 +56,12 @@ class PipelineState(BaseModel, frozen=True):
     #: IdentityResolver. Empty ⇒ consumers fall back to session_id (per-channel),
     #: i.e. unconfigured behavior is byte-identical.
     identity_key: str = ""
+    # A human-readable routing-correction notice from the scanner (e.g. a fuzzy
+    # "@Maxx → @max" owl correction, or "owl not registered → @secretary"). The
+    # gateway sets this from RouteDecision.suggestion so the pre-delivery command
+    # hint surfacer can additively show it — otherwise the field is dead. None on
+    # every turn the scanner inferred no correction (byte-identical default).
+    route_suggestion: str | None = None
     # Coarse turn classification stamped by the triage step via SecretaryRouter.
     # Fail-safe default "standard" = byte-identical to pre-classification behavior.
     # "conversational" marks trivial greetings/small-talk (no task) so downstream

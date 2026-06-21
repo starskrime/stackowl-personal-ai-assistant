@@ -122,7 +122,7 @@ async def test_pilot_command_dropdown_visible_with_description() -> None:
         assert "history" in names
         assert "memory" not in names
         # Description is carried through for the command rows.
-        descs = {n: d for n, d in dropdown._items}
+        descs = {r.name: r.description for r in dropdown._items}
         assert descs["help"] == "List commands"
         # Overlay region is actually painted (non-empty, on-screen).
         assert dropdown.region.width > 0
@@ -303,7 +303,7 @@ async def test_pilot_owl_dropdown_appears_and_completes() -> None:
         assert "athena" in names
         assert "atlas" in names
         # Owl rows carry no description.
-        assert all(d is None for _, d in dropdown._items)
+        assert all(r.description is None for r in dropdown._items)
 
         await pilot.press("enter")
         await pilot.pause()
