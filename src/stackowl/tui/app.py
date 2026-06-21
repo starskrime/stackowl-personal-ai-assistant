@@ -79,6 +79,8 @@ if TYPE_CHECKING:
     from textual.message import Message
     from textual.widget import Widget
 
+    from stackowl.commands.resolver import CommandResolver
+    from stackowl.commands.sequence_store import SequenceSuggestionProvider
     from stackowl.events.bus import EventBus
 
 
@@ -141,6 +143,8 @@ class StackOwlApp(App[None]):
         command_names: Iterable[str] | None = None,
         command_infos: Iterable[CommandInfo] | None = None,
         owl_names: Iterable[str] | None = None,
+        sequence_provider: SequenceSuggestionProvider | None = None,
+        semantic_resolver: CommandResolver | None = None,
     ) -> None:
         install_default_translations()
         super().__init__()
@@ -148,6 +152,8 @@ class StackOwlApp(App[None]):
         self._command_names: list[str] = list(command_names or [])
         self._command_infos: list[CommandInfo] = list(command_infos or [])
         self._owl_names: list[str] = list(owl_names or [])
+        self._sequence_provider = sequence_provider
+        self._semantic_resolver = semantic_resolver
         log.tui.debug(
             "[tui] StackOwlApp.__init__",
             extra={"_fields": {
@@ -167,6 +173,8 @@ class StackOwlApp(App[None]):
             command_names=self._command_names,
             command_infos=self._command_infos,
             owl_names=self._owl_names,
+            sequence_provider=self._sequence_provider,
+            semantic_resolver=self._semantic_resolver,
         )
 
     def deliver(self, message: Message) -> None:

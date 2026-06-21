@@ -919,14 +919,52 @@ class StartupOrchestrator:
             for c in _commands
         ]
         owl_names = [m.name for m in owl_registry.list()]
+
+        # WS-D AI lanes for the local terminal. A stable CLI session id ties the
+        # suggested-lane owner_key to the SAME identity the command-stub records
+        # under (state.identity_key or session_id), so "after A you usually B"
+        # surfaces within the session. Both lanes are None unless their config
+        # flag is on → the dropdown stays byte-identical to the deterministic
+        # baseline (honesty spine).
+        cli_session_id = "cli-local"
+        sequence_provider = None
+        if sequence_store is not None:
+            from stackowl.commands.sequence_store import SequenceSuggestionProvider
+
+            owner_key = resolve_identity_key(services, cli_session_id) or cli_session_id
+            sequence_provider = SequenceSuggestionProvider(sequence_store, owner_key)
+        semantic_resolver = None
+        if self._settings.ui.semantic_command_search:
+            from stackowl.commands.resolver import CommandResolver
+
+            _emb_registry = memory_components.embedding_registry
+            provider = None
+            semantic = False
+            try:
+                provider = _emb_registry.get()
+                semantic = _emb_registry.is_semantic
+            except Exception as exc:  # lexical-only fallback is fine
+                log.debug(
+                    "[startup] gateway: resolver embeddings unavailable", exc_info=exc
+                )
+            semantic_resolver = CommandResolver(provider, semantic=semantic)
+            semantic_resolver.index(_commands)
+            log.info(
+                "[startup] gateway: semantic command search enabled",
+                extra={"_fields": {"semantic": semantic}},
+            )
+
         tui_components = TuiAssembly.build(
             event_bus=event_bus,
             command_names=command_names,
             command_infos=command_infos,
             owl_names=owl_names,
             ui_settings=self._settings.ui,
+            sequence_provider=sequence_provider,
+            semantic_resolver=semantic_resolver,
         )
         adapter = CLIAdapter(
+            session_id=cli_session_id,
             tui_components=tui_components, event_bus=event_bus,
         )
         # E5 — let the clarify gateway deliver questions back over the CLI.

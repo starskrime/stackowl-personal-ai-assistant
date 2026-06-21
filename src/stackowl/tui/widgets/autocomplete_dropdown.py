@@ -11,6 +11,12 @@ renders directly above the input and is never clipped — an earlier version doc
 with a negative offset on the ``top`` layer, which placed it outside the compose
 region so the parent clipped it (invisible).  Highlighting is a ``▶ `` prefix plus an accent style on the
 selected row.
+
+Rows are :class:`DropdownRow` ``(name, description, kind)``.  AI-augmented rows
+(``suggested``/``semantic``) render with a dim ``☆`` mark and are NEVER the default
+highlight (honesty spine): the highlight initialises to the first deterministic
+row.  A semantic panel may open with NO selection at all (``allow_no_selection``)
+so Enter submits the prose instead of hijacking it.
 """
 
 from __future__ import annotations
@@ -23,25 +29,39 @@ from textual.reactive import reactive
 from textual.widgets import Static
 
 from stackowl.infra.observability import log
+from stackowl.tui.widgets.compose_helpers import (
+    _STAR_KINDS,
+    ROW_SEMANTIC,
+    ROW_SUGGESTED,
+    DropdownRow,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rich.console import RenderableType
+
+_STAR_HEADERS = {
+    ROW_SUGGESTED: "☆ suggested — you usually do this next",
+    ROW_SEMANTIC: "☆ matches for what you typed — Tab to use, never runs on its own",
+}
 
 
 class AutocompleteDropdown(Static):
     """An overlay list of completion candidates with a navigable highlight.
 
-    Items are ``(name, description)`` pairs; ``description`` is ``None`` for owl
+    Items are :class:`DropdownRow` records; ``description`` is ``None`` for owl
     mentions (name only) and the command one-liner for slash commands.  The
     highlighted index is a clamped reactive — :meth:`move_up` / :meth:`move_down`
     never wrap (top/bottom are sticky), which keeps the keyboard model obvious.
+    A highlight of ``-1`` means "no selection" (only when ``allow_no_selection``).
     """
 
     # Visible row budget. The dropdown is a Static (no native scroll), so when
     # there are more candidates than this we render a sliding window that keeps
     # the highlighted row on screen — see :meth:`visible_range` / :meth:`render`.
     # The CSS ``max-height`` must fit this window plus the two ``N more`` hint
-    # rows and the round border: 9 items + 2 hints + 2 border = 13.
+    # rows / the ``☆`` header and the round border: 9 items + 2 + 2 border = 13.
     _VISIBLE_ROWS = 9
 
     DEFAULT_CSS = """
@@ -63,28 +83,60 @@ class AutocompleteDropdown(Static):
             "[tui] autocomplete_dropdown.__init__: entry",
             extra={"_fields": {"id": id}},
         )
-        self._items: list[tuple[str, str | None]] = []
+        self._items: list[DropdownRow] = []
         # Index of the first row currently shown — the scroll offset that keeps
         # the highlight inside the visible window (move_up/move_down adjust it).
         self._offset: int = 0
+        # When True the list may rest with NO row selected (highlight == -1) so
+        # Enter falls through to submit — used by the semantic (prose) panel.
+        self._allow_no_selection: bool = False
 
     # ------------------------------------------------------------------ data
-    def set_items(self, items: list[tuple[str, str | None]]) -> None:
-        """Replace the visible candidate list and reset the highlight to the top."""
-        log.tui.debug(
-            "[tui] autocomplete_dropdown.set_items: entry",
-            extra={"_fields": {"count": len(items)}},
-        )
-        self._items = list(items)
-        # Reset highlight + scroll window; assigning the same value (0 == 0)
-        # still needs an explicit re-render, so refresh unconditionally below.
+    @staticmethod
+    def _normalize(
+        items: Sequence[DropdownRow | tuple[str, str | None]],
+    ) -> list[DropdownRow]:
+        """Accept legacy ``(name, description)`` tuples OR tagged DropdownRows."""
+        out: list[DropdownRow] = []
+        for it in items:
+            if isinstance(it, DropdownRow):
+                out.append(it)
+            else:
+                name, description = it
+                out.append(DropdownRow(name=name, description=description))
+        return out
+
+    def set_items(
+        self,
+        items: Sequence[DropdownRow | tuple[str, str | None]],
+        *,
+        allow_no_selection: bool = False,
+    ) -> None:
+        """Replace the visible candidate list and reset the highlight.
+
+        The highlight resets to the first DETERMINISTIC row (AI rows are never
+        the default), or to ``-1`` (no selection) when ``allow_no_selection`` —
+        the semantic panel uses that so Enter submits the prose.
+        """
+        self._items = self._normalize(items)
+        self._allow_no_selection = allow_no_selection
         self._offset = 0
-        self.highlight = 0
+        self.highlight = -1 if allow_no_selection else self._first_selectable_index()
         self.refresh(layout=True)
         log.tui.debug(
             "[tui] autocomplete_dropdown.set_items: exit",
-            extra={"_fields": {"count": len(self._items), "highlight": self.highlight}},
+            extra={"_fields": {
+                "count": len(self._items), "highlight": self.highlight,
+                "no_select": allow_no_selection,
+            }},
         )
+
+    def _first_selectable_index(self) -> int:
+        """First deterministic (non-AI) row, so an AI row is never default."""
+        for i, row in enumerate(self._items):
+            if row.kind not in _STAR_KINDS:
+                return i
+        return 0
 
     # ------------------------------------------------------------------ access
     @property
@@ -97,60 +149,57 @@ class AutocompleteDropdown(Static):
         """``True`` when there is nothing to complete."""
         return not self._items
 
-    def current(self) -> str | None:
-        """Return the highlighted candidate's name, or ``None`` when empty."""
-        if not self._items:
-            log.tui.debug(
-                "[tui] autocomplete_dropdown.current: empty",
-                extra={"_fields": {}},
-            )
+    def _clamped_index(self) -> int | None:
+        """The currently selected index, or ``None`` when nothing is selected."""
+        if not self._items or self.highlight < 0:
             return None
-        idx = max(0, min(self.highlight, len(self._items) - 1))
-        name = self._items[idx][0]
-        log.tui.debug(
-            "[tui] autocomplete_dropdown.current: exit",
-            extra={"_fields": {"index": idx, "name": name}},
-        )
-        return name
+        return max(0, min(self.highlight, len(self._items) - 1))
+
+    def current(self) -> str | None:
+        """Return the highlighted candidate's name, or ``None`` when none."""
+        idx = self._clamped_index()
+        if idx is None:
+            return None
+        return self._items[idx].name
+
+    def current_row(self) -> DropdownRow | None:
+        """Return the highlighted :class:`DropdownRow`, or ``None`` when none."""
+        idx = self._clamped_index()
+        return None if idx is None else self._items[idx]
 
     # ------------------------------------------------------------------ nav
     def move_down(self) -> None:
-        """Move the highlight down one row (clamped, no wrap)."""
+        """Move the highlight down one row (clamped, no wrap). From none → first."""
         if not self._items:
             return
-        new_index = min(self.highlight + 1, len(self._items) - 1)
-        log.tui.debug(
-            "[tui] autocomplete_dropdown.move_down: decision",
-            extra={"_fields": {"from": self.highlight, "to": new_index}},
-        )
-        self.highlight = new_index
+        if self.highlight < 0:
+            self.highlight = 0
+        else:
+            self.highlight = min(self.highlight + 1, len(self._items) - 1)
         self._scroll_into_view()
 
     def move_up(self) -> None:
-        """Move the highlight up one row (clamped at the top, no wrap)."""
+        """Move the highlight up one row. From the top → none when allowed."""
         if not self._items:
             return
-        new_index = max(self.highlight - 1, 0)
-        log.tui.debug(
-            "[tui] autocomplete_dropdown.move_up: decision",
-            extra={"_fields": {"from": self.highlight, "to": new_index}},
-        )
-        self.highlight = new_index
+        if self.highlight <= 0:
+            self.highlight = -1 if self._allow_no_selection else 0
+        else:
+            self.highlight = self.highlight - 1
         self._scroll_into_view()
 
     def _scroll_into_view(self) -> None:
         """Nudge the scroll offset so the highlighted row stays on screen."""
+        if self.highlight < 0:
+            self._offset = 0
+            return
         if self.highlight < self._offset:
             self._offset = self.highlight
         elif self.highlight >= self._offset + self._VISIBLE_ROWS:
             self._offset = self.highlight - self._VISIBLE_ROWS + 1
 
     def visible_range(self) -> tuple[int, int]:
-        """``(start, end)`` half-open index range currently rendered.
-
-        ``end`` is exclusive and clamped to the item count.  The highlighted
-        index is always within ``[start, end)`` — the scroll-window invariant.
-        """
+        """``(start, end)`` half-open index range currently rendered."""
         start = max(0, min(self._offset, max(0, len(self._items) - self._VISIBLE_ROWS)))
         end = min(start + self._VISIBLE_ROWS, len(self._items))
         return (start, end)
@@ -161,30 +210,41 @@ class AutocompleteDropdown(Static):
         self.refresh(layout=True)
 
     def render(self) -> RenderableType:
-        """Render the visible candidate window; highlighted row gets a ``▶ `` accent.
+        """Render the visible candidate window.
 
-        Only the ``visible_range`` slice is drawn so a list larger than
-        :attr:`_VISIBLE_ROWS` (e.g. all ~29 slash commands) scrolls with the
-        highlight rather than being clipped.  A dim ``↑``/``↓`` counter is shown
-        on the first/last row when rows are hidden above/below.
+        The highlighted row gets a ``▶ `` accent; AI rows (``suggested``/
+        ``semantic``) get a dim ``☆`` mark and a one-line header above their
+        block (shown only at the top of the window, where no ``↑ N more`` hint
+        competes for the line).  A ``-1`` highlight draws no marker at all.
         """
         if not self._items:
             return Text("")
-        idx = max(0, min(self.highlight, len(self._items) - 1))
+        idx = self._clamped_index()  # None when no selection
         start, end = self.visible_range()
         rows: list[Text] = []
-        if start > 0:
+        # Header for an AI block at the very top (mutually exclusive with the
+        # "↑ N more" hint, which only appears when start > 0).
+        if start == 0 and self._items[0].kind in _STAR_KINDS:
+            header = _STAR_HEADERS.get(self._items[0].kind, "☆ suggested")
+            rows.append(Text(f"  {header}", style="dim italic"))
+        elif start > 0:
             rows.append(Text(f"  ↑ {start} more", style="dim"))
         for i in range(start, end):
-            name, description = self._items[i]
-            selected = i == idx
-            marker = "▶ " if selected else "  "
-            row_style = "bold reverse" if selected else ""
+            row = self._items[i]
+            selected = idx is not None and i == idx
+            is_star = row.kind in _STAR_KINDS
+            marker = "▶ " if selected else ("☆ " if is_star else "  ")
+            if selected:
+                row_style = "bold reverse"
+            elif is_star:
+                row_style = "dim"
+            else:
+                row_style = ""
             line = Text(marker, style=row_style)
-            line.append(name, style=row_style)
-            if description:
+            line.append(row.name, style=row_style)
+            if row.description:
                 line.append(" — ", style="dim")
-                line.append(description, style="dim")
+                line.append(row.description, style="dim")
             rows.append(line)
         hidden_below = len(self._items) - end
         if hidden_below > 0:

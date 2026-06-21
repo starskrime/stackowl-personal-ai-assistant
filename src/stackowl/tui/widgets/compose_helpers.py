@@ -4,12 +4,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from stackowl.commands.metadata import CommandMeta, resolve_path
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from stackowl.commands.metadata import SubCommand
+
+
+# Row "kind" tags. ``item`` is the deterministic default (top-level command, sub
+# command, owl) — always selectable, the default highlight. ``suggested`` and
+# ``semantic`` are AI-augmented rows (☆ + dim): they are reachable but NEVER the
+# default highlight and NEVER auto-fire (honesty spine).
+ROW_ITEM = "item"
+ROW_SUGGESTED = "suggested"
+ROW_SEMANTIC = "semantic"
+_STAR_KINDS = frozenset({ROW_SUGGESTED, ROW_SEMANTIC})
+
+
+class DropdownRow(NamedTuple):
+    """One dropdown row: ``(name, description, kind)``.
+
+    A :class:`NamedTuple` so ``row[0]``/``row[1]`` keep the legacy
+    ``(name, description)`` index access the widget and tests rely on, while the
+    ``kind`` tag lets the renderer fence/mark AI rows and the navigation keep
+    them off the default highlight.
+    """
+
+    name: str
+    description: str | None = None
+    kind: str = ROW_ITEM
+
+
+def mark_rows(
+    pairs: Sequence[tuple[str, str | None]], kind: str
+) -> tuple[DropdownRow, ...]:
+    """Tag ``(name, description)`` pairs with a row ``kind`` (e.g. an AI lane)."""
+    return tuple(DropdownRow(name=n, description=d, kind=kind) for n, d in pairs)
 
 # Default candidate cap. Must comfortably exceed the full shipped slash-command
 # surface (~29) so an empty "/" prefix lists EVERY command rather than the first
@@ -310,6 +343,59 @@ def command_dropdown_items(
             rows.append((cand.name, label))
         return (CompletionLevel.SUB, tuple(rows))
     return (CompletionLevel.NONE, ())
+
+
+# ---------------------------------------------------------------------------
+# Gait-read (WS-D): one input box, deterministic dropdown vs semantic search
+# ---------------------------------------------------------------------------
+
+
+def is_path_prefix(buffer: str) -> bool:
+    """Decide whether ``buffer`` is a literal command-path entry vs free prose.
+
+    * ``True`` — the deterministic dropdown (or owl autocomplete) owns it: the
+      buffer is empty, or its first non-space char is ``/`` (a slash command) or
+      ``@`` (an owl mention). Selecting/typing here NEVER changes meaning.
+    * ``False`` — a natural-language phrase that does not start a command path,
+      so the panel may switch to resolver-ranked command candidates (semantic).
+
+    Pure and language-agnostic: it keys on the structural lead char, not on any
+    word list. Empty → path-mode so an empty box shows nothing surprising.
+    """
+    s = buffer.lstrip()
+    if not s:
+        return True
+    return s[0] in ("/", "@")
+
+
+def predict_next_token(buffer: str, infos: list[CommandInfo]) -> str | None:
+    """Forward ghost-text: the deterministic completion of the CURRENT partial.
+
+    Returns the suffix to append to finish the token the user is typing (fish
+    shell style) — e.g. ``/mem`` → ``"ory"`` (completes ``/memory``), or
+    ``/memory rem`` → ``"ember"``. Returns ``None`` when there is no partial
+    token, no candidate, or the best candidate does not extend what is typed.
+
+    Deterministic (first candidate in declared/alpha order) so the prediction is
+    stable across machines; it only ever PREDICTS FORWARD and never reorders the
+    listed rows.
+    """
+    ctx = parse_completion(buffer, infos)
+    partial = ctx.partial
+    if not partial:
+        return None
+    if ctx.level is CompletionLevel.COMMAND:
+        names = [ci.name for ci in filter_command_infos(partial, infos)]
+    elif ctx.level is CompletionLevel.SUB:
+        names = [c.name for c in ctx.candidates]
+    else:
+        return None
+    if not names:
+        return None
+    best = names[0]
+    if best.casefold().startswith(partial.casefold()) and len(best) > len(partial):
+        return best[len(partial):]
+    return None
 
 
 def _find_info(name: str, infos: list[CommandInfo]) -> CommandInfo | None:
