@@ -376,10 +376,13 @@ async def test_send_text_falls_back_to_plain_on_markdownv2_rejection() -> None:
     first = bot.send_message.await_args_list[0].kwargs
     second = bot.send_message.await_args_list[1].kwargs
     assert first["parse_mode"] == "MarkdownV2"
-    # Fallback: same chat, same text, markup dropped.
+    # Fallback: same chat, same (formatted) text, markup dropped. send_text now
+    # MarkdownV2-formats its raw input, so the resent part equals the FORMATTED
+    # first part (content is never lost), not the raw input string.
     assert second["parse_mode"] is None
     assert second["chat_id"] == 555
-    assert second["text"] == first["text"] == "oops *bad markup"
+    assert second["text"] == first["text"]
+    assert "oops" in second["text"]
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,9 @@ from stackowl.channels.telegram.settings import TelegramSettings
 def _make_adapter() -> MagicMock:
     adapter = MagicMock()
     adapter.send_text = AsyncMock()
+    # Specialized notification formatters pre-escape MarkdownV2 → send_markdown
+    # (the pre-formatted path). Only raw `custom` payloads use send_text.
+    adapter.send_markdown = AsyncMock()
     adapter.send_inline_keyboard = AsyncMock()
     return adapter
 
@@ -108,10 +111,10 @@ async def test_dispatch_morning_brief_sends_text() -> None:
     )
     await dispatcher.dispatch(payload)
 
-    adapter.send_text.assert_awaited_once()
+    adapter.send_markdown.assert_awaited_once()
     adapter.send_inline_keyboard.assert_not_called()
     # The text should be non-empty
-    sent_text = adapter.send_text.call_args[0][0]
+    sent_text = adapter.send_markdown.call_args[0][0]
     assert len(sent_text) > 0
 
 
@@ -136,9 +139,9 @@ async def test_dispatch_parliament_synthesis_sends_text() -> None:
     )
     await dispatcher.dispatch(payload)
 
-    adapter.send_text.assert_awaited_once()
+    adapter.send_markdown.assert_awaited_once()
     adapter.send_inline_keyboard.assert_not_called()
-    sent_text = adapter.send_text.call_args[0][0]
+    sent_text = adapter.send_markdown.call_args[0][0]
     assert len(sent_text) > 0
 
 
@@ -159,7 +162,7 @@ async def test_dispatch_evolution_not_suppressed_by_default() -> None:
     )
     await dispatcher.dispatch(payload)
 
-    adapter.send_text.assert_awaited_once()
+    adapter.send_markdown.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

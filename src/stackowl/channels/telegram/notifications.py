@@ -181,8 +181,14 @@ class TelegramNotificationDispatcher:
 
         if keyboard is not None:
             await self._adapter.send_inline_keyboard(formatted, keyboard)
-        else:
+        elif payload.event_type == "custom":
+            # Custom payloads carry RAW assistant markdown — route through the
+            # send_text formatting chokepoint so GFM tables are flattened (and the
+            # text MarkdownV2-escaped). The specialized formatters below already
+            # produce MarkdownV2, so they use send_markdown to avoid double-escape.
             await self._adapter.send_text(formatted)
+        else:
+            await self._adapter.send_markdown(formatted)
 
         log.telegram.debug(
             "[telegram] dispatcher.dispatch: exit",

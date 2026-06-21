@@ -123,6 +123,27 @@ async def test_global_catalog_surfaced_for_default_owl_when_enabled():
 
 
 @pytest.mark.asyncio
+async def test_global_catalog_surfaces_every_source():
+    """Native (builtin), installed (external), user, and synthesized (learned)
+    skills must ALL be visible to the platform — the catalog is source-agnostic."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    enabled = [
+        _Sk("native-skill", "builtin"),
+        _Sk("installed-skill", "installed"),
+        _Sk("hand-written", "user"),
+        _Sk("synthesized-skill", "learned"),
+    ]
+    store = _CatalogStore(owned=[], enabled=enabled)
+    set_services(StepServices(owl_registry=reg, skill_store=store,
+                              settings=_settings(global_catalog=True)))
+    from stackowl.pipeline.steps import assemble
+    sp = (await assemble.run(_state(owl_name="secretary"))).system_prompt or ""
+    for name in ("native-skill", "installed-skill", "hand-written", "synthesized-skill"):
+        assert name in sp, f"{name} (a real installed skill) not visible in the catalog"
+
+
+@pytest.mark.asyncio
 async def test_global_catalog_off_is_byte_identical_to_no_block():
     """Flag OFF → no skills block at all (byte-identical baseline preserved)."""
     FOCUS_TRACKER.clear_all()
