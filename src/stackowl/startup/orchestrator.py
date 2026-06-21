@@ -349,8 +349,15 @@ class StartupOrchestrator:
         # Commit A. Hard-fails on Kuzu init per operator-approved decision.
         from stackowl.memory.assembly import MemoryAssembly
 
+        # ONE IdentityResolver shared by StepServices (preferences) and the
+        # FactExtractor (fact staging). Built once here and threaded into both so
+        # a live `settings_reloaded` alias edit (mutated in place via the
+        # identity reload handler below) propagates to every durable-knowledge
+        # consumer without a restart — and so we read Settings for it just once.
+        identity_resolver = load_identity_resolver()
         memory_components = await MemoryAssembly.build(
             db=db_pool, settings=self._settings, provider_registry=provider_registry,
+            identity_resolver=identity_resolver,
         )
         memory_bridge = memory_components.bridge
         preference_store = memory_components.preference_store
@@ -703,10 +710,17 @@ class StartupOrchestrator:
         config_watcher = None
         if self._settings.settings_watch:
             from stackowl.config.watcher import ConfigWatcher
+            from stackowl.startup.identity_reload import make_identity_reload_handler
             from stackowl.startup.provider_reload import make_settings_reload_handler
 
             event_bus.subscribe(
                 "settings_reloaded", make_settings_reload_handler(provider_registry)
+            )
+            # LIVE identity hot-reload — an `identity.aliases` edit refreshes the
+            # SHARED resolver in place (seen by both preferences + fact staging),
+            # no restart. Mirrors the provider reload above on the same event.
+            event_bus.subscribe(
+                "settings_reloaded", make_identity_reload_handler(identity_resolver)
             )
             config_watcher = ConfigWatcher(
                 config_path=StackowlHome.config_file(),
@@ -754,7 +768,7 @@ class StartupOrchestrator:
             sandbox_governor=sandbox_governor,
             turn_registry=turn_registry,
             settings=self._settings,
-            identity_resolver=load_identity_resolver(),
+            identity_resolver=identity_resolver,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
