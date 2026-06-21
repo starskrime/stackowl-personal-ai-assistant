@@ -244,6 +244,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.whoami import WhoamiCommand
     _safe_register(registry, "whoami", lambda: WhoamiCommand(owl_registry=deps.owl_registry))
 
+    # /find — natural-language command discovery (suggest-only; lexical fallback
+    # when no semantic embedding model is available)
+    from stackowl.commands.find_command import FindCommand
+    _safe_register(registry, "find", lambda: FindCommand(embedding_registry=deps.embedding_registry))
+
     # /audit (and /audit export subcommand)
     from stackowl.audit.logger import AuditLogger
     from stackowl.commands.audit import AuditCommand
