@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.infra.observability import log
 from stackowl.scheduler.scheduler_helpers import write_audit
@@ -26,11 +27,30 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.pipeline.state import PipelineState
 
 
-_USAGE = (
-    "Usage:\n"
-    "  /webhook register <source>   — print YAML stanza to register a source\n"
-    "  /webhook list                — show configured sources + recent receipts\n"
-    "  /webhook disable <source>    — print YAML disable stanza and audit-log"
+_WEBHOOK_META = CommandMeta(
+    grammar="verb",
+    group="Integrations",
+    subcommands=(
+        SubCommand(
+            name="register",
+            summary="Print the YAML stanza to add a source",
+            description=(
+                "You get the YAML stanza and secret-export line to wire a new "
+                "webhook source. The command never edits config or secrets for "
+                "you — those stay user operations."
+            ),
+            args=(Arg(name="source", summary="webhook source name"),),
+        ),
+        SubCommand(
+            name="list",
+            summary="Show configured sources and recent receipts",
+        ),
+        SubCommand(
+            name="disable",
+            summary="Print the disable stanza and audit-log the request",
+            args=(Arg(name="source", summary="webhook source name"),),
+        ),
+    ),
 )
 _LIST_SQL = (
     "SELECT source, MAX(received_at) AS last_received, COUNT(*) AS event_count "
@@ -59,6 +79,10 @@ class WebhookCommand(SlashCommand):
     def description(self) -> str:
         return "Show webhook source config instructions and audit disable requests"
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _WEBHOOK_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         if self._db is None or self._settings is None:
             return "✗ /webhook: not configured"
@@ -67,29 +91,30 @@ class WebhookCommand(SlashCommand):
             "[webhook] command.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
         )
+        usage = render_usage("webhook", _WEBHOOK_META)
         parts = args.strip().split()
         if not parts:
-            return _USAGE
+            return usage
 
         sub = parts[0]
         rest = parts[1:]
 
         if sub == "register":
             if not rest:
-                return "webhook register: missing <source>\n\n" + _USAGE
+                return "webhook register: missing <source>\n\n" + usage
             return await self._register(rest[0], state)
         if sub == "list":
             return await self._list(state)
         if sub == "disable":
             if not rest:
-                return "webhook disable: missing <source>\n\n" + _USAGE
+                return "webhook disable: missing <source>\n\n" + usage
             return await self._disable(rest[0], state)
 
         log.webhook.debug(
             "[webhook] command.handle: unknown subcommand",
             extra={"_fields": {"sub": sub}},
         )
-        return f"webhook: unknown subcommand {sub!r}\n\n{_USAGE}"
+        return f"webhook: unknown subcommand {sub!r}\n\n{usage}"
 
     # ------------------------------------------------------------------ subs
 

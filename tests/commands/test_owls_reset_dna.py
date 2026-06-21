@@ -12,11 +12,11 @@ from __future__ import annotations
 import pytest
 
 from stackowl.commands.owls_command import OwlsCommand
+from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_authored import capture_one_authored
 from stackowl.owls.dna_hydrator import apply_dna_overlay
 from stackowl.owls.dna_storage import upsert_owl_dna
-from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.state import PipelineState

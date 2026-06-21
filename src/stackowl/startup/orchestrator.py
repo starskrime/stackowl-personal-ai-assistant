@@ -893,10 +893,16 @@ class StartupOrchestrator:
         from stackowl.tui.assembly import TuiAssembly
         from stackowl.tui.widgets.compose_helpers import CommandInfo
 
+        # registry.list() yields SlashCommand INSTANCES, so each exposes its
+        # static .meta (CommandMeta: grammar + sub-command tree). Sub-commands
+        # are class metadata, not runtime state, so this one-shot startup
+        # snapshot is authoritative for the lifetime of the TUI — the dropdown
+        # never needs to re-reach into the registry per keystroke.
         _commands = CommandRegistry.instance().list()
         command_names = [c.command for c in _commands]
         command_infos = [
-            CommandInfo(name=c.command, description=c.description) for c in _commands
+            CommandInfo(name=c.command, description=c.description, meta=c.meta)
+            for c in _commands
         ]
         owl_names = [m.name for m in owl_registry.list()]
         tui_components = TuiAssembly.build(

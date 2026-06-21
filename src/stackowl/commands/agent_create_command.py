@@ -36,6 +36,7 @@ from stackowl.commands.agent_create_helpers import (
 )
 from stackowl.commands.agents_helpers import format_jobs_table, format_results_table
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
@@ -56,17 +57,76 @@ _PROMPT_DIR = (
 _TEMPLATE_NAME = "agent_intent.j2"
 _FAST_TIER = "fast"
 
-_USAGE = (
-    "Usage: /agent <subcommand> [args]\n"
-    "  create <intent>      — propose a new background agent from natural language\n"
-    "  confirm              — confirm the pending proposal and create the agent\n"
-    "  cancel               — discard the pending (unconfirmed) proposal\n"
-    "  list                 — show registered background agents\n"
-    "  log <job_id>         — show the last 10 recorded runs\n"
-    "  pause <job_id>       — pause an agent\n"
-    "  resume <job_id>      — resume a paused agent\n"
-    "  acknowledge <job_id> — clear failures and re-arm an agent\n"
-    "  stop <job_id>        — permanently remove an agent (asks YES)"
+_AGENT_META = CommandMeta(
+    grammar="verb",
+    group="Agents & Automation",
+    subcommands=(
+        SubCommand(
+            name="create",
+            summary="Propose a background agent from natural language",
+            description=(
+                "You describe what you want in plain language; an LLM turns it "
+                "into a proposed agent definition (handler, schedule, params). "
+                "Nothing is created until you run /agent confirm."
+            ),
+            args=(Arg(name="intent", summary="natural-language description"),),
+            examples=(
+                Example(
+                    invocation="/agent create remind me to stretch every hour",
+                    note="Stage a proposal",
+                ),
+            ),
+        ),
+        SubCommand(
+            name="confirm",
+            summary="Confirm the pending proposal and create the agent",
+            description="You turn the staged proposal into a real scheduled agent.",
+        ),
+        SubCommand(
+            name="cancel",
+            summary="Discard the pending unconfirmed proposal",
+            description=(
+                "You drop a proposal that was never created. This differs from "
+                "stop, which removes an agent that already exists."
+            ),
+        ),
+        SubCommand(
+            name="list",
+            summary="Show registered background agents",
+        ),
+        SubCommand(
+            name="log",
+            summary="Show the last 10 recorded runs of an agent",
+            args=(Arg(name="job_id", summary="agent identifier"),),
+        ),
+        SubCommand(
+            name="pause",
+            summary="Pause a running agent",
+            args=(Arg(name="job_id", summary="agent identifier"),),
+        ),
+        SubCommand(
+            name="resume",
+            summary="Resume a paused agent",
+            args=(Arg(name="job_id", summary="agent identifier"),),
+        ),
+        SubCommand(
+            name="acknowledge",
+            summary="Clear failures and re-arm an agent",
+            args=(Arg(name="job_id", summary="agent identifier"),),
+        ),
+        SubCommand(
+            name="stop",
+            summary="Permanently remove an agent",
+            description="You delete the agent's schedule for good. Confirmed with YES.",
+            args=(Arg(name="job_id", summary="agent identifier"),),
+            examples=(
+                Example(
+                    invocation="/agent stop abc123 YES",
+                    note="Confirm permanent removal",
+                ),
+            ),
+        ),
+    ),
 )
 
 _NO_PENDING = "No pending agent proposal for this session — run /agent create <intent> first."
@@ -106,6 +166,10 @@ class AgentCommand(SlashCommand):
     def description(self) -> str:
         return "Create and manage background agents (create/confirm/cancel, list/pause/resume/stop/log/acknowledge)."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _AGENT_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.scheduler.debug(
             "[commands] agent.handle: entry",
@@ -140,13 +204,13 @@ class AgentCommand(SlashCommand):
                     "[commands] agent.handle: unknown subcommand",
                     extra={"_fields": {"sub": sub}},
                 )
-                return _USAGE
+                return render_usage("agent", _AGENT_META)
         except CommandParseError as exc:
             log.scheduler.warning(
                 "[commands] agent.handle: parse error",
                 extra={"_fields": {"sub": sub, "error": str(exc)}},
             )
-            return f"✗ {exc}\n\n{_USAGE}"
+            return f"✗ {exc}\n\n{render_usage('agent', _AGENT_META)}"
         except Exception as exc:
             log.scheduler.error(
                 "[commands] agent.handle: subcommand crashed",

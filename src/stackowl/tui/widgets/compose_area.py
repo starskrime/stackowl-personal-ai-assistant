@@ -9,6 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Static, TextArea
 
+from stackowl.commands.metadata import resolve_path
 from stackowl.infra.observability import log
 from stackowl.tui.glyphs import GLYPH_PROMPT
 from stackowl.tui.i18n import localize
@@ -22,9 +23,11 @@ from stackowl.tui.widgets.compose_helpers import (
     AutocompleteKind,
     AutocompleteState,
     CommandInfo,
+    CompletionLevel,
     build_state,
+    command_dropdown_items,
     filter_candidates,
-    filter_command_infos,
+    parse_completion,
 )
 from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 
@@ -132,6 +135,10 @@ class ComposeArea(Vertical):
             kind=AutocompleteKind.NONE, prefix="", candidates=()
         )
         self._dropdown_open: bool = False
+        # Tracks whether the currently-shown command dropdown is at COMMAND
+        # (top-level) or SUB (sub-command) level, so selection inserts the right
+        # token and Tab can descend a level. NONE when no command dropdown.
+        self._completion_level: CompletionLevel = CompletionLevel.NONE
 
     # ------------------------------------------------------------------ binding
     def set_command_names(self, names: Iterable[str]) -> None:
@@ -216,7 +223,7 @@ class ComposeArea(Vertical):
             owl_names=self._owl_names,
         )
         if self._autocomplete_state.kind == AutocompleteKind.COMMAND:
-            self._show_command_autocomplete(self._autocomplete_state.prefix)
+            self._show_command_autocomplete(value)
         elif self._autocomplete_state.kind == AutocompleteKind.OWL:
             self._show_owl_autocomplete(self._autocomplete_state.prefix)
         else:
@@ -349,24 +356,25 @@ class ComposeArea(Vertical):
             )
             return None
 
-    def _show_command_autocomplete(self, prefix: str) -> None:
-        # Use filter_command_infos (carries descriptions) against the same
-        # prefix the name-only build_state already computed.
-        infos = filter_command_infos(prefix, self._command_infos)
+    def _show_command_autocomplete(self, value: str) -> None:
+        # One authoritative decision: top-level command rows (with descriptions)
+        # vs context-aware sub-command rows (with summaries + a ``›`` marker for
+        # nodes that have children). flag/leaf grammar and past-args resolve to
+        # NONE → no fake sub rows (honesty).
+        level, items = command_dropdown_items(value, self._command_infos)
         log.tui.debug(
             "[tui] compose_area._show_command_autocomplete: step",
-            extra={"_fields": {"prefix_len": len(prefix), "candidates": len(infos)}},
+            extra={"_fields": {"level": level.value, "candidates": len(items)}},
         )
-        if not infos:
+        if not items:
+            self._completion_level = CompletionLevel.NONE
             self._hide_autocomplete()
             return
-        items: list[tuple[str, str | None]] = [
-            (ci.name, ci.description) for ci in infos
-        ]
+        self._completion_level = level
         dropdown = self._dropdown()
         if dropdown is None:
             return
-        dropdown.set_items(items)
+        dropdown.set_items(list(items))
         dropdown.display = True
         self._dropdown_open = True
 
@@ -379,6 +387,7 @@ class ComposeArea(Vertical):
         if not names:
             self._hide_autocomplete()
             return
+        self._completion_level = CompletionLevel.NONE
         items: list[tuple[str, str | None]] = [(n, None) for n in names]
         dropdown = self._dropdown()
         if dropdown is None:
@@ -393,6 +402,7 @@ class ComposeArea(Vertical):
             extra={"_fields": {}},
         )
         self._dropdown_open = False
+        self._completion_level = CompletionLevel.NONE
         dropdown = self._dropdown()
         if dropdown is not None:
             # Clear stale rows AND hide. Collapsing this in-flow palette leaves
@@ -442,19 +452,25 @@ class ComposeArea(Vertical):
         return False
 
     def _complete_current(self) -> None:
-        """Accept the highlighted candidate: rewrite editor text + post message."""
+        """Accept the highlighted candidate: rewrite editor text + post message.
+
+        Three cases by the kind/level of the open dropdown:
+
+        * COMMAND — replace the whole line with ``/<name> `` and re-open the
+          dropdown so a verb command immediately reveals its sub-commands
+          (Tab/Enter descend a level).
+        * SUB — replace only the trailing partial token with ``<name>``, keeping
+          the already-typed command/sub prefix, adding a trailing space (and
+          re-opening) when the node has children or args, else closing.
+        * OWL — unchanged: replace the last ``@<prefix>`` token.
+        """
         dropdown = self._dropdown()
         if dropdown is None:
             return
         name = dropdown.current()
         if name is None:
             return
-        is_command = self._autocomplete_state.kind == AutocompleteKind.COMMAND
-        completion_type = "command" if is_command else "owl"
-        log.tui.debug(
-            "[tui] compose_area._complete_current: entry",
-            extra={"_fields": {"name": name, "type": completion_type}},
-        )
+        is_command_kind = self._autocomplete_state.kind == AutocompleteKind.COMMAND
         try:
             editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
         except Exception as exc:
@@ -464,25 +480,83 @@ class ComposeArea(Vertical):
                 extra={"_fields": {}},
             )
             return
-        if is_command:
-            # Command trigger is always at line start ("/prefix") → replace wholesale.
-            new_text = f"/{name} "
-        else:
-            # Replace the last "@<prefix>" token with "@<name> ".
+
+        if not is_command_kind:
+            # Owl mention — replace the last "@<prefix>" token with "@<name> ".
             text = editor.text
             at_idx = text.rfind("@")
             new_text = f"@{name} " if at_idx < 0 else f"{text[:at_idx]}@{name} "
+            self._apply_completion(editor, new_text, name, "owl")
+            self._hide_autocomplete()
+            return
+
+        if self._completion_level == CompletionLevel.SUB:
+            # Replace only the trailing partial sub token; keep the prefix.
+            new_text, reopen = self._compose_sub_completion(editor.text, name)
+        else:
+            # Top-level command → "/name " (descend into subs next).
+            new_text = f"/{name} "
+            reopen = True
+
+        self._apply_completion(editor, new_text, name, "command")
+        log.tui.debug(
+            "[tui] compose_area._complete_current: decision",
+            extra={"_fields": {"name": name, "reopen": reopen}},
+        )
+        if reopen:
+            # Re-derive the dropdown from the new buffer so a verb command/sub
+            # with children descends a level; programmatic edits don't fire
+            # on_text_area_changed, so drive the recompute explicitly.
+            self._show_command_autocomplete(new_text)
+        else:
+            self._hide_autocomplete()
+
+    def _apply_completion(
+        self, editor: SubmitTextArea, new_text: str, name: str, kind: str
+    ) -> None:
+        """Write the completed text, move the cursor, and post the selection."""
         editor.text = new_text
         editor.move_cursor(editor.document.end)
         self._autogrow(editor)
         self.post_message(
-            AutocompleteSelectedMessage(selected=name, completion_type=completion_type)
+            AutocompleteSelectedMessage(selected=name, completion_type=kind)
         )
-        self._hide_autocomplete()
-        log.tui.debug(
-            "[tui] compose_area._complete_current: exit",
-            extra={"_fields": {"text_len": len(new_text), "type": completion_type}},
+
+    def _compose_sub_completion(self, text: str, name: str) -> tuple[str, bool]:
+        """Build the buffer after accepting sub-command ``name``.
+
+        Replaces the trailing partial token (if any) with ``name``, then asks the
+        parser whether the resulting node still has something to complete
+        (children/args) — that decides the trailing space + re-open.
+        """
+        ends_with_space = text.endswith(" ")
+        head = text if ends_with_space else text.rsplit(" ", 1)[0] + " "
+        candidate_buffer = f"{head}{name}"
+        # Does the node we just completed take children or args? If so, add a
+        # trailing space so the user can keep going (and re-open the dropdown).
+        level, items = command_dropdown_items(f"{candidate_buffer} ", self._command_infos)
+        has_more = level == CompletionLevel.SUB and bool(items)
+        node_takes_args = self._sub_node_takes_args(candidate_buffer)
+        if has_more or node_takes_args:
+            return (f"{candidate_buffer} ", has_more)
+        return (candidate_buffer, False)
+
+    def _sub_node_takes_args(self, buffer: str) -> bool:
+        """True when the fully-typed sub path resolves to a node with args."""
+        ctx = parse_completion(buffer, self._command_infos)
+        if ctx.command is None:
+            return False
+        info = next(
+            (i for i in self._command_infos if i.name == ctx.command), None
         )
+        if info is None:
+            return False
+        body = buffer[1:].split()
+        path = body[1:]  # drop the command token
+        if not path:
+            return False
+        node = resolve_path(info.meta.subcommands, path)
+        return bool(node and node.args)
 
     # ------------------------------------------------------------------ actions
     def action_clear_input(self) -> None:

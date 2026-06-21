@@ -15,6 +15,7 @@ store is unavailable (e.g. unit tests).
 from __future__ import annotations
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta
 from stackowl.commands.registry import register_command
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
@@ -22,6 +23,19 @@ from stackowl.pipeline.state import PipelineState
 
 _PREF_KEY = "provider_tier"
 _VALID_TIERS: frozenset[str] = frozenset({"fast", "standard", "powerful", "local"})
+
+_TIER_META = CommandMeta(
+    grammar="flag",
+    group="Providers & Routing",
+    args=(
+        Arg(
+            "tier",
+            required=False,
+            choices=("fast", "standard", "powerful", "local"),
+            summary="preferred provider tier",
+        ),
+    ),
+)
 
 # Fallback in-memory store when PreferenceStore not wired (tests, dry-run, etc.).
 # This is intentionally per-process and lost on restart — the persisted
@@ -48,6 +62,10 @@ class TierCommand(SlashCommand):
     @property
     def description(self) -> str:
         return "Set the preferred provider tier (session-scoped; follows identity across channels when configured)."
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _TIER_META
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.engine.debug(
@@ -82,7 +100,9 @@ async def _read_tier(store: object, owner_key: str) -> str | None:
     """Read tier from PreferenceStore, falling back to in-memory dict."""
     if store is not None:
         try:
-            return await store.get(owner_key, _PREF_KEY)  # type: ignore[attr-defined]
+            # store is duck-typed `object`; .get returns Any. Pre-existing on the
+            # branch (identity work) — surfaced now that mypy checks this file.
+            return await store.get(owner_key, _PREF_KEY)  # type: ignore[attr-defined,no-any-return]
         except Exception as exc:
             log.engine.warning(
                 "[commands] tier._read_tier: store.get failed — falling back to memory",

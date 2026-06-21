@@ -143,7 +143,8 @@ async def test_urgent_command_empty_message_returns_error(tmp_path: Path) -> Non
         router = NotificationRouter(db=db, settings=make_settings())
         cmd = UrgentCommand(router=router)
         out = await cmd.handle("   ", make_state())
-        assert out == "urgent: message required"
+        assert "urgent: message required" in out
+        assert "<message>" in out
     finally:
         await db.close()
 

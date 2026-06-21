@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.skill_helpers import (
     SkillInstallError,
@@ -44,22 +45,135 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.pipeline.state import PipelineState
 
 
-_USAGE = (
-    "Usage:\n"
-    "  /skill list [--source builtin|installed|user|learned]\n"
-    "  /skill show <name>\n"
-    "  /skill add <local-path>\n"
-    "  /skill add --url <git-or-archive-url>\n"
-    "  /skill rm <name> [YES]\n"
-    "  /skill edit <name>\n"
-    "  /skill diff <name>\n"
-    "  /skill enable <name>\n"
-    "  /skill disable <name>\n"
-    "  /skill reload\n"
-    "  /skill restore <name> --version <hash-prefix>"
-)
 _CONFIRMATION = "YES"
 _VALID_SOURCES: tuple[SkillSource, ...] = ("builtin", "installed", "user", "learned")
+
+_SKILL_META = CommandMeta(
+    grammar="verb",
+    group="Memory & Knowledge",
+    subcommands=(
+        SubCommand(
+            name="list",
+            summary="List installed skills",
+            description=(
+                "You see every skill across all sources with its enable state and "
+                "success rate. Filter with --source to narrow the view."
+            ),
+            args=(
+                Arg(
+                    name="--source",
+                    required=False,
+                    summary="filter by source",
+                    choices=("builtin", "installed", "user", "learned"),
+                ),
+            ),
+            examples=(
+                Example(invocation="/skill list"),
+                Example(invocation="/skill list --source user"),
+            ),
+        ),
+        SubCommand(
+            name="show",
+            summary="Print a skill's frontmatter and body",
+            description=(
+                "You read a skill's full SKILL.md — metadata, stats, and the "
+                "instruction body — to understand what it does."
+            ),
+            args=(Arg(name="name", summary="skill name"),),
+            examples=(Example(invocation="/skill show research"),),
+        ),
+        SubCommand(
+            name="add",
+            summary="Install from a path or URL",
+            description=(
+                "You install a skill from a local directory, a git URL, or an archive "
+                "URL. The workspace re-indexes so the skill is usable immediately."
+            ),
+            args=(
+                Arg(name="local-path", required=False, summary="local directory to install"),
+                Arg(name="--url", required=False, summary="git or archive URL"),
+            ),
+            examples=(
+                Example(invocation="/skill add ./my-skill"),
+                Example(invocation="/skill add --url https://github.com/me/skill.git"),
+            ),
+        ),
+        SubCommand(
+            name="rm",
+            summary="Delete a non-builtin skill",
+            description=(
+                "You permanently remove an installed, user, or learned skill. Built-ins "
+                "are protected — disable them instead. Append YES to confirm."
+            ),
+            args=(
+                Arg(name="name", summary="skill name"),
+                Arg(name="YES", required=False, summary="confirm the removal"),
+            ),
+            examples=(Example(invocation="/skill rm old-skill YES"),),
+        ),
+        SubCommand(
+            name="edit",
+            summary="Print the path to a skill's SKILL.md",
+            description=(
+                "You get the on-disk path to edit a skill yourself. Built-ins are "
+                "read-only; fork with add first. Run reload when you are done."
+            ),
+            args=(Arg(name="name", summary="skill name"),),
+            examples=(Example(invocation="/skill edit research"),),
+        ),
+        SubCommand(
+            name="diff",
+            summary="Show recent audit history for a skill",
+            description=(
+                "You review the recent mutation history — installs, edits, restores — "
+                "with before and after content hashes."
+            ),
+            args=(Arg(name="name", summary="skill name"),),
+            examples=(Example(invocation="/skill diff research"),),
+        ),
+        SubCommand(
+            name="enable",
+            summary="Turn a skill on without deleting",
+            description="You re-activate a previously disabled skill.",
+            args=(Arg(name="name", summary="skill name"),),
+            examples=(Example(invocation="/skill enable research"),),
+        ),
+        SubCommand(
+            name="disable",
+            summary="Turn a skill off without deleting",
+            description=(
+                "You hide a skill from selection while keeping it on disk so you can "
+                "re-enable it later."
+            ),
+            args=(Arg(name="name", summary="skill name"),),
+            examples=(Example(invocation="/skill disable research"),),
+        ),
+        SubCommand(
+            name="reload",
+            summary="Rescan disk and refresh the index",
+            description=(
+                "You re-scan the skills workspace and rebuild the SQLite index after "
+                "editing files by hand."
+            ),
+            examples=(Example(invocation="/skill reload"),),
+        ),
+        SubCommand(
+            name="restore",
+            summary="Roll a skill back to an audited version",
+            description=(
+                "You recover a prior version of a skill from its audit snapshot. Use "
+                "diff to find the version hash, then restore to it."
+            ),
+            args=(
+                Arg(name="name", summary="skill name"),
+                Arg(name="--version", required=False, summary="audit hash prefix"),
+            ),
+            examples=(
+                Example(invocation="/skill restore research --version a1b2c3d4"),
+            ),
+        ),
+    ),
+)
 
 
 class SkillCommand(SlashCommand):
@@ -99,6 +213,10 @@ class SkillCommand(SlashCommand):
             "enable/disable, reload)."
         )
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _SKILL_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         # 1. ENTRY
         log.skills.debug(
@@ -109,7 +227,7 @@ class SkillCommand(SlashCommand):
             return "✗ /skill: not configured"
         stripped = args.strip()
         if not stripped:
-            return _USAGE
+            return render_usage("skill", _SKILL_META)
         parts = stripped.split(maxsplit=1)
         sub = parts[0].lower()
         rest = parts[1] if len(parts) > 1 else ""
@@ -140,7 +258,7 @@ class SkillCommand(SlashCommand):
                     "[commands] skill.handle: decision — unknown subcommand",
                     extra={"_fields": {"sub": sub[:40]}},
                 )
-                return _USAGE
+                return render_usage("skill", _SKILL_META)
         except SkillInstallError as exc:  # user-facing, expected
             log.skills.warning(
                 "[commands] skill.handle: install failed",

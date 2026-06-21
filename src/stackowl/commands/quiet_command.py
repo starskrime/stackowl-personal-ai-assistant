@@ -18,6 +18,7 @@ from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.infra.observability import log
 
@@ -32,10 +33,15 @@ _INSERT_OVERRIDE_SQL = (
     "VALUES (?, ?, ?, ?, ?)"
 )
 _DEFAULT_TTL_HOURS = 24
-_USAGE = (
-    "Usage:\n"
-    "  /quiet HH:MM HH:MM                           — global override\n"
-    "  /quiet --category <name> HH:MM HH:MM         — per-category override"
+
+_QUIET_META = CommandMeta(
+    grammar="flag",
+    group="Notifications",
+    args=(
+        Arg("start", summary="start time HH:MM"),
+        Arg("end", summary="end time HH:MM"),
+        Arg("--category", required=False, summary="quiet-hours category"),
+    ),
 )
 
 
@@ -53,6 +59,10 @@ class QuietHoursCommand(SlashCommand):
     def description(self) -> str:
         return "Set a global quiet-hours override (process-wide, expires in 24 h)."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _QUIET_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] quiet.handle: entry",
@@ -63,7 +73,7 @@ class QuietHoursCommand(SlashCommand):
         parts = args.strip().split()
         if not parts:
             log.notifications.debug("[notifications] quiet.handle: usage shown — empty args")
-            return _USAGE
+            return render_usage("quiet", _QUIET_META)
 
         category: str | None = None
         if parts[0] == "--category":
@@ -71,14 +81,14 @@ class QuietHoursCommand(SlashCommand):
                 log.notifications.debug(
                     "[notifications] quiet.handle: usage shown — missing category args"
                 )
-                return _USAGE
+                return render_usage("quiet", _QUIET_META)
             category = parts[1]
             start_raw, end_raw = parts[2], parts[3]
         elif len(parts) >= 2:  # noqa: PLR2004
             start_raw, end_raw = parts[0], parts[1]
         else:
             log.notifications.debug("[notifications] quiet.handle: usage shown — too few parts")
-            return _USAGE
+            return render_usage("quiet", _QUIET_META)
 
         try:
             time.fromisoformat(start_raw)

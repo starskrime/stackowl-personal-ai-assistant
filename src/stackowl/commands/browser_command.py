@@ -6,10 +6,70 @@ import shutil
 from pathlib import Path
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, SubCommand, render_usage
 from stackowl.commands.registry import register_command
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+
+_BROWSER_META = CommandMeta(
+    grammar="verb",
+    group="Browser",
+    subcommands=(
+        SubCommand(
+            name="help",
+            summary="List the browser admin subcommands",
+        ),
+        SubCommand(
+            name="settings",
+            summary="Show the current browser settings",
+        ),
+        SubCommand(
+            name="sessions",
+            summary="List active sessions for this conversation",
+        ),
+        SubCommand(
+            name="close",
+            summary="Release one session by id prefix, or all",
+            args=(
+                Arg(
+                    name="id",
+                    summary="session id prefix, or 'all'",
+                    choices=("id", "all"),
+                ),
+            ),
+        ),
+        SubCommand(
+            name="fetch-binary",
+            summary="Re-run the Camoufox binary fetch",
+        ),
+        SubCommand(
+            name="profile",
+            summary="Manage persistent browser profiles",
+            children=(
+                SubCommand(
+                    name="list",
+                    summary="List profiles for this conversation",
+                ),
+                SubCommand(
+                    name="delete",
+                    summary="Remove a profile directory",
+                    args=(Arg(name="name", summary="profile name"),),
+                ),
+            ),
+        ),
+        SubCommand(
+            name="watch",
+            summary="Inspect website-watch registration",
+            children=(
+                SubCommand(
+                    name="list",
+                    summary="Explain how to register a watch job",
+                ),
+            ),
+        ),
+    ),
+)
 
 
 def _owner_key_for_session(state: PipelineState) -> str:
@@ -39,6 +99,10 @@ class BrowserCommand(SlashCommand):
             "profile list/delete, watch add/list/remove."
         )
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _BROWSER_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] browser.handle: entry",
@@ -64,7 +128,11 @@ class BrowserCommand(SlashCommand):
             return self._profile_subcmd(runtime, parts[1:], _owner_key_for_session(state))
         if sub == "watch":
             return self._watch_subcmd(parts[1:])
-        return f"Unknown subcommand: '{sub}'. Try /browser help."
+        log.gateway.debug(
+            "[commands] browser.handle: unknown subcommand — returning usage",
+            extra={"_fields": {"sub": sub}},
+        )
+        return f"Unknown subcommand: '{sub}'.\n\n" + render_usage("browser", _BROWSER_META)
 
     def _help_text(self) -> str:
         return (

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.infra.observability import log
 from stackowl.notifications.router import Notification, NotificationRouter
@@ -28,6 +29,12 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 
 _CATEGORY = "user_urgent"
 _FALLBACK_CHANNELS = ["cli"]
+
+_URGENT_META = CommandMeta(
+    grammar="flag",
+    group="Notifications",
+    args=(Arg("message", summary="the urgent message to broadcast"),),
+)
 
 
 class UrgentCommand(SlashCommand):
@@ -80,6 +87,10 @@ class UrgentCommand(SlashCommand):
     def description(self) -> str:
         return "Broadcast a critical notification to all registered channels."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _URGENT_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         channels = self._resolve_channels()
         log.notifications.debug(
@@ -97,7 +108,7 @@ class UrgentCommand(SlashCommand):
         message = args.strip()
         if not message:
             log.notifications.debug("[notifications] urgent.handle: empty message")
-            return "urgent: message required"
+            return "urgent: message required\n" + render_usage("urgent", _URGENT_META)
 
         log.notifications.debug(
             "[notifications] urgent.handle: dispatching to channels",

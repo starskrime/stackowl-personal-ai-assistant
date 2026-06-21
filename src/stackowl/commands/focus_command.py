@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.infra.observability import log
 from stackowl.notifications.router import FocusMode, NotificationRouter
@@ -25,6 +26,19 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 
 
 _EVENT_FOCUS_CHANGED = "focus_mode_changed"
+
+_FOCUS_META = CommandMeta(
+    grammar="flag",
+    group="Focus & Availability",
+    args=(
+        Arg(
+            "mode",
+            required=False,
+            choices=("soft", "hard", "off"),
+            summary="focus mode",
+        ),
+    ),
+)
 
 
 class FocusCommand(SlashCommand):
@@ -46,6 +60,10 @@ class FocusCommand(SlashCommand):
     def description(self) -> str:
         return "Control focus mode (suppress/batch notifications)."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _FOCUS_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] focus.handle: entry",
@@ -55,12 +73,18 @@ class FocusCommand(SlashCommand):
             return "✗ /focus: not configured"
         stripped = args.strip()
         mode: FocusMode
-        if stripped == "--hard":
+        if stripped in ("--hard", "hard"):
             mode = "hard"
         elif stripped == "off":
             mode = "off"
-        else:
+        elif stripped in ("", "soft"):
             mode = "soft"
+        else:
+            log.notifications.debug(
+                "[notifications] focus.handle: usage shown — unrecognized mode",
+                extra={"_fields": {"arg": stripped[:40]}},
+            )
+            return render_usage("focus", _FOCUS_META)
 
         log.notifications.debug(
             "[notifications] focus.handle: decision",

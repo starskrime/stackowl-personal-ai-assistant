@@ -13,11 +13,41 @@ import cycles with the providers subsystem.
 from __future__ import annotations
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import register_command
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
 
 _PRIVACY_CONFIRMATION = "YES"
+
+_COST_META = CommandMeta(
+    grammar="verb",
+    group="Cost & Usage",
+    subcommands=(
+        SubCommand(
+            name="privacy",
+            summary="Wipe all cost history after a YES confirmation",
+            description=(
+                "You permanently delete every cost record. The wipe is "
+                "irreversible, so it runs only after you confirm with YES."
+            ),
+            args=(
+                Arg(
+                    name="confirmation",
+                    required=False,
+                    summary="literal YES to confirm the wipe",
+                    choices=("YES",),
+                ),
+            ),
+            examples=(
+                Example(
+                    invocation="/cost privacy YES",
+                    note="Irreversibly delete all cost records",
+                ),
+            ),
+        ),
+    ),
+)
 
 
 class CostCommand(SlashCommand):
@@ -28,6 +58,10 @@ class CostCommand(SlashCommand):
     @property
     def description(self) -> str:
         return "Show today's spending or wipe cost history (/cost privacy)."
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _COST_META
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.engine.debug(
@@ -51,10 +85,7 @@ class CostCommand(SlashCommand):
             "[commands] cost.handle: decision — unknown subcommand",
             extra={"_fields": {"sub": sub[:40]}},
         )
-        return (
-            "Usage: /cost                 — show today's spend\n"
-            "       /cost privacy YES     — wipe cost_records (irreversible)"
-        )
+        return render_usage("cost", _COST_META)
 
     async def _summary(self) -> str:
         log.engine.debug("[commands] cost.summary: entry")

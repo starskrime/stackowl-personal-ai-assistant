@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.metadata import Arg, CommandMeta, SubCommand, render_usage
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -13,12 +14,30 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.plugins.registry import PluginRegistry
 
 
-_USAGE = (
-    "Usage:\n"
-    "  /plugins list\n"
-    "  /plugins info <name>\n"
-    "  /plugins enable <name>\n"
-    "  /plugins disable <name>"
+_PLUGINS_META = CommandMeta(
+    grammar="verb",
+    group="Plugins",
+    subcommands=(
+        SubCommand(
+            name="list",
+            summary="List every installed plugin with version and type",
+        ),
+        SubCommand(
+            name="info",
+            summary="Show full metadata for one plugin",
+            args=(Arg(name="name", summary="installed plugin name"),),
+        ),
+        SubCommand(
+            name="enable",
+            summary="Turn a plugin on",
+            args=(Arg(name="name", summary="installed plugin name"),),
+        ),
+        SubCommand(
+            name="disable",
+            summary="Turn a plugin off",
+            args=(Arg(name="name", summary="installed plugin name"),),
+        ),
+    ),
 )
 
 
@@ -39,6 +58,10 @@ class PluginsCommand(SlashCommand):
     @property
     def description(self) -> str:
         return "List and manage installed plugins"
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _PLUGINS_META
 
     async def handle(self, args: str, state: PipelineState) -> str:
         # 1. ENTRY
@@ -69,7 +92,7 @@ class PluginsCommand(SlashCommand):
             elif sub == "disable" and arg:
                 result = await self._handle_disable(arg.strip())
             else:
-                result = _USAGE
+                result = render_usage("plugins", _PLUGINS_META)
         except Exception as exc:
             log.gateway.error(
                 "plugins_command.handle: subcommand crashed",

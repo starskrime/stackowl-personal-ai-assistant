@@ -12,7 +12,6 @@ from stackowl.commands.owls_command import OwlsCommand
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.state import PipelineState
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

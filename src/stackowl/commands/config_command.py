@@ -25,21 +25,59 @@ from stackowl.commands.config_helpers import (
     set_nested,
     stringify,
 )
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.config.settings import Settings
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
 
-_USAGE = (
-    "Usage: /config <list|get|set|reset|export> [args]\n"
-    "  /config list                — show all settings (dot notation)\n"
-    "  /config get <key>           — read one setting\n"
-    "  /config set <key> <value>   — write one setting\n"
-    "  /config reset <key>         — revert to default\n"
-    "  /config export              — dump full settings as YAML"
-)
-
 _NO_FILE = "No stackowl.yaml found — run stackowl init first"
+
+_CONFIG_META = CommandMeta(
+    grammar="verb",
+    group="Configuration",
+    subcommands=(
+        SubCommand(
+            name="list",
+            summary="Show all settings in dot notation",
+            description="You see every configured setting, sorted, with sensitive values masked.",
+            examples=(Example(invocation="/config list"),),
+        ),
+        SubCommand(
+            name="get",
+            summary="Read a single setting",
+            description="You read one setting by its dot-notation key.",
+            args=(Arg(name="key", summary="dot-notation setting key"),),
+            examples=(Example(invocation="/config get heartbeat.interval_minutes"),),
+        ),
+        SubCommand(
+            name="set",
+            summary="Write a single setting",
+            description=(
+                "You write one setting. Sensitive fields are refused — set those "
+                "via SecretResolver syntax in stackowl.yaml instead."
+            ),
+            args=(
+                Arg(name="key", summary="dot-notation setting key"),
+                Arg(name="value", summary="new value (coerced to type)"),
+            ),
+            examples=(Example(invocation="/config set heartbeat.interval_minutes 30"),),
+        ),
+        SubCommand(
+            name="reset",
+            summary="Revert a setting to its default",
+            description="You remove the override for a key so it falls back to its default.",
+            args=(Arg(name="key", summary="dot-notation setting key"),),
+            examples=(Example(invocation="/config reset heartbeat.interval_minutes"),),
+        ),
+        SubCommand(
+            name="export",
+            summary="Dump the full settings file as YAML",
+            description="You print the raw stackowl.yaml contents.",
+            examples=(Example(invocation="/config export"),),
+        ),
+    ),
+)
 
 
 class ConfigCommand(SlashCommand):
@@ -56,6 +94,10 @@ class ConfigCommand(SlashCommand):
     def description(self) -> str:
         return "Read and write StackOwl settings at runtime."
 
+    @property
+    def meta(self) -> CommandMeta:
+        return _CONFIG_META
+
     async def handle(self, args: str, state: PipelineState) -> str:
         log.config.debug(
             "[commands] config.handle: entry",
@@ -64,7 +106,7 @@ class ConfigCommand(SlashCommand):
         parts = args.strip().split(maxsplit=1)
         if not parts:
             log.config.debug("[commands] config.handle: no subcommand — returning usage")
-            return _USAGE
+            return render_usage("config", _CONFIG_META)
         sub = parts[0].lower()
         rest = parts[1] if len(parts) > 1 else ""
         try:
@@ -83,7 +125,7 @@ class ConfigCommand(SlashCommand):
                     "[commands] config.handle: unknown subcommand",
                     extra={"_fields": {"sub": sub}},
                 )
-                return _USAGE
+                return render_usage("config", _CONFIG_META)
         except Exception as exc:
             log.config.error(
                 "[commands] config.handle: subcommand failed",

@@ -21,6 +21,7 @@ from typing import Any
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
+from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_writer import store_secret
 from stackowl.events.bus import EventBus
@@ -51,6 +52,68 @@ _USAGE = (
 
 _NO_FILE = "No stackowl.yaml found — run stackowl setup --minimal first"
 
+_PROVIDER_META = CommandMeta(
+    grammar="verb",
+    group="Providers & Routing",
+    subcommands=(
+        SubCommand(
+            name="list",
+            summary="Show every configured AI provider",
+            description=(
+                "You see each provider's protocol, default model, tier, enabled "
+                "flag, and the api_key reference (never the secret itself)."
+            ),
+            examples=(Example(invocation="/provider list"),),
+        ),
+        SubCommand(
+            name="add",
+            summary="Register a new AI provider",
+            description=(
+                "You add a provider entry. A raw token is stored as a secret "
+                "reference (keyring or mode-0600 file) — never in plaintext. "
+                "The change applies on the next reload or restart."
+            ),
+            args=(
+                Arg(name="name", summary="unique provider name"),
+                Arg(name="protocol", summary="backend protocol", choices=_VALID_PROTOCOLS),
+                Arg(name="default_model", summary="model id to use by default"),
+                Arg(name="tier", summary="routing tier", choices=_VALID_TIERS),
+                Arg(name="base_url", required=False, summary="API base URL"),
+                Arg(name="token=<RAW>", required=False, summary="auth token (stored as a secret ref)"),
+            ),
+            examples=(
+                Example(
+                    invocation="/provider add openai openai gpt-4o powerful token=sk-...",
+                    note="Add an OpenAI provider with a token",
+                ),
+            ),
+        ),
+        SubCommand(
+            name="remove",
+            summary="Delete a configured provider",
+            description=(
+                "You remove the named provider. Any stored secret is left in "
+                "place. The change applies on the next reload or restart."
+            ),
+            args=(Arg(name="name", summary="provider to remove"),),
+            examples=(Example(invocation="/provider remove openai"),),
+        ),
+        SubCommand(
+            name="set-tier",
+            summary="Change a provider's routing tier",
+            description=(
+                "You re-tier an existing provider so the model router selects it "
+                "differently. The change applies on the next reload or restart."
+            ),
+            args=(
+                Arg(name="name", summary="provider to re-tier"),
+                Arg(name="tier", summary="new routing tier", choices=_VALID_TIERS),
+            ),
+            examples=(Example(invocation="/provider set-tier openai powerful"),),
+        ),
+    ),
+)
+
 
 class ProviderCommand(SlashCommand):
     """Implements /provider list|add|remove|set-tier."""
@@ -65,6 +128,10 @@ class ProviderCommand(SlashCommand):
     @property
     def description(self) -> str:
         return "List, add, remove, or re-tier AI providers."
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _PROVIDER_META
 
     async def handle(self, args: str, state: PipelineState) -> str:
         log.config.debug(
@@ -88,7 +155,7 @@ class ProviderCommand(SlashCommand):
                     "[commands] provider.handle: unknown subcommand",
                     extra={"_fields": {"sub": sub}},
                 )
-                return _USAGE
+                return render_usage("provider", _PROVIDER_META)
         except Exception as exc:
             log.config.error(
                 "[commands] provider.handle: subcommand failed",
