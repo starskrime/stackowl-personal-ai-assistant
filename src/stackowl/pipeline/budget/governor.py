@@ -54,13 +54,18 @@ class BudgetGovernor:
         # 0.0 for an ephemeral turn or a first attempt → legacy behavior unchanged.
         self._prior_cost_usd = max(0.0, prior_cost_usd)
 
-    def check(self, iteration: int) -> BudgetBreach | None:
+    def check(self, iteration: int, *, tool_calls: int | None = None) -> BudgetBreach | None:
         """Return a BudgetBreach for the FIRST set cap exceeded after this iteration.
 
-        `iteration` is the just-completed 0-based ReAct index — steps_done =
-        iteration + 1. Order: steps, then time, then cost (cost last — weakest signal).
+        `iteration` is the just-completed 0-based ReAct index — round count =
+        iteration + 1. `tool_calls`, when given, is the cumulative number of
+        individual tool dispatches so far this turn; the step cap counts the MAX of
+        rounds and tool calls. A provider can emit several tool_use blocks per
+        round, so counting only rounds let a tool-spamming turn slip the step cap
+        and die on the wall-clock instead — counting dispatches contains it.
+        Order: steps, then time, then cost (cost last — weakest signal).
         """
-        steps_done = iteration + 1
+        steps_done = iteration + 1 if tool_calls is None else max(iteration + 1, tool_calls)
         if self._max_steps is not None and steps_done >= self._max_steps:
             return BudgetBreach("steps", float(self._max_steps), float(steps_done))
         if self._max_time_s is not None:

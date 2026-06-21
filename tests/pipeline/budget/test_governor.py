@@ -36,6 +36,29 @@ def test_steps_trips_at_limit_not_before() -> None:
     assert breach is not None and breach.cap == "steps" and breach.limit == 2
 
 
+def test_steps_counts_tool_calls_not_just_rounds() -> None:
+    """A provider can emit many tool_use blocks per ReAct round; the step cap must
+    count individual tool dispatches so a tool-spamming turn trips the cap instead
+    of running to the wall-clock ceiling."""
+    g = _gov(ResourceCaps(max_steps=5))
+    # Round 1 (iteration 0) but already 5 tool calls dispatched → trips on steps.
+    breach = g.check(0, tool_calls=5)
+    assert breach is not None and breach.cap == "steps"
+    assert breach.actual == 5.0
+
+
+def test_steps_tool_calls_below_limit_no_trip() -> None:
+    g = _gov(ResourceCaps(max_steps=20))
+    assert g.check(2, tool_calls=16) is None  # 16 < 20, 3 rounds < 20 → fine
+
+
+def test_steps_uses_max_of_rounds_and_tool_calls() -> None:
+    g = _gov(ResourceCaps(max_steps=4))
+    # More rounds than tool calls (rare) still trips on the round count.
+    breach = g.check(3, tool_calls=1)
+    assert breach is not None and breach.cap == "steps" and breach.actual == 4.0
+
+
 def test_time_trips_on_elapsed() -> None:
     clock = _Clock(0.0)
     g = _gov(ResourceCaps(max_time_s=10.0), clock=clock)
