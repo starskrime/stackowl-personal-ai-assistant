@@ -950,6 +950,17 @@ class StartupOrchestrator:
                 reply = await registry.dispatch(cmd, args, state)
             except CommandNotFoundError:
                 reply = f"Unknown slash command: '/{cmd}'. Try /help to see what's available."
+                # Surface the commands they likely meant, using the same resolver
+                # that powers /find (lexical, no model load). Never fatal.
+                try:
+                    from stackowl.commands.resolver import suggest_invocations
+                    hits = await suggest_invocations(
+                        f"{cmd} {args}".strip(), registry.list(), limit=3
+                    )
+                    if hits:
+                        reply += "\n\nDid you mean:\n" + "\n".join(f"  {h}" for h in hits)
+                except Exception as exc:  # suggestion is best-effort
+                    log.debug("[startup] gateway: command suggestion failed", exc_info=exc)
             except Exception as exc:
                 log.error("[startup] gateway: slash command failed", exc_info=exc)
                 reply = f"Command '/{cmd}' failed: {exc}"

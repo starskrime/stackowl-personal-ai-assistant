@@ -34,6 +34,11 @@ from stackowl.memory.sqlite_helpers import cosine_similarity
 # tokenizer is language-agnostic (no Latin-only assumption, no keyword list).
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
+# Relevance floor for ranked results — drops the weak tail so a query whose
+# meaningful words match nothing returns few/no suggestions rather than
+# alphabetically-first noise. Score-based ⇒ language-agnostic.
+_ABS_FLOOR = 0.18
+_REL_RATIO = 0.5
 
 
 @dataclass(frozen=True)
@@ -46,13 +51,22 @@ class CommandCandidate:
     grammar: str  # "verb" | "flag" | "leaf" — the leaf node's command grammar
 
 
+# A token that IS (part of) the command's name/path is a far stronger signal
+# than one that only appears in prose — the identifier is canonical. Boosting it
+# is language-agnostic (it's about WHERE the word sits, not WHICH word it is), and
+# it fixes the small-corpus IDF artefact where a rare function word out-weights a
+# real command name.
+_NAME_BOOST = 3.0
+
+
 @dataclass
 class _Entry:
     invocation: str
     summary: str
     grammar: str
     text: str  # the searchable blob (command + path + summary + description)
-    tokens: frozenset[str]
+    tokens: frozenset[str]  # all tokens (name + prose)
+    name_tokens: frozenset[str]  # just the command/path/sub-command-name tokens
     vector: list[float] | None = field(default=None)
 
 
@@ -92,8 +106,9 @@ class CommandResolver:
             )
             for node, path in _walk(cmd.meta.subcommands, []):
                 invocation = f"/{cmd.command} {' '.join(path)}"
+                name_text = " ".join([cmd.command, *path])
                 blob = " ".join([cmd.command, *path, node.summary, node.description])
-                entries.append(self._make_entry(invocation, node.summary, grammar, invocation, blob))
+                entries.append(self._make_entry(invocation, node.summary, grammar, name_text, blob))
         self._entries = entries
         self._idf = _compute_idf(entries)
         # An out-of-corpus query word is maximally distinctive — treat it as if it
@@ -107,7 +122,7 @@ class CommandResolver:
         )
 
     def _make_entry(
-        self, invocation: str, summary: str, grammar: str, _key: str, blob: str
+        self, invocation: str, summary: str, grammar: str, name_text: str, blob: str
     ) -> _Entry:
         return _Entry(
             invocation=invocation,
@@ -115,6 +130,7 @@ class CommandResolver:
             grammar=grammar,
             text=blob,
             tokens=_tokens(blob),
+            name_tokens=_tokens(name_text),
         )
 
     # ------------------------------------------------------------------
@@ -148,6 +164,14 @@ class CommandResolver:
                 ranked.append((score, entry))
 
         ranked.sort(key=lambda t: (-t[0], t[1].invocation))
+        # Relevance floor: drop the long tail of weak matches (e.g. an entry that
+        # only shares one low-information word). Keep candidates that are both
+        # above an absolute floor and reasonably close to the best match — score-
+        # based, so it's language-agnostic.
+        if ranked:
+            top = ranked[0][0]
+            cutoff = max(_ABS_FLOOR, _REL_RATIO * top)
+            ranked = [pair for pair in ranked if pair[0] >= cutoff]
         out = [
             CommandCandidate(
                 invocation=e.invocation, summary=e.summary, score=round(s, 4), grammar=e.grammar
@@ -198,9 +222,33 @@ class CommandResolver:
         overlap = q_tokens & entry.tokens
         if not overlap:
             return 0.0
-        num = sum(self._idf.get(t, self._idf_default) for t in overlap)
-        denom = sum(self._idf.get(t, self._idf_default) for t in q_tokens)
+        num = 0.0
+        for t in overlap:
+            weight = self._idf.get(t, self._idf_default)
+            if t in entry.name_tokens:
+                weight *= _NAME_BOOST  # the word IS this command's name/path
+            num += weight
+        # Normalise by the best achievable (every query token matched as a name)
+        # so the score stays in [0, 1] and a name hit dominates a prose hit.
+        denom = _NAME_BOOST * sum(self._idf.get(t, self._idf_default) for t in q_tokens)
         return num / denom if denom else 0.0
+
+
+async def suggest_invocations(
+    query: str, commands: list[SlashCommand], *, limit: int = 3
+) -> list[str]:
+    """Lexical command suggestions for an unknown / near-miss command.
+
+    Sync-safe (no embedding model loaded) helper for the gateway: when a typed
+    ``/command`` doesn't exist, feed the whole typed text here to surface the
+    real commands the user likely meant.  Returns invocation strings.
+    """
+    if not query.strip() or not commands:
+        return []
+    resolver = CommandResolver()  # lexical-only — cheap, no model load
+    resolver.index(commands)
+    candidates = await resolver.resolve(query, limit=limit)
+    return [c.invocation for c in candidates]
 
 
 def _compute_idf(entries: list[_Entry]) -> dict[str, float]:
