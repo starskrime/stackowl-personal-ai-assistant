@@ -18,6 +18,14 @@ from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
+# Reserved owner_key for preferences that apply across EVERY channel of a single
+# principal (e.g. an output-format preference the user wants honored everywhere).
+# Real owner_keys are channel-scoped ("local", "telegram:{chat_id}", …) so this
+# sentinel can never collide. The tenancy ``owner_id`` still isolates users —
+# "global" means cross-channel, NOT cross-principal. Readers merge a global pref
+# UNDER the per-owner pref (owner-specific overrides global).
+GLOBAL_OWNER_KEY = "__global__"
+
 
 class PreferenceStore(OwnedRepository):
     """Thin async SQLite wrapper for user_preferences (migration 0028).

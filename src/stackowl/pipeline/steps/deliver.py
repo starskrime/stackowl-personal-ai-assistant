@@ -121,8 +121,16 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     if store is None or not state.responses:
         return state
     try:
+        from stackowl.memory.preferences import GLOBAL_OWNER_KEY
+
         owner_key = state.identity_key or state.session_id
-        prefs = await store.list_for_owner(owner_key)
+        # Merge the cross-channel GLOBAL prefs UNDER the per-owner prefs so a
+        # globally-set preference (e.g. output_tables=off) is enforced on every
+        # channel, while a per-owner pref still overrides it. No global pref →
+        # byte-identical baseline.
+        global_prefs = await store.list_for_owner(GLOBAL_OWNER_KEY)
+        owner_prefs = await store.list_for_owner(owner_key)
+        prefs = {**global_prefs, **owner_prefs}
         if not prefs:
             return state
         from stackowl.channels._format import apply_output_preferences
