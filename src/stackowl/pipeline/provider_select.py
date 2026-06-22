@@ -6,6 +6,8 @@ logging (log_selection=True).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from stackowl.commands.tier_command import get_session_tier
 from stackowl.exceptions import (
     AllProvidersUnavailableError,
@@ -117,6 +119,23 @@ def _warn_owl_name_shadow(services: object, state: PipelineState) -> None:
         )
 
 
+@dataclass(frozen=True)
+class ToolProviderChoice:
+    """The resolved tool-loop provider PLUS the escalation plan execute needs.
+
+    ``ceiling_tier`` is the resolved desired tier (the escalation CEILING; the floor
+    is always ``"fast"``). ``pinned`` is True when the user/owl made a DELIBERATE
+    routing choice — an owl-named provider, a manifest ``provider_name`` pin, or an
+    explicit session ``/tier`` — that must be honoured EXACTLY (no auto-escalation;
+    execute calls this provider directly). When ``pinned`` is False the turn starts
+    at ``"fast"`` and the gateway escalates up to ``ceiling_tier``.
+    """
+
+    provider: ModelProvider
+    ceiling_tier: str
+    pinned: bool
+
+
 def select_tool_provider(
     registry: ProviderRegistry,
     services: object,
@@ -125,17 +144,39 @@ def select_tool_provider(
     log_selection: bool = True,
     record_recovery: bool = True,
 ) -> ModelProvider:
-    """Resolve the ModelProvider for the tool-use loop.
+    """Resolve the ModelProvider for the tool-use loop (thin wrapper, back-compat).
+
+    Returns just the provider — the historical contract used by ``assemble`` (window
+    probe) and the non-tool stream path. The execute step uses
+    :func:`select_tool_provider_plan` to also learn the escalation ceiling + pin.
+    """
+    return select_tool_provider_plan(
+        registry, services, state,
+        log_selection=log_selection, record_recovery=record_recovery,
+    ).provider
+
+
+def select_tool_provider_plan(
+    registry: ProviderRegistry,
+    services: object,
+    state: PipelineState,
+    *,
+    log_selection: bool = True,
+    record_recovery: bool = True,
+) -> ToolProviderChoice:
+    """Resolve the tool-loop provider AND the escalation plan.
 
     Precedence (highest → lowest):
     0. A provider registered under the OWL's own name — the most specific per-owl
-       binding. If this wins while the manifest ALSO carries a DIFFERENT explicit
-       ``provider_name`` pin, the collision is logged at WARN (F031/REACT-3): the
-       owl-name binding still wins, but the shadowed manifest pin is now visible.
+       binding. PINNED (no escalation). If this wins while the manifest ALSO carries a
+       DIFFERENT explicit ``provider_name`` pin, the collision is logged at WARN
+       (F031/REACT-3): the owl-name binding still wins, but the shadowed pin is visible.
     1. Owl manifest ``provider_name`` pin — if set and registered, use it directly.
-       On ProviderNotFoundError warn and fall through to tier routing.
+       PINNED. On ProviderNotFoundError warn and fall through to tier routing.
     2. Desired tier = get_session_tier(session_id) OR manifest.model_tier OR "powerful".
-       Session pref beats manifest; manifest beats default.
+       Session pref beats manifest; manifest beats default. An explicit SESSION tier is
+       PINNED (the user chose it via /tier); a manifest/default tier is the CEILING for
+       fast→…→ceiling escalation (NOT pinned).
     3. Resolve via registry.resolve_tier_with_fallback(desired_tier) — circuit-aware
        (falls back if the tier provider's circuit is OPEN).
 
@@ -169,9 +210,15 @@ def select_tool_provider(
                     "owl": state.owl_name,
                     "chosen_provider_name": state.owl_name,
                     "source": "owl_named_provider",
+                    "pinned": True,
                 }},
             )
-        return _ensure_tool_capable(provider, registry, state, log_selection=log_selection)
+        # An owl-named provider is a deliberate per-owl binding → PINNED, no escalation.
+        return ToolProviderChoice(
+            provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
+            ceiling_tier="powerful",
+            pinned=True,
+        )
     except ProviderNotFoundError:
         pass  # no per-owl provider — fall through to manifest/tier routing
 
@@ -203,9 +250,15 @@ def select_tool_provider(
                         "desired_tier": manifest.model_tier,
                         "chosen_provider_name": manifest.provider_name,
                         "source": "manifest_pin",
+                        "pinned": True,
                     }},
                 )
-            return _ensure_tool_capable(provider, registry, state, log_selection=log_selection)
+            # An explicit manifest provider pin is deliberate → PINNED, no escalation.
+            return ToolProviderChoice(
+                provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
+                ceiling_tier=manifest.model_tier or "powerful",
+                pinned=True,
+            )
         except ProviderNotFoundError:
             log.engine.warning(
                 "[pipeline] execute: manifest provider_name not registered — falling back to tier",
@@ -242,6 +295,9 @@ def select_tool_provider(
             kind="provider_fallback", failed=degraded_from,
             recovered_via=provider.name, user_visible=True,
         )
+    # An explicit SESSION tier (the user chose it via /tier) is honoured EXACTLY —
+    # PINNED, no escalation. A manifest/default tier is the escalation CEILING.
+    pinned = tier_source == "session"
     if log_selection:
         log.engine.info(
             "[pipeline] execute: tool provider selected",
@@ -250,6 +306,11 @@ def select_tool_provider(
                 "desired_tier": desired,
                 "chosen_provider_name": getattr(provider, "name", type(provider).__name__),
                 "source": tier_source,
+                "pinned": pinned,
             }},
         )
-    return _ensure_tool_capable(provider, registry, state, log_selection=log_selection)
+    return ToolProviderChoice(
+        provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
+        ceiling_tier=desired,
+        pinned=pinned,
+    )
