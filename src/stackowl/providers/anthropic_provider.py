@@ -17,14 +17,15 @@ from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
-from stackowl.providers._react import LoopGuard
+from stackowl.providers._react import LoopGuard, looks_like_tool_call, parse_react_action
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
     truncate_observation,
 )
-from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
+from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
 from stackowl.providers.vision_models import is_vision_model
@@ -173,8 +174,15 @@ class AnthropicProvider(ModelProvider):
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
+        can_escalate: bool = False,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Anthropic native tool-use loop using content blocks."""
+        """Anthropic native tool-use loop using content blocks.
+
+        ``can_escalate`` (set ONLY by LLMGateway below the ceiling tier) mirrors the
+        openai provider: when the model persistently emits an unparseable tool call
+        as TEXT (a leak) this loop returns the ESCALATE sentinel so the gateway
+        re-runs on a stronger tier — instead of leaking the raw tool-call text or
+        flooring. Default False ⇒ unchanged behaviour (honest floor)."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
         resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
         log.engine.debug(
@@ -276,6 +284,15 @@ class AnthropicProvider(ModelProvider):
         )
 
         guard = LoopGuard()
+        # Known tool names (anthropic schema shape: {"name": ...}) — lets the ReAct
+        # text parser validate/repair a flattened-newline name and reject a bogus one.
+        _known_tools = {
+            s["name"]
+            for s in tool_schemas
+            if isinstance(s, dict) and isinstance(s.get("name"), str)
+        }
+        _fmt_fix_count = 0  # bounded re-prompts when a final answer leaks as a tool call
+        _MAX_FORMAT_FIX = 2
         for _iter_idx in range(resolved_iterations):
             # Bound total context BEFORE the call. Only tool_result CONTENT is
             # elided (never the message itself), so tool_use/tool_result pairing
@@ -338,6 +355,77 @@ class AnthropicProvider(ModelProvider):
                         extra={"_fields": {"provider": self._name}},
                     )
                     continue
+                # Text-protocol parity with openai: a model that emitted a tool call
+                # as TEXT (an ACTION block) instead of a native tool_use block is
+                # dispatched through the normal chokepoint rather than delivered raw.
+                action = parse_react_action(text, known=_known_tools)
+                if action is not None:
+                    name, args = action
+                    messages.append({"role": "assistant", "content": text})
+                    try:
+                        result_text = await tool_dispatcher(name, args)
+                    except Exception as exc:  # surface to the model, keep looping
+                        log.engine.error(
+                            "[anthropic] react dispatch failed",
+                            exc_info=exc,
+                            extra={"_fields": {"provider": self._name, "tool": name}},
+                        )
+                        result_text = f"ERROR running {name}: {exc}"
+                    # Strip the private failure marker before the model/telemetry see it.
+                    clean = result_text.replace(TOOL_FAILED_MARKER, "")
+                    capped = truncate_observation(clean)
+                    failed = TOOL_FAILED_MARKER in result_text
+                    all_calls.append({"id": None, "name": name, "args": args, "result": capped, "failed": failed})
+                    react_directive = guard.observe(name, args)
+                    messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
+                    if react_directive:
+                        messages.append({"role": "user", "content": react_directive})
+                    if on_iteration_complete is not None:
+                        folded2 = await on_iteration_complete(
+                            ReActIterationState(
+                                iteration=_iter_idx,
+                                messages=list(messages),
+                                tool_call_records=list(all_calls),
+                            )
+                        )
+                        if folded2:
+                            messages.extend(folded2)
+                    if guard.tripped():
+                        log.engine.warning(
+                            "[anthropic] complete_with_tools: loop guard tripped "
+                            "(ReAct text path) — breaking to wrap-up",
+                            extra={"_fields": {"provider": self._name}},
+                        )
+                        break
+                    continue
+                # LEAK GUARD: the "final answer" is actually an unparsed tool call
+                # (an ACTION block / bare JSON we couldn't dispatch). NEVER deliver
+                # that raw text. Re-prompt the exact format a bounded number of times;
+                # if it persists, ESCALATE to a stronger tier when allowed (the gateway
+                # re-runs), else fall to the honest floor — never the raw tool call.
+                if looks_like_tool_call(text):
+                    if _fmt_fix_count < _MAX_FORMAT_FIX:
+                        _fmt_fix_count += 1
+                        log.engine.warning(
+                            "[anthropic] complete_with_tools: final answer looks like an "
+                            "unparsed tool call — re-prompting the ACTION format",
+                            extra={"_fields": {"provider": self._name, "attempt": _fmt_fix_count}},
+                        )
+                        messages.append({"role": "user", "content": FORMAT_FIX_DIRECTIVE})
+                        continue
+                    if can_escalate:
+                        log.engine.warning(
+                            "[anthropic] complete_with_tools: persistent tool-call leak — "
+                            "escalating to a stronger tier",
+                            extra={"_fields": {"provider": self._name}},
+                        )
+                        return ESCALATE_SENTINEL, all_calls
+                    log.engine.warning(
+                        "[anthropic] complete_with_tools: persistent tool-call leak, no "
+                        "escalation available — honest floor instead of raw tool call",
+                        extra={"_fields": {"provider": self._name}},
+                    )
+                    return synthesize_from_calls(user_text, all_calls, ""), all_calls
                 # Phase D: before accepting the draft, ask the persistence judge
                 # whether the agent delivered or gave up.
                 directive = await _enforce(text)

@@ -31,7 +31,10 @@ from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP, RESPONSE_RESER
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.progress.emitter import emit_start as emit_progress_start
 from stackowl.pipeline.progress.emitter import make_progress_callback
-from stackowl.pipeline.provider_select import select_tool_provider
+from stackowl.pipeline.provider_select import (
+    ToolProviderChoice,
+    select_tool_provider_plan,
+)
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, StepError, ToolCall
 from stackowl.pipeline.step_error import format_step_error
@@ -575,12 +578,54 @@ def _circuit_open_refusal(name: str) -> str:
     )
 
 
+def reset_ledger_for_tier_escalation(from_tier: str, to_tier: str, *, trace_id: str = "") -> None:
+    """Reset turn-scoped state between discarded escalation attempts.
+
+    Install a FRESH empty tool-outcome ledger (``bind()`` sets the ContextVar to
+    ``()``) so a discarded weak attempt's tool failures don't poison the NEXT tier's
+    give-up floor, and record the machinery recovery (kind ``tier_escalation``). The
+    backend's outer ledger token still governs teardown at turn end; this only clears
+    accumulation for the next attempt. Never raises — an escalation must never be
+    aborted by bookkeeping.
+    """
+    try:
+        tool_outcome_ledger.bind()  # set the ledger ContextVar to empty for the next tier
+        recovery_context.record_recovery(
+            kind="tier_escalation", failed=from_tier, recovered_via=to_tier,
+            user_visible=False,
+        )
+        log.engine.info(
+            "[pipeline] execute: tier escalation — reset ledger for the next attempt",
+            extra={"_fields": {"trace_id": trace_id, "from_tier": from_tier, "to_tier": to_tier}},
+        )
+    except Exception as exc:  # noqa: BLE001 — never abort an escalation on bookkeeping
+        log.engine.error(
+            "[pipeline] execute: tier-escalation reset failed — continuing",
+            exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+        )
+
+
 async def _run_with_tools(
     state: PipelineState,
-    provider: ModelProvider,
+    choice: ToolProviderChoice | ModelProvider,
     tool_registry: ToolRegistry,
 ) -> PipelineState:
-    """Execute the provider's tool loop and return updated state."""
+    """Execute the provider's tool loop and return updated state.
+
+    ``choice`` carries the resolved tool-loop provider PLUS the escalation plan: a
+    PINNED choice (owl-named provider / manifest pin / explicit session tier) runs
+    that provider directly; a non-pinned choice starts at ``"fast"`` and escalates
+    fast→…→``choice.ceiling_tier`` through the LLMGateway when the weak model leaks
+    an unparsed tool call (or the model itself emits ESCALATE).
+
+    Back-compat: a bare ``ModelProvider`` (the historical ``_run_with_tools(state,
+    provider, ...)`` direct-call contract — used by many integration tests and the
+    durable/direct path) is adapted to a PINNED choice, i.e. called directly with no
+    escalation, byte-identical to the prior behaviour.
+    """
+    if not isinstance(choice, ToolProviderChoice):
+        choice = ToolProviderChoice(provider=choice, ceiling_tier="powerful", pinned=True)
+    provider = choice.provider
     # E1-S4 — DNA-gated presented set: an owl with a non-empty capability_profile
     # sees base ∪ its groups ∪ pins ∪ tool_search (capped); overflow via tool_search.
     # Owls without a profile keep the full catalog (no regression).
@@ -615,11 +660,6 @@ async def _run_with_tools(
     # envelope, restrict the presented set to plan ∪ discovery (drift
     # prevention). None envelope → restrict_to=None → byte-for-byte S2.
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
-    # Per-model context budget: size the presented tool set to the model's real
-    # window so a weak/small-window model is not drowned in tool schemas.
-    # REACT-1/F032+F090 — prefer the value assemble already stamped (no second
-    # probe on the steady path); the fallback probe is bounded + safe-defaulted.
-    _window = await _resolve_execute_window(state, provider)
     _fixed_cost = _est_tokens(state.system_prompt) + sum(
         _est_tokens(getattr(m, "content", "")) for m in state.history
     )
@@ -632,20 +672,53 @@ async def _run_with_tools(
         if _svc_settings is not None
         else HARD_TOOL_COUNT_CAP
     )
-    if restrict_to is not None:
-        tool_schemas = tool_registry.to_provider_schema(
-            provider.protocol, profile=profile, pins=pins, restrict_to=restrict_to
-        )
-    else:
-        tool_schemas = tool_registry.to_provider_schema(
-            provider.protocol, profile=profile, pins=pins,
-            request_text=state.input_text,
-            budget={
-                "window": _window,
-                "fixed_cost_tokens": _fixed_cost,
-                "max_tools": _max_tools,
-            },
-        )
+
+    async def build_tool_schemas(prov: ModelProvider) -> list[dict[str, object]]:
+        """Build the presented tool schemas for ONE provider's protocol + window.
+
+        Extracted so the LLMGateway can REBUILD the schemas per escalation tier (a
+        fast and a powerful tier can speak different wire protocols and have
+        different context windows). Provider-independent inputs (profile/pins/
+        restrict_to/fixed_cost/max_tools) are captured from the enclosing scope; the
+        window is resolved per provider (REACT-1/F032+F090: a hit on the stamped
+        state.model_window on the steady path, a bounded safe-defaulted probe otherwise).
+        """
+        # Per-model context budget: size the presented set to the model's real window
+        # so a weak/small-window model is not drowned in tool schemas.
+        _window = await _resolve_execute_window(state, prov)
+        if restrict_to is not None:
+            schemas = tool_registry.to_provider_schema(
+                prov.protocol, profile=profile, pins=pins, restrict_to=restrict_to
+            )
+        else:
+            schemas = tool_registry.to_provider_schema(
+                prov.protocol, profile=profile, pins=pins,
+                request_text=state.input_text,
+                budget={
+                    "window": _window,
+                    "fixed_cost_tokens": _fixed_cost,
+                    "max_tools": _max_tools,
+                },
+            )
+        # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
+        # (delegation_depth>0) may not itself spawn/delegate, so remove those tools
+        # from the PRESENTED set. Excluded by NAME defensively.
+        if state.delegation_depth > 0:
+            schemas = _exclude_spawn_tools(schemas)
+            log.engine.debug(
+                "[pipeline] execute: depth>0 — excluding spawn/delegate tools",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "delegation_depth": state.delegation_depth,
+                    "tools": len(schemas),
+                }},
+            )
+        return schemas
+
+    # Build the schemas for the selected (ceiling/pinned) provider — used directly on
+    # the pinned/durable path and as the gateway's floor-tier seed (it rebuilds per tier).
+    _window = await _resolve_execute_window(state, provider)
+    tool_schemas = await build_tool_schemas(provider)
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(
         "[pipeline] execute: context budget",
@@ -662,23 +735,12 @@ async def _run_with_tools(
             "total_est_tokens": _fixed_cost + _tools_tokens,
         }},
     )
-    # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
-    # (delegation_depth>0) may not itself spawn/delegate, so remove those two
-    # tools from the PRESENTED set. Excluded by NAME defensively so it is correct
-    # once S1/S3 register delegate_task/sessions_spawn (they don't exist yet).
-    if state.delegation_depth > 0:
-        tool_schemas = _exclude_spawn_tools(tool_schemas)
-        log.engine.debug(
-            "[pipeline] execute: depth>0 — excluding spawn/delegate tools",
-            extra={"_fields": {
-                "trace_id": state.trace_id,
-                "delegation_depth": state.delegation_depth,
-                "tools": len(tool_schemas),
-            }},
-        )
     log.engine.info(
         "[pipeline] execute: tool_loop entry",
-        extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name, "tools": len(tool_schemas)}},
+        extra={"_fields": {
+            "trace_id": state.trace_id, "owl": state.owl_name, "tools": len(tool_schemas),
+            "pinned": choice.pinned, "ceiling_tier": choice.ceiling_tier,
+        }},
     )
 
     # F3.1 — within a single run, a tool denied once must not re-prompt the user
@@ -1153,6 +1215,9 @@ async def _run_with_tools(
     # per-iteration checkpoint callback so each ReAct round is persisted. When
     # task_id is None (every non-durable turn) NONE of this runs and the call is
     # made EXACTLY as before (no context, no extra kwargs) — byte-for-byte.
+    async def _on_tier_escalate(from_tier: str, to_tier: str) -> None:
+        reset_ledger_for_tier_escalation(from_tier, to_tier, trace_id=state.trace_id)
+
     async def _call_default() -> tuple[str, list[dict[str, Any]]]:
         _extra: dict[str, Any] = {}
         if persistence_check is not None:
@@ -1165,16 +1230,45 @@ async def _run_with_tools(
         )
         if _default_cb is not None:
             _extra["on_iteration_complete"] = _default_cb
-        # F027 — the execute step owns the BudgetGovernor; compute the residual
-        # wall-clock budget HERE and thread it as wrapup_deadline_s so the provider's
-        # terminal wrap-up is bounded (the provider gets a VALUE, never the governor).
-        return await provider.complete_with_tools(
+        # PINNED choice (owl-named provider / manifest pin / explicit session tier) →
+        # honour it EXACTLY: call the resolved provider directly, no escalation. F027 —
+        # the execute step owns the BudgetGovernor; compute the residual wall-clock
+        # budget HERE and thread it as wrapup_deadline_s (the provider gets a VALUE).
+        # (A None registry — defensive; run() already gated on it — also takes the
+        # direct path since the gateway needs the registry to resolve tiers.)
+        _preg = _services.provider_registry
+        if choice.pinned or _preg is None:
+            return await provider.complete_with_tools(
+                user_text=state.input_text,
+                system_text=state.system_prompt,
+                tool_schemas=tool_schemas,
+                tool_dispatcher=_dispatch,
+                history=list(state.history),
+                wrapup_deadline_s=_governor.remaining_seconds(),
+                **_extra,
+            )
+        # NON-PINNED → start at "fast" and escalate fast→…→ceiling through the gateway.
+        # It rebuilds schemas per tier (build_tool_schemas), recomputes the residual
+        # wrap-up budget per attempt (wrapup_deadline_fn), passes can_escalate below the
+        # ceiling so a persistent leak/give-up returns the ESCALATE sentinel (re-run on
+        # a stronger tier) instead of leaking raw text, and resets the ledger between
+        # discarded attempts (on_escalate). If even the top tier fails the loop returns
+        # an honest floor (never raw JSON) which flows through the same surfaces below.
+        from stackowl.providers.llm_gateway import LLMGateway
+
+        gateway = LLMGateway(_preg)
+        return await gateway.complete_with_tools(
             user_text=state.input_text,
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
+            floor="fast",
+            ceiling=choice.ceiling_tier,
+            purpose="execute.tool_loop",
+            build_tool_schemas=build_tool_schemas,
+            wrapup_deadline_fn=_governor.remaining_seconds,
+            on_escalate=_on_tier_escalate,
             history=list(state.history),
-            wrapup_deadline_s=_governor.remaining_seconds(),
             **_extra,
         )
 
@@ -1662,7 +1756,8 @@ async def run(state: PipelineState) -> PipelineState:
         return state
 
     try:
-        provider = select_tool_provider(registry, services, state)
+        choice = select_tool_provider_plan(registry, services, state)
+        provider = choice.provider
     except AllProvidersUnavailableError as exc:
         log.engine.error(
             "[pipeline] execute: all providers unavailable — flooring",
@@ -1722,7 +1817,7 @@ async def run(state: PipelineState) -> PipelineState:
             }},
         )
     if _use_tools and tool_registry is not None:
-        out = await _run_with_tools(state, provider, tool_registry)
+        out = await _run_with_tools(state, choice, tool_registry)
         # REACT-7/F099 — snapshot the consequential tally + bridged set onto state
         # HERE, while the turn-scoped ledger/recovery ContextVars are still bound
         # (the backend binds them for the whole pipeline). The honest giveup floor

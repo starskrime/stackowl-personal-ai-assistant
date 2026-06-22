@@ -17,6 +17,7 @@ Meta-calls that must not recurse (the intent router, the give-up judges) pin
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
@@ -125,6 +126,8 @@ class LLMGateway:
         ceiling: str = "powerful",
         purpose: str = "",
         on_escalate: Any = None,
+        build_tool_schemas: Any = None,
+        wrapup_deadline_fn: Any = None,
         **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Escalating agentic tool loop with FULL mid-loop escalation.
@@ -136,13 +139,37 @@ class LLMGateway:
         async callback) lets the caller reset turn-scoped state — e.g. the
         tool-outcome ledger — between attempts so a discarded attempt's tool
         failures don't poison the next tier's give-up floor.
+
+        ``build_tool_schemas`` (optional ``(provider) -> list`` — may be async) is
+        called once per attempt to REBUILD the tool schemas for that tier's provider
+        protocol + context window (a fast and a powerful tier can speak different
+        wire protocols and have different windows). When ``None`` the passed-in
+        ``tool_schemas`` are reused unchanged (back-compat for existing callers).
+
+        ``wrapup_deadline_fn`` (optional ``() -> float``) recomputes the residual
+        wrap-up budget FRESH per attempt from the live BudgetGovernor, so a late
+        tier is bounded by the time actually left — not a value frozen at entry.
+        When set it overrides any ``wrapup_deadline_s`` in ``kwargs`` for the call.
+
+        ``can_escalate`` (``idx < last tier``) is passed into each
+        ``provider.complete_with_tools`` so a provider that persistently leaks an
+        unparsed tool call returns the ESCALATE sentinel (re-run on a stronger tier)
+        instead of leaking raw text or flooring at a non-final tier.
         """
         tiers = tier_span(floor, ceiling)
         final_text, calls = "", []  # type: tuple[str, list[dict[str, Any]]]
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
             provider, _degraded = self._registry.resolve_tier_with_fallback(tier)
-            if tool_schemas and not provider.supports_tools and can_escalate:
+            # Rebuild schemas for THIS tier's provider (protocol + window differ per
+            # tier); reuse the passed-in list when no builder is supplied.
+            if build_tool_schemas is not None:
+                schemas = build_tool_schemas(provider)
+                if inspect.isawaitable(schemas):
+                    schemas = await schemas
+            else:
+                schemas = tool_schemas
+            if schemas and not provider.supports_tools and can_escalate:
                 # Can't run the loop on this tier — climb to a tool-capable one.
                 log.engine.info(
                     "[llm_gateway] tools: tier not tool-capable — stepping up",
@@ -150,9 +177,13 @@ class LLMGateway:
                 )
                 continue
             sys = _augment_system(system_text, can_escalate)
+            attempt_kwargs = dict(kwargs)
+            if wrapup_deadline_fn is not None:
+                attempt_kwargs["wrapup_deadline_s"] = wrapup_deadline_fn()
             final_text, calls = await provider.complete_with_tools(
-                user_text=user_text, system_text=sys, tool_schemas=tool_schemas,
-                tool_dispatcher=tool_dispatcher, **kwargs,
+                user_text=user_text, system_text=sys, tool_schemas=schemas,
+                tool_dispatcher=tool_dispatcher, can_escalate=can_escalate,
+                **attempt_kwargs,
             )
             if can_escalate and is_escalate_signal(final_text):
                 log.engine.info(

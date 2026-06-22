@@ -253,8 +253,15 @@ class ModelProvider(ABC):
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
+        can_escalate: bool = False,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
+
+        ``can_escalate`` (set by :class:`LLMGateway` below the ceiling tier) lets a
+        tool-capable provider return the ESCALATE sentinel — instead of leaking a
+        raw tool call or flooring — when it persistently cannot act, so the gateway
+        re-runs the loop on a stronger tier. Default ``False`` ⇒ unchanged behaviour.
+        The base default ignores it (it cannot run tools at all).
 
         ``wrapup_deadline_s`` (F027/SP-4) is the residual wall-clock budget the
         execute step (the BudgetGovernor owner) computes for the terminal Phase-F
