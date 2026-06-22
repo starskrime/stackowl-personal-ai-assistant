@@ -102,7 +102,14 @@ async def _gather_preferences(owner_key: str) -> str:
     if store is None:
         return ""
     try:
-        prefs = await store.list_for_owner(owner_key)
+        from stackowl.memory.preferences import GLOBAL_OWNER_KEY
+
+        # Surface cross-channel GLOBAL prefs too (owner-specific overrides global),
+        # so a globally-enforced preference (e.g. output_tables=off) is also VISIBLE
+        # to the model — closing the awareness loop. No global pref → unchanged.
+        global_prefs = await store.list_for_owner(GLOBAL_OWNER_KEY)
+        owner_prefs = await store.list_for_owner(owner_key)
+        prefs = {**global_prefs, **owner_prefs}
     except Exception as exc:
         log.engine.warning(
             "[pipeline] classify: preference load failed — skipping",

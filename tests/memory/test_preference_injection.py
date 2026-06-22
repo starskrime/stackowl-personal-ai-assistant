@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.db.pool import DbPool
-from stackowl.memory.preferences import PreferenceStore
+from stackowl.memory.preferences import GLOBAL_OWNER_KEY, PreferenceStore
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
@@ -44,6 +44,24 @@ async def test_preferences_appear_in_classify_memory_context(tmp_db: DbPool) -> 
     assert "## Learned Preferences" in ctx
     assert "response_style: markdown bullets" in ctx
     assert "language: English" in ctx
+
+
+async def test_global_preference_visible_to_any_session(tmp_db: DbPool) -> None:
+    """A GLOBALLY-set output preference is surfaced to the model for a session
+    that has no per-owner prefs — closing the awareness loop cross-channel."""
+    bridge = SqliteMemoryBridge(db=tmp_db)
+    store = PreferenceStore(db=tmp_db)
+    await store.set(GLOBAL_OWNER_KEY, "output_tables", "off")
+
+    token = set_services(StepServices(memory_bridge=bridge, preference_store=store))
+    try:
+        out = await classify.run(_make_state(session_id="sess-fresh"))
+    finally:
+        reset_services(token)
+
+    ctx = out.memory_context or ""
+    assert "## Learned Preferences" in ctx
+    assert "output_tables: off" in ctx
 
 
 async def test_no_preferences_section_when_owner_has_none(tmp_db: DbPool) -> None:

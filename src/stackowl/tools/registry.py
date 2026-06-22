@@ -446,6 +446,7 @@ class ToolRegistry:
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
         from stackowl.tools.knowledge.memory import MemoryTool
+        from stackowl.tools.knowledge.output_preference import SetOutputPreferenceTool
         from stackowl.tools.knowledge.reflect_now import ReflectNowTool
         from stackowl.tools.knowledge.session_search import SessionSearchTool
         from stackowl.tools.knowledge.skill_manage import SkillManageTool
@@ -562,6 +563,7 @@ class ToolRegistry:
         # specialist owl (consent-gated, depth-0 only, child-excluded at dispatch).
         registry.register(OwlBuildTool())
         registry.register(MemoryTool())
+        registry.register(SetOutputPreferenceTool())
         registry.register(SkillManageTool())
         registry.register(SkillViewTool())
         registry.register(SkillsListTool())
