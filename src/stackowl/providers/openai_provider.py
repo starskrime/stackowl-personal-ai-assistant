@@ -22,14 +22,15 @@ from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import message_has_blocks, openai_user_content
-from stackowl.providers._react import LoopGuard, parse_react_action
+from stackowl.providers._react import LoopGuard, looks_like_tool_call, parse_react_action
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
     truncate_observation,
 )
-from stackowl.providers._wrapup import WRAPUP_DIRECTIVE
+from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
 from stackowl.providers.vision_models import is_vision_model
@@ -197,8 +198,15 @@ class OpenAIProvider(ModelProvider):
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
+        can_escalate: bool = False,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """OpenAI function-calling tool-use loop."""
+        """OpenAI function-calling tool-use loop.
+
+        ``can_escalate`` (set ONLY by LLMGateway below the ceiling tier): when the
+        model persistently emits an unparseable tool call (a leak) or spins on
+        repeated failing calls, this loop returns the ESCALATE sentinel so the
+        gateway re-runs on a stronger tier — instead of leaking the raw tool-call
+        text or flooring. Default False ⇒ unchanged behaviour (honest floor)."""
         import json
 
         TestModeGuard.assert_not_test_mode("openai.complete_with_tools")
@@ -317,6 +325,16 @@ class OpenAIProvider(ModelProvider):
         )
 
         guard = LoopGuard()
+        # Known tool names — lets the ReAct parser validate/repair a flattened-newline
+        # name (e.g. "skill_managen" → "skill_manage") and reject a hallucinated one.
+        _known_tools = {
+            s["function"]["name"]
+            for s in tool_schemas
+            if isinstance(s, dict) and isinstance(s.get("function"), dict)
+            and isinstance(s["function"].get("name"), str)
+        }
+        _fmt_fix_count = 0  # bounded re-prompts when a final answer leaks as a tool call
+        _MAX_FORMAT_FIX = 2
         for _iter_idx in range(resolved_iterations):
             # Bound total context BEFORE the call: elide oldest tool observations
             # if the accumulated history would overflow the model's window.
@@ -354,7 +372,7 @@ class OpenAIProvider(ModelProvider):
             choice = response.choices[0]
             if not choice.message.tool_calls:
                 content = choice.message.content or ""
-                action = parse_react_action(content)
+                action = parse_react_action(content, known=_known_tools)
                 if action is not None:
                     name, args = action
                     messages.append({"role": "assistant", "content": content})
@@ -444,6 +462,34 @@ class OpenAIProvider(ModelProvider):
                         extra={"_fields": {"provider": self._name}},
                     )
                     continue
+                # LEAK GUARD: the "final answer" is actually an unparsed tool call
+                # (an ACTION block / bare JSON we couldn't dispatch). NEVER deliver
+                # that raw text to the user. Re-prompt the exact format a bounded
+                # number of times; if it persists, ESCALATE to a stronger tier when
+                # allowed (the gateway re-runs), else fall to the honest floor.
+                if looks_like_tool_call(content):
+                    if _fmt_fix_count < _MAX_FORMAT_FIX:
+                        _fmt_fix_count += 1
+                        log.engine.warning(
+                            "[openai] complete_with_tools: final answer looks like an "
+                            "unparsed tool call — re-prompting the ACTION format",
+                            extra={"_fields": {"provider": self._name, "attempt": _fmt_fix_count}},
+                        )
+                        messages.append({"role": "user", "content": FORMAT_FIX_DIRECTIVE})
+                        continue
+                    if can_escalate:
+                        log.engine.warning(
+                            "[openai] complete_with_tools: persistent tool-call leak — "
+                            "escalating to a stronger tier",
+                            extra={"_fields": {"provider": self._name}},
+                        )
+                        return ESCALATE_SENTINEL, all_calls
+                    log.engine.warning(
+                        "[openai] complete_with_tools: persistent tool-call leak, no "
+                        "escalation available — honest floor instead of raw tool call",
+                        extra={"_fields": {"provider": self._name}},
+                    )
+                    return synthesize_from_calls(user_text, all_calls, ""), all_calls
                 # Phase D: before accepting it, ask the persistence judge whether
                 # the agent delivered or gave up.
                 directive = await _enforce(content)
