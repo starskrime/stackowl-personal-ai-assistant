@@ -120,3 +120,51 @@ async def test_reindex_phase_cures_drift(
     assert read_corpus_identity(conn) == ("all-mpnet-768d", 768)
     hits = conn.open_table("committed_facts").search([0.5] * 768).limit(5).to_list()
     assert any(h["fact_id"] == "f1" for h in hits)
+
+
+@pytest.mark.asyncio
+async def test_reindex_heals_vectorless_legacy_facts(
+    tmp_path: Path, tmp_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase-L guard fix: a committed fact with NO embedding blob (legacy/untagged
+    corpus) still re-embeds from the SQLite SoT text and tags the corpus — the case
+    the old `count_committed_with_vectors` guard skipped, leaving drift forever."""
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda _op: None))
+
+    # Committed fact with an EMPTY embedding blob (legacy/untagged): the column is
+    # NOT NULL, so the "vectorless" case is a zero-length blob — exactly what the
+    # old count_committed_with_vectors (LENGTH(embedding) > 0) guard skipped.
+    await tmp_db.execute(
+        """INSERT INTO committed_facts
+               (fact_id, content, embedding, embedding_model, source_type,
+                source_ref, tags, trust, committed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "f1", "the user lives in Baku", b"", "legacy",
+            "conversation_fact", "s1", "[]", "self", datetime.now(UTC).isoformat(),
+        ),
+    )
+
+    from stackowl.memory.dream_worker_helpers import (
+        count_committed_facts,
+        count_committed_with_vectors,
+        reembed_committed_facts,
+    )
+
+    # The OLD guard would skip (no vectors); the NEW guard gates on facts.
+    assert await count_committed_with_vectors(tmp_db) == 0
+    assert await count_committed_facts(tmp_db) == 1
+
+    lancedb = LanceDBAdapter(data_dir=tmp_path / "lance")
+
+    async def _embed(texts: list[str]) -> list[list[float]]:
+        return [[0.5] * 768 for _ in texts]
+
+    written = await reembed_committed_facts(
+        tmp_db, lancedb, embed=_embed, active_model="all-mpnet-768d", active_dim=768
+    )
+    assert written == 1
+    conn = lancedb._connect()  # type: ignore[attr-defined]
+    assert read_corpus_identity(conn) == ("all-mpnet-768d", 768)

@@ -253,7 +253,8 @@ class SqliteMemoryBridge(MemoryBridge):
             if corpus_model is None or corpus_model != active_model:
                 log.memory.warning(
                     "[memory] sqlite_bridge.recall: embedding model drift — "
-                    "ANN corpus mismatched, degrading to FTS + scheduling reindex",
+                    "ANN corpus mismatched, degrading to FTS until the dream-worker "
+                    "reindex phase re-embeds from the SQLite SoT (no inline reindex)",
                     extra={
                         "_fields": {
                             "active_embedding_model": active_model,
