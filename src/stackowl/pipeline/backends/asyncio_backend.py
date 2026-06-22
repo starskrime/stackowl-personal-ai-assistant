@@ -11,6 +11,7 @@ from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
+from stackowl.pipeline.budget import human_wait as human_wait_ctx
 from stackowl.pipeline.command_hint import surface_command_hint
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
@@ -64,6 +65,7 @@ class AsyncioBackend(OrchestratorBackend):
         lesson_token = lc.bind()
         recovery_token = recovery_context.bind()
         ledger_token = tool_outcome_ledger.bind()
+        human_wait_token = human_wait_ctx.bind()
         current = state
         step_durations: list[tuple[str, float]] = []
         try:
@@ -169,6 +171,7 @@ class AsyncioBackend(OrchestratorBackend):
                         ],
                     }},
                 )
+            human_wait_ctx.reset(human_wait_token)
             tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
             lc.reset(lesson_token)

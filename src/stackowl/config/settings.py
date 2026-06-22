@@ -311,6 +311,18 @@ class OrchestratorSettings(BaseModel):
         ),
         json_schema_extra={"hot_reload": False},
     )
+    tool_count_cap: int = Field(
+        default=40,
+        ge=1,
+        description=(
+            "Maximum number of tools presented to the model per turn. The "
+            "discretionary roster is relevance-ranked and clipped to this count; "
+            "guaranteed base tools are always included and count toward it. Default "
+            "40 matches the historical cap (byte-identical). Lower it (e.g. 12-18) "
+            "for weak/quantized models that derail when offered too many tools."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
 
 
 class SkillsSettings(BaseModel):

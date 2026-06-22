@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.budget.human_wait import record_human_wait
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.channels.base import ChannelAdapter
@@ -305,6 +306,11 @@ class ClarifyGateway:
                 extra={"_fields": {"clarify_id": clarify_id, "present": entry is not None}},
             )
             return (None, OUTCOME_TIMED_OUT)
+        # Measure time BLOCKED on the human so the budget governor can exclude it
+        # from the compute-time cap (a slow human must not push a fast turn over its
+        # ceiling). The finally records on EVERY path (answered / timeout / cancel /
+        # error / resolve-before-park ~0s). Reuses the injectable monotonic clock.
+        _t_wait_start = self.time_fn()
         try:
             if not entry.event.is_set():
                 # Not yet resolved → park. (If already set — resolve-before-park —
@@ -338,6 +344,10 @@ class ClarifyGateway:
                 extra={"_fields": {"clarify_id": clarify_id}},
             )
             return (None, OUTCOME_TIMED_OUT)
+        finally:
+            # Record blocked-on-human seconds (runs before any except's return and
+            # before the resolved path below). Excluded from the budget compute clock.
+            record_human_wait(self.time_fn() - _t_wait_start)
         # Resolved (or already-resolved). The WAITER pops the entry now — idempotent
         # if try_resolve/abandon already removed it. Read the answer from the HELD
         # reference (never re-get by id — the entry may already be gone from the map).

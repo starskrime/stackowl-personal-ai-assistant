@@ -12,7 +12,21 @@ from collections.abc import Callable
 
 PROMPT_SAFETY_FRACTION = 0.9
 RESPONSE_RESERVE_TOKENS = 2048
+# Default max tools presented per turn. The effective cap is configurable via
+# OrchestratorSettings.tool_count_cap (threaded through the budget dict as
+# "max_tools"); this is the byte-identical fallback when none is supplied. Lower
+# it for weak/quantized models that derail when offered too many tools.
 HARD_TOOL_COUNT_CAP = 40
+
+
+def resolve_tool_count_cap(configured: int | None) -> int:
+    """Effective tool-count cap: the configured value, or the default fallback.
+
+    ``None`` / non-positive → ``HARD_TOOL_COUNT_CAP`` (byte-identical default).
+    """
+    if configured is None or configured < 1:
+        return HARD_TOOL_COUNT_CAP
+    return configured
 
 
 def tool_budget_tokens(*, window: int, fixed_cost_tokens: int) -> int:

@@ -342,7 +342,11 @@ class ToolRegistry:
         if budget is not None:
             import json
 
-            from stackowl.pipeline.context_budget import fit_items, tool_budget_tokens
+            from stackowl.pipeline.context_budget import (
+                fit_items,
+                resolve_tool_count_cap,
+                tool_budget_tokens,
+            )
             from stackowl.tools._infra.presentation import ToolPresentation
 
             guaranteed, ranked = ToolPresentation().rank_candidates(
@@ -356,7 +360,13 @@ class ToolRegistry:
             def _size(t: Tool) -> int:
                 return len(json.dumps(_schema_for(t))) // 4
 
-            fitted = fit_items(guaranteed=guaranteed, candidates=ranked, budget=b, size_of=_size)
+            # Cap the COUNT too: a weak model derails when offered too many tools
+            # even if they fit in tokens. Effective cap comes from the budget dict's
+            # optional "max_tools" (OrchestratorSettings.tool_count_cap), default 40.
+            fitted = fit_items(
+                guaranteed=guaranteed, candidates=ranked, budget=b, size_of=_size,
+                hard_cap=resolve_tool_count_cap(budget.get("max_tools")),
+            )
             return [_schema_for(t) for t in fitted]
 
         if profile is None and pins is None and hydrated is None:
