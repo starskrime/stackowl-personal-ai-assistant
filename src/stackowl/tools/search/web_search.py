@@ -74,6 +74,7 @@ class WebSearchTool(Tool):
             action_severity="read",
             toolset_group=_TOOLSET_GROUP,
             capability_tag="web_knowledge",
+            progress_key="SEARCH_WEB",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

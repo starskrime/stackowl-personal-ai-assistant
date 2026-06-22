@@ -808,6 +808,9 @@ class StartupOrchestrator:
             # PARL-7 (F084) — the host-wide governor so the nightly evolution
             # batch's concurrent fan-out shares the single in-flight budget.
             delegation_governor=delegation_governor,
+            # Phase L — heavy background jobs (dream_worker/kuzu_sync/critic/
+            # reflection) defer to live user turns so they stop starving the box.
+            turn_registry=turn_registry,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).
@@ -1691,7 +1694,10 @@ class StartupOrchestrator:
                 resolved_tg_settings = tg_cfg.model_copy(
                     update={"bot_token": resolved_token, "webhook_secret": resolved_webhook_secret}
                 )
-                telegram_adapter = TelegramChannelAdapter(resolved_tg_settings)
+                telegram_adapter = TelegramChannelAdapter(
+                    resolved_tg_settings,
+                    progress=self._settings.progress if self._settings else None,
+                )
 
                 # E0-S1 — wire the Telegram consent round-trip BEFORE start() so a
                 # message arriving at boot can never miss its prompter (would else

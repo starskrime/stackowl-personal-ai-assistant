@@ -177,11 +177,14 @@ class UIStateCoordinator:
         if callable(post):
             try:
                 post(deliver, message)
-            except RuntimeError as exc:
-                # No running message loop (e.g. unit tests) — deliver directly.
-                log.tui.warning(
-                    "[tui] coordinator._dispatch: call_from_thread unavailable",
-                    exc_info=exc,
+            except RuntimeError:
+                # Benign + expected for events emitted on the app's OWN thread
+                # (e.g. live-progress pipeline_step_changed, or unit tests):
+                # call_from_thread requires a *different* thread, so deliver
+                # directly — we're already on the right thread. Debug-only (this
+                # fires once per progress tick; a warning+traceback would spam).
+                log.tui.debug(
+                    "[tui] coordinator._dispatch: same-thread — delivering directly",
                     extra={"_fields": {"event": event_name}},
                 )
                 deliver(message)

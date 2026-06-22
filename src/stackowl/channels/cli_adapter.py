@@ -180,6 +180,11 @@ class CLIAdapter(ChannelAdapter):
         last_owl = ""
         last_trace = ""
         async for chunk in chunks:
+            # Live-progress chunks reach the terminal via the EventBus
+            # (pipeline_step_changed → PipelineStrip), NOT as conversation text —
+            # skip them here so they never render as a bubble or pollute the buffer.
+            if getattr(chunk, "kind", "answer") == "progress":
+                continue
             buffer += chunk.content
             if self._mode == "fullzone" and self._event_bus is not None:
                 # Publish to EventBus → UIStateCoordinator → ConversationView.

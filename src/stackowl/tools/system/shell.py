@@ -464,6 +464,7 @@ class ShellTool(Tool):
             parameters=self.parameters,
             action_severity="write",
             commit_coupling="unconfirmed",
+            progress_key="RUN_CMD",
         )
 
     @property

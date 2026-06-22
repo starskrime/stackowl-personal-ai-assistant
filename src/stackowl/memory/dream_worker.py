@@ -21,7 +21,6 @@ from stackowl.memory.dream_worker_helpers import (
     PhaseName,
     advance_phase,
     count_committed_facts,
-    count_committed_with_vectors,
     count_stuck_eligible,
     finalize_run,
     get_contradiction_boundary_ids,
@@ -93,6 +92,10 @@ class DreamWorkerJobHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return self._handler_name
+
+    @property
+    def defer_under_load(self) -> bool:
+        return True  # Phase L — heavy memory pass (mine+phases+kuzu); yield to turns
 
     async def execute(self, job: Job) -> JobResult:
         """Run a full consolidation pass with checkpoint-resume semantics."""
@@ -284,12 +287,16 @@ class DreamWorkerJobHandler(JobHandler):
             corpus_model, corpus_dim = await lancedb.corpus_identity()
             active_model = embeddings.active_model
             active_dim = embeddings.active_dim
-            # No drift, or an empty/never-written corpus (None) with nothing to
-            # rebuild → nothing to do. (A None corpus with committed facts present
-            # IS a legacy untagged corpus and SHOULD be reindexed to tag it.)
-            has_vectors = await count_committed_with_vectors(db) > 0
+            # Heal when the corpus drifted AND there are committed facts to embed.
+            # F062-fix: gate on committed FACTS (the re-embed source is the SQLite
+            # SoT text, NOT existing vectors) — NOT count_committed_with_vectors.
+            # The old vectors-present gate left a legacy/untagged corpus (facts but
+            # no vector blobs) drifting FOREVER: recall logged drift every turn but
+            # the cure skipped because has_vectors==0. Now such a corpus is embedded
+            # and tagged, curing the permanent FTS degrade.
+            has_facts = await count_committed_facts(db) > 0
             drift = corpus_model != active_model or corpus_dim != active_dim
-            if not drift or not has_vectors:
+            if not drift or not has_facts:
                 return 0
             from stackowl.memory.dream_worker_helpers import reembed_committed_facts
 

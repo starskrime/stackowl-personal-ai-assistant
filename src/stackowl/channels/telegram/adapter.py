@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
@@ -27,7 +28,9 @@ from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.channels.telegram._bot import build_inline_keyboard, start_bot, stop_bot
 from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
 from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention, strip_command_bot_suffix
+from stackowl.channels.telegram.progress_render import TelegramProgressView
 from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
@@ -65,8 +68,14 @@ def _mint_request_id() -> str:
 class TelegramChannelAdapter(ChannelAdapter):
     """Telegram I/O channel — DM + group support, allowlist-gated."""
 
-    def __init__(self, settings: TelegramSettings) -> None:
+    def __init__(
+        self,
+        settings: TelegramSettings,
+        *,
+        progress: ProgressSettings | None = None,
+    ) -> None:
         self._settings = settings
+        self._progress = progress or ProgressSettings()
         self._queue: asyncio.Queue[IngressMessage] = asyncio.Queue()
         self._formatter = TelegramMarkdownFormatter()
         self._splitter = TelegramMessageSplitter()
@@ -167,7 +176,14 @@ class TelegramChannelAdapter(ChannelAdapter):
         return msg
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:
-        """Collect streaming chunks, format, and dispatch to Telegram."""
+        """Collect streaming chunks, format, and dispatch to Telegram.
+
+        ``kind="progress"`` chunks drive a single live status message
+        (:class:`TelegramProgressView`) and are NEVER concatenated into the answer
+        body. ``kind="answer"`` chunks (the default) accumulate and deliver exactly
+        as before — with no progress chunks present, this method is byte-identical
+        to the prior buffer-then-send behaviour.
+        """
         log.telegram.info("[telegram] adapter.send: entry")
         TestModeGuard.assert_not_test_mode("telegram.send")
         buffer = ""
@@ -177,26 +193,68 @@ class TelegramChannelAdapter(ChannelAdapter):
         # (which a newer concurrent inbound update may have overwritten). None →
         # send_text falls back to `_last_chat_id` (single-terminal/back-compat).
         target: int | None = None
-        async for chunk in chunks:
-            buffer += chunk.content
-            raw = chunk.target
-            if isinstance(raw, str):
-                # Telegram only ever delivers int chat_id targets; a str (Slack
-                # channel/thread_ts) cannot reach the Telegram adapter by
-                # construction (each turn is delivered by its OWN channel adapter).
-                # Log loudly if one ever does, then fall back to _last_chat_id.
-                log.telegram.warning(
-                    "[telegram] adapter.send: unexpected str target — falling back to _last_chat_id",
-                    extra={"_fields": {"target": raw}},
-                )
-                target = None
-            elif isinstance(raw, int):
-                target = raw
-        # send_text is the single formatting chokepoint — pass RAW buffer.
-        await self.send_text(buffer, chat_id=target)
+        view: TelegramProgressView | None = None
+        answer_started = False
+        try:
+            async for chunk in chunks:
+                raw = chunk.target
+                if isinstance(raw, str):
+                    # Telegram only ever delivers int chat_id targets; a str (Slack
+                    # channel/thread_ts) cannot reach the Telegram adapter by
+                    # construction (each turn is delivered by its OWN channel adapter).
+                    # Log loudly if one ever does, then fall back to _last_chat_id.
+                    log.telegram.warning(
+                        "[telegram] adapter.send: unexpected str target — falling back to _last_chat_id",
+                        extra={"_fields": {"target": raw}},
+                    )
+                    target = None
+                elif isinstance(raw, int):
+                    target = raw
+
+                if getattr(chunk, "kind", "answer") == "progress":
+                    # Live status — render transiently; NEVER add to the answer buffer.
+                    if target is not None:
+                        if view is None:
+                            view = self._make_progress_view(target)
+                            view.start()  # background liveness ticker
+                        await view.on_progress(chunk.content)
+                    continue
+
+                buffer += chunk.content
+                if view is not None and not answer_started:
+                    view.on_first_answer()  # stop mutating the status; answer is here
+                    answer_started = True
+            # send_text is the single formatting chokepoint — pass RAW buffer. The
+            # answer is delivered as its own clean message(s), independent of progress.
+            await self.send_text(buffer, chat_id=target)
+            if view is not None:
+                await view.settle()  # collapse the status to a "✓ done in Ns" footer
+        finally:
+            # Safety net: never leak the ticker task if the loop raised mid-turn.
+            if view is not None:
+                await view.stop()
         log.telegram.info(
             "[telegram] adapter.send: exit",
-            extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None}},
+            extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None,
+                               "live_progress": view is not None}},
+        )
+
+    def _make_progress_view(self, chat_id: int) -> TelegramProgressView:
+        """Build the per-turn live-status view bound to this adapter's I/O."""
+        import time
+
+        return TelegramProgressView(
+            chat_id=chat_id,
+            send_status=self.send_status,
+            edit_status=self.edit_message,
+            send_typing=self.send_typing,
+            clock=time.monotonic,
+            edit_min_interval_s=self._progress.telegram_edit_min_interval_s,
+            typing_reissue_interval_s=self._progress.typing_reissue_interval_s,
+            flicker_guard_s=self._progress.flicker_guard_ms / 1000.0,
+            tick_interval_s=self._progress.tick_interval_s,
+            elapsed_after_s=self._progress.elapsed_after_s,
+            reassure_after_s=self._progress.reassure_after_s,
         )
 
     async def send_text(self, text: str, *, chat_id: int | None = _UNSET) -> None:
@@ -307,6 +365,48 @@ class TelegramChannelAdapter(ChannelAdapter):
                 chat_id=target,
                 text=part,
                 parse_mode=None,
+            )
+
+    async def send_status(self, chat_id: int, text: str) -> int | None:
+        """Send a plain live-status message and return its message_id (None on miss).
+
+        Status text is sent raw (``parse_mode=None``) — it is short, glyph-led, and
+        not assistant markdown. Best-effort: any Bot API failure is logged and
+        returns None so a failed status send never breaks the turn.
+        """
+        TestModeGuard.assert_not_test_mode("telegram.send_status")
+        if self._bot_app is None:
+            return None
+        try:
+            msg = await self._bot_app.bot.send_message(
+                chat_id=chat_id, text=text, parse_mode=None
+            )
+            return int(msg.message_id)
+        except Exception as exc:  # noqa: BLE001 — progress is best-effort
+            log.telegram.warning(
+                "[telegram] adapter.send_status: failed — skipping live status",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id}},
+            )
+            return None
+
+    async def send_typing(self, chat_id: int) -> None:
+        """Issue the Telegram 'typing' chat action (auto-clears after ~5s).
+
+        Best-effort: failures are logged and swallowed.
+        """
+        TestModeGuard.assert_not_test_mode("telegram.send_typing")
+        if self._bot_app is None:
+            return
+        try:
+            await self._bot_app.bot.send_chat_action(
+                chat_id=chat_id, action=ChatAction.TYPING
+            )
+        except Exception as exc:  # noqa: BLE001 — progress is best-effort
+            log.telegram.warning(
+                "[telegram] adapter.send_typing: failed — continuing",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id}},
             )
 
     async def send_inline_keyboard(

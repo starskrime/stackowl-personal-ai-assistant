@@ -20,6 +20,7 @@ from stackowl.config.notification_settings import (
     NotificationSettings,
     QuietHoursSettings,
 )
+from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.config.ui_settings import UISettings
@@ -33,7 +34,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "ProgressSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -703,6 +704,7 @@ class Settings(BaseSettings):
     check_in: CheckInSettings = Field(default_factory=CheckInSettings)
     system: SystemSettings = Field(default_factory=SystemSettings)
     ui: UISettings = Field(default_factory=UISettings)
+    progress: ProgressSettings = Field(default_factory=ProgressSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     discord_channel: DiscordSettings = Field(default_factory=DiscordSettings)

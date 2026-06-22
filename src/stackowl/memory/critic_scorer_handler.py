@@ -56,6 +56,10 @@ class CriticScorerHandler(JobHandler):
     def handler_name(self) -> str:
         return self._handler_name
 
+    @property
+    def defer_under_load(self) -> bool:
+        return True  # Phase L — LLM scoring pass; yield to live user turns
+
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY
         log.memory.debug(

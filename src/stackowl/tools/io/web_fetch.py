@@ -93,6 +93,7 @@ class WebFetchTool(Tool):
             parameters=self.parameters,
             action_severity="read",
             capability_tag="web_knowledge",
+            progress_key="READ_WEB",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

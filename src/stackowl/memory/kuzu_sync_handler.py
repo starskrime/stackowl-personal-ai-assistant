@@ -79,6 +79,10 @@ class KuzuSyncJobHandler(JobHandler):
     def handler_name(self) -> str:
         return self._handler_name
 
+    @property
+    def defer_under_load(self) -> bool:
+        return True  # Phase L — per-fact LLM extract + graph upserts; yield to turns
+
     async def execute(self, job: Job) -> JobResult:
         """Sync the next batch of un-mirrored facts into Kuzu."""
         # 1. ENTRY

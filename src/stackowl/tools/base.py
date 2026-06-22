@@ -53,6 +53,12 @@ class ToolManifest(BaseModel):
     # self-healing substitution: when a tool in a capability class fails, the
     # supervisor can route to a sibling with the same tag (W3 substitution actuator).
     capability_tag: str | None = None
+    # Live-progress vocabulary key (e.g. "SEARCH_WEB", "READ_FILES"). Maps this
+    # tool to a friendly, localized "what I'm doing now" status line shown to the
+    # user while a turn runs (pipeline/progress/vocabulary.py). None ⇒ the generic
+    # localized "Working on it…" fallback — a missing key NEVER leaks the raw tool
+    # name to a customer. Keyed on a stable semantic enum, not user language.
+    progress_key: str | None = None
     # D1 §6 — how tightly the tool's REAL-WORLD effect is coupled to our local
     # ledger commit. Decides definite-answer-vs-honest_uncertain after a durable
     # child times out / is recovered:

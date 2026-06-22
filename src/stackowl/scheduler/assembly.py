@@ -95,6 +95,7 @@ class SchedulerAssembly:
         skills_components: SkillsComponents,
         proactive_deliverer: ProactiveDeliverer | None = None,
         delegation_governor: ConcurrencyGovernor | None = None,
+        turn_registry: object | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -115,7 +116,11 @@ class SchedulerAssembly:
         # 1) JobScheduler — the polling loop that dispatches due jobs. Threaded with
         # the user IANA tz so a daily@HH:MM job re-arms at the right LOCAL instant
         # and shares the quiet-hours clock (F108).
-        scheduler = JobScheduler(db=db, tz=settings.system.timezone or "UTC")
+        scheduler = JobScheduler(
+            db=db,
+            tz=settings.system.timezone or "UTC",
+            turn_registry=turn_registry,
+        )
         log.scheduler.debug("[scheduler] assembly: JobScheduler constructed")
 
         # 2) Supervisor — owns the scheduler's runtime task.

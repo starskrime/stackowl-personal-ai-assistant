@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from pydantic import BaseModel
 
 from stackowl.infra.observability import log
+
+# Discriminates the durable ANSWER body from ephemeral live-PROGRESS updates that
+# share the same per-turn stream. Defaulting to "answer" keeps every existing
+# construction site byte-identical. Progress chunks are best-effort liveness
+# ("Searching the web…"); a channel adapter renders them transiently and MUST NOT
+# concatenate them into the answer body. See pipeline/progress/.
+ChunkKind = Literal["answer", "progress"]
 
 
 class ResponseChunk(BaseModel, frozen=True):
@@ -19,6 +27,8 @@ class ResponseChunk(BaseModel, frozen=True):
     trace_id: str
     owl_name: str
     duration_ms: float | None = None
+    # "answer" (default) = durable response body; "progress" = ephemeral live status.
+    kind: ChunkKind = "answer"
     # Optional delivery target for fan-out channels (e.g. a Telegram chat_id).
     # None → the channel adapter resolves the destination itself.
     # String targets are for Slack (channel id / thread_ts); int for Telegram chat_id.

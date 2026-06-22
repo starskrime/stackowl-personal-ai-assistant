@@ -29,6 +29,8 @@ from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP, RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+from stackowl.pipeline.progress.emitter import emit_start as emit_progress_start
+from stackowl.pipeline.progress.emitter import make_progress_callback
 from stackowl.pipeline.provider_select import select_tool_provider
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState, StepError, ToolCall
@@ -1111,6 +1113,12 @@ async def _run_with_tools(
     # tests/gateway/test_completion_finalize_drain.py.
     _steering_cb = make_steering_callback(_services.turn_registry, state.trace_id)
 
+    # Live-progress: observe-only callback (always returns None) that emits a
+    # friendly "what I'm doing now" status per ReAct iteration. None when this
+    # turn is gated (non-interactive / delegated child / deferred / flag off) →
+    # composed list and provider call stay byte-identical to the baseline.
+    _progress_cb = make_progress_callback(state, _services)
+
     def _compose_iter_cbs(
         cbs: list[IterationCallback],
     ) -> IterationCallback | None:
@@ -1149,9 +1157,11 @@ async def _run_with_tools(
         _extra: dict[str, Any] = {}
         if persistence_check is not None:
             _extra["persistence_check"] = persistence_check
-        # Budget gate first (it may Raise to stop the loop), then steering fold.
+        # Budget gate first (it may Raise to stop the loop), then steering fold,
+        # then progress LAST (observe-only — must run after the short-circuiting
+        # callbacks so a budget Raise pre-empts a pointless progress emit).
         _default_cb = _compose_iter_cbs(
-            [c for c in (_budget_cb, _steering_cb) if c is not None]
+            [c for c in (_budget_cb, _steering_cb, _progress_cb) if c is not None]
         )
         if _default_cb is not None:
             _extra["on_iteration_complete"] = _default_cb
@@ -1239,7 +1249,8 @@ async def _run_with_tools(
         # [steering] message. _compose_iter_cbs concatenates any folded messages
         # (Task 9 splice contract) so no callback's splice is silently lost.
         _iter_cb = _compose_iter_cbs(
-            [c for c in (cb, _persist_cost_cb, _budget_cb, _steering_cb) if c is not None]
+            [c for c in (cb, _persist_cost_cb, _budget_cb, _steering_cb, _progress_cb)
+             if c is not None]
         )
 
         log.tasks.debug(
@@ -1273,6 +1284,10 @@ async def _run_with_tools(
                                "tool_calls": len(result[1])}},
         )
         return result
+
+    # Surface "Working on it…" the instant the loop begins so the user sees life
+    # within ~1s (best-effort; no-op when progress is gated).
+    await emit_progress_start(_progress_cb)
 
     try:
         if state.task_id is None:

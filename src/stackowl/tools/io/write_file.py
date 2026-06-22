@@ -37,6 +37,7 @@ class WriteFileTool(Tool):
             parameters=self.parameters,
             action_severity="write",
             commit_coupling="transactional",
+            progress_key="WRITE_FILES",
         )
 
     @property

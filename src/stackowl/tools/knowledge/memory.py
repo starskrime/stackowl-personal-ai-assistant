@@ -125,6 +125,7 @@ class MemoryTool(Tool):
             action_severity="write",
             commit_coupling="transactional",
             toolset_group="knowledge",
+            progress_key="SAVE_MEMORY",
         )
 
     # ------------------------------------------------------------------ dispatch
