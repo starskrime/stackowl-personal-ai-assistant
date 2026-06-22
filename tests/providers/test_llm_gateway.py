@@ -21,6 +21,10 @@ class _FakeProvider:
         self.supports_tools = supports_tools
         self.complete_calls: list[list[Message]] = []
         self.tool_calls: list[str | None] = []
+        # What the gateway handed complete_with_tools (escalation-wiring assertions).
+        self.tool_schemas_seen: list[Any] = []
+        self.can_escalate_seen: list[bool] = []
+        self.wrapup_seen: list[Any] = []
 
     async def complete(self, messages: list[Message], model: str, **kwargs: Any) -> CompletionResult:
         self.complete_calls.append(messages)
@@ -32,6 +36,9 @@ class _FakeProvider:
     async def complete_with_tools(self, *, user_text: str, system_text: str | None,
                                   tool_schemas: list, tool_dispatcher: Any, **kwargs: Any):
         self.tool_calls.append(system_text)
+        self.tool_schemas_seen.append(tool_schemas)
+        self.can_escalate_seen.append(kwargs.get("can_escalate"))
+        self.wrapup_seen.append(kwargs.get("wrapup_deadline_s"))
         return self._reply, [{"name": "t", "failed": False}]
 
 
@@ -158,3 +165,68 @@ def test_tools_no_escalation_when_fast_answers() -> None:
     ))
     assert text == "quick answer"
     assert powerful.tool_calls == []
+
+
+# -- escalation-wiring: per-tier schema rebuild + can_escalate flag ----------- #
+
+
+def test_tools_rebuilds_schemas_per_tier_and_passes_can_escalate() -> None:
+    fast = _FakeProvider("fast", reply="ESCALATE")
+    standard = _FakeProvider("standard", reply="done")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard}))
+
+    def build(provider: _FakeProvider) -> list:
+        return [{"name": f"schema_{provider.name}"}]
+
+    text, _ = asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[{"name": "ORIGINAL"}],
+        tool_dispatcher=None, floor="fast", ceiling="standard", build_tool_schemas=build,
+    ))
+    assert text == "done"
+    # Each tier's provider received schemas REBUILT for itself, not the passed-in list.
+    assert fast.tool_schemas_seen == [[{"name": "schema_fast"}]]
+    assert standard.tool_schemas_seen == [[{"name": "schema_standard"}]]
+    # can_escalate is True below the ceiling, False at the ceiling.
+    assert fast.can_escalate_seen == [True]
+    assert standard.can_escalate_seen == [False]
+
+
+def test_tools_build_schemas_may_be_async() -> None:
+    fast = _FakeProvider("fast", reply="answer")
+    gw = LLMGateway(_FakeRegistry({"fast": fast}))
+
+    async def build(provider: _FakeProvider) -> list:
+        return [{"name": "async_schema"}]
+
+    asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[], tool_dispatcher=None,
+        floor="fast", ceiling="fast", build_tool_schemas=build,
+    ))
+    assert fast.tool_schemas_seen == [[{"name": "async_schema"}]]
+
+
+def test_tools_wrapup_deadline_recomputed_per_attempt() -> None:
+    fast = _FakeProvider("fast", reply="ESCALATE")
+    standard = _FakeProvider("standard", reply="done")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard}))
+    residual = iter([30.0, 20.0])
+
+    text, _ = asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[], tool_dispatcher=None,
+        floor="fast", ceiling="standard", wrapup_deadline_fn=lambda: next(residual),
+    ))
+    assert text == "done"
+    # A fresh residual budget is computed for each tier attempt.
+    assert fast.wrapup_seen == [30.0]
+    assert standard.wrapup_seen == [20.0]
+
+
+def test_tools_back_compat_uses_passed_schemas_when_no_builder() -> None:
+    fast = _FakeProvider("fast", reply="answer")
+    gw = LLMGateway(_FakeRegistry({"fast": fast}))
+    asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[{"name": "passed"}],
+        tool_dispatcher=None, floor="fast", ceiling="fast",
+    ))
+    assert fast.tool_schemas_seen == [[{"name": "passed"}]]
+    assert fast.can_escalate_seen == [False]
