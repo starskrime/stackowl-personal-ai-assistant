@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
@@ -25,6 +26,9 @@ from stackowl.supervisor.supervisor import SupervisedTask
 _POLL_INTERVAL_SEC = 30.0
 _MAX_RETRIES = 3
 _RETRY_DELAY_MIN = 5
+# A `defer_under_load` job overdue by MORE than this is run anyway, so heavy
+# background work is never indefinitely starved by a stream of user turns.
+_MAX_DEFER_SEC = 900.0
 
 
 class JobScheduler(SupervisedTask):
@@ -37,10 +41,17 @@ class JobScheduler(SupervisedTask):
         clock: Clock = WallClock(),
         handler_registry: HandlerRegistry | None = None,
         tz: str = "UTC",
+        turn_registry: Any = None,
+        max_defer_sec: float = _MAX_DEFER_SEC,
     ) -> None:
         self._db = db
         self._clock = clock
         self._registry = handler_registry or HandlerRegistry.instance()
+        # Optional TurnRegistry (duck-typed: needs has_active_turns()). When wired,
+        # heavy `defer_under_load` handlers yield to live user turns. None ⇒ no
+        # deferral (back-compat for tests / non-orchestrated construction).
+        self._turn_registry = turn_registry
+        self._max_defer_sec = max_defer_sec
         # The user IANA tz (settings.system.timezone) — threaded into every
         # ``compute_next_run`` so a ``daily@HH:MM`` job re-arms at the right LOCAL
         # instant and shares the quiet-hours clock (F108). Defaults to UTC for
@@ -87,7 +98,33 @@ class JobScheduler(SupervisedTask):
         """
         return f"{job.idempotency_key}@{job.next_run_at}"
 
+    def _should_defer_under_load(self, job: Job) -> bool:
+        """True when a heavy job should yield to a live user turn (and isn't yet
+        overdue past the starvation cap). Pure read — leaves the job pending so
+        the next poll retries it once the box is idle."""
+        if self._turn_registry is None:
+            return False
+        handler = self._registry.get(job.handler_name)
+        if handler is None or not getattr(handler, "defer_under_load", False):
+            return False
+        if not self._turn_registry.has_active_turns():
+            return False
+        # Starvation guard: once overdue beyond the cap, run anyway.
+        try:
+            due = datetime.fromisoformat(job.next_run_at)
+            overdue_s = (datetime.now(UTC) - due).total_seconds()
+        except (ValueError, TypeError):
+            overdue_s = 0.0
+        return overdue_s < self._max_defer_sec
+
     async def _run_job(self, job: Job) -> None:
+        if self._should_defer_under_load(job):
+            log.heartbeat.info(
+                "[scheduler] %s: deferred — user turn active (heavy job yields)",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
+            )
+            return  # left pending; the next idle poll will dispatch it
         occurrence_key = self._occurrence_key(job)
         already = await self._db.fetch_all(
             "SELECT status FROM job_runs WHERE idempotency_key = ? AND status = 'completed'",

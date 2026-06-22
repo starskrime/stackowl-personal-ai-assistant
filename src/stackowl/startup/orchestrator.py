@@ -808,6 +808,9 @@ class StartupOrchestrator:
             # PARL-7 (F084) — the host-wide governor so the nightly evolution
             # batch's concurrent fan-out shares the single in-flight budget.
             delegation_governor=delegation_governor,
+            # Phase L — heavy background jobs (dream_worker/kuzu_sync/critic/
+            # reflection) defer to live user turns so they stop starving the box.
+            turn_registry=turn_registry,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).

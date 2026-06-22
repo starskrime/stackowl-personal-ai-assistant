@@ -37,6 +37,20 @@ class JobHandler(ABC):
         """
         return "seeded"
 
+    @property
+    def defer_under_load(self) -> bool:
+        """Whether the scheduler should DEFER this job while a user turn is live.
+
+        Defaults to ``False`` (every existing handler keeps running exactly as
+        before). Heavy, CPU/IO-hungry background jobs (dream_worker, kuzu_sync,
+        critic_scorer, reflection_writer) override to ``True`` so they yield the
+        resource-constrained box to the foreground turn — the scheduler skips
+        them while ``TurnRegistry`` reports active turns, up to a starvation cap
+        (see :class:`JobScheduler`), then runs them anyway so background work is
+        never indefinitely starved.
+        """
+        return False
+
     @abstractmethod
     async def execute(self, job: Job) -> JobResult: ...
 

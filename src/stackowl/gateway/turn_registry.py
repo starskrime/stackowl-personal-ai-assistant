@@ -146,6 +146,16 @@ class TurnRegistry:
     def global_running_max(self) -> int:
         return self._global_running_max
 
+    def active_turn_count(self) -> int:
+        """Number of turns currently RUNNING across all sessions (FIFO-queued
+        turns not yet started are not counted — they impose no live CPU load)."""
+        return len(self._running)
+
+    def has_active_turns(self) -> bool:
+        """True when any user turn is mid-flight — the signal heavy background
+        jobs consult to defer themselves and stop starving the foreground turn."""
+        return bool(self._running)
+
     def at_global_capacity(self) -> bool:
         """True when the number of running turns across ALL sessions is at the cap.
 

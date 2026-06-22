@@ -94,6 +94,10 @@ class DreamWorkerJobHandler(JobHandler):
     def handler_name(self) -> str:
         return self._handler_name
 
+    @property
+    def defer_under_load(self) -> bool:
+        return True  # Phase L — heavy memory pass (mine+phases+kuzu); yield to turns
+
     async def execute(self, job: Job) -> JobResult:
         """Run a full consolidation pass with checkpoint-resume semantics."""
         # 1. ENTRY
