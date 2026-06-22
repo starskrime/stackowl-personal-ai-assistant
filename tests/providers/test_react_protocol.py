@@ -40,6 +40,46 @@ def test_parse_action_no_args_is_empty_dict() -> None:
     assert result == ("list_tools", {})
 
 
+def test_parse_flattened_newline_action_repairs_name() -> None:
+    # The leak case: the model flattened its newline so the tool name runs into the
+    # JSON ("skill_managen"). With the known set, the trailing char is repaired.
+    text = 'ACTION: skill_managen{"action": "create"}'
+    result = parse_react_action(text, known={"skill_manage", "web_search"})
+    assert result == ("skill_manage", {"action": "create"})
+
+
+def test_parse_unknown_name_rejected_when_known_given() -> None:
+    text = 'ACTION: definitely_not_a_tool\n{"x": 1}'
+    assert parse_react_action(text, known={"web_search"}) is None
+
+
+def test_parse_without_known_trusts_name_backcompat() -> None:
+    text = 'ACTION: web_search\n{"query": "x"}'
+    assert parse_react_action(text) == ("web_search", {"query": "x"})
+
+
+def test_looks_like_tool_call_detects_action_block() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    assert looks_like_tool_call('ACTION: skill_manage\n{"action": "create"}')
+
+
+def test_looks_like_tool_call_detects_bare_json_object() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    assert looks_like_tool_call('{"action": "create", "name": "x"}')
+    # object-shaped but unparseable (flattened) is still a leaked attempt
+    assert looks_like_tool_call('{"action": "create" "name": "x"}')
+
+
+def test_looks_like_tool_call_false_for_real_answer() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    assert not looks_like_tool_call("The capital of France is Paris.")
+    assert not looks_like_tool_call("")
+    assert not looks_like_tool_call(None)
+
+
 def test_parse_malformed_json_returns_none() -> None:
     text = "ACTION: web_search\n```json\n{not valid json}\n```"
     assert parse_react_action(text) is None
@@ -398,3 +438,41 @@ async def test_native_failed_dispatch_strips_marker_and_flags_failed(
     ]
     assert tool_msgs
     assert all(TOOL_FAILED_MARKER not in t and "\x00" not in t for t in tool_msgs)
+
+
+# --------------------------------------------------------------------------- #
+# Leak guard: an unparsed tool call must NEVER be delivered as the final answer
+# --------------------------------------------------------------------------- #
+
+
+async def _noop_dispatch(name: str, args: dict[str, Any]) -> str:
+    return ""
+
+
+@pytest.mark.asyncio
+async def test_leak_guard_escalates_when_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    # Bare JSON object as the "final answer" — a leaked tool-call attempt.
+    leak = '{"action": "create", "name": "x"}'
+    responses = [_FakeResponse(_FakeMessage(content=leak)) for _ in range(4)]
+    provider = _make_provider(_FakeClient(responses))
+    text, _calls = await provider.complete_with_tools(
+        user_text="make a skill", system_text=None, tool_schemas=[],
+        tool_dispatcher=_noop_dispatch, can_escalate=True,
+    )
+    assert text == "ESCALATE"  # never the raw JSON; gateway will step up a tier
+
+
+@pytest.mark.asyncio
+async def test_leak_guard_floors_when_no_escalation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    leak = '{"action": "create", "name": "x"}'
+    responses = [_FakeResponse(_FakeMessage(content=leak)) for _ in range(4)]
+    provider = _make_provider(_FakeClient(responses))
+    text, _calls = await provider.complete_with_tools(
+        user_text="make a skill", system_text=None, tool_schemas=[],
+        tool_dispatcher=_noop_dispatch, can_escalate=False,
+    )
+    assert text != leak
+    assert '{"action"' not in text  # raw tool call never leaks
+    assert text  # honest floor is non-empty

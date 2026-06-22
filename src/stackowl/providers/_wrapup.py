@@ -23,3 +23,19 @@ WRAPUP_DIRECTIVE = (
     "any result or file you produced. If the task is not fully done, clearly state what you "
     "accomplished, the specific remaining blocker, and the concrete next step."
 )
+
+# Injected when a model's "final answer" was actually an unparsed tool call (an
+# ACTION block or a bare JSON object) — it tried to act but used the wrong syntax,
+# so the call never ran and must NOT be shown to the user. Re-states the exact
+# text-protocol format so the model can re-emit a parseable call.
+FORMAT_FIX_DIRECTIVE = (
+    "Your last message was a tool call written in the wrong format, so it did NOT run and was "
+    "not shown to the user. To call a tool, reply with EXACTLY this shape:\n"
+    "ACTION: <tool_name>\n"
+    "```json\n"
+    "{\"arg\": \"value\"}\n"
+    "```\n"
+    "Put ACTION: and the tool name on their own line, then the JSON arguments in a fenced "
+    "```json block with REAL newlines (not the two characters backslash-n). "
+    "If you instead have the final answer for the user, write it as plain prose with no JSON."
+)
