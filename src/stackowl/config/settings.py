@@ -22,6 +22,7 @@ from stackowl.config.notification_settings import (
 )
 from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.provider import ProviderConfig
+from stackowl.config.runtime_settings import RuntimeSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.config.ui_settings import UISettings
 from stackowl.config.webhook_settings import (
@@ -694,6 +695,7 @@ class Settings(BaseSettings):
     providers: list[ProviderConfig] = []
     test_mode: bool = False
     settings_watch: bool = True
+    runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
     durable: DurableSettings = Field(default_factory=DurableSettings)
