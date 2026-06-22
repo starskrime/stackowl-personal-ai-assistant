@@ -41,6 +41,7 @@ class ReadFileTool(Tool):
             parameters=self.parameters,
             action_severity="read",
             capability_tag="file_read",
+            progress_key="READ_FILES",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

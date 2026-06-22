@@ -188,6 +188,7 @@ class BrowserBrowseTool(Tool):
             commit_coupling="unconfirmed",
             toolset_group="browser",
             capability_tag="web_knowledge",
+            progress_key="BROWSE",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

@@ -1691,7 +1691,10 @@ class StartupOrchestrator:
                 resolved_tg_settings = tg_cfg.model_copy(
                     update={"bot_token": resolved_token, "webhook_secret": resolved_webhook_secret}
                 )
-                telegram_adapter = TelegramChannelAdapter(resolved_tg_settings)
+                telegram_adapter = TelegramChannelAdapter(
+                    resolved_tg_settings,
+                    progress=self._settings.progress if self._settings else None,
+                )
 
                 # E0-S1 — wire the Telegram consent round-trip BEFORE start() so a
                 # message arriving at boot can never miss its prompter (would else
