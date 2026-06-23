@@ -26,7 +26,8 @@ from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.channels.telegram.voice_confirm import CALLBACK_PREFIX, PendingTranscriptStore
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
-from stackowl.media.stt.base import SttResult
+from stackowl.media.stt.base import SttResult, stt_error_key
+from stackowl.tui.i18n import localize
 
 if TYPE_CHECKING:
     from stackowl.channels.telegram.adapter import TelegramChannelAdapter
@@ -250,17 +251,18 @@ class TelegramVoiceHandler:
                 "[telegram] voice.handler.handle_voice: stt unavailable",
                 extra={"_fields": {"reason": selection.reason}},
             )
-            await self._reply(chat_id, self._ERROR_GLYPH)
+            await self._reply(chat_id, localize(stt_error_key(selection.reason)))
             return
 
         result = await selection.backend.transcribe(audio_bytes, audio_format="ogg")
         if isinstance(result, str):
-            # Operational failure surfaced as a structured reason — inject nothing.
+            # Operational failure surfaced as a structured reason — tell the user
+            # WHY (e.g. ffmpeg missing for OGG) instead of a bare ❌, inject nothing.
             log.telegram.error(
                 "[telegram] voice.handler.handle_voice: transcription failed",
                 extra={"_fields": {"reason": result}},
             )
-            await self._reply(chat_id, self._ERROR_GLYPH)
+            await self._reply(chat_id, localize(stt_error_key(result)))
             return
 
         transcript = result.text if isinstance(result, SttResult) else ""

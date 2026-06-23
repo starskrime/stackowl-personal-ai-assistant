@@ -30,6 +30,9 @@ _EN: dict[str, str] = {
     "compose.voice.empty": "🎤 Heard nothing — try again",
     "compose.voice.error": "🎤 Transcription failed",
     "compose.voice.ready": "🎤 Transcript ready — edit, then Enter ↵ to send",
+    # Shared STT error messages (Telegram + TUI), keyed by stt_error_key()
+    "voice.err.ffmpeg": "🎤 Voice needs ffmpeg, which isn't installed — run: sudo apt install ffmpeg",
+    "voice.err.generic": "🎤 Voice transcription failed",
     # Autocomplete
     "autocomplete.no_matches": "No matches",
     # Parliament

@@ -213,7 +213,21 @@ async def test_transcription_error_no_queue(db_pool: DbPool) -> None:
 
     assert adapter._queue.qsize() == 0
     adapter.send_inline_keyboard.assert_not_called()
-    adapter.send_text.assert_awaited()  # the error glyph
+    adapter.send_text.assert_awaited()  # a user-facing error message
+
+
+async def test_ffmpeg_error_tells_user_to_install_it(db_pool: DbPool) -> None:
+    # A missing-ffmpeg failure (Telegram OGG) surfaces an ACTIONABLE message, not ❌.
+    adapter = _make_adapter()
+    adapter.send_text = AsyncMock()
+    reason = "transcription failed: RuntimeError: cannot decode ogg audio without ffmpeg"
+    handler, _ = await _wire(adapter, db_pool, _StubBackend(error=reason))
+
+    await handler.handle_voice(_make_voice_update("F7", user_id=42, chat_id=1), None)
+
+    sent_text = adapter.send_text.call_args.args[0]
+    assert "ffmpeg" in sent_text.lower()
+    assert adapter._queue.qsize() == 0
 
 
 # ---------------------------------------------------------------------------

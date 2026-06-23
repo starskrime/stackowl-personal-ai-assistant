@@ -24,7 +24,18 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
-__all__ = ["SttAvailability", "SttBackend", "SttResult"]
+__all__ = ["SttAvailability", "SttBackend", "SttResult", "stt_error_key"]
+
+
+def stt_error_key(reason: str | None) -> str:
+    """Map an STT failure reason to an i18n key for a user-facing message.
+
+    Returns ``"voice.err.ffmpeg"`` when the failure is the missing-ffmpeg case
+    (Telegram OGG/Opus can't be decoded without it), else ``"voice.err.generic"``.
+    Callers run the key through ``localize`` so the message stays translatable —
+    no raw English is embedded here (keeps the substrate i18n-clean).
+    """
+    return "voice.err.ffmpeg" if "ffmpeg" in (reason or "").lower() else "voice.err.generic"
 
 
 class SttResult(BaseModel):

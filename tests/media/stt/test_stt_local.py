@@ -70,6 +70,14 @@ async def test_transcribe_failure_returns_str_not_raise(monkeypatch: pytest.Monk
     assert "transcription failed" in result
 
 
+def test_stt_error_key_classifies_ffmpeg() -> None:
+    from stackowl.media.stt.base import stt_error_key
+
+    assert stt_error_key("cannot decode ogg without ffmpeg") == "voice.err.ffmpeg"
+    assert stt_error_key("RuntimeError: model exploded") == "voice.err.generic"
+    assert stt_error_key(None) == "voice.err.generic"
+
+
 def test_decode_wav_is_ffmpeg_free() -> None:
     # arecord-style 16 kHz mono 16-bit WAV → decoded to a float32 array WITHOUT
     # ffmpeg (the bug fix: openai-whisper's load_audio shells out to ffmpeg).
