@@ -22,10 +22,17 @@ adapter is none the wiser.
 
 from __future__ import annotations
 
+import asyncio
+
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import ChunkFrame
-from stackowl.pipeline.streaming import ResponseChunk, StreamReader, StreamRegistry
+from stackowl.pipeline.streaming import (
+    ResponseChunk,
+    StreamReader,
+    StreamRegistry,
+    StreamWriter,
+)
 
 
 def chunk_to_frame(chunk: ResponseChunk) -> ChunkFrame:
@@ -58,14 +65,17 @@ def frame_to_chunk(frame: ChunkFrame) -> ResponseChunk:
     )
 
 
-class SocketStreamWriter:
+class SocketStreamWriter(StreamWriter):
     """Core-side stream writer: same ``write``/``close`` as ``StreamWriter``.
 
     Emits each chunk as a ``ChunkFrame`` on the shared core->gateway connection.
-    Drop-in for ``StreamWriter`` so ``backend.run`` / the deliver path is unchanged.
+    Drop-in for ``StreamWriter`` (subclasses it for type-compatibility in the
+    registry) so ``backend.run`` / the deliver path is unchanged. The inherited
+    queue is never used — ``write``/``close`` go to the socket instead.
     """
 
     def __init__(self, conn: FrameConnection, request_id: str) -> None:
+        super().__init__(asyncio.Queue())  # unused; satisfies the base contract
         self._conn = conn
         self._request_id = request_id
 
@@ -85,6 +95,48 @@ class SocketStreamWriter:
                 owl_name="",
             )
         )
+
+
+class _DeadReader(StreamReader):
+    """A StreamReader that yields nothing — the core has no local consumer.
+
+    In the split core, the per-turn output is consumed on the GATEWAY side, so
+    the reader returned alongside the socket writer must never be drained for
+    output. ``spawn_send`` still iterates it (and harmlessly gets nothing).
+    """
+
+    def __init__(self) -> None:
+        queue: asyncio.Queue[ResponseChunk] = asyncio.Queue()
+        # Pre-load the is_final sentinel so the inherited _iter breaks at once
+        # and yields nothing — no override needed.
+        queue.put_nowait(
+            ResponseChunk(content="", is_final=True, chunk_index=-1,
+                          trace_id="", owl_name="")
+        )
+        super().__init__(queue)
+
+
+class SocketStreamRegistry(StreamRegistry):
+    """Core-side StreamRegistry whose writers stream over the socket.
+
+    ``create`` registers a :class:`SocketStreamWriter` (so the deliver step and
+    progress emitter, which look the writer up by ``get_writer(trace_id)``, write
+    ChunkFrames to the gateway) and returns a dead reader (no local consumer).
+    ``get_writer``/``remove`` are inherited and operate on the shared dict.
+    """
+
+    def __init__(self, conn: FrameConnection) -> None:
+        super().__init__()
+        self._conn = conn
+
+    def create(self, request_id: str) -> tuple[StreamWriter, StreamReader]:
+        writer: StreamWriter = SocketStreamWriter(self._conn, request_id)
+        self._writers[request_id] = writer
+        log.gateway.debug(
+            "[ipc] socket stream registry: registered request",
+            extra={"_fields": {"request_id": request_id}},
+        )
+        return writer, _DeadReader()
 
 
 class StreamDemux:
