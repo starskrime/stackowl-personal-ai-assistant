@@ -43,6 +43,8 @@ if TYPE_CHECKING:
 
     from stackowl.commands.resolver import CommandResolver
     from stackowl.commands.sequence_store import SequenceSuggestionProvider
+    from stackowl.media.stt.selector import SttSelector
+    from stackowl.tui.voice.recorder import MicRecorder
 
 _INPUT_ID = "compose_input"
 _DROPDOWN_ID = "autocomplete_dropdown"
@@ -111,6 +113,7 @@ class ComposeArea(Vertical):
     BINDINGS = [
         Binding("ctrl+l", "clear_input", "Clear input"),
         Binding("escape", "cancel_autocomplete", "Cancel autocomplete"),
+        Binding("ctrl+r", "dictate", "Voice"),
     ]
 
     state: reactive[str] = reactive(_STATE_IDLE)
@@ -123,6 +126,8 @@ class ComposeArea(Vertical):
         owl_names: Iterable[str] | None = None,
         sequence_provider: SequenceSuggestionProvider | None = None,
         semantic_resolver: CommandResolver | None = None,
+        recorder: MicRecorder | None = None,
+        stt_selector: SttSelector | None = None,
     ) -> None:
         super().__init__()
         infos: list[CommandInfo] = list(command_infos or [])
@@ -153,6 +158,12 @@ class ComposeArea(Vertical):
             kind=AutocompleteKind.NONE, prefix="", candidates=()
         )
         self._dropdown_open: bool = False
+        # Voice dictation (push-to-talk). Both None → the ctrl+r action is a no-op
+        # status line; the binding still exists but never records. Set by the TUI
+        # assembly only when transcription is enabled.
+        self._recorder = recorder
+        self._stt_selector = stt_selector
+        self._recording: bool = False
         # Tracks whether the currently-shown command dropdown is at COMMAND
         # (top-level) or SUB (sub-command) level, so selection inserts the right
         # token and Tab can descend a level. NONE when no command dropdown.
@@ -774,6 +785,88 @@ class ComposeArea(Vertical):
             return
         self.state = _STATE_IDLE
         self._hide_autocomplete()
+
+    async def action_dictate(self) -> None:
+        """Push-to-talk toggle (Ctrl+R): record → transcribe → fill the compose box.
+
+        First press starts recording; second press stops, transcribes off the UI
+        thread, and DROPS the transcript into the editor for the user to edit and
+        send with Enter — it never auto-submits. Missing recorder/selector, no
+        mic tool, an empty transcript, or a transcription error all degrade to a
+        hint line; this action never raises into the UI.
+
+        4-point logging: entry / decision / step / exit.
+        """
+        log.tui.debug(
+            "[tui] compose_area.action_dictate: entry",
+            extra={"_fields": {"recording": self._recording}},
+        )
+        if (
+            self._recorder is None
+            or self._stt_selector is None
+            or not self._recorder.is_available()
+        ):
+            self._set_hint_text(localize("compose.voice.unavailable"))
+            return
+
+        if not self._recording:
+            started = await self._recorder.start()
+            if not started:
+                self._set_hint_text(localize("compose.voice.unavailable"))
+                return
+            self._recording = True
+            self._set_hint_text(localize("compose.voice.recording"))
+            return
+
+        # Second press → stop + transcribe.
+        self._recording = False
+        self._set_hint_text(localize("compose.voice.transcribing"))
+        audio = await self._recorder.stop()
+        if not audio:
+            self._set_hint_text(localize("compose.voice.empty"))
+            return
+
+        selection = await self._stt_selector.select()
+        if not selection.available or selection.backend is None:
+            log.tui.warning(
+                "[tui] compose_area.action_dictate: stt unavailable",
+                extra={"_fields": {"reason": selection.reason}},
+            )
+            self._set_hint_text(localize("compose.voice.error"))
+            return
+
+        result = await selection.backend.transcribe(audio, audio_format="wav")
+        if isinstance(result, str):
+            log.tui.error(
+                "[tui] compose_area.action_dictate: transcription failed",
+                extra={"_fields": {"reason": result}},
+            )
+            self._set_hint_text(localize("compose.voice.error"))
+            return
+
+        transcript = result.text.strip()
+        if not transcript:
+            self._set_hint_text(localize("compose.voice.empty"))
+            return
+
+        # Drop the transcript into the editor for edit-then-Enter. NOT submitted.
+        try:
+            editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
+            editor.text = transcript
+            self._autogrow(editor)
+            editor.focus()
+        except Exception as exc:
+            log.tui.warning(
+                "[tui] compose_area.action_dictate: editor not mounted",
+                exc_info=exc,
+            )
+            return
+        self.state = _STATE_COMPOSING
+        self._set_hint_text(localize("compose.voice.ready"))
+        log.tui.debug(
+            "[tui] compose_area.action_dictate: exit",
+            extra={"_fields": {"text_len": len(transcript)}},
+        )
 
     def action_cancel_autocomplete(self) -> None:
         """Binding action — dismiss any open autocomplete dropdown."""

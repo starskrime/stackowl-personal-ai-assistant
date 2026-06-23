@@ -1,29 +1,36 @@
 """Voice transcription for the Telegram channel.
 
-:class:`WhisperLocalTranscriber` wraps the ``openai-whisper`` package to
-transcribe audio bytes (OGG from Telegram voice messages) using a
-locally-loaded Whisper model.
+:class:`TelegramVoiceHandler` glues the PTB voice callback into the channel: it
+downloads the voice file, transcribes it via the shared local-first STT selector
+(:mod:`stackowl.media.stt`), and — instead of auto-injecting — shows the
+transcript with a Send/Discard inline keyboard so the user CONFIRMS (or edits by
+retyping) before it enters the pipeline. The confirm round-trip lives in
+:mod:`stackowl.channels.telegram.voice_confirm`.
 
-:class:`TelegramVoiceHandler` glues the PTB callback into the adapter's
-ingress queue: it downloads the voice file, transcribes it, and enqueues the
-resulting text as an :class:`IngressMessage`.
+:class:`WhisperLocalTranscriber` is the original local Whisper wrapper. The
+transcription logic now lives in :class:`stackowl.media.stt.WhisperSttBackend`
+(shared with the TUI); this class is retained as a thin backward-compatible
+shim so existing imports keep working.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import tempfile
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 from stackowl.channels.telegram.helpers import hash_user_id, is_authorized
+from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
+from stackowl.channels.telegram.voice_confirm import CALLBACK_PREFIX, PendingTranscriptStore
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.gateway.scanner import IngressMessage
 from stackowl.infra.observability import log
+from stackowl.media.stt.base import SttResult
 
 if TYPE_CHECKING:
     from stackowl.channels.telegram.adapter import TelegramChannelAdapter
+    from stackowl.media.stt.selector import SttSelector
 
 __all__ = [
     "TelegramVoiceHandler",
@@ -54,7 +61,7 @@ class WhisperLocalTranscriber:
                 "[telegram] voice.transcriber._load_model: loading Whisper model",
                 extra={"_fields": {"model_name": self._model_name}},
             )
-            import whisper  # type: ignore[import]
+            import whisper
 
             self._model = whisper.load_model(self._model_name)
             log.telegram.debug(
@@ -153,31 +160,41 @@ class WhisperLocalTranscriber:
 
 
 class TelegramVoiceHandler:
-    """Handles Telegram voice messages by transcribing and enqueuing them.
+    """Transcribes Telegram voice messages and asks the user to confirm.
 
-    The handler is registered as a PTB callback. On each voice message it:
-    1. Downloads the voice file via the adapter.
-    2. Transcribes the audio.
-    3. Enqueues an :class:`IngressMessage` identical to a text message.
+    Registered as a PTB callback on ``filters.VOICE``. On each voice message it:
+    1. authorizes the sender;
+    2. downloads the voice file via the adapter;
+    3. transcribes the audio via the shared local-first STT selector;
+    4. stashes the transcript and replies with a Send/Discard inline keyboard —
+       it does NOT enqueue anything. The actual injection happens only when the
+       user taps Send (handled by :class:`VoiceConfirmHandler`).
+
+    Operational failures and an empty/unintelligible transcript reply with a
+    language-neutral glyph and inject nothing.
     """
+
+    # Language-neutral glyph replies (the platform is multilingual): no English
+    # copy needed — a glyph conveys the outcome. Mirrors the consent gate's
+    # glyph-first philosophy and the old platform's "🔇"/"❌" voice replies.
+    _EMPTY_GLYPH = "🔇"  # heard nothing intelligible
+    _ERROR_GLYPH = "❌"  # download / transcription failed
 
     def __init__(
         self,
-        transcriber: WhisperLocalTranscriber,
-        adapter: "TelegramChannelAdapter",
+        selector: SttSelector,
+        adapter: TelegramChannelAdapter,
+        pending_store: PendingTranscriptStore,
     ) -> None:
-        self._transcriber = transcriber
+        self._selector = selector
         self._adapter = adapter
+        self._pending = pending_store
         log.telegram.debug("[telegram] voice.handler.init: entry")
 
     async def handle_voice(self, update: Any, context: Any) -> None:
-        """PTB callback for Filters.VOICE messages.
+        """PTB callback for ``filters.VOICE`` messages.
 
         4-point logging: entry / decision / step / exit.
-
-        Args:
-            update: python-telegram-bot ``Update`` object.
-            context: python-telegram-bot ``ContextTypes.DEFAULT_TYPE``.
         """
         log.telegram.debug("[telegram] voice.handler.handle_voice: entry")
 
@@ -189,7 +206,6 @@ class TelegramVoiceHandler:
             return
 
         file_id: str = message.voice.file_id
-
         user = update.effective_user
         user_id = int(user.id) if user is not None else 0
         user_hash = hash_user_id(user_id)
@@ -201,10 +217,21 @@ class TelegramVoiceHandler:
             )
             return
 
+        chat = update.effective_chat
+        chat_id = int(chat.id) if chat is not None else 0
+        # A voice note that REPLIES to one of the bot's messages is a STEER signal,
+        # mirroring the text path (adapter._handle_update).
+        is_reply = bool(getattr(message, "reply_to_message", None))
+
         log.telegram.debug(
             "[telegram] voice.handler.handle_voice: decision download_and_transcribe",
             extra={"_fields": {"user_hash": user_hash}},
         )
+
+        # Show a typing indicator while we download + transcribe (ephemeral, no
+        # leftover message to clean up). Best-effort liveness cue.
+        with contextlib.suppress(Exception):
+            await self._adapter.send_typing(chat_id)
 
         try:
             audio_bytes = await self._adapter.download_media(file_id)
@@ -214,37 +241,81 @@ class TelegramVoiceHandler:
                 exc,
                 extra={"_fields": {"user_hash": user_hash}},
             )
+            await self._reply(chat_id, self._ERROR_GLYPH)
             return
 
-        try:
-            transcript = await self._transcriber.transcribe(audio_bytes)
-        except Exception as exc:
+        selection = await self._selector.select()
+        if not selection.available or selection.backend is None:
+            log.telegram.warning(
+                "[telegram] voice.handler.handle_voice: stt unavailable",
+                extra={"_fields": {"reason": selection.reason}},
+            )
+            await self._reply(chat_id, self._ERROR_GLYPH)
+            return
+
+        result = await selection.backend.transcribe(audio_bytes, audio_format="ogg")
+        if isinstance(result, str):
+            # Operational failure surfaced as a structured reason — inject nothing.
             log.telegram.error(
-                "[telegram] voice.handler.handle_voice: transcribe failed",
+                "[telegram] voice.handler.handle_voice: transcription failed",
+                extra={"_fields": {"reason": result}},
+            )
+            await self._reply(chat_id, self._ERROR_GLYPH)
+            return
+
+        transcript = result.text if isinstance(result, SttResult) else ""
+        if not transcript.strip():
+            log.telegram.debug(
+                "[telegram] voice.handler.handle_voice: empty transcript — heard nothing"
+            )
+            await self._reply(chat_id, self._EMPTY_GLYPH)
+            return
+
+        # Stash the transcript and present it for confirmation. NOTHING is enqueued
+        # here — only a Send tap injects it (VoiceConfirmHandler).
+        rid = self._pending.add(
+            chat_id=chat_id,
+            session_id=str(user_id),
+            transcript=transcript,
+            is_reply=is_reply,
+        )
+        keyboard = (
+            InlineKeyboardBuilder()
+            .add_button("✅", f"{CALLBACK_PREFIX}:send:{rid}")
+            .add_button("🗑", f"{CALLBACK_PREFIX}:discard:{rid}")
+            .build()
+        )
+        try:
+            # parse_mode=None: a raw transcript may contain markdown-breaking chars
+            # (same reason the consent gate sends plain text).
+            sent = await self._adapter.send_inline_keyboard(
+                f"🎤 {transcript}", keyboard, chat_id=chat_id, parse_mode=None
+            )
+            self._pending.set_message_id(rid, getattr(sent, "message_id", None))
+        except Exception as exc:
+            # The prompt could not be delivered — drop the pending entry so it can't
+            # leak, and surface the failure.
+            self._pending.pop(rid)
+            log.telegram.error(
+                "[telegram] voice.handler.handle_voice: confirm prompt send failed",
                 exc,
                 extra={"_fields": {"user_hash": user_hash}},
             )
+            await self._reply(chat_id, self._ERROR_GLYPH)
             return
-
-        if not transcript:
-            log.telegram.debug(
-                "[telegram] voice.handler.handle_voice: empty transcript — skip"
-            )
-            return
-
-        chat = update.effective_chat
-        chat_id = int(chat.id) if chat is not None else 0
-
-        ingress = IngressMessage(
-            text=transcript,
-            session_id=str(user_id),
-            channel=self._adapter.channel_name,
-            trace_id=uuid4().hex,
-        )
-        self._adapter._queue.put_nowait(ingress)
-        self._adapter._last_chat_id = chat_id
 
         log.telegram.debug(
             "[telegram] voice.handler.handle_voice: exit",
-            extra={"_fields": {"user_hash": user_hash, "trace_id": ingress.trace_id}},
+            extra={"_fields": {"user_hash": user_hash, "rid": rid, "text_len": len(transcript)}},
         )
+
+    async def _reply(self, chat_id: int, text: str) -> None:
+        """Best-effort plain reply (glyph status) — never raises into the callback."""
+        try:
+            await self._adapter.send_text(text, chat_id=chat_id)
+        except Exception as exc:  # noqa: BLE001 — a status reply must not crash the handler.
+            log.telegram.error(
+                "[telegram] voice.handler._reply: send failed",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id}},
+            )

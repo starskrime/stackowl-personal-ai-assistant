@@ -85,6 +85,7 @@ async def _run_until_signal(adapter: object, stop_event: asyncio.Event) -> None:
 _drain_tasks: set[asyncio.Task[object]] = set()
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
+    from stackowl.channels.telegram.voice_confirm import PendingTranscriptStore
     from stackowl.pipeline.streaming import ResponseChunk
 
 
@@ -1104,6 +1105,18 @@ class StartupOrchestrator:
             assert core_conn is not None
             adapter = SocketChannelAdapter(core_conn, channel_name="cli")
         else:
+            # Voice dictation (opt-in): build the mic recorder + shared STT selector
+            # so the compose ctrl+r push-to-talk works. Disabled → both None and the
+            # binding degrades to a status line (byte-identical baseline).
+            tui_recorder = None
+            tui_stt_selector = None
+            if self._settings.transcription.enabled:
+                from stackowl.media.stt.selector import SttSelector
+                from stackowl.tui.voice.recorder import ShellMicRecorder
+
+                tui_recorder = ShellMicRecorder()
+                tui_stt_selector = SttSelector(self._settings.transcription)
+                log.info("[startup] tui: voice dictation enabled")
             tui_components = TuiAssembly.build(
                 event_bus=event_bus,
                 command_names=command_names,
@@ -1112,6 +1125,8 @@ class StartupOrchestrator:
                 ui_settings=self._settings.ui,
                 sequence_provider=sequence_provider,
                 semantic_resolver=semantic_resolver,
+                recorder=tui_recorder,
+                stt_selector=tui_stt_selector,
             )
             adapter = CLIAdapter(
                 session_id=cli_session_id,
@@ -1973,6 +1988,29 @@ class StartupOrchestrator:
                 tg_consent_prompter = TelegramConsentPrompter(telegram_adapter)
                 consent_routing.register("telegram", tg_consent_prompter)
 
+                # Voice transcription (opt-in, transcription.enabled): build the
+                # local-first STT selector + voice handler BEFORE start() so the
+                # filters.VOICE handler is registered inside start() (same reason
+                # the consent prompter is wired pre-start). The vtx: confirm
+                # callback is registered after start() on the shared callback
+                # router. When disabled this whole block is skipped → byte-identical.
+                tg_voice_pending: PendingTranscriptStore | None = None
+                if self._settings and self._settings.transcription.enabled:
+                    from stackowl.channels.telegram.voice import TelegramVoiceHandler
+                    from stackowl.channels.telegram.voice_confirm import (
+                        PendingTranscriptStore,
+                    )
+                    from stackowl.media.stt.selector import SttSelector
+
+                    tg_voice_pending = PendingTranscriptStore()
+                    tg_voice_selector = SttSelector(self._settings.transcription)
+                    telegram_adapter.set_voice_handler(
+                        TelegramVoiceHandler(
+                            tg_voice_selector, telegram_adapter, tg_voice_pending
+                        )
+                    )
+                    log.info("[startup] gateway: Telegram voice transcription enabled")
+
                 await telegram_adapter.start()
                 # E5 — let the clarify gateway deliver questions over Telegram,
                 # and give the Telegram loop its own clarify-aware dispatch pump.
@@ -2000,6 +2038,20 @@ class StartupOrchestrator:
 
                     tg_clarify_resolver = TelegramClarifyResolver(clarify_gateway)
                     tg_callback_router.register("clarify:", tg_clarify_resolver.handle_callback)
+                    # Voice-transcript Send/Discard taps (only when transcription is
+                    # enabled — tg_voice_pending is None otherwise).
+                    if tg_voice_pending is not None:
+                        from stackowl.channels.telegram.voice_confirm import (
+                            CALLBACK_PREFIX,
+                            VoiceConfirmHandler,
+                        )
+
+                        tg_voice_confirm = VoiceConfirmHandler(
+                            telegram_adapter, tg_voice_pending
+                        )
+                        tg_callback_router.register(
+                            f"{CALLBACK_PREFIX}:", tg_voice_confirm.handle_callback
+                        )
                     telegram_adapter.attach_callback_router(tg_callback_router)
                     log.info("[startup] gateway: Telegram consent + clarify callbacks wired")
                 except Exception as exc:
