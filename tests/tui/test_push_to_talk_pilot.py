@@ -95,6 +95,28 @@ async def test_dictation_fills_compose_without_submitting() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mic_button_click_dictates() -> None:
+    # The VISIBLE 🎤 button drives the same path as Ctrl+R (mouse, not keyboard).
+    bus = EventBus()
+    submitted: list[object] = []
+    bus.subscribe("compose_submitted", submitted.append)
+
+    recorder = _StubRecorder(audio=b"clip")
+    app = StackOwlApp(bus, recorder=recorder, stt_selector=_selector("clicked hello"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#compose_mic")  # start recording
+        await pilot.pause()
+        await pilot.click("#compose_mic")  # stop → transcribe → fill box
+        await pilot.pause()
+
+        editor = app.query_one("#compose_input", SubmitTextArea)
+        assert editor.text == "clicked hello"
+        assert recorder.started and recorder.stopped
+        assert submitted == []  # filled for editing, NOT submitted
+
+
+@pytest.mark.asyncio
 async def test_no_mic_degrades_to_empty_box() -> None:
     bus = EventBus()
     recorder = _StubRecorder(available=False)
