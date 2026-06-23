@@ -2010,6 +2010,17 @@ class StartupOrchestrator:
                         )
                     )
                     log.info("[startup] gateway: Telegram voice transcription enabled")
+                    # Telegram voice notes are OGG/Opus → need ffmpeg to decode.
+                    # Warn loudly at boot so a missing codec is diagnosable here,
+                    # not only when the first voice note fails.
+                    import shutil as _shutil
+
+                    if _shutil.which("ffmpeg") is None:
+                        log.warning(
+                            "[startup] gateway: ffmpeg NOT found — Telegram voice "
+                            "notes (OGG) cannot be transcribed until it is installed "
+                            "(sudo apt install ffmpeg). TUI WAV dictation is unaffected."
+                        )
 
                 await telegram_adapter.start()
                 # E5 — let the clarify gateway deliver questions over Telegram,

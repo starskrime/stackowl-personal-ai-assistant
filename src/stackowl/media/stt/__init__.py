@@ -13,7 +13,12 @@ selector skip a backend whose heavy dep failed to install WITHOUT raising (B5).
 
 from __future__ import annotations
 
-from stackowl.media.stt.base import SttAvailability, SttBackend, SttResult
+from stackowl.media.stt.base import (
+    SttAvailability,
+    SttBackend,
+    SttResult,
+    stt_error_key,
+)
 from stackowl.media.stt.local import WhisperSttBackend
 from stackowl.media.stt.selector import SttSelection, SttSelector
 
@@ -24,4 +29,5 @@ __all__ = [
     "SttSelection",
     "SttSelector",
     "WhisperSttBackend",
+    "stt_error_key",
 ]

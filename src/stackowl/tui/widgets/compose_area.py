@@ -13,6 +13,7 @@ from textual.widgets import Static, TextArea
 
 from stackowl.commands.metadata import resolve_path
 from stackowl.infra.observability import log
+from stackowl.media.stt.base import stt_error_key
 from stackowl.tui.glyphs import GLYPH_PROMPT
 from stackowl.tui.i18n import localize
 from stackowl.tui.messages import (
@@ -899,7 +900,7 @@ class ComposeArea(Vertical):
                 "[tui] compose_area.action_dictate: stt unavailable",
                 extra={"_fields": {"reason": selection.reason}},
             )
-            self._set_hint_text(localize("compose.voice.error"))
+            self._set_hint_text(localize(stt_error_key(selection.reason)))
             return
 
         result = await selection.backend.transcribe(audio, audio_format="wav")
@@ -908,7 +909,7 @@ class ComposeArea(Vertical):
                 "[tui] compose_area.action_dictate: transcription failed",
                 extra={"_fields": {"reason": result}},
             )
-            self._set_hint_text(localize("compose.voice.error"))
+            self._set_hint_text(localize(stt_error_key(result)))
             return
 
         transcript = result.text.strip()
