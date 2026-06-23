@@ -15,15 +15,15 @@ from stackowl.config.runtime_settings import RuntimeSettings
 from stackowl.config.settings import Settings
 
 
-# --- defaults: OFF baseline -------------------------------------------------
+# --- defaults: split ON (dev hot-reload is the default end-state) -----------
 
 
-def test_split_process_defaults_off() -> None:
-    assert RuntimeSettings().split_process is False
+def test_split_process_defaults_on() -> None:
+    assert RuntimeSettings().split_process is True
 
 
-def test_auto_restart_defaults_off() -> None:
-    assert RuntimeSettings().auto_restart.enabled is False
+def test_auto_restart_defaults_on() -> None:
+    assert RuntimeSettings().auto_restart.enabled is True
 
 
 def test_auto_restart_default_delay_is_five_minutes() -> None:
@@ -90,5 +90,5 @@ def test_blocks_forbid_extra_keys() -> None:
 def test_root_settings_exposes_runtime_block() -> None:
     runtime = Settings().runtime
     assert isinstance(runtime, RuntimeSettings)
-    assert runtime.split_process is False
-    assert runtime.auto_restart.enabled is False
+    assert runtime.split_process is True
+    assert runtime.auto_restart.enabled is True

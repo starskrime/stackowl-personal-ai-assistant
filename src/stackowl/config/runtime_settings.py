@@ -23,10 +23,12 @@ class RuntimeSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     split_process: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Run the gateway and core as two processes over a local socket "
-            "instead of one in-process monolith. OFF by default (compat path)."
+            "instead of one in-process monolith. ON by default — the durable "
+            "gateway holds the TUI while the core can be restarted on code "
+            "change. Set false to force the single-process compat path."
         ),
     )
     socket_path: str | None = Field(
