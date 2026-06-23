@@ -35,7 +35,9 @@ async def test_transcribe_returns_structured_result(monkeypatch: pytest.MonkeyPa
     backend = WhisperSttBackend()
     # Bypass the test-mode guard and the real model: stub the sync transcribe.
     monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda op: None))
-    monkeypatch.setattr(backend, "_transcribe_sync", lambda path: "hello world")
+    monkeypatch.setattr(
+        backend, "_transcribe_sync", lambda audio_bytes, audio_format: "hello world"
+    )
     result = await backend.transcribe(b"audio-bytes", audio_format="ogg")
     assert isinstance(result, SttResult)
     assert result.text == "hello world"
@@ -46,7 +48,9 @@ async def test_transcribe_returns_structured_result(monkeypatch: pytest.MonkeyPa
 async def test_empty_transcript_is_success_not_error(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = WhisperSttBackend()
     monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda op: None))
-    monkeypatch.setattr(backend, "_transcribe_sync", lambda path: "")
+    monkeypatch.setattr(
+        backend, "_transcribe_sync", lambda audio_bytes, audio_format: ""
+    )
     result = await backend.transcribe(b"silence", audio_format="ogg")
     # Empty text is a valid SUCCESS (heard nothing), NOT a str error.
     assert isinstance(result, SttResult)
@@ -57,13 +61,41 @@ async def test_transcribe_failure_returns_str_not_raise(monkeypatch: pytest.Monk
     backend = WhisperSttBackend()
     monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda op: None))
 
-    def _boom(path: str) -> str:
+    def _boom(audio_bytes: bytes, audio_format: str) -> str:
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(backend, "_transcribe_sync", _boom)
     result = await backend.transcribe(b"x", audio_format="ogg")
     assert isinstance(result, str)
     assert "transcription failed" in result
+
+
+def test_decode_wav_is_ffmpeg_free() -> None:
+    # arecord-style 16 kHz mono 16-bit WAV → decoded to a float32 array WITHOUT
+    # ffmpeg (the bug fix: openai-whisper's load_audio shells out to ffmpeg).
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x10" * 16000)  # 1s of a constant sample
+    arr = WhisperSttBackend._decode_wav(buf.getvalue())
+    assert arr.dtype.name == "float32"
+    assert arr.shape[0] == 16000  # 1 second at 16 kHz mono
+    assert -1.0 <= float(arr.max()) <= 1.0
+
+
+def test_decode_non_wav_without_ffmpeg_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OGG (Telegram) needs a codec; with no ffmpeg the error must be actionable.
+    import stackowl.media.stt.local as local_mod
+
+    monkeypatch.setattr(local_mod.shutil, "which", lambda _name: None)
+    backend = WhisperSttBackend()
+    with pytest.raises(RuntimeError, match="ffmpeg"):
+        backend._decode_audio(b"OggS....", audio_format="ogg")
 
 
 async def test_is_available_negative_cache(monkeypatch: pytest.MonkeyPatch) -> None:

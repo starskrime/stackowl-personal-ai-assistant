@@ -55,8 +55,8 @@ _PROMPT_ID = "compose_prompt"
 _HINT_ID = "compose_hint"
 _MIC_ID = "compose_mic"
 
-_MIC_GLYPH_IDLE = "🎤"
-_MIC_GLYPH_RECORDING = "⏺"
+_MIC_GLYPH_IDLE = "🎤 voice"
+_MIC_GLYPH_RECORDING = "⏺ REC ■"
 
 
 class MicButton(Static):
@@ -126,15 +126,24 @@ class ComposeArea(Vertical):
         padding: 0;
     }
     ComposeArea #compose_mic {
-        width: 3;
+        width: auto;
+        min-width: 9;
         height: 1;
-        color: $color-accent;
+        padding: 0 1;
+        color: $color-surface;
+        background: $color-accent;
+        text-style: bold;
         text-align: center;
         content-align: center middle;
     }
     ComposeArea #compose_mic:hover {
-        background: $color-accent;
+        background: $color-text-primary;
         color: $color-surface;
+    }
+    ComposeArea #compose_mic.recording {
+        background: red;
+        color: white;
+        text-style: bold blink;
     }
     ComposeArea #compose_hint {
         height: 1;
@@ -826,13 +835,19 @@ class ComposeArea(Vertical):
         event.stop()
         await self.action_dictate()
 
-    def _set_mic_glyph(self, glyph: str) -> None:
-        """Update the mic button face (🎤 idle / ⏺ recording). Best-effort."""
+    def _set_mic_recording(self, recording: bool) -> None:
+        """Update the mic button face + colour to reflect recording state.
+
+        Idle = accent "🎤 voice"; recording = a blinking red "⏺ REC ■" so it is
+        unmistakable that audio is being captured. Best-effort/cosmetic.
+        """
         try:
-            self.query_one(f"#{_MIC_ID}", MicButton).update(glyph)
+            btn = self.query_one(f"#{_MIC_ID}", MicButton)
+            btn.update(_MIC_GLYPH_RECORDING if recording else _MIC_GLYPH_IDLE)
+            btn.set_class(recording, "recording")
         except Exception as exc:  # noqa: BLE001 — cosmetic; never break dictation.
             log.tui.debug(
-                "[tui] compose_area._set_mic_glyph: button not mounted",
+                "[tui] compose_area._set_mic_recording: button not mounted",
                 extra={"_fields": {"err": type(exc).__name__}},
             )
 
@@ -865,13 +880,13 @@ class ComposeArea(Vertical):
                 self._set_hint_text(localize("compose.voice.unavailable"))
                 return
             self._recording = True
-            self._set_mic_glyph(_MIC_GLYPH_RECORDING)
+            self._set_mic_recording(True)
             self._set_hint_text(localize("compose.voice.recording"))
             return
 
         # Second press → stop + transcribe.
         self._recording = False
-        self._set_mic_glyph(_MIC_GLYPH_IDLE)
+        self._set_mic_recording(False)
         self._set_hint_text(localize("compose.voice.transcribing"))
         audio = await self._recorder.stop()
         if not audio:
