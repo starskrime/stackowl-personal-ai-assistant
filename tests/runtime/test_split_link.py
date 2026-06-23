@@ -46,12 +46,18 @@ async def _run_split(socket_path, dispatch, adapter):
     """Wire a gateway server + core client; return (gateway_link, stop()) once linked."""
     holder: dict = {}
     link_ready = asyncio.Event()
+    # One link instance, reattached per accepted core connection (reconnect-aware).
+    link = GatewayLink(adapters={adapter.channel_name: adapter})
+    holder["link"] = link
 
     async def gateway_accept(conn: FrameConnection) -> None:
-        link = GatewayLink(conn, adapters={adapter.channel_name: adapter})
-        holder["link"] = link
+        link.set_connection(conn)
         link_ready.set()
-        await link.run()
+        try:
+            await link.run(conn)
+        finally:
+            link.drop_connection()
+            await link.finalize()
 
     server = IpcServer(socket_path)
     await server.start(gateway_accept)

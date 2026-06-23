@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import signal
+import sys
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -157,6 +158,49 @@ class _SlackMemoryBridgeComposite:
             extra={"_fields": {"fact_id": fact_id}},
         )
         await self._bridge.delete(fact_id)  # type: ignore[attr-defined]
+
+
+# How long the gateway waits for the core's first socket connection before
+# declaring boot failure (Phase 5). Generous — the core boots the full pipeline
+# (providers/memory/skills/MCP/browser) before it connects.
+_CORE_BOOT_TIMEOUT_S = 120.0
+
+
+async def _supervise_core(
+    proc_holder: dict[str, asyncio.subprocess.Process],
+    socket_path: Path | None,
+    stop_event: asyncio.Event,
+) -> None:
+    """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
+
+    A code-change restart is an ``os.execv`` IN the core: the PID is unchanged, so
+    this ``wait()`` does NOT return — the gateway just re-accepts the reconnect.
+    It returns only on a genuine crash, in which case we respawn with capped
+    exponential backoff until the gateway itself is shutting down. The durable
+    IpcServer listener never drops, so the fresh core simply reconnects.
+    """
+    from stackowl.runtime.supervisor import spawn_core
+
+    if socket_path is None:
+        return
+    backoff = 1.0
+    while not stop_event.is_set():
+        proc = proc_holder.get("proc")
+        if proc is None:
+            return
+        rc = await proc.wait()
+        if stop_event.is_set():
+            return
+        log.warning(
+            "[startup] gateway: core exited unexpectedly — respawning",
+            extra={"_fields": {"returncode": rc, "backoff_s": backoff}},
+        )
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
+        if stop_event.is_set():
+            return
+        with contextlib.suppress(Exception):
+            proc_holder["proc"] = await spawn_core(socket_path)
 
 
 def _pid_path() -> Path:
@@ -319,7 +363,7 @@ class StartupOrchestrator:
         from stackowl.gateway.scanner import GatewayScanner
         from stackowl.ipc.client import IpcClient
         from stackowl.ipc.connection import FrameConnection
-        from stackowl.ipc.frames import IngressFrame
+        from stackowl.ipc.frames import HelloFrame, IngressFrame, RestartNoticeFrame
         from stackowl.ipc.server import IpcServer
         from stackowl.ipc.stream_bridge import SocketStreamRegistry
         from stackowl.owls.registry import OwlRegistry
@@ -330,8 +374,11 @@ class StartupOrchestrator:
         from stackowl.pipeline.state import PipelineState
         from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
         from stackowl.providers.registry import ProviderRegistry
+        from stackowl.runtime.code_watcher import CodeWatcher
+        from stackowl.runtime.drain import quiesce
         from stackowl.runtime.gateway_link import GatewayLink
         from stackowl.runtime.message_bridge import frame_to_ingress
+        from stackowl.runtime.supervisor import spawn_core
         from stackowl.tools.browser.runtime import CamoufoxRuntime
         from stackowl.tools.browser.sessions import BrowserSessionRegistry
         from stackowl.tools.registry import ToolRegistry
@@ -346,11 +393,19 @@ class StartupOrchestrator:
         # registry, primary adapter, turn client, driver).
         core_conn: FrameConnection | None = None
         gateway_server: IpcServer | None = None
-        gateway_conn_ready: asyncio.Event | None = None
-        gateway_conn_holder: dict[str, FrameConnection] = {}
-        gateway_conn_done: asyncio.Event | None = None
-        core_proc: asyncio.subprocess.Process | None = None
+        gateway_socket_path: Path | None = None
+        # Set when the first core connection lands (Phase 5 boot-timeout waits on it).
+        gateway_first_conn_ready = asyncio.Event()
+        # Holder so the crash-respawn supervisor and teardown share one handle that
+        # a respawn can swap (execv keeps the PID, so this only changes on a crash).
+        core_proc_holder: dict[str, asyncio.subprocess.Process] = {}
         gateway_link: GatewayLink | None = None
+        # CORE self-restart wiring (Phase 3/4): a fired event drives a graceful
+        # quiesce -> teardown -> os.execv; the flag survives the teardown finally.
+        restart_event = asyncio.Event()
+        restart_requested = {"value": False}
+        _restart_grace = self._settings.runtime.auto_restart.grace_seconds
+        code_watcher: CodeWatcher | None = None
         if self._role == "core":
             socket_path = _resolve_socket_path(self._settings)
             log.info(
@@ -358,31 +413,13 @@ class StartupOrchestrator:
                 extra={"_fields": {"socket_path": str(socket_path)}},
             )
             core_conn = await IpcClient(socket_path).connect()
+            # Announce readiness so the gateway flushes any messages buffered while
+            # this (possibly just-exec-replaced) core was booting.
+            with contextlib.suppress(Exception):
+                await core_conn.send(HelloFrame(core_pid=os.getpid()))
             log.info("[startup] core: connected to gateway")
         elif self._role == "gateway":
-            from stackowl.runtime.supervisor import spawn_core
-
-            socket_path = _resolve_socket_path(self._settings)
-            gateway_conn_ready = asyncio.Event()
-            gateway_conn_done = asyncio.Event()
-
-            async def _accept_core(conn: FrameConnection) -> None:
-                # Hand the (single, v1) core connection to the assembly below and
-                # hold it open until gateway teardown — IpcServer closes the
-                # connection when this handler returns, so we must not return early.
-                gateway_conn_holder["conn"] = conn
-                assert gateway_conn_ready is not None
-                gateway_conn_ready.set()
-                assert gateway_conn_done is not None
-                await gateway_conn_done.wait()
-
-            gateway_server = IpcServer(socket_path)
-            await gateway_server.start(_accept_core)
-            log.info(
-                "[startup] gateway: socket bound — spawning core",
-                extra={"_fields": {"socket_path": str(socket_path)}},
-            )
-            core_proc = await spawn_core(socket_path)
+            gateway_socket_path = _resolve_socket_path(self._settings)
 
         # 1. ENTRY — build services
         log.info("[startup] gateway: building services")
@@ -1748,16 +1785,47 @@ class StartupOrchestrator:
         # internally, so the gateway needs no steer/stop RPCs.
         turn_client: TurnClient
         if self._role == "gateway":
-            assert gateway_conn_ready is not None
-            log.info("[startup] gateway: waiting for core to connect")
-            await gateway_conn_ready.wait()
-            gateway_conn = gateway_conn_holder["conn"]
+            assert gateway_socket_path is not None
             gateway_link = GatewayLink(
-                gateway_conn,
                 {adapter.channel_name: adapter},
                 event_bus=event_bus,
             )
             turn_client = gateway_link
+
+            async def _accept_core(conn: FrameConnection) -> None:
+                # One call per accepted core connection. The FIRST establishes the
+                # link; every later one is the fresh core after an exec-replace.
+                # IpcServer closes the connection when this returns, so we route it
+                # to EOF here, then drop+finalize so the next core can reattach.
+                assert gateway_link is not None
+                gateway_link.set_connection(conn)
+                gateway_first_conn_ready.set()
+                try:
+                    await gateway_link.run(conn)
+                finally:
+                    gateway_link.drop_connection()
+                    with contextlib.suppress(Exception):
+                        await gateway_link.finalize()
+
+            gateway_server = IpcServer(gateway_socket_path)
+            await gateway_server.start(_accept_core)
+            log.info(
+                "[startup] gateway: socket bound — spawning core",
+                extra={"_fields": {"socket_path": str(gateway_socket_path)}},
+            )
+            core_proc_holder["proc"] = await spawn_core(gateway_socket_path)
+            # Phase 5 — bounded wait for the core's first connection so a core that
+            # dies during boot surfaces as a startup failure instead of a hang.
+            log.info("[startup] gateway: waiting for core to connect")
+            try:
+                await asyncio.wait_for(
+                    gateway_first_conn_ready.wait(), timeout=_CORE_BOOT_TIMEOUT_S
+                )
+            except TimeoutError as exc:
+                raise StartupError(
+                    6, "gateway",
+                    f"core did not connect within {_CORE_BOOT_TIMEOUT_S:.0f}s",
+                ) from exc
             log.info("[startup] gateway: core connected — link established")
         else:
             local_client = LocalTurnClient(cast(IngressHandler, _handle_ingress))
@@ -2609,6 +2677,46 @@ class StartupOrchestrator:
 
                 signal.signal(sig, _win_handler)
 
+        # CORE restart triggers (Phase 3/4). SIGHUP is the manual trigger (e.g.
+        # `kill -HUP <core_pid>`) to validate the drain/execv path; CodeWatcher is
+        # the automatic one. Both just set restart_event — the driver above turns
+        # that into quiesce -> teardown -> os.execv. Gateway/mono never arm these.
+        if self._role == "core":
+            def _request_restart() -> None:
+                if not restart_event.is_set():
+                    log.info("[startup] core: restart trigger received")
+                    restart_event.set()
+
+            if hasattr(signal, "SIGHUP"):
+                with contextlib.suppress(NotImplementedError):
+                    loop.add_signal_handler(signal.SIGHUP, _request_restart)
+
+            auto = self._settings.runtime.auto_restart
+            if auto.enabled:
+                # delay_minutes is the quiet-period settle; require_client_connected
+                # is satisfied by construction here (the core only runs while its
+                # gateway connection is live). A burst of edits coalesces into one
+                # restart via the watcher's debounce. on_change fires on the watcher
+                # thread → marshal onto the loop.
+                def _on_code_change() -> None:
+                    loop.call_soon_threadsafe(_request_restart)
+
+                code_watcher = CodeWatcher(
+                    watch_paths=[Path(p) for p in auto.watch_paths],
+                    on_change=_on_code_change,
+                    poll_interval_s=auto.poll_interval_s,
+                    quiet_period_s=auto.delay_minutes * 60.0,
+                )
+                code_watcher.capture_loop(loop)
+                code_watcher.start()
+                log.info(
+                    "[startup] core: code watcher armed",
+                    extra={"_fields": {
+                        "watch_paths": auto.watch_paths,
+                        "delay_minutes": auto.delay_minutes,
+                    }},
+                )
+
         # F142 — start the REAL recurring systemd watchdog (self-skips off-systemd).
         watchdog = WatchdogService()
         watchdog.start()
@@ -2616,27 +2724,54 @@ class StartupOrchestrator:
         # earlier (premature READY would let systemd start dependents while startup
         # could still fail). No-op off-systemd.
         watchdog.send_ready()
-        # GATEWAY routes the core's outbound frames (chunks/send_text/progress/
-        # clarify) back to the adapters via GatewayLink.run(), concurrently with
-        # the TUI. The TUI staying alive while this link can come and go is the
-        # whole point of the split (scrollback survives a core restart).
-        link_task: asyncio.Task[None] | None = None
-        if self._role == "gateway" and gateway_link is not None:
-            link_task = asyncio.create_task(gateway_link.run())
+        # GATEWAY routes the core's outbound frames back to the adapters via
+        # GatewayLink.run(conn) — driven by the IpcServer accept handler (one per
+        # core connection), so a core exec-replace is handled by re-accepting. The
+        # gateway just runs the TUI here; the link lives in the accept tasks. The
+        # core supervisor (crash-respawn) runs alongside.
+        supervise_task: asyncio.Task[None] | None = None
+        if self._role == "gateway":
+            supervise_task = asyncio.create_task(
+                _supervise_core(core_proc_holder, gateway_socket_path, stop_event)
+            )
         try:
             if self._role == "core":
                 # No TUI to run — the inbound-frame loop is the blocking driver.
-                # Race it against a stop signal so SIGTERM/SIGINT still tears down.
+                # Race it against a stop signal AND the restart trigger (code change
+                # or SIGHUP). On restart we drain in-flight turns, then fall through
+                # to teardown and os.execv (fresh interpreter = new code).
                 stop_task = asyncio.ensure_future(stop_event.wait())
+                restart_task = asyncio.ensure_future(restart_event.wait())
                 try:
                     await asyncio.wait(
-                        {loop_task, stop_task},
+                        {loop_task, stop_task, restart_task},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
+                    if restart_event.is_set() and not stop_event.is_set():
+                        assert core_conn is not None
+                        log.info("[startup] core: restart requested — quiescing")
+                        # Tell the gateway to buffer before we stop accepting.
+                        with contextlib.suppress(Exception):
+                            await core_conn.send(
+                                RestartNoticeFrame(
+                                    reason="code-change",
+                                    grace_seconds=_restart_grace,
+                                )
+                            )
+                        # Stop accepting new turns (the frame loop), then drain the
+                        # turns already running.
+                        loop_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await loop_task
+                        await quiesce(turn_registry, grace_seconds=_restart_grace)
+                        restart_requested["value"] = True
                 finally:
                     stop_task.cancel()
+                    restart_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError, Exception):
                         await stop_task
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await restart_task
             else:
                 await _run_until_signal(adapter, stop_event)
         finally:
@@ -2707,21 +2842,25 @@ class StartupOrchestrator:
             loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await loop_task
-            # GATEWAY's outbound-frame router (None in mono/core).
-            if link_task is not None:
-                link_task.cancel()
+            # CORE auto-restart watcher (None unless this is the core w/ auto_restart).
+            if code_watcher is not None:
+                with contextlib.suppress(Exception):
+                    code_watcher.stop()
+            # GATEWAY crash-respawn supervisor (None in mono/core).
+            if supervise_task is not None:
+                supervise_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await link_task
-            # GATEWAY tear-down of the split socket: release the accept handler so
-            # the listener can close, stop the server, and stop the core child.
-            if gateway_conn_done is not None:
-                gateway_conn_done.set()
+                    await supervise_task
+            # GATEWAY tear-down of the split socket: stop the listener, then the
+            # core child. On a normal shutdown the core gets a terminate; a
+            # code-change restart never reaches here (the core execs itself).
             if gateway_server is not None:
                 with contextlib.suppress(Exception):
                     await gateway_server.stop()
-            if core_proc is not None and core_proc.returncode is None:
+            _gw_proc = core_proc_holder.get("proc")
+            if _gw_proc is not None and _gw_proc.returncode is None:
                 with contextlib.suppress(Exception):
-                    core_proc.terminate()
+                    _gw_proc.terminate()
             # CORE's connection to the gateway (None in mono/gateway).
             if core_conn is not None:
                 with contextlib.suppress(Exception):
@@ -2765,6 +2904,16 @@ class StartupOrchestrator:
                 log.info("[startup] gateway: PID file removed in shutdown finally")
 
         # 5. EXIT
+        # CORE code-change restart: teardown has released the DB pool / browser /
+        # sockets, so exec-replace this process with a fresh interpreter (= new
+        # code). The same PID re-runs `__core__`, reconnects to the durable
+        # gateway, and the gateway flushes anything buffered during the gap. execv
+        # never returns; nothing below runs.
+        if self._role == "core" and restart_requested["value"]:
+            log.info("[startup] core: exec-replacing with fresh code (restart)")
+            with contextlib.suppress(Exception):
+                logging.shutdown()
+            os.execv(sys.executable, [sys.executable, "-m", "stackowl", "__core__"])
         log.info("[startup] gateway: adapter exited — shutdown complete")
 
     def _write_pid(self) -> None:
