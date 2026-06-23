@@ -22,8 +22,12 @@ preserved; the only additions are the structured-error / availability contract.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import os
+import shutil
 import tempfile
+import wave
 from typing import Any
 
 from stackowl.config.test_mode import TestModeGuard
@@ -117,31 +121,14 @@ class WhisperSttBackend(SttBackend):
         # both slow and non-deterministic in tests).
         TestModeGuard.assert_not_test_mode("whisper.transcribe")
 
-        suffix = f".{audio_format.lstrip('.')}" if audio_format else ".ogg"
-        tmp_path: str | None = None
         try:
-            log.tool.debug(
-                "[stt.whisper] transcribe: decision write_tempfile",
-                extra={"_fields": {"audio_len": len(audio_bytes), "suffix": suffix}},
-            )
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = tmp.name
-
             loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, self._transcribe_sync, tmp_path)
+            text = await loop.run_in_executor(
+                None, self._transcribe_sync, audio_bytes, audio_format
+            )
         except Exception as exc:  # operational failure → structured str, never raise.
             log.tool.error("[stt.whisper] transcribe: failed", exc_info=exc)
             return f"transcription failed: {type(exc).__name__}: {exc}"
-        finally:
-            if tmp_path is not None:
-                try:
-                    os.unlink(tmp_path)
-                except OSError as exc:
-                    log.tool.error(
-                        "[stt.whisper] transcribe: tempfile cleanup failed",
-                        exc_info=exc,
-                    )
 
         log.tool.debug(
             "[stt.whisper] transcribe: exit",
@@ -149,12 +136,77 @@ class WhisperSttBackend(SttBackend):
         )
         return SttResult(text=text, backend=self.name, is_local=True)
 
-    def _transcribe_sync(self, path: str) -> str:
-        """Synchronous transcription — called via ``run_in_executor``."""
+    def _transcribe_sync(self, audio_bytes: bytes, audio_format: str) -> str:
+        """Synchronous decode + transcription — called via ``run_in_executor``."""
         avail = self._ensure_loaded()
         if not avail.available:
             # Surface the structured load failure to the async caller as an error.
             raise RuntimeError(avail.reason or "Whisper model unavailable")
-        result: dict[str, Any] = self._model.transcribe(path)
+        # Decode to a float32 waveform OURSELVES so WAV needs no ffmpeg (openai-
+        # whisper's load_audio shells out to ffmpeg even for WAV). The TUI records
+        # 16 kHz mono WAV via arecord, so this removes the ffmpeg dependency for
+        # the dictation path entirely.
+        audio = self._decode_audio(audio_bytes, audio_format)
+        result: dict[str, Any] = self._model.transcribe(audio)
         text: str = str(result.get("text", "")).strip()
         return text
+
+    def _decode_audio(self, audio_bytes: bytes, audio_format: str) -> Any:
+        """Decode raw audio bytes to a 16 kHz mono float32 numpy array.
+
+        WAV is decoded in-process (stdlib :mod:`wave` + numpy) — no ffmpeg. Other
+        containers (OGG/Opus from Telegram, mp3, …) need a codec; we fall back to
+        whisper's ffmpeg-based loader and raise an ACTIONABLE error when ffmpeg is
+        absent rather than a cryptic FileNotFoundError.
+        """
+        fmt = audio_format.lstrip(".").lower()
+        is_wav = fmt == "wav" or audio_bytes[:4] == b"RIFF"
+        if is_wav:
+            return self._decode_wav(audio_bytes)
+
+        # Non-WAV container → needs ffmpeg (whisper.load_audio).
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(
+                f"cannot decode {fmt or 'this'} audio without ffmpeg "
+                f"(install ffmpeg: 'sudo apt install ffmpeg')"
+            )
+        import whisper
+
+        with tempfile.NamedTemporaryFile(suffix=f".{fmt or 'ogg'}", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        try:
+            return whisper.load_audio(tmp_path)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+
+    @staticmethod
+    def _decode_wav(audio_bytes: bytes) -> Any:
+        """Decode a PCM WAV to a 16 kHz mono float32 numpy array (no ffmpeg)."""
+        import numpy as np
+
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            rate = wf.getframerate()
+            frames = wf.readframes(wf.getnframes())
+
+        if sampwidth == 2:
+            data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sampwidth == 4:
+            data = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+        elif sampwidth == 1:  # 8-bit PCM is unsigned, centered at 128.
+            data = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+        else:
+            raise RuntimeError(f"unsupported WAV sample width: {sampwidth} bytes")
+
+        if n_channels > 1:  # mix down to mono.
+            data = data.reshape(-1, n_channels).mean(axis=1)
+        if rate != 16000 and len(data) > 0:  # linear resample to whisper's 16 kHz.
+            target = int(round(len(data) * 16000 / rate))
+            if target > 0:
+                x_old = np.linspace(0.0, 1.0, num=len(data), endpoint=False)
+                x_new = np.linspace(0.0, 1.0, num=target, endpoint=False)
+                data = np.interp(x_new, x_old, data).astype(np.float32)
+        return np.ascontiguousarray(data, dtype=np.float32)

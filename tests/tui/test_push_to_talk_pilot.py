@@ -84,8 +84,12 @@ async def test_dictation_fills_compose_without_submitting() -> None:
         await pilot.pause()
         await pilot.press("ctrl+r")  # start recording
         await pilot.pause()
+        # The mic button must visibly reflect the recording state (red .recording).
+        mic = app.query_one("#compose_mic")
+        assert mic.has_class("recording")
         await pilot.press("ctrl+r")  # stop → transcribe → fill box
         await pilot.pause()
+        assert not mic.has_class("recording")  # back to idle
 
         editor = app.query_one("#compose_input", SubmitTextArea)
         assert editor.text == "hello there"
