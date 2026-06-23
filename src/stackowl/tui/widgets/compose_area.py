@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from textual import events
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Static, TextArea
 
@@ -51,6 +53,26 @@ _DROPDOWN_ID = "autocomplete_dropdown"
 _ROW_ID = "compose_row"
 _PROMPT_ID = "compose_prompt"
 _HINT_ID = "compose_hint"
+_MIC_ID = "compose_mic"
+
+_MIC_GLYPH_IDLE = "🎤"
+_MIC_GLYPH_RECORDING = "⏺"
+
+
+class MicButton(Static):
+    """A clickable 🎤 voice button — taps emit :class:`MicButton.Pressed`.
+
+    The TUI is otherwise keybinding-driven; this is the one visible affordance for
+    push-to-talk dictation (parallel to the Ctrl+R binding), so a user who never
+    learns the shortcut can still start a recording with the mouse.
+    """
+
+    class Pressed(Message):
+        """Posted when the mic button is clicked."""
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(self.Pressed())
 
 _MAX_INPUT_ROWS = 8
 
@@ -102,6 +124,17 @@ class ComposeArea(Vertical):
         color: $color-text-primary;
         border: none;
         padding: 0;
+    }
+    ComposeArea #compose_mic {
+        width: 3;
+        height: 1;
+        color: $color-accent;
+        text-align: center;
+        content-align: center middle;
+    }
+    ComposeArea #compose_mic:hover {
+        background: $color-accent;
+        color: $color-surface;
     }
     ComposeArea #compose_hint {
         height: 1;
@@ -201,6 +234,8 @@ class ComposeArea(Vertical):
         with Horizontal(id=_ROW_ID):
             yield Static(f"{GLYPH_PROMPT} ", id=_PROMPT_ID)
             yield SubmitTextArea(id=_INPUT_ID)
+            # Visible voice affordance — click to dictate (mirrors the Ctrl+R bind).
+            yield MicButton(_MIC_GLYPH_IDLE, id=_MIC_ID)
         yield Static(localize("compose.hints"), id=_HINT_ID)
 
     def on_mount(self) -> None:
@@ -786,8 +821,23 @@ class ComposeArea(Vertical):
         self.state = _STATE_IDLE
         self._hide_autocomplete()
 
+    async def on_mic_button_pressed(self, event: MicButton.Pressed) -> None:
+        """Mouse click on the 🎤 button → same path as the Ctrl+R binding."""
+        event.stop()
+        await self.action_dictate()
+
+    def _set_mic_glyph(self, glyph: str) -> None:
+        """Update the mic button face (🎤 idle / ⏺ recording). Best-effort."""
+        try:
+            self.query_one(f"#{_MIC_ID}", MicButton).update(glyph)
+        except Exception as exc:  # noqa: BLE001 — cosmetic; never break dictation.
+            log.tui.debug(
+                "[tui] compose_area._set_mic_glyph: button not mounted",
+                extra={"_fields": {"err": type(exc).__name__}},
+            )
+
     async def action_dictate(self) -> None:
-        """Push-to-talk toggle (Ctrl+R): record → transcribe → fill the compose box.
+        """Push-to-talk toggle (Ctrl+R or 🎤 click): record → transcribe → fill box.
 
         First press starts recording; second press stops, transcribes off the UI
         thread, and DROPS the transcript into the editor for the user to edit and
@@ -815,11 +865,13 @@ class ComposeArea(Vertical):
                 self._set_hint_text(localize("compose.voice.unavailable"))
                 return
             self._recording = True
+            self._set_mic_glyph(_MIC_GLYPH_RECORDING)
             self._set_hint_text(localize("compose.voice.recording"))
             return
 
         # Second press → stop + transcribe.
         self._recording = False
+        self._set_mic_glyph(_MIC_GLYPH_IDLE)
         self._set_hint_text(localize("compose.voice.transcribing"))
         audio = await self._recorder.stop()
         if not audio:
