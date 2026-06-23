@@ -15,13 +15,46 @@ from __future__ import annotations
 
 import types
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.channels.telegram.voice import TelegramVoiceHandler, WhisperLocalTranscriber
+from stackowl.channels.telegram.voice_confirm import PendingTranscriptStore
+from stackowl.config.settings import TranscriptionSettings
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
+from stackowl.media.stt.base import SttAvailability, SttBackend, SttResult
+from stackowl.media.stt.selector import SttSelector
+
+
+class _StubBackend(SttBackend):
+    """A deterministic STT backend — returns a fixed transcript, no model load."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    @property
+    def name(self) -> str:
+        return "stub"
+
+    @property
+    def is_local(self) -> bool:
+        return True
+
+    async def is_available(self) -> SttAvailability:
+        return SttAvailability.ok()
+
+    async def transcribe(
+        self, audio_bytes: bytes, *, audio_format: str = "ogg"
+    ) -> SttResult | str:
+        return SttResult(text=self._text, backend="stub", is_local=True)
+
+
+def _make_handler(adapter: Any, text: str) -> tuple[TelegramVoiceHandler, PendingTranscriptStore]:
+    selector = SttSelector(TranscriptionSettings(enabled=True), local=_StubBackend(text))
+    store = PendingTranscriptStore()
+    return TelegramVoiceHandler(selector, adapter, store), store
 
 
 # ---------------------------------------------------------------------------
@@ -82,11 +115,10 @@ async def test_handle_voice_calls_download_media_with_file_id() -> None:
     """handle_voice must call adapter.download_media with the voice's file_id."""
     adapter = _make_adapter(allowed=frozenset({42}))
     adapter.download_media = AsyncMock(return_value=b"audio")
+    adapter.send_typing = AsyncMock()
+    adapter.send_inline_keyboard = AsyncMock(return_value=None)
 
-    transcriber = MagicMock(spec=WhisperLocalTranscriber)
-    transcriber.transcribe = AsyncMock(return_value="hello world")
-
-    handler = TelegramVoiceHandler(transcriber=transcriber, adapter=adapter)
+    handler, _ = _make_handler(adapter, "hello world")
     update = _make_voice_update(file_id="FILE_ID_123", user_id=42)
 
     await handler.handle_voice(update, None)
@@ -95,30 +127,33 @@ async def test_handle_voice_calls_download_media_with_file_id() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. TelegramVoiceHandler passes transcribed text to queue
+# 3. TelegramVoiceHandler shows a confirm prompt and does NOT auto-enqueue
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_handle_voice_enqueues_transcribed_text() -> None:
-    """handle_voice must enqueue an IngressMessage with the transcribed text."""
+async def test_handle_voice_shows_confirm_and_does_not_enqueue() -> None:
+    """handle_voice must present a Send/Discard prompt, enqueuing NOTHING yet."""
     adapter = _make_adapter(allowed=frozenset({42}))
     adapter.download_media = AsyncMock(return_value=b"audio bytes")
+    adapter.send_typing = AsyncMock()
+    adapter.send_inline_keyboard = AsyncMock(return_value=None)
 
-    transcriber = MagicMock(spec=WhisperLocalTranscriber)
-    transcriber.transcribe = AsyncMock(return_value="transcribed speech")
-
-    handler = TelegramVoiceHandler(transcriber=transcriber, adapter=adapter)
+    handler, _ = _make_handler(adapter, "transcribed speech")
     update = _make_voice_update(file_id="F1", user_id=42, chat_id=999)
 
     await handler.handle_voice(update, None)
 
-    assert adapter._queue.qsize() == 1
-    msg = await adapter._queue.get()
-    assert msg.text == "transcribed speech"
-    assert msg.session_id == "42"
-    assert msg.channel == "telegram"
-    assert adapter._last_chat_id == 999
+    # Confirm-before-send: nothing is injected until the user taps Send.
+    assert adapter._queue.qsize() == 0
+    adapter.send_inline_keyboard.assert_called_once()
+    # The prompt carries the transcript and a two-button keyboard.
+    call = adapter.send_inline_keyboard.call_args
+    assert "transcribed speech" in call.args[0]
+    keyboard = call.args[1]
+    buttons = [btn for row in keyboard["inline_keyboard"] for btn in row]
+    actions = {btn["callback_data"].split(":")[1] for btn in buttons}
+    assert actions == {"send", "discard"}
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,13 @@ _EN: dict[str, str] = {
     "compose.mcp_disabled": "Input paused — an MCP spectator is connected",
     "compose.parliament_active": "Parliament in session…",
     "compose.hints": "Enter ↵ send · Shift+Enter newline · / commands · @ owls",
+    # Voice dictation (push-to-talk)
+    "compose.voice.recording": "🎤 Recording… Ctrl+R to stop",
+    "compose.voice.transcribing": "🎤 Transcribing…",
+    "compose.voice.unavailable": "🎤 Voice input unavailable (no microphone tool found)",
+    "compose.voice.empty": "🎤 Heard nothing — try again",
+    "compose.voice.error": "🎤 Transcription failed",
+    "compose.voice.ready": "🎤 Transcript ready — edit, then Enter ↵ to send",
     # Autocomplete
     "autocomplete.no_matches": "No matches",
     # Parliament

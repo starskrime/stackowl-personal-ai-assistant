@@ -39,7 +39,7 @@ from stackowl.infra.observability import log
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:
-    pass
+    from stackowl.channels.telegram.voice import TelegramVoiceHandler
 
 _UPDATE_DEGRADED_AFTER_S = 120.0
 
@@ -84,6 +84,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         self._last_chat_id: int | None = None
         self._bot_user_id: int = 0
         self._bot_username: str = ""
+        # Optional voice-transcription handler (set by the orchestrator only when
+        # transcription is enabled). None → no filters.VOICE handler is registered
+        # in start(), so behavior is byte-identical to a build without the feature.
+        self._voice_handler: TelegramVoiceHandler | None = None
         log.telegram.debug(
             "[telegram] adapter.init: ready",
             extra={
@@ -151,6 +155,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         self._bot_username = bot_username
 
         app.add_handler(MessageHandler(filters.TEXT, self._handle_update))
+        # Voice messages → transcribe → confirm (only when a handler was wired).
+        if self._voice_handler is not None:
+            app.add_handler(MessageHandler(filters.VOICE, self._voice_handler.handle_voice))
+            log.telegram.debug("[telegram] adapter.start: voice handler registered")
         self.register_with_registry()
         # RC-D: publish the slash-command menu so "/" autocompletes in clients.
         from stackowl.channels.telegram.commands_registration import register_commands
@@ -747,6 +755,15 @@ class TelegramChannelAdapter(ChannelAdapter):
             extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
         )
         return True
+
+    def set_voice_handler(self, handler: TelegramVoiceHandler) -> None:
+        """Install the voice-transcription handler (must be called BEFORE start()).
+
+        ``start()`` registers a ``filters.VOICE`` MessageHandler only when this is
+        set, so a build with transcription disabled never wires the voice path.
+        """
+        self._voice_handler = handler
+        log.telegram.debug("[telegram] adapter.set_voice_handler: installed")
 
     def attach_callback_router(self, router: Any) -> None:
         """Route Telegram callback-query taps (inline buttons) through ``router``.

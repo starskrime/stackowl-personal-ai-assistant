@@ -29,8 +29,10 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.commands.sequence_store import SequenceSuggestionProvider
     from stackowl.config.ui_settings import UISettings
     from stackowl.events.bus import EventBus
+    from stackowl.media.stt.selector import SttSelector
     from stackowl.tui.app import StackOwlApp
     from stackowl.tui.coordinator import UIStateCoordinator
+    from stackowl.tui.voice.recorder import MicRecorder
     from stackowl.tui.widgets.compose_helpers import CommandInfo
 
 
@@ -55,6 +57,8 @@ class TuiAssembly:
         ui_settings: UISettings | None = None,
         sequence_provider: SequenceSuggestionProvider | None = None,
         semantic_resolver: CommandResolver | None = None,
+        recorder: MicRecorder | None = None,
+        stt_selector: SttSelector | None = None,
     ) -> TuiComponents:
         """Construct the app and coordinator. Neither is started here.
 
@@ -77,6 +81,8 @@ class TuiAssembly:
             owl_names=owl_names,
             sequence_provider=sequence_provider,
             semantic_resolver=semantic_resolver,
+            recorder=recorder,
+            stt_selector=stt_selector,
         )
         # UIStateCoordinator's annotation is `App[object]` but Textual's
         # generic is contravariant in practice — StackOwlApp(App[None]) is

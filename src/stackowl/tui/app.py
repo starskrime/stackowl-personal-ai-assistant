@@ -82,6 +82,8 @@ if TYPE_CHECKING:
     from stackowl.commands.resolver import CommandResolver
     from stackowl.commands.sequence_store import SequenceSuggestionProvider
     from stackowl.events.bus import EventBus
+    from stackowl.media.stt.selector import SttSelector
+    from stackowl.tui.voice.recorder import MicRecorder
 
 
 _COMPOSE_EVENT = "compose_submitted"
@@ -145,6 +147,8 @@ class StackOwlApp(App[None]):
         owl_names: Iterable[str] | None = None,
         sequence_provider: SequenceSuggestionProvider | None = None,
         semantic_resolver: CommandResolver | None = None,
+        recorder: MicRecorder | None = None,
+        stt_selector: SttSelector | None = None,
     ) -> None:
         install_default_translations()
         super().__init__()
@@ -154,6 +158,10 @@ class StackOwlApp(App[None]):
         self._owl_names: list[str] = list(owl_names or [])
         self._sequence_provider = sequence_provider
         self._semantic_resolver = semantic_resolver
+        # Voice dictation (push-to-talk); both None when transcription is disabled
+        # → the compose ctrl+r action degrades to a status line (no-op).
+        self._recorder = recorder
+        self._stt_selector = stt_selector
         log.tui.debug(
             "[tui] StackOwlApp.__init__",
             extra={"_fields": {
@@ -175,6 +183,8 @@ class StackOwlApp(App[None]):
             owl_names=self._owl_names,
             sequence_provider=self._sequence_provider,
             semantic_resolver=self._semantic_resolver,
+            recorder=self._recorder,
+            stt_selector=self._stt_selector,
         )
 
     def deliver(self, message: Message) -> None:

@@ -35,7 +35,7 @@ from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
 
-__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "ProgressSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
+__all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "ProgressSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TranscriptionSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
 log = logging.getLogger("stackowl.config")
 
@@ -232,6 +232,77 @@ class TtsSettings(BaseModel):
         default="tts-1",
         description="Model id sent to the cloud speech endpoint.",
         json_schema_extra={"hot_reload": True},
+    )
+
+
+class TranscriptionSettings(BaseModel):
+    """Speech-to-text (voice transcription) configuration — self-hosted-first.
+
+    Sibling of :class:`TtsSettings` in the opposite direction (audio → text). The
+    local OSS engine ('whisper', ``openai-whisper``) keeps audio on the box. The
+    feature is ON by default (``enabled=True``): Telegram voice notes are
+    transcribed + confirmed, and the TUI Ctrl+R push-to-talk dictates into the
+    compose box. Set ``enabled=False`` to wire neither path (byte-identical to a
+    build without the feature). The cloud fields are placeholders for a future
+    cloud STT backend (none is shipped yet); leaving them does nothing today.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Master switch for voice transcription (Telegram voice notes + TUI "
+            "push-to-talk). ON by default: Telegram voice notes are transcribed "
+            "(local Whisper) and shown with a Send/Discard prompt, and the TUI "
+            "Ctrl+R push-to-talk dictates into the compose box. Set False to wire "
+            "neither path (byte-identical to a build without this feature)."
+        ),
+        json_schema_extra={"hot_reload": False},
+    )
+    engine: Literal["local", "auto"] = Field(
+        default="local",
+        description=(
+            "STT engine selection. 'local' = local Whisper only (audio never "
+            "leaves the box). 'auto' = local first, then a cloud fallback IF one "
+            "is enabled + configured (no cloud STT backend ships yet)."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    model: str = Field(
+        default="base",
+        description=(
+            "Local Whisper model size ('tiny', 'base', 'small', 'medium', "
+            "'large'). Smaller = faster but less accurate; consider 'tiny' on a "
+            "CPU-only / ARM host where 'base' is slow."
+        ),
+        json_schema_extra={"hot_reload": False},
+    )
+    language: str = Field(
+        default="",
+        description=(
+            "Optional ISO language hint for the local engine (e.g. 'en'). Empty = "
+            "let Whisper auto-detect the spoken language (multilingual)."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_enabled: bool = Field(
+        default=False,
+        description=(
+            "Opt-in switch for a future cloud STT fallback. False (default) = "
+            "local engine only; the audio never leaves the machine. (Placeholder: "
+            "no cloud STT backend ships yet.)"
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
+    cloud_api_key: str = Field(
+        default="",
+        description=(
+            "Secret REFERENCE for a future cloud STT endpoint key — an env-var "
+            "name, 'keychain:<service>', or 'file:<path>' (resolved at use, never "
+            "the raw secret). Empty disables the cloud fallback. (Placeholder.)"
+        ),
+        json_schema_extra={"hot_reload": True, "sensitive": True},
     )
 
 
@@ -725,6 +796,7 @@ class Settings(BaseSettings):
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     tts: TtsSettings = Field(default_factory=TtsSettings)
+    transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
     image: ImageSettings = Field(default_factory=ImageSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     clarify: ClarifySettings = Field(default_factory=ClarifySettings)
