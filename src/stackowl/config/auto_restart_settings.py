@@ -24,11 +24,12 @@ class AutoRestartSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Master switch for auto-restarting the core process when watched "
-            "source files change. OFF by default (baseline never auto-restarts). "
-            "Only takes effect when runtime.split_process is also true."
+            "source files change. ON by default (dev hot-reload). Only takes "
+            "effect when runtime.split_process is also true. Set false to "
+            "disable code-change restarts."
         ),
         json_schema_extra={"hot_reload": True},
     )

@@ -23,6 +23,7 @@ adapter is none the wiser.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
@@ -154,6 +155,32 @@ class StreamDemux:
         """Open a reader for a turn before its first chunk arrives."""
         _writer, reader = self._registry.create(request_id)
         return reader
+
+    async def finalize_all(self) -> None:
+        """Terminate every open reader (stream-finalize-on-cut).
+
+        When the core connection drops mid-turn, the readers handed to
+        ``adapter.send`` would otherwise hang forever (no more chunks arrive).
+        Writing the ``is_final`` sentinel to each ends ``adapter.send`` cleanly so
+        no spinner dangles. Idempotent — clears the registry afterwards.
+        """
+        request_ids = list(self._registry._writers.keys())
+        for request_id in request_ids:
+            writer = self._registry.get_writer(request_id)
+            if writer is not None:
+                with contextlib.suppress(Exception):
+                    await writer.write(
+                        ResponseChunk(
+                            content="", is_final=True, chunk_index=-1,
+                            trace_id=request_id, owl_name="",
+                        )
+                    )
+            self._registry.remove(request_id)
+        if request_ids:
+            log.gateway.info(
+                "[ipc] stream demux: finalized cut turns",
+                extra={"_fields": {"count": len(request_ids)}},
+            )
 
     async def feed(self, frame: ChunkFrame) -> None:
         """Route one inbound ChunkFrame to its turn's reader; clean up on close."""
