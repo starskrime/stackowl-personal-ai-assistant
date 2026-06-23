@@ -36,6 +36,8 @@ from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import (
     ChunkFrame,
     ClarifyAskFrame,
+    ConsentRequestFrame,
+    ConsentResponseFrame,
     GoodbyeFrame,
     HelloFrame,
     ProgressEventFrame,
@@ -49,6 +51,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from collections.abc import AsyncIterator
 
     from stackowl.pipeline.streaming import ResponseChunk
+    from stackowl.tools.consent import ConsentRequest, ConsentScope
 
 
 class _Adapter(Protocol):
@@ -66,6 +69,12 @@ class _EventSink(Protocol):
     def emit(self, event: str, payload: object) -> None: ...  # noqa: D102
 
 
+class _ConsentRouter(Protocol):
+    """The gateway's RoutingPrompter slice used to resolve a consent request."""
+
+    async def prompt(self, req: ConsentRequest) -> ConsentScope: ...  # noqa: D102
+
+
 class GatewayLink:
     """Socket-backed TurnClient + outbound frame router, resilient to core restart."""
 
@@ -74,11 +83,18 @@ class GatewayLink:
         adapters: Mapping[str, _Adapter],
         demux: StreamDemux | None = None,
         event_bus: _EventSink | None = None,
+        consent_router: _ConsentRouter | None = None,
     ) -> None:
-        self._adapters = adapters
+        # Mutable copy so channels started after construction (Telegram/Slack/…
+        # in gateway role) can register themselves via register_adapter.
+        self._adapters: dict[str, _Adapter] = dict(adapters)
         self._demux = demux if demux is not None else StreamDemux()
         self._event_bus = event_bus
+        # The gateway's RoutingPrompter (holds the real per-channel consent UI).
+        # None in tests / CLI-only configs.
+        self._consent_router = consent_router
         self._send_tasks: set[asyncio.Task[None]] = set()
+        self._aux_tasks: set[asyncio.Task[None]] = set()
         # Connection state: None during the gap between a core exec-replace and
         # the fresh core's reconnect. ``_buffering`` is set the moment a restart
         # notice arrives (before the drop) so no in-flight message is sent to a
@@ -86,6 +102,20 @@ class GatewayLink:
         self._conn: FrameConnection | None = None
         self._buffering = False
         self._pending: list[IngressMessage] = []
+
+    def register_adapter(self, channel_name: str, adapter: _Adapter) -> None:
+        """Add a channel adapter so its turns route over the split (gateway role).
+
+        Inbound: ``submit`` for ``msg.channel == channel_name`` opens a demux
+        reader and spawns this adapter's ``send``. Outbound: ``SendTextFrame`` /
+        the streamed answer route back here by channel / trace_id. The core (which
+        owns the pipeline) handles the turn; this is pure I/O transport.
+        """
+        self._adapters[channel_name] = adapter
+        log.gateway.info(
+            "[ipc] gateway link: channel adapter registered",
+            extra={"_fields": {"channel": channel_name}},
+        )
 
     # --- connection lifecycle (driven by the gateway accept handler) -------
 
@@ -165,6 +195,13 @@ class GatewayLink:
                 await adapter.send_text(frame.text)
         elif isinstance(frame, ClarifyAskFrame):
             await self._deliver_clarify(frame)
+        elif isinstance(frame, ConsentRequestFrame):
+            # Resolving consent BLOCKS on the user (button press, up to ~2 min) —
+            # never inline in the frame loop, or it would stall every other turn's
+            # chunks. Spawn it; the decision returns as a ConsentResponseFrame.
+            task = asyncio.create_task(self._handle_consent(frame))
+            self._aux_tasks.add(task)
+            task.add_done_callback(self._aux_tasks.discard)
         elif isinstance(frame, ProgressEventFrame):
             if self._event_bus is not None:
                 self._event_bus.emit(frame.event, frame.payload)
@@ -189,11 +226,46 @@ class GatewayLink:
             log.gateway.info("[ipc] gateway link: core said goodbye")
 
     async def _deliver_clarify(self, frame: ClarifyAskFrame) -> None:
-        adapter = self._adapters.get(
-            # ClarifyAskFrame has no channel; deliver on the session's adapter via
-            # send_text as the base path (rich button delivery lands with the fork).
-            next(iter(self._adapters), "")
-        )
-        if adapter is not None:
+        # Route by the originating channel (falls back to the only adapter for the
+        # CLI-only case). Render the question + any choices as a numbered list;
+        # the user's typed reply on the same session+channel resolves the parked
+        # turn core-side via the normal message path (no button round-trip needed).
+        channel = frame.channel or next(iter(self._adapters), "")
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return
+        text = frame.question
+        if frame.choices:
+            lines = [f"{i + 1}. {c}" for i, c in enumerate(frame.choices)]
+            text = frame.question + "\n" + "\n".join(lines)
+        with contextlib.suppress(Exception):
+            await adapter.send_text(text)
+
+    async def _handle_consent(self, frame: ConsentRequestFrame) -> None:
+        from stackowl.tools.consent import ConsentRequest, ConsentScope
+
+        scope = ConsentScope.DENY
+        if self._consent_router is not None:
+            try:
+                req = ConsentRequest(
+                    tool_name=frame.tool_name,
+                    channel=frame.channel,
+                    session_id=frame.session_id,
+                    category=frame.category,
+                    summary=frame.summary,
+                    allow_relaxation=frame.allow_relaxation,
+                )
+                scope = await self._consent_router.prompt(req)
+            except Exception as exc:  # noqa: BLE001 — fail closed on any error
+                log.gateway.warning(
+                    "[ipc] gateway link: consent prompt failed — denying",
+                    extra={"_fields": {"consent_id": frame.consent_id, "error": str(exc)}},
+                )
+                scope = ConsentScope.DENY
+        if self._conn is not None:
             with contextlib.suppress(Exception):
-                await adapter.send_text(frame.question)
+                await self._conn.send(
+                    ConsentResponseFrame(
+                        consent_id=frame.consent_id, scope=scope.value
+                    )
+                )
