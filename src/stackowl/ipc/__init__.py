@@ -31,6 +31,12 @@ from stackowl.ipc.frames import (
     StopFrame,
 )
 from stackowl.ipc.server import IpcServer
+from stackowl.ipc.stream_bridge import (
+    SocketStreamWriter,
+    StreamDemux,
+    chunk_to_frame,
+    frame_to_chunk,
+)
 
 __all__ = [
     "AckFrame",
@@ -50,8 +56,12 @@ __all__ = [
     "RestartNoticeFrame",
     "RunningStateFrame",
     "SendTextFrame",
+    "SocketStreamWriter",
     "SteerFrame",
     "StopFrame",
+    "StreamDemux",
+    "chunk_to_frame",
     "decode_frame",
     "encode_frame",
+    "frame_to_chunk",
 ]

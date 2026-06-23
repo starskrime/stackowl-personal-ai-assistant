@@ -57,8 +57,10 @@ class IpcServer:
         """Stop accepting, close the listener, and remove the socket file."""
         if self._server is not None:
             self._server.close()
+            # Bound wait_closed: it only returns once every accepted connection's
+            # handler has finished, which can lag during a concurrent teardown.
             with contextlib.suppress(Exception):
-                await self._server.wait_closed()
+                await asyncio.wait_for(self._server.wait_closed(), timeout=2.0)
             self._server = None
         with contextlib.suppress(FileNotFoundError):
             self._path.unlink()

@@ -69,6 +69,9 @@ class FrameConnection:
         self._closed = True
         try:
             self._writer.close()
-            await self._writer.wait_closed()
-        except (ConnectionError, OSError):
+            # Bound the close handshake: with both peers closing concurrently,
+            # wait_closed() can block on the full bidirectional teardown. close()
+            # already releases the FD, so awaiting confirmation is best-effort.
+            await asyncio.wait_for(self._writer.wait_closed(), timeout=2.0)
+        except (ConnectionError, OSError, TimeoutError):
             pass
