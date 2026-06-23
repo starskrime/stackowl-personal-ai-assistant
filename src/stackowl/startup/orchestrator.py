@@ -18,7 +18,7 @@ from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool, default_db_path
 from stackowl.exceptions import ConfigurationError, StartupError
 from stackowl.paths import StackowlHome
-from stackowl.runtime.turn_client import IngressHandler, LocalTurnClient
+from stackowl.runtime.turn_client import IngressHandler, LocalTurnClient, TurnClient
 from stackowl.service.watchdog import WatchdogService
 from stackowl.startup.browser_probe import BrowserProbe, BrowserProbeResult
 from stackowl.startup.fs_probe import FilesystemProbe
@@ -163,11 +163,34 @@ def _pid_path() -> Path:
     return StackowlHome.pid_file()
 
 
+def _resolve_socket_path(settings: Settings) -> Path:
+    """The gateway<->core socket path: explicit override, else the home default.
+
+    The core subprocess also honours ``STACKOWL_CORE_SOCKET`` (set by the
+    supervisor when it spawns the core) so both halves resolve the same endpoint
+    even if config derivation differs; that env var takes precedence here.
+    """
+    env_override = os.environ.get("STACKOWL_CORE_SOCKET")
+    if env_override:
+        return Path(env_override)
+    configured = settings.runtime.socket_path
+    if configured:
+        return Path(configured)
+    return StackowlHome.core_socket()
+
+
 class StartupOrchestrator:
     """Boots StackOwl through 6 named phases; raises StartupError on any failure."""
 
-    def __init__(self, dry_run: bool = False) -> None:
+    def __init__(self, dry_run: bool = False, *, role: str = "mono") -> None:
         self._dry_run = dry_run
+        # Process role for the two-process split (runtime.split_process). "mono"
+        # (default) is the single-process monolith — byte-identical to baseline,
+        # every split-only branch in _phase_gateway is guarded on this. "gateway"
+        # is the durable client-facing half; "core" is the restartable agent half.
+        if role not in ("mono", "gateway", "core"):
+            raise ValueError(f"invalid orchestrator role: {role!r}")
+        self._role = role
         self._settings: Settings | None = None
         self._browser_probe_result: BrowserProbeResult | None = None
         self._shutting_down = False  # F144 — idempotency guard for double-signal
@@ -288,10 +311,17 @@ class StartupOrchestrator:
             return
 
         from stackowl.audit.logger import AuditLogger
+        from stackowl.channels.base import ChannelAdapter
         from stackowl.channels.cli_adapter import CLIAdapter
+        from stackowl.channels.socket_adapter import SocketChannelAdapter
         from stackowl.commands.registry import CommandRegistry
         from stackowl.exceptions import CommandNotFoundError
         from stackowl.gateway.scanner import GatewayScanner
+        from stackowl.ipc.client import IpcClient
+        from stackowl.ipc.connection import FrameConnection
+        from stackowl.ipc.frames import IngressFrame
+        from stackowl.ipc.server import IpcServer
+        from stackowl.ipc.stream_bridge import SocketStreamRegistry
         from stackowl.owls.registry import OwlRegistry
         from stackowl.parliament.orchestrator import ParliamentOrchestrator
         from stackowl.parliament.session_store import SessionStore
@@ -300,16 +330,68 @@ class StartupOrchestrator:
         from stackowl.pipeline.state import PipelineState
         from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
         from stackowl.providers.registry import ProviderRegistry
+        from stackowl.runtime.gateway_link import GatewayLink
+        from stackowl.runtime.message_bridge import frame_to_ingress
         from stackowl.tools.browser.runtime import CamoufoxRuntime
         from stackowl.tools.browser.sessions import BrowserSessionRegistry
         from stackowl.tools.registry import ToolRegistry
 
         assert self._settings is not None
 
+        # --- Two-process split bootstrap (runtime.split_process) ---------------
+        # role == "mono" (default) skips ALL of this and runs the in-process
+        # monolith byte-identically. CORE connects to the durable gateway as a
+        # client; GATEWAY binds the socket and spawns the core subprocess. The
+        # connection objects feed the role-guarded branches below (stream
+        # registry, primary adapter, turn client, driver).
+        core_conn: FrameConnection | None = None
+        gateway_server: IpcServer | None = None
+        gateway_conn_ready: asyncio.Event | None = None
+        gateway_conn_holder: dict[str, FrameConnection] = {}
+        gateway_conn_done: asyncio.Event | None = None
+        core_proc: asyncio.subprocess.Process | None = None
+        gateway_link: GatewayLink | None = None
+        if self._role == "core":
+            socket_path = _resolve_socket_path(self._settings)
+            log.info(
+                "[startup] core: connecting to gateway socket",
+                extra={"_fields": {"socket_path": str(socket_path)}},
+            )
+            core_conn = await IpcClient(socket_path).connect()
+            log.info("[startup] core: connected to gateway")
+        elif self._role == "gateway":
+            from stackowl.runtime.supervisor import spawn_core
+
+            socket_path = _resolve_socket_path(self._settings)
+            gateway_conn_ready = asyncio.Event()
+            gateway_conn_done = asyncio.Event()
+
+            async def _accept_core(conn: FrameConnection) -> None:
+                # Hand the (single, v1) core connection to the assembly below and
+                # hold it open until gateway teardown — IpcServer closes the
+                # connection when this handler returns, so we must not return early.
+                gateway_conn_holder["conn"] = conn
+                assert gateway_conn_ready is not None
+                gateway_conn_ready.set()
+                assert gateway_conn_done is not None
+                await gateway_conn_done.wait()
+
+            gateway_server = IpcServer(socket_path)
+            await gateway_server.start(_accept_core)
+            log.info(
+                "[startup] gateway: socket bound — spawning core",
+                extra={"_fields": {"socket_path": str(socket_path)}},
+            )
+            core_proc = await spawn_core(socket_path)
+
         # 1. ENTRY — build services
         log.info("[startup] gateway: building services")
         provider_registry = ProviderRegistry.from_settings(self._settings)
-        stream_registry = StreamRegistry()
+        stream_registry = (
+            SocketStreamRegistry(core_conn)
+            if self._role == "core" and core_conn is not None
+            else StreamRegistry()
+        )
         # §4.3 non-blocking in-chat intake: one process-wide TurnRegistry SHARED by
         # every channel loop (CLI + Telegram). Per session it tracks at most one
         # RUNNING turn + a FIFO intake queue, so a same-session message that
@@ -450,7 +532,9 @@ class StartupOrchestrator:
         browser_runtime: CamoufoxRuntime | None = None
         browser_sessions: BrowserSessionRegistry | None = None
         probe = self._browser_probe_result
-        if probe is not None and probe.binary_ok:
+        # GATEWAY skips the browser entirely — the core owns the browser runtime
+        # and its scheduler handlers, so running it here would double them.
+        if self._role != "gateway" and probe is not None and probe.binary_ok:
             browser_settings = self._settings.browser
             # Auto-degrade headless='virtual' → 'true' when Xvfb is missing.
             if browser_settings.headless_mode == "virtual" and not probe.xvfb_ok:
@@ -870,7 +954,8 @@ class StartupOrchestrator:
         # The server runs as a background task; clients connect via configured
         # transport (sse/stdio). See plan Commit E (operator-approved opt-in).
         mcp_task: asyncio.Task[None] | None = None
-        if self._settings.mcp_server.enabled:
+        # GATEWAY skips the MCP server — the core owns it (one federation endpoint).
+        if self._role != "gateway" and self._settings.mcp_server.enabled:
             try:
                 from stackowl.mcp.server import McpServer
 
@@ -973,19 +1058,28 @@ class StartupOrchestrator:
             # execute time (mirrors a2a_delegator wiring above).
             services.command_hint_resolver = command_resolver
 
-        tui_components = TuiAssembly.build(
-            event_bus=event_bus,
-            command_names=command_names,
-            command_infos=command_infos,
-            owl_names=owl_names,
-            ui_settings=self._settings.ui,
-            sequence_provider=sequence_provider,
-            semantic_resolver=semantic_resolver,
-        )
-        adapter = CLIAdapter(
-            session_id=cli_session_id,
-            tui_components=tui_components, event_bus=event_bus,
-        )
+        # CORE role has no terminal — its only "channel" is the socket to the
+        # gateway, so it skips the TUI build entirely and uses a SocketChannelAdapter
+        # as the primary (originating-channel "cli") adapter. mono/gateway build the
+        # real Textual TUI exactly as before (byte-identical).
+        adapter: ChannelAdapter
+        if self._role == "core":
+            assert core_conn is not None
+            adapter = SocketChannelAdapter(core_conn, channel_name="cli")
+        else:
+            tui_components = TuiAssembly.build(
+                event_bus=event_bus,
+                command_names=command_names,
+                command_infos=command_infos,
+                owl_names=owl_names,
+                ui_settings=self._settings.ui,
+                sequence_provider=sequence_provider,
+                semantic_resolver=semantic_resolver,
+            )
+            adapter = CLIAdapter(
+                session_id=cli_session_id,
+                tui_components=tui_components, event_bus=event_bus,
+            )
         # E5 — let the clarify gateway deliver questions back over the CLI.
         clarify_gateway.register_adapter("cli", adapter)
 
@@ -1647,11 +1741,28 @@ class StartupOrchestrator:
             # instant-ack. The running turn's completion drains the next intake.
             await _intake(pump, channel_adapter, msg, decision, input_text)
 
-        # The in-process turn-submission seam. Under runtime.split_process the
-        # SocketTurnClient slots in here; each channel registers its (pump,
-        # adapter) so submit(msg) routes by msg.channel.
-        turn_client = LocalTurnClient(cast(IngressHandler, _handle_ingress))
-        turn_client.register_channel(adapter.channel_name, cli_pump, adapter)
+        # The turn-submission seam. mono/core run the body in-process via
+        # LocalTurnClient; GATEWAY routes it over the socket via GatewayLink
+        # (submit forwards an IngressFrame to the core and spawns the unchanged
+        # adapter.send over a demux reader). The core decides STEER/STOP/NEW
+        # internally, so the gateway needs no steer/stop RPCs.
+        turn_client: TurnClient
+        if self._role == "gateway":
+            assert gateway_conn_ready is not None
+            log.info("[startup] gateway: waiting for core to connect")
+            await gateway_conn_ready.wait()
+            gateway_conn = gateway_conn_holder["conn"]
+            gateway_link = GatewayLink(
+                gateway_conn,
+                {adapter.channel_name: adapter},
+                event_bus=event_bus,
+            )
+            turn_client = gateway_link
+            log.info("[startup] gateway: core connected — link established")
+        else:
+            local_client = LocalTurnClient(cast(IngressHandler, _handle_ingress))
+            local_client.register_channel(adapter.channel_name, cli_pump, adapter)
+            turn_client = local_client
 
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
@@ -1691,13 +1802,77 @@ class StartupOrchestrator:
                 log.info("[startup] gateway: message loop cancelled")
                 raise
 
+        async def _core_frame_loop() -> None:
+            """CORE driver: read inbound IngressFrames and submit each turn.
+
+            Replaces the TUI receive loop on the core side. The gateway forwards
+            every inbound message as an IngressFrame; for each, we lazily bind a
+            SocketChannelAdapter + ClarifyPump for its originating channel (so
+            acks/clarify route home, and the per-turn answer streams over the
+            SocketStreamRegistry keyed by trace_id) and submit it through the same
+            LocalTurnClient body the mono path uses. Ends when the gateway hangs
+            up (clean EOF) — that drives the core's graceful teardown.
+            """
+            assert core_conn is not None
+            core_client = cast(LocalTurnClient, turn_client)
+            registered: set[str] = {adapter.channel_name}
+            core_adapters: dict[str, SocketChannelAdapter] = {
+                adapter.channel_name: cast(SocketChannelAdapter, adapter)
+            }
+            log.info("[startup] core: frame loop started")
+            try:
+                async for frame in core_conn:
+                    if not isinstance(frame, IngressFrame):
+                        # steer/stop/clarify_reply arrive as plain IngressFrames
+                        # (the core's _intake decides their role); anything else is
+                        # not part of the v1 inbound contract.
+                        log.debug(
+                            "[startup] core: ignoring non-ingress frame",
+                            extra={"_fields": {"type": getattr(frame, "type", "?")}},
+                        )
+                        continue
+                    msg = frame_to_ingress(frame)
+                    if msg.channel not in registered:
+                        chan_adapter = SocketChannelAdapter(
+                            core_conn, channel_name=msg.channel
+                        )
+                        clarify_gateway.register_adapter(msg.channel, chan_adapter)
+                        chan_pump = ClarifyPump(
+                            clarify_gateway, stream_registry, clarify_classifier
+                        )
+                        core_client.register_channel(
+                            msg.channel, chan_pump, chan_adapter
+                        )
+                        core_adapters[msg.channel] = chan_adapter
+                        registered.add(msg.channel)
+                    try:
+                        await turn_client.submit(msg)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 — top-level loop guard
+                        log.error(
+                            "[startup] core: turn submission failed — continuing",
+                            exc_info=exc,
+                            extra={"_fields": {"session_id": msg.session_id}},
+                        )
+                        with contextlib.suppress(Exception):
+                            stream_registry.remove(msg.trace_id)
+            except asyncio.CancelledError:
+                log.info("[startup] core: frame loop cancelled")
+                raise
+            finally:
+                log.info("[startup] core: frame loop ended (gateway disconnected)")
+
         # 3. STEP — start Telegram adapter if configured
         from stackowl.config.secret_resolver import SecretResolver
 
         telegram_adapter = None
         telegram_loop_task = None
         tg_cfg = self._settings.telegram_channel
-        if tg_cfg.bot_token:
+        # v1 split scope is CLI/TUI only — extra channels stay on the mono path
+        # (a split gateway forwards just the local TUI; Telegram/Slack/etc. land
+        # in a later phase). mono is byte-identical.
+        if self._role == "mono" and tg_cfg.bot_token:
             log.info("[startup] gateway: starting Telegram adapter")
             try:
                 resolved_token = SecretResolver.resolve(tg_cfg.bot_token)
@@ -1735,7 +1910,7 @@ class StartupOrchestrator:
                 # and give the Telegram loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("telegram", telegram_adapter)
                 tg_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
-                turn_client.register_channel(
+                cast(LocalTurnClient, turn_client).register_channel(
                     telegram_adapter.channel_name, tg_pump, telegram_adapter
                 )
 
@@ -1821,7 +1996,7 @@ class StartupOrchestrator:
         slack_socket_task = None
         slack_socket_handler = None
         slack_cfg = self._settings.slack_channel
-        if slack_cfg.bot_token and slack_cfg.app_token:
+        if self._role == "mono" and slack_cfg.bot_token and slack_cfg.app_token:
             log.info("[startup] gateway: starting Slack adapter")
             try:
                 resolved_bot_token = SecretResolver.resolve(slack_cfg.bot_token)
@@ -2019,7 +2194,7 @@ class StartupOrchestrator:
                 # the Slack loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("slack", slack_adapter)
                 slack_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
-                turn_client.register_channel(
+                cast(LocalTurnClient, turn_client).register_channel(
                     slack_adapter.channel_name, slack_pump, slack_adapter
                 )
 
@@ -2082,7 +2257,7 @@ class StartupOrchestrator:
         discord_adapter = None
         discord_loop_task = None
         discord_cfg = self._settings.discord_channel
-        if discord_cfg.enabled and discord_cfg.bot_token:
+        if self._role == "mono" and discord_cfg.enabled and discord_cfg.bot_token:
             log.info("[startup] gateway: starting Discord adapter")
             try:
                 resolved_discord_token = SecretResolver.resolve(discord_cfg.bot_token)
@@ -2146,7 +2321,7 @@ class StartupOrchestrator:
                 discord_pump = ClarifyPump(
                     clarify_gateway, stream_registry, clarify_classifier
                 )
-                turn_client.register_channel(
+                cast(LocalTurnClient, turn_client).register_channel(
                     discord_adapter.channel_name, discord_pump, discord_adapter
                 )
 
@@ -2204,7 +2379,7 @@ class StartupOrchestrator:
         whatsapp_adapter = None
         whatsapp_loop_task = None
         whatsapp_cfg = self._settings.whatsapp_channel
-        if whatsapp_cfg.enabled:
+        if self._role == "mono" and whatsapp_cfg.enabled:
             log.info("[startup] gateway: starting WhatsApp adapter")
             try:
                 from stackowl.channels.whatsapp.adapter import WhatsAppChannelAdapter
@@ -2221,7 +2396,7 @@ class StartupOrchestrator:
                 whatsapp_pump = ClarifyPump(
                     clarify_gateway, stream_registry, clarify_classifier
                 )
-                turn_client.register_channel(
+                cast(LocalTurnClient, turn_client).register_channel(
                     whatsapp_adapter.channel_name, whatsapp_pump, whatsapp_adapter
                 )
 
@@ -2285,7 +2460,11 @@ class StartupOrchestrator:
 
         # 4. STEP — start the CLI loop and block on the adapter
         log.info("[startup] gateway: starting CLI adapter")
-        loop_task = asyncio.create_task(_message_loop())
+        # CORE's driver is the inbound-frame loop (no TUI to receive from);
+        # mono/gateway drive the channel-receive loop. Both submit via turn_client.
+        loop_task = asyncio.create_task(
+            _core_frame_loop() if self._role == "core" else _message_loop()
+        )
         # Recover the scheduler's durable state from the prior run BEFORE the poll
         # loop starts: reap jobs left 'running' by a crash and replay/realarm overdue
         # ones, so an assigned task survives a restart instead of wedging forever.
@@ -2293,18 +2472,21 @@ class StartupOrchestrator:
         # NOTE: a replay_missed=True job dispatches its handler INLINE here (before the
         # watchdog notify below), so keep such handlers light or background them if
         # replay handlers ever become heavy — else they delay startup readiness.
-        try:
-            recovered = await scheduler_components.scheduler.recover()
-            log.info(
-                "[startup] gateway: scheduler recovered prior state",
-                extra={"_fields": {"replayed": recovered}},
-            )
-        except Exception as exc:
-            log.error(
-                "[startup] gateway: scheduler.recover() failed — starting anyway",
-                exc_info=exc,
-                extra={"_fields": {}},
-            )
+        # GATEWAY does not own the scheduler — the core recovers + runs it, so the
+        # gateway must NOT recover (it would race the core reaping the same rows).
+        if self._role != "gateway":
+            try:
+                recovered = await scheduler_components.scheduler.recover()
+                log.info(
+                    "[startup] gateway: scheduler recovered prior state",
+                    extra={"_fields": {"replayed": recovered}},
+                )
+            except Exception as exc:
+                log.error(
+                    "[startup] gateway: scheduler.recover() failed — starting anyway",
+                    exc_info=exc,
+                    extra={"_fields": {}},
+                )
 
         # WS-E — STARTUP WIRING-CLOSURE audit. Runs AFTER recover() so seeded rows
         # exist, then warns loudly (never fails startup) when a registered "seeded"
@@ -2360,25 +2542,33 @@ class StartupOrchestrator:
         # returned recoverer is held in a local that OUTLIVES the await below: it
         # owns the strong refs to the in-flight drives, so they are not GC'd.
         durable_recoverer = None
-        try:
-            from stackowl.pipeline.durable.recovery import recover_durable_tasks
+        # GATEWAY does not run turns, so it owns no durable tasks to recover — the
+        # core reconstructs and re-drives them.
+        if self._role != "gateway":
+            try:
+                from stackowl.pipeline.durable.recovery import recover_durable_tasks
 
-            durable_recoverer = await recover_durable_tasks(db_pool, backend)
-            log.info(
-                "[startup] gateway: launched %d durable-task recoveries in background",
-                durable_recoverer.launched,
-                extra={"_fields": {"launched": durable_recoverer.launched}},
-            )
-        except Exception as exc:
-            log.error(
-                "[startup] gateway: durable-task recovery failed — starting anyway",
-                exc_info=exc,
-                extra={"_fields": {}},
-            )
+                durable_recoverer = await recover_durable_tasks(db_pool, backend)
+                log.info(
+                    "[startup] gateway: launched %d durable-task recoveries in background",
+                    durable_recoverer.launched,
+                    extra={"_fields": {"launched": durable_recoverer.launched}},
+                )
+            except Exception as exc:
+                log.error(
+                    "[startup] gateway: durable-task recovery failed — starting anyway",
+                    exc_info=exc,
+                    extra={"_fields": {}},
+                )
         # Start the scheduler under Supervisor so all registered handlers
         # (browser, dream worker, fact extraction, notification digest,
-        # morning brief, etc.) actually dispatch.
-        scheduler_task = asyncio.create_task(scheduler_components.supervisor.start())
+        # morning brief, etc.) actually dispatch. GATEWAY skips this — the core
+        # owns the scheduler loop, so running it here would double every job.
+        scheduler_task: asyncio.Task[None] | None = None
+        if self._role != "gateway":
+            scheduler_task = asyncio.create_task(
+                scheduler_components.supervisor.start()
+            )
 
         # F144 — cooperative shutdown: route SIGTERM/SIGINT to a stop_event so the
         # graceful teardown below actually runs (the old handler raised SystemExit,
@@ -2426,8 +2616,29 @@ class StartupOrchestrator:
         # earlier (premature READY would let systemd start dependents while startup
         # could still fail). No-op off-systemd.
         watchdog.send_ready()
+        # GATEWAY routes the core's outbound frames (chunks/send_text/progress/
+        # clarify) back to the adapters via GatewayLink.run(), concurrently with
+        # the TUI. The TUI staying alive while this link can come and go is the
+        # whole point of the split (scrollback survives a core restart).
+        link_task: asyncio.Task[None] | None = None
+        if self._role == "gateway" and gateway_link is not None:
+            link_task = asyncio.create_task(gateway_link.run())
         try:
-            await _run_until_signal(adapter, stop_event)
+            if self._role == "core":
+                # No TUI to run — the inbound-frame loop is the blocking driver.
+                # Race it against a stop signal so SIGTERM/SIGINT still tears down.
+                stop_task = asyncio.ensure_future(stop_event.wait())
+                try:
+                    await asyncio.wait(
+                        {loop_task, stop_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    stop_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await stop_task
+            else:
+                await _run_until_signal(adapter, stop_event)
         finally:
             # F142 — stop the recurring watchdog ping FIRST so it cannot keep telling
             # systemd "healthy" during a wedged teardown (masking the very bug).
@@ -2496,9 +2707,30 @@ class StartupOrchestrator:
             loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await loop_task
-            scheduler_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await scheduler_task
+            # GATEWAY's outbound-frame router (None in mono/core).
+            if link_task is not None:
+                link_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await link_task
+            # GATEWAY tear-down of the split socket: release the accept handler so
+            # the listener can close, stop the server, and stop the core child.
+            if gateway_conn_done is not None:
+                gateway_conn_done.set()
+            if gateway_server is not None:
+                with contextlib.suppress(Exception):
+                    await gateway_server.stop()
+            if core_proc is not None and core_proc.returncode is None:
+                with contextlib.suppress(Exception):
+                    core_proc.terminate()
+            # CORE's connection to the gateway (None in mono/gateway).
+            if core_conn is not None:
+                with contextlib.suppress(Exception):
+                    await core_conn.aclose()
+            # scheduler_task is None on the GATEWAY (it skips the scheduler loop).
+            if scheduler_task is not None:
+                scheduler_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await scheduler_task
             if mcp_task is not None:
                 mcp_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
