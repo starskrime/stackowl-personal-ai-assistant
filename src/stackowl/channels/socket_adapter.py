@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator
 from stackowl.channels.base import ChannelAdapter
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.ipc.connection import FrameConnection
-from stackowl.ipc.frames import SendTextFrame
+from stackowl.ipc.frames import ClarifyAskFrame, SendTextFrame
 from stackowl.ipc.stream_bridge import chunk_to_frame
 from stackowl.pipeline.streaming import ResponseChunk
 
@@ -54,3 +54,27 @@ class SocketChannelAdapter(ChannelAdapter):
 
     async def send_text(self, text: str) -> None:
         await self._conn.send(SendTextFrame(channel=self._channel, text=text))
+
+    async def send_clarify(
+        self,
+        session_id: str,
+        question: str,
+        choices: tuple[str, ...] | list[str],
+        clarify_id: str,
+    ) -> None:
+        """Emit a ClarifyAskFrame so the gateway renders it on the real channel.
+
+        Carries the originating channel + choices so the gateway can render
+        tap-buttons (the answer round-trips as a ClarifyReplyFrame). The core's
+        ClarifyGateway has the parked turn keyed by clarify_id.
+        """
+        await self._conn.send(
+            ClarifyAskFrame(
+                clarify_id=clarify_id,
+                session_id=session_id,
+                question=question,
+                trace_id="",
+                channel=self._channel,
+                choices=tuple(choices),
+            )
+        )

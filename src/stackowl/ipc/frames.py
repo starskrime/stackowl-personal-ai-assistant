@@ -142,13 +142,20 @@ class ProgressEventFrame(_Frame):
 
 
 class ClarifyAskFrame(_Frame):
-    """Core -> gateway: a tool is asking the user a clarifying question."""
+    """Core -> gateway: a tool is asking the user a clarifying question.
+
+    ``channel`` routes the question to the originating adapter; ``choices`` (when
+    non-empty) lets the gateway render selectable buttons (the answer round-trips
+    as a :class:`ClarifyReplyFrame`).
+    """
 
     type: Literal["clarify_ask"] = "clarify_ask"
     clarify_id: str
     session_id: str
     question: str
     trace_id: str
+    channel: str = ""
+    choices: tuple[str, ...] = ()
     target: int | str | None = None
 
 
@@ -158,6 +165,32 @@ class ClarifyReplyFrame(_Frame):
     type: Literal["clarify_reply"] = "clarify_reply"
     clarify_id: str
     answer: str
+
+
+class ConsentRequestFrame(_Frame):
+    """Core -> gateway: the pipeline needs the user's consent for a tool.
+
+    Mirrors :class:`stackowl.tools.consent.ConsentRequest` (all scalar fields) so
+    the gateway can rebuild it and invoke the real per-channel consent prompter
+    (e.g. Telegram inline buttons). The decision returns as a ConsentResponseFrame.
+    """
+
+    type: Literal["consent_request"] = "consent_request"
+    consent_id: str
+    channel: str
+    tool_name: str
+    session_id: str
+    category: str | None = None
+    summary: str = ""
+    allow_relaxation: bool = True
+
+
+class ConsentResponseFrame(_Frame):
+    """Gateway -> core: the user's consent decision (a ConsentScope value)."""
+
+    type: Literal["consent_response"] = "consent_response"
+    consent_id: str
+    scope: str
 
 
 class AckFrame(_Frame):
@@ -187,6 +220,8 @@ Frame = Annotated[
     | ProgressEventFrame
     | ClarifyAskFrame
     | ClarifyReplyFrame
+    | ConsentRequestFrame
+    | ConsentResponseFrame
     | AckFrame,
     Field(discriminator="type"),
 ]

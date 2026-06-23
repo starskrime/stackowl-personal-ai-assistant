@@ -364,7 +364,13 @@ class StartupOrchestrator:
         from stackowl.gateway.scanner import GatewayScanner
         from stackowl.ipc.client import IpcClient
         from stackowl.ipc.connection import FrameConnection
-        from stackowl.ipc.frames import HelloFrame, IngressFrame, RestartNoticeFrame
+        from stackowl.ipc.frames import (
+            ClarifyReplyFrame,
+            ConsentResponseFrame,
+            HelloFrame,
+            IngressFrame,
+            RestartNoticeFrame,
+        )
         from stackowl.ipc.server import IpcServer
         from stackowl.ipc.stream_bridge import SocketStreamRegistry
         from stackowl.owls.registry import OwlRegistry
@@ -665,6 +671,19 @@ class StartupOrchestrator:
         consent_components = ConsentAssembly.build(audit_logger)
         consent_routing = consent_components.routing_prompter
         consent_gate = consent_components.consent_gate
+
+        # CORE role has no local consent UI (no TTY, no bot) — every channel's
+        # consent round-trips to the durable gateway over the socket. One
+        # SocketConsentPrompter serves all channels (it reads req.channel); it is
+        # resolved by inbound ConsentResponseFrames in the core frame loop.
+        socket_consent_prompter = None
+        if self._role == "core" and core_conn is not None:
+            from stackowl.runtime.socket_consent import SocketConsentPrompter
+
+            socket_consent_prompter = SocketConsentPrompter(core_conn)
+            for _chan in ("cli", "telegram", "slack", "discord", "whatsapp"):
+                consent_routing.register(_chan, socket_consent_prompter)
+            log.info("[startup] core: socket consent prompter registered (all channels)")
 
         # E5 — clarify pause/resume gateway. One DI singleton: tools reach it via
         # get_services().clarify_gateway to ask the user mid-turn; the message
@@ -1804,6 +1823,7 @@ class StartupOrchestrator:
             gateway_link = GatewayLink(
                 {adapter.channel_name: adapter},
                 event_bus=event_bus,
+                consent_router=consent_routing,
             )
             turn_client = gateway_link
 
@@ -1846,6 +1866,23 @@ class StartupOrchestrator:
             local_client = LocalTurnClient(cast(IngressHandler, _handle_ingress))
             local_client.register_channel(adapter.channel_name, cli_pump, adapter)
             turn_client = local_client
+
+        def _register_turn_channel(
+            channel_name: str, pump: object, channel_adapter: object
+        ) -> None:
+            """Bind a started channel to the turn client, role-appropriately.
+
+            mono/core use the in-process LocalTurnClient (pump-backed clarify);
+            the GATEWAY just needs the adapter in the link's map so the core's
+            output for that channel routes back over the socket (the core owns
+            scan/clarify/consent).
+            """
+            if self._role == "gateway" and gateway_link is not None:
+                gateway_link.register_adapter(channel_name, channel_adapter)  # type: ignore[arg-type]
+            else:
+                cast(LocalTurnClient, turn_client).register_channel(
+                    channel_name, pump, channel_adapter
+                )
 
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
@@ -1905,10 +1942,23 @@ class StartupOrchestrator:
             log.info("[startup] core: frame loop started")
             try:
                 async for frame in core_conn:
+                    if isinstance(frame, ConsentResponseFrame):
+                        # The gateway's user answered a consent prompt — resolve
+                        # the parked SocketConsentPrompter future so the tool runs
+                        # (or is denied).
+                        if socket_consent_prompter is not None:
+                            socket_consent_prompter.resolve(frame.consent_id, frame.scope)
+                        continue
+                    if isinstance(frame, ClarifyReplyFrame):
+                        # A tapped clarify button on the gateway — resolve the
+                        # parked turn by clarify_id (parallel to the typed-reply
+                        # path that arrives as a normal IngressFrame).
+                        with contextlib.suppress(Exception):
+                            clarify_gateway.try_resolve_by_id(
+                                frame.clarify_id, frame.answer
+                            )
+                        continue
                     if not isinstance(frame, IngressFrame):
-                        # steer/stop/clarify_reply arrive as plain IngressFrames
-                        # (the core's _intake decides their role); anything else is
-                        # not part of the v1 inbound contract.
                         log.debug(
                             "[startup] core: ignoring non-ingress frame",
                             extra={"_fields": {"type": getattr(frame, "type", "?")}},
@@ -1955,7 +2005,7 @@ class StartupOrchestrator:
         # v1 split scope is CLI/TUI only — extra channels stay on the mono path
         # (a split gateway forwards just the local TUI; Telegram/Slack/etc. land
         # in a later phase). mono is byte-identical.
-        if self._role == "mono" and tg_cfg.bot_token:
+        if self._role != "core" and tg_cfg.bot_token:
             log.info("[startup] gateway: starting Telegram adapter")
             try:
                 resolved_token = SecretResolver.resolve(tg_cfg.bot_token)
@@ -2027,7 +2077,7 @@ class StartupOrchestrator:
                 # and give the Telegram loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("telegram", telegram_adapter)
                 tg_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
-                cast(LocalTurnClient, turn_client).register_channel(
+                _register_turn_channel(
                     telegram_adapter.channel_name, tg_pump, telegram_adapter
                 )
 
@@ -2127,7 +2177,7 @@ class StartupOrchestrator:
         slack_socket_task = None
         slack_socket_handler = None
         slack_cfg = self._settings.slack_channel
-        if self._role == "mono" and slack_cfg.bot_token and slack_cfg.app_token:
+        if self._role != "core" and slack_cfg.bot_token and slack_cfg.app_token:
             log.info("[startup] gateway: starting Slack adapter")
             try:
                 resolved_bot_token = SecretResolver.resolve(slack_cfg.bot_token)
@@ -2325,7 +2375,7 @@ class StartupOrchestrator:
                 # the Slack loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("slack", slack_adapter)
                 slack_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
-                cast(LocalTurnClient, turn_client).register_channel(
+                _register_turn_channel(
                     slack_adapter.channel_name, slack_pump, slack_adapter
                 )
 
@@ -2388,7 +2438,7 @@ class StartupOrchestrator:
         discord_adapter = None
         discord_loop_task = None
         discord_cfg = self._settings.discord_channel
-        if self._role == "mono" and discord_cfg.enabled and discord_cfg.bot_token:
+        if self._role != "core" and discord_cfg.enabled and discord_cfg.bot_token:
             log.info("[startup] gateway: starting Discord adapter")
             try:
                 resolved_discord_token = SecretResolver.resolve(discord_cfg.bot_token)
@@ -2452,7 +2502,7 @@ class StartupOrchestrator:
                 discord_pump = ClarifyPump(
                     clarify_gateway, stream_registry, clarify_classifier
                 )
-                cast(LocalTurnClient, turn_client).register_channel(
+                _register_turn_channel(
                     discord_adapter.channel_name, discord_pump, discord_adapter
                 )
 
@@ -2510,7 +2560,7 @@ class StartupOrchestrator:
         whatsapp_adapter = None
         whatsapp_loop_task = None
         whatsapp_cfg = self._settings.whatsapp_channel
-        if self._role == "mono" and whatsapp_cfg.enabled:
+        if self._role != "core" and whatsapp_cfg.enabled:
             log.info("[startup] gateway: starting WhatsApp adapter")
             try:
                 from stackowl.channels.whatsapp.adapter import WhatsAppChannelAdapter
@@ -2527,7 +2577,7 @@ class StartupOrchestrator:
                 whatsapp_pump = ClarifyPump(
                     clarify_gateway, stream_registry, clarify_classifier
                 )
-                cast(LocalTurnClient, turn_client).register_channel(
+                _register_turn_channel(
                     whatsapp_adapter.channel_name, whatsapp_pump, whatsapp_adapter
                 )
 

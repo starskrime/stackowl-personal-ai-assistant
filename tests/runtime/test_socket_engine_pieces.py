@@ -7,6 +7,8 @@ the socket. Verified against a fake connection that records frames.
 
 from __future__ import annotations
 
+import asyncio
+
 from stackowl.channels.socket_adapter import SocketChannelAdapter
 from stackowl.ipc.frames import ChunkFrame, SendTextFrame
 from stackowl.ipc.stream_bridge import SocketStreamRegistry
@@ -43,12 +45,26 @@ async def test_registry_get_writer_finds_socket_writer() -> None:
     assert conn.sent[1].is_final and conn.sent[1].trace_id == "t1"
 
 
-async def test_registry_dead_reader_yields_nothing() -> None:
+async def test_registry_reader_yields_nothing_and_completes_on_close() -> None:
+    # The core's local reader carries NO output (the gateway renders over the
+    # socket) but it must stay alive until the writer closes — that back-pressure
+    # is what stops spawn_send's cleanup from removing the slot before deliver.
     conn = FakeConn()
     reg = SocketStreamRegistry(conn)  # type: ignore[arg-type]
-    _writer, reader = reg.create("t1")
-    collected = [c async for c in reader]
-    assert collected == []
+    writer, reader = reg.create("t1")
+    # Drain in the background; it must NOT complete until close().
+    collected: list = []
+
+    async def _drain() -> None:
+        async for chunk in reader:
+            collected.append(chunk)
+
+    task = asyncio.create_task(_drain())
+    await asyncio.sleep(0.02)
+    assert not task.done()  # back-pressure: open writer keeps the reader alive
+    await writer.close()
+    await asyncio.wait_for(task, timeout=1)
+    assert collected == []  # output went over the socket, not the local reader
 
 
 def test_registry_remove_clears_writer() -> None:

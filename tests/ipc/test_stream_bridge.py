@@ -138,3 +138,49 @@ def test_close_sentinel_carries_request_id() -> None:
     assert sent[0].is_final is True
     assert sent[0].chunk_index == -1
     assert sent[0].trace_id == "real-req"
+
+
+def test_socket_registry_reader_blocks_until_close() -> None:
+    """Regression: the per-turn reader must NOT complete until the writer closes.
+
+    The old `_DeadReader` completed instantly, so `spawn_send`'s cleanup removed
+    the registry slot BEFORE `deliver`'s `get_writer` ran — and the answer was
+    dropped (`stream-miss`). The coupled reader drains only when `close()` drops
+    the sentinel, so the slot stays alive across deliver. `write` streams over the
+    socket but does NOT end the local reader (the gateway is the renderer).
+    """
+    from stackowl.ipc.stream_bridge import SocketStreamRegistry
+
+    sent: list[ChunkFrame] = []
+
+    class _FakeConn:
+        async def send(self, frame):
+            sent.append(frame)
+
+    async def _run() -> None:
+        reg = SocketStreamRegistry(_FakeConn())  # type: ignore[arg-type]
+        writer, reader = reg.create("req-1")
+        assert reg.get_writer("req-1") is writer
+
+        collected: list[ResponseChunk] = []
+
+        async def _drain() -> None:
+            async for chunk in reader:
+                collected.append(chunk)
+
+        task = asyncio.create_task(_drain())
+        await asyncio.sleep(0.02)
+        assert not task.done()  # writer open -> reader draining -> slot survives
+
+        await writer.write(_chunk(content="x", trace_id="req-1"))
+        await asyncio.sleep(0.02)
+        assert not task.done()  # write does NOT end the local reader
+
+        await writer.close()
+        await asyncio.wait_for(task, timeout=1)
+        assert task.done()
+        assert collected == []  # output went over the socket, not the local reader
+        assert any(getattr(f, "content", None) == "x" for f in sent)
+        assert sent[-1].is_final and sent[-1].trace_id == "req-1"
+
+    asyncio.run(_run())

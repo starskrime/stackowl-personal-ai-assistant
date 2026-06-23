@@ -71,22 +71,37 @@ class SocketStreamWriter(StreamWriter):
 
     Emits each chunk as a ``ChunkFrame`` on the shared core->gateway connection.
     Drop-in for ``StreamWriter`` (subclasses it for type-compatibility in the
-    registry) so ``backend.run`` / the deliver path is unchanged. The inherited
-    queue is never used — ``write``/``close`` go to the socket instead.
+    registry) so ``backend.run`` / the deliver path is unchanged.
+
+    The inherited queue is a LOCAL back-pressure channel (NOT a second output
+    path): ``write`` goes only to the socket (the gateway renders), but ``close``
+    ALSO drops the ``is_final`` sentinel on the local queue. The per-turn reader
+    handed to ``spawn_send`` drains that queue, so ``adapter.send`` blocks until
+    the writer is closed — exactly like mono. That ordering is load-bearing:
+    ``spawn_send``'s cleanup removes the registry slot when ``adapter.send``
+    completes, and it MUST complete after ``deliver`` has looked the writer up,
+    not before (the old dead-on-arrival reader removed the slot too early, so
+    ``deliver``'s ``get_writer`` missed and the answer was dropped).
     """
 
-    def __init__(self, conn: FrameConnection, request_id: str) -> None:
-        super().__init__(asyncio.Queue())  # unused; satisfies the base contract
+    def __init__(
+        self,
+        conn: FrameConnection,
+        request_id: str,
+        local_queue: asyncio.Queue[ResponseChunk] | None = None,
+    ) -> None:
+        super().__init__(local_queue if local_queue is not None else asyncio.Queue())
         self._conn = conn
         self._request_id = request_id
 
     async def write(self, chunk: ResponseChunk) -> None:
+        # Output goes over the socket only; the local reader yields nothing (the
+        # gateway is the renderer). Do NOT enqueue locally — that would duplicate.
         await self._conn.send(chunk_to_frame(chunk))
 
     async def close(self) -> None:
-        # Mirror StreamWriter.close's sentinel, but stamp the real request_id so
-        # the gateway StreamDemux can ROUTE the close to this turn's reader (the
-        # reader breaks on is_final and never yields it).
+        # Route the close over the socket (stamp the real request_id so the
+        # gateway StreamDemux can route it)...
         await self._conn.send(
             ChunkFrame(
                 content="",
@@ -96,25 +111,10 @@ class SocketStreamWriter(StreamWriter):
                 owl_name="",
             )
         )
-
-
-class _DeadReader(StreamReader):
-    """A StreamReader that yields nothing — the core has no local consumer.
-
-    In the split core, the per-turn output is consumed on the GATEWAY side, so
-    the reader returned alongside the socket writer must never be drained for
-    output. ``spawn_send`` still iterates it (and harmlessly gets nothing).
-    """
-
-    def __init__(self) -> None:
-        queue: asyncio.Queue[ResponseChunk] = asyncio.Queue()
-        # Pre-load the is_final sentinel so the inherited _iter breaks at once
-        # and yields nothing — no override needed.
-        queue.put_nowait(
-            ResponseChunk(content="", is_final=True, chunk_index=-1,
-                          trace_id="", owl_name="")
-        )
-        super().__init__(queue)
+        # ...AND release the local reader so the core's adapter.send completes
+        # only now — after deliver. This is the back-pressure that mono gets for
+        # free from its queue-backed reader.
+        await super().close()
 
 
 class SocketStreamRegistry(StreamRegistry):
@@ -122,8 +122,8 @@ class SocketStreamRegistry(StreamRegistry):
 
     ``create`` registers a :class:`SocketStreamWriter` (so the deliver step and
     progress emitter, which look the writer up by ``get_writer(trace_id)``, write
-    ChunkFrames to the gateway) and returns a dead reader (no local consumer).
-    ``get_writer``/``remove`` are inherited and operate on the shared dict.
+    ChunkFrames to the gateway) and returns a real queue-backed reader coupled to
+    that writer's ``close``. ``get_writer``/``remove`` are inherited.
     """
 
     def __init__(self, conn: FrameConnection) -> None:
@@ -131,13 +131,17 @@ class SocketStreamRegistry(StreamRegistry):
         self._conn = conn
 
     def create(self, request_id: str) -> tuple[StreamWriter, StreamReader]:
-        writer: StreamWriter = SocketStreamWriter(self._conn, request_id)
+        # One queue shared by writer.close (producer of the sentinel) and the
+        # reader (consumer) so adapter.send back-pressures until deliver closes.
+        queue: asyncio.Queue[ResponseChunk] = asyncio.Queue()
+        writer: StreamWriter = SocketStreamWriter(self._conn, request_id, queue)
+        reader = StreamReader(queue)
         self._writers[request_id] = writer
         log.gateway.debug(
             "[ipc] socket stream registry: registered request",
             extra={"_fields": {"request_id": request_id}},
         )
-        return writer, _DeadReader()
+        return writer, reader
 
 
 class StreamDemux:
