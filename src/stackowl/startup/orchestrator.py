@@ -18,6 +18,7 @@ from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool, default_db_path
 from stackowl.exceptions import ConfigurationError, StartupError
 from stackowl.paths import StackowlHome
+from stackowl.runtime.turn_client import IngressHandler, LocalTurnClient
 from stackowl.service.watchdog import WatchdogService
 from stackowl.startup.browser_probe import BrowserProbe, BrowserProbeResult
 from stackowl.startup.fs_probe import FilesystemProbe
@@ -1618,6 +1619,40 @@ class StartupOrchestrator:
                         "Stopping the current task at the next safe point."
                     )
 
+        async def _handle_ingress(
+            pump: ClarifyPump,
+            channel_adapter: _IntakeAdapter,
+            msg: IngressMessage,
+        ) -> None:
+            """Shared receive-loop body: scan -> resolve clarify reply -> intake.
+
+            The single gateway->core submission path, byte-identical across every
+            channel loop. ``LocalTurnClient.submit`` dispatches it per
+            ``msg.channel`` (the SocketTurnClient will instead serialise the
+            message to an IngressFrame for a core process to run this body).
+            """
+            decision = scanner.scan(msg)
+            input_text = (
+                decision.stripped_text if decision.stripped_text is not None else msg.text
+            )
+            # E5 — a reply to a pending clarify resumes its turn (or seeds a
+            # fresh resume turn in the turn-yield fallback).
+            consumed, input_text = await pump.resolve_or_rewrite(
+                session_id=msg.session_id, channel=msg.channel,
+                route=decision.route, target=decision.target, input_text=input_text,
+            )
+            if consumed:
+                return
+            # §4.3 non-blocking intake: dispatch if idle, else enqueue FIFO +
+            # instant-ack. The running turn's completion drains the next intake.
+            await _intake(pump, channel_adapter, msg, decision, input_text)
+
+        # The in-process turn-submission seam. Under runtime.split_process the
+        # SocketTurnClient slots in here; each channel registers its (pump,
+        # adapter) so submit(msg) routes by msg.channel.
+        turn_client = LocalTurnClient(cast(IngressHandler, _handle_ingress))
+        turn_client.register_channel(adapter.channel_name, cli_pump, adapter)
+
         async def _message_loop() -> None:
             log.info("[startup] gateway: message loop started")
             try:
@@ -1638,21 +1673,7 @@ class StartupOrchestrator:
                             "[startup] gateway: message received",
                             extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
                         )
-                        decision = scanner.scan(msg)
-                        input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
-                        # E5 — a reply to a pending clarify resumes its turn (or,
-                        # in turn-yield fallback, seeds a fresh resume turn).
-                        consumed, input_text = await cli_pump.resolve_or_rewrite(
-                            session_id=msg.session_id, channel=msg.channel,
-                            route=decision.route, target=decision.target, input_text=input_text,
-                        )
-                        if consumed:
-                            continue
-                        # §4.3 non-blocking intake: dispatch if the session is idle,
-                        # else enqueue FIFO + instant-ack (no blocking on the running
-                        # turn — serialize_prior is GONE). The running turn's
-                        # completion drains the next queued intake.
-                        await _intake(cli_pump, adapter, msg, decision, input_text)
+                        await turn_client.submit(msg)
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001 — top-level loop guard
@@ -1714,6 +1735,9 @@ class StartupOrchestrator:
                 # and give the Telegram loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("telegram", telegram_adapter)
                 tg_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
+                turn_client.register_channel(
+                    telegram_adapter.channel_name, tg_pump, telegram_adapter
+                )
 
                 try:
                     from stackowl.channels.telegram.callbacks import CallbackRouter
@@ -1762,20 +1786,7 @@ class StartupOrchestrator:
                                     "[startup] gateway: telegram message received",
                                     extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
                                 )
-                                decision = scanner.scan(msg)
-                                input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
-                                # E5 — resolve a reply into its parked clarify turn.
-                                consumed, input_text = await tg_pump.resolve_or_rewrite(
-                                    session_id=msg.session_id, channel=msg.channel,
-                                    route=decision.route, target=decision.target, input_text=input_text,
-                                )
-                                if consumed:
-                                    continue
-                                # §4.3 non-blocking intake (identical to the CLI
-                                # loop): dispatch if idle, else enqueue FIFO +
-                                # instant-ack. serialize_prior is GONE; the running
-                                # turn's completion drains the next queued intake.
-                                await _intake(tg_pump, telegram_adapter, msg, decision, input_text)
+                                await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
                             except Exception as exc:  # noqa: BLE001 — top-level loop guard
@@ -2008,6 +2019,9 @@ class StartupOrchestrator:
                 # the Slack loop its own clarify-aware dispatch pump.
                 clarify_gateway.register_adapter("slack", slack_adapter)
                 slack_pump = ClarifyPump(clarify_gateway, stream_registry, clarify_classifier)
+                turn_client.register_channel(
+                    slack_adapter.channel_name, slack_pump, slack_adapter
+                )
 
                 # Open the Socket Mode connection as a BACKGROUND task — boot must
                 # never block on the live WebSocket handshake.
@@ -2036,20 +2050,7 @@ class StartupOrchestrator:
                                     "[startup] gateway: slack message received",
                                     extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
                                 )
-                                decision = scanner.scan(msg)
-                                input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
-                                # E5 — resolve a reply into its parked clarify turn.
-                                consumed, input_text = await slack_pump.resolve_or_rewrite(
-                                    session_id=msg.session_id, channel=msg.channel,
-                                    route=decision.route, target=decision.target, input_text=input_text,
-                                )
-                                if consumed:
-                                    continue
-                                # §4.3 non-blocking intake (identical to the CLI/
-                                # Telegram loops): dispatch if idle, else enqueue
-                                # FIFO + instant-ack; the running turn's completion
-                                # drains the next queued intake.
-                                await _intake(slack_pump, slack_adapter, msg, decision, input_text)
+                                await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
                             except Exception as exc:  # noqa: BLE001 — top-level loop guard
@@ -2145,6 +2146,9 @@ class StartupOrchestrator:
                 discord_pump = ClarifyPump(
                     clarify_gateway, stream_registry, clarify_classifier
                 )
+                turn_client.register_channel(
+                    discord_adapter.channel_name, discord_pump, discord_adapter
+                )
 
                 async def _discord_loop() -> None:
                     log.info("[startup] gateway: discord loop started")
@@ -2166,15 +2170,7 @@ class StartupOrchestrator:
                                     "[startup] gateway: discord message received",
                                     extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
                                 )
-                                decision = scanner.scan(msg)
-                                input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
-                                consumed, input_text = await discord_pump.resolve_or_rewrite(
-                                    session_id=msg.session_id, channel=msg.channel,
-                                    route=decision.route, target=decision.target, input_text=input_text,
-                                )
-                                if consumed:
-                                    continue
-                                await _intake(discord_pump, discord_adapter, msg, decision, input_text)
+                                await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
                             except Exception as exc:  # noqa: BLE001 — top-level loop guard
@@ -2225,6 +2221,9 @@ class StartupOrchestrator:
                 whatsapp_pump = ClarifyPump(
                     clarify_gateway, stream_registry, clarify_classifier
                 )
+                turn_client.register_channel(
+                    whatsapp_adapter.channel_name, whatsapp_pump, whatsapp_adapter
+                )
 
                 async def _whatsapp_loop() -> None:
                     log.info("[startup] gateway: whatsapp loop started")
@@ -2250,18 +2249,15 @@ class StartupOrchestrator:
                                 input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
                                 # A numbered consent reply ("reply N") resolves the
                                 # parked consent Future BEFORE clarify/intake — else
-                                # it would be mistaken for a fresh turn.
+                                # it would be mistaken for a fresh turn. This pre-check
+                                # is WhatsApp-specific, so it stays in the loop; the
+                                # scan/resolve/intake tail goes through the shared seam
+                                # (which re-scans — scanner.scan is pure/idempotent).
                                 if await whatsapp_consent_prompter.resolve_reply(
                                     msg.session_id, input_text
                                 ):
                                     continue
-                                consumed, input_text = await whatsapp_pump.resolve_or_rewrite(
-                                    session_id=msg.session_id, channel=msg.channel,
-                                    route=decision.route, target=decision.target, input_text=input_text,
-                                )
-                                if consumed:
-                                    continue
-                                await _intake(whatsapp_pump, whatsapp_adapter, msg, decision, input_text)
+                                await turn_client.submit(msg)
                             except asyncio.CancelledError:
                                 raise
                             except Exception as exc:  # noqa: BLE001 — top-level loop guard
