@@ -205,16 +205,52 @@ def start(
         if not all_ok:
             raise typer.Exit(1)
 
-    # Phase 5 — SERVE (reuse the same orchestrator instance; its migration guard
+    # Phase 5 — SERVE. With runtime.split_process ON, boot the DURABLE gateway
+    # (it binds the socket and spawns the restartable core); otherwise run the
+    # in-process monolith via the same orchestrator instance (its migration guard
     # already fired in phase 1, so _phase_migrations is a no-op — single site).
     log.debug("[cli] start: phase 5 — serve")
     try:
-        asyncio.run(orchestrator.run())
+        if settings.runtime.split_process:
+            from stackowl.runtime.gateway_process import run_gateway
+
+            log.info("[cli] start: split_process ON — launching gateway + core")
+            typer.echo("Two-process split: starting gateway + core…")
+            asyncio.run(run_gateway())
+        else:
+            asyncio.run(orchestrator.run())
     except StartupError as exc:
         typer.echo(f"✗ Startup failed: {exc}", err=True)
         sys.exit(1)
     except KeyboardInterrupt:
         log.debug("[cli] start: interrupted")
+        sys.exit(0)
+
+
+@app.command(name="__core__", hidden=True)
+def core_process_cmd() -> None:
+    """Internal: run the restartable CORE process of the two-process split.
+
+    Not for direct use — the durable gateway spawns this (``python -m stackowl
+    __core__``) after binding the socket. It boots the full agent pipeline in
+    core role and connects back to the gateway. Hidden from help/onboarding.
+    """
+    import asyncio
+    import sys
+
+    from stackowl.exceptions import StartupError
+    from stackowl.infra.observability import setup_logging
+    from stackowl.runtime.core_process import run_core
+
+    setup_logging()
+    log.debug("[cli] __core__: entry")
+    try:
+        asyncio.run(run_core())
+    except StartupError as exc:
+        log.warning("[cli] __core__: startup failed: %s", exc)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        log.debug("[cli] __core__: interrupted")
         sys.exit(0)
 
 

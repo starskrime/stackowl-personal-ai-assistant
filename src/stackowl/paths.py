@@ -112,6 +112,16 @@ class StackowlHome:
         return Path(raw) if raw else cls.home() / "runtime" / "stackowl.pid"
 
     @classmethod
+    def core_socket(cls) -> Path:
+        """The gateway<->core unix-domain socket for the two-process split.
+
+        Lives in the runtime dir next to the PID file. Overridable via
+        ``runtime.socket_path`` in config (resolved by the orchestrator); this is
+        the default when that override is unset.
+        """
+        return cls.home() / "runtime" / "core.sock"
+
+    @classmethod
     def screenshots_dir(cls) -> Path:
         return cls.home() / "screenshots"
 
