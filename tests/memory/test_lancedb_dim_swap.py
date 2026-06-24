@@ -22,6 +22,7 @@ from stackowl.memory.lancedb_helpers import (
     EmbeddingDimensionMismatch,
     read_corpus_identity,
     sync_recreate_table,
+    sync_reindex,
     sync_upsert,
     write_corpus_identity,
 )
@@ -76,6 +77,48 @@ def test_recreate_table_changes_dim(tmp_path: Path) -> None:
     # The 768 vector is searchable under the new dim.
     hits = conn.open_table("committed_facts").search([0.2] * 768).limit(5).to_list()
     assert any(h["fact_id"] == "f2" for h in hits)
+
+
+def test_sync_reindex_recreates_on_stale_schema_same_dim(tmp_path: Path) -> None:
+    """Keystone (live break): a committed_facts table created under the OLD,
+    pre-F062 schema (NO ``embedding_model`` column) must be recreated by reindex
+    even at the SAME dim.
+
+    The live corpus was legacy/untagged (``read_corpus_identity == (None, None)``)
+    at the unchanged 384 dim, so the dim-swap recreate branch was skipped and
+    reindex appended into the stale-schema table, crashing with
+    ``ValueError: Field 'embedding_model' not found in target schema``. reindex is
+    a full rebuild from the SQLite SoT, so recreating loses no durable data.
+    """
+    import pyarrow as pa
+
+    conn = _connect(tmp_path / "lance")
+    # Seed the table under the OLD schema (no embedding_model column).
+    old_schema = pa.schema(
+        [
+            pa.field("fact_id", pa.string()),
+            pa.field("embedding", pa.list_(pa.float32(), 384)),
+            pa.field("metadata", pa.string()),
+        ]
+    )
+    conn.create_table("committed_facts", schema=old_schema, exist_ok=True)
+    conn.open_table("committed_facts").add(
+        [{"fact_id": "old1", "embedding": [0.1] * 384, "metadata": "{}"}]
+    )
+    # Legacy/untagged: no sidecar → stored_dim is None (the live condition).
+    assert read_corpus_identity(conn) == (None, None)
+
+    # Reindex at the SAME dim with current-schema records (carry embedding_model).
+    records = [
+        ("f1", [0.2] * 384, {"embedding_model": "all-MiniLM-L6-v2", "content": "x"})
+    ]
+    sync_reindex(conn, records, target_dim=384)
+
+    # The table now matches the current schema and the rebuilt row is searchable.
+    table = conn.open_table("committed_facts")
+    assert "embedding_model" in [f.name for f in table.schema]
+    hits = table.search([0.2] * 384).limit(5).to_list()
+    assert any(h["fact_id"] == "f1" for h in hits)
 
 
 @pytest.mark.asyncio
