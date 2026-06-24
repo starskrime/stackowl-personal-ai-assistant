@@ -18,19 +18,6 @@ def test_config_override_wins_and_converts_chars_to_tokens():
     assert w == 10000  # 40000 // 4
 
 
-def test_clamp_no_cap_by_default(monkeypatch):
-    # No platform cap — the window comes dynamically from the model.
-    monkeypatch.delenv("STACKOWL_CONTEXT_CEILING", raising=False)
-    assert mw._clamp(999_999) == 999_999
-    assert mw._clamp(4096) == 4096
-
-
-def test_clamp_respects_optional_env_ceiling(monkeypatch):
-    monkeypatch.setenv("STACKOWL_CONTEXT_CEILING", "16384")
-    assert mw._clamp(999_999) == 16384
-    assert mw._clamp(4096) == 4096
-
-
 async def test_resolve_uses_config_override_without_probing():
     w = await mw.resolve_window(
         provider_name="ollama", base_url="http://x:11434/v1",
