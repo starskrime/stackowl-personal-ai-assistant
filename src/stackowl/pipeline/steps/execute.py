@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, DEFAULT_TURN_MAX_TIME_S, ResourceCaps
+from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, ResourceCaps
 from stackowl.exceptions import (
     AllProvidersUnavailableError,
     BudgetBreach,
@@ -1140,8 +1140,11 @@ async def _run_with_tools(
     # (just stop + deliver — no "Raise?" prompt; that UX is for explicit owl caps).
     _default_backstop = not _has_explicit_caps
     if _default_backstop:
+        # No per-turn TIME cap — a slow (but correct) model on a remote server must
+        # be allowed to finish; the wall-clock timeout was killing good turns
+        # mid-work. The step backstop still prevents a genuine infinite loop; time
+        # is bounded only if an owl sets an explicit max_time_s cap.
         _caps = _caps.model_copy(update={
-            "max_time_s": DEFAULT_TURN_MAX_TIME_S,
             "max_steps": DEFAULT_TURN_MAX_STEPS,
         })
     # F093 — cumulative cost across durable resume: seed the governor with the
