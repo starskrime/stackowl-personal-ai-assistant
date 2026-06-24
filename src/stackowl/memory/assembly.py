@@ -199,6 +199,7 @@ class MemoryAssembly:
         entity_extractor = EntityExtractor(
             provider_registry=provider_registry,
             sensitive_categories=mem.sensitive_categories,
+            preferred_tier="standard",
         )
         kuzu_sync_handler = KuzuSyncJobHandler(
             kuzu_adapter=kuzu_adapter,
@@ -206,8 +207,8 @@ class MemoryAssembly:
             db=db,
         )
 
-        # 7) FactExtractor — uses powerful-tier provider for quality extraction.
-        # Provider cascade ensures graceful fallback if powerful is unavailable.
+        # 7) FactExtractor — uses standard-tier provider — capable extraction without the 122b cost.
+        # Provider cascade ensures graceful fallback if standard is unavailable.
         # Embedding registry is passed so extracted facts can be embedded for
         # downstream semantic recall.
         from stackowl.providers.base import ModelProvider
@@ -217,7 +218,7 @@ class MemoryAssembly:
         # so a live `settings_reloaded` alias edit (mutated in place) is seen here
         # too; fall back to a fresh load for standalone/test callers.
         resolver = identity_resolver if identity_resolver is not None else load_identity_resolver()
-        extraction_provider: ModelProvider = provider_registry.get_with_cascade("powerful")
+        extraction_provider: ModelProvider = provider_registry.get_with_cascade("standard")
         fact_extractor = FactExtractor(
             provider=extraction_provider,
             embedding_registry=embedding_registry,

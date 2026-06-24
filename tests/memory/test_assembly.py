@@ -44,7 +44,23 @@ def _stub_provider_registry() -> ProviderRegistry:
     """Return a ProviderRegistry populated with one stub provider on all tiers."""
     reg = ProviderRegistry()
     reg.register_mock("stub", _StubProvider(), tier="powerful")
+    reg.register_mock("stub-std", _StubProvider(), tier="standard")
     return reg
+
+
+class _SpyProviderRegistry(ProviderRegistry):
+    """ProviderRegistry that records every tier passed to get_with_cascade."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cascade_tiers: list[str] = []
+        self.register_mock("stub", _StubProvider(), tier="powerful")
+        self.register_mock("stub-std", _StubProvider(), tier="standard")
+        self.register_mock("stub-fast", _StubProvider(), tier="fast")
+
+    def get_with_cascade(self, preferred_tier: str) -> Any:  # type: ignore[override]
+        self.cascade_tiers.append(preferred_tier)
+        return super().get_with_cascade(preferred_tier)
 
 
 @pytest.fixture(autouse=True)
@@ -173,4 +189,30 @@ async def test_build_kuzu_degrades_to_none_if_unavailable(
     assert any(
         r.levelno >= logging.ERROR and "kuzu" in r.getMessage().lower()
         for r in caplog.records
+    )
+
+
+async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
+    """Fact extractor and entity extractor must resolve 'standard', not 'powerful'.
+
+    This is a hybrid-routing cost guard: running these helpers on the 122b (powerful)
+    model is expensive; standard is capable enough for extraction tasks.
+    """
+    spy = _SpyProviderRegistry()
+    settings = Settings(memory=MemorySettings())
+    components = await MemoryAssembly.build(
+        db=tmp_db, settings=settings, provider_registry=spy,
+    )
+
+    # Fact extractor: get_with_cascade must have been called with "standard".
+    assert "standard" in spy.cascade_tiers, (
+        f"Expected 'standard' in cascade tier calls; got {spy.cascade_tiers!r}"
+    )
+    assert "powerful" not in spy.cascade_tiers, (
+        f"No extractor should request 'powerful'; got {spy.cascade_tiers!r}"
+    )
+
+    # Entity extractor: _preferred_tier must be "standard" at the live construction site.
+    assert components.entity_extractor._preferred_tier == "standard", (  # type: ignore[union-attr]
+        f"EntityExtractor._preferred_tier is {components.entity_extractor._preferred_tier!r}, expected 'standard'"  # type: ignore[union-attr]
     )
