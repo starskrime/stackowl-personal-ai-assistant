@@ -14,6 +14,7 @@ import pytest
 from stackowl.commands import tier_command
 from stackowl.infra import recovery_context as rc
 from stackowl.pipeline.provider_select import (
+    answer_floor_for_intent,
     select_tool_provider,
     select_tool_provider_plan,
 )
@@ -166,5 +167,103 @@ def test_plan_manifest_model_tier_is_ceiling_not_pinned() -> None:
         plan = select_tool_provider_plan(reg, services, state)
         assert plan.pinned is False
         assert plan.ceiling_tier == "standard"
+    finally:
+        rc.reset(token)
+
+
+# -- answer_floor_for_intent ------------------------------------------------- #
+
+
+def test_answer_floor_disabled_is_always_fast():
+    # Flag off => legacy behaviour: every turn starts at "fast".
+    assert answer_floor_for_intent("standard", ceiling="powerful", enabled=False) == "fast"
+    assert answer_floor_for_intent("conversational", ceiling="powerful", enabled=False) == "fast"
+
+
+def test_answer_floor_conversational_is_fast():
+    assert answer_floor_for_intent("conversational", ceiling="powerful", enabled=True) == "fast"
+
+
+def test_answer_floor_standard_is_standard():
+    assert answer_floor_for_intent("standard", ceiling="powerful", enabled=True) == "standard"
+
+
+def test_answer_floor_unknown_intent_falls_back_to_fast():
+    # clarify never reaches the tool loop, but the mapping must be total.
+    assert answer_floor_for_intent("clarify", ceiling="powerful", enabled=True) == "fast"
+    assert answer_floor_for_intent("garbage", ceiling="powerful", enabled=True) == "fast"
+
+
+def test_answer_floor_clamped_to_ceiling():
+    # A "standard" intent under a "fast" ceiling can never start above the ceiling.
+    assert answer_floor_for_intent("standard", ceiling="fast", enabled=True) == "fast"
+
+
+def test_answer_floor_unknown_ceiling_does_not_crash():
+    # Unknown ceiling => no clamp lowering; the intent's own floor stands.
+    assert answer_floor_for_intent("standard", ceiling="bogus", enabled=True) == "standard"
+
+
+# -- floor_tier on ToolProviderChoice ---------------------------------------- #
+
+
+def _make_reg_with_tiers() -> tuple[ProviderRegistry, StepServices, PipelineState]:
+    """Registry with distinct fast/standard/powerful providers for floor_tier tests."""
+    reg = ProviderRegistry()
+    reg.register_mock("fast_p", MockProvider(name="fast_p"), tier="fast")
+    reg.register_mock("standard_p", MockProvider(name="standard_p"), tier="standard")
+    reg.register_mock("powerful_p", MockProvider(name="powerful_p"), tier="powerful")
+    return reg
+
+
+def test_choice_floor_tier_tracks_intent_when_enabled() -> None:
+    # answer_floor_by_intent=True (default); standard intent => floor "standard".
+    # NOTE: Settings() kwargs are silently ignored (settings_customise_sources drops
+    # init_settings) — use model_copy to override fields.
+    from stackowl.config.settings import Settings
+
+    reg = _make_reg_with_tiers()
+    settings_on = Settings().model_copy(update={"answer_floor_by_intent": True})
+    services = StepServices(provider_registry=reg, settings=settings_on)
+    state = PipelineState(
+        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        owl_name="some_owl", pipeline_step="execute", intent_class="standard",
+    )
+    token = rc.bind()
+    try:
+        choice = select_tool_provider_plan(reg, services, state)
+        assert choice.floor_tier == "standard"
+    finally:
+        rc.reset(token)
+
+    # conversational intent => floor "fast".
+    state_conv = PipelineState(
+        trace_id="t2", session_id="s", input_text="hi", channel="cli",
+        owl_name="some_owl", pipeline_step="execute", intent_class="conversational",
+    )
+    token = rc.bind()
+    try:
+        choice_conv = select_tool_provider_plan(reg, services, state_conv)
+        assert choice_conv.floor_tier == "fast"
+    finally:
+        rc.reset(token)
+
+
+def test_choice_floor_tier_is_fast_when_flag_off() -> None:
+    # answer_floor_by_intent=False => legacy fast for every intent.
+    # NOTE: Settings() kwargs are silently ignored — use model_copy to override.
+    from stackowl.config.settings import Settings
+
+    reg = _make_reg_with_tiers()
+    settings_off = Settings().model_copy(update={"answer_floor_by_intent": False})
+    services = StepServices(provider_registry=reg, settings=settings_off)
+    state = PipelineState(
+        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        owl_name="some_owl", pipeline_step="execute", intent_class="standard",
+    )
+    token = rc.bind()
+    try:
+        choice = select_tool_provider_plan(reg, services, state)
+        assert choice.floor_tier == "fast"
     finally:
         rc.reset(token)

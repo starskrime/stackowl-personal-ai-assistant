@@ -20,14 +20,18 @@ Drives the real ``_run_with_tools`` via the same harness as
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.pipeline.provider_select import ToolProviderChoice
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _run_with_tools
+from stackowl.providers.mock_provider import MockProvider
+from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
@@ -210,3 +214,147 @@ async def test_execute_threads_residual_deadline_into_provider() -> None:
     assert 0.0 < provider.seen_deadline <= 120.0, (
         f"residual deadline not bounded by the default backstop: {provider.seen_deadline}"
     )
+
+
+# ---------------------------------------------------------------------------
+# floor_tier integration — execute passes choice.floor_tier to the gateway
+# ---------------------------------------------------------------------------
+
+
+def _make_floor_harness(
+    intent_class: str,
+    *,
+    answer_floor_by_intent: bool = True,
+) -> tuple[ToolProviderChoice, ProviderRegistry, StepServices, ToolRegistry, PipelineState]:
+    """Build the pieces needed to drive _run_with_tools through the NON-PINNED
+    (gateway) path with a controllable intent_class and settings flag."""
+    from stackowl.config.settings import Settings
+
+    reg = ProviderRegistry()
+    reg.register_mock("fast_p", MockProvider(name="fast_p"), tier="fast")
+    reg.register_mock("standard_p", MockProvider(name="standard_p"), tier="standard")
+    reg.register_mock("powerful_p", MockProvider(name="powerful_p"), tier="powerful")
+
+    # Resolve a non-pinned choice manually so we control floor_tier.
+    settings = Settings().model_copy(update={"answer_floor_by_intent": answer_floor_by_intent})
+
+    tool_registry = ToolRegistry()
+    tool_registry.register(_NoopTool())
+
+    # Use model_tier="powerful" so ceiling="powerful" — a "fast" ceiling would clamp
+    # the "standard" floor down to "fast", making the floor_tier test vacuous.
+    owl_registry = OwlRegistry()
+    owl_registry.register(OwlAgentManifest(
+        name="o", role="r", system_prompt="s", model_tier="powerful", bounds=None,
+    ))
+
+    services = StepServices(
+        provider_registry=reg,
+        tool_registry=tool_registry,
+        owl_registry=owl_registry,
+        cost_tracker=None,
+        clarify_gateway=None,
+        settings=settings,
+    )  # type: ignore[arg-type]
+
+    state = PipelineState(
+        trace_id="trace-floor-intent",
+        session_id="sess-floor-intent",
+        input_text="please do this",
+        channel="cli",
+        owl_name="o",
+        pipeline_step="execute",
+        interactive=False,
+        intent_class=intent_class,
+    )
+
+    # Build the choice using the real selector so floor_tier is computed correctly.
+    from stackowl.infra import recovery_context as rc
+    from stackowl.pipeline.provider_select import select_tool_provider_plan
+    token = rc.bind()
+    try:
+        choice = select_tool_provider_plan(reg, services, state)
+    finally:
+        rc.reset(token)
+
+    return choice, reg, services, tool_registry, state
+
+
+@pytest.mark.asyncio
+async def test_standard_intent_starts_on_standard_floor() -> None:
+    """answer_floor_by_intent=True + standard intent => gateway called with floor='standard'."""
+    choice, _reg, services, tool_registry, state = _make_floor_harness("standard")
+    assert choice.floor_tier == "standard", f"pre-check: expected standard, got {choice.floor_tier}"
+    assert choice.ceiling_tier == "powerful"
+
+    captured: dict[str, str] = {}
+
+    async def _fake_gateway_complete(**kwargs: Any) -> tuple[str, list[Any]]:
+        captured["floor"] = kwargs.get("floor", "MISSING")
+        captured["ceiling"] = kwargs.get("ceiling", "MISSING")
+        return ("ok", [])
+
+    token = set_services(services)
+    try:
+        with patch(
+            "stackowl.providers.llm_gateway.LLMGateway.complete_with_tools",
+            new=AsyncMock(side_effect=_fake_gateway_complete),
+        ):
+            await _run_with_tools(state, choice, tool_registry)
+    finally:
+        reset_services(token)
+
+    assert captured.get("floor") == "standard", f"gateway floor was {captured.get('floor')!r}"
+    assert captured.get("ceiling") == "powerful"
+
+
+@pytest.mark.asyncio
+async def test_conversational_intent_starts_on_fast_floor() -> None:
+    """answer_floor_by_intent=True + conversational intent => gateway called with floor='fast'."""
+    choice, _reg, services, tool_registry, state = _make_floor_harness("conversational")
+    assert choice.floor_tier == "fast"
+
+    captured: dict[str, str] = {}
+
+    async def _fake_gateway_complete(**kwargs: Any) -> tuple[str, list[Any]]:
+        captured["floor"] = kwargs.get("floor", "MISSING")
+        return ("ok", [])
+
+    token = set_services(services)
+    try:
+        with patch(
+            "stackowl.providers.llm_gateway.LLMGateway.complete_with_tools",
+            new=AsyncMock(side_effect=_fake_gateway_complete),
+        ):
+            await _run_with_tools(state, choice, tool_registry)
+    finally:
+        reset_services(token)
+
+    assert captured.get("floor") == "fast", f"gateway floor was {captured.get('floor')!r}"
+
+
+@pytest.mark.asyncio
+async def test_flag_off_keeps_fast_floor() -> None:
+    """answer_floor_by_intent=False + standard intent => gateway still called with floor='fast'."""
+    choice, _reg, services, tool_registry, state = _make_floor_harness(
+        "standard", answer_floor_by_intent=False
+    )
+    assert choice.floor_tier == "fast"
+
+    captured: dict[str, str] = {}
+
+    async def _fake_gateway_complete(**kwargs: Any) -> tuple[str, list[Any]]:
+        captured["floor"] = kwargs.get("floor", "MISSING")
+        return ("ok", [])
+
+    token = set_services(services)
+    try:
+        with patch(
+            "stackowl.providers.llm_gateway.LLMGateway.complete_with_tools",
+            new=AsyncMock(side_effect=_fake_gateway_complete),
+        ):
+            await _run_with_tools(state, choice, tool_registry)
+    finally:
+        reset_services(token)
+
+    assert captured.get("floor") == "fast", f"gateway floor was {captured.get('floor')!r}"
