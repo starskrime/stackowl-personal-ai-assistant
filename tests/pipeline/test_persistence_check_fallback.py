@@ -51,6 +51,44 @@ class _GaveUpJudge:
         return _Completion('{"delivered": false, "reason": "stub"}')
 
 
+class _EmptyJudge:
+    """Judge whose model returns EMPTY content -> judge_delivery fails open
+    (returns the JUDGE_ERROR_REASON sentinel), the 2026-06-23 reasoning-model
+    truncation case."""
+
+    async def complete(self, *a: object, **k: object) -> _Completion:
+        return _Completion("")
+
+
+class _GaveUpThenEmptyJudge:
+    """Real give-up on the first call, then EMPTY (fail-open) on the next — the
+    live sequence: the judge ruled give-up, the turn was nudged, then the re-judge
+    came back empty and 'failed open', erasing the give-up."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *a: object, **k: object) -> _Completion:
+        self.calls += 1
+        if self.calls == 1:
+            return _Completion('{"delivered": false, "reason": "no evidence"}')
+        return _Completion("")
+
+
+class _GaveUpThenDeliveredJudge:
+    """Give-up first, then a GENUINE delivered:true — the give-up was actually
+    resolved, so the turn must be accepted (not held)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *a: object, **k: object) -> _Completion:
+        self.calls += 1
+        if self.calls == 1:
+            return _Completion('{"delivered": false, "reason": "no evidence"}')
+        return _Completion('{"delivered": true, "reason": "now grounded"}')
+
+
 @pytest.fixture
 def fake_services() -> StepServices:
     # No provider_registry needed — tests inject primary/fallback explicitly.
@@ -112,6 +150,36 @@ async def test_both_judges_raise_fail_open(
         fake_state, fake_services, primary=_RaisingJudge(), fallback=_RaisingJudge()
     )
     assert await check("a give-up draft", ["browser_browse(failed)"]) is None
+
+
+@pytest.mark.asyncio
+async def test_failopen_after_giveup_preserves_giveup(
+    fake_state: PipelineState, fake_services: StepServices
+) -> None:
+    """2026-06-23 break: once a real give-up is seen this turn, a later judge
+    fail-open (empty output, both judges) must NOT ship the unvetted draft — it
+    must preserve the give-up (nudge), never accept."""
+    primary = _GaveUpThenEmptyJudge()
+    check = build_persistence_check(
+        fake_state, fake_services, primary=primary, fallback=_EmptyJudge()
+    )
+    # 1st check: real give-up -> nudge.
+    assert await check("draft v1", ["browser_browse(failed)"]) == PERSISTENCE_DIRECTIVE
+    # 2nd check: both judges empty (fail open) -> must STILL hold the give-up.
+    assert await check("draft v2", ["browser_browse(failed)"]) == PERSISTENCE_DIRECTIVE
+
+
+@pytest.mark.asyncio
+async def test_genuine_delivered_after_giveup_is_accepted(
+    fake_state: PipelineState, fake_services: StepServices
+) -> None:
+    """A give-up that is genuinely resolved (parsed delivered:true) is accepted —
+    preservation must not over-floor a legitimately-fixed answer."""
+    check = build_persistence_check(
+        fake_state, fake_services, primary=_GaveUpThenDeliveredJudge()
+    )
+    assert await check("draft v1", ["browser_browse(failed)"]) == PERSISTENCE_DIRECTIVE
+    assert await check("draft v2 grounded", ["web_search(ok)"]) is None
 
 
 @pytest.mark.asyncio

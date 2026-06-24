@@ -83,6 +83,24 @@ def make_schema(dim: int) -> pa.Schema:
     )
 
 
+def _schema_matches(table: Table, target: pa.Schema) -> bool:
+    """Return ``True`` when ``table``'s schema matches ``target`` field-for-field.
+
+    Used by :func:`sync_reindex` (a full rebuild from the SQLite SoT) to decide
+    whether the existing on-disk table must be dropped + recreated. A mismatch
+    means either a schema-evolved corpus (e.g. a legacy/untagged table created
+    before the F062 ``embedding_model`` column existed — the keystone live break)
+    or a dim swap (the pinned ``embedding`` fixed-size-list dim differs). In both
+    cases appending would raise an Arrow ``_cast_to_target_schema`` error.
+    """
+    existing_names = sorted(f.name for f in table.schema)
+    target_names = sorted(f.name for f in target)
+    if existing_names != target_names:
+        return False
+    # The embedding dim is pinned at create time; a dim swap must also recreate.
+    return bool(table.schema.field("embedding").type == target.field("embedding").type)
+
+
 def make_row(
     fact_id: str, embedding: list[float], metadata: dict[str, Any]
 ) -> dict[str, Any]:
@@ -240,16 +258,21 @@ def sync_reindex(
         raise EmbeddingDimensionMismatch(
             f"reindex target_dim={target_dim} but first record dim={first_dim}"
         )
-    _, stored_dim = read_corpus_identity(conn)
     effective_dim = target_dim if target_dim is not None else first_dim
-    if (
-        TABLE_NAME in _table_names(conn)
-        and stored_dim is not None
-        and stored_dim != effective_dim
+    target_schema = make_schema(effective_dim)
+    if TABLE_NAME in _table_names(conn) and not _schema_matches(
+        conn.open_table(TABLE_NAME), target_schema
     ):
-        # Dim swap — rebuild the table at the new dim (build-new-then-swap is
-        # the caller's responsibility for the source; here we recreate empty
-        # then fill it in this same call).
+        # The existing table predates the current schema OR is a dim swap. Both
+        # callers of reindex pass the FULL committed-fact set re-built from the
+        # SQLite source of truth, so dropping + recreating at the current schema
+        # and refilling is lossless — and is the only way to add the missing
+        # embedding_model column (Arrow cannot evolve a pinned schema in place).
+        log.memory.info(
+            "[memory] lancedb_helpers.sync_reindex: existing table schema stale/"
+            "mismatched — recreating from SoT",
+            extra={"_fields": {"effective_dim": effective_dim}},
+        )
         table = sync_recreate_table(conn, effective_dim)
     else:
         table = get_or_create_table(conn, effective_dim)

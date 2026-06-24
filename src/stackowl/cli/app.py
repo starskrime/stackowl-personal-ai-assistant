@@ -464,6 +464,73 @@ def db_restore(
     typer.echo(f"✓ Database restored from {input}")
 
 
+@db_app.command("reindex-memory")
+def db_reindex_memory() -> None:
+    """Rebuild the semantic-memory (LanceDB) corpus from the SQLite source of truth.
+
+    Use after an embedding-model change or a corpus-schema break to restore
+    semantic recall immediately instead of waiting for the nightly dream-worker
+    pass. Reuses the same ``reembed_committed_facts`` machinery: it re-embeds every
+    committed fact, drops + recreates the vector table at the active model/dim, and
+    stamps the corpus identity. SQLite is the source of truth, so this is lossless.
+    """
+    import asyncio
+    import sys
+
+    from stackowl.config.test_mode import TestModeGuard, TestModeViolation
+    from stackowl.db.pool import DbPool
+
+    try:
+        TestModeGuard.assert_not_test_mode("db.reindex-memory")
+    except TestModeViolation as exc:
+        log.warning("db_reindex_memory: blocked in test mode: %s", exc)
+        typer.echo(f"✗ {exc}", err=True)
+        sys.exit(1)
+
+    async def _run() -> tuple[int, tuple[str | None, int | None]]:
+        from stackowl.embeddings.registry import EmbeddingRegistry
+        from stackowl.memory.dream_worker_helpers import reembed_committed_facts
+        from stackowl.memory.lancedb_adapter import LanceDBAdapter
+
+        db = DbPool()
+        await db.open()
+        try:
+            registry = await EmbeddingRegistry.create()
+            lancedb = LanceDBAdapter(embedding_registry=registry)
+
+            async def _embed(texts: list[str]) -> list[list[float]]:
+                return await registry.get().embed(texts)
+
+            written = await reembed_committed_facts(
+                db,
+                lancedb,
+                embed=_embed,
+                active_model=registry.active_model,
+                active_dim=registry.active_dim,
+            )
+            identity = await lancedb.corpus_identity()
+            return written, identity
+        finally:
+            await db.close()
+
+    log.info("[db] db_reindex_memory: entry")
+    try:
+        written, (model, dim) = asyncio.run(_run())
+    except Exception as exc:
+        log.warning("[db] db_reindex_memory: failed: %s", exc)
+        typer.echo(f"✗ Memory reindex failed: {exc}", err=True)
+        sys.exit(1)
+
+    if written == 0:
+        typer.echo("No committed facts to reindex (0 written)")
+    else:
+        typer.echo(
+            f"✓ Reindexed {written} fact(s) into LanceDB "
+            f"(corpus: {model}, dim {dim})"
+        )
+    log.info("[db] db_reindex_memory: exit — written=%d", written)
+
+
 # ---------------------------------------------------------------------------
 # MCP server commands
 # ---------------------------------------------------------------------------

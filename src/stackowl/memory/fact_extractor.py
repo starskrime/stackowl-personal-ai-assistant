@@ -116,8 +116,10 @@ class FactExtractor:
             extra={"_fields": {"session_id": session_id, "prompt_messages": len(messages)}},
         )
 
-        # 3. STEP — provider call
-        result = await self._provider.complete(messages, model="")
+        # 3. STEP — provider call. disable_thinking so a reasoning model emits the
+        # JSON instead of spending its whole output budget inside a <think> block
+        # (which returned empty content and crashed mining — the 2026-06-23 break).
+        result = await self._provider.complete(messages, model="", disable_thinking=True)
         log.memory.debug(
             "[memory] fact_extractor.extract: provider response received",
             extra={
@@ -223,6 +225,17 @@ class FactExtractor:
     def _parse_response(self, raw: str) -> list[ExtractedFactDraft]:
         stripped = _FENCE_OPEN_RE.sub("", raw.strip())
         stripped = _FENCE_CLOSE_RE.sub("", stripped).strip()
+        if not stripped:
+            # Empty/whitespace model output (e.g. a reasoning model that consumed
+            # its whole output budget inside a <think> block, truncated at the
+            # cap). That is "no facts this session", NOT a hard parse failure —
+            # return [] so mining records an honest zero instead of raising and
+            # aborting the session (the 2026-06-23 mine_all break).
+            log.memory.info(
+                "[memory] fact_extractor.parse: empty model output — no facts extracted",
+                extra={"_fields": {"raw_len": len(raw)}},
+            )
+            return []
         try:
             return list(_DRAFT_LIST_ADAPTER.validate_json(stripped))
         except (ValidationError, json.JSONDecodeError, ValueError) as exc:

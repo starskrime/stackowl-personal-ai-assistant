@@ -7,6 +7,7 @@ Adding a new compatible provider requires only a new stackowl.yaml entry — zer
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal
@@ -62,6 +63,28 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
     if isinstance(val, int):
         return val
     return int(str(val))
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def strip_think(text: str) -> str:
+    """Remove qwen3-style ``<think>…</think>`` reasoning blocks from output.
+
+    Reasoning models emit chain-of-thought inside ``<think></think>`` before the
+    answer; structured/utility callers (judge, fact extractor) never want it.
+    Also handles a response TRUNCATED mid-thinking — an unclosed ``<think>`` left
+    when the output-token cap is hit — by dropping everything from that dangling
+    tag onward. That truncation is exactly what left ``content`` empty and
+    crashed the fact extractor / fooled the judge into failing open.
+    """
+    if not text:
+        return ""
+    cleaned = _THINK_RE.sub("", text)
+    idx = cleaned.lower().find("<think>")
+    if idx != -1:  # unclosed (truncated) block — the rest is all reasoning
+        cleaned = cleaned[:idx]
+    return cleaned.strip()
 
 
 class OpenAIProvider(ModelProvider):
@@ -713,19 +736,42 @@ class OpenAIProvider(ModelProvider):
             else {"role": m.role, "content": m.content}
             for m in messages
         ]
-        async def _round() -> Any:
+        # Structured/utility callers (judge, fact extractor) pass disable_thinking
+        # so the reasoning model emits the answer instead of burning its whole
+        # output budget inside a <think> block (which returns EMPTY content).
+        disable_thinking = bool(kwargs.get("disable_thinking", False))
+
+        def _extra_body(no_think: bool) -> dict[str, Any]:
+            extra = self._ollama_extra_body(resolved_model)
+            if not no_think:
+                return extra
+            base = (self._config.base_url or "").lower()
+            if ":11434" not in base and "ollama" not in base:
+                # The no-think knobs are ollama-family specific; a strict OpenAI
+                # endpoint may 400 on unknown body fields. strip_think + the
+                # empty-retry below are the cross-provider guarantee.
+                return extra
+            # Best-effort no-think knobs — the server ignores fields it doesn't
+            # know. The DETERMINISTIC guarantee is strip_think + the empty-retry
+            # below; these just stop the model wasting the budget thinking.
+            body = dict(extra.get("extra_body", {}))
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+            body["think"] = False
+            return {**extra, "extra_body": body}
+
+        async def _round(no_think: bool) -> Any:
             return await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
                 max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
-                **self._ollama_extra_body(resolved_model),
+                **_extra_body(no_think),
             )
 
         try:
             # F115 — record the per-round HTTP outcome onto the registry-owned breaker
             # the cascade reads; a classified APIError (wrapped below as ProviderError)
             # is the fault. resilient_round re-raises the original APIError unchanged.
-            response = await self._resilient_round(_round)
+            response = await self._resilient_round(lambda: _round(disable_thinking))
         except openai.APIError as exc:
             log.engine.error(
                 "[openai] complete: API error",
@@ -738,8 +784,32 @@ class OpenAIProvider(ModelProvider):
             raise ProviderError(self._name, ValueError("empty choices"))
         choice = response.choices[0]
         usage = response.usage
+        content = strip_think(choice.message.content or "")
+        # Empty after stripping reasoning ⇒ the model spent its whole output budget
+        # inside a <think> block (truncated at the cap). Retry ONCE with thinking
+        # disabled so it emits the actual answer — the fix for empty judge verdicts
+        # and empty fact-extraction JSON. Skip when thinking is already disabled.
+        if not content and not disable_thinking:
+            log.engine.warning(
+                "[openai] complete: empty after think-strip — retrying once with "
+                "thinking disabled",
+                extra={"_fields": {"provider": self._name, "model": resolved_model}},
+            )
+            try:
+                retry = await self._resilient_round(lambda: _round(True))
+            except openai.APIError as exc:
+                log.engine.warning(
+                    "[openai] complete: no-think retry failed — keeping empty",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+                retry = None
+            if retry is not None and retry.choices:
+                choice = retry.choices[0]
+                usage = retry.usage
+                content = strip_think(choice.message.content or "")
         result = CompletionResult(
-            content=choice.message.content or "",
+            content=content,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             model=response.model,

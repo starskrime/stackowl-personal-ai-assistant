@@ -110,7 +110,15 @@ def build_persistence_check(
         judge_delivery,
     )
 
+    # Per-turn memory: once a judge that COULD vet ruled give-up this turn, a later
+    # fail-open (empty/unparseable judge output — the 2026-06-23 reasoning-model
+    # truncation) must NOT silently upgrade that give-up into a shipped, unvetted
+    # draft. The closure is built once per turn and reused across provider
+    # iterations, so this flag spans the whole turn.
+    seen_giveup = False
+
     async def _persistence_check(draft: str, tools_tried: list[str]) -> str | None:
+        nonlocal seen_giveup
         preg = services.provider_registry
         # PRIMARY judge — resolve (injected or "fast" tier) and rule. judge_delivery
         # is itself fail-OPEN: on a provider/parse error it returns
@@ -121,11 +129,12 @@ def build_persistence_check(
             judge = primary if primary is not None else (
                 preg.get_with_cascade("fast") if preg is not None else None
             )
-            if judge is None:  # no registry → cannot judge; accept (fail open)
-                return None
-            delivered, reason = await judge_delivery(
-                judge, state.input_text, draft, tools_tried
-            )
+            if judge is None:  # no registry → cannot judge (fail open)
+                delivered, reason = True, JUDGE_ERROR_REASON
+            else:
+                delivered, reason = await judge_delivery(
+                    judge, state.input_text, draft, tools_tried
+                )
         except Exception as exc:  # primary provider lookup raised
             log.engine.warning(
                 "[pipeline] execute: primary persistence judge raised — "
@@ -145,23 +154,45 @@ def build_persistence_check(
                 fb = fallback if fallback is not None else (
                     preg.get_with_cascade("local") if preg is not None else None
                 )
-                if fb is None:  # no fallback available — accept (fail open)
-                    return None
-                delivered, reason = await judge_delivery(
-                    fb, state.input_text, draft, tools_tried
-                )
+                if fb is None:  # no fallback available — fail open
+                    delivered, reason = True, JUDGE_ERROR_REASON
+                else:
+                    delivered, reason = await judge_delivery(
+                        fb, state.input_text, draft, tools_tried
+                    )
             except Exception as exc2:  # fallback lookup also raised — final fail OPEN
                 log.engine.error(
-                    "[pipeline] execute: fallback persistence judge also failed — "
-                    "accepting answer",
+                    "[pipeline] execute: fallback persistence judge also failed",
                     exc_info=exc2,
                     extra={"_fields": {"trace_id": state.trace_id}},
                 )
-                return None
-        if not delivered:
+                delivered, reason = True, JUDGE_ERROR_REASON
+
+        could_vet = reason != JUDGE_ERROR_REASON
+
+        if not delivered and could_vet:
+            # A genuine give-up verdict — nudge, and remember it for this turn.
+            seen_giveup = True
             log.engine.info(
                 "[pipeline] execute: persistence judge ruled give-up — nudging",
                 extra={"_fields": {"trace_id": state.trace_id, "reason": reason[:120]}},
+            )
+            return PERSISTENCE_DIRECTIVE
+
+        if delivered and could_vet:
+            # Genuinely vetted as delivered — any earlier give-up is resolved.
+            return None
+
+        # Fail-open: neither judge could vet (empty/unparseable/unavailable). Never
+        # let that ship a draft after a real give-up was seen this turn — keep
+        # nudging (the nudge ceiling + budget backstop bound the loop, then the
+        # honest floor delivers). With no prior give-up, preserve the historical
+        # fail-open behaviour and accept so the turn never blocks.
+        if seen_giveup:
+            log.engine.warning(
+                "[pipeline] execute: persistence judge failed open after a give-up "
+                "— preserving give-up (nudging), not shipping an unvetted draft",
+                extra={"_fields": {"trace_id": state.trace_id}},
             )
             return PERSISTENCE_DIRECTIVE
         return None

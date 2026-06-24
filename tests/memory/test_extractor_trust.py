@@ -67,6 +67,36 @@ class _StubProvider(ModelProvider):
 # ---------------------------------------------------------------------------
 
 
+class _EmptyProvider(_StubProvider):
+    """Returns EMPTY content — a reasoning model that spent its whole output
+    budget inside a <think> block (truncated at the cap)."""
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        return CompletionResult(
+            content="",
+            input_tokens=5,
+            output_tokens=0,
+            model="stub",
+            provider_name="stub",
+            duration_ms=0.5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_model_output_returns_no_facts_not_crash() -> None:
+    """2026-06-23 break: empty model output must yield [] (honest zero), NOT raise
+    FactExtractionParseError and abort the mining cycle."""
+    extractor = FactExtractor(provider=_EmptyProvider())
+    convo = [
+        Message(role="user", content="I love hiking."),
+        Message(role="assistant", content="That's great!"),
+    ]
+    facts = await extractor.extract(convo, session_id="sess-empty")
+    assert facts == [], f"empty output must extract zero facts, got {facts!r}"
+
+
 @pytest.mark.asyncio
 async def test_extracted_facts_untrusted_when_batch_has_tool_role() -> None:
     """Any tool-role message in the batch taints all extracted facts as untrusted."""
