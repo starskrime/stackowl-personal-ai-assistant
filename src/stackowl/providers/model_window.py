@@ -9,13 +9,35 @@ resolved value (to send num_ctx) without re-probing.
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 
 from stackowl.infra.observability import log
 
 DEFAULT_WINDOW_FALLBACK = 8192
-WINDOW_CEILING_DEFAULT = 16384
+# Upper bound on the resolved window. A window directly sizes the KV-cache in RAM,
+# so this is a high SANITY bound (not the old small fixed cap) that prevents an
+# absurd probed value from OOM-ing the host. Overridable per host via the
+# STACKOWL_CONTEXT_CEILING env var — general, no per-vendor logic.
+WINDOW_CEILING_DEFAULT = 131072
 _CLOUD_DEFAULT = 200_000
+
+
+def _ceiling() -> int:
+    """Resolved window upper bound (env-overridable, host-tunable for RAM)."""
+    raw = os.environ.get("STACKOWL_CONTEXT_CEILING")
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            log.engine.warning(
+                "[model_window] invalid STACKOWL_CONTEXT_CEILING — using default",
+                extra={"_fields": {"value": raw}},
+            )
+    return WINDOW_CEILING_DEFAULT
 _PROBE_TIMEOUT = 4.0
 
 _WINDOW_CACHE: dict[tuple[str, str], int] = {}
@@ -49,7 +71,7 @@ def _reset_probe_client() -> None:
 
 
 def _clamp(tokens: int) -> int:
-    return max(1, min(int(tokens), WINDOW_CEILING_DEFAULT))
+    return max(1, min(int(tokens), _ceiling()))
 
 
 def window_from_config(*, context_chars: int) -> int:

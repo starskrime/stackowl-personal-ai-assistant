@@ -203,12 +203,11 @@ async def judge_relevance(
         ),
     ]
 
-    # 3. STEP — provider call (fail open on any provider error). disable_thinking
-    # so a reasoning model emits the verdict JSON instead of burning its whole
-    # output budget inside a <think> block (which returned empty content and made
-    # the judge fail open on an unvetted draft — the 2026-06-23 break).
+    # 3. STEP — provider call (fail open on any provider error). The provider
+    # strips the <think> trace and the output budget is window-sized, so a
+    # reasoning model reasons then emits the verdict JSON (no mid-think truncation).
     try:
-        result = await provider.complete(messages, model="", disable_thinking=True)
+        result = await provider.complete(messages, model="")
     except Exception as exc:
         _JUDGE_ERRORS["count"] += 1
         log.engine.warning(
@@ -393,12 +392,11 @@ async def judge_delivery(
     )
     messages = _build_messages(user_request, draft_answer, tools_tried)
 
-    # 3. STEP — provider call (fail open on any provider error). disable_thinking
-    # so a reasoning model emits the verdict JSON instead of burning its whole
-    # output budget inside a <think> block (which returned empty content and made
-    # the judge fail open on an unvetted draft — the 2026-06-23 break).
+    # 3. STEP — provider call (fail open on any provider error). The provider
+    # strips the <think> trace and the output budget is window-sized, so a
+    # reasoning model reasons then emits the verdict JSON (no mid-think truncation).
     try:
-        result = await provider.complete(messages, model="", disable_thinking=True)
+        result = await provider.complete(messages, model="")
     except Exception as exc:  # fail OPEN — never block the turn on a judge error
         log.engine.error(
             "[persistence] judge_delivery: provider.complete failed — failing open",

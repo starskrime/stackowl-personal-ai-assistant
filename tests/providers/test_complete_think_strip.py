@@ -6,12 +6,11 @@ returned EMPTY content. That empty string crashed the fact extractor
 (``FactExtractionParseError``) and fooled the persistence judge into "failing
 open" — shipping an unvetted draft.
 
-These tests drive three guarantees on the plain ``complete()`` path:
-  1. ``<think>…</think>`` reasoning blocks are stripped from the answer.
-  2. Empty-after-strip (truncated mid-thinking) triggers ONE retry with thinking
-     disabled.
-  3. ``disable_thinking=True`` forwards the no-think knob to the request and does
-     not retry (thinking is already off).
+These tests drive the guarantees on the plain ``complete()`` path:
+  1. ``<think>…</think>`` reasoning blocks are stripped from the answer (thinking
+     stays ON for quality; only the trace is discarded).
+  2. Empty-after-strip triggers ONE retry as a cheap backstop.
+  3. The artificial fixed 4096 output cap is gone — ``max_tokens`` is window-sized.
 """
 
 from __future__ import annotations
@@ -117,26 +116,23 @@ async def test_complete_retries_once_on_empty_after_strip(
     result = await provider.complete([Message(role="user", content="hi")], model="")
 
     assert result.content == '[{"fact":"x"}]'
-    assert len(completions.calls) == 2  # retried exactly once
-    # The retry carried the no-think knob.
-    retry_body = completions.calls[1].get("extra_body", {})
-    assert retry_body.get("chat_template_kwargs", {}).get("enable_thinking") is False
+    assert len(completions.calls) == 2  # retried exactly once on the empty result
 
 
 @pytest.mark.asyncio
-async def test_complete_disable_thinking_forwards_knob_and_no_retry(
+async def test_complete_does_not_send_fixed_4096_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The artificial 4096 output cap is gone: with a resolved window the call's
+    max_tokens reflects the window, not the flat default."""
+    from stackowl.providers import model_window
+
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
-    # Even though the (only) response is empty, disable_thinking=True must NOT retry.
-    completions = _ScriptedCompletions([""])
+    # Seed a resolved window for this (provider, model) so _output_cap uses it.
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "qwen3.5:2b"), 32768)
+    completions = _ScriptedCompletions(["an answer"])
     provider = _make_provider(_FakeClient(completions))
 
-    result = await provider.complete(
-        [Message(role="user", content="hi")], model="", disable_thinking=True
-    )
+    await provider.complete([Message(role="user", content="hi")], model="")
 
-    assert result.content == ""
-    assert len(completions.calls) == 1  # no retry when thinking already disabled
-    body = completions.calls[0].get("extra_body", {})
-    assert body.get("chat_template_kwargs", {}).get("enable_thinking") is False
+    assert completions.calls[0]["max_tokens"] == 32768  # window-derived, not 4096
