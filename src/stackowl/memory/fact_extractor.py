@@ -116,10 +116,9 @@ class FactExtractor:
             extra={"_fields": {"session_id": session_id, "prompt_messages": len(messages)}},
         )
 
-        # 3. STEP — provider call. disable_thinking so a reasoning model emits the
-        # JSON instead of spending its whole output budget inside a <think> block
-        # (which returned empty content and crashed mining — the 2026-06-23 break).
-        result = await self._provider.complete(messages, model="", disable_thinking=True)
+        # 3. STEP — provider call. The provider strips the <think> trace and the
+        # output budget is window-sized, so the model reasons then emits the JSON.
+        result = await self._provider.complete(messages, model="")
         log.memory.debug(
             "[memory] fact_extractor.extract: provider response received",
             extra={

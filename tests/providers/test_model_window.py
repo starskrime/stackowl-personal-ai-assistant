@@ -48,7 +48,10 @@ async def test_resolve_probes_ollama_api_show(monkeypatch):
         provider_name="ollama", base_url="http://x:11434/v1",
         model="qwen3.5:9b", context_chars=None, protocol="openai",
     )
-    assert w == mw.WINDOW_CEILING_DEFAULT  # 32768 clamped to 16384
+    # The model's REAL probed window is honored (32768) — not thrown away by a
+    # small fixed clamp. The ceiling is now a high sanity bound, not a cap.
+    assert w == 32768
+    assert w <= mw.WINDOW_CEILING_DEFAULT
 
 
 async def test_resolve_probe_failure_falls_back(monkeypatch):
