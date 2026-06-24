@@ -520,6 +520,18 @@ class OpenAIProvider(ModelProvider):
                 # the agent delivered or gave up.
                 directive = await _enforce(content)
                 if directive:
+                    # The judge ruled give-up. If a stronger tier is available,
+                    # escalate the whole turn instead of nudging the weak model to
+                    # try again — the objective verdict, not the model's self-report,
+                    # drives the step-up. At the top tier (can_escalate False) we
+                    # keep nudging as before.
+                    if can_escalate:
+                        log.engine.warning(
+                            "[openai] complete_with_tools: judge ruled give-up — "
+                            "escalating to a stronger tier instead of nudging",
+                            extra={"_fields": {"provider": self._name}},
+                        )
+                        return ESCALATE_SENTINEL, all_calls
                     messages.append({"role": "user", "content": directive})
                     continue
                 log.engine.debug(
@@ -599,6 +611,20 @@ class OpenAIProvider(ModelProvider):
                 break
             if iter_native_directives:
                 messages.append({"role": "user", "content": iter_native_directives[0]})
+
+        # Auto-escalate on max-out: the current tier burned its WHOLE tool budget
+        # without delivering — an objective "out of its depth" signal. A weak model
+        # never self-reports ESCALATE, so escalate here and hand the turn to the
+        # next tier rather than wrapping up a weak answer on the weak model. The
+        # gateway re-runs the turn one tier up; at the top tier can_escalate is
+        # False, so the graceful wrap-up floor below still applies.
+        if can_escalate:
+            log.engine.warning(
+                "[openai] complete_with_tools: tool budget exhausted without "
+                "delivering — escalating to a stronger tier",
+                extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+            )
+            return ESCALATE_SENTINEL, all_calls
 
         log.engine.warning(
             "[openai] complete_with_tools: max_iterations reached",
