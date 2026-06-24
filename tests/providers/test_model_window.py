@@ -18,8 +18,16 @@ def test_config_override_wins_and_converts_chars_to_tokens():
     assert w == 10000  # 40000 // 4
 
 
-def test_clamp_to_ceiling():
-    assert mw._clamp(999_999) == mw.WINDOW_CEILING_DEFAULT  # 16384
+def test_clamp_no_cap_by_default(monkeypatch):
+    # No platform cap — the window comes dynamically from the model.
+    monkeypatch.delenv("STACKOWL_CONTEXT_CEILING", raising=False)
+    assert mw._clamp(999_999) == 999_999
+    assert mw._clamp(4096) == 4096
+
+
+def test_clamp_respects_optional_env_ceiling(monkeypatch):
+    monkeypatch.setenv("STACKOWL_CONTEXT_CEILING", "16384")
+    assert mw._clamp(999_999) == 16384
     assert mw._clamp(4096) == 4096
 
 
@@ -48,10 +56,9 @@ async def test_resolve_probes_ollama_api_show(monkeypatch):
         provider_name="ollama", base_url="http://x:11434/v1",
         model="qwen3.5:9b", context_chars=None, protocol="openai",
     )
-    # The model's REAL probed window is honored (32768) — not thrown away by a
-    # small fixed clamp. The ceiling is now a high sanity bound, not a cap.
+    # The model's REAL probed window is honored (32768) — dynamic from the model,
+    # no platform cap.
     assert w == 32768
-    assert w <= mw.WINDOW_CEILING_DEFAULT
 
 
 async def test_resolve_probe_failure_falls_back(monkeypatch):
@@ -71,7 +78,7 @@ async def test_cloud_default_for_anthropic_without_probe():
         provider_name="claude", base_url=None,
         model="claude-x", context_chars=None, protocol="anthropic",
     )
-    assert w == mw.WINDOW_CEILING_DEFAULT
+    assert w == mw._CLOUD_DEFAULT
 
 
 def test_cached_window_returns_none_when_absent():

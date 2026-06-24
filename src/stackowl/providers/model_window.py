@@ -15,17 +15,21 @@ import httpx
 
 from stackowl.infra.observability import log
 
+# Floor used only when the model reports nothing (probe failure / no info). NOT a
+# cap — by default the window comes DYNAMICALLY from the model's own reported
+# context length, with no platform-imposed upper bound.
 DEFAULT_WINDOW_FALLBACK = 8192
-# Upper bound on the resolved window. A window directly sizes the KV-cache in RAM,
-# so this is a high SANITY bound (not the old small fixed cap) that prevents an
-# absurd probed value from OOM-ing the host. Overridable per host via the
-# STACKOWL_CONTEXT_CEILING env var — general, no per-vendor logic.
-WINDOW_CEILING_DEFAULT = 131072
 _CLOUD_DEFAULT = 200_000
 
 
-def _ceiling() -> int:
-    """Resolved window upper bound (env-overridable, host-tunable for RAM)."""
+def _ceiling() -> int | None:
+    """Optional upper bound on the resolved window.
+
+    Returns ``None`` by default — NO platform cap, so the window is the model's
+    own reported context length (the platform honors what the model supports).
+    Set ``STACKOWL_CONTEXT_CEILING`` ONLY to opt into a host-specific cap (e.g. to
+    bound KV-cache RAM on a constrained inference server).
+    """
     raw = os.environ.get("STACKOWL_CONTEXT_CEILING")
     if raw:
         try:
@@ -34,10 +38,10 @@ def _ceiling() -> int:
                 return v
         except ValueError:
             log.engine.warning(
-                "[model_window] invalid STACKOWL_CONTEXT_CEILING — using default",
+                "[model_window] invalid STACKOWL_CONTEXT_CEILING — ignoring (no cap)",
                 extra={"_fields": {"value": raw}},
             )
-    return WINDOW_CEILING_DEFAULT
+    return None
 _PROBE_TIMEOUT = 4.0
 
 _WINDOW_CACHE: dict[tuple[str, str], int] = {}
@@ -71,7 +75,11 @@ def _reset_probe_client() -> None:
 
 
 def _clamp(tokens: int) -> int:
-    return max(1, min(int(tokens), _ceiling()))
+    # No platform cap by default — honor the model's own window. An optional
+    # STACKOWL_CONTEXT_CEILING bounds it only when a host opts in.
+    t = max(1, int(tokens))
+    ceil = _ceiling()
+    return min(t, ceil) if ceil is not None else t
 
 
 def window_from_config(*, context_chars: int) -> int:
