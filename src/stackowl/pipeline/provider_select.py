@@ -19,10 +19,41 @@ from stackowl.infra.observability import log
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.providers.base import ModelProvider
+from stackowl.providers.llm_gateway import LADDER
 from stackowl.providers.registry import ProviderRegistry
 
 # Tier walk order for the F120 route-away cascade (mirrors registry._TIER_ORDER).
 _TOOL_CAPABLE_TIER_WALK: tuple[str, ...] = ("powerful", "standard", "fast", "local")
+
+# Map the triage router's verdict to the answer's escalation FLOOR tier.
+# conversational/clarify start cheap (escalate on judge give-up); standard starts
+# mid. Anything unknown reproduces the legacy "fast" floor.
+_INTENT_FLOOR: dict[str, str] = {
+    "conversational": "fast",
+    "clarify": "fast",
+    "standard": "standard",
+}
+
+
+def answer_floor_for_intent(intent_class: str, *, ceiling: str, enabled: bool) -> str:
+    """Starting tier for the user-facing answer's escalation span.
+
+    When ``enabled`` is False this returns ``"fast"`` for every turn — byte-identical
+    to the legacy hardcoded floor. When enabled, the floor is chosen from the router's
+    ``intent_class`` and CLAMPED so its ladder rank never exceeds ``ceiling`` (a low
+    manifest/pin ceiling is always honoured). Unknown intents fall back to ``"fast"``.
+    """
+    if not enabled:
+        return "fast"
+    floor = _INTENT_FLOOR.get(intent_class, "fast")
+    try:
+        ceiling_rank = LADDER.index(ceiling)
+    except ValueError:
+        return floor  # unknown ceiling: no clamp, keep the intent's floor
+    floor_rank = LADDER.index(floor)  # floor is always a known ladder tier
+    if floor_rank > ceiling_rank:
+        return ceiling
+    return floor
 
 
 def _ensure_tool_capable(

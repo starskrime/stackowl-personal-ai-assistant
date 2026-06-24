@@ -14,6 +14,7 @@ import pytest
 from stackowl.commands import tier_command
 from stackowl.infra import recovery_context as rc
 from stackowl.pipeline.provider_select import (
+    answer_floor_for_intent,
     select_tool_provider,
     select_tool_provider_plan,
 )
@@ -168,3 +169,36 @@ def test_plan_manifest_model_tier_is_ceiling_not_pinned() -> None:
         assert plan.ceiling_tier == "standard"
     finally:
         rc.reset(token)
+
+
+# -- answer_floor_for_intent ------------------------------------------------- #
+
+
+def test_answer_floor_disabled_is_always_fast():
+    # Flag off => legacy behaviour: every turn starts at "fast".
+    assert answer_floor_for_intent("standard", ceiling="powerful", enabled=False) == "fast"
+    assert answer_floor_for_intent("conversational", ceiling="powerful", enabled=False) == "fast"
+
+
+def test_answer_floor_conversational_is_fast():
+    assert answer_floor_for_intent("conversational", ceiling="powerful", enabled=True) == "fast"
+
+
+def test_answer_floor_standard_is_standard():
+    assert answer_floor_for_intent("standard", ceiling="powerful", enabled=True) == "standard"
+
+
+def test_answer_floor_unknown_intent_falls_back_to_fast():
+    # clarify never reaches the tool loop, but the mapping must be total.
+    assert answer_floor_for_intent("clarify", ceiling="powerful", enabled=True) == "fast"
+    assert answer_floor_for_intent("garbage", ceiling="powerful", enabled=True) == "fast"
+
+
+def test_answer_floor_clamped_to_ceiling():
+    # A "standard" intent under a "fast" ceiling can never start above the ceiling.
+    assert answer_floor_for_intent("standard", ceiling="fast", enabled=True) == "fast"
+
+
+def test_answer_floor_unknown_ceiling_does_not_crash():
+    # Unknown ceiling => no clamp lowering; the intent's own floor stands.
+    assert answer_floor_for_intent("standard", ceiling="bogus", enabled=True) == "standard"
