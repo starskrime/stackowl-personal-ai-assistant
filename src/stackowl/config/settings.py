@@ -766,6 +766,11 @@ class Settings(BaseSettings):
     providers: list[ProviderConfig] = []
     test_mode: bool = False
     settings_watch: bool = True
+    # Route the user-facing answer's escalation FLOOR off the triage router's
+    # intent_class (conversational->fast, standard->standard). False => the answer
+    # always starts at "fast" (legacy, byte-identical). Helpers/extractor tiers are
+    # config-driven and unaffected by this flag.
+    answer_floor_by_intent: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

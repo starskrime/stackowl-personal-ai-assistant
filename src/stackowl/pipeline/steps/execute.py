@@ -1296,7 +1296,7 @@ async def _run_with_tools(
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
-            floor="fast",
+            floor=choice.floor_tier,
             ceiling=choice.ceiling_tier,
             purpose="execute.tool_loop",
             build_tool_schemas=build_tool_schemas,

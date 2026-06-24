@@ -154,17 +154,21 @@ def _warn_owl_name_shadow(services: object, state: PipelineState) -> None:
 class ToolProviderChoice:
     """The resolved tool-loop provider PLUS the escalation plan execute needs.
 
-    ``ceiling_tier`` is the resolved desired tier (the escalation CEILING; the floor
-    is always ``"fast"``). ``pinned`` is True when the user/owl made a DELIBERATE
-    routing choice — an owl-named provider, a manifest ``provider_name`` pin, or an
-    explicit session ``/tier`` — that must be honoured EXACTLY (no auto-escalation;
-    execute calls this provider directly). When ``pinned`` is False the turn starts
-    at ``"fast"`` and the gateway escalates up to ``ceiling_tier``.
+    ``ceiling_tier`` is the resolved desired tier (the escalation CEILING).
+    ``floor_tier`` is the starting tier for the escalation span — derived from the
+    triage router's ``intent_class`` when ``answer_floor_by_intent`` is enabled
+    (conversational->fast, standard->standard). ``pinned`` is True when the user/owl
+    made a DELIBERATE routing choice — an owl-named provider, a manifest
+    ``provider_name`` pin, or an explicit session ``/tier`` — that must be honoured
+    EXACTLY (no auto-escalation; execute calls this provider directly). When ``pinned``
+    is False the turn starts at ``floor_tier`` and the gateway escalates up to
+    ``ceiling_tier``.
     """
 
     provider: ModelProvider
     ceiling_tier: str
     pinned: bool
+    floor_tier: str = "fast"
 
 
 def select_tool_provider(
@@ -249,6 +253,7 @@ def select_tool_provider_plan(
             provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
             ceiling_tier="powerful",
             pinned=True,
+            floor_tier="fast",
         )
     except ProviderNotFoundError:
         pass  # no per-owl provider — fall through to manifest/tier routing
@@ -289,6 +294,7 @@ def select_tool_provider_plan(
                 provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
                 ceiling_tier=manifest.model_tier or "powerful",
                 pinned=True,
+                floor_tier="fast",
             )
         except ProviderNotFoundError:
             log.engine.warning(
@@ -340,8 +346,20 @@ def select_tool_provider_plan(
                 "pinned": pinned,
             }},
         )
+    # Pinned (session /tier) → floor is inert ("fast"); execute's pinned branch calls
+    # the provider directly and never reads floor_tier.  Non-pinned → derive from the
+    # triage router's intent_class so the answer starts at the right escalation tier.
+    if pinned:
+        floor_tier = "fast"
+    else:
+        _settings = getattr(services, "settings", None)
+        _enabled = bool(getattr(_settings, "answer_floor_by_intent", False))
+        floor_tier = answer_floor_for_intent(
+            state.intent_class, ceiling=desired, enabled=_enabled
+        )
     return ToolProviderChoice(
         provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
         ceiling_tier=desired,
         pinned=pinned,
+        floor_tier=floor_tier,
     )
