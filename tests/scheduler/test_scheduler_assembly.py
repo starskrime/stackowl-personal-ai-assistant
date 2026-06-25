@@ -136,6 +136,22 @@ async def test_build_seeds_three_default_schedules(tmp_db: DbPool) -> None:
     }
 
 
+async def test_build_registers_and_seeds_objective_driver(tmp_db: DbPool) -> None:
+    # Keystone reachability lock: the ObjectiveDriver must be BOTH registered AND
+    # seeded with an every-1m row, or standing objectives would never advance
+    # (registered ≠ reachable).
+    from stackowl.scheduler.base import HandlerRegistry
+
+    await _build(tmp_db)
+    assert HandlerRegistry.instance().get("objective_driver") is not None
+    rows = await tmp_db.fetch_all(
+        "SELECT handler_name, schedule FROM jobs WHERE handler_name = ?",
+        ("objective_driver",),
+    )
+    assert len(rows) == 1
+    assert rows[0]["schedule"] == "every 1m"
+
+
 async def test_build_seeds_turn_sweep_every_10m(tmp_db: DbPool) -> None:
     # F050 — the turn-sweep backstop reaper gets a recurring seeded jobs row so the
     # scheduler actually dispatches it (the handler itself is registered in the
