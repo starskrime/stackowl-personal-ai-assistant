@@ -9,6 +9,7 @@ held, decomposed, and followed through without the user re-asking.
 
 from __future__ import annotations
 
+from stackowl.objectives.decomposer import ObjectiveDecomposer
 from stackowl.objectives.model import (
     Objective,
     ObjectiveEvent,
@@ -16,11 +17,13 @@ from stackowl.objectives.model import (
     Subgoal,
     SubgoalStatus,
 )
-from stackowl.objectives.store import ObjectiveStore
+from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 
 __all__ = [
     "Objective",
+    "ObjectiveDecomposer",
     "ObjectiveEvent",
+    "ObjectiveNotFoundError",
     "ObjectiveStatus",
     "ObjectiveStore",
     "Subgoal",
