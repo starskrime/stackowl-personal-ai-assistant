@@ -83,6 +83,7 @@ async def test_apology_not_amplified_across_turns(
     router = _StandardRouterProvider()
     preg.register_mock("router", router, tier="fast")
     preg.register_mock("local-judge", router, tier="local")
+    preg.register_mock("standard-judge", router, tier="standard")
 
     services = StepServices(
         provider_registry=preg,

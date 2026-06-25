@@ -1977,6 +1977,16 @@ class StartupOrchestrator:
                             msg.channel, chan_pump, chan_adapter
                         )
                         core_adapters[msg.channel] = chan_adapter
+                        # Publish into the core's ChannelRegistry too, so the
+                        # notification deliverer (proactive send_text + the
+                        # send_file/send_message tools) can resolve this channel.
+                        # Without it those fail "unknown channel"/"channel
+                        # unavailable" because the real adapter lives in the
+                        # gateway. Idempotent — guarded by `registered`.
+                        from stackowl.channels.registry import ChannelRegistry
+
+                        with contextlib.suppress(Exception):
+                            ChannelRegistry.instance().register(chan_adapter)
                         registered.add(msg.channel)
                     try:
                         await turn_client.submit(msg)

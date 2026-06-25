@@ -232,6 +232,7 @@ def _build_backend(
     # ENTIRE cascade returns the scripted verdict.  Also serves the triage call.
     preg.register_mock("fast-judge", judge, tier="fast")
     preg.register_mock("local-judge", judge, tier="local")
+    preg.register_mock("standard-judge", judge, tier="standard")
 
     owl_registry = OwlRegistry.with_default_secretary()
     # No explicit caps on the owl → default backstop: DEFAULT_TURN_MAX_STEPS=20.

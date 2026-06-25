@@ -162,6 +162,7 @@ def _build_backend(
     preg.register_mock("powerful", provider, tier="powerful")
     preg.register_mock("router", provider, tier="fast")
     preg.register_mock("local-judge", provider, tier="local")
+    preg.register_mock("standard-judge", provider, tier="standard")
 
     services = StepServices(
         provider_registry=preg,

@@ -125,9 +125,15 @@ def build_persistence_check(
         # (True, JUDGE_ERROR_REASON) instead of raising. So a primary failure shows
         # up EITHER as a raised exception (provider lookup) OR as that sentinel —
         # both route to the fallback tier rather than silently accepting a give-up.
+        # Judge tier is config-driven (default "standard"): the smallest tier is a
+        # false economy here — a thinking model rambles for thousands of tokens
+        # (slow) and rules give-up unreliably (wrong), forcing premature
+        # escalations. Resolved lazily so a hot settings reload is picked up.
+        _settings = getattr(services, "settings", None)
+        _judge_tier = getattr(_settings, "judge_tier", "standard") or "standard"
         try:
             judge = primary if primary is not None else (
-                preg.get_with_cascade("fast") if preg is not None else None
+                preg.get_with_cascade(_judge_tier) if preg is not None else None
             )
             if judge is None:  # no registry → cannot judge (fail open)
                 delivered, reason = True, JUDGE_ERROR_REASON

@@ -205,15 +205,63 @@ def _split_flags_and_operands(rest: list[str]) -> tuple[list[str], list[str]]:
     return flags, operands
 
 
+# Shell control operators that separate sub-commands. The detector splits on
+# these so a chained sub-command (``cd /x && rm -rf /``) is inspected, not just
+# the first word — now that the tool executes through a real shell, ``&&``/``|``/
+# ``;`` are live, so the safety net must follow them.
+_SHELL_OP_RE = re.compile(r"(&&|\|\||;|\||&|\n)")
+
+
+def _shell_segments(args: list[str]) -> list[list[str]]:
+    """Split a token list into sub-command argv lists on shell control operators.
+
+    Best-effort and conservative: each token is exploded on operator boundaries
+    (``"a;"`` → ``"a"`` then ``;``; ``"/&&rm"`` → ``/`` then ``&&`` then ``rm``)
+    so spaced AND glued chains both surface their sub-commands. Used ONLY by the
+    catastrophic detector; over-splitting can only make detection stricter, never
+    looser (execution still uses the original command string verbatim).
+    """
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for tok in args:
+        for part in _SHELL_OP_RE.split(tok):
+            if part == "":
+                continue
+            if _SHELL_OP_RE.fullmatch(part):  # an operator → sub-command boundary
+                if current:
+                    segments.append(current)
+                    current = []
+            else:
+                current.append(part)
+    if current:
+        segments.append(current)
+    return segments
+
+
 def is_catastrophic(args: list[str]) -> tuple[bool, str]:
     """Detect a truly system-destroying command shape (conservative).
 
     ``args`` is the shlex-split command. Returns ``(True, human_reason)`` on a
-    match, ``(False, "")`` otherwise. This is intentionally narrow: it matches
-    command STRUCTURE and target PATHS (multilingual-safe — no natural-language
-    keywords), and errs toward catching only the obvious catastrophic shapes so
-    that normal file writes/deletes (``rm -rf ./build``, ``echo x > f.txt``) run
-    silently. ``shell=False`` already neutralizes pipes/redirects/chaining.
+    match, ``(False, "")`` otherwise. Splits chained commands on shell operators
+    and checks EACH sub-command, so ``cd /x && rm -rf /`` is caught even though
+    the base word is ``cd``.
+    """
+    if not args:
+        return (False, "")
+    for segment in _shell_segments(args):
+        hit, reason = _is_catastrophic_segment(segment)
+        if hit:
+            return (hit, reason)
+    return (False, "")
+
+
+def _is_catastrophic_segment(args: list[str]) -> tuple[bool, str]:
+    """Catastrophic-shape check for a SINGLE sub-command (no operators).
+
+    Intentionally narrow: it matches command STRUCTURE and target PATHS
+    (multilingual-safe — no natural-language keywords), and errs toward catching
+    only the obvious catastrophic shapes so that normal file writes/deletes
+    (``rm -rf ./build``, ``echo x > f.txt``) run silently.
     """
     if not args:
         return (False, "")
@@ -358,15 +406,25 @@ async def run_argv(
     tool_name: str = "shell",
     workdir: str | None = None,
     timeout_sec: float = _TIMEOUT_SEC,
+    shell_command: str | None = None,
 ) -> ToolResult:
-    """Run an already-split argv through the allowlisted subprocess boundary.
+    """Run a command through the shared subprocess boundary.
 
     The SINGLE execution seam shared by :class:`ShellTool` and learned tools: the
-    catastrophic-shape check + consent path, then ``create_subprocess_exec``
-    (``shell=False`` — pipes/redirects/chaining are inert), timeout, and OSError
-    handling, with 4-point logging. Honors the workspace-CWD default (no
-    ``workdir`` → workspace). Never raises — every failure becomes a structured
-    failed :class:`ToolResult`.
+    catastrophic-shape check (operator-aware, see :func:`is_catastrophic`) +
+    consent path, then the spawn, timeout, and OSError handling, with 4-point
+    logging. Honors the workspace-CWD default (no ``workdir`` → workspace). Never
+    raises — every failure becomes a structured failed :class:`ToolResult`.
+
+    Two execution modes:
+
+    * ``shell_command`` given → run it through a real shell
+      (``create_subprocess_shell`` = ``/bin/sh -c``) so builtins (``cd``),
+      operators (``&&``/``||``/``;``), pipes and redirects work. ``argv`` is the
+      shlex-split form, used ONLY for the catastrophic safety check.
+    * ``shell_command`` ``None`` → run ``argv`` directly via
+      ``create_subprocess_exec`` (``shell=False``). The path learned tools use:
+      pre-built argv, no shell interpretation.
     """
     t0 = time.monotonic()
     if not argv:
@@ -390,14 +448,25 @@ async def run_argv(
         if decision is not None:
             return decision  # refused / declined / fail-closed — never spawns
 
-    log.tool.debug("shell.execute: launching subprocess", extra={"_fields": {"args": argv[:5]}})
+    log.tool.debug(
+        "shell.execute: launching subprocess",
+        extra={"_fields": {"args": argv[:5], "shell": shell_command is not None}},
+    )
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd or None,
-        )
+        if shell_command is not None:
+            proc = await asyncio.create_subprocess_shell(
+                shell_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd or None,
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd or None,
+            )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
     except TimeoutError:
         duration_ms = (time.monotonic() - t0) * 1000
@@ -441,7 +510,8 @@ class ShellTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run any shell command in a subprocess (shell=False, never shell=True). "
+            "Run a shell command in a subprocess. Full shell syntax works: "
+            "builtins (cd), operators (&&, ||, ;), pipes (|) and redirects (>). "
             "Installs, downloads, network and file writes run silently with no "
             "prompt. Only truly catastrophic, system-destroying commands "
             "(rm -rf on a system/home root, dd/mkfs/shred/wipefs on a device, "
@@ -475,10 +545,13 @@ class ShellTool(Tool):
                 "command": {
                     "type": "string",
                     "description": (
-                        "Shell command string. Any command runs silently — including "
-                        "installs, downloads, network calls and file writes. Only "
-                        "catastrophic, system-destroying commands require the user's "
-                        "explicit approval before they run."
+                        "Shell command string, run through a real shell — chaining "
+                        "(cd /dir && make), pipes (a | b) and redirects (> f) all "
+                        "work. Any command runs silently — including installs, "
+                        "downloads, network calls and file writes. Only catastrophic, "
+                        "system-destroying commands require the user's explicit "
+                        "approval before they run. Tip: set workdir instead of a "
+                        "leading cd when you just need a different directory."
                     ),
                 },
                 "workdir": {
@@ -514,7 +587,15 @@ class ShellTool(Tool):
                 success=False, output="", error=f"Invalid command syntax: {exc}", duration_ms=0,
                 side_effect_committed=False,  # unparseable — never spawned
             )
-        # The shared seam does the catastrophic-shape check + consent path, the
-        # workspace-CWD default, create_subprocess_exec, timeout and OSError
-        # handling (the learned-tool path runs the SAME seam).
-        return await run_argv(args, tool_name="shell", workdir=workdir, timeout_sec=timeout_sec)
+        # The shared seam does the catastrophic-shape check (on the shlex-split
+        # `args`) + consent path, the workspace-CWD default, the spawn, timeout
+        # and OSError handling. We pass the ORIGINAL command string so it runs
+        # through a real shell — builtins (cd), operators (&&/||/;), pipes and
+        # redirects all work — while the safety check still inspects `args`.
+        return await run_argv(
+            args,
+            tool_name="shell",
+            workdir=workdir,
+            timeout_sec=timeout_sec,
+            shell_command=command,
+        )

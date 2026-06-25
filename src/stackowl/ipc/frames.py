@@ -129,6 +129,21 @@ class SendTextFrame(_Frame):
     target: int | str | None = None
 
 
+class SendFileFrame(_Frame):
+    """Core -> gateway: a file/image to upload on a channel.
+
+    The split's core has no live channel adapter (the bot/terminal lives in the
+    gateway), so a file upload — like ``send_text`` — must cross the socket and be
+    performed by the gateway's real adapter. ``file_path`` is a path on the shared
+    local filesystem (gateway and core run on the same host)."""
+
+    type: Literal["send_file"] = "send_file"
+    channel: str
+    file_path: str
+    caption: str | None = None
+    target: int | str | None = None
+
+
 class ProgressEventFrame(_Frame):
     """Core -> gateway: a UI progress event (e.g. pipeline_step_changed) as a dict.
 
@@ -217,6 +232,7 @@ Frame = Annotated[
     | QueryRunningFrame
     | RunningStateFrame
     | SendTextFrame
+    | SendFileFrame
     | ProgressEventFrame
     | ClarifyAskFrame
     | ClarifyReplyFrame

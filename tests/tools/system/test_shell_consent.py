@@ -94,6 +94,48 @@ def test_catastrophic_commands_flagged(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        # Now that the shell is real, a catastrophic sub-command after an
+        # operator must NOT evade detection by hiding behind a benign base word.
+        "cd /tmp && rm -rf /",
+        "echo cleaning; rm -rf /etc",
+        "true | rm -rf /usr",
+        "make build || rm -rf /home",
+        "cd / && chmod -R 777 /etc",
+        "ls && dd if=/dev/zero of=/dev/sda",
+        # glued (no spaces) operator must also split
+        "cd /&&rm -rf /",
+    ],
+)
+def test_chained_catastrophic_subcommand_flagged(command: str) -> None:
+    import shlex
+
+    flagged, reason = is_catastrophic(shlex.split(command))
+    assert flagged is True, command
+    assert reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Benign chains must still run silently (no false positives from splitting).
+        "cd /tmp && ls",
+        "echo a && echo b",
+        "git pull && npm install",
+        "cat log.txt | grep error",
+        "mkdir build && cd build && cmake ..",
+        "rm -rf ./build && make",
+    ],
+)
+def test_benign_chains_not_flagged(command: str) -> None:
+    import shlex
+
+    flagged, _reason = is_catastrophic(shlex.split(command))
+    assert flagged is False, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "ls",
         "ls -la /etc",
         "git status",
@@ -140,18 +182,55 @@ class _FakeProc:
 
 
 def _patch_subprocess(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Patch create_subprocess_exec; record the args it was invoked with."""
+    """Patch both subprocess spawners; record the args they were invoked with.
+
+    ShellTool now spawns via ``create_subprocess_shell`` (real shell); learned
+    tools still use ``create_subprocess_exec``. Patch both so a spawn through
+    either path is recorded as ``called``.
+    """
     captured: dict[str, Any] = {"called": False, "args": None}
 
-    async def _fake_exec(*args: Any, **kwargs: Any) -> _FakeProc:
+    async def _fake_spawn(*args: Any, **kwargs: Any) -> _FakeProc:
         captured["called"] = True
         captured["args"] = args
         return _FakeProc()
 
     monkeypatch.setattr(
-        "stackowl.tools.system.shell.asyncio.create_subprocess_exec", _fake_exec
+        "stackowl.tools.system.shell.asyncio.create_subprocess_exec", _fake_spawn
+    )
+    monkeypatch.setattr(
+        "stackowl.tools.system.shell.asyncio.create_subprocess_shell", _fake_spawn
     )
     return captured
+
+
+@pytest.mark.asyncio
+async def test_shell_operators_and_builtins_actually_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real subprocess: shell builtins (cd) and operators (&&) work end-to-end.
+
+    Regression for the exec-mode bug where `cd /x && y` was shlex-split into
+    argv `['cd', ...]` and `execvp('cd')` raised FileNotFoundError, tripping the
+    same-tool circuit breaker. With a real shell, `cd / && pwd` prints `/`.
+    """
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    result = await ShellTool().execute(command="cd / && pwd")
+
+    assert result.success is True, result.error
+    assert result.output.strip() == "/"
+
+
+@pytest.mark.asyncio
+async def test_shell_pipe_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real subprocess: a pipe is honored, not passed as inert literal args."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    result = await ShellTool().execute(command="printf 'a\\nb\\nc\\n' | wc -l")
+
+    assert result.success is True, result.error
+    assert result.output.strip() == "3"
 
 
 @pytest.mark.asyncio
