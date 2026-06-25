@@ -73,21 +73,24 @@ def test_parse_reflection_response_handles_fenced_block() -> None:
 
 # --- ReflectionPromptBuilder -----------------------------------------------
 
-def test_reflection_prompt_includes_failure_class_and_quality_score() -> None:
+def test_reflection_prompt_is_positive_and_includes_trace() -> None:
+    # POSITIVE-ONLY: the prompt coaches on what WORKED, never on failure.
     outcome = TaskOutcome(
         outcome_id=1, trace_id="t1", session_id="s", owl_name="scout",
-        channel="cli", success=False, latency_ms=5000.0, tool_call_count=3,
-        failure_class="OwlTimeoutError", quality_score=0.3,
-        step_durations={"execute": 4900.0}, input_text="research stuff",
-        response_text="(error)", captured_at=1.0, scored_at=2.0,
+        channel="cli", success=True, latency_ms=800.0, tool_call_count=3,
+        failure_class=None, quality_score=0.9,
+        step_durations={"execute": 700.0}, input_text="research stuff",
+        response_text="(great answer)", captured_at=1.0, scored_at=2.0,
     )
     msgs = ReflectionPromptBuilder().build(outcome)
     assert len(msgs) == 2
     user_text = msgs[1].content
-    assert "OwlTimeoutError" in user_text
     assert "research stuff" in user_text
     assert "scout" in user_text
-    # System message states the JSON schema.
+    # System message is positively framed and states the JSON schema.
+    system_low = msgs[0].content.lower()
+    assert "worked" in system_low or "winning" in system_low
+    assert "failure" not in system_low or "never frame anything as a failure" in system_low
     assert "summary" in msgs[0].content
     assert "suggested_strategy" in msgs[0].content
 
@@ -114,32 +117,30 @@ async def _make_outcome(
     return out.outcome_id
 
 
-async def test_list_pending_returns_low_quality_outcomes(tmp_db: DbPool) -> None:
-    """Outcomes with quality_score < 0.6 are eligible for reflection."""
+async def test_list_pending_returns_high_quality_successes(tmp_db: DbPool) -> None:
+    """POSITIVE-ONLY: a successful, high-quality outcome IS eligible (learn the win)."""
+    rstore = ReflectionStore(tmp_db)
+    await _make_outcome(tmp_db, trace_id="good", quality_score=0.85, success=True)
+    pending = await rstore.list_pending()
+    assert len(pending) == 1
+    assert pending[0].trace_id == "good"
+
+
+async def test_list_pending_excludes_low_quality_outcomes(tmp_db: DbPool) -> None:
+    """POSITIVE-ONLY: quality_score < 0.6 is NOT learned (no 'this was mediocre' memory)."""
     rstore = ReflectionStore(tmp_db)
     await _make_outcome(tmp_db, trace_id="lo", quality_score=0.3, success=True)
     pending = await rstore.list_pending()
-    assert len(pending) == 1
-    assert pending[0].trace_id == "lo"
+    assert pending == []
 
 
-async def test_list_pending_returns_failure_outcomes(tmp_db: DbPool) -> None:
-    """Outcomes with failure_class IS NOT NULL are eligible (even if quality high)."""
+async def test_list_pending_excludes_failures(tmp_db: DbPool) -> None:
+    """POSITIVE-ONLY: a failure is NEVER learned (no 'this didn't work / I can't' memory)."""
     rstore = ReflectionStore(tmp_db)
     await _make_outcome(
         tmp_db, trace_id="err", quality_score=0.9, success=False,
         failure_class="OwlTimeoutError",
     )
-    pending = await rstore.list_pending()
-    assert len(pending) == 1
-    assert pending[0].trace_id == "err"
-    assert pending[0].failure_class == "OwlTimeoutError"
-
-
-async def test_list_pending_excludes_high_quality_successes(tmp_db: DbPool) -> None:
-    """quality_score >= 0.6 AND no failure → skip (the cost > value vote)."""
-    rstore = ReflectionStore(tmp_db)
-    await _make_outcome(tmp_db, trace_id="good", quality_score=0.85, success=True)
     pending = await rstore.list_pending()
     assert pending == []
 
@@ -155,12 +156,14 @@ async def test_list_pending_excludes_unscored_outcomes(tmp_db: DbPool) -> None:
 async def test_list_pending_excludes_already_reflected(tmp_db: DbPool) -> None:
     """Once a reflection exists for a trace_id, it's excluded from list_pending."""
     rstore = ReflectionStore(tmp_db)
-    await _make_outcome(tmp_db, trace_id="r1", quality_score=0.3, success=True)
+    # A high-quality success (eligible under positive-only) that has already been
+    # reflected — so the exclusion is by the reflection, not by the quality filter.
+    await _make_outcome(tmp_db, trace_id="r1", quality_score=0.85, success=True)
     # Reflect on it.
     await rstore.write(
         trace_id="r1", owl_name="secretary",
         summary="test", suggested_strategy="test strat",
-        failure_class=None, quality_score=0.3,
+        failure_class=None, quality_score=0.85,
         embedding=None, embedding_model=None,
     )
     pending = await rstore.list_pending()
