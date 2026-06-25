@@ -431,11 +431,12 @@ class DurableSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     goals: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Route scheduled owl goals through the durable pipeline (checkpointed, "
-            "exactly-once, resumable). OFF by default — flag-off goal execution is "
-            "byte-for-byte the legacy ephemeral path."
+            "Route scheduled owl goals AND objective sub-goals through the durable "
+            "pipeline (checkpointed, exactly-once, resumable) so long-running "
+            "autonomous work survives a restart. ON by default as of the Objective "
+            "Manager keystone; set False to fall back to the legacy ephemeral path."
         ),
         json_schema_extra={"hot_reload": True},
     )
