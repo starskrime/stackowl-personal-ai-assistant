@@ -4,9 +4,10 @@ Dedicated table (migration 0030) — kept separate from staged_facts because
 reflections are *learning* artifacts (telemetry about how the agent thought),
 not knowledge facts. Operator-approved decision per the Commit 2 audit.
 
-A reflection is written exactly when the critic scored an outcome with
-either ``failure_class IS NOT NULL`` OR ``quality_score < 0.6``. High-quality
-successes are skipped per the trigger vote — cost > value.
+POSITIVE-ONLY LEARNING (operator directive): a reflection is written exactly
+when the critic scored an outcome as a SUCCESS with ``quality_score >= 0.6`` and
+no ``failure_class``. Failures and low-quality outcomes are skipped — the
+platform remembers what worked, never "this failed / I can't".
 """
 
 from __future__ import annotations
@@ -38,8 +39,10 @@ class Reflection:
 
 
 # Filter applied to task_outcomes when picking the next batch to reflect on.
-# We reflect on failures and low-quality successes only — see operator vote.
-_LOW_QUALITY_THRESHOLD = 0.6
+# POSITIVE-ONLY LEARNING (operator directive): the platform reflects ONLY on
+# SUCCESSFUL, high-quality outcomes — it builds a library of "what worked" and
+# never accumulates "this failed / I can't" memories.
+_HIGH_QUALITY_THRESHOLD = 0.6
 
 _LIST_PENDING_SQL = f"""
 SELECT o.trace_id, o.session_id, o.owl_name, o.channel,
@@ -52,7 +55,9 @@ LEFT JOIN reflections r ON r.trace_id = o.trace_id AND r.owner_id = o.owner_id
 WHERE o.owner_id = ?
   AND r.reflection_id IS NULL
   AND o.quality_score IS NOT NULL
-  AND (o.failure_class IS NOT NULL OR o.quality_score < {_LOW_QUALITY_THRESHOLD})
+  AND o.failure_class IS NULL
+  AND o.success = 1
+  AND o.quality_score >= {_HIGH_QUALITY_THRESHOLD}
 ORDER BY o.captured_at ASC
 LIMIT ?
 """
@@ -83,13 +88,14 @@ class ReflectionStore(OwnedRepository):
     async def list_pending(self, limit: int = 10) -> list[TaskOutcome]:
         """Return task_outcomes that are scored, eligible-for-reflection, and unreflected.
 
-        Eligibility: failure_class IS NOT NULL OR quality_score < 0.6.
-        High-quality successes are intentionally skipped.
+        Eligibility (positive-only): success = 1 AND failure_class IS NULL AND
+        quality_score >= 0.6. Failures and low-quality outcomes are intentionally
+        skipped — the platform learns only from what worked.
         """
         # 1. ENTRY
         log.memory.debug(
             "[reflections] list_pending: entry",
-            extra={"_fields": {"limit": limit, "low_quality_threshold": _LOW_QUALITY_THRESHOLD}},
+            extra={"_fields": {"limit": limit, "high_quality_threshold": _HIGH_QUALITY_THRESHOLD}},
         )
         # 3. STEP — LEFT JOIN against reflections gives us only unreflected rows
         rows = await self._db.fetch_all(_LIST_PENDING_SQL, (self._owner_id, limit))

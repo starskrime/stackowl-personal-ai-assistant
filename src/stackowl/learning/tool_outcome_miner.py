@@ -106,10 +106,12 @@ class ToolOutcomeMiner:
         for o in outcomes:
             if not o.tool_sequence:
                 continue
-            # A failed run with multiple tools — credit the failure to every
-            # tool in the sequence (we can't blame attribution without per-
-            # tool error data; daily mining is conservative).
-            failure_label = o.failure_class or "succeeded"
+            # POSITIVE-ONLY LEARNING (operator directive): mine ONLY what WORKED.
+            # A failed run is skipped entirely — the platform never learns a
+            # "tool X fails under Y" heuristic, only "tool X succeeds for these".
+            if o.failure_class:
+                continue
+            failure_label = "succeeded"
             for tool in o.tool_sequence:
                 buckets[(tool, failure_label)].append(o)
         # 3. STEP — emit heuristics for buckets above threshold

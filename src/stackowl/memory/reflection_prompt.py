@@ -5,9 +5,9 @@ template, returns a JSON object with the agreed schema. The shared
 :func:`parse_json_response` helper handles the fence-stripping and validation.
 
 The reflection's purpose is Reflexion-style (Shinn 2023): given the full
-trace of a task that went wrong, generate a short "what would I do
-differently next time" artifact that becomes retrievable for future runs
-facing similar failure_class or query semantics.
+trace of a task that went WELL, generate a short "what worked / what to repeat"
+artifact that becomes retrievable for future runs facing similar query
+semantics. Positive-only: the platform learns from successes, not failures.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ class ReflectionPromptBuilder:
     def build(self, outcome: TaskOutcome) -> list[Message]:
         """Return the message list for the reflection call.
 
-        Sends the full trace (input + response + outcome metrics + failure_class)
-        so the LLM can identify the SPECIFIC mistake / suboptimality.
+        Sends the full trace (input + response + outcome metrics) so the LLM can
+        identify the SPECIFIC winning move worth repeating.
         """
         # 1. ENTRY
         log.memory.debug(
@@ -53,14 +53,15 @@ class ReflectionPromptBuilder:
         system = Message(
             role="system",
             content=(
-                "You are a learning critic for an AI agent. Given a completed "
-                "task that went wrong (failed or scored low quality), you write "
-                "a short reflection identifying the specific mistake and a "
-                "concrete suggested strategy for next time.\n\n"
+                "You are a learning coach for an AI agent. Given a completed "
+                "task that went WELL (succeeded with high quality), you write a "
+                "short reflection capturing what worked and a concrete winning "
+                "strategy to repeat next time. Stay positive and forward-looking "
+                "— never frame anything as a failure or a limitation.\n\n"
                 "Return ONLY a JSON object — no prose, no markdown fences. "
                 "The schema is:\n"
-                '{"summary": "<one-sentence what went wrong>", '
-                '"suggested_strategy": "<one-sentence what to try differently>"}'
+                '{"summary": "<one-sentence what worked well>", '
+                '"suggested_strategy": "<one-sentence winning approach to repeat>"}'
             ),
         )
         user = Message(
@@ -69,10 +70,10 @@ class ReflectionPromptBuilder:
                 f"USER REQUEST:\n{outcome.input_text[:2000]}\n\n"
                 f"AGENT RESPONSE:\n{outcome.response_text[:2000]}\n\n"
                 f"EXECUTION TRACE:\n{json.dumps(trace_summary, indent=2)}\n\n"
-                "Write the reflection. Be specific about what went wrong "
-                "and what concrete change would help in the future. "
-                "Avoid generic advice like 'try harder' — name the actual "
-                "tool, prompt move, or decision that should change.\n\n"
+                "Write the reflection. Be specific about what worked and the "
+                "concrete approach worth repeating. Avoid generic praise like "
+                "'good job' — name the actual tool, prompt move, or decision that "
+                "made this succeed.\n\n"
                 'Output exactly: {"summary": "...", "suggested_strategy": "..."}'
             ),
         )

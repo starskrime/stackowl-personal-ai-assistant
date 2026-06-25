@@ -110,9 +110,11 @@ async def _seed_outcomes_with_failures(
         await store.set_quality_score(o.outcome_id, 0.9)
 
 
-async def test_miner_writes_heuristic_when_evidence_threshold_met(
+async def test_miner_skips_failures_positive_only(
     tmp_db: DbPool,
 ) -> None:
+    # POSITIVE-ONLY LEARNING: failures are never mined into a heuristic — the
+    # platform never learns "tool X fails under Y".
     await _seed_outcomes_with_failures(tmp_db, n_fail=4, n_success=0)
     heur_store = ToolHeuristicStore(tmp_db)
     miner = ToolOutcomeMiner(
@@ -123,11 +125,9 @@ async def test_miner_writes_heuristic_when_evidence_threshold_met(
     )
     report = await miner.mine()
     assert report.n_outcomes_scanned == 4
-    assert report.n_heuristics_written == 1
+    assert report.n_heuristics_written == 0  # failures yield no heuristic
     rows = await heur_store.find_for_tool("web_fetch", min_evidence=3)
-    assert len(rows) == 1
-    assert rows[0].condition_value == "ToolTimeoutError"
-    assert rows[0].predicted_outcome == "fails"
+    assert rows == []
 
 
 async def test_miner_skips_below_threshold(tmp_db: DbPool) -> None:
@@ -160,15 +160,16 @@ async def test_miner_heuristic_lesson_metadata_includes_mean_quality(
     tmp_db: DbPool,
 ) -> None:
     """Heuristic LessonDraft.metadata must carry both evidence_count and mean_quality."""
-    # Seed 3 failures with known quality scores (all 0.4) so mean_quality == 0.4
+    # POSITIVE-ONLY: seed 3 SUCCESSES with known quality scores (all 0.4) so
+    # mean_quality == 0.4 — the miner learns only from what worked.
     store = TaskOutcomeStore(tmp_db)
     for i in range(3):
-        tid = f"mq-fail-{i}"
+        tid = f"mq-ok-{i}"
         await store.record(
             trace_id=tid, session_id="s", owl_name="scout", channel="cli",
-            success=False, latency_ms=3000.0, tool_call_count=1,
-            failure_class="ToolTimeoutError", step_durations={},
-            input_text=f"task {i}", response_text="(error)",
+            success=True, latency_ms=300.0, tool_call_count=1,
+            failure_class=None, step_durations={},
+            input_text=f"task {i}", response_text="(done)",
             tool_sequence=("web_fetch",),
         )
         o = await store.get_by_trace_id(tid)

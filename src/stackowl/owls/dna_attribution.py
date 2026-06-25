@@ -136,8 +136,14 @@ class DnaAttributor:
             "[dna] attributor.attribute: entry",
             extra={"_fields": {"owl_name": owl_name, "n_outcomes": len(outcomes)}},
         )
-        # 2. DECISION — too few scored outcomes
-        scored = [o for o in outcomes if o.quality_score is not None and o.dna_snapshot]
+        # 2. DECISION — too few scored outcomes. POSITIVE-ONLY LEARNING (operator
+        # directive): tune traits from SUCCESSFUL outcomes only, so the bands
+        # reflect what worked — never which configuration failed.
+        scored = [
+            o for o in outcomes
+            if o.quality_score is not None and o.dna_snapshot
+            and o.success and not o.failure_class
+        ]
         if len(scored) < self._min_samples:
             log.engine.debug(
                 "[dna] attributor.attribute: exit — below sample threshold",

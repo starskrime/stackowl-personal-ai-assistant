@@ -1,9 +1,9 @@
 """ReflectionWriterHandler — async job that generates Reflexion-style reflections.
 
 Polls ``task_outcomes`` for rows that have been critic-scored AND meet the
-reflection trigger criteria (failure_class IS NOT NULL OR quality_score <
-0.6), runs a fast-tier LLM reflection call, embeds the summary, persists to
-``reflections``. Mirrors :class:`CriticScorerHandler` exactly — same handler
+POSITIVE-ONLY reflection trigger (success = 1 AND failure_class IS NULL AND
+quality_score >= 0.6), runs a fast-tier LLM reflection call, embeds the summary,
+persists to ``reflections``. Mirrors :class:`CriticScorerHandler` exactly — same handler
 contract, same 4-point logging, same JobResult shape.
 
 Skip rule: rows that already have a reflection (LEFT JOIN reflections IS
@@ -38,7 +38,7 @@ _DEFAULT_BATCH_LIMIT = 10
 
 
 class ReflectionWriterHandler(JobHandler):
-    """Generate reflections for failed / low-quality outcomes."""
+    """Generate reflections for SUCCESSFUL, high-quality outcomes (what worked)."""
 
     _handler_name: ClassVar[str] = _REFLECTION_HANDLER_NAME
 
@@ -241,12 +241,9 @@ class ReflectionWriterHandler(JobHandler):
         from stackowl.learning.lessons_index import LessonDraft
 
         # Compose the lesson content — same shape the LLM gets at retrieval.
-        content = (
-            f"Reflection on {outcome.owl_name} task ({outcome.failure_class or 'low-quality'}): "
-            f"{summary}"
-        )
+        content = f"What worked for {outcome.owl_name}: {summary}"
         if suggested_strategy:
-            content += f" Strategy: {suggested_strategy}"
+            content += f" Repeat: {suggested_strategy}"
         try:
             await self._lessons_index.publish(LessonDraft(
                 source_type="reflection",
