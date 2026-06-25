@@ -204,6 +204,15 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(objective_driver_handler)
 
+        # Anticipation (Phase 3) — the perch watches a filesystem path and pings on
+        # change through the SAME durable delivery seam. on_demand (created via the
+        # cronjob `watch` action with watch_path); no standing seed. Needs no
+        # browser/db — just a state dir + the deliverer.
+        from stackowl.paths import StackowlHome
+        from stackowl.scheduler.handlers.perch import register_perch_handler
+
+        register_perch_handler(StackowlHome.home() / "perch", goal_job_deliverer)
+
         # Evolution uses its own register factory (which owns the import + DI).
         register_evolution_handler(
             db=db,

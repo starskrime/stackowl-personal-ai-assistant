@@ -564,3 +564,26 @@ async def test_cross_owl_cannot_hijack_anothers_job(migrated_db: DbPool) -> None
     assert after.schedule == before.schedule
     # No handler ever ran from the foreign 'run' attempt.
     assert backend.calls == []
+
+
+async def test_watch_path_creates_perch_job(migrated_db: DbPool, tmp_path: Path) -> None:
+    await _seed_session(migrated_db)
+    watched = tmp_path / "notes"
+    watched.mkdir()
+    result = await _run(
+        migrated_db, action="watch", watch_path=str(watched), schedule="every 5m"
+    )
+    assert result.success
+    body = _payload(result)
+    assert body["created"] is True
+    job_id = body["job_id"]
+    persisted = {j.job_id: j for j in await JobScheduler(db=migrated_db).list_jobs()}
+    assert persisted[job_id].handler_name == "perch"
+    assert persisted[job_id].params["path"] == str(watched)
+
+
+async def test_watch_requires_url_or_path(migrated_db: DbPool) -> None:
+    await _seed_session(migrated_db)
+    result = await _run(migrated_db, action="watch", schedule="every 5m")
+    assert not result.success
+    assert "watch_url" in (result.error or "") or "watch_path" in (result.error or "")
