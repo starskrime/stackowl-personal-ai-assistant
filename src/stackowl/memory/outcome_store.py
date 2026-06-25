@@ -138,7 +138,13 @@ class TaskOutcomeStore(OwnedRepository):
         )
 
     async def list_pending_critic(self, limit: int = 25) -> list[TaskOutcome]:
-        """Return outcomes that haven't been scored yet (quality_score IS NULL).
+        """Return SUCCESSFUL outcomes that haven't been scored yet.
+
+        POSITIVE-ONLY LEARNING (operator directive): the critic scores only
+        successful outcomes (``success = 1 AND failure_class IS NULL``), because
+        every downstream learner (reflection, tool-miner, DNA attribution) now
+        consumes successes only — scoring a failure would be wasted LLM work and
+        the platform never learns from it anyway.
 
         Ordered oldest-first so the critic scores in the order things happened
         (gives more sensible cross-references when reading reflections later).
@@ -156,6 +162,7 @@ class TaskOutcomeStore(OwnedRepository):
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
                WHERE owner_id = ? AND quality_score IS NULL
+                     AND success = 1 AND failure_class IS NULL
                ORDER BY captured_at ASC
                LIMIT ?""",
             (self._owner_id, limit),
