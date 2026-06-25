@@ -1,0 +1,198 @@
+"""ObjectiveDriverHandler — advance standing objectives one sub-goal per tick (1C).
+
+The driver is the functional heart of the keystone: when the scheduler fires it,
+it advances each active objective by its next pending sub-goal (run through the
+pipeline backend), records progress, and decides continue / done / blocked. The
+act-on-reversible posture means an autonomous sub-goal that parks (a consequential
+action it cannot get consent for, non-interactively) blocks the objective and
+pings the owner — it never silently acts on the irreversible thing.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+from pathlib import Path
+
+import pytest
+
+from stackowl.db.migrations.runner import MigrationRunner
+from stackowl.db.pool import DbPool
+from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
+from stackowl.objectives.driver import ObjectiveDriverHandler
+from stackowl.objectives.model import Objective
+from stackowl.objectives.store import ObjectiveStore
+from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.scheduler.job import Job
+
+
+@pytest.fixture()
+async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
+    db_path = tmp_path / "driver.db"
+    MigrationRunner(db_path=db_path).run()
+    p = DbPool(db_path=db_path)
+    await p.open()
+    try:
+        yield p
+    finally:
+        await p.close()
+
+
+class _FakeBackend:
+    """Echoes the input as a single response; configurable errors / park."""
+
+    def __init__(self, *, text: str = "did it", errors: tuple[str, ...] = (), parked: bool = False) -> None:
+        self._text = text
+        self._errors = errors
+        self._parked = parked
+        self.runs = 0
+
+    async def run(self, state: PipelineState) -> PipelineState:
+        self.runs += 1
+        chunk = ResponseChunk(
+            content=self._text, is_final=False, chunk_index=0,
+            trace_id=state.trace_id, owl_name=state.owl_name,
+        )
+        return state.evolve(
+            responses=(chunk,), errors=self._errors, durable_parked=self._parked,
+        )
+
+
+class _FakeDeliverer:
+    """Records every deliver_for_job call; always reports delivered."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Job, str, str]] = []
+
+    async def deliver_for_job(
+        self, job: Job, *, message: str, category: str, urgency: str = "normal",
+    ) -> ProactiveDeliveryOutcome:
+        self.calls.append((job, message, category))
+        return ProactiveDeliveryOutcome(rollup="delivered", per_channel={"telegram": "delivered"})
+
+
+def _driver_job() -> Job:
+    return Job(
+        job_id="objective_driver-seed",
+        handler_name="objective_driver",
+        schedule="every 1m",
+        idempotency_key="objective_driver",
+        last_run_at=None,
+        next_run_at="2026-06-24T00:00:00+00:00",
+        status="running",
+    )
+
+
+async def _make_objective(
+    store: ObjectiveStore, subgoals: list[str], *, objective_id: str = "obj-1",
+) -> Objective:
+    obj = Objective(
+        objective_id=objective_id,
+        owner_id="principal-default",
+        intent="watch X and handle it",
+        channel="telegram",
+        target_channels=["telegram"],
+        target_addresses={"telegram": 999},
+    )
+    await store.create(obj)
+    await store.add_subgoals(objective_id, subgoals)
+    await store.append_event(objective_id, "created", "objective created")
+    return obj
+
+
+def test_handler_name_and_trigger_kind() -> None:
+    h = ObjectiveDriverHandler(db=None, backend=None)
+    assert h.handler_name == "objective_driver"
+    assert h.trigger_kind == "seeded"
+
+
+async def test_advances_one_pending_subgoal_per_tick(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["step a", "step b"])
+    backend = _FakeBackend(text="answer a")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend)
+
+    result = await handler.execute(_driver_job())
+
+    assert result.success
+    assert backend.runs == 1  # exactly one sub-goal advanced this tick
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "done" and subs[0].result == "answer a"
+    assert subs[1].status == "pending"
+    kinds = [e.kind for e in await store.list_events("obj-1")]
+    assert "subgoal_done" in kinds
+
+
+async def test_completes_objective_and_notifies_when_all_done(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["only step"])
+    backend = _FakeBackend(text="finished")
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    await handler.execute(_driver_job())   # tick 1 — run the sub-goal
+    await handler.execute(_driver_job())   # tick 2 — no pending → complete
+
+    obj = await store.get("obj-1")
+    assert obj.status == "done"
+    assert len(deliverer.calls) == 1  # notified once, on completion
+    _job, message, _category = deliverer.calls[0]
+    assert "watch X and handle it" in message
+
+
+async def test_blocks_objective_when_subgoal_parks(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["risky step"])
+    backend = _FakeBackend(parked=True, errors=("needs consent for an irreversible action",))
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    await handler.execute(_driver_job())
+
+    obj = await store.get("obj-1")
+    assert obj.status == "blocked"
+    assert obj.blocker and "irreversible" in obj.blocker
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "blocked"
+    assert len(deliverer.calls) == 1  # owner pinged about the block
+
+
+async def test_stalls_objective_on_subgoal_error(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["doomed step"])
+    backend = _FakeBackend(errors=("boom",))
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    await handler.execute(_driver_job())
+
+    obj = await store.get("obj-1")
+    assert obj.status == "blocked"
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "failed"
+    assert len(deliverer.calls) == 1
+
+
+async def test_no_active_objectives_is_noop_success(pool: DbPool) -> None:
+    backend = _FakeBackend()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend)
+    result = await handler.execute(_driver_job())
+    assert result.success
+    assert backend.runs == 0
+
+
+async def test_notify_targets_the_objective_recipient(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["only step"])
+    backend = _FakeBackend()
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    await handler.execute(_driver_job())  # run sub-goal
+    await handler.execute(_driver_job())  # complete + notify
+
+    job, _message, _category = deliverer.calls[0]
+    # The synthetic delivery job carries the OBJECTIVE's durable recipient, not
+    # the driver job's (which has none).
+    assert job.target_channels == ["telegram"]
+    assert job.target_addresses == {"telegram": 999}
