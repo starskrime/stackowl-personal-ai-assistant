@@ -46,6 +46,7 @@ _TOOLSET_GROUP = "scheduling"
 _DEFAULT_SOFT_CAP = 20
 _HANDLER = "goal_execution"
 _WATCH_HANDLER = "website_watch"
+_PERCH_HANDLER = "perch"
 _ACTIONS = ("create", "list", "update", "pause", "resume", "remove", "run", "watch")
 
 
@@ -62,6 +63,10 @@ class CronjobArgs(BaseModel):
     job_id: str | None = Field(default=None, description="Target job (update/pause/resume/remove/run).")
     watch_url: str | None = Field(
         default=None, description="The URL to watch for changes (watch action)."
+    )
+    watch_path: str | None = Field(
+        default=None,
+        description="A filesystem path (dir or file) to watch for changes (watch action).",
     )
 
 
@@ -80,7 +85,8 @@ class CronjobTool(Tool):
         return (
             "SCHEDULE a natural-language goal to run automatically on a recurrence. "
             "Actions: create (needs 'prompt' + 'schedule'), watch (needs "
-            "'watch_url' + 'schedule' — poll a page and ping you when it changes), "
+            "'schedule' + either 'watch_url' to poll a web page or 'watch_path' to "
+            "watch a filesystem path — ping you when it changes), "
             "list (your scheduled jobs), update (by 'job_id'; re-checks the "
             "prompt), pause, resume, remove, run (execute one job now) — the last "
             "four take 'job_id'. "
@@ -110,6 +116,10 @@ class CronjobTool(Tool):
                 "watch_url": {
                     "type": "string",
                     "description": "URL to watch for changes (watch action).",
+                },
+                "watch_path": {
+                    "type": "string",
+                    "description": "Filesystem path (dir or file) to watch for changes (watch action).",
                 },
             },
             "required": ["action"],
@@ -278,14 +288,26 @@ class CronjobTool(Tool):
         state. This is a defence-in-depth reuse, not a new bespoke validator.
         """
         watch_url = (args.watch_url or "").strip()
+        watch_path = (args.watch_path or "").strip()
         schedule = (args.schedule or "").strip()
-        if not watch_url or not schedule:
-            return self._err("watch requires both 'watch_url' and 'schedule'", t0)
+        # Pick the watch kind from whichever target was supplied: a filesystem path
+        # routes to the `perch` handler; a URL routes to `website_watch`. Both ride
+        # the same create/target/soft-cap flow below.
+        if watch_path:
+            target_value, handler, params_extra = watch_path, _PERCH_HANDLER, {"path": watch_path}
+        elif watch_url:
+            target_value, handler, params_extra = watch_url, _WATCH_HANDLER, {"url": watch_url}
+        else:
+            return self._err(
+                "watch requires 'schedule' and either 'watch_url' or 'watch_path'", t0
+            )
+        if not schedule:
+            return self._err("watch requires a 'schedule'", t0)
 
-        ok, reason = scan_cron_prompt(watch_url)
+        ok, reason = scan_cron_prompt(target_value)
         if not ok:
             log.tool.warning(
-                "cronjob.watch: url blocked", extra={"_fields": {"reason": reason}}
+                "cronjob.watch: target blocked", extra={"_fields": {"reason": reason}}
             )
             return self._err(f"blocked: {reason}", t0)
 
@@ -309,16 +331,16 @@ class CronjobTool(Tool):
                 t0,
             )
 
-        # Capture the ORIGIN delivery target at create time so the website_watch
-        # handler can route a change ping back to the chat it was scheduled from
+        # Capture the ORIGIN delivery target at create time so the watch handler
+        # can route a change ping back to the chat it was scheduled from
         # (a cron poll has no live session — the recipient MUST be durable now).
         target_channels, target_addresses = self._resolve_durable_target(channel)
         unreachable = not target_channels
 
         job = await scheduler.create_job(
-            handler_name=_WATCH_HANDLER,
+            handler_name=handler,
             schedule=schedule,
-            params={"url": watch_url, "created_by": CREATED_BY_TAG, "owl": owl},
+            params={**params_extra, "created_by": CREATED_BY_TAG, "owl": owl},
             primary_channel=channel,
             target_channels=target_channels,
             target_addresses=target_addresses,
