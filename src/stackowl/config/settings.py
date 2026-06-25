@@ -772,6 +772,13 @@ class Settings(BaseSettings):
     # always starts at "fast" (legacy, byte-identical). Helpers/extractor tiers are
     # config-driven and unaffected by this flag.
     answer_floor_by_intent: bool = True
+    # Tier for the delivery (deliver-vs-give-up) judge — a structured reasoning
+    # call, NOT the user-facing answer. Defaults to "standard": the smallest tier
+    # (a thinking model) rambles for thousands of tokens here (slow) and rules
+    # give-up unreliably (wrong), so the judge needs a capable-enough tier.
+    # General/config-driven — no vendor or model names; resolved via the tier
+    # cascade, so it degrades gracefully if "standard" is absent.
+    judge_tier: str = "standard"
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

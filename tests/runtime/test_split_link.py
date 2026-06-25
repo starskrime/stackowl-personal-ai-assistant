@@ -27,6 +27,7 @@ class FakeAdapter:
     def __init__(self) -> None:
         self.chunks: list[str] = []
         self.texts: list[str] = []
+        self.files: list[tuple[str, str | None, str | int | None]] = []
         self.done = asyncio.Event()
 
     async def send(self, reader) -> None:
@@ -36,6 +37,15 @@ class FakeAdapter:
 
     async def send_text(self, text: str) -> None:
         self.texts.append(text)
+
+    async def send_file(
+        self,
+        file_path: str,
+        caption: str | None = None,
+        *,
+        chat_id: str | int | None = None,
+    ) -> None:
+        self.files.append((file_path, caption, chat_id))
 
 
 def _msg(text: str = "hello", trace_id: str = "t1") -> IngressMessage:
@@ -121,6 +131,56 @@ async def test_proactive_send_text_routes_to_adapter(socket_path) -> None:
 
     assert adapter.texts == ["out-of-band ping"]
     assert adapter.chunks == ["done"]
+
+
+async def test_send_file_routes_across_split_to_adapter(socket_path) -> None:
+    """A file upload from the core reaches the gateway's real adapter (the split
+    bug was 'unknown channel' because the core had no live adapter for files)."""
+    from stackowl.channels.socket_adapter import SocketChannelAdapter
+
+    async def upload(msg: IngressMessage, sink: CoreSink) -> None:
+        # Mirror the production path: the deliverer resolves a SocketChannelAdapter
+        # from the core's ChannelRegistry and calls send_file with a target chat.
+        chan = SocketChannelAdapter(sink._conn, "cli")
+        await chan.send_file("/tmp/pic.png", "a caption", chat_id=42)
+        await sink.stream_writer().write(ResponseChunk(
+            content="sent", is_final=False, chunk_index=0,
+            trace_id=msg.trace_id, owl_name="owl"))
+        await sink.close_stream()
+
+    adapter = FakeAdapter()
+    link, stop = await _run_split(socket_path, upload, adapter)
+    try:
+        await link.submit(_msg())
+        await asyncio.wait_for(adapter.done.wait(), timeout=5)
+    finally:
+        await stop()
+
+    assert adapter.files == [("/tmp/pic.png", "a caption", 42)]
+    assert adapter.chunks == ["sent"]
+
+
+async def test_send_file_without_target_uses_default_destination(socket_path) -> None:
+    """No explicit chat_id → the adapter's default destination (chat_id=None)."""
+    from stackowl.channels.socket_adapter import SocketChannelAdapter
+
+    async def upload(msg: IngressMessage, sink: CoreSink) -> None:
+        chan = SocketChannelAdapter(sink._conn, "cli")
+        await chan.send_file("/tmp/doc.pdf")
+        await sink.stream_writer().write(ResponseChunk(
+            content="ok", is_final=False, chunk_index=0,
+            trace_id=msg.trace_id, owl_name="owl"))
+        await sink.close_stream()
+
+    adapter = FakeAdapter()
+    link, stop = await _run_split(socket_path, upload, adapter)
+    try:
+        await link.submit(_msg())
+        await asyncio.wait_for(adapter.done.wait(), timeout=5)
+    finally:
+        await stop()
+
+    assert adapter.files == [("/tmp/doc.pdf", None, None)]
 
 
 async def test_dispatch_crash_still_closes_stream(socket_path) -> None:

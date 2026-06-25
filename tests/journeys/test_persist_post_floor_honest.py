@@ -169,6 +169,7 @@ def _build_services(
     router = _RouterJudgeProvider()
     preg.register_mock("router", router, tier="fast")
     preg.register_mock("local-judge", router, tier="local")
+    preg.register_mock("standard-judge", router, tier="standard")
     preg.register_mock("fast", router, tier="fast")
     return StepServices(
         provider_registry=preg, owl_registry=owl_registry, tool_registry=tool_registry,

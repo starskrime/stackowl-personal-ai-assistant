@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator
 from stackowl.channels.base import ChannelAdapter
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.ipc.connection import FrameConnection
-from stackowl.ipc.frames import ClarifyAskFrame, SendTextFrame
+from stackowl.ipc.frames import ClarifyAskFrame, SendFileFrame, SendTextFrame
 from stackowl.ipc.stream_bridge import chunk_to_frame
 from stackowl.pipeline.streaming import ResponseChunk
 
@@ -54,6 +54,28 @@ class SocketChannelAdapter(ChannelAdapter):
 
     async def send_text(self, text: str) -> None:
         await self._conn.send(SendTextFrame(channel=self._channel, text=text))
+
+    async def send_file(
+        self,
+        file_path: str,
+        caption: str | None = None,
+        *,
+        chat_id: str | int | None = None,
+    ) -> None:
+        """Emit a SendFileFrame so the gateway's real adapter uploads the file.
+
+        Accepts the ``chat_id`` keyword (the ``_TargetedFileSender`` shape the
+        notification deliverer narrows to) so a file reaches a specific chat; the
+        gateway forwards it to the originating channel's adapter.
+        """
+        await self._conn.send(
+            SendFileFrame(
+                channel=self._channel,
+                file_path=file_path,
+                caption=caption,
+                target=chat_id,
+            )
+        )
 
     async def send_clarify(
         self,

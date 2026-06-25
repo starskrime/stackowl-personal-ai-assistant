@@ -182,6 +182,52 @@ async def test_genuine_delivered_after_giveup_is_accepted(
     assert await check("draft v2 grounded", ["web_search(ok)"]) is None
 
 
+class _RecordingRegistry:
+    """Provider registry that records every tier requested via get_with_cascade."""
+
+    def __init__(self, judge: object) -> None:
+        self.tiers: list[str] = []
+        self._judge = judge
+
+    def get_with_cascade(self, tier: str) -> object:
+        self.tiers.append(tier)
+        return self._judge
+
+
+class _SettingsStub:
+    def __init__(self, judge_tier: str) -> None:
+        self.judge_tier = judge_tier
+
+
+@pytest.mark.asyncio
+async def test_judge_resolves_standard_tier_by_default(
+    fake_state: PipelineState,
+) -> None:
+    """Default (no settings): the delivery judge resolves the "standard" tier, NOT
+    "fast" — the 2b fast tier was slow (thousands of think tokens) and ruled
+    give-up unreliably."""
+    reg = _RecordingRegistry(_DeliveredJudge())
+    services = StepServices(provider_registry=reg)  # settings=None → default
+    check = build_persistence_check(fake_state, services)
+    await check("a fine answer", ["shell(ok)"])
+    assert reg.tiers, "judge tier was never resolved"
+    assert reg.tiers[0] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_judge_tier_overridable_via_settings(
+    fake_state: PipelineState,
+) -> None:
+    """The judge tier is config-driven: settings.judge_tier wins."""
+    reg = _RecordingRegistry(_DeliveredJudge())
+    services = StepServices(
+        provider_registry=reg, settings=_SettingsStub("powerful")
+    )
+    check = build_persistence_check(fake_state, services)
+    await check("a fine answer", ["shell(ok)"])
+    assert reg.tiers[0] == "powerful"
+
+
 @pytest.mark.asyncio
 async def test_checker_built_for_delegated_turn(
     fake_state_delegated: PipelineState, fake_services: StepServices

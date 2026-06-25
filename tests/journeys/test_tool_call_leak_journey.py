@@ -132,6 +132,7 @@ def _build_services(provider: OpenAIProvider, tool_registry: ToolRegistry) -> St
     router = _RouterJudgeProvider()
     preg.register_mock("router", router, tier="fast")
     preg.register_mock("local-judge", router, tier="local")
+    preg.register_mock("standard-judge", router, tier="standard")
     preg.register_mock("fast", router, tier="fast")
     return StepServices(
         provider_registry=preg,

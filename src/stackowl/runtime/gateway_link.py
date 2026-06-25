@@ -42,6 +42,7 @@ from stackowl.ipc.frames import (
     HelloFrame,
     ProgressEventFrame,
     RestartNoticeFrame,
+    SendFileFrame,
     SendTextFrame,
 )
 from stackowl.ipc.stream_bridge import StreamDemux
@@ -63,6 +64,10 @@ class _Adapter(Protocol):
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None: ...  # noqa: D102
 
     async def send_text(self, text: str) -> None: ...  # noqa: D102
+
+    async def send_file(  # noqa: D102
+        self, file_path: str, caption: str | None = ..., *, chat_id: str | int | None = ...
+    ) -> None: ...
 
 
 class _EventSink(Protocol):
@@ -193,6 +198,17 @@ class GatewayLink:
             adapter = self._adapters.get(frame.channel)
             if adapter is not None:
                 await adapter.send_text(frame.text)
+        elif isinstance(frame, SendFileFrame):
+            adapter = self._adapters.get(frame.channel)
+            if adapter is not None:
+                # Target the specific chat when the core resolved one (telegram);
+                # otherwise the adapter's default destination.
+                if frame.target is not None:
+                    await adapter.send_file(
+                        frame.file_path, frame.caption, chat_id=frame.target
+                    )
+                else:
+                    await adapter.send_file(frame.file_path, frame.caption)
         elif isinstance(frame, ClarifyAskFrame):
             await self._deliver_clarify(frame)
         elif isinstance(frame, ConsentRequestFrame):
