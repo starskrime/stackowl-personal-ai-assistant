@@ -9,7 +9,10 @@ import pytest
 
 from stackowl.commands.owls_command import OwlsCommand
 
-_EXPECTED = {"list", "add", "edit", "remove", "health", "dna", "reset-dna"}
+_EXPECTED = {
+    "list", "add", "edit", "remove", "health", "dna", "reset-dna",
+    "objectives", "objective", "objective-cancel",
+}
 
 
 def _state():  # type: ignore[no-untyped-def]
