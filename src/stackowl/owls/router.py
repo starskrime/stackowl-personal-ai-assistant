@@ -188,8 +188,11 @@ class SecretaryRouter:
             "- 'clarify' ONLY when the request is genuinely ambiguous about WHAT to "
             "do AND the most likely action is expensive, slow, irreversible, or you "
             "are unsure it is even possible — so a wrong guess would waste real "
-            "effort or do harm. When torn between 'standard' and 'clarify', choose "
-            "'standard' and act. Judge by meaning, in any language.\n"
+            "effort or do harm. When the request is ambiguous but the most likely "
+            "action is reversible or cheap, do NOT clarify: choose 'standard', act "
+            "on the most likely interpretation, and state your assumption. When torn "
+            "between 'standard' and 'clarify', choose 'standard' and act. Judge by "
+            "meaning, in any language.\n"
             "Line 3 (ONLY if line 2 is 'clarify'): the single short question to ask "
             "the user, in their language. Omit this line otherwise."
         )

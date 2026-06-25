@@ -20,7 +20,9 @@ _HIGH_DIRECTIVES: tuple[tuple[str, str], ...] = (
     ),
     (
         "curiosity",
-        "Ask clarifying questions whenever intent or scope is ambiguous before producing the main answer.",
+        "When intent or scope is ambiguous but the most likely action is reversible, "
+        "act on the most likely interpretation and state your assumption — ask the "
+        "user a clarifying question only when the action is irreversible or expensive.",
     ),
     (
         "formality",

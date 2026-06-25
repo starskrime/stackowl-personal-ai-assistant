@@ -228,3 +228,12 @@ def test_manifest_severity_and_group() -> None:
 def test_registered_in_with_defaults() -> None:
     registry = ToolRegistry.with_defaults()
     assert any(t.name == "clarify" for t in registry.all())
+
+
+def test_description_reserves_clarify_for_irreversible() -> None:
+    # Act-first posture: the model should reach for clarify only before an
+    # irreversible/expensive action — not on every recoverable ambiguity. The
+    # description must say so explicitly so the owl stops "looking to my face".
+    desc = ClarifyTool().description.lower()
+    assert "irreversible" in desc
+    assert "reversible" in desc  # …and the act-and-state-assumption guidance for reversible work

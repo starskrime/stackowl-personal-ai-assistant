@@ -167,3 +167,15 @@ def test_prompt_distinguishes_direct_answer_from_action_required() -> None:
     assert "chit-chat" in low or "greeting" in low
     # …and now keys on the real discriminator: needing an external action.
     assert "external action" in low
+
+
+def test_prompt_biases_act_first_on_reversible_ambiguity() -> None:
+    # The act-vs-ask threshold must explicitly reserve 'clarify' for IRREVERSIBLE
+    # ambiguity and instruct the router to act + state an assumption when the
+    # likely action is reversible — so the assistant stops deferring on every
+    # recoverable ambiguity.
+    p = _r()._build_prompt([("secretary", "general")], "do something")
+    low = p.lower()
+    assert "irreversible" in low
+    assert "most likely" in low
+    assert "state your assumption" in low
