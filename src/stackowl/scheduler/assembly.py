@@ -36,6 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.critic_scorer_handler import CriticScorerHandler
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
     from stackowl.notifications.deliverer import ProactiveDeliverer
+    from stackowl.objectives.driver import ObjectiveDriverHandler
     from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.backends.base import OrchestratorBackend
@@ -74,6 +75,7 @@ class SchedulerComponents:
     knowledge_prune_handler: KnowledgePruneHandler
     tool_pruning_handler: ToolPruningHandler
     goal_execution_handler: GoalExecutionHandler
+    objective_driver_handler: ObjectiveDriverHandler
     critic_scorer_handler: CriticScorerHandler
     reflection_writer_handler: ReflectionWriterHandler
     skill_synthesizer_handler: SkillSynthesizerHandler
@@ -188,6 +190,19 @@ class SchedulerAssembly:
             job_deliverer=goal_job_deliverer,
         )
         HandlerRegistry.instance().register(goal_execution_handler)
+
+        # Objective Manager (keystone) — the ObjectiveDriver advances every active
+        # standing objective by one sub-goal per tick through the SAME pipeline
+        # backend + delivery seam as goal_execution. Seeded below ("every 1m").
+        from stackowl.objectives.driver import ObjectiveDriverHandler
+
+        objective_driver_handler = ObjectiveDriverHandler(
+            db=db,
+            backend=backend,
+            settings=settings,
+            job_deliverer=goal_job_deliverer,
+        )
+        HandlerRegistry.instance().register(objective_driver_handler)
 
         # Evolution uses its own register factory (which owns the import + DI).
         register_evolution_handler(
@@ -320,6 +335,13 @@ class SchedulerAssembly:
             db, handler_name="knowledge_prune",
             schedule="daily@04:00", next_hour=4,
         )
+        # Objective driver advances standing objectives one sub-goal per tick.
+        # Frequent (1m) so a multi-step objective makes visible progress; each
+        # tick is cheap when there are no active objectives.
+        await _seed_minutes_schedule(
+            db, handler_name="objective_driver", schedule="every 1m",
+            interval_minutes=1,
+        )
         # Critic scorer runs frequently — outcomes pile up fast.
         await _seed_minutes_schedule(
             db, handler_name="critic_scorer", schedule="every 10m",
@@ -410,6 +432,7 @@ class SchedulerAssembly:
             knowledge_prune_handler=knowledge_prune_handler,
             tool_pruning_handler=tool_pruning_handler,
             goal_execution_handler=goal_execution_handler,
+            objective_driver_handler=objective_driver_handler,
             critic_scorer_handler=critic_scorer_handler,
             reflection_writer_handler=reflection_writer_handler,
             skill_synthesizer_handler=skill_synthesizer_handler,

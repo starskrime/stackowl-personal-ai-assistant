@@ -29,7 +29,9 @@ from stackowl.exceptions import (
     OwlNotFoundError,
 )
 from stackowl.infra.observability import log
+from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 from stackowl.owls.registry import _SECRETARY_NAME
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:
     from stackowl.db.pool import DbPool
@@ -101,10 +103,34 @@ _OWLS_META = CommandMeta(
                 Example(invocation="/owls reset-dna Sage YES", note="Confirm reset"),
             ),
         ),
+        SubCommand(
+            name="objectives",
+            summary="List standing objectives and their progress",
+        ),
+        SubCommand(
+            name="objective",
+            summary="Show one objective's steps and activity log",
+            args=(Arg(name="objective_id", summary="objective id"),),
+            examples=(
+                Example(invocation="/owls objective obj-1a2b3c4d"),
+            ),
+        ),
+        SubCommand(
+            name="objective-cancel",
+            summary="Abandon a standing objective",
+            description="You stop the assistant from pursuing an objective. Confirmed with YES.",
+            args=(Arg(name="objective_id", summary="objective id"),),
+            examples=(
+                Example(invocation="/owls objective-cancel obj-1a2b3c4d YES", note="Confirm"),
+            ),
+        ),
     ),
 )
 
 _NO_REGISTRY = "(no owl registry wired — start StackOwl normally to manage owls)"
+_NO_OBJECTIVE_DB = "(no database wired — start StackOwl normally to manage objectives)"
+#: Status → glyph for the step list (symbols, not language — i18n-safe).
+_STEP_GLYPH = {"done": "✓", "running": "…", "failed": "✗", "blocked": "⏸", "pending": "·"}
 
 _SELECT_DNA_SQL = (
     "SELECT challenge_level, verbosity, curiosity, formality, creativity, "
@@ -164,6 +190,12 @@ class OwlsCommand(SlashCommand):
                 result = await self._dna(rest)
             elif sub == "reset-dna":
                 result = await self._reset_dna(rest)
+            elif sub == "objectives":
+                result = await self._objectives()
+            elif sub == "objective":
+                result = await self._objective(rest)
+            elif sub == "objective-cancel":
+                result = await self._objective_cancel(rest)
             else:
                 log.gateway.debug(
                     "[commands] owls.handle: unknown subcommand",
@@ -388,6 +420,78 @@ class OwlsCommand(SlashCommand):
             extra={"_fields": {"name": name}},
         )
         return f"✓ Owl '{name}' DNA reset to authored baseline."
+
+    # ------------------------------------------------------------ objectives
+    async def _objectives(self) -> str:
+        """List standing objectives with a done/total progress count."""
+        if self._db is None:
+            return _NO_OBJECTIVE_DB
+        store = ObjectiveStore(self._db, DEFAULT_PRINCIPAL_ID)
+        objectives = await store.list_objectives()
+        if not objectives:
+            return "No objectives yet. Ask me to 'keep an eye on X and handle it'."
+        lines = ["Objectives:"]
+        for o in objectives:
+            subs = await store.list_subgoals(o.objective_id)
+            done = sum(1 for s in subs if s.status == "done")
+            lines.append(
+                f"  {o.objective_id} [{o.status}] {o.intent} ({done}/{len(subs)} done)"
+            )
+        return "\n".join(lines)
+
+    async def _objective(self, rest: str) -> str:
+        """Show one objective's steps and recent activity log."""
+        if self._db is None:
+            return _NO_OBJECTIVE_DB
+        objective_id = rest.strip()
+        if not objective_id:
+            return "Usage: /owls objective <objective_id>"
+        store = ObjectiveStore(self._db, DEFAULT_PRINCIPAL_ID)
+        try:
+            objective = await store.get(objective_id)
+        except ObjectiveNotFoundError:
+            return f"✗ no such objective: {objective_id!r}"
+        subs = await store.list_subgoals(objective_id)
+        events = await store.list_events(objective_id)
+        lines = [f"{objective.objective_id} [{objective.status}] {objective.intent}"]
+        if objective.blocker:
+            lines.append(f"  blocked: {objective.blocker}")
+        lines.append("Steps:")
+        for s in subs:
+            glyph = _STEP_GLYPH.get(s.status, "·")
+            lines.append(f"  {glyph} {s.description} [{s.status}]")
+        if events:
+            lines.append("Recent activity:")
+            for e in events[-5:]:
+                lines.append(f"  • {e.kind}: {e.detail or ''}".rstrip())
+        return "\n".join(lines)
+
+    async def _objective_cancel(self, rest: str) -> str:
+        """Abandon a standing objective (confirmed with YES)."""
+        if self._db is None:
+            return _NO_OBJECTIVE_DB
+        tokens = rest.split()
+        if not tokens:
+            return "Usage: /owls objective-cancel <objective_id> YES"
+        objective_id = tokens[0]
+        store = ObjectiveStore(self._db, DEFAULT_PRINCIPAL_ID)
+        try:
+            await store.get(objective_id)
+        except ObjectiveNotFoundError:
+            return f"✗ no such objective: {objective_id!r}"
+        confirmed = len(tokens) > 1 and tokens[1] == "YES"
+        if not confirmed:
+            return (
+                f"⚠ This will abandon objective '{objective_id}'.\n"
+                f"   Type: /owls objective-cancel {objective_id} YES to confirm."
+            )
+        await store.update_status(objective_id, "abandoned")
+        await store.append_event(objective_id, "abandoned", "cancelled by owner")
+        log.gateway.info(
+            "[commands] owls.objective_cancel: abandoned",
+            extra={"_fields": {"objective_id": objective_id}},
+        )
+        return f"✓ objective '{objective_id}' abandoned."
 
     # ----------------------------------------------------------- yaml helpers
     def _upsert_to_yaml(self, entry: dict[str, Any]) -> None:

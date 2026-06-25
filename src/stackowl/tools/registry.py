@@ -470,6 +470,7 @@ class ToolRegistry:
         from stackowl.tools.process.wait_tool import WaitTool
         from stackowl.tools.scheduling.cronjob import CronjobTool
         from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
+        from stackowl.tools.scheduling.objective_tool import ObjectiveTool
         from stackowl.tools.scheduling.send_file import SendFileTool
         from stackowl.tools.scheduling.send_message import SendMessageTool
         from stackowl.tools.search.web_search import WebSearchTool
@@ -496,6 +497,10 @@ class ToolRegistry:
         # builds from get_services().db_pool at execute time (no constructor
         # wiring; reuses the goal_execution handler — E7-S1).
         registry.register(CronjobTool())
+        # objective — creates a STANDING OBJECTIVE (decomposed + driven by the
+        # objective_driver handler) from get_services().db_pool +
+        # provider_registry at execute time (no constructor wiring — 1D).
+        registry.register(ObjectiveTool())
         # heartbeat_respond — declares a heartbeat turn's outcome and (notify=True)
         # routes a clamped Notification through get_services().proactive_deliverer
         # at execute time (the S0 transport chokepoint); no constructor wiring.
