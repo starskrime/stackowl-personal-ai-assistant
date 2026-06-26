@@ -1,264 +1,241 @@
-# Verification Primitive — Design Spec
+# Verification Primitive — Design Spec (v2)
 
 **Date:** 2026-06-25
-**Branch:** `feat/verification-primitive`
-**Status:** approved-design (pre-implementation)
+**Branch base:** `feat/verification-primitive`
+**Status:** approved-design, revised after adversarial party-mode review (Winston / Murat / Mary / Amelia)
 
-## 1. The root cause this fixes
+> **This is a CORE architectural change, not a download fix.** The contract change
+> is on `ToolResult` (the base type every ~100 tools return) and the seam is
+> `Tool.__call__` (every dispatch). The `yt-dlp --simulate` incident is merely the
+> cheapest reproducible *witness* of the class "claimed an effect, produced
+> nothing." The word "download" appears nowhere in the code; we fix the class.
 
-StackOwl has no objective **verification** primitive. Every "success" signal is
-either *asserted* (a self-reported boolean — often a process exit code) or
-*guessed* (an LLM judge reading draft text) — never *measured against reality*.
-Because the foundational bit `ToolResult.success` is unverified at its source,
-every layer built on it (the delivery judge, the honesty floors, the overclaim
-gate, the learning loop, the objective planner) reasons on a signal that can be a
-lie.
+## 1. The root cause
 
-Smoking-gun anchors:
-- `tools/system/shell.py:486` — `success = proc.returncode == 0` (the
-  `yt-dlp --simulate --no-download` bug: did nothing, exit 0, "succeeded").
-- `tools/io/write_file.py:86` — returns `success=True` after `write_text` without
-  reading the file back.
-- `tools/media/image_generate.py:196`, `tools/media/tts.py:193` — `success=True`
-  on a backend's word; the artifact is never stat'd.
-- `pipeline/backends/asyncio_backend.py:256` — turn `success = len(errors) == 0`
-  ("didn't crash" ≠ "accomplished the task").
-- `objectives/driver.py:163` — a sub-goal is "done" when no error was thrown; no
-  acceptance criterion on `Subgoal` (`objectives/model.py:52`).
-- `pipeline/persistence.py:366` — the delivery judge reads request + draft text +
-  tool self-reports, never the filesystem; fails OPEN.
-- `pipeline/state.py` — `PipelineState` has no goal / acceptance-criteria /
-  expected-artifact field.
+StackOwl has no objective **verification** primitive. Every "success" is either
+*asserted* (a self-reported boolean / process exit code) or *guessed* (an LLM
+judge reading draft text) — never *measured against reality*. Because
+`ToolResult.success` is unverified at its source, the delivery judge, the honesty
+floors, the overclaim gate, the learning loop, and the objective planner all
+reason on a signal that can be a lie.
 
-**Principle: verification > representation.** The cheapest, highest-leverage fix
-is a post-condition check *at the tool boundary* — "a tool that claims an effect
-must observe that effect before reporting it." We then lift the same idea to a
-per-turn / per-goal acceptance check owned by **one** authority, so the disjoint
-honesty-proxy pile can begin to collapse.
+Anchors: `shell.py:486` `success=(returncode==0)`; `write_file.py:86` `success=True`
+never reads back; `image_generate.py:196` / `tts.py:193` on the backend's word;
+`asyncio_backend.py:256` turn `success=(len(errors)==0)`; `objectives/driver.py:163`
+sub-goal `done`=no error thrown (no acceptance criterion on `Subgoal`);
+`persistence.py:366` judge reads TEXT, fails OPEN; `state.py` has no acceptance
+field.
 
-## 2. Decisions (owner-settled 2026-06-25)
+**Principle: verification > representation.** Lift `ToolResult.success` from
+asserted to *verified-against-a-post-condition* at the universal tool seam, then
+to a per-turn / per-goal acceptance check owned by ONE authority — collapsing the
+disjoint honesty-proxy pile onto a single measured signal.
+
+## 2. Sensor vs. actuator (the two roots)
+
+The party review surfaced that verification alone makes the platform **honest, not
+agentic** — it changes the agent's *belief*, not its *behavior*. An honest quitter
+is still a quitter. So the design has two halves:
+
+- **Phase A — the SENSOR (this spec's near-term deliverable):** measure whether an
+  action achieved its effect. Resolves the false-success class.
+- **Phase B — the ACTUATOR (designed here, built last):** a recovery policy that
+  *consumes* `verified=False` and does something agentic — retry once, escalate to
+  a stronger model, prefer a known-good learned skill, or stop-and-ask. This is
+  what kills the flailing and earns "Jarvis." Reuses the escalation gateway and
+  same-tool circuit breaker already half-built in the platform.
+
+Without Phase B, flailing may temporarily *worsen* (the loop now knows it hasn't
+succeeded and keeps trying). Phase B is non-optional for the agentic goal; it is
+merely sequenced last because it depends on the sensor existing first.
+
+## 3. Decisions (owner-settled)
 
 | Fork | Decision |
 |------|----------|
-| Mechanism | **`verify()` hook on the `Tool` ABC, with `verify_artifact()` helper as the declarative shorthand.** The hook is the primitive; the helper is the common-case spec. |
-| Failure semantics | **Add a separate `verified` field**, do NOT mutate `success`. Preserve the distinction "what the tool claimed" vs. "what reality confirmed." |
-| Scope | **Full agentic solution this branch** — Phase 1 (tool boundary) AND Phase 2 (goal-level acceptance authority), fully wired. |
-| Phase-2 acceptance source | **Both, behavior- and result-gated**: a deterministic per-tool `verified` ledger always on, PLUS an LLM-derived expected-outcome reality-check that engages only when the turn's *behavior* (an effectful tool ran) and *result* (the draft claims an outcome) indicate an effect was promised. |
-| Default state | **ON by default** on the live platform. Fail-safe: `verified=None` always falls back to `success`; only an explicit reality-disagreement flips trust. |
+| Mechanism | `verify()` hook on `Tool` ABC + `verify_artifact()` helper as the common-case shorthand |
+| Failure semantics | Separate `verified` field; do NOT mutate `success` (preserve claimed-vs-confirmed) |
+| Scope | Full agentic solution: sensor (Phase A) AND goal-level acceptance, with the actuator (Phase B) designed and sequenced last |
+| Acceptance source | Both: deterministic per-tool/per-goal observation always on; LLM-derived expected-outcome behavior+result gated, **fail-closed, flag-OFF until measured** |
+| Default state | Phase-A deterministic verification ON; Phase-2 LLM-derived acceptance behind a flag (default OFF) |
+| Oracle strength | `verified=True` requires existence **+ freshness + magic-byte/MIME** for typed artifacts — never bare "non-empty" |
 
-## 3. The contract
+## 4. The contract
 
-### 3.1 `ToolResult.verified: bool | None` (tri-state, additive)
+### 4.1 `ToolResult` additive fields (frozen model, `extra="forbid"`)
 
 ```python
 class ToolResult(BaseModel):
-    success: bool                       # unchanged: the tool's self-report
-    verified: bool | None = None        # NEW: reality check
+    success: bool                         # unchanged: the tool's self-report
+    verified: bool | None = None          # NEW reality check (None=not-checked)
+    artifact_path: str | None = None      # NEW structured locator (Amelia's fix)
     ...
 ```
 
-- `None` → no post-condition ran (un-migrated tool, or verification could not be
-  performed). **Byte-identical to today.**
-- `True` → the claimed effect was observed in reality.
-- `False` → the tool claimed `success=True` but reality disagreed
-  (the absent/empty artifact case).
+- `verified`: `None` → not checked (byte-identical); `True` → effect observed;
+  `False` → claimed but reality disagreed.
+- `artifact_path`: the tool's OWN trusted path to what it produced, so `verify()`
+  reads a structured value instead of re-parsing `output` text (which would be the
+  very "GUESSED" failure mode this spec kills). Tools that produce a file set it;
+  others leave it `None`.
 
-`success` semantics are untouched — no lie-laundering, no mutation.
-
-### 3.2 One derived predicate, read everywhere
+### 4.2 One derived predicate, read everywhere
 
 ```python
 def is_trustworthy_success(success: bool, verified: bool | None) -> bool:
     return success and verified is not False
 ```
 
-This single function (and its ledger-level twin) is what the deciders consume:
-- `verified is False` → not a trustworthy success → the floor fires, the learning
-  miner skips it, the judge sees a failed tool, turn-success goes false.
-- `verified is None` → falls back to `success` → today's behavior, exactly.
+`verified is False` → not trustworthy → floor fires, learning skips, judge sees
+fail. `verified is None` → falls back to `success` → today's behavior exactly.
 
-### 3.3 The `verify()` hook + `verify_artifact()` helper
+### 4.3 `verify()` hook + hardened `verify_artifact()`
 
-On the `Tool` ABC (`tools/base.py`):
+`Tool.verify(self, args, result) -> bool | None` on the ABC (default `None`).
+Runs ONLY after `success=True`; never raises; result falls back to `None` on any
+error (fail-safe — verification never blocks a real success it merely failed to
+confirm).
 
-```python
-async def verify(self, args: dict, result: ToolResult) -> bool | None:
-    """Observe reality to confirm the claimed effect. Default: no verification.
-
-    Return True (effect observed), False (claimed but absent), or None
-    (not applicable / could not check). Runs ONLY after a success=True execute.
-    Must never raise (caller wraps); never re-do the side effect.
-    """
-    return None
-```
-
-Shared helper (`tools/verification.py`, new):
+`tools/verification.py` (new):
 
 ```python
-def verify_artifact(path: str | Path | None) -> bool | None:
-    """True iff `path` exists and is a non-empty regular file.
-    None when path is None/empty (nothing claimed). Never raises."""
+def verify_artifact(
+    path: str | Path | None,
+    *,
+    not_before: float | None = None,         # tool-call start (monotonic/epoch)
+    expect_kind: str | None = None,          # "image"|"audio"|"pdf"|... or None
+) -> bool | None:
+    """True iff path is a non-empty regular file that is THIS run's artifact and
+    (when expect_kind given) passes a magic-byte/MIME sanity check.
+    None when path is None/empty. Never raises."""
 ```
 
-`Tool.__call__` (the single universal dispatch seam) stamps the bit:
+- **Existence + non-empty** — `getsize() > 0`.
+- **Freshness** — when `not_before` is given, the file's mtime must be ≥ it, so a
+  stale last-run artifact on a predictable path cannot pass (Murat's #1 risk).
+- **Magic-byte/MIME** — when `expect_kind` is given, a cheap header check rejects a
+  9-byte error page saved as `.mp4` (Murat's #2). Content *correctness* (right
+  subject) remains out of scope and is documented as a known ceiling.
+
+`Tool.__call__` stamps the bit:
 
 ```python
-async def __call__(self, **kwargs):
-    result = await self.execute(**kwargs)        # unchanged
-    if result.success and result.verified is None:
-        try:
-            verdict = await self.verify(kwargs, result)
-        except Exception:
-            verdict = None                        # fail-safe: never block on verify
-        if verdict is not None:
-            result = result.model_copy(update={"verified": verdict})
-    return result
+result = await self.execute(**kwargs)
+if result.success and result.verified is None:
+    try:
+        verdict = await self.verify(kwargs, result)
+    except Exception:
+        verdict = None
+    if verdict is not None:
+        result = result.model_copy(update={"verified": verdict})
+return result
 ```
 
-A tool that does not override `verify()` returns `None` → result unchanged → the
-56 + 36 un-migrated tools are byte-identical.
+A tool that does not override `verify()` → `None` → unchanged. **Byte-identical**
+for the ~92 un-migrated tool/non-tool files.
 
-## 4. Phase 1 — tool-boundary verification
+## 5. Branches (staged by blast radius — Amelia)
 
-### 4.1 Migration set (tools that name their own artifact)
+### Branch 1 — primitive + existence-class (ON by default, low risk)
+- `ToolResult.verified` + `artifact_path`; `is_trustworthy_success`;
+  `tools/verification.py` with freshness + magic-byte; `Tool.verify()` hook +
+  `__call__` stamping.
+- Migrate the **existence-class** tools that name their own artifact:
+  `write_file`, `image_generate`, `tts`, `get_images`, `send_file` (send_file
+  verifies the LOCAL file it claims to send; delivery is `unconfirmed` coupling).
+- `verified` is **read-but-not-floor-wired** in B1 — stamped and surfaced, but the
+  giveup floor still reads the old predicate. This isolates the headline
+  empty/stale-artifact fix with zero journey-fixture risk.
+- **RED tests first:** stale-file → `verified=False`; empty-file → `False`; missing
+  → `False`; real fresh artifact → `True`; magic-byte mismatch → `False`;
+  no-override tool → `verified is None` (byte-identical).
 
-| Tool | Post-condition |
-|------|----------------|
-| `write_file` | `verify_artifact(target)` — the written path exists & non-empty |
-| `edit` | edited file exists & contains the applied change (artifact exists, non-empty) |
-| `apply_patch` | each touched path exists post-apply (artifact exists) |
-| `pdf` (write paths) | output path exists & non-empty |
-| `image_generate` | `verify_artifact(result.path)` |
-| `tts` | `verify_artifact(result.path)` |
-| `get_images` | downloaded file(s) exist & non-empty |
-| `send_file` | precondition (input file exists/non-empty) already checked at
-  send_file.py:278; coupling is `unconfirmed` (lossy channel boundary), so
-  `verify()` confirms the *local* artifact it claims to send, not delivery |
+### Branch 2 — floor wiring + content-class (journey-suite gate)
+- Thread `verified` through `infra/tool_outcome_ledger.py`: `ToolOutcome.verified`;
+  `is_effectful_failure(..., verified=None)` treats `verified is False` as an
+  effectful failure; `consequential_tally` counts it as a failure;
+  `execute.py:1053` passes `verified=tr.verified`.
+- **Deletion list** (Winston): remove/redirect the redundant proxy re-derivations
+  that now read the one ledger signal, so the pile collapses rather than grows.
+  (Enumerated during B2 against the live code; each deletion gated by a test.)
+- Migrate **content-class** tools with real post-conditions (not `verify_artifact`):
+  `edit` (post-condition string present, pre-condition consumed), `apply_patch`
+  (all hunks applied, file parses), `pdf` (page-count / extractable). Each ~20–60
+  lines + its own RED test.
+- **Gate:** full `journeys` suite green (this is where the 19-fixture class of
+  break lives — isolate it here).
 
-`shell` is intentionally **excluded** from Phase-1 self-verification: it is
-open-ended and cannot know what artifact a bare command "should" have produced.
-That class is caught by Phase 2.
+### Branch 3 — goal-level acceptance authority (Phase-2 LLM flag-OFF)
+- `PipelineState.expected_outcome` + `Subgoal.acceptance_criteria` (additive,
+  default None = byte-identical).
+- `pipeline/acceptance.py` — the ONE `AcceptanceChecker`. Behavior-gated (engages
+  only if an effectful tool ran). **Deterministic layer always on**: observe the
+  declared `expected_outcome` artifact on the filesystem. This catches the
+  shell/effectful class (incl. the yt-dlp witness) **deterministically**, because
+  the turn declared the expected artifact UP FRONT — no LLM derivation needed.
+- **LLM-derived expected-outcome: result-gated, fail-CLOSED, flag-OFF by default.**
+  When enabled it derives a criterion only when the draft claims an outcome the
+  deterministic layer couldn't confirm, then OBSERVES reality. If the model is
+  unavailable/times out → **no positive acceptance asserted** (honest-limit), never
+  a silent pass. Runs **post-hoc** (feeds learning + the next-turn floor), NOT as a
+  pre-delivery latency gate.
+- Wire `objectives/driver.py:163` to read the acceptance verdict (sub-goal `done`
+  vs `failed`) instead of "no error thrown"; feed turn-success.
 
-### 4.2 Wiring the deciders (the ledger is the backbone)
-
-`infra/tool_outcome_ledger.py` is already the single source of truth the floor,
-the execute snapshot, and the tally all read. We thread `verified` through it:
-
-- `ToolOutcome` gains `verified: bool | None = None`.
-- `execute.py:1053` `record_tool_outcome(...)` passes `verified=tr.verified`.
-- `is_effectful_failure(severity, success, side_effect_committed, verified=None)`
-  returns True also when `severity in EFFECTFUL and side_effect_committed and
-  verified is False` — i.e. a *claimed-but-unverified* write/consequential is an
-  effectful failure. `consequential_tally` counts a `verified=False` as a failure,
-  not a success.
-
-This makes the entire honesty pile (giveup floor, overclaim gate, snapshot)
-verification-aware in **one** edit, with no per-floor changes.
-
-- Turn-success at `asyncio_backend.py:256` and the `task_outcomes` capture record
-  the trustworthy bit (a new `verified`-derived column / failure_class), so the
-  reflection trigger and `tool_outcome_miner` (positive-only) never mine a
-  `verified=False` false win.
-
-## 5. Phase 2 — goal-level acceptance authority
-
-### 5.1 Representation
-
-- `PipelineState` gains `expected_outcome: ExpectedOutcome | None = None`
-  (additive; default None = byte-identical). `ExpectedOutcome` is a small frozen
-  model: `{ kind, artifact_dir?, description }`.
-- `Subgoal` (`objectives/model.py`) gains `acceptance_criteria: str | None = None`
-  and is checked at done-decision time.
-
-### 5.2 The single authority: `AcceptanceChecker`
-
-`pipeline/acceptance.py` (new) — the ONE place a turn/goal's outcome is judged
-against reality. It is **behavior- and result-gated**:
-
-1. **Behavior gate** — engages only if an effectful (write/consequential) tool ran
-   this turn. Conversational / read-only turns skip it entirely (no latency, no
-   model call) → byte-identical.
-2. **Deterministic layer (always)** — aggregate the per-tool `verified` ledger;
-   account for delivered artifacts. Cheap, no model.
-3. **Result gate + LLM-derived expected-outcome (only when promised)** — if the
-   draft *claims* an outcome and the deterministic layer can't confirm it, a
-   fast-tier model derives the expected outcome from the user request (general,
-   no per-site logic — e.g. "a non-empty media file should exist under the
-   workspace/downloads dir"), and the checker **observes the filesystem** to
-   confirm. The derivation is a guess; the **check is real**. Result =
-   verification, not representation.
-
-The checker returns an `Acceptance{accepted: bool, reason}` verdict that:
-- `objectives/driver.py` reads instead of "no error thrown" to mark a sub-goal
-  `done` vs `failed`.
-- the turn pipeline reads to set turn-level trustworthy success and to feed the
-  honest floor (a not-accepted turn cannot ship a confident "done" draft).
-
-### 5.3 Why this catches the `yt-dlp --simulate` class
-
-Shell exited 0, no tool named an artifact, so the per-tool ledger looks clean. But
-the behavior gate sees an effectful shell ran, the result gate sees the draft
-claims "downloaded your video," the LLM-derived expected-outcome says "a non-empty
-media file should exist," and the checker observes that **no such file exists** →
-`accepted=False` → honest floor, no false win mined, sub-goal marked failed.
+### Branch 4 — recovery actuator (Phase B, earns "Jarvis")
+- A `RecoveryPolicy` that consumes `verified=False` / `accepted=False`:
+  retry-once → escalate model → prefer a known-good learned skill → stop-and-ask.
+- Reuse the existing escalation gateway and same-tool circuit breaker.
+- Plus a **one-time back-catalog re-validation pass**: re-check already-learned
+  tools against `is_trustworthy_success`; evict/flag the ones that only ever
+  produced false wins (the `instagram_media_extractor` class). Confirm the learner
+  reads `is_trustworthy_success`, not raw `success` (the `registered≠reachable`
+  trap).
 
 ## 6. Positive-only learning
 
-Positive-only learning (remember wins, never failures) **stays** — but the miner
-and reflection trigger now key on `is_trustworthy_success` / the `verified`-aware
-`task_outcomes` row, so a `verified=False` false win can never be mined. This is
-the point at which positive-only becomes *safe* (it was a coping policy on an
-untrustworthy signal). **Per owner directive, we do NOT change positive-only in
-this branch; revisit only after explicit owner approval.**
+Unchanged in behavior (owner directive: never learn failures). But the miner /
+reflection trigger key on `is_trustworthy_success` (B2/B4), so a `verified=False`
+false win can never be mined. This is the point at which positive-only becomes
+*safe*. **Do not alter positive-only without explicit owner approval.**
 
-## 7. Default state & config
+## 7. Byte-identical guarantees
 
-- Tool-boundary verification: **ON** (deterministic fs checks; fail-safe to
-  `verified=None`).
-- Goal-level acceptance: **ON**, behavior+result gated. The LLM-derived layer uses
-  the configured fast tier (no vendor-specific logic; `settings`-driven, mirrors
-  `judge_tier`). A `settings.verification.*` block exposes enable flags and the
-  acceptance tier, all defaulting to the ON posture.
-
-## 8. Blast radius & byte-identical guarantees
-
-- `ToolResult.verified` is additive with default `None`; `extra="forbid"` is
-  preserved. All existing `ToolResult(...)` constructions remain valid.
-- `Tool.__call__` only verifies when `verify()` is overridden → 56 non-tool +
-  ~36 non-artifact tool files unchanged in behavior.
-- `is_effectful_failure` / `consequential_tally` gain an optional `verified`
-  param defaulting to `None` → every existing caller is byte-identical until it
-  opts in.
+- `ToolResult.verified` / `artifact_path` additive, default `None`; `extra="forbid"`
+  preserved; all existing constructions valid.
+- `Tool.__call__` verifies only when `verify()` is overridden.
+- `is_effectful_failure` gains optional `verified=None` → existing callers
+  unchanged until they opt in.
 - `PipelineState.expected_outcome`, `Subgoal.acceptance_criteria`,
-  `ToolOutcome.verified` all default None/absent → unconfigured/legacy paths
-  unchanged.
-- `AcceptanceChecker` no-ops on conversational/read-only turns.
+  `ToolOutcome.verified` default None/absent.
+- `AcceptanceChecker` no-ops on conversational/read-only turns; LLM layer flag-OFF.
 
-## 9. Testing strategy (TDD — failing tests first)
+## 8. Testing strategy (TDD — RED first)
 
-1. **Primitive:** a fake tool that returns `success=True` but produces nothing →
-   after `__call__`, `result.verified is False`; `is_trustworthy_success` False.
-2. **Artifact tools:** `write_file`/`image_generate`/`tts` that claim a path which
-   is absent or zero-byte → `verified=False`; a real write → `verified=True`.
-3. **Byte-identical:** a tool with no `verify()` override → `verified is None`,
-   result object unchanged.
-4. **Ledger/floor:** a `verified=False` write outcome trips
-   `is_effectful_failure` and the consequential give-up floor; a `verified=True`
-   does not.
-5. **Learning:** a `verified=False` turn is NOT mined as a win; positive-only
-   still mines `verified=True`.
-6. **Acceptance authority:** the `yt-dlp --simulate` shape (effectful shell, draft
-   claims a download, no file on disk) → `accepted=False`; a real download →
-   `accepted=True`; a conversational turn → checker not engaged.
-7. **Objectives:** a sub-goal whose acceptance fails → `failed`, not `done`.
+Per branch, mirror the FAILURE not the happy path:
+1. **Primitive:** `is_trustworthy_success(True, None) is True`; `(True, False) is
+   False`. Fake tool claims success, produces nothing → `verified is False`.
+2. **Stale-file (the test that fails a naive impl):** pre-seed a file, tool no-ops,
+   assert `verified is False` via freshness.
+3. **Magic-byte:** 9-byte text saved with an image extension → `verified is False`.
+4. **Byte-identical:** no-override tool → `verified is None`, result unchanged;
+   full journey suite green as the B2 gate.
+5. **Ledger/floor (B2):** `verified=False` write trips `is_effectful_failure` and
+   the consequential floor; `verified=True` does not.
+6. **Acceptance (B3):** declared-artifact turn with no file on disk →
+   `accepted=False`; with file → `True`; conversational → checker not engaged;
+   LLM-layer unavailable → honest-limit, never silent pass.
+7. **Objectives (B3):** sub-goal whose acceptance fails → `failed`, not `done`.
 
-Gates before "done": `tools`, `pipeline`, `runtime`, `journeys` suites green,
-plus `ruff check src/` and `mypy src/` clean on changed files.
+Gates before "done" per branch: `tools`, `pipeline`, `runtime`, `journeys` green +
+`ruff check src/` + `mypy src/` clean on changed files.
 
-## 10. Non-goals (this branch)
+## 9. Non-goals
 
-- No new download/media tool (the capability exists; we fix the verification
-  CLASS, not the symptom).
-- No change to positive-only learning behavior (revisit later, owner-gated).
-- No vendor-specific logic anywhere; the acceptance tier is config-driven.
-- Windows catastrophic-path detection and other pre-existing cuts remain as-is.
+- No new download/media tool (fix the class, not the symptom).
+- No change to positive-only learning behavior (owner-gated).
+- No vendor-specific logic; the acceptance tier is config-driven (mirrors
+  `judge_tier`).
+- Semantic correctness of artifacts (right subject / right answer) is a known
+  ceiling of filesystem verification, deferred to the LLM acceptance layer and
+  human-eval; documented, not silently claimed.
