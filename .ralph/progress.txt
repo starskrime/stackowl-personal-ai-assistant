@@ -1,5 +1,6 @@
-Iteration 1: Bootstrapped .ralph/ state files and built the module map.
-Enumerated 23 logical modules in AUDIT_PLAN.md, ordered by reliability-criticality.
-Project is Python under src/stackowl/ (CLAUDE.md's TS layout is stale — trust the tree).
-No modules audited yet (0 findings). Next iteration: audit the FIRST unchecked module
-= "Pipeline — ReAct execution core" (the agent loop; check 8-point checklist, evidence required).
+Iteration 2 (final): Audited ALL 23 modules in one pass via parallel read-only auditors.
+Coverage COMPLETE — every module in AUDIT_PLAN.md is [x]. 88 findings recorded in
+FINDINGS.md; BACKLOG.md sorts them by severity (14×S1, 30×S2, 35×S3, 9×S4).
+Meta-roots: (1) silent give-up — failures swallowed into success-shaped results or
+surrendered after one attempt; (2) registered≠reachable — learning/proactive machinery
+built but never read/fired on the live path. AUDIT_COMPLETE emitted. No code changed (read-only).
