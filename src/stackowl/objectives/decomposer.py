@@ -17,6 +17,7 @@ import re
 import time
 
 from stackowl.infra.observability import log
+from stackowl.objectives.model import ExpectedOutcome, SubgoalSpec
 from stackowl.providers.base import Message
 from stackowl.providers.registry import ProviderRegistry
 
@@ -30,6 +31,14 @@ _MAX_SUBGOALS = 12
 
 #: Strip a leading ordered/bullet marker: "1.", "2)", "-", "*", "•".
 _MARKER_RE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*")
+
+#: A step the model declares produces a saved file: a trailing
+#: ``<<produces-file>>`` or ``<<produces-file: relative/dir>>`` marker. Parsed
+#: deterministically into an artifact :class:`ExpectedOutcome`; the JUDGMENT of
+#: which steps produce a file is the model's (no keyword list in our code).
+_PRODUCES_FILE_RE = re.compile(
+    r"<<\s*produces-file\s*(?::\s*(?P<dir>[^>]*?))?\s*>>", re.IGNORECASE
+)
 
 
 class ObjectiveDecomposer:
@@ -47,28 +56,58 @@ class ObjectiveDecomposer:
             "summarize, compute, write, notify). Order them so each builds on the "
             "previous. Output ONLY the steps, ONE per line, with no numbering, "
             "bullets, headers, or commentary. Use at most "
-            f"{_MAX_SUBGOALS} steps; prefer fewer.\n\n"
+            f"{_MAX_SUBGOALS} steps; prefer fewer.\n"
+            "If — and ONLY if — a step is expected to SAVE or DOWNLOAD a file to "
+            "disk, append the exact marker `<<produces-file>>` at the end of that "
+            "step's line (or `<<produces-file: relative/dir>>` to name the target "
+            "directory). Do NOT add the marker to steps that only fetch, read, "
+            "search, summarize, compute, or notify without saving a file.\n\n"
             f"Objective: {intent}"
         )
 
     @staticmethod
-    def _parse_subgoals(raw: str) -> list[str]:
-        """Parse the model reply into an ordered list of sub-goal strings.
+    def _parse_specs(raw: str) -> list[SubgoalSpec]:
+        """Parse the model reply into ordered :class:`SubgoalSpec` records.
 
-        Strips any leading numbering/bullet marker, drops blank lines, and caps
-        at :data:`_MAX_SUBGOALS`. Language-neutral — no keyword/stopword lists.
+        Strips any leading numbering/bullet marker, extracts a trailing
+        ``<<produces-file[: dir]>>`` marker into an artifact acceptance criterion
+        (and removes it from the description), drops blank lines, and caps at
+        :data:`_MAX_SUBGOALS`. Language-neutral — no keyword/stopword lists; the
+        marker convention is the model's structured signal, parsed deterministically.
         """
-        subgoals: list[str] = []
+        specs: list[SubgoalSpec] = []
         for line in (raw or "").splitlines():
-            cleaned = _MARKER_RE.sub("", line).strip()
+            stripped = _MARKER_RE.sub("", line)
+            criterion: ExpectedOutcome | None = None
+            match = _PRODUCES_FILE_RE.search(stripped)
+            if match is not None:
+                raw_dir = (match.group("dir") or "").strip()
+                criterion = ExpectedOutcome(
+                    kind="artifact", artifact_dir=raw_dir or None
+                )
+                stripped = _PRODUCES_FILE_RE.sub("", stripped)
+            cleaned = stripped.strip()
             if cleaned:
-                subgoals.append(cleaned)
-            if len(subgoals) >= _MAX_SUBGOALS:
+                specs.append(
+                    SubgoalSpec(description=cleaned, acceptance_criteria=criterion)
+                )
+            if len(specs) >= _MAX_SUBGOALS:
                 break
-        return subgoals
+        return specs
 
-    async def decompose(self, intent: str) -> list[str]:
-        """Return ordered sub-goals for ``intent``; fail-safe to ``[intent]``."""
+    @staticmethod
+    def _parse_subgoals(raw: str) -> list[str]:
+        """Legacy parse → ordered description strings (markers stripped).
+
+        Retained for the ``decompose()`` contract and existing callers; delegates
+        to :meth:`_parse_specs` so the two never drift.
+        """
+        return [s.description for s in ObjectiveDecomposer._parse_specs(raw)]
+
+    async def decompose_specs(self, intent: str) -> list[SubgoalSpec]:
+        """Return ordered sub-goal SPECS for ``intent`` (with any declared
+        acceptance criteria); fail-safe to a single criterion-free spec that IS
+        the whole objective, so a decomposition miss never strands it."""
         log.engine.debug(
             "[objectives] decompose: entry",
             extra={"_fields": {"intent_preview": intent[:80]}},
@@ -90,23 +129,29 @@ class ObjectiveDecomposer:
                 exc_info=exc,
                 extra={"_fields": {"intent_preview": intent[:80]}},
             )
-            return [intent]
+            return [SubgoalSpec(description=intent)]
 
-        subgoals = self._parse_subgoals(result.content)
-        if not subgoals:
+        specs = self._parse_specs(result.content)
+        if not specs:
             log.engine.info(
                 "[objectives] decompose: empty/garbled reply — single-step fallback",
                 extra={"_fields": {"intent_preview": intent[:80]}},
             )
-            return [intent]
+            return [SubgoalSpec(description=intent)]
         log.engine.info(
             "[objectives] decompose: exit",
             extra={
                 "_fields": {
                     "intent_preview": intent[:80],
-                    "subgoal_count": len(subgoals),
+                    "subgoal_count": len(specs),
+                    "with_acceptance": sum(1 for s in specs if s.acceptance_criteria),
                     "latency_ms": (time.monotonic() - t0) * 1000,
                 }
             },
         )
-        return subgoals
+        return specs
+
+    async def decompose(self, intent: str) -> list[str]:
+        """Return ordered sub-goal DESCRIPTIONS for ``intent`` (legacy list[str]
+        contract; markers stripped). Delegates to :meth:`decompose_specs`."""
+        return [s.description for s in await self.decompose_specs(intent)]

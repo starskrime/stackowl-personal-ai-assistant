@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from stackowl.authz.bounds import BoundsSpec
+from stackowl.objectives.model import ExpectedOutcome
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message
 
@@ -174,6 +175,13 @@ class PipelineState(BaseModel, frozen=True):
     # honest floor may have replaced), so trust cannot be laundered. Default False =
     # byte-identical to a clean (non-tool-merged) turn.
     merged_external: bool = False
+    # Verification B3 — an OPTIONAL declared, deterministically-observable
+    # post-condition for this turn (the goal-level half of the verification
+    # primitive). On the objectives path the driver threads the sub-goal's
+    # acceptance_criteria here; on a normal user turn it is None (the flag-OFF
+    # LLM-derived acceptance layer is the only future populator). None ⇒ the
+    # AcceptanceChecker no-ops — byte-identical to pre-acceptance behavior.
+    expected_outcome: ExpectedOutcome | None = None
     memory_context: str | None = None
     # Query embedding computed once in classify (semantic only), forwarded so assemble
     # can score owned skills without re-embedding. None = no usable relevance signal. Story B.

@@ -201,6 +201,8 @@ class SchedulerAssembly:
             backend=backend,
             settings=settings,
             job_deliverer=goal_job_deliverer,
+            # For the OPTIONAL post-hoc LLM acceptance layer (flag-OFF default).
+            provider_registry=provider_registry,
         )
         HandlerRegistry.instance().register(objective_driver_handler)
 

@@ -12,16 +12,19 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.objectives.model import (
+    ExpectedOutcome,
     Objective,
     ObjectiveEvent,
     ObjectiveStatus,
     Subgoal,
+    SubgoalSpec,
     SubgoalStatus,
 )
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
@@ -65,6 +68,25 @@ def _parse_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value))
+
+
+def _dumps_outcome(outcome: ExpectedOutcome | None) -> str | None:
+    """Serialize an ExpectedOutcome to JSON; None ⇒ SQL NULL (undeclared)."""
+    return None if outcome is None else outcome.model_dump_json()
+
+
+def _loads_outcome(text: Any) -> ExpectedOutcome | None:
+    """Deserialize a stored ExpectedOutcome; NULL/garbage ⇒ None (no criterion).
+
+    Tolerant by construction — a row written before this column existed, or any
+    unparseable value, degrades to None (the legacy no-error path), never an error.
+    """
+    if not text:
+        return None
+    try:
+        return ExpectedOutcome.model_validate_json(str(text))
+    except ValueError:
+        return None
 
 
 class ObjectiveStore(OwnedRepository):
@@ -139,14 +161,20 @@ class ObjectiveStore(OwnedRepository):
     # ------------------------------------------------------------- sub-goals
 
     async def add_subgoals(
-        self, objective_id: str, descriptions: list[str]
+        self, objective_id: str, items: Sequence[str | SubgoalSpec]
     ) -> list[Subgoal]:
-        """Append ordered sub-goals (positions continue after any existing ones)."""
+        """Append ordered sub-goals (positions continue after any existing ones).
+
+        Each item is either a plain description string (legacy / no acceptance
+        criterion) or a :class:`SubgoalSpec` carrying an OPTIONAL declared
+        ``acceptance_criteria``. A bare string is normalized to a criterion-free
+        spec, so every existing caller is unchanged (byte-identical)."""
         existing = await self.list_subgoals(objective_id)
         start = len(existing)
         created: list[Subgoal] = []
         now = _now()
-        for offset, description in enumerate(descriptions):
+        for offset, item in enumerate(items):
+            spec = SubgoalSpec(description=item) if isinstance(item, str) else item
             subgoal_id = f"sub-{uuid.uuid4().hex[:12]}"
             position = start + offset
             await self._insert_owned(
@@ -155,9 +183,10 @@ class ObjectiveStore(OwnedRepository):
                     "subgoal_id": subgoal_id,
                     "objective_id": objective_id,
                     "position": position,
-                    "description": description,
+                    "description": spec.description,
                     "status": "pending",
                     "result": None,
+                    "acceptance_criteria": _dumps_outcome(spec.acceptance_criteria),
                     "task_id": None,
                     "created_at": now.isoformat(),
                     "updated_at": now.isoformat(),
@@ -169,8 +198,9 @@ class ObjectiveStore(OwnedRepository):
                     owner_id=self._owner_id,
                     objective_id=objective_id,
                     position=position,
-                    description=description,
+                    description=spec.description,
                     status="pending",
+                    acceptance_criteria=spec.acceptance_criteria,
                     created_at=now,
                     updated_at=now,
                 )
@@ -278,6 +308,7 @@ class ObjectiveStore(OwnedRepository):
             description=str(row["description"]),
             status=row["status"],
             result=row.get("result"),
+            acceptance_criteria=_loads_outcome(row.get("acceptance_criteria")),
             task_id=row.get("task_id"),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),

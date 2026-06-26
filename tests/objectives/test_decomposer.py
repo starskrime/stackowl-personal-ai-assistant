@@ -85,3 +85,57 @@ async def test_decompose_provider_unavailable_falls_back_to_whole_objective() ->
     d = ObjectiveDecomposer(provider_registry=ProviderRegistry())
     subs = await d.decompose("resilient objective")
     assert subs == ["resilient objective"]
+
+
+# --------------------------------------------------- acceptance markers (B3)
+
+
+@pytest.mark.asyncio
+async def test_decompose_specs_parses_produces_file_marker() -> None:
+    """A step the model marks with <<produces-file>> carries an artifact
+    acceptance criterion; the marker is stripped from the description. Steps
+    without the marker carry no criterion (legacy no-error path)."""
+    d = _decomposer(
+        "fetch the video page\n"
+        "download the video to a file <<produces-file: downloads>>\n"
+        "notify the owner"
+    )
+    specs = await d.decompose_specs("download the video")
+    assert [s.description for s in specs] == [
+        "fetch the video page",
+        "download the video to a file",
+        "notify the owner",
+    ]
+    assert specs[0].acceptance_criteria is None
+    assert specs[2].acceptance_criteria is None
+    crit = specs[1].acceptance_criteria
+    assert crit is not None
+    assert crit.kind == "artifact"
+    assert crit.artifact_dir == "downloads"
+
+
+@pytest.mark.asyncio
+async def test_decompose_specs_marker_without_dir_defaults_to_workspace() -> None:
+    """The bare marker (no directory) declares an artifact with no specific dir
+    (artifact_dir=None ⇒ the workspace root is observed)."""
+    d = _decomposer("save the report <<produces-file>>")
+    specs = await d.decompose_specs("save the report")
+    assert specs[0].description == "save the report"
+    crit = specs[0].acceptance_criteria
+    assert crit is not None and crit.kind == "artifact" and crit.artifact_dir is None
+
+
+@pytest.mark.asyncio
+async def test_decompose_legacy_returns_plain_descriptions() -> None:
+    """decompose() keeps its list[str] contract — descriptions only, markers
+    stripped — so every existing caller is byte-identical."""
+    d = _decomposer("save the report <<produces-file>>\nnotify")
+    assert await d.decompose("x") == ["save the report", "notify"]
+
+
+def test_prompt_documents_the_artifact_marker() -> None:
+    """The decomposition prompt must teach the model the marker convention so it
+    can declare artifact-producing steps (general instruction, not a keyword list)."""
+    d = _decomposer("x")
+    p = d._build_prompt("download something")
+    assert "<<produces-file>>" in p
