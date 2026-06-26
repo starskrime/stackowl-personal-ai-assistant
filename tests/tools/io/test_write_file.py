@@ -79,3 +79,29 @@ async def test_successful_write_stays_default_committed(workspace: Path) -> None
     result = await WriteFileTool().execute(path="ok.txt", content="x")
     assert result.success is True
     assert result.side_effect_committed is True
+
+
+async def test_successful_write_names_its_artifact(workspace: Path) -> None:
+    """A real write exposes its structured artifact_path so the verify() seam can
+    observe it (no re-parsing of free output text)."""
+    result = await WriteFileTool().execute(path="ok.txt", content="x")
+    assert result.success is True
+    assert result.artifact_path == str(workspace / "ok.txt")
+
+
+async def test_write_verifies_true_through_call_seam(workspace: Path) -> None:
+    """Through __call__, a real non-empty write is OBSERVED → verified True."""
+    result = await WriteFileTool()(path="ok.txt", content="content")
+    assert result.success is True
+    assert result.verified is True
+
+
+async def test_write_of_empty_content_is_not_trustworthy(workspace: Path) -> None:
+    """A zero-byte write claims success but produced no real artifact → verified False
+    (the verify_artifact non-empty rule). success is preserved, trust is not."""
+    from stackowl.tools.verification import is_trustworthy_success
+
+    result = await WriteFileTool()(path="blank.txt", content="")
+    assert result.success is True
+    assert result.verified is False
+    assert is_trustworthy_success(result.success, result.verified) is False

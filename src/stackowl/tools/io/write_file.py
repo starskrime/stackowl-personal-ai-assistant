@@ -57,6 +57,15 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """Post-condition: the file we claim to have written exists, is non-empty,
+        and is THIS run's artifact (fresh)."""
+        from stackowl.tools.verification import verify_artifact
+
+        return verify_artifact(result.artifact_path, not_before=started_at)
+
     async def execute(self, **kwargs: object) -> ToolResult:
         path_str = str(kwargs.get("path", ""))
         content = str(kwargs.get("content", ""))
@@ -83,7 +92,10 @@ class WriteFileTool(Tool):
                 "write_file.execute: exit",
                 extra={"_fields": {"path": path_str, "bytes": len(content), "duration_ms": duration_ms}},
             )
-            return ToolResult(success=True, output=f"Written: {path_str}", duration_ms=duration_ms)
+            return ToolResult(
+                success=True, output=f"Written: {path_str}", duration_ms=duration_ms,
+                artifact_path=str(target),  # structured locator for verify()
+            )
         except OSError as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.error(

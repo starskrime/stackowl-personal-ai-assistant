@@ -193,7 +193,21 @@ class ImageGenerateTool(Tool):
                 "size": result.size, "duration_ms": duration_ms,
             }},
         )
-        return ToolResult(success=True, output=output, error=None, duration_ms=duration_ms)
+        return ToolResult(
+            success=True, output=output, error=None, duration_ms=duration_ms,
+            artifact_path=str(result.path),  # structured locator for verify()
+        )
+
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """Post-condition: the generated image exists, is non-empty, is this run's
+        artifact (fresh), and has a real image header (rejects an error page)."""
+        from stackowl.tools.verification import verify_artifact
+
+        return verify_artifact(
+            result.artifact_path, not_before=started_at, expect_kind="image"
+        )
 
     def _err(self, msg: str, t0: float) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000
