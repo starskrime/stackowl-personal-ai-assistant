@@ -27,8 +27,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
-from stackowl.objectives.model import Objective
+from stackowl.objectives.model import ExpectedOutcome, Objective
 from stackowl.objectives.store import ObjectiveStore
+from stackowl.pipeline.acceptance import AcceptanceChecker
 from stackowl.pipeline.state import PipelineState
 from stackowl.scheduler.base import JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
@@ -39,6 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
     from stackowl.notifications.proactive_job import ProactiveJobDeliverer
     from stackowl.pipeline.backends.base import OrchestratorBackend
+    from stackowl.providers.registry import ProviderRegistry
 
 _HANDLER = "objective_driver"
 _CATEGORY = "objective"
@@ -54,6 +56,7 @@ class ObjectiveDriverHandler(JobHandler):
         *,
         settings: Settings | None = None,
         job_deliverer: ProactiveJobDeliverer | None = None,
+        provider_registry: ProviderRegistry | None = None,
         owner_id: str = DEFAULT_PRINCIPAL_ID,
     ) -> None:
         self._db = db
@@ -64,7 +67,13 @@ class ObjectiveDriverHandler(JobHandler):
         # The durable exactly-once delivery seam. None ⇒ no notification (back-
         # compat / unit surface); never a fake "delivered".
         self._job_deliverer = job_deliverer
+        # Provider access for the OPTIONAL post-hoc LLM acceptance layer. None (or
+        # an empty acceptance_tier) ⇒ that layer is never reached (byte-identical).
+        self._provider_registry = provider_registry
         self._owner_id = owner_id
+        # Goal-level acceptance authority (verification B3). Stateless; deterministic
+        # filesystem observation of a sub-goal's declared ExpectedOutcome.
+        self._acceptance = AcceptanceChecker()
 
     @property
     def handler_name(self) -> str:
@@ -138,7 +147,12 @@ class ObjectiveDriverHandler(JobHandler):
             return True
 
         await store.update_subgoal(nxt.subgoal_id, "running")
-        final_state, task_id = await self._run_subgoal(objective, nxt.description)
+        # Freshness clock for goal-level acceptance — captured BEFORE the run so a
+        # stale pre-existing artifact cannot satisfy the declared outcome.
+        started_at = time.time()
+        final_state, task_id = await self._run_subgoal(
+            objective, nxt.description, nxt.acceptance_criteria
+        )
         response_text = "".join(c.content for c in final_state.responses)
 
         if final_state.durable_parked:
@@ -160,12 +174,49 @@ class ObjectiveDriverHandler(JobHandler):
             await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{err}")
             return True
 
+        # Goal-level acceptance (verification B3). When the sub-goal DECLARED an
+        # expected outcome, a clean run is not enough — the declared post-condition
+        # must be observed against reality. This catches the class the per-tool
+        # `verified` net cannot (a tool that exits 0 producing nothing, e.g. a shell
+        # no-op). No declaration ⇒ the checker no-ops ⇒ the legacy no-error path
+        # (byte-identical). When NO criterion was declared, the OPTIONAL post-hoc
+        # LLM layer (flag-gated, fail-closed) may derive one from the draft.
+        criteria = nxt.acceptance_criteria or await self._derive_acceptance(
+            objective.intent, nxt.description, response_text
+        )
+        verdict = self._acceptance.check(
+            criteria,
+            turn_started_at=started_at,
+            # The turn acted if it produced a response or dispatched a tool — a
+            # pure no-op turn is never penalized for an outcome it had no chance to
+            # produce. A confident "done!" text IS an action, so a claim-without-
+            # artifact is still caught.
+            acted=bool(final_state.responses or final_state.tool_calls),
+        )
+        if verdict.accepted is False:
+            reason = f"step did not achieve its goal: {verdict.reason}"
+            await store.update_subgoal(nxt.subgoal_id, "failed", result=reason, task_id=task_id)
+            await store.update_status(objective.objective_id, "blocked", blocker=reason)
+            await store.append_event(objective.objective_id, "subgoal_failed", reason)
+            await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
+            log.scheduler.info(
+                "[scheduler] objective_driver: sub-goal failed acceptance",
+                extra={"_fields": {
+                    "objective_id": objective.objective_id,
+                    "subgoal_id": nxt.subgoal_id, "reason": verdict.reason,
+                }},
+            )
+            return True
+
         await store.update_subgoal(nxt.subgoal_id, "done", result=response_text, task_id=task_id)
         await store.append_event(objective.objective_id, "subgoal_done", nxt.description)
         return True
 
     async def _run_subgoal(
-        self, objective: Objective, description: str
+        self,
+        objective: Objective,
+        description: str,
+        acceptance_criteria: ExpectedOutcome | None = None,
     ) -> tuple[PipelineState, str | None]:
         """Run one sub-goal through the pipeline; returns (final_state, task_id)."""
         assert self._backend is not None  # narrowed by execute()
@@ -180,6 +231,10 @@ class ObjectiveDriverHandler(JobHandler):
             # No human present to answer a clarify; the handler owns delivery.
             interactive=False,
             defer_delivery=True,
+            # Carry the declared post-condition onto the turn so downstream layers
+            # (and the future LLM-derived acceptance) can see it. The driver itself
+            # performs the authoritative deterministic check after the run.
+            expected_outcome=acceptance_criteria,
         )
         if self._durable_enabled():
             from stackowl.pipeline.durable.store import DurableTaskStore
@@ -193,6 +248,25 @@ class ObjectiveDriverHandler(JobHandler):
 
         final_state = await self._backend.run(state)
         return final_state, None
+
+    async def _derive_acceptance(
+        self, intent: str, description: str, draft: str
+    ) -> ExpectedOutcome | None:
+        """OPTIONAL post-hoc LLM-derived acceptance (verification B3, flag-OFF default).
+
+        Returns a derived ExpectedOutcome ONLY when ``settings.acceptance_tier`` is
+        set AND a provider registry is wired. FAIL-CLOSED by construction (the
+        deriver returns None on any model error/garbage) and never raises — an
+        unreachable model yields no expectation, so the sub-goal falls back to its
+        prior (deterministic / no-error) signal. None on every default path."""
+        tier = self._settings.acceptance_tier if self._settings is not None else ""
+        if not tier or self._provider_registry is None:
+            return None
+        from stackowl.pipeline.acceptance_llm import LlmAcceptanceDeriver
+
+        deriver = LlmAcceptanceDeriver(self._provider_registry, tier)
+        intent_for_draft = description or intent
+        return await deriver.derive(intent=intent_for_draft, draft=draft)
 
     def _durable_enabled(self) -> bool:
         """True iff durable sub-goal routing is on AND a DbPool is wired."""

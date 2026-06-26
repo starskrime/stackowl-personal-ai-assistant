@@ -779,6 +779,15 @@ class Settings(BaseSettings):
     # General/config-driven — no vendor or model names; resolved via the tier
     # cascade, so it degrades gracefully if "standard" is absent.
     judge_tier: str = "standard"
+    # Tier for the POST-HOC, FAIL-CLOSED LLM-derived acceptance layer (verification
+    # B3). Empty (the default) ⇒ the layer is OFF: goal-level acceptance is purely
+    # the deterministic declared-artifact observation. When set to a tier name, the
+    # driver may derive an expected outcome from a sub-goal's draft when none was
+    # declared, then OBSERVE reality — never asserting a positive pass it could not
+    # measure (model unavailable ⇒ no acceptance, honest-limit). General/config-
+    # driven — no vendor or model names; resolved via the tier cascade. Mirrors
+    # judge_tier. Default OFF keeps every path byte-identical.
+    acceptance_tier: str = ""
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

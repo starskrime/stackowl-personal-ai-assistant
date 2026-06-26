@@ -24,7 +24,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.objectives.decomposer import ObjectiveDecomposer
-from stackowl.objectives.model import Objective
+from stackowl.objectives.model import Objective, SubgoalSpec
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.services import get_services
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
@@ -134,11 +134,17 @@ class ObjectiveTool(Tool):
             await store.append_event(objective_id, "created", intent)
 
             decomposer = ObjectiveDecomposer(services.provider_registry) if services.provider_registry else None
-            subgoals = await decomposer.decompose(intent) if decomposer else [intent]
-            await store.add_subgoals(objective_id, subgoals)
-            await store.append_event(
-                objective_id, "decomposed", f"{len(subgoals)} step(s)"
+            specs = (
+                await decomposer.decompose_specs(intent)
+                if decomposer else [SubgoalSpec(description=intent)]
             )
+            await store.add_subgoals(objective_id, specs)
+            await store.append_event(
+                objective_id, "decomposed", f"{len(specs)} step(s)"
+            )
+            # The payload surfaces plain step descriptions (the criteria are an
+            # internal acceptance concern, persisted on the sub-goal rows).
+            subgoals = [s.description for s in specs]
         except Exception as exc:  # B5 — never raise out of a tool
             log.tool.error(
                 "objective.execute: persist failed — degrading",
