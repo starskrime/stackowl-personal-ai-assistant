@@ -531,6 +531,72 @@ def db_reindex_memory() -> None:
     log.info("[db] db_reindex_memory: exit — written=%d", written)
 
 
+@db_app.command("revalidate-tools")
+def db_revalidate_tools(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report suspect tools without quarantining any.",
+    ),
+    min_evidence: int = typer.Option(
+        3, "--min-evidence", help="Minimum recorded attempts before a tool can be condemned.",
+    ),
+) -> None:
+    """Re-validate learned tools against their trustworthy-success history.
+
+    A learned tool the self-learning loop minted is re-registered on every boot. This
+    one-time pass (verification arc, B4b) re-checks each against its ``task_outcomes``
+    record and QUARANTINES the ones that, with enough evidence to judge, never
+    produced a trustworthy success (``success=1 AND failure_class IS NULL``) — the
+    "claims success, produces nothing" class. Quarantine moves the spec to a sibling
+    directory (reversible/auditable), so the boot loader stops re-registering a known
+    useless capability. Use ``--dry-run`` to preview.
+    """
+    import asyncio
+    import sys
+
+    from stackowl.config.test_mode import TestModeGuard, TestModeViolation
+    from stackowl.db.pool import DbPool
+    from stackowl.tools.meta.tool_revalidation import (
+        RevalidationReport,
+        revalidate_learned_tools,
+    )
+
+    try:
+        TestModeGuard.assert_not_test_mode("db.revalidate-tools")
+    except TestModeViolation as exc:
+        log.warning("db_revalidate_tools: blocked in test mode: %s", exc)
+        typer.echo(f"✗ {exc}", err=True)
+        sys.exit(1)
+
+    async def _run() -> RevalidationReport:
+        db = DbPool()
+        await db.open()
+        try:
+            return await revalidate_learned_tools(
+                db, min_evidence=min_evidence, dry_run=dry_run,
+            )
+        finally:
+            await db.close()
+
+    log.info("[db] db_revalidate_tools: entry")
+    try:
+        report = asyncio.run(_run())
+    except Exception as exc:
+        log.warning("[db] db_revalidate_tools: failed: %s", exc)
+        typer.echo(f"✗ Tool re-validation failed: {exc}", err=True)
+        sys.exit(1)
+
+    verb = "Would quarantine" if dry_run else "Quarantined"
+    typer.echo(
+        f"✓ Re-validated learned tools — kept {len(report.kept)}, "
+        f"{verb.lower()} {len(report.suspects)}, "
+        f"insufficient evidence {len(report.insufficient_evidence)}, "
+        f"no history {len(report.no_history)}."
+    )
+    for name in report.suspects:
+        typer.echo(f"  • {verb}: {name} (no trustworthy successes)")
+    log.info("[db] db_revalidate_tools: exit")
+
+
 # ---------------------------------------------------------------------------
 # MCP server commands
 # ---------------------------------------------------------------------------
