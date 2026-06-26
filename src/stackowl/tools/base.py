@@ -20,6 +20,21 @@ class ToolResult(BaseModel):
     output: str
     error: str | None = None
     duration_ms: float
+    # VERIFICATION (the reality check, distinct from `success` the self-report).
+    # None  ⇒ not checked — falls back to `success` (byte-identical to pre-
+    #         verification behavior; the default for the ~92 un-migrated tools).
+    # True  ⇒ the claimed effect was OBSERVED in reality (a fresh, non-empty,
+    #         right-shaped artifact).
+    # False ⇒ the tool claimed success but reality disagreed (absent/empty/stale
+    #         artifact). `success` is NOT mutated — the claim-vs-confirmation
+    #         distinction is preserved. The single derived predicate
+    #         tools.verification.is_trustworthy_success collapses the two for every
+    #         downstream decider (floor, judge, learning, turn-success).
+    verified: bool | None = None
+    # Structured locator for the artifact this call claims to have produced, set by
+    # the tool itself (its OWN trusted path), so verify() reads a real value instead
+    # of re-parsing free `output` text. None when the call produces no file.
+    artifact_path: str | None = None
     # Did this call cross the side-effect boundary? Default True (conservative: an
     # undeclared failure is assumed to have touched the world, so the honest give-up
     # floor still fires). A tool sets this False on a PRE-EXECUTION refusal — bad/
@@ -123,6 +138,21 @@ class Tool(ABC):
     @abstractmethod
     async def execute(self, **kwargs: object) -> ToolResult: ...
 
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """Observe reality to confirm the effect this call CLAIMED — the post-condition.
+
+        Default: ``None`` (no verification) ⇒ every un-migrated tool is byte-identical.
+        A tool that produces an artifact overrides this to return ``True`` (effect
+        observed), ``False`` (claimed but absent/empty/stale), or ``None`` (could not
+        check). Runs at the :meth:`__call__` seam ONLY after a ``success=True``
+        execute; ``started_at`` is the call-start epoch time for freshness checks
+        (see :func:`stackowl.tools.verification.verify_artifact`). MUST NOT re-do the
+        side effect and SHOULD NOT raise (the seam catches and falls back to ``None``).
+        """
+        return None
+
     async def __call__(self, **kwargs: object) -> ToolResult:
         """Invoke execute() and wrap any unhandled exception into a failed ToolResult."""
         import time
@@ -133,6 +163,7 @@ class Tool(ABC):
             extra={"_fields": {"tool": self.name}},
         )
         t0 = time.monotonic()
+        started_at = time.time()  # epoch — for verify() freshness (vs t0's monotonic)
         try:
             result = await self.execute(**kwargs)
         except Exception as exc:
@@ -143,8 +174,32 @@ class Tool(ABC):
                 extra={"_fields": {"tool": self.name, "duration_ms": duration_ms}},
             )
             result = ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
+        # VERIFICATION seam — only after a success the tool ASSERTED, and only when it
+        # has not already stamped a verdict itself. A claim that reality refutes
+        # becomes verified=False (success preserved); a verify() that raises or
+        # cannot decide falls back to None so it never blocks a real success.
+        if result.success and result.verified is None:
+            try:
+                verdict = await self.verify(kwargs, result, started_at=started_at)
+            except Exception as exc:  # fail-safe — verification never blocks a success
+                log.tool.warning(
+                    "tool.__call__: verify() raised — leaving unverified",
+                    exc_info=exc,
+                    extra={"_fields": {"tool": self.name}},
+                )
+                verdict = None
+            if verdict is not None:
+                if verdict is False:
+                    log.tool.warning(
+                        "tool.__call__: claimed success but verification FAILED",
+                        extra={"_fields": {"tool": self.name, "artifact_path": result.artifact_path}},
+                    )
+                result = result.model_copy(update={"verified": verdict})
         log.tool.debug(
             "tool.__call__: exit",
-            extra={"_fields": {"tool": self.name, "success": result.success, "duration_ms": result.duration_ms}},
+            extra={"_fields": {
+                "tool": self.name, "success": result.success,
+                "verified": result.verified, "duration_ms": result.duration_ms,
+            }},
         )
         return result

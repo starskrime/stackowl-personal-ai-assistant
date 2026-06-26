@@ -176,3 +176,16 @@ async def test_registered_in_with_defaults() -> None:
     assert tool is not None
     assert tool.manifest.action_severity == "read"
     assert tool.manifest.toolset_group == "media"
+
+
+async def test_tts_names_artifact_and_verifies_true() -> None:
+    """Migration: synthesized speech exposes artifact_path and, through __call__,
+    is OBSERVED on disk with a valid audio header → verified True."""
+    local = _FakeBackend("piper", local=True)
+    cloud = _FakeBackend("cloud", local=False)
+    tool = TtsTool(selector=_selector(local, cloud))
+    res = await tool(text="hello there")  # through the __call__ verification seam
+    assert res.success is True
+    assert res.artifact_path is not None
+    assert res.artifact_path.endswith("piper.wav")
+    assert res.verified is True

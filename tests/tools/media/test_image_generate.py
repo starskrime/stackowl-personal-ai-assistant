@@ -196,3 +196,44 @@ async def test_registered_in_with_defaults() -> None:
     assert tool is not None
     assert tool.manifest.action_severity == "read"
     assert tool.manifest.toolset_group == "media"
+
+
+async def test_image_generate_names_artifact_and_verifies_true() -> None:
+    """Migration: a generated image exposes artifact_path and, through __call__,
+    is OBSERVED on disk with a valid image header → verified True."""
+    local = _FakeBackend("local-sdxl", local=True)
+    cloud = _FakeBackend("cloud", local=False)
+    tool = ImageGenerateTool(selector=_selector(local, cloud))
+    res = await tool(prompt="a cat")  # through the __call__ verification seam
+    assert res.success is True
+    assert res.artifact_path is not None
+    assert res.artifact_path.endswith("local-sdxl.png")
+    assert res.verified is True
+
+
+class _ClaimsButWritesNothing(_FakeBackend):
+    """Reports a successful ImageResult but never writes the file (the --simulate
+    shape: backend says 'done', no artifact on disk)."""
+
+    async def generate(self, prompt: str, *, size: str | None = None):  # noqa: ANN202
+        from stackowl.media.image.base import ImageResult
+        from stackowl.paths import StackowlHome
+
+        path = StackowlHome.media_dir() / "image" / f"{self._name}.png"
+        return ImageResult(
+            path=str(path), size=size or "1024x1024", backend=self._name, is_local=self._local
+        )
+
+
+async def test_image_generate_missing_artifact_is_not_trustworthy() -> None:
+    """Backend reports success but wrote NO file → verify() observes the absence →
+    verified False (success preserved, trust withheld)."""
+    from stackowl.tools.verification import is_trustworthy_success
+
+    local = _ClaimsButWritesNothing("local-sdxl", local=True)
+    cloud = _FakeBackend("cloud", local=False)
+    tool = ImageGenerateTool(selector=_selector(local, cloud))
+    res = await tool(prompt="a cat")  # through the __call__ verification seam
+    assert res.success is True
+    assert res.verified is False
+    assert is_trustworthy_success(res.success, res.verified) is False
