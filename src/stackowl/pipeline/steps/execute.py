@@ -45,12 +45,14 @@ from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_win
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.tools.child_exclusion import CHILD_EXCLUDED_TOOLS
 from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.verification import is_trustworthy_success
 
 if TYPE_CHECKING:
     from stackowl.gateway.turn_registry import TurnRegistry
     from stackowl.pipeline.services import StepServices
     from stackowl.providers.react_callback import IterationCallback
     from stackowl.skills.store import SkillIndexStore
+    from stackowl.tools.base import ToolResult
 
 # W1.T3 — the deliver-vs-giveup checker the provider loop calls just before
 # accepting a final answer: (draft, tools_tried) -> corrective directive | None.
@@ -418,8 +420,13 @@ async def _try_substitute(
         )
         tool_outcome_ledger.record_tool_outcome(
             name=sibling_name, action_severity=sib.manifest.action_severity, success=sib_result.success,
+            side_effect_committed=sib_result.side_effect_committed,
+            # B4a — the substitute is held to the SAME reality check as the primary:
+            # a sibling that also CLAIMED success but produced nothing (verified=False)
+            # is not a route-around, it is a second false win.
+            verified=sib_result.verified,
         )
-        if not sib_result.success:
+        if not is_trustworthy_success(sib_result.success, sib_result.verified):
             log.engine.info(
                 "[pipeline] execute: substitute sibling also failed — falling through",
                 extra={"_fields": {
@@ -530,7 +537,11 @@ async def _resolve_execute_window(state: PipelineState, provider: ModelProvider)
 
 
 _EFFECTFUL_SEVERITIES = {"write", "consequential"}
-_BRIDGING_RECOVERY_KINDS = {"substitution"}
+# Recovery kinds that BRIDGE a failed effectful attempt to an achieved one, so the
+# honest floor treats the original failure as recovered (not an unachieved goal):
+# "substitution" (a sibling produced the result) and B4a "retry" (the same tool
+# succeeded on a second, verified attempt).
+_BRIDGING_RECOVERY_KINDS = {"substitution", "retry"}
 
 # Local-workspace FILE-MUTATION tools. These mutate the local filesystem and are
 # NEVER delivered out to the user — their success must not mask an unachieved
@@ -792,6 +803,12 @@ async def _run_with_tools(
     # per capability per turn; a second failure of the same class falls through to
     # the honest TOOL_FAILED marker rather than substituting again).
     substituted_tags: set[str] = set()
+    # B4a — tool names already retried once this turn for an UNVERIFIED EFFECT
+    # (success=True but verified=False). The recovery ladder's first rung re-runs a
+    # non-consequential effectful tool once before routing to substitution / the
+    # honest floor; a second unverified effect from the same tool falls straight
+    # through (bounded — never a retry spiral).
+    retried_unverified: set[str] = set()
     # TurnProgressTracker — unified replacement for the P2 fail_streak/circuit_open
     # pair. Closes G1 (timeout) and G2 (no-op refusal) spiral gaps in addition to
     # the original same-tool repeated-failure containment. Window-scaled threshold:
@@ -1030,77 +1047,111 @@ async def _run_with_tools(
         # REACT-5/F061 — bound the tool's OWN awaitable: asyncio.wait_for cancels the
         # tool coroutine (not the turn task) at the per-tool deadline so a hung/long
         # tool can never block the loop — or a co-pending stop — indefinitely.
+        from stackowl.learning.heuristic_matcher import match_and_log
         from stackowl.pipeline.durable.ledger_guard import ledger_guard
 
-        try:
-            tr = await asyncio.wait_for(
-                ledger_guard(name, args, t.manifest.action_severity, lambda: t(**args)),
-                timeout=_TOOL_DEADLINE_S,
-            )
-        except TimeoutError:
-            log.engine.warning(
-                "[pipeline] execute: tool exceeded per-tool deadline — cancelled",
-                extra={"_fields": {"tool": name, "trace_id": state.trace_id,
-                                   "deadline_s": _TOOL_DEADLINE_S}},
-            )
+        async def _guarded_dispatch(d_args: dict[str, object]) -> ToolResult | None:
+            """Run ``t`` once through the exactly-once ledger guard + per-tool
+            deadline, record its outcome (ledger + progress tracker), and return the
+            ToolResult. Returns ``None`` iff the tool exceeded its deadline (the
+            caller renders the timeout marker). Shared by the initial dispatch and
+            the B4a unverified-effect retry so both record IDENTICALLY — the retry is
+            a real second attempt with its own ledger outcome, not a silent re-run."""
+            try:
+                r = await asyncio.wait_for(
+                    ledger_guard(name, d_args, t.manifest.action_severity, lambda: t(**d_args)),
+                    timeout=_TOOL_DEADLINE_S,
+                )
+            except TimeoutError:
+                log.engine.warning(
+                    "[pipeline] execute: tool exceeded per-tool deadline — cancelled",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                       "deadline_s": _TOOL_DEADLINE_S}},
+                )
+                tool_outcome_ledger.record_tool_outcome(
+                    name=name, action_severity=t.manifest.action_severity, success=False,
+                )
+                # G1 — a timeout is zero-progress: advance the streak so a tool that
+                # keeps timing out gets bounced rather than spiralling the budget.
+                progress.record_no_progress(name)
+                return None
             tool_outcome_ledger.record_tool_outcome(
-                name=name, action_severity=t.manifest.action_severity, success=False,
+                name=name, action_severity=t.manifest.action_severity, success=r.success,
+                # L1 — a tool that pre-execution-refuses (bad args, unavailable store)
+                # reports side_effect_committed=False so a no-op failure does not trip
+                # the honest give-up floor as if a real consequential action had failed.
+                side_effect_committed=r.side_effect_committed,
+                # B2 — the reality check: an effectful tool that claimed success but
+                # whose artifact was not observed (verified=False) is recorded as an
+                # unachieved outcome, so the honest floor owns the turn. None ⇒
+                # byte-identical.
+                verified=r.verified,
             )
-            # G1 — a timeout is zero-progress: advance the streak so a tool that
-            # keeps timing out gets bounced rather than spiralling through the budget.
-            progress.record_no_progress(name)
+            # TurnProgressTracker — update from this REAL completed dispatch. A
+            # TRUSTWORTHY success resets the streak; ANY non-trustworthy result (a
+            # genuine failure OR an unverified effect, regardless of
+            # side_effect_committed) is zero-progress. B4a: keying this on
+            # is_trustworthy_success (not raw success) means a claimed-but-unobserved
+            # effect can no longer disarm the same-tool circuit breaker.
+            if is_trustworthy_success(r.success, r.verified):
+                progress.record_progress(name)
+            else:
+                opened = progress.record_no_progress(name)
+                if opened:
+                    log.engine.warning(
+                        "[pipeline] execute: same-tool failure threshold reached — circuit open",
+                        extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                           "threshold": _np_threshold}},
+                    )
+            # F038 — honest no-IO log of the tool outcome (the old per-call heuristic
+            # matcher had no production subscriber). match_and_log never raises.
+            match_and_log(tool_name=name, tool_result=r)
+            return r
+
+        tr = await _guarded_dispatch(args)
+        if tr is None:
             return (
                 f"{TOOL_FAILED_MARKER}The action '{name}' was cancelled after exceeding the "
                 f"{_TOOL_DEADLINE_S:.0f}s per-tool time limit and did not complete."
             )
-        tool_outcome_ledger.record_tool_outcome(
-            name=name, action_severity=t.manifest.action_severity, success=tr.success,
-            # L1 — a tool that pre-execution-refuses (bad args, unavailable store)
-            # reports side_effect_committed=False so a no-op failure does not trip the
-            # honest give-up floor as if a real consequential action had failed.
-            side_effect_committed=tr.side_effect_committed,
-            # B2 — the reality check: an effectful tool that claimed success but whose
-            # artifact was not observed (verified=False) is recorded as an unachieved
-            # outcome, so the honest floor owns the turn. None ⇒ byte-identical.
-            verified=tr.verified,
-        )
-        # TurnProgressTracker — update from this REAL completed dispatch (not a
-        # pre-exec refusal/bounce, which are counted in their own blocks above).
-        # A success resets the streak; ANY non-success (regardless of
-        # side_effect_committed) is zero-progress — that's the G2 design: the ledger
-        # above already uses committed-awareness for the honest floor; this counter
-        # is the INDEPENDENT containment signal (severity-agnostic: contains spirals
-        # on ANY tool, not only write/consequential ones).
-        if tr.success:
-            progress.record_progress(name)
-        else:
-            opened = progress.record_no_progress(name)
-            if opened:
-                log.engine.warning(
-                    "[pipeline] execute: same-tool failure threshold reached — circuit open",
-                    extra={"_fields": {"tool": name, "trace_id": state.trace_id,
-                                       "threshold": _np_threshold}},
-                )
-        # F038 — DEMOTED: the old per-call matcher did a heuristic DB lookup +
-        # emitted a learning event on the bus, but NO production subscriber existed
-        # (only test files). Both were dead weight on the hot path. Replace with an
-        # honest no-IO log of the tool outcome; re-introducing a learned-hint
-        # consumer is a separate future story (must not steer a weak model on low
-        # evidence). match_and_log never raises — no guard needed.
-        from stackowl.learning.heuristic_matcher import match_and_log
-
-        match_and_log(tool_name=name, tool_result=tr)
-        if tr.success:
+        # B4a — the dispatch returns a win ONLY for a TRUSTWORTHY success. A
+        # claimed-but-unobserved effect (success=True, verified=False) no longer
+        # returns its (misleading) "done!" output here; it enters the recovery ladder.
+        if is_trustworthy_success(tr.success, tr.verified):
             return tr.output
-        # FAILED — W3.T14 recovery actuator: before surrendering to the marker,
-        # deterministically route around the broken capability. If this tool
-        # declares a capability_tag, look for an in-bounds, NON-consequential
-        # sibling that produces the same KIND of result and run IT through the
-        # SAME guarded path, feeding its success back as a fresh observation.
-        # CONSENT-SAFE by construction: find_substitute excludes consequential
-        # siblings, so no consent gate is ever bypassed. BOUNDS-SAFE: the same
-        # check_effective_bounds verdict gates the sibling. One substitution per
-        # capability per turn. Any actuator error → fall through to the marker.
+        # B4a recovery ladder — RUNG 1: RETRY-ONCE on an unverified effect. A
+        # non-consequential effectful tool that CLAIMED success but whose result was
+        # not observed (success=True, verified=False) is re-run ONCE through the same
+        # guarded path. A transient miss (slow flush / race) self-heals; a genuine
+        # no-op (the disguised --simulate class) fails identically and falls through.
+        # Bounded to one retry per tool per turn (retried_unverified) — never a retry
+        # spiral. CONSEQUENTIAL tools are NEVER auto-retried: an irreversible effect
+        # must not be re-fired blind, so they drop straight to substitution / the floor.
+        if (
+            tr.success and tr.verified is False
+            and not is_consequential
+            and name not in retried_unverified
+        ):
+            retried_unverified.add(name)
+            log.engine.info(
+                "[pipeline] execute: unverified effect — retrying once (recovery rung 1)",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
+            retry_tr = await _guarded_dispatch(args)
+            if retry_tr is not None and is_trustworthy_success(retry_tr.success, retry_tr.verified):
+                # The retry observed the effect — record a (bridging) recovery so the
+                # honest floor knows the consequential goal WAS achieved on attempt 2.
+                recovery_context.record_recovery(
+                    kind="retry", failed=name, recovered_via=name, user_visible=False,
+                )
+                return retry_tr.output
+            if retry_tr is not None:
+                tr = retry_tr  # carry the freshest result forward for the floor marker
+        # RUNG 2 — W3.T14 substitution: route around the broken capability via an
+        # in-bounds, NON-consequential sibling sharing the capability_tag, run through
+        # the SAME guarded path. CONSENT-SAFE (find_substitute excludes consequential
+        # siblings) + BOUNDS-SAFE (same check_effective_bounds verdict). One
+        # substitution per capability per turn. Any actuator error → fall through.
         sub = await _try_substitute(
             failed_tool=name,
             failed_args=args,
@@ -1112,11 +1163,17 @@ async def _run_with_tools(
         )
         if sub is not None:
             return sub
-        # No route-around — prefix the rendered error with the structural marker so
-        # the give-up judge (which sees only these rendered strings) can tell a
-        # failed action from a successful one. Language-agnostic; the model still
-        # reads a normal error message after the (invisible-ish) sentinel.
-        # (TOOL_FAILED_MARKER imported above at the stop pre-check.)
+        # RUNG 3 — honest surrender. An UNVERIFIED EFFECT gets an HONEST message (NOT
+        # the tool's own misleading "done!" output, which would re-introduce the very
+        # false-success this arc exists to kill); a genuine failure renders its error.
+        # Both carry the structural marker so the give-up judge reads them as failures.
+        if tr.success and tr.verified is False:
+            return (
+                f"{TOOL_FAILED_MARKER}The action '{name}' reported success but its expected "
+                f"result could not be confirmed (the produced artifact was not observed). "
+                f"Treat it as NOT done — try another approach, or tell the user it could not "
+                f"be completed."
+            )
         return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback

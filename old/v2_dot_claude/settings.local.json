@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(uv run *)",
-      "Bash(git -C /ssd/projects/stackowl-personal-ai-assistant add v2/src/stackowl/gateway/scanner.py v2/src/stackowl/pipeline/state.py v2/src/stackowl/pipeline/streaming.py v2/src/stackowl/gateway/turn_registry.py v2/tests/pipeline/test_target_type_widen.py)",
-      "Bash(git -C /ssd/projects/stackowl-personal-ai-assistant commit -m \"feat\\(v2\\): widen per-message delivery target to int|str|None \\(Slack channel foundation, A1\\)\" -m \"Co-Authored-By: Claude Opus 4.8 \\(1M context\\) <noreply@anthropic.com>\")"
-    ]
-  }
-}

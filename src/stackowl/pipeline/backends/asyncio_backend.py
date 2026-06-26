@@ -24,6 +24,13 @@ from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
 from stackowl.pipeline.turn_persist import persist_turn
 
+# B4b — the general failure_class stamped on a turn whose only "success" was an
+# UNRECOVERED effectful failure the error-based classifier missed (a verified=False
+# false win, or a success=False effectful tool that never raised). Keys the
+# positive-only learner OFF the turn so a false win is never mined as a win. General
+# and vendor-neutral — names the SHAPE of the failure, not any tool/site.
+_UNACHIEVED_EFFECT_CLASS = "unachieved_effect"
+
 
 class AsyncioBackend(OrchestratorBackend):
     """Executes the 8 pipeline steps sequentially using plain asyncio.
@@ -226,6 +233,25 @@ async def _capture_outcome(
         store = TaskOutcomeStore(db)
         response_text = "\n".join(c.content for c in state.responses if c.content)
         failure_class = classify_failure(state.errors)
+        # B4b — make the LEARNER's signal trustworthy (verification arc). The
+        # positive-only miner / critic scorer / reflection trigger all treat
+        # ``failure_class IS NULL`` as "clean win". ``classify_failure`` reads
+        # ``state.errors`` ALONE, so a verified=False false win (success=True, no
+        # exception) — the instagram_media_extractor class — would persist as a
+        # learnable WIN. The B2 snapshot already measured the truth on immutable
+        # state: ``consequential_failures`` holds effects claimed-but-not-observed
+        # (and effectful tools that returned success=False), while
+        # ``recovered_consequential`` holds the ones the recovery actuator HEALED
+        # (retry / substitution). An UNRECOVERED effectful failure with no raised
+        # error is the corruption case → label it so the learner skips it. This does
+        # NOT learn negatives (positive-only is unchanged); it stops MIS-learning a
+        # false win as a positive.
+        unrecovered_effects = (
+            set(state.consequential_failures) - set(state.recovered_consequential)
+        )
+        if failure_class is None and unrecovered_effects:
+            failure_class = _UNACHIEVED_EFFECT_CLASS
+        trustworthy_success = len(state.errors) == 0 and not unrecovered_effects
         # Snapshot DNA from the owl registry so attribution-based evolution
         # (Learning Commit 4) can correlate trait values with outcome quality.
         # Best-effort — owl may not be registered (system commands, parliament).
@@ -253,7 +279,7 @@ async def _capture_outcome(
             session_id=state.session_id,
             owl_name=state.owl_name,
             channel=state.channel,
-            success=len(state.errors) == 0,
+            success=trustworthy_success,
             latency_ms=total_ms,
             tool_call_count=len(state.tool_calls),
             failure_class=failure_class,
@@ -276,7 +302,7 @@ async def _capture_outcome(
         "[outcomes] capture: exit",
         extra={"_fields": {
             "trace_id": state.trace_id,
-            "success": len(state.errors) == 0,
+            "success": trustworthy_success,
             "failure_class": failure_class,
             "latency_ms": int(total_ms),
         }},

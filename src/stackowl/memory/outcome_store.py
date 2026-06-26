@@ -361,6 +361,44 @@ class TaskOutcomeStore(OwnedRepository):
         )
         return results
 
+    async def tool_outcome_trust_counts(
+        self, *, since_epoch: float = 0.0,
+    ) -> dict[str, tuple[int, int]]:
+        """Per-tool ``(trustworthy_successes, total_appearances)`` over ALL outcomes.
+
+        Unlike :meth:`list_scored_for_owl_global` this does NOT require a quality
+        score — a failed/false-win run never gets scored, but it is exactly what
+        back-catalog re-validation (verification B4b) must count. A ``trustworthy``
+        outcome is ``success = 1 AND failure_class IS NULL`` — the same predicate the
+        positive-only learner keys on, so this measures a tool's learnable-win record.
+        """
+        log.memory.debug(
+            "[outcomes] tool_outcome_trust_counts: entry",
+            extra={"_fields": {"since_epoch": since_epoch}},
+        )
+        rows = await self._db.fetch_all(
+            """SELECT success, failure_class, tool_sequence
+               FROM task_outcomes
+               WHERE owner_id = ? AND captured_at >= ?""",
+            (self._owner_id, since_epoch),
+        )
+        counts: dict[str, tuple[int, int]] = {}
+        for row in rows:
+            seq_raw = row.get("tool_sequence") or "[]"
+            try:
+                tools = json.loads(str(seq_raw))
+            except json.JSONDecodeError:
+                tools = []
+            trustworthy = bool(row.get("success")) and row.get("failure_class") is None
+            for tool in {str(t) for t in tools}:  # one credit per tool per outcome
+                tw, total = counts.get(tool, (0, 0))
+                counts[tool] = (tw + (1 if trustworthy else 0), total + 1)
+        log.memory.debug(
+            "[outcomes] tool_outcome_trust_counts: exit",
+            extra={"_fields": {"n_tools": len(counts)}},
+        )
+        return counts
+
     async def get_by_trace_id(self, trace_id: str) -> TaskOutcome | None:
         # 1. ENTRY
         log.memory.debug(
