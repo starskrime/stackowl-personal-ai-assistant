@@ -1,0 +1,5 @@
+Iteration 1: Bootstrapped .ralph/ state files and built the module map.
+Enumerated 23 logical modules in AUDIT_PLAN.md, ordered by reliability-criticality.
+Project is Python under src/stackowl/ (CLAUDE.md's TS layout is stale — trust the tree).
+No modules audited yet (0 findings). Next iteration: audit the FIRST unchecked module
+= "Pipeline — ReAct execution core" (the agent loop; check 8-point checklist, evidence required).
