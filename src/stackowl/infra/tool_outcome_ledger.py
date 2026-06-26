@@ -27,20 +27,34 @@ class ToolOutcome:
     # marks a pre-execution refusal (bad/missing args, unavailable store) that did
     # nothing — it must NOT count as an unachieved consequential outcome.
     side_effect_committed: bool = True
+    # The reality check (mirrors ToolResult.verified). None ⇒ not checked (the
+    # outcome is judged on `success` alone — byte-identical to pre-verification).
+    # False ⇒ the tool claimed success but the effect was NOT observed: an effectful
+    # `verified=False` is an UNACHIEVED outcome even though `success` is True.
+    verified: bool | None = None
 
 
 def is_effectful_failure(
-    action_severity: str, success: bool, side_effect_committed: bool = True,
+    action_severity: str,
+    success: bool,
+    side_effect_committed: bool = True,
+    verified: bool | None = None,
 ) -> bool:
-    """True iff this outcome is a write/consequential FAILURE that crossed (or may
-    have crossed) the side-effect boundary.
+    """True iff this outcome is a write/consequential effect that did NOT land —
+    either it reported failure, OR it claimed success but reality refuted it
+    (``verified is False``) — and it crossed (or may have crossed) the side-effect
+    boundary.
 
     THE single source of truth for "did the user's effect fail to land?" — shared by
     the ledger tally, the execute snapshot, and the give-up floor so the three never
     drift. A validation-refused no-op (``side_effect_committed=False``) is excluded:
-    nothing was attempted, so there is nothing to be honest about.
+    nothing was attempted, so there is nothing to be honest about. A ``verified=None``
+    outcome falls back to the ``success`` signal (byte-identical to today).
     """
-    return action_severity in _EFFECTFUL and not success and side_effect_committed
+    if action_severity not in _EFFECTFUL or not side_effect_committed:
+        return False
+    # An unverified claim (success=True, verified=False) is an unachieved effect.
+    return not success or verified is False
 
 
 _outcomes: ContextVar[tuple[ToolOutcome, ...] | None] = ContextVar(
@@ -58,12 +72,15 @@ def reset(token: Token[tuple[ToolOutcome, ...] | None]) -> None:
 
 def record_tool_outcome(
     *, name: str, action_severity: str, success: bool, side_effect_committed: bool = True,
+    verified: bool | None = None,
 ) -> None:
     """Record one dispatched tool's outcome. No-op (logged) when unbound; never raises.
 
     ``side_effect_committed`` defaults True (conservative). Callers pass False for a
     pre-execution refusal (bad/missing args, unavailable store) so it is excluded from
-    the unachieved-consequential tally — see :func:`is_effectful_failure`.
+    the unachieved-consequential tally — see :func:`is_effectful_failure`. ``verified``
+    mirrors ToolResult.verified (None ⇒ not checked, byte-identical; False ⇒ claimed
+    but unobserved → an effectful failure).
     """
     current = _outcomes.get()
     if current is None:
@@ -76,7 +93,7 @@ def record_tool_outcome(
         *current,
         ToolOutcome(
             name=name, action_severity=action_severity, success=success,
-            side_effect_committed=side_effect_committed,
+            side_effect_committed=side_effect_committed, verified=verified,
         ),
     ))
 
@@ -87,11 +104,19 @@ def get_outcomes() -> tuple[ToolOutcome, ...]:
 
 
 def consequential_tally() -> tuple[int, int]:
-    """Return (consequential_failures, consequential_successes) over write+consequential outcomes."""
+    """Return (consequential_failures, consequential_successes) over write+consequential outcomes.
+
+    Verification-aware: a ``verified=False`` effect counts as a FAILURE (not a
+    success) even though it self-reported ``success=True`` — a claimed-but-unobserved
+    write is an unachieved outcome.
+    """
     outcomes = get_outcomes()
     cons_f = sum(
         1 for o in outcomes
-        if is_effectful_failure(o.action_severity, o.success, o.side_effect_committed)
+        if is_effectful_failure(o.action_severity, o.success, o.side_effect_committed, o.verified)
     )
-    cons_s = sum(1 for o in outcomes if o.action_severity in _EFFECTFUL and o.success)
+    cons_s = sum(
+        1 for o in outcomes
+        if o.action_severity in _EFFECTFUL and o.success and o.verified is not False
+    )
     return cons_f, cons_s

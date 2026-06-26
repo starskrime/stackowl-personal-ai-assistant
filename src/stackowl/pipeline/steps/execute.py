@@ -562,12 +562,14 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         failures = tuple(
             o.name for o in outcomes
             if tool_outcome_ledger.is_effectful_failure(
-                o.action_severity, o.success, o.side_effect_committed,
+                o.action_severity, o.success, o.side_effect_committed, o.verified,
             )
         )
+        # B2 — a verified=False effect is NOT a success (it was claimed, never observed),
+        # so it neither counts here nor disarms the floor below.
         successes = tuple(
             o.name for o in outcomes
-            if o.action_severity in _EFFECTFUL_SEVERITIES and o.success
+            if o.action_severity in _EFFECTFUL_SEVERITIES and o.success and o.verified is not False
         )
         # GOAL-RELEVANT subset: effectful successes MINUS local-workspace file
         # mutations. A pure local file write (write_file / edit / apply_patch /
@@ -581,6 +583,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             o.name for o in outcomes
             if o.action_severity in _EFFECTFUL_SEVERITIES
             and o.success
+            and o.verified is not False
             and o.name not in _LOCAL_FILE_MUTATION_TOOLS
         )
         recovered = tuple(
@@ -1056,6 +1059,10 @@ async def _run_with_tools(
             # reports side_effect_committed=False so a no-op failure does not trip the
             # honest give-up floor as if a real consequential action had failed.
             side_effect_committed=tr.side_effect_committed,
+            # B2 — the reality check: an effectful tool that claimed success but whose
+            # artifact was not observed (verified=False) is recorded as an unachieved
+            # outcome, so the honest floor owns the turn. None ⇒ byte-identical.
+            verified=tr.verified,
         )
         # TurnProgressTracker — update from this REAL completed dispatch (not a
         # pre-exec refusal/bounce, which are counted in their own blocks above).

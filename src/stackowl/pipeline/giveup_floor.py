@@ -42,7 +42,7 @@ def _unrecovered_consequential_failures(
     failed = {
         o.name for o in tool_outcome_ledger.get_outcomes()
         if tool_outcome_ledger.is_effectful_failure(
-            o.action_severity, o.success, o.side_effect_committed,
+            o.action_severity, o.success, o.side_effect_committed, o.verified,
         )
     }
     recovered = {
@@ -198,7 +198,7 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
             failed_name = next(
                 (o.name for o in tool_outcome_ledger.get_outcomes()
                  if tool_outcome_ledger.is_effectful_failure(
-                     o.action_severity, o.success, o.side_effect_committed,
+                     o.action_severity, o.success, o.side_effect_committed, o.verified,
                  ) and o.name in unrecovered),
                 None,
             )
