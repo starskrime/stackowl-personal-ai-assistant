@@ -45,6 +45,7 @@ from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_win
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.tools.child_exclusion import CHILD_EXCLUDED_TOOLS
 from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.verification import is_trustworthy_success
 
 if TYPE_CHECKING:
     from stackowl.gateway.turn_registry import TurnRegistry
@@ -792,6 +793,12 @@ async def _run_with_tools(
     # per capability per turn; a second failure of the same class falls through to
     # the honest TOOL_FAILED marker rather than substituting again).
     substituted_tags: set[str] = set()
+    # B4a — tool names already retried once this turn for an UNVERIFIED EFFECT
+    # (success=True but verified=False). The recovery ladder's first rung re-runs a
+    # non-consequential effectful tool once before routing to substitution / the
+    # honest floor; a second unverified effect from the same tool falls straight
+    # through (bounded — never a retry spiral).
+    retried_unverified: set[str] = set()
     # TurnProgressTracker — unified replacement for the P2 fail_streak/circuit_open
     # pair. Closes G1 (timeout) and G2 (no-op refusal) spiral gaps in addition to
     # the original same-tool repeated-failure containment. Window-scaled threshold:

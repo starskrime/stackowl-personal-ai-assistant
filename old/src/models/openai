@@ -1,4 +1,0 @@
-compatible: openai
-availableModels: ["gpt-5"]
-defaultModel: "gpt-5"
-url: "https://api.openai.com/v1"
