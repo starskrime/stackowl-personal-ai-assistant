@@ -806,6 +806,14 @@ class Settings(BaseSettings):
     # false-negative cannot brick a boot on a transient. Flip to "block" once the census is
     # burned-in green (it is, on this machine). General/config-driven — no per-feature logic.
     reachability_enforcement: str = "warn"
+    # ADR-2 — on a TRANSIENT provider fault, retry the SAME tier once (via the
+    # RecoveryActuator) before cascading to the next tier. A momentary blip (timeout /
+    # transient circuit trip) may clear on an immediate retry without burning the
+    # escalation. Provider completions are idempotent (no side effect), so a same-tier
+    # retry cannot double-commit. Default ON (owner-approved): more resilient on flaky
+    # faults at the cost of at most one extra attempt on the fault path. Set False for the
+    # pre-ADR cascade-only behavior (byte-identical).
+    provider_retry_same_tier_once: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

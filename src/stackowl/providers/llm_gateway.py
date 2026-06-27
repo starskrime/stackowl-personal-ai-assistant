@@ -18,6 +18,8 @@ Meta-calls that must not recurse (the intent router, the give-up judges) pin
 from __future__ import annotations
 
 import inspect
+from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from stackowl.exceptions import CircuitOpenError, RateLimitError
@@ -31,6 +33,18 @@ if TYPE_CHECKING:
 # The escalation ladder, least → most capable. ``local`` is a separate axis
 # (offline backend), NOT part of the quality ladder.
 LADDER: tuple[str, ...] = ("fast", "standard", "powerful")
+
+
+def _retry_same_tier_enabled() -> bool:
+    """ADR-2 flag read (``provider_retry_same_tier_once``). Fail-safe to True (the
+    owner-approved default) on any config error — a flag read must never break a turn.
+    Consulted ONLY on a fault path, so the happy path never constructs Settings here."""
+    try:
+        from stackowl.config.settings import Settings
+
+        return bool(Settings().provider_retry_same_tier_once)
+    except Exception:  # noqa: BLE001 — a flag read must never raise into the gateway
+        return True
 
 ESCALATE_SENTINEL = "ESCALATE"
 
@@ -102,6 +116,28 @@ class LLMGateway:
 
     # -- non-tool completion ------------------------------------------------- #
 
+    async def _retry_same_tier_once(
+        self, attempt: Callable[[], Awaitable[Any]], tier: str, purpose: str
+    ) -> Any | None:
+        """ADR-2 — retry the SAME tier ONCE on a transient provider fault, via the one
+        RecoveryActuator, BEFORE cascading. Returns the recovered result, or ``None`` if the
+        retry also failed (the caller then cascades / re-raises as before). The completion is
+        idempotent (no side effect), so re-running it cannot double-commit. Records nothing —
+        the gateway owns the escalation trace; this is a transparent in-tier heal."""
+        from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+        failure = Failure(name=f"provider:{tier}", kind="provider", transient=True)
+        outcome = await RecoveryActuator().recover(
+            failure, attempt=attempt, verify=lambda r: r is not None, record=False,
+        )
+        if outcome.recovered:
+            log.engine.info(
+                "[llm_gateway] same-tier retry recovered a transient provider fault",
+                extra={"_fields": {"purpose": purpose, "tier": tier}},
+            )
+            return outcome.result
+        return None
+
     async def complete(
         self,
         messages: list[Message],
@@ -119,6 +155,7 @@ class LLMGateway:
         """
         tiers = tier_span(floor, ceiling)
         result: CompletionResult | None = None
+        retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
             provider, degraded = self._registry.resolve_tier_with_fallback(tier)
@@ -126,33 +163,53 @@ class LLMGateway:
             try:
                 result = await provider.complete(msgs, model="", **kwargs)
             except BaseException as exc:
-                # F-16/F-17: a CLASSIFIED provider fault (circuit OPEN, rate-limit cap,
-                # 5xx/429, transport timeout) must cascade to the next tier — not
-                # dead-end at the user. Only on FAILURE; the happy path is unchanged.
-                # A non-fault (our bug / user-stop / budget-kill) or the LAST tier
-                # re-raises, preserving today's terminal behaviour.
-                if not (can_escalate and is_cascadable_fault(exc)):
-                    # F-19 — a fault outcome that ends the turn must be EXPLAINABLE,
-                    # not a silent re-raise: log the failure branch (only when the
-                    # exception IS a classified fault; a control-flow signal / our-own
-                    # bug propagates unannotated as before).
-                    if is_cascadable_fault(exc):
-                        log.engine.warning(
-                            "[llm_gateway] complete: provider fault not recoverable — re-raising",
-                            extra={"_fields": {"purpose": purpose, "from_tier": tier,
-                                               "exc_type": type(exc).__name__,
-                                               "degraded_from": degraded,
-                                               "at_ceiling": not can_escalate}},
-                        )
-                    raise
-                log.engine.warning(
-                    "[llm_gateway] complete: tier failed — falling back",
-                    extra={"_fields": {"purpose": purpose, "from_tier": tier,
-                                       "to_tier": tiers[idx + 1],
-                                       "exc_type": type(exc).__name__,
-                                       "degraded_from": degraded}},
-                )
-                continue
+                # ADR-2 — same-tier retry-once on a TRANSIENT fault, via the RecoveryActuator,
+                # BEFORE cascading (flagged provider_retry_same_tier_once). A recovered retry
+                # sets `result` and falls through to the escalate-check + return; if the retry
+                # also fails (or the flag is off), the original cascade/re-raise logic runs.
+                if (
+                    is_cascadable_fault(exc)
+                    and _retry_same_tier_enabled()
+                    and tier not in retried_tiers
+                ):
+                    retried_tiers.add(tier)
+                    retried = await self._retry_same_tier_once(
+                        partial(provider.complete, msgs, model="", **kwargs),
+                        tier, purpose,
+                    )
+                    # success on same-tier retry → result set; flow to the escalate-check.
+                    result = retried
+                else:
+                    retried = None
+                    result = None
+                if retried is None:
+                    # F-16/F-17: a CLASSIFIED provider fault (circuit OPEN, rate-limit cap,
+                    # 5xx/429, transport timeout) must cascade to the next tier — not
+                    # dead-end at the user. A non-fault (our bug / user-stop / budget-kill)
+                    # or the LAST tier re-raises, preserving today's terminal behaviour.
+                    if not (can_escalate and is_cascadable_fault(exc)):
+                        # F-19 — a fault outcome that ends the turn must be EXPLAINABLE,
+                        # not a silent re-raise (only when the exception IS a classified
+                        # fault; a control-flow signal / our-own bug propagates unannotated).
+                        if is_cascadable_fault(exc):
+                            log.engine.warning(
+                                "[llm_gateway] complete: provider fault not recoverable — re-raising",
+                                extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                                   "exc_type": type(exc).__name__,
+                                                   "degraded_from": degraded,
+                                                   "at_ceiling": not can_escalate}},
+                            )
+                        raise
+                    log.engine.warning(
+                        "[llm_gateway] complete: tier failed — falling back",
+                        extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                           "to_tier": tiers[idx + 1],
+                                           "exc_type": type(exc).__name__,
+                                           "degraded_from": degraded}},
+                    )
+                    continue
+            # Reached only on a try success OR a recovered same-tier retry → result is set.
+            assert result is not None
             if can_escalate and is_escalate_signal(result.content):
                 log.engine.info(
                     "[llm_gateway] complete: model escalated — stepping up tier",
@@ -210,6 +267,7 @@ class LLMGateway:
         """
         tiers = tier_span(floor, ceiling)
         final_text, calls = "", []  # type: tuple[str, list[dict[str, Any]]]
+        retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
             provider, degraded = self._registry.resolve_tier_with_fallback(tier)
@@ -239,32 +297,56 @@ class LLMGateway:
                     **attempt_kwargs,
                 )
             except BaseException as exc:
-                # F-16/F-17: a CLASSIFIED provider fault on this tier cascades to the
-                # next tier up instead of dead-ending at the user. Reset turn-scoped
-                # state (the tool-outcome ledger) via on_escalate exactly like a
-                # discarded ESCALATE attempt so the failed attempt doesn't poison the
-                # recovery tier's give-up floor. Non-fault or LAST tier re-raises.
-                if not (can_escalate and is_cascadable_fault(exc)):
-                    # F-19 — an unrecoverable fault outcome must be explainable.
-                    if is_cascadable_fault(exc):
-                        log.engine.warning(
-                            "[llm_gateway] tools: provider fault not recoverable — re-raising",
-                            extra={"_fields": {"purpose": purpose, "from_tier": tier,
-                                               "exc_type": type(exc).__name__,
-                                               "degraded_from": degraded,
-                                               "at_ceiling": not can_escalate}},
-                        )
-                    raise
-                log.engine.warning(
-                    "[llm_gateway] tools: tier failed — falling back",
-                    extra={"_fields": {"purpose": purpose, "from_tier": tier,
-                                       "to_tier": tiers[idx + 1],
-                                       "exc_type": type(exc).__name__,
-                                       "degraded_from": degraded}},
-                )
-                if on_escalate is not None:
-                    await on_escalate(tier, tiers[idx + 1])
-                continue
+                # ADR-2 — same-tier retry-once on a TRANSIENT fault, via the RecoveryActuator,
+                # BEFORE cascading (flagged). A recovered retry sets (final_text, calls) and
+                # falls through to the escalate-check; if the retry also fails (or the flag is
+                # off), the original cascade (with on_escalate reset) / re-raise logic runs.
+                if (
+                    is_cascadable_fault(exc)
+                    and _retry_same_tier_enabled()
+                    and tier not in retried_tiers
+                ):
+                    retried_tiers.add(tier)
+                    retried = await self._retry_same_tier_once(
+                        partial(
+                            provider.complete_with_tools,
+                            user_text=user_text, system_text=sys, tool_schemas=schemas,
+                            tool_dispatcher=tool_dispatcher, can_escalate=can_escalate,
+                            **attempt_kwargs,
+                        ),
+                        tier, purpose,
+                    )
+                else:
+                    retried = None
+                if retried is not None:
+                    final_text, calls = retried
+                else:
+                    # F-16/F-17: a CLASSIFIED provider fault on this tier cascades to the
+                    # next tier up instead of dead-ending at the user. Reset turn-scoped
+                    # state (the tool-outcome ledger) via on_escalate exactly like a
+                    # discarded ESCALATE attempt so the failed attempt doesn't poison the
+                    # recovery tier's give-up floor. Non-fault or LAST tier re-raises.
+                    if not (can_escalate and is_cascadable_fault(exc)):
+                        # F-19 — an unrecoverable fault outcome must be explainable.
+                        if is_cascadable_fault(exc):
+                            log.engine.warning(
+                                "[llm_gateway] tools: provider fault not recoverable — re-raising",
+                                extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                                   "exc_type": type(exc).__name__,
+                                                   "degraded_from": degraded,
+                                                   "at_ceiling": not can_escalate}},
+                            )
+                        raise
+                    log.engine.warning(
+                        "[llm_gateway] tools: tier failed — falling back",
+                        extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                           "to_tier": tiers[idx + 1],
+                                           "exc_type": type(exc).__name__,
+                                           "degraded_from": degraded}},
+                    )
+                    if on_escalate is not None:
+                        await on_escalate(tier, tiers[idx + 1])
+                    continue
             if can_escalate and is_escalate_signal(final_text):
                 log.engine.info(
                     "[llm_gateway] tools: model escalated mid-loop — discard + step up",
