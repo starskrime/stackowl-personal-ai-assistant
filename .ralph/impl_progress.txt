@@ -63,15 +63,34 @@ across-tick retry — the ADR says sites keep their rung handlers).
   consequential-never-retried, not classification. 82 objectives/recovery/journey/config green;
   ruff+mypy clean. NOT live-restarted (provider box reachability TBD; no migration, flag ON in
   code default so no prod config flip needed).
-NEXT (2 subsystems left to mark ADR-2 [x]):
-  A. SCHEDULER _mark_failed (F-60/62): add flag unify_scheduler_recovery (default ON, byte-
-     identical), route the retry-exhaustion decision through should_retry. STEER-5 retry already
-     exists — delegate the decision, keep the retry_at/retry_count execution.
-  B. GATEWAY turn replay (F-35/37/67): add flag unify_gateway_recovery (default ON). gateway_link
-     _flush_pending replay-retry + turn_registry wedge re-dispatch decision → should_retry.
-     RISKIEST (restart-critical) — gate carefully. This is ADR-2's headline live-verify
-     (kill core mid-turn → turn replays). Live-verify if box up.
-  Then mark ADR-2 [x] in IMPLEMENTATION_PLAN.md, update BACKLOG/FINDINGS, cite F-numbers.
+UPDATE (iter 9, main @2b6b55de): SCHEDULER routed. scheduler._run_job retry-vs-terminal-fail
+decision gated by self._may_retry(result) → should_retry(Failure(kind="scheduled_job",
+transient=True, consequential=False)). Flag unify_scheduler_recovery default ON; OFF=inline
+byte-identical. module-level _unify_scheduler_enabled() (monkeypatchable like llm_gateway).
+STEER-5/F113 retry_at/retry_count execution UNCHANGED. Scheduler+recovery suites green.
+
+UPDATE (iter 10, main @b45b6c24): GATEWAY routed — ADR-2 COMPLETE. Two decision seams behind
+flag unify_gateway_recovery (default ON; OFF=inline byte-identical):
+  - GatewayLink._flush_pending (F-38): replay retry-vs-surface → self._may_retry_replay(exc).
+  - TurnRegistry._redispatch_wedged_goal (F-67): re-dispatch-vs-give-up → self._may_redispatch().
+Both → should_retry(Failure(kind="gateway_turn", transient=True, consequential=False)). F-35
+unconditional in-flight requeue UNCHANGED. Each module has its own _unify_gateway_enabled()
+reader (monkeypatchable). 212 gateway/runtime/recovery green (incl. existing F-38/F-67/replay/
+inflight = byte-identical proof); ruff+mypy clean.
+
+★ADR-2 MARKED [x]. ALL 6 subsystems delegate to ONE RecoveryActuator authority:
+  execute.py (tool) / llm_gateway.py (provider) / deliverer.py (channel) / objectives/driver.py
+  (objective) / scheduler.py (scheduler) / gateway_link.py + turn_registry.py (gateway turn replay).
+  All flags ON in code default (no prod config flip needed; no migration). Invariant: no call site
+  surrenders a recoverable failure on its own before the ladder; recovered = ADR-1-verified.
+  NOT YET live-verified end-to-end (kill core mid-turn → turn replays) — the headline live test;
+  do it next session if the platform is running. Health green (db/fs/graph + 3 provider tiers) @iter8.
+
+NEXT ADR in build order: ADR-3 — ReversibilityResolver (feat/adr-3-reversibility-resolver).
+  One reversibility/stakes signal + default-resolution authority so trivial reversible decisions
+  resolve act-first instead of bouncing to the user. Closes F-3/27/44/56/68/69/70/71. Does NOT
+  depend on ADR-2. Read .ralph/adr/ADR-3-*.md + ROOT_CAUSES T3. Note: F-44 (reversible park
+  auto-resolve) already partly done in objective driver (_park_is_irreversible) — recon first.
 
 BUILD ORDER REMAINING after ADR-2: ADR-3 → ADR-5 → ADR-6 → ADR-7.
 Known pre-existing reds: IMPLEMENT_PROMPT §6 — git-stash-verify any NEW red vs clean main.

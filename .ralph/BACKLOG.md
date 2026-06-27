@@ -167,3 +167,26 @@ when any registered capability is unreachable on the default path. Closures:
   enforced at assembly time (scheduler/commands/notifications) so a new half-edge can't register
   without declaring how it's reached. Not blockers — the boot invariant + REQUIRED_PROBES already
   fail-close; this extends coverage to those specific edges. ⤷F-87 (lifecycle variant → ADR-6).
+
+### ADR-2 — RecoveryActuator ladder (SHIPPED 2026-06-27, all `unify_*_recovery` flags ON in prod)
+One `RecoveryActuator` (`pipeline/recovery_actuator.py`) with a typed `Failure` + the bounded
+`should_retry` predicate is the single authority every failing subsystem hands its retry-vs-
+surrender DECISION to; a "recovered" result is re-verified via ADR-1. Each subsystem KEEPS its own
+execution (rung handlers) — nothing removed. ALL 6 sites now delegate:
+- **Closed (decision unified + re-verified)**: F-5, F-6, F-7, F-8, F-24, F-55 (tool dispatch,
+  execute.py — classifier+decision); F-16, F-17, F-18, F-21 (provider gateway same-tier retry +
+  cascade); F-64, F-65, F-66 (channel transport reroute, deliverer.py); F-40, F-41 (objective driver
+  sub-goal retry/cooldown); F-60, F-62 (scheduler retry/re-arm); F-35, F-37, F-67 (gateway in-flight
+  replay + wedged-turn re-dispatch).
+- **Key finding from the arc**: each subsystem ALREADY had correct bounded recovery (the audit found
+  point-solutions, not absences). The S1-S4 reliability arcs had built per-site retry/cooldown/replay.
+  ADR-2's value is UNIFICATION: one `should_retry`/`Failure` policy, one re-verify step (ADR-1), one
+  ledger (`recovery_context`) — so future failure paths inherit recovery and the invariant ("no call
+  site surrenders a recoverable failure on its own before the ladder") is structural, not coincidental.
+- **Owner decision**: "complete literal unification" of the final 3 byte-identical routings
+  (objective/scheduler/gateway) + flag default ON, both via AskUserQuestion (see
+  feedback_ask_before_flag_default). Flag OFF = inline decision = byte-identical to pre-ADR.
+- **Open / deferred (NOT regressions)**: live end-to-end verify of the headline (kill core mid-turn
+  → turn replays) not yet run. Replan rung for the objective driver (decompose remainder) is a future
+  enhancement, intentionally NOT added (would change behavior; the F-43 different-approach retry +
+  F-41 cooldown already cover the transient case).

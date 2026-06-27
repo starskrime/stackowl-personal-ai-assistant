@@ -22,9 +22,15 @@ Mark `[x]` only when the per-ADR Definition of Done in `IMPLEMENT_PROMPT.md` is 
   closed instead of shipping green. Prevents the half-edges later ADRs would otherwise add.
   Closes: F-45, F-76, F-77, F-78, F-86. (⤷F-87)
 
-- [ ] **ADR-2 — RecoveryActuator ladder** (`feat/adr-2-recovery-actuator`).
+- [x] **ADR-2 — RecoveryActuator ladder** (`feat/adr-2-*`). SHIPPED 2026-06-27, all flags ON in prod.
   One authority turns a not-trustworthy result into a bounded recovery ladder
-  (retry/fallback/substitution/replan/re-arm); the ~12 point-solutions delegate. (Depends on ADR-1.)
+  (retry/fallback/substitution/replan/re-arm); ALL 6 point-solutions now DELEGATE: tool dispatch
+  (execute.py), provider gateway (llm_gateway.py), channel transport (deliverer.py), objective
+  driver (objectives/driver.py), scheduler (scheduler.py), gateway turn replay (gateway_link.py +
+  turn_registry.py). Recovery already existed at each site (the audit found point-solutions with
+  gaps); ADR-2 unifies the DECISION under one `should_retry`/`Failure` authority, re-verified via
+  ADR-1. Owner chose "complete literal unification" + flag default ON for the final 3 byte-identical
+  routings (objective/scheduler/gateway) via AskUserQuestion. (Depends on ADR-1.)
   Closes: F-5, F-6, F-7, F-8, F-16, F-17, F-18, F-21, F-24, F-35, F-37, F-40, F-41, F-55,
   F-60, F-62, F-64, F-65, F-66, F-67.
 
