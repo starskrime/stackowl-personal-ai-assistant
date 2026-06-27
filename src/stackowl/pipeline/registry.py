@@ -18,6 +18,18 @@ from stackowl.pipeline.steps import (
 
 StepFn = Callable[[PipelineState], Coroutine[Any, Any, PipelineState]]
 
+# F-2 (DEFERRED — architectural) — this fixed sequence has no dedicated
+# plan/decompose stage ahead of ``execute``. Decomposition is NOT absent from the
+# platform: it is owned today by the OBJECTIVES PLANNER (``stackowl.objectives`` —
+# ``decomposer.py`` splits a goal into ordered sub-goals, ``driver.py`` advances
+# them, ``store.py`` persists state), reached out-of-band via the ``objective``
+# tool / durable goals rather than inline in this per-turn pipeline. Inserting a
+# plan/decompose step here would restructure the hot path and duplicate that
+# authority, so it is intentionally NOT done as part of the S3 (minor) pass: a
+# safe version needs its own design (where the planner's output threads into
+# ``execute``, how it stays flag-OFF/byte-identical by default, and how it avoids
+# two decomposition owners). Until then the objectives planner remains the single
+# decomposition path. Do not fake a stage here.
 PIPELINE_STEPS: list[tuple[str, StepFn]] = [
     ("triage", triage.run),
     ("dispatch", dispatch.run),

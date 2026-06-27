@@ -14,8 +14,16 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.providers._blocks import gemini_user_parts, message_has_blocks
+from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.vision_models import is_vision_model
+
+# Gemini candidate finish_reason names that are a NORMAL (non-blocked) completion.
+# Anything else with empty text (SAFETY / RECITATION / BLOCKLIST / PROHIBITED_CONTENT
+# / SPII …) is a content BLOCK, not a transient empty generation. These are SDK
+# protocol enum names (vendor wire detail confined to this thin adapter), NOT
+# natural-language keywords.
+_NORMAL_FINISH_REASONS = frozenset({"STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED"})
 
 
 def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
@@ -23,6 +31,31 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
     if isinstance(val, int):
         return val
     return int(str(val))
+
+
+def _block_reason(response: Any) -> str | None:
+    """Return a non-empty reason string when a generation was blocked/filtered.
+
+    Reads the prompt-side ``prompt_feedback.block_reason`` and the response-side
+    candidate ``finish_reason``. Returns ``None`` for a normal completion (STOP /
+    MAX_TOKENS / unspecified) so an ordinary empty generation is never misreported
+    as a block. Fail-open: any odd/missing shape returns ``None``.
+    """
+    try:
+        feedback = getattr(response, "prompt_feedback", None)
+        block = getattr(feedback, "block_reason", None) if feedback is not None else None
+        if block:
+            return str(getattr(block, "name", block))
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            fr = getattr(candidates[0], "finish_reason", None)
+            if fr is not None:
+                name = str(getattr(fr, "name", fr)).upper()
+                if name not in _NORMAL_FINISH_REASONS:
+                    return name
+    except Exception:  # noqa: BLE001 — never let block detection break the round.
+        return None
+    return None
 
 
 def _build_contents(messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
@@ -107,6 +140,8 @@ class GeminiProvider(ModelProvider):
         # record the streamed round's spend at generator exit (best-effort,
         # fail-open) so streaming no longer under-counts the per-turn budget.
         final_usage: Any = None
+        yielded_any = False
+        last_chunk: Any = None
         try:
             try:
                 async for chunk in await self._client.aio.models.generate_content_stream(
@@ -114,10 +149,12 @@ class GeminiProvider(ModelProvider):
                     contents=contents,
                     config=config,
                 ):
+                    last_chunk = chunk
                     chunk_usage = getattr(chunk, "usage_metadata", None)
                     if chunk_usage is not None:
                         final_usage = chunk_usage
                     if chunk.text:
+                        yielded_any = True
                         yield chunk.text
             finally:
                 await self._record_stream_usage_safe(
@@ -130,6 +167,18 @@ class GeminiProvider(ModelProvider):
                 extra={"_fields": {"provider": self._name}},
             )
             raise ProviderError(self._name, exc) from exc
+        # F-23 — a stream that ended having yielded NOTHING because the generation
+        # was safety/recitation-blocked must surface honestly, not finish as a
+        # silent empty success. (Raised OUTSIDE the wrap above so it is not
+        # double-wrapped.) A legitimately empty (non-blocked) generation is left as-is.
+        if not yielded_any:
+            reason = _block_reason(last_chunk)
+            if reason is not None:
+                log.engine.warning(
+                    "[gemini] stream: generation blocked — surfacing honestly",
+                    extra={"_fields": {"provider": self._name, "reason": reason}},
+                )
+                raise ProviderError(self._name, ValueError(f"generation blocked: {reason}"))
         log.engine.debug("[gemini] stream: exit", extra={"_fields": {"provider": self._name}})
 
     async def _record_stream_usage_safe(
@@ -192,6 +241,43 @@ class GeminiProvider(ModelProvider):
             raise ProviderError(self._name, exc) from exc
         duration_ms = (time.monotonic() - t0) * 1000
         text = response.text or ""
+        # F-23 — ``response.text or ""`` returns "" for BOTH a transient empty
+        # generation AND a safety/recitation BLOCK; do not coerce either into a
+        # silent empty success. A confirmed block surfaces honestly (ProviderError
+        # → the gateway floors); a plain empty generation gets ONE retry as a cheap
+        # backstop (parity with the OpenAI/Anthropic siblings).
+        if not text.strip():
+            reason = _block_reason(response)
+            if reason is not None:
+                log.engine.warning(
+                    "[gemini] complete: generation blocked — surfacing honestly",
+                    extra={"_fields": {"provider": self._name, "reason": reason}},
+                )
+                raise ProviderError(self._name, ValueError(f"generation blocked: {reason}"))
+            log.engine.warning(
+                "[gemini] complete: empty content — retrying once",
+                extra={"_fields": {"provider": self._name, "model": resolved_model}},
+            )
+            try:
+                retry = await self._resilient_round(_round)
+            except Exception as exc:
+                if not _is_transport_error(exc):
+                    raise
+                log.engine.warning(
+                    "[gemini] complete: retry after empty failed — keeping empty",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+            else:
+                response = retry
+                text = response.text or ""
+                reason2 = _block_reason(response)
+                if not text.strip() and reason2 is not None:
+                    log.engine.warning(
+                        "[gemini] complete: retry also blocked — surfacing honestly",
+                        extra={"_fields": {"provider": self._name, "reason": reason2}},
+                    )
+                    raise ProviderError(self._name, ValueError(f"generation blocked: {reason2}"))
         usage = response.usage_metadata
         result = CompletionResult(
             content=text,

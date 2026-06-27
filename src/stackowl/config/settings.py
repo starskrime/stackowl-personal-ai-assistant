@@ -786,7 +786,10 @@ class Settings(BaseSettings):
     # declared, then OBSERVE reality — never asserting a positive pass it could not
     # measure (model unavailable ⇒ no acceptance, honest-limit). General/config-
     # driven — no vendor or model names; resolved via the tier cascade. Mirrors
-    # judge_tier. Default OFF keeps every path byte-identical.
+    # judge_tier. Default OFF keeps every path byte-identical. The OFF state is not
+    # silent (F-14): when the layer is skipped because this tier is unset, the
+    # deriver logs ``acceptance_skip_reason`` so "an undeclared claim went unverified"
+    # is visible in the trace rather than an invisible early-return.
     acceptance_tier: str = ""
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)

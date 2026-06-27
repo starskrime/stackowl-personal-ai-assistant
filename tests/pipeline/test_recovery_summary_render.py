@@ -6,10 +6,11 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 
 
-def _state(*, responses):
+def _state(*, responses, language="en"):
     return PipelineState(
         trace_id="t", session_id="s", input_text="hi", channel="cli",
         owl_name="o", pipeline_step="deliver", responses=responses,
+        language=language,
     )
 
 
@@ -57,14 +58,52 @@ async def test_no_recovery_means_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_floor_only_response_gets_no_recovery_line():
+async def test_floor_only_response_surfaces_attempted_recovery_line():
+    """F-10: when floored, the user-visible recovery is NOT silently dropped — a
+    brief, generic 'I tried alternatives before giving up' line is surfaced so the
+    honest floor still admits an attempt was made (no provider/tool names leaked)."""
     token = rc.bind()
     try:
-        rc.record_recovery(kind="substitution", failed="a",
-                           recovered_via="b", user_visible=True)
+        rc.record_recovery(kind="substitution", failed="secret_tool",
+                           recovered_via="secret_sibling", user_visible=True)
+        s = _state(responses=(_answer("I couldn't finish", is_floor=True),))
+        out = await surface_recovery(s)
+        # Original floor preserved + ONE brief attempted-recovery line appended.
+        assert len(out.responses) == 2
+        line = out.responses[-1].content
+        assert line.strip()
+        # Generic — must not leak the specific failed/recovered capability names.
+        assert "secret_tool" not in line
+        assert "secret_sibling" not in line
+    finally:
+        rc.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_floor_with_no_recovery_events_stays_unchanged():
+    """No recovery events at all → a floored response is left byte-identical."""
+    token = rc.bind()
+    try:
         s = _state(responses=(_answer("I couldn't finish", is_floor=True),))
         out = await surface_recovery(s)
         assert out.responses == s.responses
+    finally:
+        rc.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_recovery_line_localized_to_turn_language():
+    """F-9: the recovery trace honors state.language (not a hardcoded 'en')."""
+    token = rc.bind()
+    try:
+        rc.record_recovery(kind="substitution", failed="browse_url",
+                           recovered_via="http_fetch", user_visible=True)
+        out = await surface_recovery(
+            _state(responses=(_answer(),), language="de")
+        )
+        assert len(out.responses) == 2
+        # German template: "'{failed}' war nicht verfügbar, daher habe ich ..."
+        assert "war nicht verfügbar" in out.responses[-1].content
     finally:
         rc.reset(token)
 

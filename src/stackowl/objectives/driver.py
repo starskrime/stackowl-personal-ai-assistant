@@ -170,11 +170,16 @@ class ObjectiveDriverHandler(JobHandler):
             return True
 
         await store.update_subgoal(nxt.subgoal_id, "running")
+        # F-43: don't run a retry COLD. When this sub-goal previously failed, the prior
+        # attempt's failure reason is persisted in its ``result`` column; feed it back
+        # into THIS run so the backend can pick a different approach instead of repeating
+        # the failing one. A fresh sub-goal (no prior result) runs unchanged.
+        run_description = self._with_retry_context(nxt)
         # Freshness clock for goal-level acceptance — captured BEFORE the run so a
         # stale pre-existing artifact cannot satisfy the declared outcome.
         started_at = time.time()
         final_state, task_id = await self._run_subgoal(
-            objective, nxt.description, nxt.acceptance_criteria
+            objective, run_description, nxt.acceptance_criteria
         )
         response_text = "".join(c.content for c in final_state.responses)
 
@@ -326,6 +331,36 @@ class ObjectiveDriverHandler(JobHandler):
         )
         await store.append_event(objective.objective_id, "subgoal_failed", reason)
         await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
+
+    @staticmethod
+    def _with_retry_context(subgoal: Subgoal) -> str:
+        """Augment a previously-failed sub-goal's run with its prior failure (F-43).
+
+        On a retry the sub-goal carries the prior attempt's failure reason in its
+        ``result`` column (stamped when the bounded-retry path re-queued it to
+        ``pending``, and preserved across an F-41 cooldown re-queue). Running the step
+        COLD would simply repeat the failing approach; surfacing what already went wrong
+        lets the backend choose a different one. This is OPERATIONAL within-turn context
+        — reading a prior outcome to inform a retry — NOT persisted negative learning:
+        nothing is written as a "doesn't work" lesson; the note exists only in this run's
+        input_text. A first attempt (no prior result) returns the bare description, so the
+        cold-start path is byte-identical. The ``result`` column is the subgoal-attributed
+        source (objective ``events`` are not keyed to a specific sub-goal)."""
+        prior = (subgoal.result or "").strip()
+        if not prior:
+            return subgoal.description
+        log.scheduler.debug(
+            "[scheduler] objective_driver._advance: feeding prior-failure context into retry",
+            extra={"_fields": {
+                "subgoal_id": subgoal.subgoal_id, "attempts": subgoal.attempts,
+            }},
+        )
+        return (
+            f"{subgoal.description}\n\n"
+            "[Retry note] A previous attempt at this step did not succeed. "
+            f"What went wrong last time: {prior}. "
+            "Take a different approach; do not repeat what already failed."
+        )
 
     @staticmethod
     def _park_is_irreversible(state: PipelineState) -> bool:

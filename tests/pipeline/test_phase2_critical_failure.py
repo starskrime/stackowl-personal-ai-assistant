@@ -318,6 +318,35 @@ async def test_non_critical_failure_does_not_inject_user_error(tmp_db: DbPool) -
     )
 
 
+async def test_apology_advances_tier_when_first_provider_complete_raises() -> None:
+    """F-8: the apology cascade must ADVANCE to the next tier/provider when the
+    first provider's ``complete`` raises mid-outage, rather than dropping straight
+    to the non-localized neutral marker.
+
+    Fast tier provider raises on ``complete``; a healthy provider on the next tier
+    answers. The localized apology must come from the healthy provider — proving
+    the helper advanced past the failing tier instead of giving up after one try.
+    """
+    from stackowl.pipeline.critical_failure import _generate_localized_apology
+
+    failing_fast = _FailingExecuteProvider()  # complete() raises
+    healthy = _ApologyProvider(reply="Lo siento mucho.")
+
+    preg = ProviderRegistry()
+    preg.register_mock("fast-down", failing_fast, tier="fast")
+    preg.register_mock("standard-up", healthy, tier="standard")
+
+    services = StepServices(provider_registry=preg)
+    state = _state(session="sess-advance")
+
+    text = await _generate_localized_apology(state, services)
+
+    assert text == "Lo siento mucho.", (
+        f"apology must come from the healthy next-tier provider; got {text!r}"
+    )
+    assert healthy.complete_calls == 1, "the next-tier provider was never tried"
+
+
 async def test_apology_falls_back_to_neutral_when_cascade_also_fails(tmp_db: DbPool) -> None:
     """execute fails AND the apology cascade also fails (total outage) → the
     deterministic FLOOR is the delivered backstop (never silence, never raises).

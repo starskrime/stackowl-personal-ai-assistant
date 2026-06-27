@@ -16,6 +16,38 @@ _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
 _MAX_CONSECUTIVE_FAILURES = 5
 
+# Why a task is being escalated. ``stuck_timeout`` = a single run() exceeded the
+# watchdog budget (live-but-stuck, F-73); ``max_failures`` = the give-up floor
+# was hit (F-74).
+EscalationReason = Literal["stuck_timeout", "max_failures"]
+
+
+@dataclass(frozen=True)
+class EscalationEvent:
+    """A recoverable signal raised when a supervised task needs operator attention.
+
+    Emitted both when the watchdog trips on a live-but-stuck task (F-73) and when
+    the consecutive-failure floor parks a task as ``failed`` (F-74). Callers wire
+    :class:`Supervisor`'s ``on_escalation`` hook to a real notification/alert seam;
+    when unwired the supervisor still logs the escalation at ``error`` level with a
+    clear ``ESCALATION`` marker.
+    """
+
+    task_id: str
+    reason: EscalationReason
+    consecutive_failures: int
+    detail: str
+
+
+# An escalation hook may be sync (returns ``None``) or async (returns a coroutine
+# the supervisor awaits). Exceptions raised by the hook are caught and logged so a
+# bad hook can never break supervisor bookkeeping.
+EscalationHook = Callable[[EscalationEvent], "Coroutine[Any, Any, None] | None"]
+
+
+class _StuckTimeout(Exception):
+    """Internal: a single run() exceeded the watchdog budget (distinct from a crash)."""
+
 
 class SupervisedTask(ABC):
     """ABC for tasks managed by Supervisor (ARCH-102)."""
@@ -44,9 +76,21 @@ class _TaskState:
 class Supervisor:
     """Manages a set of SupervisedTask instances with exponential-backoff restarts."""
 
-    def __init__(self, *, clock: Clock = WallClock()) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Clock = WallClock(),
+        on_escalation: EscalationHook | None = None,
+        max_run_seconds: float | None = None,
+    ) -> None:
         self._clock = clock
         self._tasks: dict[str, _TaskState] = {}
+        # F-74: optional operator-notification seam invoked on escalation.
+        self._on_escalation = on_escalation
+        # F-73: optional watchdog. When set, a single run() that exceeds this many
+        # seconds is treated as live-but-stuck, cancelled, and restarted. Default
+        # ``None`` (disabled) keeps perpetual-loop tasks (e.g. JobScheduler) intact.
+        self._max_run_seconds = max_run_seconds
 
     def register(self, task: SupervisedTask) -> None:
         """Register a task. Must be called before start()."""
@@ -96,14 +140,7 @@ class Supervisor:
                     "[supervisor] task: starting",
                     extra={"_fields": {"task_id": state.task.task_id}},
                 )
-                await state.task.run()
-                state.consecutive_failures = 0
-                backoff = _BACKOFF_INITIAL
-                duration_ms = (self._clock.monotonic() - t0) * 1000
-                log.startup.debug(
-                    "[supervisor] task: completed cleanly — restarting",
-                    extra={"_fields": {"task_id": state.task.task_id, "duration_ms": duration_ms}},
-                )
+                await self._invoke(state)
             except asyncio.CancelledError:
                 log.startup.info(
                     "[supervisor] task: cancelled",
@@ -111,28 +148,121 @@ class Supervisor:
                 )
                 state.status = "stopped"
                 return
-            except Exception as exc:
-                state.consecutive_failures += 1
+            except _StuckTimeout as exc:
+                # F-73: live-but-stuck — watchdog cancelled the run; escalate + restart.
                 duration_ms = (self._clock.monotonic() - t0) * 1000
-                attempt = state.consecutive_failures
-                log.startup.warning(
-                    "[supervisor] %s: restarting (attempt %d, backoff %.0fs)",
-                    state.task.task_id,
-                    attempt,
-                    backoff,
-                    extra={"_fields": {"task_id": state.task.task_id, "exc": str(exc), "duration_ms": duration_ms}},
+                gave_up = await self._record_failure(
+                    state, detail=str(exc), stuck=True, duration_ms=duration_ms
                 )
-                if state.consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    log.startup.error(
-                        "[supervisor] %s: max consecutive failures reached — marking failed",
-                        state.task.task_id,
-                        extra={"_fields": {"task_id": state.task.task_id, "failures": state.consecutive_failures}},
-                    )
-                    state.status = "failed"
+                if gave_up:
                     return
+            except Exception as exc:
+                duration_ms = (self._clock.monotonic() - t0) * 1000
+                gave_up = await self._record_failure(
+                    state, detail=str(exc), stuck=False, duration_ms=duration_ms
+                )
+                if gave_up:
+                    return
+            else:
+                state.consecutive_failures = 0
+                backoff = _BACKOFF_INITIAL
+                duration_ms = (self._clock.monotonic() - t0) * 1000
+                log.startup.debug(
+                    "[supervisor] task: completed cleanly — restarting",
+                    extra={"_fields": {"task_id": state.task.task_id, "duration_ms": duration_ms}},
+                )
 
             await self._clock.async_sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_MAX)
+
+    async def _invoke(self, state: _TaskState) -> None:
+        """Run the task body once, applying the max-runtime watchdog if configured."""
+        if self._max_run_seconds is None:
+            await state.task.run()
+            return
+        try:
+            await asyncio.wait_for(state.task.run(), timeout=self._max_run_seconds)
+        except TimeoutError as exc:
+            # Translate to a distinct type so a genuine crash is never mislabelled
+            # as "stuck" (and vice-versa). wait_for already cancelled the run.
+            raise _StuckTimeout(
+                f"run exceeded max_run_seconds={self._max_run_seconds:.3g}s"
+            ) from exc
+
+    async def _record_failure(
+        self, state: _TaskState, *, detail: str, stuck: bool, duration_ms: float
+    ) -> bool:
+        """Account one failed run; escalate when warranted. Returns True if parked failed."""
+        state.consecutive_failures += 1
+        attempt = state.consecutive_failures
+        log.startup.warning(
+            "[supervisor] %s: restarting (attempt %d, stuck=%s)",
+            state.task.task_id,
+            attempt,
+            stuck,
+            extra={
+                "_fields": {
+                    "task_id": state.task.task_id,
+                    "exc": detail,
+                    "stuck": stuck,
+                    "duration_ms": duration_ms,
+                }
+            },
+        )
+        # F-73: surface the live-but-stuck signal the moment the watchdog trips.
+        if stuck:
+            await self._escalate(state, "stuck_timeout", detail)
+        # F-74: the give-up floor escalates instead of silently parking the task dead.
+        if state.consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+            log.startup.error(
+                "[supervisor] ESCALATION %s: max consecutive failures reached — marking failed",
+                state.task.task_id,
+                extra={
+                    "_fields": {
+                        "task_id": state.task.task_id,
+                        "failures": state.consecutive_failures,
+                    }
+                },
+            )
+            state.status = "failed"
+            await self._escalate(state, "max_failures", detail)
+            return True
+        return False
+
+    async def _escalate(self, state: _TaskState, reason: EscalationReason, detail: str) -> None:
+        """Emit a recoverable escalation signal and invoke the operator hook if wired."""
+        event = EscalationEvent(
+            task_id=state.task.task_id,
+            reason=reason,
+            consecutive_failures=state.consecutive_failures,
+            detail=detail,
+        )
+        log.startup.error(
+            "[supervisor] ESCALATION: task %s — %s",
+            state.task.task_id,
+            reason,
+            extra={
+                "_fields": {
+                    "task_id": state.task.task_id,
+                    "reason": reason,
+                    "detail": detail,
+                    "failures": state.consecutive_failures,
+                }
+            },
+        )
+        hook = self._on_escalation
+        if hook is None:
+            return
+        try:
+            result = hook(event)
+            if result is not None:
+                await result
+        except Exception as exc:
+            log.startup.error(
+                "[supervisor] %s: escalation hook raised — ignored",
+                state.task.task_id,
+                extra={"_fields": {"task_id": state.task.task_id, "exc": str(exc)}},
+            )
 
 
 def make_supervised_task(task_id: str, coro_fn: Callable[[], Coroutine[Any, Any, None]]) -> SupervisedTask:

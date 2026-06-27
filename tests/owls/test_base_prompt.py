@@ -145,6 +145,31 @@ def test_charter_carries_persistent_memory_principle() -> None:
         )
 
 
+def test_charter_carries_act_first_ambiguity_principle() -> None:
+    """F-53: the act-first / anti-over-clarify principle is UNCONDITIONAL — it
+    lives in the durable charter (every owl gets it), not gated behind a high
+    curiosity trait band in the DNA injector. It must reserve clarifying for
+    irreversible/expensive ambiguity and otherwise act on the most likely intent
+    and state the assumption — introducing no forbidden tool/domain token.
+    """
+    charter = behavioral_charter().lower()
+
+    assert "most likely" in charter, (
+        "charter must carry the act-on-most-likely-intent principle"
+    )
+    assert "irreversible" in charter, (
+        "charter must reserve clarifying questions for irreversible actions"
+    )
+    assert "assumption" in charter, (
+        "charter must instruct stating the assumption when acting on ambiguity"
+    )
+
+    for token in _FORBIDDEN_TOKENS:
+        assert token not in charter, (
+            f"act-first principle must NOT introduce case-specific token {token!r}"
+        )
+
+
 def test_adapter_has_date_and_protocol() -> None:
     """The adapter renders today's date human-readably (not raw isoformat) and
     teaches the ReAct call protocol."""

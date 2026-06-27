@@ -9,10 +9,13 @@ never raises).
 
 Re-introducing a learned-hint consumer is a separate future story with its own
 brainstorm + journey: it must NOT steer a weak model on low evidence (the
-amplification the reliability arc fought). Note (F049): the synthesizer's
-``mean_quality`` is LIVE-consumed; only ``ToolHeuristic.mean_quality`` (the
-heuristic-store row field) is currently unread — it is persisted by the outcome
-miner and rendered in ``__str__`` but no longer feeds any decision.
+amplification the reliability arc fought). Note (F049/F046): the synthesizer's
+``mean_quality`` is LIVE-consumed; the heuristic-store ``mean_quality`` is mined
+by the outcome miner, rendered via ``heuristic_summary``, AND (F046) now feeds a
+live ranking DECISION — it scales the UCB exploration nudge in
+:func:`stackowl.learning.heuristic_ranking.rank_lessons` so promising
+under-observed heuristics surface over mediocre ones. It is therefore no longer a
+dead signal.
 """
 
 from __future__ import annotations

@@ -80,8 +80,20 @@ class _ConsentRouter(Protocol):
     async def prompt(self, req: ConsentRequest) -> ConsentScope: ...  # noqa: D102
 
 
+# F-38 — user-facing notice when a buffered turn can no longer be resumed after a
+# restart, having exhausted its bounded replay retries. No internals, channel-safe.
+_REPLAY_FAILURE_NOTICE = (
+    "Sorry — I couldn't resume an earlier request after a restart, so it didn't "
+    "go through. Please send it again."
+)
+
+
 class GatewayLink:
     """Socket-backed TurnClient + outbound frame router, resilient to core restart."""
+
+    # F-38 — how many times a buffered turn is replayed before it is surfaced to
+    # the user as undeliverable (rather than silently retried forever or dropped).
+    _MAX_REPLAY_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -115,6 +127,10 @@ class GatewayLink:
         # REPLAYS them with the SAME trace_id (the core dedupes a double-execute),
         # instead of the goal evaporating and the user having to re-ask.
         self._inflight: dict[str, IngressMessage] = {}
+        # F-38 — per-turn replay attempt counter (keyed by trace_id). A buffered
+        # turn whose replay raises is re-queued and retried on the next Hello up
+        # to ``_MAX_REPLAY_ATTEMPTS``; cleared on success or after surfacing.
+        self._replay_attempts: dict[str, int] = {}
 
     def register_adapter(self, channel_name: str, adapter: _Adapter) -> None:
         """Add a channel adapter so its turns route over the split (gateway role).
@@ -201,7 +217,14 @@ class GatewayLink:
         await self._conn.send(ingress_to_frame(msg))
 
     async def _flush_pending(self) -> None:
-        """Replay buffered messages once a fresh, ready core is connected."""
+        """Replay buffered messages once a fresh, ready core is connected.
+
+        F-38: a replay that raises is NOT silently dropped. A transient fault
+        (the fresh core's socket faltering) re-queues the turn for the next
+        ``Hello``, up to ``_MAX_REPLAY_ATTEMPTS``; once exhausted the turn is
+        surfaced to its originating channel as a visible failure notice instead
+        of vanishing. A turn forwarded successfully clears its attempt counter.
+        """
         if not self._pending:
             return
         pending, self._pending = self._pending, []
@@ -210,8 +233,62 @@ class GatewayLink:
             extra={"_fields": {"count": len(pending)}},
         )
         for msg in pending:
-            with contextlib.suppress(Exception):
+            try:
                 await self._do_submit(msg)
+            except Exception as exc:  # noqa: BLE001 — one bad replay must not drop the rest
+                # The turn never reached the core; it must not stay tracked as
+                # in-flight (that map is the crash-replay source, and _pending now
+                # owns this turn's fate).
+                self._inflight.pop(msg.trace_id, None)
+                attempts = self._replay_attempts.get(msg.trace_id, 0) + 1
+                if attempts < self._MAX_REPLAY_ATTEMPTS:
+                    self._replay_attempts[msg.trace_id] = attempts
+                    self._pending.append(msg)
+                    log.gateway.warning(
+                        "[ipc] gateway link: replay failed — re-queued for retry",
+                        extra={
+                            "_fields": {
+                                "request_id": msg.trace_id,
+                                "channel": msg.channel,
+                                "attempt": attempts,
+                                "error": str(exc),
+                            }
+                        },
+                    )
+                else:
+                    self._replay_attempts.pop(msg.trace_id, None)
+                    log.gateway.error(
+                        "[ipc] gateway link: replay exhausted retries — notifying channel",
+                        exc_info=exc,
+                        extra={
+                            "_fields": {
+                                "request_id": msg.trace_id,
+                                "channel": msg.channel,
+                                "attempts": attempts,
+                            }
+                        },
+                    )
+                    await self._notify_replay_failure(msg)
+            else:
+                self._replay_attempts.pop(msg.trace_id, None)
+
+    async def _notify_replay_failure(self, msg: IngressMessage) -> None:
+        """Surface a permanently-undeliverable replayed turn to its channel (F-38)."""
+        adapter = self._adapters.get(msg.channel)
+        if adapter is None:
+            log.gateway.error(
+                "[ipc] gateway link: replay failed for unregistered channel — dropping",
+                extra={"_fields": {"channel": msg.channel, "request_id": msg.trace_id}},
+            )
+            return
+        try:
+            await adapter.send_text(_REPLAY_FAILURE_NOTICE)
+        except Exception as exc:  # noqa: BLE001 — notice delivery is best-effort
+            log.gateway.error(
+                "[ipc] gateway link: failed to deliver replay-failure notice",
+                exc_info=exc,
+                extra={"_fields": {"channel": msg.channel, "request_id": msg.trace_id}},
+            )
 
     # --- outbound frame router (one call per core connection) --------------
 

@@ -104,12 +104,14 @@ class ConsequentialActionGate:
         # but never from raw LLM-supplied call args (E0-S1 / B2).
         effective_category = tool.manifest.consent_category or category
         summary = self._build_summary(tool, call_args)
+        reversible = self._is_reversible(tool)
         allowed = await self._policy.request(
             tool_name=tool.name,
             channel=channel or "",
             session_id=session_id or "",
             category=effective_category,
             summary=summary,
+            reversible=reversible,
         )
         # 4. EXIT
         log.tool.debug(
@@ -117,6 +119,28 @@ class ConsequentialActionGate:
             extra={"_fields": {"tool": tool.name, "allowed": allowed}},
         )
         return allowed
+
+    @staticmethod
+    def _is_reversible(tool: Tool) -> bool:
+        """Derive a low-blast-radius REVERSIBLE signal from the TRUSTED manifest (F-27).
+
+        Reuses the existing ``commit_coupling`` declaration rather than inventing a
+        keyword list: only ``"transactional"`` — the effect is atomic with our OWN
+        local ledger (e.g. a write to our SQLite), so it is locally owned and
+        rollback-able — counts as reversible. ``"unconfirmed"`` (remote/lossy sends),
+        ``"idempotent_keyed"`` (replay-safe but downstream-remote), and ``None``
+        (undeclared) all stay irreversible ⇒ ALWAYS_ASK (fail-safe). Never raises —
+        an unreadable manifest is treated as irreversible.
+        """
+        try:
+            return tool.manifest.commit_coupling == "transactional"
+        except Exception as exc:
+            log.tool.warning(
+                "[gate] could not read commit_coupling — treating as irreversible",
+                exc_info=exc,
+                extra={"_fields": {"tool": tool.name}},
+            )
+            return False
 
     @staticmethod
     def _build_summary(tool: Tool, call_args: dict[str, object] | None) -> str:
@@ -267,9 +291,59 @@ class ToolRegistry:
         )
         return True
 
+    # F-26 — how many effectful failures of the SAME tool THIS turn before the
+    # get/dispatch surface emits a prior-failure advisory. 2 = a repeated pattern
+    # (one failure is noise; two is a trend worth flagging).
+    _REPEAT_FAILURE_ADVISORY_THRESHOLD = 2
+
     def get(self, name: str) -> Tool | None:
         with self._lock:
-            return self._tools.get(name)
+            tool = self._tools.get(name)
+        # F-26 — before handing the tool to the dispatcher, consult the turn-scoped
+        # outcome ledger (read-only, in-process, no DB) for recent REPEATED failures
+        # of this same tool and emit an ADVISORY. This never blocks (the tool is
+        # still returned) and writes NOTHING back — a pure consult of existing
+        # outcomes, no negative learning. Outside the lock: the consult touches only
+        # the per-turn ContextVar ledger, never the registry dict.
+        if tool is not None:
+            self._advise_on_prior_failures(name)
+        return tool
+
+    @classmethod
+    def _advise_on_prior_failures(cls, name: str) -> None:
+        """Log a read-only advisory when this tool has repeatedly failed THIS turn.
+
+        Consults :func:`tool_outcome_ledger.get_outcomes` (the in-process per-turn
+        ledger the backend already binds) and counts effectful failures of ``name``
+        via the shared :func:`is_effectful_failure` predicate. Never raises, never
+        blocks, never writes. When the ledger is unbound (introspection off the turn
+        path) ``get_outcomes`` returns empty ⇒ silent. DEFERRED: a cross-turn
+        PERSISTENT trust history (``tool_outcome_trust_counts``) is not consulted
+        here — the registry holds no DB handle (see report).
+        """
+        try:
+            from stackowl.infra.tool_outcome_ledger import get_outcomes, is_effectful_failure
+
+            failures = sum(
+                1
+                for o in get_outcomes()
+                if o.name == name
+                and is_effectful_failure(
+                    o.action_severity, o.success, o.side_effect_committed, o.verified
+                )
+            )
+            if failures >= cls._REPEAT_FAILURE_ADVISORY_THRESHOLD:
+                log.tool.warning(
+                    "[tools] registry.get: prior-failure advisory — tool repeatedly "
+                    "failed this turn (advisory only, not blocked)",
+                    extra={"_fields": {"tool": name, "prior_effectful_failures": failures}},
+                )
+        except Exception as exc:  # a consult must NEVER break dispatch
+            log.tool.error(
+                "[tools] registry.get: prior-failure consult failed",
+                exc_info=exc,
+                extra={"_fields": {"tool": name}},
+            )
 
     def source_of(self, name: str) -> str | None:
         """Return the source name that registered tool ``name``, or ``None``.

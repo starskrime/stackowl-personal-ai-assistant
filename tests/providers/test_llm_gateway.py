@@ -375,3 +375,72 @@ def test_tools_rate_limited_ceiling_tier_reraises_terminally() -> None:
             user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
             tool_dispatcher=None, floor="powerful", ceiling="powerful",
         ))
+
+
+# -- F-19: every fault outcome is explainable via a failure-branch log -------- #
+
+
+class _DegradedRegistry(_FakeRegistry):
+    """Registry that reports a ``degraded_from`` marker for given tiers."""
+
+    def __init__(self, by_tier: dict[str, _FakeProvider], degraded: dict[str, str]) -> None:
+        super().__init__(by_tier)
+        self._degraded = degraded
+
+    def resolve_tier_with_fallback(self, tier: str):
+        return self._by_tier[tier], self._degraded.get(tier)
+
+
+def test_complete_terminal_fault_logs_before_reraise(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    # A provider fault at the ceiling tier (no headroom) must NOT dead-end silently:
+    # an explainable failure-branch record (from_tier + exc_type) precedes the raise.
+    fault = ProviderError("powerful", ConnectionError("down"))
+    powerful = _FaultyProvider("powerful", fault=fault)
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    with caplog.at_level(logging.WARNING, logger="stackowl.engine"), pytest.raises(ProviderError):
+        asyncio.run(gw.complete([_user("hi")], floor="powerful", ceiling="powerful"))
+    recs = [r for r in caplog.records if "not recoverable" in r.message]
+    assert recs, "a terminal provider fault must emit an explainable failure-branch log"
+
+
+def test_tools_terminal_fault_logs_before_reraise(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    fault = ProviderError("powerful", TimeoutError("hung"))
+    powerful = _FaultyProvider("powerful", fault=fault)
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    with caplog.at_level(logging.WARNING, logger="stackowl.engine"), pytest.raises(ProviderError):
+        asyncio.run(gw.complete_with_tools(
+            user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+            tool_dispatcher=None, floor="powerful", ceiling="powerful",
+        ))
+    recs = [r for r in caplog.records if "not recoverable" in r.message]
+    assert recs, "a terminal tool-loop provider fault must emit a failure-branch log"
+
+
+def test_complete_cascade_log_carries_degraded_from(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    # The floor tier cascades on a fault AND was itself a degraded (circuit-OPEN)
+    # resolution; the fallback log must carry degraded_from so the outcome is traceable.
+    fast = _FaultyProvider("fast", fault=CircuitOpenError("fast", 30.0))
+    standard = _FakeProvider("standard", reply="recovered")
+    gw = LLMGateway(_DegradedRegistry(
+        {"fast": fast, "standard": standard, "powerful": standard},
+        degraded={"fast": "fast-primary"},
+    ))
+    with caplog.at_level(logging.WARNING, logger="stackowl.engine"):
+        out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    assert out.content == "recovered"
+    fields = [getattr(r, "_fields", {}) for r in caplog.records]
+    assert any(f.get("degraded_from") == "fast-primary" for f in fields), (
+        "the cascade fallback log must carry the degraded_from marker"
+    )

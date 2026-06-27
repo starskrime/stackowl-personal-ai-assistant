@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_injector import DNAPromptInjector
-from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.manifest import OwlAgentManifest
 
 
@@ -34,16 +34,15 @@ def test_no_directive_in_neutral() -> None:
     assert out == "BASE"
 
 
-def test_high_curiosity_emits_act_first_not_always_ask() -> None:
-    # The high-curiosity directive used to force the owl to "Ask clarifying
-    # questions whenever intent or scope is ambiguous before producing the main
-    # answer" — the literal source of the "looks to my face for advice" pain.
-    # It must now be ACT-FIRST: act on the most likely reading of a reversible
-    # request and state the assumption; ask only when the action is irreversible.
+def test_high_curiosity_drives_exploration_breadth_not_clarify() -> None:
+    # F-53: act-first / anti-over-clarify is no longer gated behind high curiosity.
+    # It is now an UNCONDITIONAL charter principle (see test_base_prompt). The
+    # curiosity HIGH directive governs EXPLORATION BREADTH only — it must NOT
+    # re-introduce the always-ask language, and it no longer OWNS the act-first
+    # nudge (so a low-curiosity owl still gets act-first from the charter).
     DIRECTIVE_LATCH.clear_all()
     out = DNAPromptInjector().inject(_m("curio"), OwlDNA(curiosity=0.72))
     low = out.lower()
     assert out != "BASE"  # curiosity still modulates behaviour
     assert "ask clarifying questions whenever" not in low  # always-ask is gone
-    assert "most likely" in low  # act on the most likely interpretation
-    assert "irreversible" in low  # ask reserved for irreversible actions
+    assert "explore" in low or "broadly" in low  # now drives exploration breadth

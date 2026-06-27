@@ -127,9 +127,16 @@ def disable_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 def make_settings(
     sections: dict[str, bool] | None = None, tz: str = "UTC"
 ) -> Settings:
-    return Settings(
-        brief=BriefSettings(sections=sections or {}),
-        system=SystemSettings(timezone=tz),
+    # NOTE: ``Settings(brief=..., system=...)`` init kwargs are SILENTLY IGNORED
+    # (settings_customise_sources drops init_settings) — a constructed override
+    # never takes effect. Use ``model_copy(update=...)`` so the per-section
+    # toggles + timezone GENUINELY apply (otherwise a disabled-section assertion
+    # would pass only by coincidence, e.g. an empty recall happening to omit).
+    return Settings().model_copy(
+        update={
+            "brief": BriefSettings(sections=sections or {}),
+            "system": SystemSettings(timezone=tz),
+        }
     )
 
 

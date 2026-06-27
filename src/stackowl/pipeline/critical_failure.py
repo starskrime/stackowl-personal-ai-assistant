@@ -31,6 +31,7 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.step_error import parse_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message
+from stackowl.providers.registry import _TIER_ORDER
 from stackowl.setup.localize import localize
 
 # The answer-producing step(s). A failure here with no usable response is what
@@ -170,15 +171,6 @@ async def _generate_localized_apology(
             extra={"_fields": {"trace_id": state.trace_id}},
         )
         return None
-    try:
-        provider = registry.get_with_cascade(_APOLOGY_TIER)
-    except Exception as exc:  # AllProvidersUnavailableError or any lookup failure
-        log.engine.warning(
-            "[critical_failure] apology: cascade found no provider — neutral fallback",
-            exc_info=exc,
-            extra={"_fields": {"trace_id": state.trace_id}},
-        )
-        return None
 
     # Minimal prompt; the model must answer in the SAME language as the user.
     system_text = (
@@ -190,35 +182,64 @@ async def _generate_localized_apology(
         "Reply with ONE short sentence, in the SAME language as the user, "
         "apologizing that their request could not be completed right now."
     )
-    try:
-        result = await provider.complete(
-            [
-                Message(role="system", content=system_text),
-                Message(role="user", content=user_text),
-            ],
-            model="",
-            max_tokens=_APOLOGY_MAX_TOKENS,
-        )
-    except Exception as exc:  # provider call itself failed (outage mid-cascade)
-        log.engine.warning(
-            "[critical_failure] apology: provider.complete failed — neutral fallback",
-            exc_info=exc,
-            extra={"_fields": {"trace_id": state.trace_id}},
-        )
-        return None
+    messages = [
+        Message(role="system", content=system_text),
+        Message(role="user", content=user_text),
+    ]
 
-    text = (result.content or "").strip()
-    if not text:
-        log.engine.warning(
-            "[critical_failure] apology: provider returned empty — neutral fallback",
-            extra={"_fields": {"trace_id": state.trace_id}},
+    # F-8: walk tiers from the apology tier; if a provider's ``complete`` raises or
+    # returns empty mid-outage, ADVANCE to the next tier's provider before falling
+    # to the non-localized neutral marker. Reuses the registry's circuit-aware
+    # cascade per tier; providers are de-duped by identity so one shared across
+    # tiers isn't retried, and only ONE tried provider is attempted per tier.
+    if _APOLOGY_TIER in _TIER_ORDER:
+        start = _TIER_ORDER.index(_APOLOGY_TIER)
+        tier_walk = _TIER_ORDER[start:] + _TIER_ORDER[:start]
+    else:
+        tier_walk = _TIER_ORDER
+    tried: set[int] = set()
+    for tier in tier_walk:
+        try:
+            provider = registry.get_with_cascade(tier)
+        except Exception as exc:  # AllProvidersUnavailableError or any lookup failure
+            log.engine.warning(
+                "[critical_failure] apology: cascade found no provider for tier — advancing",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id, "tier": tier}},
+            )
+            continue
+        if id(provider) in tried:
+            continue  # same provider serves multiple tiers — don't re-attempt
+        tried.add(id(provider))
+        try:
+            result = await provider.complete(
+                messages, model="", max_tokens=_APOLOGY_MAX_TOKENS,
+            )
+        except Exception as exc:  # provider call itself failed (outage mid-cascade)
+            log.engine.warning(
+                "[critical_failure] apology: provider.complete failed — advancing tier",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id, "tier": tier}},
+            )
+            continue
+        text = (result.content or "").strip()
+        if not text:
+            log.engine.warning(
+                "[critical_failure] apology: provider returned empty — advancing tier",
+                extra={"_fields": {"trace_id": state.trace_id, "tier": tier}},
+            )
+            continue
+        log.engine.info(
+            "[critical_failure] apology: localized message generated",
+            extra={"_fields": {"trace_id": state.trace_id, "tier": tier, "len": len(text)}},
         )
-        return None
-    log.engine.info(
-        "[critical_failure] apology: localized message generated",
-        extra={"_fields": {"trace_id": state.trace_id, "len": len(text)}},
+        return text
+
+    log.engine.warning(
+        "[critical_failure] apology: all tiers exhausted — neutral fallback",
+        extra={"_fields": {"trace_id": state.trace_id}},
     )
-    return text
+    return None
 
 
 def _neutral_fallback(state: PipelineState) -> str:

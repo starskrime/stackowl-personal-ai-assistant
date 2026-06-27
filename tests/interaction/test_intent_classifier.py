@@ -21,7 +21,10 @@ from typing import Literal
 
 import pytest
 
-from stackowl.interaction.intent_classifier import ClarifyIntentClassifier
+from stackowl.interaction.intent_classifier import (
+    AnswerVerdict,
+    ClarifyIntentClassifier,
+)
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 
 _QUESTION = "Which environment should I deploy to?"
@@ -302,6 +305,123 @@ async def test_hung_provider_fail_safe_true_quickly() -> None:
         timeout=2.0,
     )
     assert out is True
+
+
+# -------------------------- F-72: explainable low-confidence assumption surface
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_clear_verdict_is_confident() -> None:
+    """A clean ANSWER verdict is high-confidence with a clear_verdict reason."""
+    classifier, _ = _make(_FakeProvider("ANSWER"))
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert isinstance(v, AnswerVerdict)
+    assert v.value is True
+    assert v.confident is True
+    assert v.reason == "clear_verdict"
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_clear_new_is_confident() -> None:
+    classifier, _ = _make(_FakeProvider("NEW"))
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message="show me my calendar",
+    )
+    assert v.value is False
+    assert v.confident is True
+    assert v.reason == "clear_verdict"
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_ambiguous_verdict_is_low_confidence() -> None:
+    """An ambiguous verdict still fail-safes to answer but is flagged LOW-confidence.
+
+    F-72: the assumption is surfaced (confident=False + a diagnostic reason) instead
+    of being silently committed, so a caller can warn the user.
+    """
+    # Both tokens present but NEITHER leads → the genuine ambiguous fallthrough.
+    classifier, _ = _make(_FakeProvider("perhaps answer or new"))
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert v.value is True  # unchanged fail-safe direction
+    assert v.confident is False
+    assert v.reason == "ambiguous_verdict"
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_garbage_verdict_is_low_confidence() -> None:
+    classifier, _ = _make(_FakeProvider("maybe"))
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert v.value is True
+    assert v.confident is False
+    assert v.reason == "ambiguous_verdict"
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_empty_message_is_low_confidence_no_call() -> None:
+    provider = _FakeProvider("NEW")
+    classifier, registry = _make(provider)
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message="   ",
+    )
+    assert v.value is True
+    assert v.confident is False
+    assert v.reason == "empty_message"
+    assert registry.tiers_requested == []
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_no_provider_is_low_confidence() -> None:
+    classifier, _ = _make(raise_on_get=RuntimeError("no providers"))
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert v.value is True
+    assert v.confident is False
+    assert v.reason == "no_provider"
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_provider_error_is_low_confidence() -> None:
+    classifier, _ = _make(_FakeProvider(raise_on_complete=RuntimeError("boom")))
+    v = await classifier.explain_answer(
+        question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+    )
+    assert v.value is True
+    assert v.confident is False
+    assert v.reason == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_explain_answer_timeout_is_low_confidence() -> None:
+    classifier, _ = _make(_FakeProvider(hang_seconds=10.0), timeout_s=0.05)
+    v = await asyncio.wait_for(
+        classifier.explain_answer(
+            question=_QUESTION, choices=_CHOICES, message=_MESSAGE,
+        ),
+        timeout=2.0,
+    )
+    assert v.value is True
+    assert v.confident is False
+    assert v.reason == "provider_timeout"
+
+
+@pytest.mark.asyncio
+async def test_is_answer_still_returns_bool_and_matches_explain() -> None:
+    """The bool contract of is_answer is preserved (delegates to explain_answer)."""
+    for verdict, expected in [("ANSWER", True), ("NEW", False), ("maybe", True)]:
+        classifier, _ = _make(_FakeProvider(verdict))
+        out = await classifier.is_answer(
+            question=_QUESTION, choices=_CHOICES, message="show me my calendar",
+        )
+        assert out is expected
+        assert isinstance(out, bool)
 
 
 @pytest.mark.asyncio

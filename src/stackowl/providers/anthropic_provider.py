@@ -18,6 +18,7 @@ from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_out
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
 from stackowl.providers._react import LoopGuard, looks_like_tool_call, parse_react_action
+from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers._truncate import (
     CONTEXT_CHAR_BUDGET,
     trim_messages_to_budget,
@@ -121,9 +122,17 @@ class AnthropicProvider(ModelProvider):
                     await self._record_stream_usage_safe(
                         stream, resolved_model, (time.monotonic() - _t0) * 1000
                     )
-        except anthropic.APIError as exc:
+        except Exception as exc:
+            # F-21 — wrap the BROADER transport set (raw ConnectionError/TimeoutError,
+            # a non-429 SDK error, a 5xx/429) as ProviderError so the gateway sees a
+            # uniform fault, matching the Gemini sibling. A non-transport exception
+            # (a routing control signal like CircuitOpenError/RateLimitError, a
+            # user-stop, or our own bug) propagates UNWRAPPED so the cascade can
+            # still classify it.
+            if not _is_transport_error(exc):
+                raise
             log.engine.error(
-                "[anthropic] stream: API error",
+                "[anthropic] stream: transport error",
                 exc_info=exc,
                 extra={"_fields": {"provider": self._name}},
             )
@@ -634,15 +643,43 @@ class AnthropicProvider(ModelProvider):
         try:
             # F115 — record the per-round HTTP outcome onto the registry-owned breaker.
             response = await self._resilient_round(_round)
-        except anthropic.APIError as exc:
+        except Exception as exc:
+            # F-21 — wrap the broader transport set (raw connection/timeout, SDK
+            # error, 5xx/429) consistently; a control signal / our-own bug propagates
+            # unwrapped so the gateway cascade classifies it correctly.
+            if not _is_transport_error(exc):
+                raise
             log.engine.error(
-                "[anthropic] complete: API error",
+                "[anthropic] complete: transport error",
                 exc_info=exc,
                 extra={"_fields": {"provider": self._name}},
             )
             raise ProviderError(self._name, exc) from exc
         duration_ms = (time.monotonic() - t0) * 1000
         content = "".join(b.text for b in response.content if hasattr(b, "text"))
+        # F-20 — an empty/whitespace generation is not an honest success. Retry the
+        # round ONCE (parity with the OpenAI sibling); if the retry produces real
+        # text, use it. A still-empty result is returned with a warning logged (not
+        # silently) so the downstream honesty floor — not a confident-looking empty
+        # success — handles it.
+        if not content.strip():
+            log.engine.warning(
+                "[anthropic] complete: empty content — retrying once",
+                extra={"_fields": {"provider": self._name, "model": resolved_model}},
+            )
+            try:
+                retry = await self._resilient_round(_round)
+            except Exception as exc:
+                if not _is_transport_error(exc):
+                    raise
+                log.engine.warning(
+                    "[anthropic] complete: retry after empty failed — keeping empty",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._name}},
+                )
+            else:
+                response = retry
+                content = "".join(b.text for b in response.content if hasattr(b, "text"))
         result = CompletionResult(
             content=content,
             input_tokens=response.usage.input_tokens,

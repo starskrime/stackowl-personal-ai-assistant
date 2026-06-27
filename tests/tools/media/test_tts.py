@@ -189,3 +189,52 @@ async def test_tts_names_artifact_and_verifies_true() -> None:
     assert res.artifact_path is not None
     assert res.artifact_path.endswith("piper.wav")
     assert res.verified is True
+
+
+class _ClaimsButWritesNothing(_FakeBackend):
+    """Reports a successful TtsResult but never writes the file (backend says
+    'done', no artifact on disk)."""
+
+    async def synthesize(self, text: str, *, voice: str | None) -> TtsResult | str:
+        path = StackowlHome.media_dir() / "tts" / f"{self._name}.wav"
+        return TtsResult(
+            path=str(path), duration_ms=1.0, voice=voice or "default",
+            backend=self._name, is_local=self._local,
+        )
+
+
+class _ClaimsButWritesEmpty(_FakeBackend):
+    """Reports a successful TtsResult and writes a ZERO-BYTE file."""
+
+    async def synthesize(self, text: str, *, voice: str | None) -> TtsResult | str:
+        out_dir = StackowlHome.media_dir() / "tts"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{self._name}.wav"
+        path.write_bytes(b"")
+        return TtsResult(
+            path=str(path), duration_ms=1.0, voice=voice or "default",
+            backend=self._name, is_local=self._local,
+        )
+
+
+async def test_tts_missing_artifact_refused_by_execute() -> None:
+    """F-34: execute is DEFENSIVE — a backend that claims success but writes NO file
+    is caught INLINE (success=False), not only downstream at the verify() seam."""
+    from stackowl.tools.verification import is_trustworthy_success
+
+    local = _ClaimsButWritesNothing("piper", local=True)
+    cloud = _FakeBackend("cloud", local=False)
+    tool = TtsTool(selector=_selector(local, cloud))
+    res = await tool.execute(text="hello")  # execute self-assertion, no seam
+    assert res.success is False
+    assert is_trustworthy_success(res.success, res.verified) is False
+
+
+async def test_tts_empty_artifact_refused_by_execute() -> None:
+    """F-34: a ZERO-BYTE audio file must not self-assert success — execute checks the
+    file is non-empty before claiming success."""
+    local = _ClaimsButWritesEmpty("piper", local=True)
+    cloud = _FakeBackend("cloud", local=False)
+    tool = TtsTool(selector=_selector(local, cloud))
+    res = await tool.execute(text="hello")
+    assert res.success is False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -61,10 +62,41 @@ class WriteFileTool(Tool):
         self, args: dict[str, object], result: ToolResult, *, started_at: float
     ) -> bool | None:
         """Post-condition: the file we claim to have written exists, is non-empty,
-        and is THIS run's artifact (fresh)."""
+        is THIS run's artifact (fresh), AND its persisted bytes equal the content we
+        claimed to write.
+
+        Existence + freshness alone (verify_artifact) let a SHORT/TRUNCATED write pass
+        — a file with the right path but fewer bytes than intended. So, mirroring
+        edit.py's post-write read-back, this also re-reads the file and compares it to
+        ``args['content']``; on a length/content mismatch it returns False (claimed but
+        not faithfully persisted). A read error → None (no opinion; never flip a real
+        success to a failure on an inability to observe)."""
         from stackowl.tools.verification import verify_artifact
 
-        return verify_artifact(result.artifact_path, not_before=started_at)
+        observed = verify_artifact(result.artifact_path, not_before=started_at)
+        if observed is not True or not result.artifact_path:
+            # False (absent/empty/stale) or None (unobservable) — nothing to compare.
+            return observed
+        intended = str(args.get("content", ""))
+        try:
+            persisted = Path(result.artifact_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            log.tool.warning(
+                "write_file.verify: read-back failed — no opinion",
+                extra={"_fields": {"path": result.artifact_path, "err": type(exc).__name__}},
+            )
+            return None
+        if persisted != intended:
+            log.tool.error(
+                "write_file.verify: read-back mismatch — persisted bytes differ from intent",
+                extra={"_fields": {
+                    "path": result.artifact_path,
+                    "intended_len": len(intended),
+                    "persisted_len": len(persisted),
+                }},
+            )
+            return False
+        return True
 
     async def execute(self, **kwargs: object) -> ToolResult:
         path_str = str(kwargs.get("path", ""))

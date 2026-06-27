@@ -94,6 +94,78 @@ async def test_interactive_graceful_timeout(with_gateway: ClarifyGateway) -> Non
     assert "ABORT" in result.output
 
 
+async def test_timeout_auto_resumes_with_declared_default_reversible(
+    with_gateway: ClarifyGateway,
+) -> None:
+    """F-68: a reversible clarify with a declared, menu-consistent default does NOT
+
+    punt the whole decision back on timeout — it auto-resumes with the stated
+    assumption (the default) instead of waiting the full TTL and returning the
+    "ABORT or guess" punt text.
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        result = await ClarifyTool(timeout_s=0.05).execute(
+            question="Which environment?",
+            choices=["staging", "production"],
+            default="staging",
+        )
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    # Auto-resumed with the stated assumption — NOT the abort/punt framing.
+    assert "staging" in result.output
+    assert "assum" in result.output.lower()
+    assert "ABORT" not in result.output
+
+
+async def test_timeout_high_stakes_default_still_aborts(
+    with_gateway: ClarifyGateway,
+) -> None:
+    """F-68: an irreversible/high-stakes gate is NEVER auto-defaulted on timeout.
+
+    Even with a menu-consistent default supplied, ``high_stakes=True`` keeps the
+    ABORT-on-consequential punt (never assume consent for an irreversible action).
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        result = await ClarifyTool(timeout_s=0.05).execute(
+            question="Delete which database?",
+            choices=["primary", "replica"],
+            default="replica",
+            high_stakes=True,
+        )
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    assert "did not reply in time" in result.output
+    assert "ABORT" in result.output
+
+
+async def test_timeout_default_not_in_menu_aborts(
+    with_gateway: ClarifyGateway,
+) -> None:
+    """F-68: a default inconsistent with the offered menu is unsafe → falls back
+
+    to the ABORT/punt path rather than auto-resuming on a bogus assumption.
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        result = await ClarifyTool(timeout_s=0.05).execute(
+            question="Which environment?",
+            choices=["staging", "production"],
+            default="rogue-value",
+        )
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    assert "did not reply in time" in result.output
+    assert "ABORT" in result.output
+
+
 async def test_interactive_pivot_returns_cancelled(with_gateway: ClarifyGateway) -> None:
     """A user PIVOT (cancel_pending) yields the DISTINCT set-aside result.
 

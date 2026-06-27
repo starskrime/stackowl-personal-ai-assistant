@@ -22,10 +22,70 @@ from stackowl.providers.base import Message
 
 if TYPE_CHECKING:
     from stackowl.parliament.synthesis_parser import SynthesisParser
+    from stackowl.providers.base import ModelProvider
     from stackowl.providers.registry import ProviderRegistry
 
 _DIAMOND = "◆"
 _BASE_CONFIDENCE = 0.7
+
+# F-57 — corrective nudge sent on the single re-prompt when the first synthesis
+# completion was unparseable. Restates the structural-marker contract tersely so a
+# one-off bad generation can be recovered before the result is accepted.
+_STRICT_RETRY_INSTRUCTION = (
+    "Your previous reply could not be parsed. Reply AGAIN using ONLY the exact "
+    "uppercase structural markers, each on its own line: CONSENSUS:, "
+    "RECOMMENDATION:, and (optionally) DISAGREEMENT:. The very first line must "
+    "begin with 'CONSENSUS:'. Terminate the whole response with ◆ on its own "
+    "line. Output nothing outside these markers."
+)
+
+
+async def complete_synthesis_with_retry(
+    *,
+    provider: ModelProvider,
+    parser: SynthesisParser,
+    messages: list[Message],
+    correlation_id: str,
+) -> tuple[str, SynthesisResult]:
+    """Complete a synthesis and parse it; re-prompt ONCE if the parse degrades.
+
+    F-57 — the synthesis ``provider.complete`` call was single-shot: a malformed or
+    empty completion was handed straight to :class:`SynthesisParser`, whose fallback
+    (S2 ``parse_ok=False``) then dressed raw text as a verdict, so a transient bad
+    generation was never recovered. This re-prompts the SAME provider once, stricter
+    (``_STRICT_RETRY_INSTRUCTION``), before accepting a degraded parse. The retry is
+    bounded to exactly one extra call. A persistently-unparseable synthesis is
+    returned with ``parse_ok=False`` so the existing S2 gates (orchestrator marks the
+    session degraded; pellet generator skips staging) still fire — this only adds the
+    bounded retry, it never weakens those gates. Provider exceptions propagate to the
+    caller (surfaced, never masked).
+    """
+    completion = await provider.complete(messages, model="")
+    raw_text = completion.content
+    parsed = parser.parse(raw_text, correlation_id)
+    if parsed.parse_ok:
+        return raw_text, parsed
+
+    log.parliament.debug(
+        "[parliament] synthesis: unparseable completion — re-prompting once (stricter)",
+        extra={"_fields": {"correlation_id": correlation_id, "raw_len": len(raw_text)}},
+    )
+    retry_messages = [*messages, Message(role="user", content=_STRICT_RETRY_INSTRUCTION)]
+    retry_completion = await provider.complete(retry_messages, model="")
+    retry_text = retry_completion.content
+    retry_parsed = parser.parse(retry_text, correlation_id)
+    if retry_parsed.parse_ok:
+        log.parliament.debug(
+            "[parliament] synthesis: re-prompt recovered a parseable verdict",
+            extra={"_fields": {"correlation_id": correlation_id}},
+        )
+        return retry_text, retry_parsed
+
+    log.parliament.warning(
+        "[parliament] synthesis: still unparseable after one re-prompt — DEGRADED",
+        extra={"_fields": {"correlation_id": correlation_id, "raw_len": len(retry_text)}},
+    )
+    return retry_text, retry_parsed
 
 
 def build_positions_prompt(
@@ -94,7 +154,14 @@ async def synthesize_positions(
         )
 
     try:
-        completion = await provider.complete(messages, model="")
+        # F-57 — re-prompt once (stricter) if the first completion is unparseable,
+        # before accepting a degraded parse; provider failures still propagate.
+        raw_text, parsed = await complete_synthesis_with_retry(
+            provider=provider,
+            parser=parser,
+            messages=messages,
+            correlation_id="moa",
+        )
     except Exception as exc:
         # No-hidden-errors: a synthesis-provider failure must NOT be masked as a
         # clean verdict (a placeholder dressed as a synthesized answer). Surface it
@@ -106,9 +173,7 @@ async def synthesize_positions(
             extra={"_fields": {"provider_name": provider.name}},
         )
         raise
-    raw_text = completion.content
 
-    parsed = parser.parse(raw_text, "moa")
     rollcall = " · ".join(labels)
     body = raw_text.split(_DIAMOND)[0].rstrip()
     degrade_notice = (

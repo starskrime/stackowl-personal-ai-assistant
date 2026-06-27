@@ -121,7 +121,7 @@ class LLMGateway:
         result: CompletionResult | None = None
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
-            provider, _degraded = self._registry.resolve_tier_with_fallback(tier)
+            provider, degraded = self._registry.resolve_tier_with_fallback(tier)
             msgs = _augment_messages(messages, can_escalate)
             try:
                 result = await provider.complete(msgs, model="", **kwargs)
@@ -132,12 +132,25 @@ class LLMGateway:
                 # A non-fault (our bug / user-stop / budget-kill) or the LAST tier
                 # re-raises, preserving today's terminal behaviour.
                 if not (can_escalate and is_cascadable_fault(exc)):
+                    # F-19 — a fault outcome that ends the turn must be EXPLAINABLE,
+                    # not a silent re-raise: log the failure branch (only when the
+                    # exception IS a classified fault; a control-flow signal / our-own
+                    # bug propagates unannotated as before).
+                    if is_cascadable_fault(exc):
+                        log.engine.warning(
+                            "[llm_gateway] complete: provider fault not recoverable — re-raising",
+                            extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                               "exc_type": type(exc).__name__,
+                                               "degraded_from": degraded,
+                                               "at_ceiling": not can_escalate}},
+                        )
                     raise
                 log.engine.warning(
                     "[llm_gateway] complete: tier failed — falling back",
                     extra={"_fields": {"purpose": purpose, "from_tier": tier,
                                        "to_tier": tiers[idx + 1],
-                                       "exc_type": type(exc).__name__}},
+                                       "exc_type": type(exc).__name__,
+                                       "degraded_from": degraded}},
                 )
                 continue
             if can_escalate and is_escalate_signal(result.content):
@@ -199,7 +212,7 @@ class LLMGateway:
         final_text, calls = "", []  # type: tuple[str, list[dict[str, Any]]]
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
-            provider, _degraded = self._registry.resolve_tier_with_fallback(tier)
+            provider, degraded = self._registry.resolve_tier_with_fallback(tier)
             # Rebuild schemas for THIS tier's provider (protocol + window differ per
             # tier); reuse the passed-in list when no builder is supplied.
             if build_tool_schemas is not None:
@@ -232,12 +245,22 @@ class LLMGateway:
                 # discarded ESCALATE attempt so the failed attempt doesn't poison the
                 # recovery tier's give-up floor. Non-fault or LAST tier re-raises.
                 if not (can_escalate and is_cascadable_fault(exc)):
+                    # F-19 — an unrecoverable fault outcome must be explainable.
+                    if is_cascadable_fault(exc):
+                        log.engine.warning(
+                            "[llm_gateway] tools: provider fault not recoverable — re-raising",
+                            extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                               "exc_type": type(exc).__name__,
+                                               "degraded_from": degraded,
+                                               "at_ceiling": not can_escalate}},
+                        )
                     raise
                 log.engine.warning(
                     "[llm_gateway] tools: tier failed — falling back",
                     extra={"_fields": {"purpose": purpose, "from_tier": tier,
                                        "to_tier": tiers[idx + 1],
-                                       "exc_type": type(exc).__name__}},
+                                       "exc_type": type(exc).__name__,
+                                       "degraded_from": degraded}},
                 )
                 if on_escalate is not None:
                     await on_escalate(tier, tiers[idx + 1])

@@ -154,7 +154,18 @@ class TaskOutcomeStore(OwnedRepository):
             "[outcomes] list_pending_critic: entry",
             extra={"_fields": {"limit": limit}},
         )
-        # 3. STEP — single indexed SELECT against idx_task_outcomes_pending
+        # 3. STEP — single indexed SELECT against idx_task_outcomes_pending.
+        #
+        # F-51 (ACCEPTED BY DIRECTIVE — do NOT "fix" this): an audit flagged that
+        # the critic scores only successes (`success = 1 AND failure_class IS NULL`)
+        # and suggested adding a FAILURE-analysis scoring path. That suggestion is
+        # intentionally REJECTED. POSITIVE-ONLY LEARNING is a hard operator product
+        # directive: the platform learns ONLY from "what worked" and must NEVER
+        # mine / score / persist "this failed" outcomes. Every downstream learner
+        # (reflection writer, tool-miner, DNA attribution) consumes successes only,
+        # so scoring a failure would be wasted LLM work the platform never reads.
+        # The predicate below is therefore correct and load-bearing — leave as-is.
+        # Rationale (memory): feedback_positive_only_learning.
         rows = await self._db.fetch_all(
             """SELECT outcome_id, trace_id, session_id, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,

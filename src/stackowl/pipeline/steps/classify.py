@@ -446,6 +446,22 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
         surfaced.append(lc.SurfacedLesson(
             lesson_id=lid, source_type=h.source_type, content=h.content, similarity=h.similarity,
         ))
+        # F-47 — explainability trace. The surfaced lesson flattens its structured
+        # provenance into opaque prose for the model; emit a per-lesson DEBUG record
+        # that ties the turn-local id (L#) back to the canonical source row
+        # (source_ref — the heuristic_id for tool_heuristic lessons) and its
+        # evidence strength, so a heuristic-influenced decision is auditable from
+        # the logs. Trace-only: ranking/selection is unchanged.
+        log.engine.debug(
+            "[pipeline] classify._gather_lessons: surfaced lesson",
+            extra={"_fields": {
+                "lesson_id": lid,
+                "source_type": h.source_type,
+                "source_ref": h.source_ref,
+                "evidence_count": h.metadata.get("evidence_count"),
+                "similarity": h.similarity,
+            }},
+        )
     lc.set_surfaced(tuple(surfaced))
     result = "\n".join(lines)
     log.engine.debug(

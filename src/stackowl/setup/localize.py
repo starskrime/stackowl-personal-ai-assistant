@@ -102,6 +102,21 @@ _STRINGS: dict[tuple[str, str], str] = {
     ("self_heal_recovery_provider", "es"): (
         "ℹ️ El modelo habitual no estaba disponible, así que un modelo de respaldo completó esto."
     ),
+    # Recovery attempted before an honest give-up (pillar ④ / F-10) — GENERIC, no
+    # names: surfaced ALONGSIDE the honest floor so the user knows alternatives were
+    # tried before surrendering ("I tried alternatives before giving up"). No slots.
+    ("self_heal_recovery_attempted", "en"): (
+        "ℹ️ I tried alternative approaches before giving up."
+    ),
+    ("self_heal_recovery_attempted", "de"): (
+        "ℹ️ Ich habe alternative Ansätze versucht, bevor ich aufgegeben habe."
+    ),
+    ("self_heal_recovery_attempted", "fr"): (
+        "ℹ️ J'ai essayé d'autres approches avant d'abandonner."
+    ),
+    ("self_heal_recovery_attempted", "es"): (
+        "ℹ️ Intenté enfoques alternativos antes de rendirme."
+    ),
     # Static minimal fallback for the floor (used when template interpolation fails)
     ("self_heal_floor_minimal", "en"): (
         "I hit a problem completing this and couldn't finish; "
