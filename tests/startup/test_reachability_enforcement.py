@@ -73,8 +73,11 @@ async def test_warn_mode_does_not_block_on_dangling_edge(only_dangling: None) ->
     await orch._phase_reachability_census()
 
 
-async def test_default_enforcement_is_warn() -> None:
-    assert Settings().reachability_enforcement == "warn"
+async def test_default_enforcement_is_block() -> None:
+    # A finished feature ships ON: the reachability invariant is ENFORCED by default
+    # (a dangling half-edge fails the boot, not the user). Set "warn" in config to
+    # restore the historical advisory behavior.
+    assert Settings().reachability_enforcement == "block"
 
 
 # --- a broken auditor never blocks boot, even in block mode --------------------
