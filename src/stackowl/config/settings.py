@@ -843,11 +843,13 @@ class Settings(BaseSettings):
     # answer resolves ACT_WITH_ASSUMPTION (act, state the assumption, keep the undo handle)
     # instead of parking; only an irreversible-or-high-stakes-or-genuinely-ambiguous
     # decision reaches the user. The gates (clarify ``_resolve_default``, consent
-    # ``reversible`` tier, cost-pause block-threshold, objective ``_park_is_irreversible``)
-    # DELEGATE to the resolver; nothing is removed. Default OFF ⇒ each gate runs its
-    # pre-ADR inline rule, byte-identical. Intended ON in production once green (this
-    # powerful machine affords a default-resolution check rather than over-asking).
-    reversibility_resolver: bool = False
+    # ``reversible`` tier, cost-pause block-threshold, objective ``_park_is_irreversible``,
+    # router clarify verdict) DELEGATE to the resolver; nothing is removed. Each delegation
+    # reproduces its gate's pre-ADR inline rule EXACTLY, so ON is byte-identical (pure
+    # unification — the ADR-2 pattern; the value is one authority, not a behavior change).
+    # Default ON (owner-approved). Set False for the pre-ADR per-gate inline rules
+    # (also byte-identical).
+    reversibility_resolver: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
