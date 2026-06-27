@@ -44,9 +44,17 @@ Mark `[x]` only when the per-ADR Definition of Done in `IMPLEMENT_PROMPT.md` is 
   unification, the ADR-2 pattern); owner approved ON-default via AskUserQuestion. Nothing removed.
   Closes: F-3, F-27, F-44, F-56, F-68, F-69, F-70, F-71.
 
-- [ ] **ADR-5 — Trustworthy (verified-gated) learning** (`feat/adr-5-trustworthy-learning`).
+- [x] **ADR-5 — Trustworthy (verified-gated) learning** (`feat/adr-5-*`). SHIPPED 2026-06-27, flag ON in code default.
   Once ADR-1 makes success measured, mining/recall gate on the verified signal; add ephemeral
   within-turn failure-awareness. NEVER persists negatives (positive-only directive). (Depends on ADR-1.)
+  All 3 moves shipped, each byte-identical when `trustworthy_learning` OFF: MOVE 1 (mine only MEASURED
+  success) was ALREADY enforced — ADR-1/B4b collapses a `verified=False` effect to
+  `failure_class="unachieved_effect"` which every learner already excludes (locked with an invariant
+  test); MOVE 2 (F-50) live path reads SEMANTIC reflection recall (`semantic_for_owl`, self-degrades to
+  recency on embed failure); MOVE 3 (F-26/43/72) ephemeral within-turn failed-approach scratch steers
+  the model off a blind re-issue of an EXACT (tool, args) approach that already failed this turn
+  (containment, never persisted). Owner approved ON-default via AskUserQuestion. F-4 decision-time
+  heuristic consult left DELIBERATELY dead (weak-model amplification safety; needs its own design).
   Closes: F-26, F-43, F-46, F-47, F-48, F-50, F-51, F-54, F-72.
 
 - [ ] **ADR-6 — Closed detect→heal→verify lifecycle** (`feat/adr-6-closed-loop-lifecycle`).

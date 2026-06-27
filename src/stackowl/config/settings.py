@@ -858,9 +858,11 @@ class Settings(BaseSettings):
     # NEVER persists a negative (positive-only directive). Mining is already gated on
     # MEASURED success (ADR-1/B4b: a ``verified=False`` effect collapses to
     # ``failure_class="unachieved_effect"`` which every learner already excludes). Default
-    # OFF ⇒ recency-only recall, byte-identical. ``semantic_for_owl`` self-degrades to
-    # recency when embeddings are unavailable, so ON is safe on any box.
-    trustworthy_learning: bool = False
+    # ON (owner-approved once all 3 moves shipped). ``semantic_for_owl`` self-degrades to
+    # recency when embeddings are unavailable and the within-turn scratch is pure
+    # containment, so ON is safe on any box; set False for the pre-ADR recency-only recall
+    # with no scratch (also byte-identical — the moves are dead when OFF).
+    trustworthy_learning: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

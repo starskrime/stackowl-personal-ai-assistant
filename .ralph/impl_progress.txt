@@ -196,3 +196,30 @@ NEXT ADR in build order: ADR-3 — ReversibilityResolver (feat/adr-3-reversibili
 
 BUILD ORDER REMAINING after ADR-2: ADR-3 → ADR-5 → ADR-6 → ADR-7.
 Known pre-existing reds: IMPLEMENT_PROMPT §6 — git-stash-verify any NEW red vs clean main.
+
+ITERATION 14 — ADR-5 MOVE 3 shipped → ADR-5 MARKED [x] (merged to main, flag ON default). — 2026-06-27
+SHIPPED: ephemeral within-turn failed-approach scratch @execute.py (F-26/43/72). _run_with_tools gains a
+loop-local failed_approaches:set[str], filled in the non-trustworthy result branch (where
+record_no_progress already runs), consulted at the TOP of _dispatch. When the model blindly RE-ISSUES the
+EXACT (tool, args) approach that already failed this turn → _repeated_approach_refusal (CONTAINMENT: no
+TOOL_FAILED_MARKER, records nothing → cannot trip give-up floor, mirrors circuit-breaker bounce). Helpers
+_approach_signature (canonical JSON, never raises) + _repeated_approach_refusal at module level.
+  KEY SEMANTICS: consult is at _dispatch top, NOT _guarded_dispatch — the recovery ladder's internal
+  retries re-enter _guarded_dispatch, so a transient that self-heals is NEVER blocked; only a MODEL-issued
+  blind repeat is. Finer than the by-name circuit breaker (exact args, fires on FIRST repeat).
+  RESEARCH-BEFORE-BUILDING: found existing F-26 advisory @registry.py:336 (_advise_on_prior_failures) — but
+  it's by-NAME + LOG-ONLY + never surfaces to model/skips run. MOVE 3 is complementary (exact-approach +
+  acted-on), not a dup. Registry advisory stays.
+  Flag-gated trustworthy_learning: OFF ⇒ _approach_sig="" (signature not even computed) ⇒ set never
+  consulted/filled ⇒ byte-identical, zero hot-path overhead.
+OWNER DECISION (AskUserQuestion): flip trustworthy_learning default → ON (all 3 moves shipped). settings.py
+default True; OFF = pre-ADR recency-only recall + no scratch (also byte-identical). NOT live-verified
+end-to-end (semantic recall self-degrades + scratch is containment-only ⇒ ON safe on any box).
+  5 MOVE-3 tests @tests/pipeline/test_within_turn_scratch.py: repeat-bounced(ON) / re-executes(OFF
+  byte-identical) / different-args-not-bounced / successful-approach-not-recorded / bounce-records-no-
+  effectful-failure(P0). circuit_breaker+dispatch+learning+config+classify suites green; ruff+mypy clean.
+★ADR-5 MARKED [x]. main @49e830fd (MOVE 3 merge) + flag-flip commit. NOT pushed yet.
+BUILD ORDER REMAINING: ADR-6 (closed detect→heal→verify lifecycle) → ADR-7 (DecisionLedger).
+NEXT ADR: ADR-6 — feat/adr-6-closed-loop-lifecycle. Boot/health/supervisor/restart DRIVE recovery toward a
+goal and re-verify, not just observe. Heal step depends on ADR-1/ADR-2 (both done). Read .ralph/adr/ADR-6-*.md
++ ROOT_CAUSES. Closes F-36/39/73/74/85/87/88.
