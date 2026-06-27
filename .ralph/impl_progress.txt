@@ -1,3 +1,49 @@
+ITERATION 11 — ADR-3 KEYSTONE shipped (merged to main), ADR-3 still [ ]. — 2026-06-27
+Done: ADR-1 [x], ADR-4 [x], ADR-2 [x]. ADR-3 = ReversibilityResolver. Built the ONE authority +
+declared tri-state signal, and routed the FIRST TWO gates (ADR-2 playbook: keystone + per-gate
+incremental merge).
+
+NEW: src/stackowl/interaction/reversibility_resolver.py —
+  - Reversibility (frozen, tri-state via classmethods .reversible(via=)/.irreversible()/.unknown();
+    is_reversible/is_irreversible/is_unknown props). `via` = undo-handle name (e.g. "undo_write").
+  - Decision (reversibility, high_stakes, choices, default, interactive, context).
+  - Verdict (act, assumption, undo_handle).
+  - ReversibilityResolver.resolve(decision)->Verdict: park IFF must_reach_user OR no most-likely
+    default; else act-on-assumption keeping the undo handle. must_reach_user(decision)->bool = the
+    binary reversibility/stakes gate (high_stakes or is_irreversible), factored out for gates that
+    only need escalate-or-not. _most_likely mirrors ClarifyGateway._resolve_default EXACTLY (one-item
+    menu / consistent default / else None) → flag-on is a STRICT GENERALIZATION (byte-identical).
+  - reversibility_resolver_enabled() fail-safe flag reader (pattern of base.py _acceptance_authority_enabled).
+FLAG: settings.reversibility_resolver default OFF (byte-identical) — settings.py just after
+  unify_gateway_recovery. Intended ON once all gates routed + green.
+
+GATES ROUTED so far (delegate when flag ON; OFF=inline byte-identical; spy tests assert authority
+consulted ON / NOT consulted OFF):
+  1. clarify (F-68/69/71): ClarifyGateway._resolve_default delegates to resolve() → verdict.assumption.
+     This ONE helper is already shared by clarify tool pre-park + graceful-timeout + gateway pre-ask,
+     so routing it covers 3 call sites. Parametrized 8-row matrix proves byte-identical ON vs OFF.
+  2. objective driver (F-44): ObjectiveDriverHandler._park_is_irreversible delegates to
+     must_reach_user (consequential footprint→irreversible; clean park→reversible) == bool(consequential_failures).
+Gate tests: tests/interaction/test_reversibility_resolver.py (33). Invariant test (fails pre-ADR,
+passes now): test_reversible_low_stakes_with_clear_default_acts_and_retains_undo_handle.
+GREEN: tests/interaction 91, tests/objectives 160-incl, pipeline clarify+overclaim+settings 28; ruff+mypy clean.
+
+★REMAINING ADR-3 GATES (next iterations, then mark [x] + flip flag ON):
+  - consent (F-27): tools/consent.py ConsentPolicy.request — the `reversible`→`reversible_auto` tier
+    (consent.py:~233-237) should DELEGATE; reversibility already derived from manifest.commit_coupling
+    =="transactional" (registry.py ConsequentialActionGate._is_reversible:~123) + undo_write token =
+    the real `reversible_via`. Insertion: registry.py:105-115 where manifest ctx is in hand.
+  - cost_pause (F-70): interaction/cost_pause.py CostPauseGuard.gate block-threshold (:207-229) →
+    reversible spend under hard cap = act-and-notify via resolver.
+  - router clarify verdict (F-3/56): owls/router.py emits `clarify` (prompt-only); execute.py
+    _maybe_clarify (:1916) consumes — _clarify_resolvable_from_context (:1881) explicitly DEFERS to a
+    structured signal = this resolver. a2a/non-interactive (state.py interactive=False fail-closed) must
+    be PRESERVED — resolver only DOWNGRADES park→act, never act→park.
+  - F-71 already covered via the clarify delegation.
+NOTE: keep ConsentRequest.reversible / cost-pause block_threshold / etc. — make them DELEGATE, never delete.
+
+BUILD ORDER REMAINING: finish ADR-3 gates → ADR-5 → ADR-6 → ADR-7.
+
 ITERATION 4 — ADR-2 SUBSTRATE shipped (on main @b6645029), ADR-2 still [ ]. — 2026-06-27
 Done: ADR-1 [x], ADR-4 [x]. ADR-2 substrate = pipeline/recovery_actuator.py (Failure +
 classify_tool_failure + is_transient_result + RecoveryActuator.recover()/should_retry() +
