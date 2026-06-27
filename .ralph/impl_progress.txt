@@ -279,3 +279,29 @@ _health_loop_enabled() → map never consulted; no browser contributor added.
   - F-39 crash user-notice; F-88 run loop in mono role.
   After these → ADR-6 [x], ask owner to flip health_loop default ON (feedback_ask_before_flag_default), then
   ADR-7 (DecisionLedger).
+
+ITERATION 17 — ADR-6 COMPLETE [x] (F-39 shipped; F-85/73/74/36/88 found already-done). — 2026-06-27
+RESEARCH-FIRST WIN: of the 4 "remaining" seams in the iter-16 handoff, only F-39 was genuinely unbuilt —
+the others shipped in prior reliability arcs:
+  - F-85 watchdog liveness gate: DONE+tested. service/watchdog.py has liveness_check/_is_live/ping-skip;
+    orchestrator wires _build_liveness_aggregator (db pool + data/log dirs ONLY — provider outage must NOT
+    kill the process), gated on down-only (degraded still serves), fails OPEN. tests/service/
+    test_watchdog_lifecycle.py + tests/health/test_aggregator_liveness.py.
+  - F-73/74: DONE (supervisor.py _record_failure escalate+restart, max-failures floor, F-75 spin guard;
+    refactored @obs 7482 earlier today).
+  - F-36: DONE (orchestrator _supervise_core 185-241 — respawned core reconnect-verify bounded by
+    _CORE_BOOT_TIMEOUT_S, LOUD failure + stop_event on timeout, first_conn_event cleared before respawn).
+  - F-88: DONE (orchestrator detect_service_manager + loud warn on None bare-shell; obs 7442).
+SHIPPED THIS ITER @main cb280bb3 (F-39 crash user-notice): _supervise_core gains optional on_crash:
+Callable[[int|None],Awaitable[None]]; fired on each unexpected core exit (AFTER the stop_event guard → no
+false notice on intentional shutdown). Gateway call site wires a closure delivering a CRITICAL proactive
+Notification via the existing deliverer ("StackOwl restarted after an unexpected core exit…"); None when no
+deliverer. Fail-safe: notice error logged, never breaks the respawn loop. Repeat notices throttled by the
+existing respawn backoff (1s→30s). brief_channels hoisted out of the closure (mypy: self._settings is
+Settings|None, not narrowed inside nested def). 1 test @tests/startup/test_resilience_findings.py
+(crash→on_crash fires once with rc). 14 green; ruff clean; mypy unchanged (3 pre-existing: 1093/1546/2020).
+★ADR-6 MARKED [x]. All 7 findings closed (F-36/39/73/74/85/87/88). OWNER DECISION (AskUserQuestion):
+health_loop default stays OFF for now — ship code-complete, flip in prod config when ready (not yet live-
+verified end-to-end on a real box). Flag OFF = byte-identical. [[feedback_ask_before_flag_default]].
+NEXT ADR: ADR-7 — DecisionLedger (feat/adr-7-decision-ledger). Read .ralph/adr/ADR-7-*.md + ROOT_CAUSES.
+Largely downstream of 1-6. This is the FINAL ADR — after it the 7-ADR Jarvis arc is complete.

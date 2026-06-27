@@ -1,6 +1,6 @@
 # ADR-6 — Closed-loop lifecycle: detect → heal → verify, instead of detect-only
 
-- **Status:** Proposed
+- **Status:** Implemented [x] (2026-06-27) — all 7 findings closed; flag `health_loop` default OFF (owner-held, not yet flipped)
 - **Theme:** T6. Closes/strengthens F-36, F-39, F-73, F-74, F-85, F-87, F-88.
 - **Depends on:** ADR-1 (verify the heal) + ADR-2 (the heal action) + ADR-4 (reachability of resources).
 
