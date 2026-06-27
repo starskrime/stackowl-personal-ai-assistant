@@ -1,0 +1,5 @@
+ITERATION 0 (bootstrap) — 2026-06-27
+Shipped: nothing yet. Created IMPLEMENTATION_PLAN.md (7-ADR checklist, build order ADR-1→4→2→3→5→6→7) + this handoff.
+Gate: n/a (no code changed).
+Next: Iteration 1 = implement ADR-1 (AcceptanceAuthority, the keystone) TDD behind a flag (default off=byte-identical). Read .ralph/adr/ADR-1-acceptance-authority.md + its ROOT_CAUSES.md entry + FINDINGS F-1/F-11.../F-83 file:line evidence first; confirm seam line numbers (they drift).
+Notes: branch off main as feat/adr-1-acceptance-authority. Known pre-existing reds listed in IMPLEMENT_PROMPT.md §6 — do NOT chase; verify any new red against clean main via git stash.
