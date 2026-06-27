@@ -54,14 +54,24 @@ def _registry() -> ProviderRegistry:
     return reg
 
 
-async def _build(tmp_db: DbPool, tmp_path: Path | None = None) -> SchedulerComponents:
+async def _build(
+    tmp_db: DbPool,
+    tmp_path: Path | None = None,
+    *,
+    browser_runtime: Any = None,
+    health_loop: bool = False,
+) -> SchedulerComponents:
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
     from stackowl.pipeline.services import StepServices
     from stackowl.skills.assembly import SkillsAssembly
     from stackowl.tools.registry import ToolRegistry
 
-    settings = Settings(memory=MemorySettings())
+    # NB: Settings has extra="ignore" — top-level kwargs are silently dropped, so
+    # health_loop must be applied via model_copy, never the constructor.
+    settings = Settings(memory=MemorySettings()).model_copy(
+        update={"health_loop": health_loop}
+    )
     provider_registry = _registry()
     memory_components = await MemoryAssembly.build(
         db=tmp_db, settings=settings, provider_registry=provider_registry,
@@ -89,7 +99,48 @@ async def _build(tmp_db: DbPool, tmp_path: Path | None = None) -> SchedulerCompo
         memory_components=memory_components,
         backend=backend,
         skills_components=skills_components,
+        browser_runtime=browser_runtime,
     )
+
+
+class _FakeBrowserRuntime:
+    """Minimal HealableResource stand-in for the browser runtime."""
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return None
+
+    async def ensure_available(self) -> None:
+        return None
+
+    def register_on_recycled(self, cb: Any) -> None:
+        return None
+
+
+async def test_health_sweep_wired_with_live_db_and_provider_healers(
+    tmp_db: DbPool,
+) -> None:
+    # ADR-6 F-87 — the sweep must hold the live DbPool + each provider as a
+    # HealableResource keyed by its health-status name, so the loop can recycle
+    # them. Browser is excluded when the flag is OFF (byte-identical detect set).
+    components = await _build(tmp_db, browser_runtime=_FakeBrowserRuntime())
+    healers = components.health_sweep_handler._healers
+    assert healers["db"] is tmp_db
+    assert "provider:stub" in healers
+    assert "browser" not in healers  # flag OFF → browser not wired
+
+
+async def test_health_sweep_wires_browser_when_flag_on(tmp_db: DbPool) -> None:
+    runtime = _FakeBrowserRuntime()
+    components = await _build(tmp_db, browser_runtime=runtime, health_loop=True)
+    handler = components.health_sweep_handler
+    assert handler._healers["browser"] is runtime
+    names = {c.contributor_name for c in handler._aggregator._contributors}
+    assert "browser" in names  # live BrowserContributor added for detection
 
 
 async def test_build_returns_frozen_components(tmp_db: DbPool) -> None:
