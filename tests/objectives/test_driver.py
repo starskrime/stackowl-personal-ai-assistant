@@ -403,3 +403,76 @@ async def test_notify_targets_the_objective_recipient(pool: DbPool) -> None:
     # the driver job's (which has none).
     assert job.target_channels == ["telegram"]
     assert job.target_addresses == {"telegram": 999}
+
+
+# --- ADR-2: the retry decision delegates to the one RecoveryActuator ----------
+
+
+class _SpyActuator:
+    """A RecoveryActuator stand-in that records the Failures it was asked to classify.
+
+    Lets a test prove the objective driver routes its retry-vs-escalate DECISION through
+    the one authority (``should_retry``) rather than an inline guard. Delegates to the real
+    predicate so behavior stays byte-identical."""
+
+    def __init__(self) -> None:
+        from stackowl.pipeline.recovery_actuator import RecoveryActuator
+
+        self._real = RecoveryActuator()
+        self.calls: list[object] = []
+
+    def should_retry(self, failure: object) -> bool:
+        self.calls.append(failure)
+        return self._real.should_retry(failure)  # type: ignore[arg-type]
+
+
+def _settings_with(**overrides: object):
+    """Build a Settings with overrides (kwargs are silently dropped by the customised
+    sources — model_copy is the only honoured path; see memory)."""
+    from stackowl.config.settings import Settings
+
+    return Settings().model_copy(update=overrides)
+
+
+async def test_retry_decision_routes_through_actuator_when_unify_on(pool: DbPool) -> None:
+    """ADR-2: with ``unify_objective_recovery`` ON (default), a sub-goal failure's
+    retry decision is made by the RecoveryActuator — it is consulted with a typed,
+    non-consequential ``Failure`` — and the behavior is byte-identical (retried)."""
+    from stackowl.pipeline.recovery_actuator import Failure
+
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["flaky step"])
+    backend = _FakeBackend(errors=("boom",))
+    spy = _SpyActuator()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, recovery=spy)  # type: ignore[arg-type]
+
+    await handler.execute(_driver_job())
+
+    # The authority was consulted with a typed objective Failure (delegation).
+    assert len(spy.calls) == 1
+    failure = spy.calls[0]
+    assert isinstance(failure, Failure)
+    assert failure.kind == "objective"
+    assert failure.consequential is False
+    # Byte-identical outcome: retried, not stranded.
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "pending" and subs[0].attempts == 1
+
+
+async def test_retry_decision_inline_when_unify_off(pool: DbPool) -> None:
+    """Flag OFF ⇒ the inline attempt-budget decision is used; the actuator is NOT
+    consulted, and behavior is the same byte-identical retry (regression-safe)."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["flaky step"])
+    backend = _FakeBackend(errors=("boom",))
+    spy = _SpyActuator()
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, recovery=spy,  # type: ignore[arg-type]
+        settings=_settings_with(unify_objective_recovery=False),
+    )
+
+    await handler.execute(_driver_job())
+
+    assert spy.calls == []  # inline path — authority not consulted
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "pending" and subs[0].attempts == 1
