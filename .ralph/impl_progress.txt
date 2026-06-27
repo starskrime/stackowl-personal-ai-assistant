@@ -253,3 +253,29 @@ flag_default):
     restart; respawned core must be reconnect-verified).
   - F-39 crash user-notice; F-88 run loop in mono role.
 BUILD ORDER REMAINING: finish ADR-6 seams → ADR-7 (DecisionLedger, largely downstream).
+
+ITERATION 16 — ADR-6 SEAM F-87 shipped (live HealableResources wired into the heal loop). — 2026-06-27
+The keystone heal step was a no-op even ON: HealthSweepHandler.healers was empty. SHIPPED @main 2916866e:
+SchedulerAssembly.build() now builds the healers map from the LIVE serve-process resources keyed by health-
+status name — {"db": DbPool} + {f"provider:{p.name}": p for provider_registry.all()}; +{"browser":
+CamoufoxRuntime} AND a live BrowserContributor on the aggregator, both gated on settings.health_loop so the
+DETECT set is unchanged when OFF. New build() param browser_runtime: HealableResource|None; orchestrator
+threads the live runtime (None in gateway role). Flag OFF byte-identical: heal short-circuits on
+_health_loop_enabled() → map never consulted; no browser contributor added.
+  LANDMINE (memory project_skills_live_path_census): Settings has extra="ignore" → Settings(health_loop=True)
+  SILENTLY DROPS the kwarg (verified False). Tests set it via .model_copy(update={...}). Production loads from
+  config so real serve is unaffected.
+  2 wiring tests @tests/scheduler/test_scheduler_assembly.py (db+provider healers present, browser excluded
+  OFF / included+contributor-registered ON). 15 assembly + 10 health_loop/sweep + 8 wiring-audit green;
+  ruff+mypy clean on changed src (pre-existing reds: B017 in frozen-components test; orchestrator mypy
+  1535/2009 — both pre-date this change). code-reviewer APPROVE, all 4 invariants hold.
+  NOTE: detect/heal object mismatch is inherent to F-87 — db detect is a path-probe (DbContributor), heal is
+  the live DbPool; recycle is idempotent/safe so the mismatch is harmless (probe down→recycle pool→re-probe).
+★REMAINING for ADR-6 [x] (4 seams, next sessions):
+  - F-85 watchdog: gate WATCHDOG=1 ping @service/watchdog.py on the loop's liveness verdict (withhold when a
+    critical subsystem is wedged-but-alive → systemd restarts).
+  - F-73/74/36 supervisor: gate @supervisor/supervisor.py restart on a progress/verify signal; respawned core
+    reconnect-verified (no blind restart).
+  - F-39 crash user-notice; F-88 run loop in mono role.
+  After these → ADR-6 [x], ask owner to flip health_loop default ON (feedback_ask_before_flag_default), then
+  ADR-7 (DecisionLedger).
