@@ -83,6 +83,29 @@ class _FakeDeliverer:
         return ProactiveDeliveryOutcome(rollup="delivered", per_channel={"telegram": "delivered"})
 
 
+class _RecordingBackend:
+    """Records each run's input_text; fails the first ``fail_times`` runs then succeeds.
+
+    Lets a test observe WHAT the driver fed into the sub-goal on each (re)try — used to
+    prove a retry carries the prior failure context rather than running cold (F-43)."""
+
+    def __init__(self, *, fail_times: int, error: str = "boom") -> None:
+        self._fail_times = fail_times
+        self._error = error
+        self.inputs: list[str] = []
+        self.runs = 0
+
+    async def run(self, state: PipelineState) -> PipelineState:
+        self.inputs.append(state.input_text)
+        self.runs += 1
+        errors = (self._error,) if self.runs <= self._fail_times else ()
+        chunk = ResponseChunk(
+            content="ok", is_final=False, chunk_index=0,
+            trace_id=state.trace_id, owl_name=state.owl_name,
+        )
+        return state.evolve(responses=(chunk,), errors=errors)
+
+
 def _driver_job() -> Job:
     return Job(
         job_id="objective_driver-seed",
@@ -316,6 +339,45 @@ async def test_completed_subgoal_without_criteria_is_unverified(pool: DbPool) ->
     subs = await store.list_subgoals("obj-1")
     assert subs[0].status == "done"
     assert subs[0].verified is False  # completed but UNVERIFIED — no criterion to check
+
+
+async def test_retry_feeds_prior_failure_into_subgoal_context(pool: DbPool) -> None:
+    """F-43: a retry must not run COLD. The first attempt runs the bare description; a
+    subsequent retry of the same (previously-failed) sub-goal carries the prior failure
+    reason into its run so the backend can choose a different approach. This is
+    operational within-turn context, NOT persisted negative learning."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["fetch the data"])
+    backend = _RecordingBackend(fail_times=1, error="connection refused")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend)
+
+    # Tick 1 — first attempt runs the bare description (cold), then fails → re-queued.
+    await handler.execute(_driver_job())
+    assert backend.inputs[0] == "fetch the data"  # first attempt is byte-identical
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "pending" and subs[0].attempts == 1
+
+    # Tick 2 — the retry feeds the prior failure back in.
+    await handler.execute(_driver_job())
+    assert len(backend.inputs) == 2
+    assert "fetch the data" in backend.inputs[1]          # original intent preserved
+    assert "connection refused" in backend.inputs[1]      # prior failure surfaced
+    assert backend.inputs[1] != backend.inputs[0]         # NOT run cold again
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "done"                        # different run now succeeded
+
+
+async def test_first_attempt_runs_cold_without_retry_note(pool: DbPool) -> None:
+    """F-43: a fresh sub-goal with no prior result is run with its bare description —
+    the prior-failure note only appears on an actual retry (byte-identical first run)."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["just answer"])
+    backend = _RecordingBackend(fail_times=0)
+    handler = ObjectiveDriverHandler(db=pool, backend=backend)
+
+    await handler.execute(_driver_job())
+
+    assert backend.inputs == ["just answer"]  # no retry note on the first, clean attempt
 
 
 async def test_no_active_objectives_is_noop_success(pool: DbPool) -> None:

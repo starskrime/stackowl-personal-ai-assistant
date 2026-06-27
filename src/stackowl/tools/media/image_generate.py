@@ -157,6 +157,25 @@ class ImageGenerateTool(Tool):
             )
             return self._err(outcome, t0)
 
+        # DEFENSIVE: an ImageResult OBJECT is the backend's self-report, not proof a
+        # real image exists. Inspect the artifact INLINE — it must exist and be
+        # non-empty — before self-asserting success (F-34). Only a POSITIVE absence
+        # (verify_artifact is False) refuses; an unobservable path (None, transient
+        # FS error) defers to verify()'s magic-byte seam downstream so a real success
+        # is never flipped on an inability to observe.
+        from stackowl.tools.verification import verify_artifact
+
+        if verify_artifact(outcome.path) is False:
+            log.tool.warning(
+                "image_generate.execute: backend claimed success but the image file "
+                "is missing or empty",
+                extra={"_fields": {"backend": backend.name}},
+            )
+            return self._err(
+                "image generation reported success but produced no readable image file",
+                t0,
+            )
+
         # 4. EXIT — disclose egress + cost IFF the backend is cloud (prompt left the box).
         return self._ok(outcome, t0)
 

@@ -179,3 +179,15 @@ def test_prompt_biases_act_first_on_reversible_ambiguity() -> None:
     assert "irreversible" in low
     assert "most likely" in low
     assert "state your assumption" in low
+
+
+def test_prompt_attempts_resolution_before_clarify() -> None:
+    # F-56: 'clarify' is a last resort. Before choosing it, the router must be
+    # instructed to first try to resolve the ambiguity itself — recall what it
+    # already knows and run a cheap, reversible probe — and only clarify when the
+    # ambiguity remains AND a wrong guess would be irreversible or expensive.
+    p = _r()._build_prompt([("secretary", "general")], "do something")
+    low = p.lower()
+    assert "before" in low  # resolution happens BEFORE clarifying
+    assert "recall" in low  # recall what you already know first
+    assert "probe" in low or "check" in low  # cheap reversible probe

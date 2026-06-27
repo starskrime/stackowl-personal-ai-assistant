@@ -33,7 +33,6 @@ from tests._story_7_3_helpers import (
     make_staged,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1–2. Models are frozen / extra-forbid
 # ---------------------------------------------------------------------------
@@ -147,12 +146,38 @@ async def test_date_and_priorities_assemble_returns_non_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_highlights_omitted_when_recall_empty() -> None:
+async def test_memory_highlights_surfaces_nothing_notable_when_recall_empty() -> None:
+    """F-79: an empty recall must NOT be silently omitted.
+
+    A chronically-empty highlights section would otherwise vanish without a
+    trace; instead the brief surfaces an explicit "nothing notable" item so the
+    user (and an operator reading the rendered brief) can SEE the section ran and
+    found nothing — the section renders (``omitted=False``).
+    """
+    from stackowl.brief.assemblers import _NOTHING_NOTABLE_ITEM
+
     mem = StubMemory(records=[])
     section = await MemoryHighlightsAssembler(memory_bridge=mem).assemble(make_ctx())
-    assert section.omitted is True
-    assert section.items == []
+    assert section.omitted is False
+    assert section.items == [_NOTHING_NOTABLE_ITEM]
     assert mem.recall_calls and mem.recall_calls[0][1] == 3
+
+
+@pytest.mark.asyncio
+async def test_memory_highlights_logs_empty_recall_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """F-79: empty recall is logged at INFO (not debug) so a chronically-empty
+    highlights section is visible without enabling debug logging."""
+    import logging
+
+    mem = StubMemory(records=[])
+    with caplog.at_level(logging.INFO, logger="stackowl.scheduler"):
+        await MemoryHighlightsAssembler(memory_bridge=mem).assemble(make_ctx())
+    assert any(
+        record.levelno == logging.INFO and "no records" in record.getMessage()
+        for record in caplog.records
+    ), "empty recall must emit an INFO-level record"
 
 
 @pytest.mark.asyncio

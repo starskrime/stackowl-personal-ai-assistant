@@ -22,6 +22,9 @@ Two layers, mirroring the spec:
 
 The checker NEVER raises and NEVER flips a real success to a failure on an
 inability to observe reality (a filesystem error ⇒ ``accepted=None`` ⇒ no opinion).
+But "could not observe a DECLARED outcome" is no longer indistinguishable from
+"nothing was declared": the former carries ``unobservable=True`` (F-13) so a caller
+can treat it as a soft-fail / retry signal rather than an implicit pass.
 """
 
 from __future__ import annotations
@@ -112,10 +115,34 @@ class AcceptanceVerdict:
     * ``True`` — the declared post-condition was observed.
     * ``False`` — the post-condition was declared but reality refuted it: the turn
       claimed an outcome it did not produce.
+
+    ``unobservable`` (F-13) disambiguates the two ``accepted is None`` cases that
+    were previously indistinguishable to a caller:
+
+    * ``unobservable is False`` — there was nothing to judge (no declared outcome,
+      or the turn took no action). A genuine no-op skip.
+    * ``unobservable is True`` — a post-condition WAS declared, but reality could
+      not be OBSERVED (a filesystem error / an unreachable endpoint). This is NOT
+      an implicit pass: the inability to observe a declared consequential outcome
+      is a distinct soft-fail signal a caller may treat as retry-worthy, rather than
+      silently falling back to the turn's self-asserted success. We still never
+      fabricate a failure (``accepted`` stays ``None``), but the caller can now SEE
+      that "we could not verify" rather than mistaking it for "nothing to verify".
     """
 
     accepted: bool | None
     reason: str
+    unobservable: bool = False
+
+    @property
+    def engaged(self) -> bool:
+        """True iff the checker actually attempted to OBSERVE a declared outcome
+        (it passed, was refuted, or was unobservable) — as opposed to being skipped
+        because nothing was declared or the turn took no action. Lets a caller trace
+        "acceptance run" vs "acceptance skipped" explicitly (F-1 explainability),
+        instead of inferring it from ``accepted is None`` (which conflates the two).
+        """
+        return self.accepted is not None or self.unobservable
 
 
 def _resolve_dir(artifact_dir: str | None) -> Path:
@@ -215,11 +242,16 @@ class AcceptanceChecker:
     ) -> AcceptanceVerdict:
         observed = _dir_has_fresh_file(_resolve_dir(outcome.artifact_dir), turn_started_at)
         if observed is None:
+            # Could-not-observe a DECLARED outcome (F-13): no opinion, but flagged
+            # ``unobservable`` so the caller does not mistake it for "nothing to
+            # verify" and silently pass the turn's self-asserted success.
             log.engine.debug(
                 "[acceptance] artifact directory unobservable — no opinion",
                 extra={"_fields": {"artifact_dir": outcome.artifact_dir}},
             )
-            return AcceptanceVerdict(None, "artifact directory could not be observed")
+            return AcceptanceVerdict(
+                None, "artifact directory could not be observed", unobservable=True
+            )
         if observed:
             return AcceptanceVerdict(True, "fresh artifact observed")
         return AcceptanceVerdict(
@@ -231,11 +263,15 @@ class AcceptanceChecker:
     def _check_http(self, outcome: HttpProbeOutcome) -> AcceptanceVerdict:
         observed = self._http_prober(outcome.url)
         if observed is None:
+            # Unreachable DECLARED endpoint (F-13): no opinion, flagged unobservable
+            # — the same soft-fail signal as an unobservable artifact directory.
             log.engine.debug(
                 "[acceptance] endpoint unobservable — no opinion",
                 extra={"_fields": {"url": outcome.url}},
             )
-            return AcceptanceVerdict(None, "endpoint could not be probed")
+            return AcceptanceVerdict(
+                None, "endpoint could not be probed", unobservable=True
+            )
         if observed:
             return AcceptanceVerdict(True, "declared endpoint responded successfully")
         return AcceptanceVerdict(

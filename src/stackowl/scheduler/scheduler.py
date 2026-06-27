@@ -147,6 +147,15 @@ class JobScheduler(SupervisedTask):
                 job.job_id,
                 extra={"_fields": {"job_id": job.job_id, "occurrence_key": occurrence_key}},
             )
+            # F-63 — the normal single-dispatch path advances the cadence slot in
+            # ``_mark_completed``; this dedup branch previously returned WITHOUT
+            # advancing ``next_run_at``. A recurring job whose current occurrence
+            # is already recorded (a lost-race / out-of-band completion that left
+            # the row at its past instant) then stayed ``pending`` at that PAST
+            # instant and idempotent-skipped every subsequent poll forever — never
+            # verifying its NEXT occurrence was scheduled. Advance it to the next
+            # future slot so the schedule keeps progressing.
+            await self._advance_past_serviced_occurrence(job)
             return
 
         # F103: claim the occurrence with the SAME compare-and-swap run_now uses,
@@ -230,6 +239,45 @@ class JobScheduler(SupervisedTask):
                     "UPDATE jobs SET status = 'pending', retry_count = ?, retry_at = ? WHERE job_id = ?",
                     (new_retries, retry_at, job.job_id),
                 )
+
+    async def _advance_past_serviced_occurrence(self, job: Job) -> None:
+        """Re-arm a recurring job past an already-serviced occurrence (F-63).
+
+        Called from the idempotent-skip branch. Guards a livelock: a recurring
+        job left ``pending`` at a PAST ``next_run_at`` with a recorded completion
+        for that occurrence would be re-selected and re-skipped on every poll,
+        never advancing. Only acts when the job is RECURRING and its
+        ``next_run_at`` is at/behind now (an unparseable value is treated as stuck
+        and repaired); a healthy FUTURE slot is left untouched, and a ONE-SHOT is
+        never re-armed (a completed one-shot must not fire again). Writes no
+        ``job_runs`` row — it only moves the slot, reusing the same
+        ``compute_next_run`` the normal completion path uses.
+        """
+        if not self._is_recurring(job):
+            return  # one-shot: completed and done — never re-arm to fire again
+        try:
+            due = datetime.fromisoformat(job.next_run_at)
+            stuck = due <= datetime.now(UTC)
+        except (ValueError, TypeError) as exc:  # B5 — never silent; repair the row
+            log.heartbeat.warning(
+                "[scheduler] %s: idempotent-skip — unparseable next_run_at, will re-arm",
+                job.job_id,
+                exc_info=exc,
+                extra={"_fields": {"job_id": job.job_id, "next_run_at": job.next_run_at}},
+            )
+            stuck = True
+        if not stuck:
+            return  # healthy future slot — leave it
+        next_run = compute_next_run(job.schedule, tz=self._tz)
+        await self._db.execute(
+            "UPDATE jobs SET next_run_at = ? WHERE job_id = ?",
+            (next_run, job.job_id),
+        )
+        log.heartbeat.info(
+            "[scheduler] %s: idempotent-skip — recurring job advanced to next slot",
+            job.job_id,
+            extra={"_fields": {"job_id": job.job_id, "next_run": next_run}},
+        )
 
     async def _mark_completed(self, job: Job, result: JobResult, duration_ms: float) -> None:
         now_iso = datetime.now(UTC).isoformat()

@@ -225,15 +225,41 @@ class _ClaimsButWritesNothing(_FakeBackend):
         )
 
 
-async def test_image_generate_missing_artifact_is_not_trustworthy() -> None:
-    """Backend reports success but wrote NO file → verify() observes the absence →
-    verified False (success preserved, trust withheld)."""
+class _ClaimsButWritesEmpty(_FakeBackend):
+    """Reports a successful ImageResult and writes a ZERO-BYTE file (the file exists
+    but holds no real image — a truncated/empty artifact)."""
+
+    async def generate(self, prompt: str, *, size: str | None = None):  # noqa: ANN202
+        from stackowl.media.image.base import ImageResult
+        from stackowl.paths import StackowlHome
+
+        out_dir = StackowlHome.media_dir() / "image"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{self._name}.png"
+        path.write_bytes(b"")  # zero bytes — nothing real produced
+        return ImageResult(
+            path=str(path), size=size or "1024x1024", backend=self._name, is_local=self._local
+        )
+
+
+async def test_image_generate_missing_artifact_refused_by_execute() -> None:
+    """F-34: execute is DEFENSIVE — a backend that claims success but writes NO file
+    is caught INLINE (success=False), not only downstream at the verify() seam."""
     from stackowl.tools.verification import is_trustworthy_success
 
     local = _ClaimsButWritesNothing("local-sdxl", local=True)
     cloud = _FakeBackend("cloud", local=False)
     tool = ImageGenerateTool(selector=_selector(local, cloud))
-    res = await tool(prompt="a cat")  # through the __call__ verification seam
-    assert res.success is True
-    assert res.verified is False
+    res = await tool.execute(prompt="a cat")  # execute self-assertion, no seam
+    assert res.success is False
     assert is_trustworthy_success(res.success, res.verified) is False
+
+
+async def test_image_generate_empty_artifact_refused_by_execute() -> None:
+    """F-34: a backend that writes a ZERO-BYTE file likewise must not self-assert
+    success — execute checks the file is non-empty before claiming success."""
+    local = _ClaimsButWritesEmpty("local-sdxl", local=True)
+    cloud = _FakeBackend("cloud", local=False)
+    tool = ImageGenerateTool(selector=_selector(local, cloud))
+    res = await tool.execute(prompt="a cat")
+    assert res.success is False

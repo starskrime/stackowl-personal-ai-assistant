@@ -2,10 +2,12 @@ from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.learning.lesson import LessonHit
 
 
-def _hit(ref, sim, source="tool_heuristic", evidence=None):
+def _hit(ref, sim, source="tool_heuristic", evidence=None, mean_quality=None):
     md: dict[str, object] = {}
     if evidence is not None:
         md["evidence_count"] = evidence
+    if mean_quality is not None:
+        md["mean_quality"] = mean_quality
     return LessonHit(lesson_id=ref, source_type=source, source_ref=ref,
                      content=f"lesson {ref}", similarity=sim, metadata=md)
 
@@ -45,6 +47,42 @@ def test_equal_similarity_prefers_under_observed():
     ]
     ranked = rank_lessons(hits)
     assert ranked[0].source_ref == "low_ev"
+
+
+def test_mean_quality_breaks_tie_between_equal_similarity_and_evidence():
+    # F-46: mean_quality must feed a DECISION, not just be rendered. With equal
+    # similarity AND equal evidence, the higher-mean_quality heuristic gets a
+    # larger exploration nudge, so it ranks first. Listed low-quality FIRST so a
+    # no-op (stable sort) would keep "low_q" on top and fail this assertion.
+    hits = [
+        _hit("low_q", sim=0.70, evidence=3, mean_quality=0.10),
+        _hit("high_q", sim=0.70, evidence=3, mean_quality=0.90),
+    ]
+    ranked = rank_lessons(hits)
+    assert ranked[0].source_ref == "high_q"
+
+
+def test_missing_mean_quality_is_byte_identical_to_legacy_full_bonus():
+    # Legacy rows (no mean_quality key) must score exactly as before: full
+    # exploration bonus. Equal similarity → lower-evidence ranks first, unchanged.
+    hits = [
+        _hit("high_ev", sim=0.70, evidence=50),
+        _hit("low_ev", sim=0.70, evidence=3),
+    ]
+    ranked = rank_lessons(hits)
+    assert ranked[0].source_ref == "low_ev"
+
+
+def test_zero_mean_quality_collapses_to_similarity_only():
+    # A heuristic whose few successes were low quality gets ~no exploration
+    # bonus, so a strictly-higher-similarity peer outranks it despite lower
+    # evidence would otherwise nudge it up.
+    hits = [
+        _hit("zero_q_low_ev", sim=0.60, evidence=3, mean_quality=0.0),
+        _hit("good_q_high_ev", sim=0.62, evidence=50, mean_quality=0.9),
+    ]
+    ranked = rank_lessons(hits)
+    assert ranked[0].source_ref == "good_q_high_ev"
 
 
 def test_bool_and_nonpositive_evidence_treated_as_missing():

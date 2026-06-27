@@ -30,6 +30,59 @@ def _o(
     )
 
 
+def _failed_o(
+    *, quality: float, dna_snapshot: dict[str, float], trace_id: str,
+) -> TaskOutcome:
+    """A FAILED scored outcome (success=False / failure_class set).
+
+    Carries a quality_score + dna_snapshot like any other, but must NEVER be
+    mined for trait bands — positive-only learning (operator directive).
+    """
+    return TaskOutcome(
+        outcome_id=0, trace_id=trace_id,
+        session_id="s", owl_name="scout", channel="cli",
+        success=False, latency_ms=100.0, tool_call_count=0,
+        failure_class="unachieved_effect", quality_score=quality, step_durations={},
+        input_text="", response_text="",
+        captured_at=time.time(), scored_at=time.time(),
+        tool_sequence=(), dna_snapshot=dna_snapshot,
+    )
+
+
+# ---------- F-54 positive-only directive (accepted-by-directive) ------------
+
+
+def test_attributor_ignores_failed_outcomes_positive_only() -> None:
+    """F-54: failed/penalized outcomes are NEVER mined for trait bands, even with
+    a strong band gap. Tuning reflects what WORKED, never which configuration
+    failed — see feedback_positive_only_learning. Here 30 FAILED outcomes with a
+    decisive high-vs-low quality gap must be dropped entirely, leaving the
+    attributor below its sample threshold (empty deltas + fallback)."""
+    attr = DnaAttributor(rng=random.Random(0), explore_epsilon=0.0)
+    outcomes: list[TaskOutcome] = []
+    for i in range(15):  # high band "wins" — but these are FAILURES
+        outcomes.append(_failed_o(
+            quality=0.95,
+            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+                          "curiosity": 0.5, "formality": 0.5,
+                          "creativity": 0.5, "precision": 0.5},
+            trace_id=f"fail-hi-{i}",
+        ))
+    for i in range(15):
+        outcomes.append(_failed_o(
+            quality=0.15,
+            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+                          "curiosity": 0.5, "formality": 0.5,
+                          "creativity": 0.5, "precision": 0.5},
+            trace_id=f"fail-lo-{i}",
+        ))
+    report = attr.attribute(
+        owl_name="scout", current_dna=OwlDNA(challenge_level=0.2), outcomes=outcomes,
+    )
+    assert report.deltas == {}  # nothing mined from failures
+    assert report.fallback_reason is not None  # all dropped → below threshold
+
+
 # ---------- band classifier -------------------------------------------------
 
 

@@ -43,6 +43,7 @@ Provenance: BUILD (no external agent had a multilingual answer-vs-new-request ga
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
@@ -50,6 +51,30 @@ from stackowl.providers.base import Message, ModelProvider
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.providers.registry import ProviderRegistry
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerVerdict:
+    """Explainable result of :meth:`ClarifyIntentClassifier.explain_answer` (F-72).
+
+    ``value`` is the same bool :meth:`ClarifyIntentClassifier.is_answer` returns
+    (``True`` = treat the reply as the answer to the pending question). ``confident``
+    is ``False`` when ``value`` was reached by a FAIL-SAFE fallback — an
+    ambiguous/unparseable verdict, an empty message, a missing provider, a timeout,
+    or a provider error — rather than a clear model verdict. F-72 wants those
+    low-confidence cases surfaced as an explicit ASSUMPTION (auditable, and a hook a
+    caller can use to tell the user "I assumed X — say 'no' to switch") instead of
+    silently committed. ``reason`` is a short, non-user-facing diagnostic TAG for the
+    audit log (never the user's multilingual text).
+
+    Rendering a localized user-facing hint from a low-confidence verdict, and any
+    cross-turn learning from past misclassifications, are DEFERRED (the latter by the
+    positive-only-learning directive — we never persist a "got it wrong" record).
+    """
+
+    value: bool
+    confident: bool
+    reason: str
 
 # Cap the text shipped to the classifier so a pathological question/message does not
 # bloat the one-token call. A few hundred chars is ample to classify intent.
@@ -134,6 +159,27 @@ class ClarifyIntentClassifier:
 
         Fail-safe → ``True`` on ANY error, a missing/unresolvable fast provider, an
         ambiguous/unparseable verdict, or an empty ``message``. Never raises.
+
+        Thin delegate over :meth:`explain_answer` (unchanged bool contract for the
+        single inline caller); use :meth:`explain_answer` when you also need the
+        low-confidence/assumption signal (F-72).
+        """
+        verdict = await self.explain_answer(
+            question=question, choices=choices, message=message,
+        )
+        return verdict.value
+
+    async def explain_answer(
+        self, *, question: str, choices: tuple[str, ...], message: str,
+    ) -> AnswerVerdict:
+        """Like :meth:`is_answer` but returns an EXPLAINABLE :class:`AnswerVerdict`.
+
+        Carries the same fail-safe bool in ``value`` PLUS ``confident`` (``False``
+        when the verdict was a fail-safe fallback) and a diagnostic ``reason`` tag.
+        F-72: a low-confidence verdict is logged as an explicit, auditable ASSUMPTION
+        — "not silently committed" — and exposed so a caller CAN surface an
+        "I assumed X — say 'no' to switch" hint (that user-facing wiring is deferred).
+        Never raises.
         """
         q_len = len(question)
         m_len = len(message)
@@ -156,7 +202,7 @@ class ClarifyIntentClassifier:
                 "intent_classifier.is_answer: empty message — fail-safe to answer",
                 extra={"_fields": {"classified": True}},
             )
-            return True
+            return self._low_confidence_answer("empty_message")
 
         provider = self._resolve_provider()
         if provider is None:
@@ -164,7 +210,7 @@ class ClarifyIntentClassifier:
                 "intent_classifier.is_answer: no fast provider — fail-safe to answer",
                 extra={"_fields": {"classified": True}},
             )
-            return True
+            return self._low_confidence_answer("no_provider")
 
         try:
             user_text = self._build_user_text(question, choices, message)
@@ -190,16 +236,16 @@ class ClarifyIntentClassifier:
                     "_fields": {"classified": True, "timeout_s": self._timeout_s}
                 },
             )
-            return True
+            return self._low_confidence_answer("provider_timeout")
         except Exception as exc:  # self-healing — a verdict call must never raise
             log.gateway.error(
                 "intent_classifier.is_answer: provider call failed — fail-safe to answer",
                 exc_info=exc,
                 extra={"_fields": {"classified": True}},
             )
-            return True
+            return self._low_confidence_answer("provider_error")
 
-        classified = self._parse_verdict(verdict)
+        classified, confident = self._parse_verdict(verdict)
         # 2. DECISION — the raw verdict and the parsed bool (truncated text).
         log.gateway.info(
             "intent_classifier.is_answer: verdict parsed",
@@ -207,11 +253,37 @@ class ClarifyIntentClassifier:
                 "_fields": {
                     "raw_verdict": verdict[:_LOG_TEXT_CHARS],
                     "classified": classified,
+                    "confident": confident,
                 }
             },
         )
+        if not confident:
+            # An ambiguous/unparseable verdict resolved by the fail-safe default —
+            # surface it as an explicit, auditable ASSUMPTION (F-72), not silently.
+            return self._low_confidence_answer("ambiguous_verdict", value=classified)
         # 4. EXIT
-        return classified
+        return AnswerVerdict(value=classified, confident=True, reason="clear_verdict")
+
+    def _low_confidence_answer(
+        self, reason: str, *, value: bool = True,
+    ) -> AnswerVerdict:
+        """Build + AUDIT-LOG a low-confidence answer assumption (F-72).
+
+        Centralises the "not silently committed" logging for every fail-safe path so
+        a low-confidence verdict is always traceable with its assumed direction and
+        the reason it was assumed (never the user's multilingual text).
+        """
+        log.gateway.info(
+            "intent_classifier.is_answer: LOW-CONFIDENCE assumption — not silently committed",
+            extra={
+                "_fields": {
+                    "assumed": "answer" if value else "new",
+                    "confidence": "low",
+                    "reason": reason,
+                }
+            },
+        )
+        return AnswerVerdict(value=value, confident=False, reason=reason)
 
     async def is_steer(self, *, running_ask: str, message: str) -> bool:
         """Return ``True`` only on a HIGH-CONFIDENCE STEER verdict (else NEW).
@@ -433,42 +505,40 @@ class ClarifyIntentClassifier:
         return "\n".join(lines)
 
     @staticmethod
-    def _parse_verdict(verdict: str) -> bool:
-        """Map the model's one-word verdict to a bool (fail-safe → ``True``).
+    def _parse_verdict(verdict: str) -> tuple[bool, bool]:
+        """Map the model's one-word verdict to ``(classified, confident)``.
 
-        Case-insensitive and token-order robust. A verbose verdict can contain BOTH
-        tokens (e.g. "NEW — this does not answer the question"); naive precedence on
-        ``answer`` would misclassify that as an answer and silently revert the feature.
-        So we test for each token independently:
+        ``classified`` is the bool (fail-safe → ``True``); ``confident`` is ``False``
+        only when ``classified`` came from the ambiguous fail-safe fallback (F-72), so
+        the caller can surface it as an explicit assumption rather than committing it
+        silently. Case-insensitive and token-order robust. A verbose verdict can
+        contain BOTH tokens (e.g. "NEW — this does not answer the question"); naive
+        precedence on ``answer`` would misclassify that as an answer and silently
+        revert the feature. So we test for each token independently:
 
-        * ``new`` present and ``answer`` absent → ``False`` (a NEW request).
-        * ``answer`` present and ``new`` absent → ``True`` (an answer).
-        * BOTH present or NEITHER (empty, ambiguous, garbage like "maybe") → the
-          fail-safe default ``True`` — the safe choice that never drops a genuine
-          answer — with a debug log noting the ambiguous verdict.
+        * ``new`` present and ``answer`` absent → ``(False, True)`` (a NEW request).
+        * ``answer`` present and ``new`` absent → ``(True, True)`` (an answer).
+        * BOTH present with a clear LEADING token → that token's bool, ``confident``.
+        * BOTH present with NO clear leader (e.g. "answer or new?"), or NEITHER
+          present (empty, garbage like "maybe") → ``(True, False)`` — the fail-safe
+          default that never drops a genuine answer, flagged LOW-confidence.
 
         This parses only the MODEL's controlled token, never the user's (multilingual)
         message.
-
-        When BOTH tokens appear, the LEADING token wins — a verdict that opens with
-        ``NEW`` ("NEW — this does not answer the question") is a NEW pivot even though
-        "answer" trails inside the justification, and must not be swallowed. Only a
-        both-present verdict with NEITHER as the clear leader (e.g. "answer or new?")
-        falls through to the fail-safe.
         """
         low = verdict.lower().lstrip()
         has_answer = "answer" in low
         has_new = "new" in low
         if has_new and not has_answer:
-            return False
+            return False, True
         if has_answer and not has_new:
-            return True
+            return True, True
         if has_answer and has_new:
             # BOTH present: defer to whichever token leads the verdict.
             if low.startswith("new"):
-                return False
+                return False, True
             if low.startswith("answer"):
-                return True
+                return True, True
         log.gateway.warning(
             "intent_classifier._parse_verdict: ambiguous verdict — fail-safe to answer",
             extra={
@@ -479,7 +549,7 @@ class ClarifyIntentClassifier:
                 }
             },
         )
-        return True
+        return True, False
 
     @staticmethod
     def _build_steer_user_text(running_ask: str, message: str) -> str:

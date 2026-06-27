@@ -139,6 +139,15 @@ class DnaAttributor:
         # 2. DECISION — too few scored outcomes. POSITIVE-ONLY LEARNING (operator
         # directive): tune traits from SUCCESSFUL outcomes only, so the bands
         # reflect what worked — never which configuration failed.
+        #
+        # F-54 (ACCEPTED-BY-DIRECTIVE): an audit suggested PENALIZING trait bands
+        # with high failure rates. That is *negative* learning and is rejected on
+        # purpose — see feedback_positive_only_learning ("remember wins, never
+        # failures"). Failed / penalized outcomes (success=False or any
+        # failure_class, incl. "unachieved_effect") are dropped here and never
+        # mined, even when they carry a quality_score + dna_snapshot. Deliver-time
+        # honesty still admits a live failure; this filter only governs what the
+        # evolver LEARNS FROM. Do NOT add failure-based attribution.
         scored = [
             o for o in outcomes
             if o.quality_score is not None and o.dna_snapshot

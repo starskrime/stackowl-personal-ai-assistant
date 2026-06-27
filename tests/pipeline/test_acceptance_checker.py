@@ -13,9 +13,13 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 from stackowl.objectives.model import ExpectedOutcome
+from stackowl.pipeline import acceptance as acceptance_mod
 from stackowl.pipeline.acceptance import (
     AcceptanceChecker,
+    AcceptanceVerdict,
     HttpProbeOutcome,
 )
 
@@ -128,3 +132,74 @@ def test_unknown_kind_non_crashing() -> None:
     )
     assert verdict.accepted is None
     assert "unknown" in verdict.reason.lower()
+
+
+# ── F-13: "unobservable" (could-not-observe) vs "observed-absent" ─────────────
+#
+# A FS/transport error must NOT silently read as a pass for a DECLARED consequential
+# outcome. accepted stays None (no fabricated failure), but a distinct ``unobservable``
+# flag lets the caller treat it as soft-fail/retry instead of an implicit pass.
+
+
+def test_http_probe_unobservable_flags_unobservable() -> None:
+    checker = AcceptanceChecker(http_prober=lambda _url: None)
+    verdict = checker.check(
+        HttpProbeOutcome(url="https://example.test/health"),
+        turn_started_at=time.time(),
+        acted=True,
+    )
+    assert verdict.accepted is None
+    assert verdict.unobservable is True
+
+
+def test_artifact_unobservable_flags_unobservable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Force the filesystem observation to error out (could-not-observe).
+    monkeypatch.setattr(acceptance_mod, "_dir_has_fresh_file", lambda *_a, **_k: None)
+    checker = AcceptanceChecker()
+    verdict = checker.check(
+        ExpectedOutcome(kind="artifact", artifact_dir=str(tmp_path)),
+        turn_started_at=time.time(),
+        acted=True,
+    )
+    assert verdict.accepted is None
+    assert verdict.unobservable is True
+
+
+def test_observed_absent_is_not_unobservable(tmp_path: Path) -> None:
+    """A directory we COULD observe that simply holds no fresh file is a refutation
+    (accepted False), never an unobservable no-opinion."""
+    verdict = AcceptanceChecker().check(
+        ExpectedOutcome(kind="artifact", artifact_dir=str(tmp_path / "nope")),
+        turn_started_at=time.time(),
+        acted=True,
+    )
+    assert verdict.accepted is False
+    assert verdict.unobservable is False
+
+
+def test_skipped_verdicts_are_not_unobservable() -> None:
+    """A skip (no declared outcome / unacted) is not the same as could-not-observe."""
+    checker = AcceptanceChecker()
+    no_outcome = checker.check(None, turn_started_at=time.time(), acted=True)
+    assert no_outcome.accepted is None and no_outcome.unobservable is False
+    unacted = checker.check(
+        ExpectedOutcome(kind="artifact", artifact_dir="x"),
+        turn_started_at=time.time(),
+        acted=False,
+    )
+    assert unacted.accepted is None and unacted.unobservable is False
+
+
+# ── F-1: ``engaged`` — distinguishes a verdict that was RUN from one SKIPPED ──
+
+
+def test_engaged_property_classifies_run_vs_skipped() -> None:
+    # Skipped: no opinion, not because we tried and failed to observe.
+    assert AcceptanceVerdict(None, "no declared outcome").engaged is False
+    # Run + passed / refuted: engaged.
+    assert AcceptanceVerdict(True, "observed").engaged is True
+    assert AcceptanceVerdict(False, "refuted").engaged is True
+    # Run but could-not-observe: still engaged (we attempted observation).
+    assert AcceptanceVerdict(None, "unobservable", unobservable=True).engaged is True

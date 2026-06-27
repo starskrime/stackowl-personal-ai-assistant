@@ -27,9 +27,18 @@ from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import ClarifyAskFrame, HelloFrame, IngressFrame, SendTextFrame
 from stackowl.ipc.stream_bridge import SocketStreamWriter
+from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.runtime.message_bridge import frame_to_ingress
 
 CoreDispatch = Callable[[IngressMessage, "CoreSink"], Awaitable[None]]
+
+# F-39 — visible, internals-free notice emitted on a turn's stream when its
+# dispatch crashes, so the channel shows that the turn errored instead of a
+# silently truncated or empty answer.
+_TURN_FAILURE_NOTICE = (
+    "Sorry — something went wrong while handling that request, so it didn't "
+    "finish. Please try again."
+)
 
 
 class CoreSink:
@@ -52,6 +61,27 @@ class CoreSink:
         if self._writer is not None and not self._closed:
             self._closed = True
             await self._writer.close()
+
+    async def emit_failure_notice(self, text: str) -> None:
+        """Emit a single visible failure chunk on the turn's stream (F-39).
+
+        No-op once the stream is closed, so a turn that failed AFTER finishing
+        its answer is left untouched. Opens the writer if the dispatch crashed
+        before writing anything, so an empty turn still shows a visible error.
+        The terminating ``is_final`` sentinel is left to ``close_stream``.
+        """
+        if self._closed:
+            return
+        writer = self.stream_writer()
+        await writer.write(
+            ResponseChunk(
+                content=text,
+                is_final=False,
+                chunk_index=-1,
+                trace_id=self.request_id,
+                owl_name="",
+            )
+        )
 
     async def send_text(
         self, channel: str, text: str, target: int | str | None = None
@@ -116,6 +146,11 @@ class CoreLink:
                 exc_info=exc,
                 extra={"_fields": {"request_id": msg.trace_id, "session_id": msg.session_id}},
             )
+            # F-39 — surface a visible failure on the stream so the channel does
+            # not deliver a silently truncated/empty answer. Best-effort: a notice
+            # that itself fails to emit must not re-raise (keep the link alive).
+            with contextlib.suppress(Exception):
+                await sink.emit_failure_notice(_TURN_FAILURE_NOTICE)
         finally:
             # Stream-finalize-on-cut: guarantee the gateway reader terminates even
             # if dispatch crashed before closing its own writer.

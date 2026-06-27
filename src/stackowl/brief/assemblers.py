@@ -36,6 +36,11 @@ _MAX_HIGHLIGHT_CHARS = 120
 _MAX_HIGHLIGHTS = 3
 _MAX_PRIORITY_ROWS = 5
 _RECALL_QUERY = "recent important facts"
+# F-79 — an empty recall is surfaced as this explicit item rather than silently
+# omitting the whole section. A single status literal (not a keyword/query
+# word-list) so the rendered brief honestly shows the section ran and found
+# nothing, instead of vanishing without a trace.
+_NOTHING_NOTABLE_ITEM = "nothing notable"
 
 
 class BriefContext(BaseModel):
@@ -139,13 +144,22 @@ class MemoryHighlightsAssembler:
         )
         records = await self._bridge.recall(_RECALL_QUERY, limit=_MAX_HIGHLIGHTS)
 
-        # 2. DECISION — zero records → omitted (renderer skips silently)
+        # 2. DECISION — zero records → surface an explicit "nothing notable" item
+        # (F-79) rather than silently omitting the section, and log at INFO (not
+        # debug) so a chronically-empty highlights section is visible without
+        # enabling debug logging. The section RENDERS (omitted=False).
         if not records:
-            log.scheduler.debug(
-                "[brief] memory_highlights.assemble: no records — omitting",
-                extra={"_fields": {"job_id": ctx.job_id}},
+            log.scheduler.info(
+                "[brief] memory_highlights.assemble: no records — surfacing "
+                "'nothing notable'",
+                extra={"_fields": {"job_id": ctx.job_id, "query": _RECALL_QUERY}},
             )
-            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
+            return BriefSection(
+                key=self.key,
+                title=self.key,
+                items=[_NOTHING_NOTABLE_ITEM],
+                omitted=False,
+            )
 
         items = [r.content[:_MAX_HIGHLIGHT_CHARS] for r in records[:_MAX_HIGHLIGHTS]]
         # 4. EXIT

@@ -33,15 +33,38 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # telemetry events (e.g. ``morning_brief_rendered``, ``settings_reloaded``) are
 # deliberately ABSENT — they must never drive a user-facing send.
 #
-# It is currently EMPTY by design:
+# It is currently EMPTY — and this is an INTENTIONAL, REASONED deferral (F-78),
+# not an oversight:
 #   * ``website_watch.changed`` is delivered via the DURABLE exactly-once seam
 #     (the handler calls ``ProactiveJobDeliverer.deliver_for_job`` directly), not
 #     this unledgered bridge — so it is no longer routed here (WS-D).
 #   * ``perch.file_landed`` is dead v1 vocabulary — no module/emitter exists.
-# The :class:`EventDeliveryBridge` machinery is kept intact (and unit-tested) so a
-# genuinely bus-native proactive event can be added here in the future; until then
-# the bridge registers no subscriptions and logs a clean dormant state.
+#
+# WHY no other already-published event can be wired here WITHOUT a publisher
+# change: the deliver seam this bridge funnels through (see
+# :meth:`EventDeliveryBridge._build_notification`) requires every event payload
+# to carry a non-``message`` body AND an explicit channel-native ``target`` — the
+# "honest recipient" C1 invariant forbids guessing the recipient (no ``_last_*``
+# fallback). The genuinely-proactive events that ARE published today carry domain
+# payloads with NEITHER:
+#   * ``budget_exceeded`` / ``budget_80pct_alert`` (cost_tracker) — payload is
+#     ``{"current_usd": ..., "limit_usd": ...}`` (no message, no target). These
+#     have no bus subscriber at all, so a real proactive gap exists, BUT they are
+#     owner-GLOBAL alerts with no per-event recipient.
+#   * ``parliament.completed`` (orchestrator) — payload is a bare ``session_id``.
+# Routing any of these through this seam UNCHANGED would drop every event at the
+# recipient rail. The honest UNBLOCK contract: a publisher must include a
+# resolvable channel-native ``target`` (and a ``message``) in its payload — or
+# route via the durable exactly-once seam, as ``website_watch`` does. Until then
+# the bridge stays dormant (registers no subscriptions, logs a clean state) and
+# the machinery is kept intact + unit-tested for that future event.
 _ALLOWED_EVENTS: frozenset[str] = frozenset()
+# Concrete proactive-event candidates that exist today but CANNOT ride this seam
+# unchanged (see the rationale above). Tracked as a named constant so the
+# deferral is explicit + regression-pinned rather than an undocumented gap.
+_DEFERRED_PROACTIVE_CANDIDATES: frozenset[str] = frozenset(
+    {"budget_exceeded", "budget_80pct_alert", "parliament.completed"}
+)
 _DEFAULT_CATEGORY = "proactive_event"
 # Bound concurrent event-driven sends so an event burst cannot fan out unbounded.
 _MAX_INFLIGHT = 16

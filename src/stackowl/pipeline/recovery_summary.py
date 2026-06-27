@@ -15,12 +15,16 @@ from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.setup.localize import localize_format
 
 _MAX_LINES = 2
-_LANG = "en"  # turn language plumbing is out of scope; localize falls back to en
 
 _TEMPLATE_BY_KIND = {
     "substitution": "self_heal_recovery_note",          # slots: failed, recovered_via
     "provider_fallback": "self_heal_recovery_provider",  # generic, no slots
 }
+
+# F-10: when the final response is an honest floor we still surface ONE brief,
+# GENERIC line so the user knows alternatives were tried before the give-up. No
+# names are leaked (a floored turn is the worst time to expose internal tool names).
+_ATTEMPTED_KEY = "self_heal_recovery_attempted"
 
 
 async def surface_recovery(state: PipelineState) -> PipelineState:
@@ -29,15 +33,32 @@ async def surface_recovery(state: PipelineState) -> PipelineState:
         events = [e for e in recovery_context.get_recovery() if e.user_visible]
         if not events:
             return state
+        lang = state.language  # F-9: honor the turn language (was hardcoded "en")
         has_real_answer = any(
             c.content.strip() and not c.is_floor for c in state.responses
         )
         if not has_real_answer:
-            log.engine.debug(
-                "[recovery_summary] skip — no real answer to annotate",
+            # F-10: a floored turn must NOT silently swallow the recovery trace.
+            # When an honest floor is present, surface ONE brief, GENERIC line so
+            # "I tried alternatives before giving up" is visible. With no floor to
+            # annotate (e.g. empty response), there is nothing to surface alongside.
+            has_floor = any(c.content.strip() and c.is_floor for c in state.responses)
+            if not has_floor:
+                log.engine.debug(
+                    "[recovery_summary] skip — no answer or floor to annotate",
+                    extra={"_fields": {"trace_id": state.trace_id, "n_events": len(events)}},
+                )
+                return state
+            attempted = ResponseChunk(
+                content=localize_format(_ATTEMPTED_KEY, lang),  # generic, no names
+                is_final=False, chunk_index=len(state.responses),
+                trace_id=state.trace_id, owl_name=state.owl_name,
+            )
+            log.engine.info(
+                "[recovery_summary] surfaced attempted-recovery line alongside floor",
                 extra={"_fields": {"trace_id": state.trace_id, "n_events": len(events)}},
             )
-            return state
+            return state.evolve(responses=(*state.responses, attempted))
         new_chunks: list[ResponseChunk] = []
         base_index = len(state.responses)
         for offset, e in enumerate(events[:_MAX_LINES]):
@@ -49,9 +70,9 @@ async def surface_recovery(state: PipelineState) -> PipelineState:
                 )
                 continue
             if key == "self_heal_recovery_provider":
-                text = localize_format(key, _LANG)  # generic, no names
+                text = localize_format(key, lang)  # generic, no names
             else:
-                text = localize_format(key, _LANG, failed=e.failed,
+                text = localize_format(key, lang, failed=e.failed,
                                        recovered_via=e.recovered_via)
             # Annotation chunk appended after the real answer; is_final stays False
             # (not a terminal response).

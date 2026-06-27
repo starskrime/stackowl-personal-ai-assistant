@@ -154,6 +154,24 @@ class TtsTool(Tool):
             )
             return self._err(outcome, t0)
 
+        # DEFENSIVE: a TtsResult OBJECT is the backend's self-report, not proof real
+        # audio exists. Inspect the artifact INLINE — it must exist and be non-empty
+        # — before self-asserting success (F-34). Only a POSITIVE absence
+        # (verify_artifact is False) refuses; an unobservable path (None, transient FS
+        # error) defers to verify()'s magic-byte seam downstream so a real success is
+        # never flipped on an inability to observe.
+        from stackowl.tools.verification import verify_artifact
+
+        if verify_artifact(outcome.path) is False:
+            log.tool.warning(
+                "tts.execute: backend claimed success but the audio file is missing "
+                "or empty",
+                extra={"_fields": {"backend": backend.name}},
+            )
+            return self._err(
+                "tts reported success but produced no readable audio file", t0
+            )
+
         # 4. EXIT — disclose egress IFF the backend is cloud (text left the box).
         return self._ok(outcome, t0)
 

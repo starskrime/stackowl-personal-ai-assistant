@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.parliament.convergence import ConvergenceDetector
-from stackowl.parliament.positions_synthesis import synthesize_positions
+from stackowl.parliament.positions_synthesis import (
+    complete_synthesis_with_retry,
+    synthesize_positions,
+)
 from stackowl.parliament.synthesis_models import SynthesisResult
 from stackowl.parliament.synthesis_parser import SynthesisParser
 from stackowl.providers.base import Message
@@ -122,7 +125,17 @@ class ParliamentSynthesizer:
             )
 
         try:
-            completion = await provider.complete(messages, model="")
+            # F-57 — re-prompt the synthesis provider ONCE (stricter) if the first
+            # completion is unparseable, before accepting a degraded parse; a one-off
+            # bad generation is recovered while a persistent failure stays
+            # parse_ok=False (the S2 degrade + pellet-skip gates still fire). Provider
+            # failures still propagate to the handler below.
+            raw_text, parsed = await complete_synthesis_with_retry(
+                provider=provider,
+                parser=self._parser,
+                messages=messages,
+                correlation_id=session.session_id,
+            )
         except Exception as exc:
             # No-hidden-errors: a synthesis-provider failure must NOT be masked as a
             # clean confidence-scored verdict (a placeholder dressed up as a real
@@ -140,10 +153,8 @@ class ParliamentSynthesizer:
                 },
             )
             raise
-        raw_text = completion.content
 
         confidence = self._compute_confidence(session, mean_sim)
-        parsed = self._parser.parse(raw_text, session.session_id)
         synthesis_text = self._format_synthesis_text(raw_text, session, confidence)
         if degraded_from is not None:
             synthesis_text = (

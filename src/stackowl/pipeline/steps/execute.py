@@ -409,58 +409,83 @@ async def _try_substitute(
             if match is None:
                 return None
             sibling_name, sibling_args = match
+            # F-5 — mark the candidate tried BEFORE running it so that if its
+            # actuator MACHINERY breaks below, the next find_substitute pass skips
+            # it (in_bounds excludes tried_siblings) and we advance to the next
+            # ranked candidate instead of looping on the broken one.
             tried_siblings.add(sibling_name)
-            sib = tool_registry.get(sibling_name)
-            if sib is None:  # raced/unregistered — try the next ranked candidate
-                log.engine.warning(
-                    "[pipeline] execute: substitute sibling vanished from registry",
-                    extra={"_fields": {"sibling": sibling_name, "trace_id": trace_id}},
-                )
-                continue
-            log.engine.info(
-                "[pipeline] execute: self-heal substitution — routing around failed tool",
-                extra={"_fields": {
-                    "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
-                }},
-            )
-            # Run the sibling through the SAME guarded path the primary used. The
-            # sibling is read/write (find_substitute guarantees it), so under a durable
-            # context ledger_guard treats a read as passthrough and a write as
-            # exactly-once — identical to a direct dispatch of that tool.
-            # partial binds sib + args EAGERLY (a fresh zero-arg op each iteration)
-            # so the loop's rebinding never leaks into a deferred closure (B023).
-            sib_result = await ledger_guard(
-                sibling_name, sibling_args, sib.manifest.action_severity,
-                functools.partial(sib, **sibling_args),
-            )
-            tool_outcome_ledger.record_tool_outcome(
-                name=sibling_name, action_severity=sib.manifest.action_severity,
-                success=sib_result.success,
-                side_effect_committed=sib_result.side_effect_committed,
-                # B4a — the substitute is held to the SAME reality check as the primary:
-                # a sibling that also CLAIMED success but produced nothing (verified=False)
-                # is not a route-around, it is a second false win.
-                verified=sib_result.verified,
-            )
-            if not is_trustworthy_success(sib_result.success, sib_result.verified):
+            # F-5 — the per-sibling actuator path is guarded INDEPENDENTLY of the
+            # whole loop: a machinery fault running ONE sibling (a ledger-guard
+            # error, an outcome-ledger raise, etc. — distinct from the tool merely
+            # returning failure, which Tool.__call__ already wraps into a
+            # ToolResult) advances to the NEXT candidate. Only when no candidate
+            # remains (match is None above) do we surrender. This distinguishes
+            # "no sibling exists" from "this sibling's actuator broke".
+            try:
+                sib = tool_registry.get(sibling_name)
+                if sib is None:  # raced/unregistered — try the next ranked candidate
+                    log.engine.warning(
+                        "[pipeline] execute: substitute sibling vanished from registry",
+                        extra={"_fields": {"sibling": sibling_name, "trace_id": trace_id}},
+                    )
+                    continue
                 log.engine.info(
-                    "[pipeline] execute: substitute sibling also failed — trying next candidate",
+                    "[pipeline] execute: self-heal substitution — routing around failed tool",
+                    extra={"_fields": {
+                        "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
+                    }},
+                )
+                # Run the sibling through the SAME guarded path the primary used. The
+                # sibling is read/write (find_substitute guarantees it), so under a durable
+                # context ledger_guard treats a read as passthrough and a write as
+                # exactly-once — identical to a direct dispatch of that tool.
+                # partial binds sib + args EAGERLY (a fresh zero-arg op each iteration)
+                # so the loop's rebinding never leaks into a deferred closure (B023).
+                sib_result = await ledger_guard(
+                    sibling_name, sibling_args, sib.manifest.action_severity,
+                    functools.partial(sib, **sibling_args),
+                )
+                tool_outcome_ledger.record_tool_outcome(
+                    name=sibling_name, action_severity=sib.manifest.action_severity,
+                    success=sib_result.success,
+                    side_effect_committed=sib_result.side_effect_committed,
+                    # B4a — the substitute is held to the SAME reality check as the primary:
+                    # a sibling that also CLAIMED success but produced nothing (verified=False)
+                    # is not a route-around, it is a second false win.
+                    verified=sib_result.verified,
+                )
+                if not is_trustworthy_success(sib_result.success, sib_result.verified):
+                    log.engine.info(
+                        "[pipeline] execute: substitute sibling also failed — trying next candidate",
+                        extra={"_fields": {
+                            "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
+                        }},
+                    )
+                    continue
+                return _record_substitution_success(
+                    failed_tool=failed_tool,
+                    sib=sib,
+                    sibling_name=sibling_name,
+                    sib_output=sib_result.output,
+                    substituted_tags=substituted_tags,
+                    recovery_context=recovery_context,
+                    locale=locale,
+                    trace_id=trace_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — one broken sibling != surrender
+                # F-5 — this sibling's actuator broke (already in tried_siblings).
+                # Advance to the next ranked candidate before giving up.
+                log.engine.error(
+                    "[pipeline] execute: substitute sibling actuator raised — trying next candidate",
+                    exc_info=exc,
                     extra={"_fields": {
                         "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
                     }},
                 )
                 continue
-            return _record_substitution_success(
-                failed_tool=failed_tool,
-                sib=sib,
-                sibling_name=sibling_name,
-                sib_output=sib_result.output,
-                substituted_tags=substituted_tags,
-                recovery_context=recovery_context,
-                locale=locale,
-                trace_id=trace_id,
-            )
     except Exception as exc:  # noqa: BLE001 — the actuator must never crash the turn
+        # Outer guard for the loop scaffolding itself (e.g. find_substitute raising):
+        # with no live sibling identity to skip, honest surrender is correct.
         log.engine.error(
             "[pipeline] execute: self-heal substitution actuator failed — falling through",
             exc_info=exc,
@@ -1179,6 +1204,14 @@ async def _run_with_tools(
         # claimed-but-unobserved effect (success=True, verified=False) no longer
         # returns its (misleading) "done!" output here; it enters the recovery ladder.
         if is_trustworthy_success(tr.success, tr.verified):
+            # F-4 (DEFERRED — intentionally NOT a decision-time learned-heuristic
+            # consult here). A per-call heuristic-store DB lookup on this hot path
+            # was deliberately removed (latency win; it fed no consumer) and is
+            # guarded by tests/learning/test_heuristic_demote.py
+            # ::test_execute_does_not_do_a_per_call_heuristic_db_lookup. Re-surfacing
+            # learned hints to the model needs its own design — weak-model
+            # amplification safety + a real consumer — per the note in
+            # learning/heuristic_matcher.py. Do not add a heuristic store read here.
             return tr.output
         # B4a recovery ladder — RUNG 1: RETRY-ONCE on a recoverable failure. Two
         # recoverable shapes self-heal on a second attempt and so earn one retry:

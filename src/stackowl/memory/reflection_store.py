@@ -14,12 +14,20 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcome
-from stackowl.memory.sqlite_helpers import pack_embedding, unpack_embedding
+from stackowl.memory.sqlite_helpers import (
+    cosine_similarity,
+    pack_embedding,
+    unpack_embedding,
+)
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.embeddings.registry import EmbeddingRegistry
 
 
 @dataclass(frozen=True)
@@ -252,6 +260,107 @@ class ReflectionStore(OwnedRepository):
         log.memory.debug(
             "[reflections] recent_for_owl: exit",
             extra={"_fields": {"owl_name": owl_name, "n": len(results)}},
+        )
+        return results
+
+    async def semantic_for_owl(
+        self,
+        owl_name: str,
+        query: str,
+        embeddings: EmbeddingRegistry,
+        *,
+        limit: int = 5,
+        candidate_cap: int = 200,
+    ) -> list[Reflection]:
+        """Return reflections for an owl ranked by SEMANTIC closeness to ``query``.
+
+        F-50: the richer sibling of :meth:`recent_for_owl`. Where ``recent_for_owl``
+        is pure recency (last-N by ``created_at``), this surfaces the reflections
+        whose embedding best matches the *current intent* (``query``), so recall
+        is relevant rather than merely recent. Recency is the tie-breaker among
+        equally-close candidates.
+
+        Positive-only by construction — reflections are written only for
+        successful, high-quality outcomes (see module docstring), so this recall
+        path never resurfaces a "this failed / I can't" memory.
+
+        ANN strategy: reflections live in SQLite (not LanceDB), so we score the
+        owl's embedded reflections in-process with cosine similarity — the same
+        primitive the rest of memory uses (:func:`sqlite_helpers.cosine_similarity`).
+        The candidate set is bounded (positive-only + owl-scoped + ``candidate_cap``),
+        so the in-process pass stays cheap. Degrades to :meth:`recent_for_owl`
+        whenever embedding is unavailable (empty query, embed failure, or no
+        embedded candidates) so recall is never empty and never crashes.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[reflections] semantic_for_owl: entry",
+            extra={"_fields": {
+                "owl_name": owl_name, "limit": limit,
+                "query_len": len(query), "candidate_cap": candidate_cap,
+            }},
+        )
+        # 2. DECISION — empty query can't be embedded; fall back to recency.
+        if not query.strip():
+            log.memory.debug(
+                "[reflections] semantic_for_owl: empty query — recency fallback",
+                extra={"_fields": {"owl_name": owl_name}},
+            )
+            return await self.recent_for_owl(owl_name, limit=limit)
+
+        # 3. STEP — embed the intent (best-effort; recency fallback on failure).
+        try:
+            vectors = await embeddings.get().embed([query])
+        except Exception as exc:  # B5 — never crash recall on an embed failure
+            log.memory.warning(
+                "[reflections] semantic_for_owl: embed failed — recency fallback",
+                exc_info=exc,
+                extra={"_fields": {"owl_name": owl_name}},
+            )
+            return await self.recent_for_owl(owl_name, limit=limit)
+        query_vec = list(vectors[0]) if vectors and vectors[0] else None
+        if query_vec is None:
+            log.memory.debug(
+                "[reflections] semantic_for_owl: empty embedding — recency fallback",
+                extra={"_fields": {"owl_name": owl_name}},
+            )
+            return await self.recent_for_owl(owl_name, limit=limit)
+
+        # 3. STEP — pull the owl's embedded reflections, newest-first so the
+        # stable sort below yields recency tie-breaking for free.
+        rows = await self._db.fetch_all(
+            """SELECT reflection_id, trace_id, owl_name, summary, suggested_strategy,
+                      failure_class, quality_score, embedding, embedding_model, created_at
+               FROM reflections
+               WHERE owner_id = ? AND owl_name = ? AND embedding IS NOT NULL
+               ORDER BY created_at DESC LIMIT ?""",
+            (self._owner_id, owl_name, candidate_cap),
+        )
+        # 2. DECISION — no embedded candidates: degrade to pure recency.
+        if not rows:
+            log.memory.debug(
+                "[reflections] semantic_for_owl: no embedded candidates — recency fallback",
+                extra={"_fields": {"owl_name": owl_name}},
+            )
+            return await self.recent_for_owl(owl_name, limit=limit)
+
+        scored: list[tuple[float, Reflection]] = []
+        for r in rows:
+            ref = _row_to_reflection(r)
+            sim = cosine_similarity(query_vec, ref.embedding)
+            scored.append((sim if sim is not None else -1.0, ref))
+        # Stable sort by similarity desc; rows already came created_at DESC, so
+        # equal-similarity ties keep newest-first (recency tie-break).
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        results = [ref for _, ref in scored[:limit]]
+        # 4. EXIT
+        log.memory.debug(
+            "[reflections] semantic_for_owl: exit",
+            extra={"_fields": {
+                "owl_name": owl_name, "n": len(results),
+                "candidates": len(rows),
+                "top_sim": round(scored[0][0], 4) if scored else None,
+            }},
         )
         return results
 

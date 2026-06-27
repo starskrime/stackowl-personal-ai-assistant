@@ -17,7 +17,7 @@ from stackowl.ipc.client import IpcClient
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.server import IpcServer
 from stackowl.pipeline.streaming import ResponseChunk
-from stackowl.runtime.core_link import CoreLink, CoreSink
+from stackowl.runtime.core_link import _TURN_FAILURE_NOTICE, CoreLink, CoreSink
 from stackowl.runtime.gateway_link import GatewayLink
 
 
@@ -184,7 +184,8 @@ async def test_send_file_without_target_uses_default_destination(socket_path) ->
 
 
 async def test_dispatch_crash_still_closes_stream(socket_path) -> None:
-    """A dispatch that raises mid-turn must not hang the gateway reader."""
+    """A dispatch that raises mid-turn must not hang the gateway reader, and the
+    user gets a visible failure notice instead of a silently truncated answer."""
     async def crasher(msg: IngressMessage, sink: CoreSink) -> None:
         await sink.stream_writer().write(ResponseChunk(
             content="partial", is_final=False, chunk_index=0,
@@ -200,7 +201,27 @@ async def test_dispatch_crash_still_closes_stream(socket_path) -> None:
     finally:
         await stop()
 
-    assert adapter.chunks == ["partial"]
+    # F-39 — the partial output is kept and a terminal failure notice is appended
+    # so the channel shows that the turn errored rather than just stopping.
+    assert adapter.chunks[0] == "partial"
+    assert adapter.chunks[-1] == _TURN_FAILURE_NOTICE
+
+
+async def test_dispatch_crash_before_any_chunk_still_notifies(socket_path) -> None:
+    """A crash before the dispatch writes anything still delivers a visible
+    failure notice (not a silent empty answer)."""
+    async def crasher(msg: IngressMessage, sink: CoreSink) -> None:
+        raise RuntimeError("immediate boom")
+
+    adapter = FakeAdapter()
+    link, stop = await _run_split(socket_path, crasher, adapter)
+    try:
+        await link.submit(_msg())
+        await asyncio.wait_for(adapter.done.wait(), timeout=5)
+    finally:
+        await stop()
+
+    assert adapter.chunks == [_TURN_FAILURE_NOTICE]
 
 
 async def test_submit_unregistered_channel_is_noop(socket_path) -> None:

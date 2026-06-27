@@ -454,6 +454,95 @@ async def test_dispatch_never_retries_consequential_transient_failure(monkeypatc
     assert out.startswith(TOOL_FAILED_MARKER)
 
 
+# ===========================================================================
+# F-5 — the substitution actuator distinguishes "no sibling exists" (surrender)
+# from "the actuator MACHINERY broke running one sibling". A per-sibling machinery
+# fault (e.g. a ledger-guard error — NOT the tool merely returning failure, which
+# Tool.__call__ already wraps into a ToolResult) must advance to the NEXT ranked
+# candidate rather than the single outer `except → return None` collapsing the
+# whole capability class on one broken sibling.
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_substitute_actuator_error_advances_to_next_candidate(monkeypatch):
+    """F-5 — the ACTUATOR explodes running the first-ranked sibling; the loop must
+    try the SECOND candidate before surrendering."""
+    import importlib
+    lg_mod = importlib.import_module("stackowl.pipeline.durable.ledger_guard")
+    from stackowl.pipeline.steps import execute as exe
+
+    reg = _two_read_siblings(search_succeeds=True, fetch_succeeds=True)
+
+    # Every sibling is in bounds.
+    monkeypatch.setattr(
+        "stackowl.authz.bounds_guard.check_effective_bounds",
+        lambda effective, name: None,  # noqa: ARG005
+    )
+
+    # The actuator MACHINERY faults for the first-ranked sibling (web_search) but
+    # works for the second (web_fetch). This models a per-sibling break distinct
+    # from a tool that merely returns success=False.
+    async def flaky_guard(name, args, severity, execute_fn):  # noqa: ANN001
+        if name == "web_search":
+            raise RuntimeError("ledger actuator exploded")
+        return await execute_fn()
+
+    monkeypatch.setattr(lg_mod, "ledger_guard", flaky_guard)
+
+    out = await exe._try_substitute(
+        failed_tool="browser_browse",
+        failed_args={"seed_url": "http://x", "task": "weather"},
+        tool_registry=reg,  # type: ignore[arg-type]
+        effective=None,
+        substituted_tags=set(),
+        trace_id="t1",
+        locale="en",
+    )
+
+    # Before the fix the outer `except` caught web_search's actuator error and
+    # returned None (surrender). After: advance to web_fetch and return its output.
+    assert out is not None
+    assert "FETCH_OK" in out
+    assert reg.get("web_fetch").calls == [{"url": "http://x"}]
+
+
+@pytest.mark.asyncio
+async def test_substitute_actuator_error_on_all_siblings_surrenders(monkeypatch):
+    """F-5 — when EVERY sibling's actuator faults, surrender honestly (None), and
+    each candidate is attempted exactly once (no spiral)."""
+    import importlib
+    lg_mod = importlib.import_module("stackowl.pipeline.durable.ledger_guard")
+    from stackowl.pipeline.steps import execute as exe
+
+    reg = _two_read_siblings(search_succeeds=True, fetch_succeeds=True)
+    monkeypatch.setattr(
+        "stackowl.authz.bounds_guard.check_effective_bounds",
+        lambda effective, name: None,  # noqa: ARG005
+    )
+
+    seen: list[str] = []
+
+    async def always_faults(name, args, severity, execute_fn):  # noqa: ANN001
+        seen.append(name)
+        raise RuntimeError("actuator exploded")
+
+    monkeypatch.setattr(lg_mod, "ledger_guard", always_faults)
+
+    out = await exe._try_substitute(
+        failed_tool="browser_browse",
+        failed_args={"seed_url": "http://x", "task": "weather"},
+        tool_registry=reg,  # type: ignore[arg-type]
+        effective=None,
+        substituted_tags=set(),
+        trace_id="t1",
+        locale="en",
+    )
+
+    assert out is None
+    # Both ranked siblings tried exactly once — no candidate retried, no spiral.
+    assert seen == ["web_search", "web_fetch"]
+
+
 # ---------------------------------------------------------------------------
 # Helper: build the REAL _dispatch closure with a stubbed services/bounds seam.
 # ---------------------------------------------------------------------------

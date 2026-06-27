@@ -41,6 +41,26 @@ _DERIVE_TEMPERATURE = 0.0
 _ARTIFACT_RE = re.compile(r"^\s*ARTIFACT\s*:?\s*(?P<dir>.*?)\s*$", re.IGNORECASE)
 
 
+def acceptance_skip_reason(tier: str) -> str | None:
+    """Why the LLM-derived acceptance layer is SKIPPED for this turn, or None when
+    it is engaged (F-14).
+
+    The layer is intentionally OFF by default (an empty ``acceptance_tier``) — it
+    adds a model round-trip per turn, so flipping it on is a deliberate cost/latency
+    choice, NOT a silent default. But "OFF" must be OBSERVABLE: a turn that CLAIMS a
+    file but declared no outcome simply goes unverified, and that fact should be
+    visible in the trace rather than a silent early-return. This returns a short,
+    config-driven explanation a caller (or the deriver itself) can log so
+    "we did not verify this claim" is never invisible.
+    """
+    if not tier:
+        return (
+            "acceptance_tier unset — LLM-derived acceptance OFF; an undeclared "
+            "outcome claim was not verified"
+        )
+    return None
+
+
 class LlmAcceptanceDeriver:
     """Derive an :class:`ExpectedOutcome` from a turn's draft, fail-closed."""
 
@@ -67,7 +87,15 @@ class LlmAcceptanceDeriver:
         FAIL-CLOSED: any provider error / empty / unparseable reply ⇒ None (no
         expectation asserted). ``NONE`` from the model ⇒ None. ``ARTIFACT: dir`` ⇒
         an artifact ExpectedOutcome (empty dir ⇒ None dir ⇒ the workspace root)."""
-        if not self._tier or not draft.strip():
+        # F-14 — make the OFF-by-default skip OBSERVABLE instead of a silent return.
+        skip_reason = acceptance_skip_reason(self._tier)
+        if skip_reason is not None:
+            log.engine.debug(
+                "[acceptance-llm] derive: skipped — layer off",
+                extra={"_fields": {"reason": skip_reason}},
+            )
+            return None
+        if not draft.strip():
             return None
         messages = [Message(role="user", content=self._build_prompt(intent, draft))]
         try:

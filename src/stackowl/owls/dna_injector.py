@@ -19,10 +19,15 @@ _HIGH_DIRECTIVES: tuple[tuple[str, str], ...] = (
         "Respond with skepticism when claims are unsupported; press for evidence and push back on weak arguments.",
     ),
     (
+        # F-53: act-first / anti-over-clarify is now an UNCONDITIONAL charter
+        # principle (see owls/base_prompt.behavioral_charter), so it no longer
+        # lives here gated behind a high-curiosity band. The curiosity trait now
+        # governs only EXPLORATION BREADTH — how widely the owl investigates
+        # before settling — independent of the act-vs-ask decision.
         "curiosity",
-        "When intent or scope is ambiguous but the most likely action is reversible, "
-        "act on the most likely interpretation and state your assumption — ask the "
-        "user a clarifying question only when the action is irreversible or expensive.",
+        "Explore the problem broadly: consider adjacent angles, gather the context "
+        "that matters, and surface relevant options the user did not name before "
+        "settling on an approach.",
     ),
     (
         "formality",

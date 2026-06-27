@@ -38,6 +38,7 @@ from stackowl.interaction.clarify_gateway import (
     CLARIFY_TTL_SECONDS,
     OUTCOME_ANSWERED,
     OUTCOME_CANCELLED,
+    ClarifyGateway,
 )
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -57,6 +58,18 @@ _TIMED_OUT = (
     "The user did not reply in time to your question ({question!r}). If this was "
     "gating a consequential action, ABORT — do not assume an answer; otherwise "
     "proceed with your best assumption and state it."
+)
+
+# Graceful in-turn timeout for a REVERSIBLE clarify that carried a SAFE default
+# (F-68): auto-resume with the stated assumption instead of punting the whole
+# decision back to the prompt and burning the full TTL. Only reached for a
+# low-stakes gate with a menu-consistent default — an irreversible/high-stakes
+# clarify keeps the ABORT path above (never assume consent — party Security).
+_TIMED_OUT_DEFAULTED = (
+    "The user did not reply in time to your question ({question!r}). This was a "
+    "reversible choice with a safe default, so proceed with the assumed answer: "
+    "{default!r}. State this assumption plainly in your reply so the user can "
+    "correct it if it was wrong."
 )
 
 # Distinct PIVOT result: the user moved on to a different request without
@@ -139,6 +152,26 @@ class ClarifyTool(Tool):
                         "open-ended question or an 'Other' pick)."
                     ),
                 },
+                "default": {
+                    "type": "string",
+                    "description": (
+                        "Optional safe fallback to assume if the user does NOT "
+                        "reply in time. Provide it ONLY for a REVERSIBLE choice "
+                        "(must be one of 'choices' when choices are given). On "
+                        "timeout the tool auto-resumes with this assumption "
+                        "instead of stalling. Omit for an irreversible/expensive "
+                        "gate — those abort on timeout, never assume consent."
+                    ),
+                },
+                "high_stakes": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Set True when the gated action is irreversible or "
+                        "expensive. Suppresses any timeout auto-default so the "
+                        "tool aborts rather than assuming an answer."
+                    ),
+                },
             },
             "required": ["question"],
         }
@@ -196,6 +229,8 @@ class ClarifyTool(Tool):
 
         choices = self._coerce_choices(kwargs.get("choices"))
         awaiting_text = bool(kwargs.get("awaiting_text", False))
+        declared_default = self._coerce_default(kwargs.get("default"))
+        high_stakes = bool(kwargs.get("high_stakes", False))
 
         try:
             # 3. STEP — register + deliver as a BLOCKING ask, then park on the
@@ -234,6 +269,22 @@ class ClarifyTool(Tool):
                 t0,
                 extra={"clarify_id": clarify_id, "cancelled": True},
             )
+        # Graceful in-turn timeout. F-68: for a REVERSIBLE clarify carrying a SAFE
+        # default (a one-item menu or a declared default consistent with it),
+        # auto-resume with the stated assumption instead of punting the whole
+        # decision back and burning the TTL. A high-stakes/irreversible gate (or no
+        # safe default) keeps the ABORT-on-consequential punt — never assume consent.
+        assumed = self._safe_timeout_default(choices, declared_default, high_stakes)
+        if assumed is not None:
+            log.tool.info(
+                "clarify.execute: timeout — auto-resuming reversible clarify with default",
+                extra={"_fields": {"clarify_id": clarify_id, "high_stakes": high_stakes}},
+            )
+            return self._ok(
+                _TIMED_OUT_DEFAULTED.format(question=question, default=assumed),
+                t0,
+                extra={"clarify_id": clarify_id, "timed_out": True, "defaulted": True},
+            )
         return self._ok(
             _TIMED_OUT.format(question=question),
             t0,
@@ -251,6 +302,29 @@ class ClarifyTool(Tool):
         if not items:
             return ()
         return tuple(items[:_MAX_CHOICES])
+
+    @staticmethod
+    def _coerce_default(raw: object) -> str | None:
+        """Normalise an optional ``default`` arg to a non-blank string, or ``None``."""
+        if not isinstance(raw, str):
+            return None
+        value = raw.strip()
+        return value or None
+
+    @staticmethod
+    def _safe_timeout_default(
+        choices: tuple[str, ...], declared_default: str | None, high_stakes: bool,
+    ) -> str | None:
+        """Resolve a SAFE timeout fallback (F-68), or ``None`` to keep the ABORT punt.
+
+        Delegates to the gateway's single source of truth for the reversible-default
+        policy (no duplicated/hardcoded rule): a fallback exists only for a low-stakes
+        clarify with a one-item menu or a declared default consistent with the menu.
+        A ``high_stakes`` (irreversible) gate always yields ``None`` → ABORT.
+        """
+        return ClarifyGateway._resolve_default(
+            choices=choices, default=declared_default, high_stakes=high_stakes,
+        )
 
     @staticmethod
     def _ok(

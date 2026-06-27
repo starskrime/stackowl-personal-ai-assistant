@@ -20,7 +20,11 @@ import asyncio
 import pytest
 
 from stackowl.events.bus import EventBus
-from stackowl.notifications.event_bridge import _ALLOWED_EVENTS, EventDeliveryBridge
+from stackowl.notifications.event_bridge import (
+    _ALLOWED_EVENTS,
+    _DEFERRED_PROACTIVE_CANDIDATES,
+    EventDeliveryBridge,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -54,6 +58,20 @@ async def test_website_watch_changed_is_not_a_bridge_event() -> None:
 async def test_perch_file_landed_is_removed_dead_vocabulary() -> None:
     """perch.file_landed has no emitter anywhere — it must not be subscribed."""
     assert "perch.file_landed" not in _ALLOWED_EVENTS
+
+
+async def test_proactive_candidates_are_intentionally_deferred_not_subscribed() -> None:
+    """F-78: the genuinely-proactive events that ARE published today (budget
+    alerts, parliament.completed) are DELIBERATELY not on the allow-list.
+
+    They carry domain payloads with no ``message`` and no channel-native
+    ``target``, so routing them through the deliver seam unchanged would drop
+    every event at the bridge's honest-recipient rail. This pins that deferral as
+    an explicit, reasoned decision rather than an undocumented gap — the unblock
+    contract is documented at ``_ALLOWED_EVENTS``."""
+    assert _DEFERRED_PROACTIVE_CANDIDATES, "the deferral rationale must name candidates"
+    # None of the deferred candidates may be silently subscribed.
+    assert _DEFERRED_PROACTIVE_CANDIDATES.isdisjoint(_ALLOWED_EVENTS)
 
 
 async def test_empty_allowlist_subscribes_nothing_and_does_not_crash() -> None:

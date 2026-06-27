@@ -81,6 +81,10 @@ class ConsentRequest:
     # When False, the prompter must NOT offer batch/window relaxation buttons
     # (the tool/category is on the always-ask exclusion list).
     allow_relaxation: bool = True
+    # F-27 — the gated effect is low-blast-radius REVERSIBLE (locally owned +
+    # rollback-able). Informational for the prompter; the policy uses it to
+    # auto-allow-with-undo. Defaults False (when in doubt, ask).
+    reversible: bool = False
 
 
 @runtime_checkable
@@ -193,12 +197,25 @@ class ConsentPolicy:
         session_id: str,
         category: str | None = None,
         summary: str = "",
+        reversible: bool = False,
     ) -> bool:
-        """Return True if the action may proceed. Audits every decision."""
+        """Return True if the action may proceed. Audits every decision.
+
+        ``reversible`` (F-27): when True the gated effect is low-blast-radius and
+        rollback-able (locally owned — derived from the TRUSTED manifest, never
+        from LLM-supplied args). A reversible consequential action is auto-allowed
+        WITH-UNDO instead of prompting every time, EXCEPT when the tool/category is
+        on the always-ask exclusion list (lock/alarm/destructive, execute_code,
+        …) — those are never relaxed. Defaults False ⇒ byte-identical to the
+        historical prompt-every-time behavior (when in doubt, ask).
+        """
         # 1. ENTRY
         log.tool.debug(
             "[consent] policy.request: entry",
-            extra={"_fields": {"tool": tool_name, "channel": channel, "session": session_id, "category": category}},
+            extra={"_fields": {
+                "tool": tool_name, "channel": channel, "session": session_id,
+                "category": category, "reversible": reversible,
+            }},
         )
         tier = self.tiers.get(tool_name, TrustTier.ALWAYS_ASK)
         excluded = self._is_always_ask(tool_name, category)
@@ -213,6 +230,11 @@ class ConsentPolicy:
         if not excluded:
             if tier is TrustTier.AUTO:
                 return self._finalize(True, tool_name, channel, session_id, category, "tier_auto", None)
+            # F-27 — a low-blast-radius REVERSIBLE effect (locally owned + undo-able)
+            # is auto-allowed-with-undo rather than re-prompted. Only reaches here for
+            # NON-excluded tools, so dangerous categories stay on ALWAYS_ASK.
+            if reversible:
+                return self._finalize(True, tool_name, channel, session_id, category, "reversible_auto", None)
             if self._window_active(session_id, tool_name):
                 return self._finalize(True, tool_name, channel, session_id, category, "window_grant", None)
             if tool_name in self._session_batch.get(session_id, set()):
@@ -226,6 +248,7 @@ class ConsentPolicy:
             category=category,
             summary=summary,
             allow_relaxation=not excluded,
+            reversible=reversible,
         )
         try:
             scope = await self.prompter.prompt(req)
