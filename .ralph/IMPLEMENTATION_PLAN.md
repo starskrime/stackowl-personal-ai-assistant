@@ -10,7 +10,7 @@ Mark `[x]` only when the per-ADR Definition of Done in `IMPLEMENT_PROMPT.md` is 
 
 ## Checklist (build order)
 
-- [ ] **ADR-1 — AcceptanceAuthority** (`feat/adr-1-acceptance-authority`) — KEYSTONE.
+- [x] **ADR-1 — AcceptanceAuthority** (`feat/adr-1-acceptance-authority` + `feat/adr-1-effect-migrations`) — KEYSTONE. SHIPPED 2026-06-27, flag ON in prod.
   One authority answers "did it actually achieve the intended effect?"; the ≥6 disjoint proxies
   (`giveup_floor`, `overclaim_gate`, `judge_delivery`, per-tool `verify()`, `AcceptanceChecker`,
   `side_effect_committed`/progress ledger) delegate to it. Asserted → measured success.
