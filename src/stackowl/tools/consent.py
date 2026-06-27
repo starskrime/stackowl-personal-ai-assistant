@@ -28,6 +28,12 @@ from typing import Protocol, runtime_checkable
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
+from stackowl.interaction.reversibility_resolver import (
+    Decision,
+    Reversibility,
+    ReversibilityResolver,
+    reversibility_resolver_enabled,
+)
 
 __all__ = [
     "ConsentScope",
@@ -233,8 +239,22 @@ class ConsentPolicy:
             # F-27 — a low-blast-radius REVERSIBLE effect (locally owned + undo-able)
             # is auto-allowed-with-undo rather than re-prompted. Only reaches here for
             # NON-excluded tools, so dangerous categories stay on ALWAYS_ASK.
+            # ADR-3: route the reversible→auto-allow DECISION through the one
+            # ReversibilityResolver. The effect's undo handle is ``undo_write`` (locally
+            # owned rollback); a reversible, low-stakes consent does not reach the user
+            # (``must_reach_user`` False) ⇒ auto-allow, byte-identical to the inline
+            # ``if reversible`` below. OFF ⇒ the inline check runs.
             if reversible:
-                return self._finalize(True, tool_name, channel, session_id, category, "reversible_auto", None)
+                if reversibility_resolver_enabled():
+                    if not ReversibilityResolver.must_reach_user(
+                        Decision(reversibility=Reversibility.reversible(via="undo_write"))
+                    ):
+                        return self._finalize(
+                            True, tool_name, channel, session_id, category,
+                            "reversible_auto", None,
+                        )
+                else:
+                    return self._finalize(True, tool_name, channel, session_id, category, "reversible_auto", None)
             if self._window_active(session_id, tool_name):
                 return self._finalize(True, tool_name, channel, session_id, category, "window_grant", None)
             if tool_name in self._session_batch.get(session_id, set()):

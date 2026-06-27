@@ -39,6 +39,12 @@ from typing import TYPE_CHECKING
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.interaction.reversibility_resolver import (
+    Decision,
+    Reversibility,
+    ReversibilityResolver,
+    reversibility_resolver_enabled,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.interaction.clarify_gateway import ClarifyGateway
@@ -213,7 +219,22 @@ class CostPauseGuard:
         # NOT mark the turn asked here, so a later op in the same turn that DOES
         # reach the block threshold can still escalate to the blocking ask.
         block_threshold = self._resolve_block_threshold()
-        if block_threshold is not None and cost < block_threshold:
+        under_cap = block_threshold is not None and cost < block_threshold
+        # ADR-3: route the continue-and-notify-vs-ask DECISION through the one
+        # ReversibilityResolver. Reversible spend that stays under the near-hard-cap
+        # threshold is low-stakes (the DAILY hard cap still protects the user) ⇒ does not
+        # reach the user (act-and-notify); spend at/above the threshold (or with no
+        # protective ceiling) is high-stakes ⇒ park on the human. ``must_reach_user``
+        # reproduces ``under_cap`` exactly (byte-identical). OFF ⇒ the inline check runs.
+        if reversibility_resolver_enabled():
+            decision = Decision(
+                reversibility=Reversibility.reversible(via="daily_cost_cap"),
+                high_stakes=not under_cap,
+            )
+            continue_and_notify = not ReversibilityResolver.must_reach_user(decision)
+        else:
+            continue_and_notify = under_cap
+        if continue_and_notify:
             log.gateway.info(
                 "cost_pause.gate: over soft budget but under near-hard-limit block "
                 "threshold — continue-and-notify (no blocking ask)",
