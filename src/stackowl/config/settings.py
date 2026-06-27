@@ -814,6 +814,15 @@ class Settings(BaseSettings):
     # faults at the cost of at most one extra attempt on the fault path. Set False for the
     # pre-ADR cascade-only behavior (byte-identical).
     provider_retry_same_tier_once: bool = True
+    # ADR-2 — route the objective driver's sub-goal retry-vs-escalate DECISION through the
+    # one RecoveryActuator (``should_retry`` on a typed ``Failure``) instead of the inline
+    # attempt-budget guard. Byte-identical: on the transient-failure path the failure is
+    # non-consequential, so the authority's predicate and the inline ``attempts < MAX`` gate
+    # agree — the flag toggles only WHERE the decision is made (one authority vs per-site).
+    # Default ON (owner-approved): one recovery policy live in prod. False ⇒ the pre-ADR
+    # inline decision (byte-identical). Consequential parks / verified-false steps escalate
+    # before this path, exactly as before.
+    unify_objective_recovery: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

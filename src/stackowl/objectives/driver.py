@@ -30,6 +30,7 @@ from stackowl.infra.observability import log
 from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.acceptance import AcceptanceChecker
+from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
 from stackowl.pipeline.state import PipelineState
 from stackowl.scheduler.base import JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
@@ -75,6 +76,7 @@ class ObjectiveDriverHandler(JobHandler):
         provider_registry: ProviderRegistry | None = None,
         owner_id: str = DEFAULT_PRINCIPAL_ID,
         blocked_retry_cooldown_s: float = _BLOCKED_RETRY_COOLDOWN_S,
+        recovery: RecoveryActuator | None = None,
     ) -> None:
         self._db = db
         self._backend = backend
@@ -94,6 +96,11 @@ class ObjectiveDriverHandler(JobHandler):
         # Goal-level acceptance authority (verification B3). Stateless; deterministic
         # filesystem observation of a sub-goal's declared ExpectedOutcome.
         self._acceptance = AcceptanceChecker()
+        # ADR-2 — the one recovery authority. The sub-goal retry-vs-escalate DECISION
+        # delegates to its ``should_retry`` predicate (flag ``unify_objective_recovery``)
+        # instead of an inline attempt-budget guard, so one policy governs every
+        # subsystem's recovery. Stateless; injectable for tests.
+        self._recovery = recovery or RecoveryActuator()
 
     @property
     def handler_name(self) -> str:
@@ -298,7 +305,7 @@ class ObjectiveDriverHandler(JobHandler):
         the objective escalate to ``blocked`` and the owner get notified, exactly as
         before. The attempt count is operational retry state, never a learned lesson."""
         used = subgoal.attempts + 1
-        if used < _MAX_SUBGOAL_ATTEMPTS:
+        if used < _MAX_SUBGOAL_ATTEMPTS and self._may_retry(reason):
             # Transient stumble: leave it pending so the next tick retries it. The
             # whole objective stays active — a single failure no longer strands it.
             await store.update_subgoal(
@@ -331,6 +338,42 @@ class ObjectiveDriverHandler(JobHandler):
         )
         await store.append_event(objective.objective_id, "subgoal_failed", reason)
         await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
+
+    def _may_retry(self, reason: str) -> bool:
+        """Whether a failed sub-goal may be retried — the ONE recovery authority decides (ADR-2).
+
+        When ``unify_objective_recovery`` is on (default) the retry-vs-escalate decision is
+        delegated to :meth:`RecoveryActuator.should_retry` over a typed ``Failure`` instead of
+        being re-decided inline. By the time a failure reaches the bounded-retry path it is
+        non-consequential and transient-by-policy (an irreversible park or a verified-false
+        step has already escalated to ``blocked`` upstream), so the authority returns True and
+        the outcome is byte-identical to the inline budget gate — but the policy now lives in
+        ONE place, and a consequential failure that ever reached here would be refused a retry
+        by the same authority every other subsystem uses. Flag off ⇒ the inline gate decides
+        alone (the actuator is not consulted), byte-identical to pre-ADR. A flag-read error
+        fails safe to the unified path (the owner-approved default)."""
+        if not self._unify_enabled():
+            return True
+        failure = Failure(
+            name="objective_subgoal",
+            kind="objective",
+            transient=True,
+            consequential=False,
+            error=reason,
+        )
+        return self._recovery.should_retry(failure)
+
+    def _unify_enabled(self) -> bool:
+        """Read the ADR-2 ``unify_objective_recovery`` flag; default ON on any error.
+
+        ``None`` settings (the unit surface) ⇒ the default (ON), so the authority governs
+        the decision there too. A flag read must never break a driver tick."""
+        if self._settings is None:
+            return True
+        try:
+            return bool(self._settings.unify_objective_recovery)
+        except Exception:  # noqa: BLE001 — a flag read must never sink the tick
+            return True
 
     @staticmethod
     def _with_retry_context(subgoal: Subgoal) -> str:
