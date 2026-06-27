@@ -46,6 +46,17 @@ class NotificationSettings(BaseModel):
         description="Channel used when a notification omits ``channel_name``.",
         json_schema_extra={"hot_reload": True},
     )
+    fallback_channel: str = Field(
+        default="",
+        description=(
+            "ADR-2 — when transport to the target channel FAILS (after the in-channel "
+            "retry), the RecoveryActuator reroutes the message to THIS channel before "
+            "surrendering. Empty (the default) ⇒ no reroute (byte-identical: a failed "
+            "transport stays 'failed'). Set to a registered channel name to opt in. A "
+            "reroute to the same channel that just failed is skipped."
+        ),
+        json_schema_extra={"hot_reload": True},
+    )
     quiet_hours: QuietHoursSettings = Field(default_factory=QuietHoursSettings)
     subscriptions: dict[str, bool] = Field(
         default_factory=dict,
