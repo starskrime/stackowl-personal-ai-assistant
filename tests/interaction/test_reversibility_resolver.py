@@ -227,3 +227,76 @@ def test_clarify_resolve_default_off_does_not_consult_resolver(
         choices=("only",), default=None, high_stakes=False
     )
     assert called is False
+
+
+# --------------------------------------------- must_reach_user (objective driver gate)
+
+
+def test_must_reach_user_irreversible_and_high_stakes() -> None:
+    assert ReversibilityResolver.must_reach_user(
+        Decision(reversibility=Reversibility.irreversible())
+    )
+    assert ReversibilityResolver.must_reach_user(
+        Decision(reversibility=Reversibility.reversible(), high_stakes=True)
+    )
+
+
+def test_must_reach_user_reversible_does_not_escalate() -> None:
+    assert not ReversibilityResolver.must_reach_user(
+        Decision(reversibility=Reversibility.reversible())
+    )
+
+
+@pytest.mark.parametrize("consequential", [(), ("send_email",)])
+def test_objective_park_classification_byte_identical_off(
+    monkeypatch: pytest.MonkeyPatch, consequential: tuple[str, ...]
+) -> None:
+    """Flag OFF ⇒ _park_is_irreversible == bool(consequential_failures), unchanged."""
+    from types import SimpleNamespace
+
+    from stackowl.objectives import driver as driver_mod
+
+    monkeypatch.setattr(driver_mod, "reversibility_resolver_enabled", lambda: False)
+    state = SimpleNamespace(consequential_failures=consequential)
+    got = driver_mod.ObjectiveDriverHandler._park_is_irreversible(state)  # type: ignore[arg-type]
+    assert got is bool(consequential)
+
+
+@pytest.mark.parametrize("consequential", [(), ("send_email",)])
+def test_objective_park_classification_byte_identical_on(
+    monkeypatch: pytest.MonkeyPatch, consequential: tuple[str, ...]
+) -> None:
+    """Flag ON ⇒ same classification, now via the resolver authority."""
+    from types import SimpleNamespace
+
+    from stackowl.objectives import driver as driver_mod
+
+    monkeypatch.setattr(driver_mod, "reversibility_resolver_enabled", lambda: True)
+    state = SimpleNamespace(consequential_failures=consequential)
+    got = driver_mod.ObjectiveDriverHandler._park_is_irreversible(state)  # type: ignore[arg-type]
+    assert got == bool(consequential)
+
+
+def test_objective_park_on_consults_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from stackowl.interaction import reversibility_resolver
+    from stackowl.objectives import driver as driver_mod
+
+    calls: list[Decision] = []
+    real = ReversibilityResolver.must_reach_user
+
+    def spy(decision: Decision) -> bool:
+        calls.append(decision)
+        return real(decision)
+
+    monkeypatch.setattr(driver_mod, "reversibility_resolver_enabled", lambda: True)
+    monkeypatch.setattr(
+        reversibility_resolver.ReversibilityResolver, "must_reach_user", staticmethod(spy)
+    )
+
+    driver_mod.ObjectiveDriverHandler._park_is_irreversible(
+        SimpleNamespace(consequential_failures=("send_email",))  # type: ignore[arg-type]
+    )
+    assert len(calls) == 1
+    assert calls[0].reversibility.is_irreversible

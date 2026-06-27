@@ -114,7 +114,7 @@ class ReversibilityResolver:
         """
         rev = decision.reversibility
         # Irreversible or high-stakes ⇒ always park (keep the human in the loop).
-        if decision.high_stakes or rev.is_irreversible:
+        if self.must_reach_user(decision):
             verdict = Verdict(act=False)
             log.gateway.debug(
                 "reversibility.resolve: park (irreversible/high-stakes)",
@@ -149,6 +149,15 @@ class ReversibilityResolver:
             },
         )
         return verdict
+
+    @staticmethod
+    def must_reach_user(decision: Decision) -> bool:
+        """True iff the decision is irreversible or high-stakes and so MUST reach the
+        human — it cannot be resolved by acting on an assumption, regardless of any
+        available default. This is the binary reversibility/stakes gate, factored out so a
+        gate that only needs the escalate-or-not classification (e.g. the objective
+        driver's park) can delegate to the same authority as :meth:`resolve`."""
+        return decision.high_stakes or decision.reversibility.is_irreversible
 
     @staticmethod
     def _most_likely(decision: Decision) -> str | None:
