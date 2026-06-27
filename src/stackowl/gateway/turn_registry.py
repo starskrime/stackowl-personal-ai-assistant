@@ -20,6 +20,18 @@ _MAILBOX_MAX = 8
 _MAX_WEDGE_REDISPATCH = 2
 _REDISPATCH_SUFFIX = "-redispatch-"
 
+
+def _unify_gateway_enabled() -> bool:
+    """ADR-2 flag read (``unify_gateway_recovery``). Fail-safe to True (the owner-approved
+    default) on any config error — a flag read must never break the sweep. Consulted ONLY on
+    the wedge-reap path, so a healthy turn never constructs Settings here."""
+    try:
+        from stackowl.config.settings import Settings
+
+        return bool(Settings().unify_gateway_recovery)
+    except Exception:  # noqa: BLE001 — a flag read must never raise into the sweep
+        return True
+
 # Per-session intake queue bound (FIFO mailbox depth). Past this, ``enqueue``
 # raises ``QueueFull`` and the orchestrator rejects-with-notice (coalesce-oldest
 # is the §4.7 backlog alternative). Kept modest: a single chat backing up dozens
@@ -107,7 +119,13 @@ class TurnRegistry:
         *,
         per_session_queue_max: int = _DEFAULT_PER_SESSION_QUEUE_MAX,
         global_running_max: int | None = None,
+        recovery: object | None = None,
     ) -> None:
+        # ADR-2 — the one recovery authority. The reaped-wedged-turn re-dispatch DECISION
+        # (F-67) delegates to its ``should_retry`` predicate (flag ``unify_gateway_recovery``)
+        # so one policy governs every subsystem's recovery. Lazily constructed (the actuator
+        # lives in the pipeline layer); injectable for tests.
+        self._recovery = recovery
         self._per_session_queue_max = max(1, per_session_queue_max)
         self._global_running_max = (
             default_global_running_max() if global_running_max is None else max(1, global_running_max)
@@ -647,6 +665,32 @@ class TurnRegistry:
         except ValueError:
             return 0
 
+    def _may_redispatch(self) -> bool:
+        """Whether a reaped wedged turn may be re-dispatched — the ONE recovery authority
+        decides (ADR-2).
+
+        When ``unify_gateway_recovery`` is on (default) the re-dispatch-vs-give-up decision is
+        delegated to :meth:`RecoveryActuator.should_retry` over a typed ``Failure`` instead of
+        the inline generation-budget guard. A wedged turn's goal is non-consequential and
+        transient-by-policy, so the authority returns True and the outcome is byte-identical to
+        the inline ``generation < _MAX_WEDGE_REDISPATCH`` gate — the policy now lives in ONE
+        place. Flag off ⇒ the inline budget gate decides alone (the actuator is not consulted),
+        byte-identical to pre-ADR. A flag-read error fails safe to the unified path (the
+        owner-approved default)."""
+        if not _unify_gateway_enabled():
+            return True
+        from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+        if self._recovery is None:
+            self._recovery = RecoveryActuator()
+        failure = Failure(
+            name="gateway_wedge",
+            kind="gateway_turn",
+            transient=True,
+            consequential=False,
+        )
+        return bool(self._recovery.should_retry(failure))  # type: ignore[attr-defined]
+
     def _redispatch_wedged_goal(self, turn: Turn) -> None:
         """F-67 — re-enqueue a reaped WEDGED turn's own goal as a queued-new intake.
 
@@ -659,7 +703,7 @@ class TurnRegistry:
         ``QueueFull`` guard), never raised into the sweep.
         """
         gen = self._wedge_redispatch_generation(turn.turn_id)
-        if gen >= _MAX_WEDGE_REDISPATCH:
+        if gen >= _MAX_WEDGE_REDISPATCH or not self._may_redispatch():
             log.gateway.error(
                 "[turn] wedged turn exhausted re-dispatch budget — goal given up",
                 extra={"_fields": {
