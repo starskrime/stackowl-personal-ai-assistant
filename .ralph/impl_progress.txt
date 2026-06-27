@@ -223,3 +223,33 @@ BUILD ORDER REMAINING: ADR-6 (closed detect→heal→verify lifecycle) → ADR-7
 NEXT ADR: ADR-6 — feat/adr-6-closed-loop-lifecycle. Boot/health/supervisor/restart DRIVE recovery toward a
 goal and re-verify, not just observe. Heal step depends on ADR-1/ADR-2 (both done). Read .ralph/adr/ADR-6-*.md
 + ROOT_CAUSES. Closes F-36/39/73/74/85/87/88.
+
+ITERATION 15 — ADR-6 KEYSTONE shipped (closed detect→heal→verify loop), ADR-6 still [ ]. — 2026-06-27
+RESEARCH-FIRST: all lifecycle pieces exist UNWIRED — health/aggregator.py (detect), health/contributors.py
+(ResilienceContributor wraps HealableResources), infra/resilience.py (HealableResource.ensure_available =
+the recycle primitive + retry_once_on_dead_handle), service/watchdog.py, supervisor/supervisor.py,
+scheduler/handlers/health_sweep.py (the S2 seed = detect+ALERT only, F-87 deferred recycle). ADR-6 CONNECTS
+them, doesn't rebuild. The health_sweep handler IS the HealthLoop seed.
+SHIPPED THIS ITER (flag settings.health_loop default OFF=byte-identical) @efca20ab on feat/adr-6-closed-loop-
+lifecycle: HealthSweepHandler closed loop. After detect+split, _heal_and_verify recycles each down/degraded
+subsystem that has a registered HealableResource (healers dict, injected; NONE today→no-op even ON), retry
+DECISION routed through ADR-2 RecoveryActuator.should_retry(Failure(kind="health",transient=True,
+consequential=False)); then RE-COLLECT (verify) → recovered=attempted−still_unhealthy; recovered subsystems
+log "recovered" + DON'T alert; still-down → existing escalate. New ctor params healers/recovery (both
+optional). Module-level _health_loop_enabled() monkeypatchable. _heal_and_verify never raises (heal fail →
+stays unhealthy → escalates).
+  4 tests @tests/scheduler/handlers/test_health_loop.py (healed+reverified→no-alert / unhealable→escalate /
+  flag-OFF detect-only byte-identical / ON+no-healer detect-only). +6 existing health_sweep + 204
+  scheduler/config green; ruff+mypy clean.
+★REMAINING for ADR-6 [x] (next session — then ask owner to flip health_loop ON per feedback_ask_before_
+flag_default):
+  - F-87 FULL HEAL: thread LIVE HealableResource refs (DbPool @db/pool.py, providers @providers/base.py,
+    browser runtime) from the serve process into assembly's `healers=` map (assembly.py:306 currently passes
+    only aggregator+alert; _build_health_aggregator uses config-probe contributors, NOT the live healables).
+    This is the "larger wiring change" the F-87 docstring deferred. Until done, the loop is a no-op even ON.
+  - F-85 watchdog: gate WATCHDOG=1 ping @service/watchdog.py on the loop's liveness verdict (withhold ping
+    when a critical subsystem is wedged-but-alive → systemd restarts).
+  - F-73/74/36 supervisor: gate @supervisor/supervisor.py restart on a progress/verify signal (no blind
+    restart; respawned core must be reconnect-verified).
+  - F-39 crash user-notice; F-88 run loop in mono role.
+BUILD ORDER REMAINING: finish ADR-6 seams → ADR-7 (DecisionLedger, largely downstream).
