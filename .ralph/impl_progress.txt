@@ -333,3 +333,23 @@ no-ops → byte-identical; the ADR-7 rollback). Gate uses self._services.setting
     heuristic produces a ledger with all three Decisions+reasons.
   After step 3 → ADR-7 [x] → 7-ADR Jarvis arc COMPLETE. Flag already ON (incremental;
   empty/unread until emitters land, so ON is safe now).
+
+ITERATION 19 — ADR-7 STEP 2a: ADR-1/2/3 authority emitters shipped. — 2026-06-27
+SHIPPED @main 25972f64. AcceptanceAuthority/RecoveryActuator/ReversibilityResolver each emit
+ONE typed Decision at their verdict point via a thin public wrapper over the existing logic
+(renamed _observe/_recover/_resolve; zero behavior/log change; emit gate-free → no-op when
+ledger unbound → byte-identical OFF). acceptance emits only on a real opinion (accepted not
+None). recovery records rungs_tried as alternatives_considered + recovered/surrendered. revers.
+records act/ask + assumption/undo. Verify test tests/pipeline/test_decision_ledger_emitters.py
+(3) + 146 authority tests green; ruff+mypy clean.
+PRE-EXISTING FAILURE (NOT mine, execute.py untouched): test_execute_floor_invariant::
+test_execute_threads_residual_deadline_into_provider — wrapup_deadline_s computes None, fails
+in isolation. Flag for a separate fix.
+★REMAINING for ADR-7 [x]:
+  STEP 2b — emitters: LearnedContext (which heuristic steered + provenance @pipeline/
+    lesson_context.py) + router/classifier (verdict + confidence). Same gate-free emit pattern.
+  STEP 3 — consumers READ the ledger: recovery_summary (F-9/10), crash Decision row (F-39),
+    next_step Decision (F-28), /explain surface ("why did you do that?" = a read).
+  VERIFY (full): a turn that recovered+acted-on-assumption+steered-by-heuristic → ledger has
+    all 3+reasons (current test covers the first two; add heuristic after 2b).
+  After step 3 → ADR-7 [x] → 7-ADR Jarvis arc COMPLETE.
