@@ -798,6 +798,14 @@ class Settings(BaseSettings):
     # that declare no post-condition are unaffected even when ON). Intended ON in
     # production once the gate is green (this powerful machine: correctness over latency).
     acceptance_authority: bool = False
+    # ADR-4 — how the boot-time reachability census treats a registered-but-unreachable
+    # capability. "warn" (default ⇒ byte-identical): log a loud degraded alert but start
+    # anyway. "block": REFUSE READY (raise StartupError) so a dangling half-edge fails the
+    # boot, not the user — the reachability invariant. A broken census auditor itself never
+    # blocks boot in either mode (only a definitive unreachable verdict does), so a probe
+    # false-negative cannot brick a boot on a transient. Flip to "block" once the census is
+    # burned-in green (it is, on this machine). General/config-driven — no per-feature logic.
+    reachability_enforcement: str = "warn"
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
