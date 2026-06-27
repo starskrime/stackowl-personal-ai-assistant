@@ -1,0 +1,5 @@
+Iteration 1: bootstrapped .ralph research state + built the 7-theme map (RESEARCH_PLAN.md).
+Clustered all 88 findings into T1-T7, ordered by leverage; T1 (AcceptanceAuthority) is the
+keystone and upstream of T2/T5/T6/T7. 0/7 ADRs written yet.
+Next iteration: T1 root cause + ADR-1, then T2..T7. Trust .ralph/FINDINGS.md for evidence.
+READ-ONLY research; on branch research/jarvis-architecture.
