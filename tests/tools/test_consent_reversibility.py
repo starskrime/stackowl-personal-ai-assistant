@@ -145,3 +145,49 @@ async def test_policy_request_default_reversible_false_is_unchanged() -> None:
 
     assert allowed is True
     assert prompter.asked is True  # had to ask — no reversibility passed
+
+
+# --------------------- ADR-3: the reversible→auto-allow decision delegates --------------
+
+
+async def test_reversible_auto_allow_holds_when_resolver_flag_on(monkeypatch) -> None:
+    """ADR-3 flag ON ⇒ the reversible→auto-allow decision routes through the
+    ReversibilityResolver and the outcome is byte-identical (auto-allow, no prompt)."""
+    from stackowl.tools import consent as consent_mod
+
+    monkeypatch.setattr(consent_mod, "reversibility_resolver_enabled", lambda: True)
+    prompter = _RecordingPrompter(scope=ConsentScope.DENY)
+    gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
+    tool = _Consequential("rev_tool", commit_coupling="transactional")
+
+    allowed = await gate.check(tool, channel="cli", session_id="s1")
+
+    assert allowed is True
+    assert prompter.asked is False
+
+
+async def test_reversible_auto_allow_consults_authority_when_on(monkeypatch) -> None:
+    from stackowl.interaction import reversibility_resolver
+    from stackowl.tools import consent as consent_mod
+
+    calls = []
+    real = reversibility_resolver.ReversibilityResolver.must_reach_user
+
+    def spy(decision):
+        calls.append(decision)
+        return real(decision)
+
+    monkeypatch.setattr(consent_mod, "reversibility_resolver_enabled", lambda: True)
+    monkeypatch.setattr(
+        reversibility_resolver.ReversibilityResolver,
+        "must_reach_user",
+        staticmethod(spy),
+    )
+    prompter = _RecordingPrompter(scope=ConsentScope.DENY)
+    gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
+    tool = _Consequential("rev_tool", commit_coupling="transactional")
+
+    await gate.check(tool, channel="cli", session_id="s1")
+
+    assert len(calls) == 1
+    assert calls[0].reversibility.is_reversible

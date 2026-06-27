@@ -22,6 +22,12 @@ from stackowl.exceptions import (
 )
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
+from stackowl.interaction.reversibility_resolver import (
+    Decision,
+    Reversibility,
+    ReversibilityResolver,
+    reversibility_resolver_enabled,
+)
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.pipeline.authz_compose import compute_effective_bounds
@@ -1953,7 +1959,23 @@ async def _maybe_clarify(state: PipelineState, services: object) -> PipelineStat
     # an unproductive re-ask), ACT instead of asking: fall through to the standard
     # tool path so the assistant makes a best-effort action (act-first), exactly as
     # the non-interactive path does.
-    if _clarify_resolvable_from_context(state):
+    # ADR-3: route the act-first-vs-park DECISION through the one ReversibilityResolver.
+    # A clarify verdict that is resolvable from context (an unproductive re-ask) is a
+    # REVERSIBLE/low-stakes decision the assistant may act on; an unresolved verdict is
+    # the router's irreversible/high-commitment judgement that must reach the human.
+    # ``must_reach_user`` reproduces ``not _clarify_resolvable_from_context`` exactly
+    # (byte-identical). OFF ⇒ the inline check runs.
+    resolvable = _clarify_resolvable_from_context(state)
+    if reversibility_resolver_enabled():
+        decision = Decision(
+            reversibility=(
+                Reversibility.reversible() if resolvable else Reversibility.irreversible()
+            )
+        )
+        act_first = not ReversibilityResolver.must_reach_user(decision)
+    else:
+        act_first = resolvable
+    if act_first:
         log.engine.info(
             "[pipeline] _maybe_clarify: ambiguity resolvable from context — "
             "acting instead of re-asking (act-first)",

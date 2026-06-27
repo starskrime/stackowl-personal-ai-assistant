@@ -331,3 +331,53 @@ async def test_gate_no_hard_cap_preserves_legacy_blocking() -> None:
         is False
     )
     assert len(gw.asks) == 1
+
+
+# --- ADR-3: the continue-and-notify-vs-ask decision delegates to the resolver ----
+
+
+async def test_gate_under_block_threshold_continues_when_resolver_on(monkeypatch) -> None:
+    """ADR-3 flag ON ⇒ the continue-and-notify decision routes through the
+    ReversibilityResolver; byte-identical (reversible spend under the cap continues)."""
+    from stackowl.interaction import cost_pause as cost_pause_mod
+
+    monkeypatch.setattr(
+        cost_pause_mod, "reversibility_resolver_enabled", lambda: True
+    )
+    tracker = _tracker()
+    await _seed_turn_cost(tracker, "t", 0.10)
+    gw = _FakeClarifyGateway(answer="Stop")
+    guard = CostPauseGuard(
+        cost_tracker=tracker,
+        clarify_gateway=gw,
+        threshold_usd=0.05,
+        block_threshold_usd=1.00,  # not reached → continue-and-notify
+    )
+    result = await guard.gate(
+        trace_id="t", session_id="s", channel="telegram", interactive=True
+    )
+    assert result is True
+    assert gw.asks == []
+
+
+async def test_gate_near_hard_limit_still_blocks_when_resolver_on(monkeypatch) -> None:
+    """ADR-3 flag ON ⇒ spend at/above the block threshold is high-stakes → still parks."""
+    from stackowl.interaction import cost_pause as cost_pause_mod
+
+    monkeypatch.setattr(
+        cost_pause_mod, "reversibility_resolver_enabled", lambda: True
+    )
+    tracker = _tracker()
+    await _seed_turn_cost(tracker, "t", 0.20)
+    gw = _FakeClarifyGateway(answer="Stop")
+    guard = CostPauseGuard(
+        cost_tracker=tracker,
+        clarify_gateway=gw,
+        threshold_usd=0.05,
+        block_threshold_usd=0.20,  # reached → blocks
+    )
+    result = await guard.gate(
+        trace_id="t", session_id="s", channel="telegram", interactive=True
+    )
+    assert result is False
+    assert len(gw.asks) == 1

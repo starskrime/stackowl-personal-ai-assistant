@@ -260,3 +260,53 @@ async def test_maybe_clarify_still_surfaces_genuine_first_time():
     assert result is not None
     assert asked.get("question") == _Q
     assert len(result.responses) == 1
+
+
+# ---------------------------------------------------------------------------
+# ADR-3 — the act-first-vs-park decision delegates to the ReversibilityResolver
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_maybe_clarify_parks_unresolvable_when_resolver_on(monkeypatch):
+    """Flag ON ⇒ an unresolved clarify verdict (router judged it irreversible) still
+    parks — byte-identical. The decision now routes through must_reach_user."""
+    from stackowl.pipeline.steps import execute as execute_mod
+
+    monkeypatch.setattr(
+        execute_mod, "reversibility_resolver_enabled", lambda: True
+    )
+    state = _clarify_state()  # question not present in any context → unresolvable
+    asked: dict = {}
+
+    class _GW:
+        async def ask(self, session_id, channel, question, **kw):
+            asked.update(question=question)
+            return "cid-1"
+
+    class _Services:
+        clarify_gateway = _GW()
+
+    result = await execute_mod._maybe_clarify(state, _Services())
+    assert result is not None  # parked: question surfaced
+    assert asked.get("question")
+
+
+@pytest.mark.asyncio
+async def test_maybe_clarify_acts_when_resolvable_and_resolver_on(monkeypatch):
+    """Flag ON ⇒ a clarify verdict resolvable from context is reversible/low-stakes →
+    act-first (return None), byte-identical to the inline F-3 check."""
+    from stackowl.pipeline.steps import execute as execute_mod
+
+    monkeypatch.setattr(
+        execute_mod, "reversibility_resolver_enabled", lambda: True
+    )
+    q = "Do you want me to create images, or find existing ones?"
+    # Same question already in the turn's memory context ⇒ resolvable (unproductive re-ask).
+    state = _clarify_state(memory_context=f"Earlier: {q}")
+
+    class _Services:
+        clarify_gateway = None
+
+    result = await execute_mod._maybe_clarify(state, _Services())
+    assert result is None  # acted instead of re-asking
