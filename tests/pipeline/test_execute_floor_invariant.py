@@ -201,18 +201,24 @@ class _DeadlineCapturingProvider:
 
 @pytest.mark.asyncio
 async def test_execute_threads_residual_deadline_into_provider() -> None:
-    """F027 — the execute step (governor owner) computes a residual wall-clock
-    budget from its BudgetGovernor and passes it as wrapup_deadline_s. With no
-    explicit owl caps the default 120s backstop applies, so the provider must
-    receive a positive, bounded float (NOT the 'UNSET' sentinel, NOT None)."""
+    """F027 — the execute step (governor owner) reads its BudgetGovernor's residual
+    wall-clock budget and threads it as ``wrapup_deadline_s``.
+
+    The default backstop DELIBERATELY sets only ``max_steps``, never a per-turn time
+    cap (execute.py: the wall-clock timeout was killing slow-but-correct remote-model
+    turns — see the no-artificial-limits rule). So with no explicit owl ``max_time_s``,
+    ``remaining_seconds()`` is ``None`` and the threaded value is ``None`` — NOT the
+    'UNSET' sentinel (the wiring DID fire and pass the governor's value). A positive,
+    bounded deadline appears only when an owl sets an explicit ``max_time_s`` cap."""
     provider = _DeadlineCapturingProvider()
     await _drive(provider)
     assert provider.seen_deadline != "UNSET", (
         "execute did not pass wrapup_deadline_s at all — F027 wiring missing"
     )
-    assert isinstance(provider.seen_deadline, float)
-    assert 0.0 < provider.seen_deadline <= 120.0, (
-        f"residual deadline not bounded by the default backstop: {provider.seen_deadline}"
+    # No explicit owl time cap → no per-turn wall-clock backstop → None (by design).
+    assert provider.seen_deadline is None, (
+        "default backstop must NOT impose a wall-clock cap; "
+        f"got {provider.seen_deadline!r}"
     )
 
 
