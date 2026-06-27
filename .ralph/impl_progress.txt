@@ -18,8 +18,17 @@ So the tool-dispatch path delegates to the authority END-TO-END (classifier + de
 the NON-TOOL failure paths still surrender on their own. Branch-first was honored this time
 (feat/adr-2-subsystem-routing).
 
-ADR-2 still [ ]: NEXT INCREMENT (continue ADR-2): route the NON-TOOL subsystems to
-RecoveryActuator.recover(), one per step behind a flag, re-verifying each rung:
+UPDATE (iter 6, main @50213274): PROVIDER GATEWAY now routes through the actuator.
+On a TRANSIENT provider fault, llm_gateway complete()/complete_with_tools() call
+RecoveryActuator.recover() to retry the SAME tier once (incl. at ceiling) BEFORE cascading.
+Flag provider_retry_same_tier_once default ON (owner chose ON via AskUserQuestion — see
+[[feedback_ask_before_flag_default]]); flag-off byte-identical. Live-verified: flag ON, health
+green (3 tiers). functools.partial used for the retry thunk (avoids B023 + lambda-inference).
+NEW RULE THIS SESSION: ASK owner before setting any flag default — feedback_ask_before_flag_default.
+
+ADR-2 routed so far: tool-dispatch (classifier+decision) + provider gateway. REMAINING (ADR-2 still [ ]):
+NEXT INCREMENT — route the remaining NON-TOOL subsystems to RecoveryActuator.recover(), each behind a
+flag (ASK owner for default), re-verifying each rung:
   1. providers/llm_gateway.py except-blocks (:128/:241) — hand provider faults to recover() w/ reroute=next-tier
      (closes F-16/17/18/21; note: cascade already mostly works via is_cascadable_fault — make it DELEGATE).
   2. channel adapters transport drop (F-64/65/66) reroute=alt-channel.
