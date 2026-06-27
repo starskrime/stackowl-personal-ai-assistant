@@ -35,9 +35,13 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.objectives.model import ExpectedOutcome
+
+if TYPE_CHECKING:
+    from stackowl.pipeline.acceptance_authority import AcceptanceAuthority
 
 # Same granularity slack as verify_artifact: a file written DURING the turn must
 # never read as stale due to coarse (≥1s) mtime rounding. A real stale artifact (a
@@ -240,11 +244,19 @@ class AcceptanceChecker:
     def _check_artifact(
         self, outcome: ExpectedOutcome, turn_started_at: float
     ) -> AcceptanceVerdict:
-        observed = _dir_has_fresh_file(_resolve_dir(outcome.artifact_dir), turn_started_at)
-        if observed is None:
-            # Could-not-observe a DECLARED outcome (F-13): no opinion, but flagged
-            # ``unobservable`` so the caller does not mistake it for "nothing to
-            # verify" and silently pass the turn's self-asserted success.
+        # ADR-1 — delegate the OBSERVATION to the single AcceptanceAuthority (directory
+        # mode), then adapt its tri-state Verdict to this checker's AcceptanceVerdict.
+        # The goal-level checker keeps its own RESPONSE (the F-13 unobservable reason text)
+        # but no longer owns a private copy of the probe. Local import avoids the
+        # acceptance ⇆ acceptance_authority module cycle.
+        from stackowl.pipeline.acceptance_authority import ArtifactFresh
+
+        verdict = self._authority().observe(
+            ArtifactFresh(artifact_dir=outcome.artifact_dir),
+            success=True,
+            started_at=turn_started_at,
+        )
+        if verdict.accepted is None:
             log.engine.debug(
                 "[acceptance] artifact directory unobservable — no opinion",
                 extra={"_fields": {"artifact_dir": outcome.artifact_dir}},
@@ -252,7 +264,7 @@ class AcceptanceChecker:
             return AcceptanceVerdict(
                 None, "artifact directory could not be observed", unobservable=True
             )
-        if observed:
+        if verdict.accepted:
             return AcceptanceVerdict(True, "fresh artifact observed")
         return AcceptanceVerdict(
             False,
@@ -261,10 +273,10 @@ class AcceptanceChecker:
         )
 
     def _check_http(self, outcome: HttpProbeOutcome) -> AcceptanceVerdict:
-        observed = self._http_prober(outcome.url)
-        if observed is None:
-            # Unreachable DECLARED endpoint (F-13): no opinion, flagged unobservable
-            # — the same soft-fail signal as an unobservable artifact directory.
+        from stackowl.pipeline.acceptance_authority import HttpOk
+
+        verdict = self._authority().observe(HttpOk(url=outcome.url), success=True)
+        if verdict.accepted is None:
             log.engine.debug(
                 "[acceptance] endpoint unobservable — no opinion",
                 extra={"_fields": {"url": outcome.url}},
@@ -272,9 +284,17 @@ class AcceptanceChecker:
             return AcceptanceVerdict(
                 None, "endpoint could not be probed", unobservable=True
             )
-        if observed:
+        if verdict.accepted:
             return AcceptanceVerdict(True, "declared endpoint responded successfully")
         return AcceptanceVerdict(
             False,
             f"declared endpoint {outcome.url} did not respond successfully",
         )
+
+    def _authority(self) -> AcceptanceAuthority:
+        """Build an AcceptanceAuthority that shares THIS checker's injected
+        ``http_prober`` (so the network re-probe stays unit-testable). Local import
+        avoids the module-load cycle (the authority imports this module's primitives)."""
+        from stackowl.pipeline.acceptance_authority import AcceptanceAuthority
+
+        return AcceptanceAuthority(http_prober=self._http_prober)
