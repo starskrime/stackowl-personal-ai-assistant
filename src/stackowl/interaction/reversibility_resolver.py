@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from stackowl.infra import decision_ledger
 from stackowl.infra.observability import log
 
 # --------------------------------------------------------------- declared signal
@@ -106,6 +107,27 @@ class ReversibilityResolver:
     """The one authority that answers ACT_WITH_ASSUMPTION vs ASK for every gate."""
 
     def resolve(self, decision: Decision) -> Verdict:
+        """Resolve a decision and emit one ADR-7 ``reversibility`` Decision for its verdict.
+
+        Thin wrapper over :meth:`_resolve`: records act-vs-ask with the assumption acted on
+        (or why it parked), so "why did it act on an assumption / why did it ask?" is a read
+        of the ledger. No-op when the ledger is unbound."""
+        verdict = self._resolve(decision)
+        decision_ledger.record_decision(
+            point="reversibility",
+            verdict="act" if verdict.act else "ask",
+            reason=verdict.assumption or "parked (irreversible/high-stakes or no safe default)",
+            inputs={
+                "reversibility": decision.reversibility.kind,
+                "high_stakes": decision.high_stakes,
+                "interactive": decision.interactive,
+                "n_choices": len(decision.choices),
+            },
+            evidence={"undo_handle": verdict.undo_handle},
+        )
+        return verdict
+
+    def _resolve(self, decision: Decision) -> Verdict:
         """Resolve a decision. Parks (``act=False``) for an irreversible or high-stakes
         action, or when there is no safe most-likely interpretation; otherwise acts on
         that interpretation, stating the assumption and retaining the undo handle.

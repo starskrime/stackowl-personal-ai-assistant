@@ -35,6 +35,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from stackowl.infra import decision_ledger
 from stackowl.infra.observability import log
 from stackowl.pipeline import acceptance as _acceptance
 from stackowl.pipeline.acceptance import HttpProber, _default_http_prober
@@ -175,6 +176,40 @@ class AcceptanceAuthority:
         self._http_prober: HttpProber = http_prober or _default_http_prober
 
     def observe(
+        self,
+        post_condition: PostCondition | None,
+        *,
+        success: bool,
+        verified: bool | None = None,
+        output: str = "",
+        started_at: float | None = None,
+    ) -> Verdict:
+        """Observe the post-condition and emit one ADR-7 Decision for a real opinion.
+
+        Thin wrapper over :meth:`_observe` (the probe dispatch): when the authority HAS an
+        opinion (``accepted`` is not None) it records an ``acceptance`` Decision to the
+        turn ledger so "why was this accepted/refuted?" is a read, not a reconstruction. A
+        ``None`` (no opinion) emits nothing — keeps the ledger to consequential verdicts.
+        No-op when the ledger is unbound (flag off / outside a turn)."""
+        verdict = self._observe(
+            post_condition, success=success, verified=verified,
+            output=output, started_at=started_at,
+        )
+        if verdict.accepted is not None:
+            decision_ledger.record_decision(
+                point="acceptance",
+                verdict="accepted" if verdict.accepted else "refuted",
+                reason=verdict.reason,
+                inputs={
+                    "post_condition": type(post_condition).__name__,
+                    "claimed_success": success,
+                    "self_reported_verified": verified,
+                },
+                evidence=dict(verdict.evidence or {}),
+            )
+        return verdict
+
+    def _observe(
         self,
         post_condition: PostCondition | None,
         *,

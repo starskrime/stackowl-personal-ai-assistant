@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from stackowl.infra import recovery_context
+from stackowl.infra import decision_ledger, recovery_context
 from stackowl.infra.observability import log
 from stackowl.tools.base import ToolResult
 
@@ -119,6 +119,39 @@ class RecoveryActuator:
         return failure.transient or failure.unverified_effect
 
     async def recover(
+        self,
+        failure: Failure,
+        attempt: Rung | None = None,
+        *,
+        reroute: Rung | None = None,
+        substitute: Rung | None = None,
+        verify: Verifier | None = None,
+        record: bool = True,
+    ) -> RecoveryOutcome:
+        """Run the ladder and emit one ADR-7 ``recovery`` Decision for its verdict.
+
+        Thin wrapper over :meth:`_recover` (the bounded ladder): records which rungs were
+        tried and whether the turn recovered or honestly surrendered, so "why did it retry
+        / why did it give up?" is a read of the ledger. No-op when the ledger is unbound."""
+        outcome = await self._recover(
+            failure, attempt, reroute=reroute, substitute=substitute,
+            verify=verify, record=record,
+        )
+        decision_ledger.record_decision(
+            point="recovery",
+            verdict="recovered" if outcome.recovered else "surrendered",
+            reason=outcome.detail,
+            inputs={
+                "failure": failure.name,
+                "kind": failure.kind,
+                "consequential": failure.consequential,
+            },
+            alternatives_considered=outcome.rungs_tried,
+            evidence={"via": outcome.via},
+        )
+        return outcome
+
+    async def _recover(
         self,
         failure: Failure,
         attempt: Rung | None = None,
