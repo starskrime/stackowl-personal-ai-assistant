@@ -791,6 +791,13 @@ class Settings(BaseSettings):
     # deriver logs ``acceptance_skip_reason`` so "an undeclared claim went unverified"
     # is visible in the trace rather than an invisible early-return.
     acceptance_tier: str = ""
+    # ADR-1 — route the per-tool verification seam through the single AcceptanceAuthority
+    # so a tool that DECLARES a PostCondition (post_condition()) has its `verified` set by
+    # an observation of reality, distinct from the actor. Default False ⇒ the seam is
+    # skipped entirely and every tool is byte-identical to pre-ADR behavior (the ~92 tools
+    # that declare no post-condition are unaffected even when ON). Intended ON in
+    # production once the gate is green (this powerful machine: correctness over latency).
+    acceptance_authority: bool = False
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

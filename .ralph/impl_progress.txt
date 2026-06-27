@@ -1,5 +1,40 @@
-ITERATION 0 (bootstrap) — 2026-06-27
-Shipped: nothing yet. Created IMPLEMENTATION_PLAN.md (7-ADR checklist, build order ADR-1→4→2→3→5→6→7) + this handoff.
-Gate: n/a (no code changed).
-Next: Iteration 1 = implement ADR-1 (AcceptanceAuthority, the keystone) TDD behind a flag (default off=byte-identical). Read .ralph/adr/ADR-1-acceptance-authority.md + its ROOT_CAUSES.md entry + FINDINGS F-1/F-11.../F-83 file:line evidence first; confirm seam line numbers (they drift).
-Notes: branch off main as feat/adr-1-acceptance-authority. Known pre-existing reds listed in IMPLEMENT_PROMPT.md §6 — do NOT chase; verify any new red against clean main via git stash.
+ITERATION 1 — ADR-1 AcceptanceAuthority: FOUNDATION shipped (substrate), ADR still [ ] — 2026-06-27
+Branch feat/adr-1-acceptance-authority, merged --no-ff to main. ADR-1 NOT marked [x] (findings not yet closed).
+
+SHIPPED (the unifying substrate, flag-off byte-identical):
+- NEW src/stackowl/pipeline/acceptance_authority.py: PostCondition family (NoPostCondition/NonEmptyText/
+  ArtifactFresh{path|artifact_dir}/HttpOk/DeliveryAck/Custom) + Verdict(accepted tri-state+reason+evidence+
+  unobservable) + AcceptanceAuthority.observe() (total, never raises) + final_verified() adapter.
+- Tool.post_condition() seam at Tool.__call__ (base.py): a tool that DECLARES a PostCondition has `verified`
+  set by the authority (observation distinct from actor); supersedes self-stamp. Flag settings.acceptance_authority
+  (default False=skip=byte-identical; flag read ONLY when a post-condition is declared, so 92 tools untouched).
+- AcceptanceChecker._check_artifact/_check_http now DELEGATE to the authority (helpers referenced via module
+  object so existing monkeypatch tests still intercept). Goal-level checker is now a caller of the one authority.
+KEY UNIFICATION: authority WRITES `verified`; every proxy (giveup_floor/overclaim_gate/ledger is_effectful_failure/
+is_trustworthy_success) already READS `verified` → they delegate for free.
+
+GATES GREEN (targeted; full tools+pipeline combined HANGS = pre-existing I/O block, obs 7522, NOT mine):
+112 proxy/acceptance/verification + 34 objectives + 422 base-adjacent tool (io/system/scheduling) + 1277 tools
+collect-only (no import breakage). ruff clean, mypy clean on changed files. Invariant tests:
+tests/pipeline/test_acceptance_authority.py + tests/tools/test_acceptance_authority_seam.py (self-stamp ignored,
+success⟺measured for text/delivery/artifact/http kinds).
+
+DISCOVERY: the obvious effect seams ALREADY self-verify from S1-S4 — send_message sets verified=delivered (F-30
+cited), MCP _tool.py deliberately keeps empty-as-success (F-82). So ADR-1's value is UNIFICATION (one authority
+the proxies delegate to), not net-new per-seam checks. NOTE: send_message's verified=True is currently DEMOTED to
+None by the F-25 self-stamp block (harmless: is_trustworthy_success(True,None)=True); migrating it to declare
+DeliveryAck(acked=status=="delivered") would route truth through the authority (flag-on: verified=True kept,
+NOT demoted) — byte-identical for all consumers (they use is_trustworthy_success). Verify that interaction with
+a test before migrating.
+
+NEXT ITERATION (continue ADR-1 → then mark [x]): on a fresh branch off main —
+1. Migrate the canonical effectful tools to DECLARE post_condition() through the authority (don't change behavior):
+   send_message + send_file → DeliveryAck (F-29/30/F-25 routed through authority); web_fetch → NonEmptyText/HttpOk
+   (F-32); a provider-empty path → NonEmptyText (F-20/23). Add a per-tool test each; preserve batched/deferred→
+   verified=False semantics.
+2. Flip settings.acceptance_authority ON in production config (stackowl.config or .yaml) once gate green (Rule 2).
+3. Live-verify: restart platform on new code + `stackowl health` (provider box 172.30.60.31 must be up). Trigger
+   a failed send with box down → turn reports failure not delivery (ADR Verification live test).
+4. Cite the F-numbers actually closed; only THEN mark ADR-1 [x] in IMPLEMENTATION_PLAN.md + update FINDINGS/BACKLOG.
+Then proceed to ADR-4 (Reachability invariant) per build order.
+Known pre-existing reds: IMPLEMENT_PROMPT §6 — do NOT chase; git-stash-verify any NEW red vs clean main.

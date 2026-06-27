@@ -13,6 +13,23 @@ from stackowl.infra.resilience import looks_like_dead_handle
 from stackowl.tools.verification import is_trustworthy_success
 
 
+def _acceptance_authority_enabled() -> bool:
+    """Read the ADR-1 ``acceptance_authority`` flag. Fail-safe to ``False`` (the
+    byte-identical default) on any config error — the seam must never break a tool
+    call by failing to read a flag. Consulted ONLY when a tool declares a
+    post-condition, so the ~92 un-migrated tools never construct Settings here."""
+    try:
+        from stackowl.config.settings import Settings
+
+        return bool(Settings().acceptance_authority)
+    except Exception as exc:  # noqa: BLE001 — flag read must never raise into a turn
+        log.tool.debug(
+            "tool.__call__: could not read acceptance_authority flag — treating OFF",
+            extra={"_fields": {"err": type(exc).__name__}},
+        )
+        return False
+
+
 class ToolResult(BaseModel):
     """The output of a single tool execution."""
 
@@ -155,6 +172,25 @@ class Tool(ABC):
         """
         return None
 
+    def post_condition(
+        self, args: dict[str, object], result: ToolResult
+    ) -> object | None:
+        """ADR-1 — declare an OBSERVABLE post-condition for THIS call, or ``None``.
+
+        Default ``None`` ⇒ no declared effect ⇒ byte-identical: the AcceptanceAuthority
+        is never consulted (the ~92 un-migrated tools are unaffected, flag or no flag).
+        A migrated tool returns a
+        :class:`~stackowl.pipeline.acceptance_authority.PostCondition`
+        (``NonEmptyText`` / ``ArtifactFresh`` / ``HttpOk`` / ``DeliveryAck`` / ``Custom``)
+        the authority observes against reality after :meth:`execute`, setting ``verified``
+        from a check distinct from the tool. Preferred over :meth:`verify` for the
+        non-file effect kinds (text / http / delivery) that the file-only ``verify_artifact``
+        cannot express. Return type is intentionally loose (``object``) to avoid importing
+        the pipeline layer into the tool ABC; the seam validates the shape. SHOULD NOT
+        raise (the seam catches and treats a raise as "no declared post-condition").
+        """
+        return None
+
     def _is_retry_safe_severity(self) -> bool:
         """True only for a declared READ-severity tool — the one case where re-running
         execute() after a transient error cannot double-commit a side effect. Any
@@ -246,6 +282,51 @@ class Tool(ABC):
                     extra={"_fields": {"tool": self.name, "artifact_path": result.artifact_path}},
                 )
                 result = result.model_copy(update={"verified": None})
+        # ADR-1 ACCEPTANCE AUTHORITY seam — a tool that DECLARES a PostCondition has it
+        # OBSERVED by the one authority (distinct from the actor); the verdict supersedes
+        # the self-report. Same guard as verify() (only second-guess a claimed success, and
+        # never override an honest verified=False). Default post_condition()=None ⇒ skipped
+        # ⇒ byte-identical; the flag is read ONLY when a post-condition is actually declared,
+        # so un-migrated tools never touch Settings here.
+        if result.success and result.verified is not False:
+            try:
+                declared = self.post_condition(kwargs, result)
+            except Exception as exc:  # a raising declaration ⇒ no post-condition
+                log.tool.warning(
+                    "tool.__call__: post_condition() raised — treating as undeclared",
+                    exc_info=exc,
+                    extra={"_fields": {"tool": self.name}},
+                )
+                declared = None
+            if declared is not None and _acceptance_authority_enabled():
+                from stackowl.pipeline.acceptance_authority import (
+                    AcceptanceAuthority,
+                    final_verified,
+                )
+
+                acc_verdict = AcceptanceAuthority().observe(
+                    declared,  # type: ignore[arg-type]
+                    success=result.success,
+                    verified=result.verified,
+                    output=result.output,
+                    started_at=started_at,
+                )
+                new_verified = final_verified(
+                    success=result.success,
+                    verified=result.verified,
+                    verdict=acc_verdict,
+                )
+                if new_verified is not result.verified:
+                    if acc_verdict.accepted is False:
+                        log.tool.warning(
+                            "tool.__call__: declared post-condition REFUTED by observation",
+                            extra={"_fields": {
+                                "tool": self.name,
+                                "post_condition": getattr(declared, "kind", "?"),
+                                "reason": acc_verdict.reason,
+                            }},
+                        )
+                    result = result.model_copy(update={"verified": new_verified})
         # NEXT-STEP SIGNAL (F-28). The seam runs exactly one execute() and returns;
         # there is no actuator HERE to drive a self-initiated follow-up when the call
         # did not land. Make that gap at least OBSERVABLE: emit one structured trace
