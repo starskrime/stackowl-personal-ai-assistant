@@ -120,6 +120,47 @@ async def test_complete_retries_once_on_empty_after_strip(
 
 
 @pytest.mark.asyncio
+async def test_empty_retry_varies_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-22 — a deterministic empty generation must not be replayed identically.
+
+    The empty-retry VARIES the request (a brief continuation nudge appended to
+    the prompt) so the retry has a chance to differ instead of reproducing the
+    same empty draft.
+    """
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    # 1st: all thinking, truncated → empty after strip. 2nd: a real answer.
+    completions = _ScriptedCompletions(["<think>thinking, cut off", "recovered answer"])
+    provider = _make_provider(_FakeClient(completions))
+
+    result = await provider.complete([Message(role="user", content="hi")], model="")
+
+    assert result.content == "recovered answer"
+    assert len(completions.calls) == 2  # retried exactly once
+    # The retry prompt is VARIED — it is not byte-identical to the first round.
+    assert completions.calls[1]["messages"] != completions.calls[0]["messages"]
+    assert len(completions.calls[1]["messages"]) > len(completions.calls[0]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_empty_after_varied_retry_returns_empty_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-22 — still empty after the varied retry ⇒ surface "" for the downstream
+    give-up floor (honest), never raise and never pass it off as an answer."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    # Both rounds empty-after-strip (unclosed think blocks).
+    completions = _ScriptedCompletions(["<think>cut off", "<think>still empty"])
+    provider = _make_provider(_FakeClient(completions))
+
+    result = await provider.complete([Message(role="user", content="hi")], model="")
+
+    assert result.content == ""  # honest empty, handled by the downstream floor
+    assert len(completions.calls) == 2  # exactly one varied retry, no loop
+
+
+@pytest.mark.asyncio
 async def test_complete_does_not_send_fixed_4096_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

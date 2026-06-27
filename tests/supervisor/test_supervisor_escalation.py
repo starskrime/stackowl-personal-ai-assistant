@@ -15,6 +15,7 @@ import asyncio
 
 from stackowl.supervisor.supervisor import (
     EscalationEvent,
+    SupervisedTask,
     Supervisor,
     make_supervised_task,
 )
@@ -157,6 +158,94 @@ async def test_stuck_task_is_detected_and_escalated() -> None:
     assert any(e.reason == "stuck_timeout" for e in events)
     assert any(e.reason == "max_failures" for e in events)
     assert runs >= 2  # was actually restarted, not parked on first trip
+
+
+# ---------------------------------------------------------------------------
+# F-75 — tight-loop guard for no-op rapid clean returns
+# ---------------------------------------------------------------------------
+
+
+async def test_tight_loop_noop_clean_returns_are_escalated() -> None:
+    """A task that returns cleanly+instantly forever is a spin, not health (F-75)."""
+    events: list[EscalationEvent] = []
+    runs = 0
+
+    async def _noop() -> None:
+        nonlocal runs
+        runs += 1
+        # returns immediately, doing no real work
+
+    sup = Supervisor(
+        clock=FakeClock(),
+        on_escalation=events.append,
+        max_tight_loop_returns=3,
+    )
+    sup.register(make_supervised_task("spin", _noop))
+    await sup.start()
+
+    async def _wait_failed() -> None:
+        while sup.health().get("spin") != "failed":
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_wait_failed(), timeout=5.0)
+
+    assert any(e.reason == "tight_loop" for e in events)
+    spin = next(e for e in events if e.reason == "tight_loop")
+    assert spin.task_id == "spin"
+    assert runs >= 3  # actually invoked repeatedly before the guard tripped
+
+
+async def test_slow_clean_return_is_not_flagged_as_tight_loop() -> None:
+    """A clean return that did real (slow) work resets the guard — unchanged behaviour."""
+    events: list[EscalationEvent] = []
+    clock = FakeClock()
+    runs = 0
+
+    class _SlowClean(SupervisedTask):
+        @property
+        def task_id(self) -> str:
+            return "slow"
+
+        async def run(self) -> None:
+            nonlocal runs
+            runs += 1
+            clock.advance(1.0)  # simulate real wall-clock work elapsing
+
+    sup = Supervisor(
+        clock=clock,
+        on_escalation=events.append,
+        max_tight_loop_returns=3,
+        tight_loop_seconds=0.001,
+    )
+    sup.register(_SlowClean())
+    await sup.start()
+
+    while runs < 6:
+        await asyncio.sleep(0.01)
+
+    assert sup.health()["slow"] == "running"
+    assert not any(e.reason == "tight_loop" for e in events)
+    await sup.stop()
+
+
+async def test_no_hook_tight_loop_still_marks_failed() -> None:
+    """Backwards-compatible: without a hook the tight-loop guard still parks failed."""
+    runs = 0
+
+    async def _noop() -> None:
+        nonlocal runs
+        runs += 1
+
+    sup = Supervisor(clock=FakeClock(), max_tight_loop_returns=3)
+    sup.register(make_supervised_task("spin", _noop))
+    await sup.start()
+
+    async def _wait_failed() -> None:
+        while sup.health().get("spin") != "failed":
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_wait_failed(), timeout=5.0)
+    assert sup.health()["spin"] == "failed"
 
 
 async def test_watchdog_disabled_by_default_lets_long_task_run() -> None:

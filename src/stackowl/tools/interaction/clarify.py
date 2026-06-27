@@ -81,6 +81,20 @@ _CANCELLED = (
     "question aside; do not block, and do NOT assume or act on any answer to it."
 )
 
+# Pre-park assumption (F-69). A REVERSIBLE clarify with a clear most-likely answer
+# (a one-item menu, or a declared default consistent with the menu) needs no human
+# round-trip AT ALL — so instead of blocking-asking and parking the turn up to the
+# full TTL, the tool proceeds on the assumption immediately and states it. Reuses
+# the gateway's reversible-default policy (F-71) as the single source of truth. A
+# high-stakes/irreversible or genuinely ambiguous gate (no safe default) still
+# parks on the human (never assume consent — party Security).
+_PROCEEDING_WITH_ASSUMPTION = (
+    "Not stopping to ask — this is a reversible choice with a clear most-likely "
+    "answer, so proceeding on the assumption for your question ({question!r}): "
+    "{assumption!r}. State this assumption plainly in your reply so the user can "
+    "correct it if it was wrong."
+)
+
 # Sentinel for non-interactive contexts. ABORTS on a consequential gate; never
 # assumes consent (party Security).
 _NON_INTERACTIVE_SENTINEL = (
@@ -232,6 +246,27 @@ class ClarifyTool(Tool):
         declared_default = self._coerce_default(kwargs.get("default"))
         high_stakes = bool(kwargs.get("high_stakes", False))
 
+        # 2b. PRE-PARK GATE (F-69) — a REVERSIBLE clarify with a clear most-likely
+        # answer (a one-item menu, or a declared default consistent with it) needs
+        # no human round-trip. Resolve the assumption HERE and proceed WITHOUT
+        # parking, instead of blocking-asking and waiting up to the full TTL. Reuses
+        # the gateway's _resolve_default (F-71) as the single policy source — no
+        # duplicated rule. A high-stakes/irreversible or genuinely ambiguous gate
+        # (no safe default) falls through to the blocking ask + park below (never
+        # assume consent — party Security). Non-interactive already short-circuited.
+        assumed = self._resolve_reversible_default(choices, declared_default, high_stakes)
+        if assumed is not None:
+            log.tool.info(
+                "clarify.execute: pre-park — reversible clarify with a clear "
+                "default, proceeding on assumption (no human round-trip)",
+                extra={"_fields": {"assumed": assumed, "high_stakes": high_stakes}},
+            )
+            return self._ok(
+                _PROCEEDING_WITH_ASSUMPTION.format(question=question, assumption=assumed),
+                t0,
+                extra={"pre_park_assumed": True},
+            )
+
         try:
             # 3. STEP — register + deliver as a BLOCKING ask, then park on the
             # waiter until the user's reply wakes us in-turn (or we time out).
@@ -274,7 +309,7 @@ class ClarifyTool(Tool):
         # auto-resume with the stated assumption instead of punting the whole
         # decision back and burning the TTL. A high-stakes/irreversible gate (or no
         # safe default) keeps the ABORT-on-consequential punt — never assume consent.
-        assumed = self._safe_timeout_default(choices, declared_default, high_stakes)
+        assumed = self._resolve_reversible_default(choices, declared_default, high_stakes)
         if assumed is not None:
             log.tool.info(
                 "clarify.execute: timeout — auto-resuming reversible clarify with default",
@@ -312,15 +347,20 @@ class ClarifyTool(Tool):
         return value or None
 
     @staticmethod
-    def _safe_timeout_default(
+    def _resolve_reversible_default(
         choices: tuple[str, ...], declared_default: str | None, high_stakes: bool,
     ) -> str | None:
-        """Resolve a SAFE timeout fallback (F-68), or ``None`` to keep the ABORT punt.
+        """Resolve a SAFE reversible assumption, or ``None`` to keep the human in the loop.
 
         Delegates to the gateway's single source of truth for the reversible-default
-        policy (no duplicated/hardcoded rule): a fallback exists only for a low-stakes
-        clarify with a one-item menu or a declared default consistent with the menu.
-        A ``high_stakes`` (irreversible) gate always yields ``None`` → ABORT.
+        policy (no duplicated/hardcoded rule): an assumption exists only for a
+        low-stakes clarify with a one-item menu or a declared default consistent with
+        the menu. A ``high_stakes`` (irreversible) gate always yields ``None``.
+
+        Shared by two decision points so they apply ONE policy: the PRE-PARK gate
+        (F-69 — proceed on the assumption without ever asking) and the graceful
+        timeout path (F-68 — auto-resume on the assumption rather than punt). Both
+        yield ``None`` for a high-stakes/ambiguous gate → keep/return to the human.
         """
         return ClarifyGateway._resolve_default(
             choices=choices, default=declared_default, high_stakes=high_stakes,

@@ -16,10 +16,17 @@ _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
 _MAX_CONSECUTIVE_FAILURES = 5
 
+# F-75: tight-loop guard. A clean run() return faster than ``_TIGHT_LOOP_SECONDS``
+# did essentially no work; ``_MAX_TIGHT_LOOP_RETURNS`` such returns in a row is a
+# spin (a no-op task busy-restarting forever, resetting the failure counter each
+# time), not health. Kept sub-millisecond so genuine fast work is never flagged.
+_TIGHT_LOOP_SECONDS = 0.001
+_MAX_TIGHT_LOOP_RETURNS = 100
+
 # Why a task is being escalated. ``stuck_timeout`` = a single run() exceeded the
 # watchdog budget (live-but-stuck, F-73); ``max_failures`` = the give-up floor
-# was hit (F-74).
-EscalationReason = Literal["stuck_timeout", "max_failures"]
+# was hit (F-74); ``tight_loop`` = repeated no-op rapid clean returns (F-75).
+EscalationReason = Literal["stuck_timeout", "max_failures", "tight_loop"]
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,8 @@ class _TaskState:
     task: SupervisedTask
     status: Literal["running", "failed", "stopped"] = "stopped"
     consecutive_failures: int = 0
+    # F-75: count of consecutive sub-threshold ("did no work") clean returns.
+    tight_loop_streak: int = 0
     asyncio_task: asyncio.Task[None] | None = None
     started_at: float = field(default_factory=time.monotonic)
 
@@ -82,6 +91,8 @@ class Supervisor:
         clock: Clock = WallClock(),
         on_escalation: EscalationHook | None = None,
         max_run_seconds: float | None = None,
+        tight_loop_seconds: float = _TIGHT_LOOP_SECONDS,
+        max_tight_loop_returns: int = _MAX_TIGHT_LOOP_RETURNS,
     ) -> None:
         self._clock = clock
         self._tasks: dict[str, _TaskState] = {}
@@ -91,6 +102,11 @@ class Supervisor:
         # seconds is treated as live-but-stuck, cancelled, and restarted. Default
         # ``None`` (disabled) keeps perpetual-loop tasks (e.g. JobScheduler) intact.
         self._max_run_seconds = max_run_seconds
+        # F-75: tight-loop guard thresholds (constructor-overridable). A clean
+        # return faster than ``tight_loop_seconds`` did no work; this many in a row
+        # is a spin and is escalated/parked rather than busy-restarted forever.
+        self._tight_loop_seconds = tight_loop_seconds
+        self._max_tight_loop_returns = max_tight_loop_returns
 
     def register(self, task: SupervisedTask) -> None:
         """Register a task. Must be called before start()."""
@@ -164,13 +180,11 @@ class Supervisor:
                 if gave_up:
                     return
             else:
-                state.consecutive_failures = 0
-                backoff = _BACKOFF_INITIAL
                 duration_ms = (self._clock.monotonic() - t0) * 1000
-                log.startup.debug(
-                    "[supervisor] task: completed cleanly — restarting",
-                    extra={"_fields": {"task_id": state.task.task_id, "duration_ms": duration_ms}},
-                )
+                gave_up = await self._record_clean_return(state, duration_ms=duration_ms)
+                if gave_up:
+                    return
+                backoff = _BACKOFF_INITIAL
 
             await self._clock.async_sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_MAX)
@@ -193,6 +207,8 @@ class Supervisor:
         self, state: _TaskState, *, detail: str, stuck: bool, duration_ms: float
     ) -> bool:
         """Account one failed run; escalate when warranted. Returns True if parked failed."""
+        # A real failure (or stuck trip) is not a no-op clean spin — reset that guard.
+        state.tight_loop_streak = 0
         state.consecutive_failures += 1
         attempt = state.consecutive_failures
         log.startup.warning(
@@ -226,6 +242,57 @@ class Supervisor:
             )
             state.status = "failed"
             await self._escalate(state, "max_failures", detail)
+            return True
+        return False
+
+    async def _record_clean_return(self, state: _TaskState, *, duration_ms: float) -> bool:
+        """Account one clean run() return; guard against a no-op tight loop (F-75).
+
+        A normal (slow, real-work) clean return resets every counter and behaves
+        exactly as before. But a task that returns cleanly faster than
+        ``tight_loop_seconds`` did essentially no work; ``max_tight_loop_returns``
+        such returns in a row is a spin, not health — so we escalate via the F-74
+        seam and park the task ``failed`` instead of busy-restarting forever.
+        Returns True if the task was parked failed.
+        """
+        state.consecutive_failures = 0
+        if duration_ms >= self._tight_loop_seconds * 1000:
+            # Genuine work elapsed — a healthy clean return; reset the spin guard.
+            state.tight_loop_streak = 0
+            log.startup.debug(
+                "[supervisor] task: completed cleanly — restarting",
+                extra={"_fields": {"task_id": state.task.task_id, "duration_ms": duration_ms}},
+            )
+            return False
+        state.tight_loop_streak += 1
+        log.startup.debug(
+            "[supervisor] task: suspiciously fast clean return",
+            extra={
+                "_fields": {
+                    "task_id": state.task.task_id,
+                    "duration_ms": duration_ms,
+                    "tight_loop_streak": state.tight_loop_streak,
+                    "threshold_s": self._tight_loop_seconds,
+                }
+            },
+        )
+        if state.tight_loop_streak >= self._max_tight_loop_returns:
+            detail = (
+                f"{state.tight_loop_streak} clean returns under "
+                f"{self._tight_loop_seconds:.3g}s — spinning (no work done)"
+            )
+            log.startup.error(
+                "[supervisor] ESCALATION %s: tight-loop spin detected — marking failed",
+                state.task.task_id,
+                extra={
+                    "_fields": {
+                        "task_id": state.task.task_id,
+                        "tight_loop_streak": state.tight_loop_streak,
+                    }
+                },
+            )
+            state.status = "failed"
+            await self._escalate(state, "tight_loop", detail)
             return True
         return False
 
