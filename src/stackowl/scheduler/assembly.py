@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
     from stackowl.events.bus import EventBus
     from stackowl.health.aggregator import HealthAggregator
+    from stackowl.infra.resilience import HealableResource
     from stackowl.memory.assembly import MemoryComponents
     from stackowl.memory.critic_scorer_handler import CriticScorerHandler
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
@@ -102,6 +103,7 @@ class SchedulerAssembly:
         proactive_deliverer: ProactiveDeliverer | None = None,
         delegation_governor: ConcurrencyGovernor | None = None,
         turn_registry: object | None = None,
+        browser_runtime: HealableResource | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -296,15 +298,31 @@ class SchedulerAssembly:
         # contributors (db / filesystem / graph / enabled providers — the same set
         # the CLI uses, minus Browser/Resilience which need live-runtime refs) and
         # register a handler that collects on a cadence and alerts on down/degraded.
-        # AUTO-RECYCLE (driving attempt_with_recycle via the live
-        # ResilienceContributor) is DEFERRED — that needs HealableResource refs from
-        # the serve process. This is the safe periodic detect+alert subset.
         health_aggregator = _build_health_aggregator(settings)
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
+        # ADR-6 F-87 — close the loop: hand the live serve-process HealableResources
+        # (DbPool, each provider) to the sweep keyed by their health-status name, so
+        # a down subsystem is RECYCLED + re-verified, not just alerted. Heal is
+        # flag-gated in the handler (settings.health_loop), so this map is consulted
+        # ONLY when ON — flag OFF stays byte-identical regardless of what's wired.
+        healers: dict[str, HealableResource] = {"db": db}
+        for provider in provider_registry.all():
+            healers[f"provider:{provider.name}"] = provider
+        # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
+        # Adding a contributor changes the detect set, so gate it on the flag too —
+        # OFF leaves the aggregator's contributor set unchanged (byte-identical).
+        if settings.health_loop and browser_runtime is not None:
+            from stackowl.health.contributors import BrowserContributor
+
+            health_aggregator.register(
+                BrowserContributor(browser_runtime, sessions=None)
+            )
+            healers["browser"] = browser_runtime
+
         health_sweep_handler = HealthSweepHandler(
-            health_aggregator, alert=health_alert
+            health_aggregator, alert=health_alert, healers=healers
         )
         HandlerRegistry.instance().register(health_sweep_handler)
 

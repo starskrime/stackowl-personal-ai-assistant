@@ -1133,6 +1133,10 @@ class StartupOrchestrator:
             # Phase L — heavy background jobs (dream_worker/kuzu_sync/critic/
             # reflection) defer to live user turns so they stop starving the box.
             turn_registry=turn_registry,
+            # ADR-6 F-87 — the live browser runtime as a HealableResource so the
+            # health loop can recycle + re-verify it (None in gateway role / when
+            # the browser failed to start).
+            browser_runtime=browser_runtime,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).
