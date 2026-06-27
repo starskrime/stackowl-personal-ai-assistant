@@ -17,7 +17,7 @@ Mark `[x]` only when the per-ADR Definition of Done in `IMPLEMENT_PROMPT.md` is 
   Closes: F-1, F-11, F-12, F-13, F-14, F-15, F-20, F-23, F-25, F-29, F-30, F-31, F-32, F-33,
   F-34, F-75, F-80, F-81, F-82, F-83. (⤷F-10) — upstream of ADR-2/5/6/7.
 
-- [ ] **ADR-4 — Reachability invariant at boot** (`feat/adr-4-reachability-invariant`).
+- [x] **ADR-4 — Reachability invariant at boot** (`feat/adr-4-reachability-invariant`). SHIPPED 2026-06-27, block mode ON in prod.
   Assert registered == reachable at boot; run the existing census; dangling half-edges fail
   closed instead of shipping green. Prevents the half-edges later ADRs would otherwise add.
   Closes: F-45, F-76, F-77, F-78, F-86. (⤷F-87)
