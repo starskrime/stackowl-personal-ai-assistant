@@ -107,6 +107,14 @@ class GatewayLink:
         self._conn: FrameConnection | None = None
         self._buffering = False
         self._pending: list[IngressMessage] = []
+        # F-35 — submitted-but-unfinished turns, keyed by trace_id (the request_id
+        # used for demux routing AND core idempotency). A turn forwarded to a live
+        # core lives here until its stream closes (is_final) — at which point it is
+        # removed. If the core CRASHES mid-turn (drop_connection -> finalize), the
+        # still-in-flight entries are moved back into ``_pending`` so the next Hello
+        # REPLAYS them with the SAME trace_id (the core dedupes a double-execute),
+        # instead of the goal evaporating and the user having to re-ask.
+        self._inflight: dict[str, IngressMessage] = {}
 
     def register_adapter(self, channel_name: str, adapter: _Adapter) -> None:
         """Add a channel adapter so its turns route over the split (gateway role).
@@ -136,7 +144,24 @@ class GatewayLink:
         log.gateway.info("[ipc] gateway link: core connection dropped — buffering")
 
     async def finalize(self) -> None:
-        """End every cut turn's reader so no spinner dangles after a drop."""
+        """End every cut turn's reader so no spinner dangles after a drop.
+
+        F-35: before clearing the cut readers, move any still-in-flight turn (one
+        whose stream never closed — the core crashed mid-turn) back into
+        ``_pending`` so the next ``Hello`` replays its goal. The trace_id is reused,
+        so the core dedupes a double-execute; the user's objective survives the
+        crash instead of evaporating. Idempotent: ``_inflight`` is emptied here.
+        """
+        if self._inflight:
+            requeued = list(self._inflight.values())
+            self._inflight = {}
+            # Prepend so a crash-replayed turn keeps FIFO order ahead of messages
+            # that arrived during the gap.
+            self._pending[:0] = requeued
+            log.gateway.warning(
+                "[ipc] gateway link: core cut mid-turn — requeuing in-flight turns",
+                extra={"_fields": {"requeued": len(requeued)}},
+            )
         await self._demux.finalize_all()
 
     # --- TurnClient.submit -------------------------------------------------
@@ -161,6 +186,10 @@ class GatewayLink:
             )
             return
         assert self._conn is not None
+        # F-35 — track the turn as in-flight (keyed by trace_id) from the instant it
+        # is forwarded, so a mid-turn core crash can replay it on reconnect. Removed
+        # when its stream closes (is_final) in ``_route``.
+        self._inflight[msg.trace_id] = msg
         # Open the reader and spawn the (unchanged) adapter consumer BEFORE the
         # core can stream the first chunk back, so no chunk is missed.
         reader = self._demux.register(msg.trace_id)
@@ -194,6 +223,10 @@ class GatewayLink:
     async def _route(self, frame: object) -> None:
         if isinstance(frame, ChunkFrame):
             await self._demux.feed(frame)
+            if frame.is_final:
+                # F-35 — the turn's stream closed normally; it is no longer
+                # in-flight, so a later crash must NOT replay it.
+                self._inflight.pop(frame.trace_id, None)
         elif isinstance(frame, SendTextFrame):
             adapter = self._adapters.get(frame.channel)
             if adapter is not None:

@@ -969,6 +969,7 @@ class StartupOrchestrator:
             event_bus=event_bus,
             db=db_pool,
             router=notification_router,
+            proactive_deliverer=proactive_deliverer,
             settings=self._settings,
             owl_registry=owl_registry,
             tool_registry=tool_registry,

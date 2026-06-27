@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
+    from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.router import NotificationRouter
     from stackowl.owls.registry import OwlRegistry
     from stackowl.parliament.orchestrator import ParliamentOrchestrator
@@ -58,6 +59,9 @@ class CommandDeps:
     event_bus: EventBus | None = None
     db: DbPool | None = None
     router: NotificationRouter | None = None
+    # The transport seam for /urgent (F-76): routes AND calls send_text. When
+    # present, /urgent counts real deliveries; absent, it reports route-only.
+    proactive_deliverer: ProactiveDeliverer | None = None
     settings: Settings | None = None
 
     # Registries
@@ -224,9 +228,17 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.focus_command import FocusCommand
     _safe_register(registry, "focus", lambda: FocusCommand(router=deps.router, event_bus=deps.event_bus))
 
-    # /urgent
+    # /urgent — wired through the REAL transport seam (F-76). When a deliverer
+    # is present the command transports + counts genuine deliveries; absent it,
+    # the command degrades to an honest routing-only report.
     from stackowl.commands.urgent_command import UrgentCommand
-    _safe_register(registry, "urgent", lambda: UrgentCommand(router=deps.router))
+    _safe_register(
+        registry,
+        "urgent",
+        lambda: UrgentCommand(
+            router=deps.router, deliverer=deps.proactive_deliverer
+        ),
+    )
 
     # /quiet
     from stackowl.commands.quiet_command import QuietHoursCommand

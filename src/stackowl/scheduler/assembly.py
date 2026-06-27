@@ -353,6 +353,22 @@ class SchedulerAssembly:
             db, handler_name="objective_driver", schedule="every 1m",
             interval_minutes=1,
         )
+        # F-77 — notification_digest flushes the notification_queue (batched /
+        # quiet-hours notifications). The handler is built+registered (in
+        # NotificationAssembly), but without a recurring jobs row the scheduler
+        # never dispatches it and batched bodies age in the queue forever. Seed
+        # it HERE, co-located with the scheduler that actually polls it, so the
+        # flush fires regardless of how NotificationAssembly's path evolves.
+        # Unlike check_in (a per-recipient send), the digest is a flush job:
+        # each queued row already carries its OWN channel, so there is no single
+        # durable target to resolve — it is seeded unconditionally like the
+        # other every-Nm maintenance sweeps. Idempotent by handler_name (a no-op
+        # if NotificationAssembly already seeded the row this boot). 5m matches
+        # the digest's batching cadence.
+        await _seed_minutes_schedule(
+            db, handler_name="notification_digest", schedule="every 5m",
+            interval_minutes=5,
+        )
         # Critic scorer runs frequently — outcomes pile up fast.
         await _seed_minutes_schedule(
             db, handler_name="critic_scorer", schedule="every 10m",

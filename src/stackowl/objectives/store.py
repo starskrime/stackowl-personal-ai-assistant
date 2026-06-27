@@ -70,6 +70,14 @@ def _parse_dt(value: Any) -> datetime:
     return datetime.fromisoformat(str(value))
 
 
+def _loads_verified(value: Any) -> bool | None:
+    """Deserialize the tri-state ``verified`` column. NULL ⇒ None (not evaluated);
+    a stored 1/0 ⇒ True/False. Tolerant: any non-NULL value coerces via truthiness."""
+    if value is None:
+        return None
+    return bool(value)
+
+
 def _dumps_outcome(outcome: ExpectedOutcome | None) -> str | None:
     """Serialize an ExpectedOutcome to JSON; None ⇒ SQL NULL (undeclared)."""
     return None if outcome is None else outcome.model_dump_json()
@@ -187,6 +195,8 @@ class ObjectiveStore(OwnedRepository):
                     "status": "pending",
                     "result": None,
                     "acceptance_criteria": _dumps_outcome(spec.acceptance_criteria),
+                    "attempts": 0,
+                    "verified": None,
                     "task_id": None,
                     "created_at": now.isoformat(),
                     "updated_at": now.isoformat(),
@@ -230,8 +240,16 @@ class ObjectiveStore(OwnedRepository):
         *,
         result: str | None = None,
         task_id: str | None = None,
+        attempts: int | None = None,
+        verified: bool | None = None,
     ) -> None:
-        """Update a sub-goal's status and (optionally) its result / task id."""
+        """Update a sub-goal's status and (optionally) result / task id / attempts /
+        verification disposition.
+
+        ``attempts`` and ``verified`` are only written when explicitly supplied —
+        an absent argument leaves the stored value untouched (so the legacy callers
+        that pass neither are byte-identical). ``verified`` is tri-state: pass
+        ``True``/``False`` to stamp it; omit (``None``) to leave it as-is."""
         sets = ["status = ?", "updated_at = ?"]
         params: list[Any] = [status, _now().isoformat()]
         if result is not None:
@@ -240,6 +258,12 @@ class ObjectiveStore(OwnedRepository):
         if task_id is not None:
             sets.append("task_id = ?")
             params.append(task_id)
+        if attempts is not None:
+            sets.append("attempts = ?")
+            params.append(attempts)
+        if verified is not None:
+            sets.append("verified = ?")
+            params.append(1 if verified else 0)
         await self._update_owned(
             _SUBGOALS,
             set_sql=", ".join(sets),
@@ -309,6 +333,8 @@ class ObjectiveStore(OwnedRepository):
             status=row["status"],
             result=row.get("result"),
             acceptance_criteria=_loads_outcome(row.get("acceptance_criteria")),
+            attempts=int(row.get("attempts") or 0),
+            verified=_loads_verified(row.get("verified")),
             task_id=row.get("task_id"),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),

@@ -733,6 +733,63 @@ async def test_handle_event_no_files_means_empty() -> None:
     assert adapter.inbound_files_for_trace(msg.trace_id) == []
 
 
+# --------------------------------------------------------------------------- #
+# F-64 — on-turn transport failure must NOT be silently swallowed
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_send_text_transport_failure_raises_delivery_error() -> None:
+    """An on-turn chat_postMessage failure must surface as DeliveryError.
+
+    Previously _post_text swallowed every transport error and returned
+    normally, so the deliverer/ledger recorded a clean send while the user's
+    reply never arrived. The on-turn send_text path must re-raise so the
+    deliverer records ``failed`` and can retry.
+    """
+    from stackowl.exceptions import DeliveryError
+
+    class _BoomClient(_FakeClient):
+        async def chat_postMessage(self, **kwargs: object) -> dict[str, object]:
+            raise RuntimeError("network down")
+
+    class _BoomApp:
+        def __init__(self) -> None:
+            self.client = _BoomClient()
+
+    adapter = _make_adapter()
+    adapter.set_bolt_app(_BoomApp())
+    TestModeGuard.deactivate()
+
+    with pytest.raises(DeliveryError) as exc_info:
+        await adapter.send_text("on-turn reply", target="C_live")
+    # Coarse reason only — never a raw channel id / secret.
+    assert exc_info.value.reason == "transport_error"
+    assert exc_info.value.channel == "slack"
+
+
+@pytest.mark.asyncio
+async def test_post_text_best_effort_swallows_when_flagged() -> None:
+    """A best-effort caller (raise_on_error=False) still tolerates failure."""
+
+    class _BoomClient(_FakeClient):
+        async def chat_postMessage(self, **kwargs: object) -> dict[str, object]:
+            raise RuntimeError("rate limited or whatever")
+
+    class _BoomApp:
+        def __init__(self) -> None:
+            self.client = _BoomClient()
+
+    adapter = _make_adapter()
+    adapter.set_bolt_app(_BoomApp())
+    TestModeGuard.deactivate()
+
+    # Must NOT raise — best-effort path swallows (logged).
+    await adapter._post_text(  # type: ignore[attr-defined]
+        "best effort", index=0, channel="C_be", raise_on_error=False
+    )
+
+
 @pytest.mark.asyncio
 async def test_health_check_no_ping() -> None:
     adapter = _make_adapter()

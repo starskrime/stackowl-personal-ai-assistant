@@ -102,3 +102,88 @@ def test_mcp_tool_description_matches_definition() -> None:
     defn = McpToolDefinition(name="foo", description="bar baz", server_name="srv")
     tool = McpTool(defn, client, config)
     assert tool.description == "bar baz"
+
+
+# --- F-82 (S1): failed/blocked MCP calls must NOT masquerade as empty success ---
+
+
+@pytest.mark.asyncio
+async def test_call_tool_blocked_raises_typed_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A call to a server not in the allowlist raises a typed 'blocked' error."""
+    from stackowl.mcp.client import McpCallError
+
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", lambda op: None)
+    client, config = _client(allowed=False)  # not in allowlist
+    with pytest.raises(McpCallError) as exc_info:
+        await client.call_tool(config, "my_tool", {})
+    assert exc_info.value.kind == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_transport_failure_raises_typed_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A session/connection failure raises a typed 'transport' error, not ''."""
+    from stackowl.mcp.client import McpCallError
+
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", lambda op: None)
+    client, config = _client(allowed=True)
+
+    async def _boom(*_a: object, **_k: object) -> str:
+        raise ConnectionError("server down")
+
+    monkeypatch.setattr(client, "_invoke_once", _boom)
+    with pytest.raises(McpCallError) as exc_info:
+        await client.call_tool(config, "my_tool", {})
+    assert exc_info.value.kind == "transport"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_execute_surfaces_transport_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """McpTool.execute returns success=False with an error on transport failure."""
+    from stackowl.mcp.client import McpCallError
+
+    client, config = _client(allowed=True)
+    defn = McpToolDefinition(name="my_tool", description="d", server_name="test_srv")
+    tool = McpTool(defn, client, config)
+
+    async def _fail(*_a: object, **_k: object) -> str:
+        raise McpCallError("transport", "server down")
+
+    monkeypatch.setattr(client, "call_tool", _fail)
+    result = await tool.execute()
+    assert result.success is False
+    assert result.output == ""
+    assert result.error and "server down" in result.error
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_execute_surfaces_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A blocked (allowlist-denied) call surfaces as success=False, not empty success."""
+    from stackowl.mcp.client import McpCallError
+
+    client, config = _client(allowed=True)
+    defn = McpToolDefinition(name="my_tool", description="d", server_name="test_srv")
+    tool = McpTool(defn, client, config)
+
+    async def _blocked(*_a: object, **_k: object) -> str:
+        raise McpCallError("blocked", "server not in allowlist")
+
+    monkeypatch.setattr(client, "call_tool", _blocked)
+    result = await tool.execute()
+    assert result.success is False
+    assert result.error and "blocked" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_execute_preserves_genuine_empty_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A genuinely empty-but-successful tool result stays success=True, output=''."""
+    client, config = _client(allowed=True)
+    defn = McpToolDefinition(name="my_tool", description="d", server_name="test_srv")
+    tool = McpTool(defn, client, config)
+
+    async def _empty(*_a: object, **_k: object) -> str:
+        return ""
+
+    monkeypatch.setattr(client, "call_tool", _empty)
+    result = await tool.execute()
+    assert result.success is True
+    assert result.output == ""

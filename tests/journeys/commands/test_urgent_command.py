@@ -17,7 +17,6 @@ from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -47,32 +46,44 @@ def _reset_registries() -> None:
 
 
 async def test_urgent_targets_live_registry_channels() -> None:
-    """When ChannelRegistry has telegram + cli adapters, /urgent reaches both."""
+    """When ChannelRegistry has telegram + cli adapters, /urgent reaches both.
+
+    F-76: with no transport seam wired, /urgent can only make a routing
+    DECISION. It must report that honestly ("routed", transport not wired) —
+    never as a "delivered"/"broadcast" that did not transport.
+    """
     ChannelRegistry.instance().register(_make_channel_adapter("cli"))
     ChannelRegistry.instance().register(_make_channel_adapter("telegram"))
 
     router = _make_router()
-    deps = CommandDeps(router=router)
+    deps = CommandDeps(router=router)  # no proactive_deliverer → route-only
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = await CommandRegistry.instance().dispatch(
         "urgent", "system alert", make_state()
     )
 
-    # Delivered to both channels — deliver called twice
+    # Routed to both channels — router.deliver called twice
     assert router.deliver.call_count == 2
     called_channels = {
         call.args[0].channel_name for call in router.deliver.call_args_list
     }
     assert called_channels == {"cli", "telegram"}
-    assert "broadcast to 2" in result
+    # Honest route-only wording — NOT an overclaimed delivery.
+    assert "routed to 2" in result
+    assert "not wired" in result
+    # Must not CLAIM a delivery (the only "delivered" allowed is the honest
+    # negation "not yet delivered").
+    assert "not yet delivered" in result
+    assert "delivered to" not in result.lower()
+    assert "broadcast" not in result.lower()
 
 
 async def test_urgent_fallback_to_cli_when_registry_empty() -> None:
     """When ChannelRegistry is empty, /urgent falls back to ['cli']."""
     # Registry is empty (reset by autouse fixture)
     router = _make_router()
-    deps = CommandDeps(router=router)
+    deps = CommandDeps(router=router)  # no proactive_deliverer → route-only
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = await CommandRegistry.instance().dispatch(
@@ -84,7 +95,9 @@ async def test_urgent_fallback_to_cli_when_registry_empty() -> None:
         call.args[0].channel_name for call in router.deliver.call_args_list
     }
     assert called_channels == {"cli"}
-    assert "broadcast to 1" in result
+    # Honest route-only wording — NOT an overclaimed delivery.
+    assert "routed to 1" in result
+    assert "not wired" in result
 
 
 async def test_urgent_not_configured_when_router_none() -> None:

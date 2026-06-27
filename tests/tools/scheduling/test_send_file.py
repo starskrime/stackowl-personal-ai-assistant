@@ -336,18 +336,48 @@ async def test_deliverer_none_structured_deferred_no_raise(_workspace: Path) -> 
     result = await _run(
         SendFileTool(), deliverer=None, file_path=str(f), target="telegram"
     )
+    # Queued, not yet delivered → honest: success but NOT verified.
     assert result.success is True  # structured, not a raise
+    assert result.verified is False
     assert _decode(result.output)["delivery_status"] == "deferred"
 
 
-async def test_deliver_failed_structured_no_raise(_workspace: Path) -> None:
+async def test_deliver_failed_is_unsuccessful(_workspace: Path) -> None:
+    """F-29: a transport 'failed' must report success=False with an informative
+    error — not a buried delivery_status on an otherwise-green result."""
     deliverer = _FakeDeliverer(status="failed")
     f = _make_file(_workspace)
     result = await _run(
         SendFileTool(), deliverer=deliverer, file_path=str(f), target="telegram"
     )
-    assert result.success is True
+    assert result.success is False
+    assert "failed" in (result.error or "").lower()
+    # delivery_status preserved in the record for backward-compat.
     assert _decode(result.output)["delivery_status"] == "failed"
+
+
+async def test_deliver_delivered_is_verified_success(_workspace: Path) -> None:
+    """A genuine 'delivered' is a verified, trustworthy success (unchanged)."""
+    deliverer = _FakeDeliverer(status="delivered")
+    f = _make_file(_workspace)
+    result = await _run(
+        SendFileTool(), deliverer=deliverer, file_path=str(f), target="telegram"
+    )
+    assert result.success is True
+    assert result.verified is True
+
+
+async def test_deliver_batched_is_unverified_success(_workspace: Path) -> None:
+    """A 'batched' (deferred under quiet-hours/focus) is queued, not delivered →
+    success but NOT verified (distinct honest signal from a true delivery)."""
+    deliverer = _FakeDeliverer(status="batched")
+    f = _make_file(_workspace)
+    result = await _run(
+        SendFileTool(), deliverer=deliverer, file_path=str(f), target="telegram"
+    )
+    assert result.success is True
+    assert result.verified is False
+    assert _decode(result.output)["delivery_status"] == "batched"
 
 
 async def test_deliver_raises_self_heals_to_deferred(_workspace: Path) -> None:
@@ -360,6 +390,7 @@ async def test_deliver_raises_self_heals_to_deferred(_workspace: Path) -> None:
         SendFileTool(), deliverer=_Raiser(), file_path=str(f), target="telegram"
     )
     assert result.success is True  # never raises out of execute
+    assert result.verified is False  # queued/unknown — not a verified delivery
     assert _decode(result.output)["delivery_status"] == "deferred"
 
 

@@ -51,6 +51,25 @@ _HEALTH_STALE_AFTER_S = 90.0
 _UNSET: Any = object()
 
 
+def _is_ratelimited(err: BaseException) -> bool:
+    """True if ``err`` looks like a transient Slack rate-limit.
+
+    Slack's SDK raises ``SlackApiError`` carrying a ``response["error"]`` of
+    ``"ratelimited"`` (HTTP 429). We avoid importing the SDK type here (unit
+    tests don't have the package) and instead probe defensively. Slack-specific
+    error names live ONLY in this thin adapter.
+    """
+    resp = getattr(err, "response", None)
+    code = None
+    if isinstance(resp, dict):
+        code = resp.get("error")
+    else:
+        code = getattr(resp, "get", lambda _k: None)("error") if resp is not None else None
+    if code == "ratelimited":
+        return True
+    return "ratelimited" in str(err).lower()
+
+
 class SlackChannelAdapter(ChannelAdapter):
     """Slack channel adapter — see module docstring for the integration contract."""
 
@@ -857,6 +876,7 @@ class SlackChannelAdapter(ChannelAdapter):
         index: int,
         channel: str,
         thread_ts: str | None = None,
+        raise_on_error: bool = True,
     ) -> None:
         """Send a single message part via the attached Bolt app, if any.
 
@@ -868,6 +888,15 @@ class SlackChannelAdapter(ChannelAdapter):
 
         When no app is attached (unit test path) we only log — the
         TestModeGuard above already protected against accidental live I/O.
+
+        Transport honesty (F-64): on the ON-TURN reply path (the default,
+        ``raise_on_error=True``) a ``chat_postMessage`` failure is NOT swallowed
+        — it is re-raised as ``DeliveryError("slack", "transport_error")`` so the
+        deliverer records ``failed`` and can retry, instead of logging a clean
+        send while the user's reply never arrives. A best-effort/proactive caller
+        may pass ``raise_on_error=False`` to keep the old log-and-swallow
+        behaviour. On a Slack ``ratelimited`` error we retry once before
+        surfacing.
         """
         msg_id = uuid.uuid4().hex[:12]
         log.slack.debug(
@@ -908,8 +937,31 @@ class SlackChannelAdapter(ChannelAdapter):
                 extra={"_fields": {"msg_id": msg_id, "channel": channel}},
             )
         except Exception as err:  # noqa: BLE001
+            # Bounded retry-once on a transient Slack rate-limit before deciding
+            # whether to surface. Slack-specific error names are acceptable in
+            # this thin adapter only.
+            if raise_on_error and _is_ratelimited(err):
+                log.slack.warning(
+                    "[slack] adapter._post_text: ratelimited — retrying once",
+                    extra={"_fields": {"msg_id": msg_id}},
+                )
+                try:
+                    await client.chat_postMessage(**post_kwargs)
+                    log.slack.debug(
+                        "[slack] adapter._post_text: exit posted (after retry)",
+                        extra={"_fields": {"msg_id": msg_id, "channel": channel}},
+                    )
+                    return
+                except Exception as retry_err:  # noqa: BLE001
+                    err = retry_err
             log.slack.error(
                 "[slack] adapter._post_text: post failed",
                 exc_info=err,
                 extra={"_fields": {"msg_id": msg_id}},
             )
+            # F-64: on the on-turn path, a swallowed transport failure means the
+            # user's reply silently never arrives. Re-raise so the deliverer
+            # records ``failed`` and can retry. Carry only the coarse channel +
+            # reason — never the raw channel id / token (sensitive-data mandate).
+            if raise_on_error:
+                raise DeliveryError("slack", "transport_error") from err

@@ -157,20 +157,73 @@ async def test_blocks_objective_when_subgoal_parks(pool: DbPool) -> None:
     assert len(deliverer.calls) == 1  # owner pinged about the block
 
 
-async def test_stalls_objective_on_subgoal_error(pool: DbPool) -> None:
+async def test_retries_subgoal_on_transient_error_before_blocking(pool: DbPool) -> None:
+    """F-40: a single sub-goal error must NOT permanently strand the objective.
+
+    The first failure leaves the sub-goal ``pending`` (attempts bumped, objective
+    still ``active``, no owner ping) so the next tick retries it. Only after the
+    retry budget is exhausted does the objective escalate to ``blocked``."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["flaky step"])
+    backend = _FakeBackend(errors=("boom",))
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    # Tick 1 — first failure: retried, not blocked.
+    await handler.execute(_driver_job())
+    obj = await store.get("obj-1")
+    assert obj.status == "active"  # objective NOT stranded on the first stumble
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "pending"  # re-queued for the next tick
+    assert subs[0].attempts == 1
+    assert len(deliverer.calls) == 0  # no premature owner ping
+
+    # Tick 2 — second failure: still under budget (MAX=3), retried again.
+    await handler.execute(_driver_job())
+    obj = await store.get("obj-1")
+    assert obj.status == "active"
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "pending"
+    assert subs[0].attempts == 2
+    assert len(deliverer.calls) == 0
+
+
+async def test_blocks_objective_after_retry_budget_exhausted(pool: DbPool) -> None:
+    """F-40: once the bounded retry budget is spent, escalate to ``blocked`` + notify."""
     store = ObjectiveStore(pool, "principal-default")
     await _make_objective(store, ["doomed step"])
     backend = _FakeBackend(errors=("boom",))
     deliverer = _FakeDeliverer()
     handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
 
-    await handler.execute(_driver_job())
+    # MAX_SUBGOAL_ATTEMPTS == 3 → tick 1 & 2 retry, tick 3 exhausts the budget.
+    await handler.execute(_driver_job())  # attempt 1 → pending
+    await handler.execute(_driver_job())  # attempt 2 → pending
+    await handler.execute(_driver_job())  # attempt 3 → blocked
 
     obj = await store.get("obj-1")
     assert obj.status == "blocked"
     subs = await store.list_subgoals("obj-1")
     assert subs[0].status == "failed"
-    assert len(deliverer.calls) == 1
+    assert subs[0].attempts == 3
+    assert len(deliverer.calls) == 1  # owner pinged once, on the terminal escalation
+    assert backend.runs == 3  # the step was genuinely retried each tick
+
+
+async def test_completed_subgoal_without_criteria_is_unverified(pool: DbPool) -> None:
+    """F-42: with NO declared acceptance criterion (and the LLM deriver off), a clean
+    run completes the sub-goal but records verified=False — completion is honest, not
+    over-claimed as a verified success."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["just answer"])
+    backend = _FakeBackend(text="here you go")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend)
+
+    await handler.execute(_driver_job())
+
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "done"
+    assert subs[0].verified is False  # completed but UNVERIFIED — no criterion to check
 
 
 async def test_no_active_objectives_is_noop_success(pool: DbPool) -> None:
