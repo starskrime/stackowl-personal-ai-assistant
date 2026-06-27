@@ -1,20 +1,23 @@
-ITERATION 2 — ADR-1 COMPLETE [x], flag ON in prod. Next: ADR-4. — 2026-06-27
-ADR-1 shipped across feat/adr-1-acceptance-authority (substrate @0172e6bf) + feat/adr-1-effect-migrations
-(send_* DeliveryAck). Authority is the single decider; the ≥6 proxies delegate (read the one `verified`
-the authority writes). Invariant tested per kind (text/delivery/artifact/http): success⟺measured, self-stamp
-ignored. send_message/send_file declare DeliveryAck (transport ack→authority→verified). Flag
-settings.acceptance_authority ON in /home/boss/.stackowl/stackowl.yaml (top-level). Closures logged in
-.ralph/BACKLOG.md "ADR implementation log". DISCOVERY: effect seams already self-verify from S1-S4, so ADR-1's
-value is UNIFICATION; remaining per-tool post_condition adoption is optional incremental hardening (BACKLOG).
+ITERATION 3 — ADR-4 COMPLETE [x], block mode ON in prod. Next: ADR-2. — 2026-06-27
+ADR-1 [x] + ADR-4 [x] done. ADR-4: census (health/reachability/census.py) was warn-only at boot; now
+StartupOrchestrator._phase_reachability_census REFUSES READY (StartupError) under
+settings.reachability_enforcement="block" when a registered capability is unreachable. Default "warn"=
+byte-identical; broken-auditor stays advisory in both modes (only definitive census_passes()==False blocks).
+Prod yaml /home/boss/.stackowl/stackowl.yaml: acceptance_authority: true + reachability_enforcement: block.
+5 live probes burned-in green → block-mode boot verified safe (does not refuse). Closures in BACKLOG
+"ADR implementation log": F-86 closed; F-45/76/77/78 structurally guaranteed (need per-edge probes to fully
+close — optional follow-on + RegistrationContract). Tests tests/startup/test_reachability_enforcement.py.
 
-GATES: 75 send+authority + 112 proxy/acceptance + 34 objectives green; ruff clean; mypy clean on changed
-(2 send Notification.target_chat_id errors PRE-EXIST on clean main — git-stash-confirmed, do NOT chase).
-Full tools+pipeline combined run HANGS = pre-existing I/O block (obs 7522) → gate TARGETED suites only.
+GATES: 5 ADR-4 + 72 startup/census green; ruff clean; mypy clean on changed (3 orchestrator errors PRE-EXIST
+on clean main — git-stash-confirmed). Full tools+pipeline combined run HANGS (pre-existing obs 7522) → gate
+TARGETED suites. No DB migration. No live platform running (process_registry empty) → health-CLI is the live
+check; both flags load + block-mode census passes.
 
-NEXT ITERATION = ADR-4 (Reachability invariant at boot). Read .ralph/adr/ADR-4-reachability-invariant.md +
-ROOT_CAUSES.md T4. Shape: health/reachability/census.py run_census/census_passes EXIST but only test callers;
-StartupOrchestrator.run never calls them (F-86 the census eats its own tail). Make it a BOOT PHASE that fails
-loud. Closes F-45, F-76, F-77, F-78, F-86 (⤷F-87). Flag-gated default reproduces today (census advisory/off),
-ON = fail-closed. Branch feat/adr-4-reachability-invariant off main. TDD: a registered-but-unreachable
-capability must fail the boot invariant (test fails on pre-ADR code).
+NEXT = ADR-2 (RecoveryActuator ladder). Read .ralph/adr/ADR-2-recovery-actuator.md + ROOT_CAUSES T2. DEPENDS
+ON ADR-1 (consumes the Verdict/verified signal). Existing: B4 recovery ladder in pipeline/steps/execute.py is
+tool-dispatch-ONLY; providers/llm_gateway.py cascades only on ESCALATE; scheduler/channel adapters re-surrender.
+Goal: ONE authority any failing op hands a not-trustworthy result to → bounded ladder (retry→reroute→substitute
+→replan→honest-surrender). Closes F-5/6/7/8/16/17/18/21/24/35/37/40/41/55/60/62/64/65/66/67. The ~12
+point-solutions DELEGATE (nothing removed). Branch feat/adr-2-recovery-actuator off main. TDD.
 Known pre-existing reds: IMPLEMENT_PROMPT §6 — git-stash-verify any NEW red vs clean main.
+BUILD ORDER REMAINING: ADR-2 → ADR-3 → ADR-5 → ADR-6 → ADR-7.

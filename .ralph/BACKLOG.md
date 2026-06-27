@@ -152,3 +152,18 @@ signal the authority writes — none deleted). Closures:
   tools above to DECLARE post_condition() so their truth also routes through the authority
   (web_fetch→HttpOk/NonEmptyText, write/media→ArtifactFresh, a provider-empty path→NonEmptyText).
   Not blockers — those seams already self-verify; this only centralizes the derivation.
+
+### ADR-4 — Reachability invariant at boot (SHIPPED 2026-06-27, `reachability_enforcement: block` in prod)
+The fail-closed census (`health/reachability/census.py`) already ran at boot but only WARNED.
+Now `StartupOrchestrator._phase_reachability_census` REFUSES READY (StartupError) in block mode
+when any registered capability is unreachable on the default path. Closures:
+- **Closed**: F-86 — the census that would catch dead edges was itself unreached on the boot
+  path (warn-wired in S-prior; now an enforced invariant: census_passes gates READY).
+- **Structurally guaranteed**: F-45, F-76, F-77, F-78 — any of these dead edges, once it has a
+  reachability probe, now FAILS a block-mode boot instead of shipping green-but-dead. The 5
+  burned-in probes pass; the REQUIRED_PROBES "constitution" guards against a required subsystem
+  losing its probe.
+- **Follow-on (optional hardening)**: add per-edge probes for F-45/76/77/78 + a RegistrationContract
+  enforced at assembly time (scheduler/commands/notifications) so a new half-edge can't register
+  without declaring how it's reached. Not blockers — the boot invariant + REQUIRED_PROBES already
+  fail-close; this extends coverage to those specific edges. ⤷F-87 (lifecycle variant → ADR-6).

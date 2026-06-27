@@ -440,41 +440,68 @@ class StartupOrchestrator:
             )
 
     async def _phase_reachability_census(self) -> None:
-        """F-86 — run the fail-closed reachability self-audit at boot.
+        """F-86 / ADR-4 — the reachability invariant: run the fail-closed self-audit at
+        boot and, under ``reachability_enforcement="block"``, REFUSE READY when a
+        registered capability is unreachable on the default path.
 
-        :func:`run_census` already existed but nothing ever invoked it on the boot
-        path, so a subsystem that ships green-but-dead-on-default-path was never
-        caught at runtime. We run it here and, on failure, emit a LOUD degraded
-        operator alert — but DELIBERATELY do NOT refuse READY: a census miss must
-        not brick a boot (a probe can have false-negatives), so warn+alert is the
-        safe subset. Never raises: the audit is advisory, not a gate.
+        :func:`run_census` already existed but nothing invoked it on the boot path, so a
+        subsystem that ships green-but-dead-on-default-path was never caught (the census
+        was itself an unreached half-edge — the bug eating its own tail). Two modes:
+
+        * ``"warn"`` (default ⇒ byte-identical): a definitive census failure logs a LOUD
+          degraded alert but the service starts anyway.
+        * ``"block"``: a definitive census failure raises :class:`StartupError` — the
+          dangling half-edge fails the boot, not the user. The reachability invariant.
+
+        A broken AUDITOR (the census machinery itself raising) is advisory in BOTH modes —
+        only a definitive ``census_passes()==False`` verdict blocks. So a probe
+        false-negative or a transient cannot brick a boot; only a real dead edge does.
         """
+        enforcement = (
+            self._settings.reachability_enforcement if self._settings else "warn"
+        )
         try:
             # Importing the probes module self-registers every probe.
             import stackowl.health.reachability.probes  # noqa: F401
             from stackowl.health.reachability import census_passes, run_census
 
             results = await run_census()
-            if census_passes(results):
-                log.info(
-                    "[startup] reachability census: ok — %d subsystems reachable",
-                    len(results),
-                )
-                return
-            unreachable = [f"{r.name}: {r.detail}" for r in results if not r.reachable]
-            log.error(
-                "[startup] ★ REACHABILITY CENSUS DEGRADED ★ — %d subsystem(s) "
-                "dead on the default path; the service is starting ANYWAY but these "
-                "are NOT reachable: %s",
-                len(unreachable),
-                "; ".join(unreachable),
-            )
         except Exception as exc:
-            # Advisory phase — a broken census must never block boot.
+            # Advisory: a broken census auditor must never block boot (even in block mode).
             log.error(
                 "[startup] reachability census: audit itself failed — skipping",
                 exc_info=exc,
             )
+            return
+
+        if census_passes(results):
+            log.info(
+                "[startup] reachability census: ok — %d subsystems reachable",
+                len(results),
+            )
+            return
+
+        unreachable = [f"{r.name}: {r.detail}" for r in results if not r.reachable]
+        if enforcement == "block":
+            log.error(
+                "[startup] ★ REACHABILITY CENSUS FAILED (block mode) ★ — REFUSING READY: "
+                "%d registered subsystem(s) are NOT reachable on the default path: %s",
+                len(unreachable),
+                "; ".join(unreachable),
+            )
+            raise StartupError(
+                0,
+                "reachability",
+                f"{len(unreachable)} registered capability(ies) unreachable on the "
+                f"default path: {'; '.join(unreachable)}",
+            )
+        log.error(
+            "[startup] ★ REACHABILITY CENSUS DEGRADED ★ — %d subsystem(s) "
+            "dead on the default path; the service is starting ANYWAY (warn mode) but "
+            "these are NOT reachable: %s",
+            len(unreachable),
+            "; ".join(unreachable),
+        )
 
     async def _phase_gateway(self) -> None:
         """Start channel adapters and run the main message loop.
