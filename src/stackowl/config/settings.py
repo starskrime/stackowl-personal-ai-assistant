@@ -797,7 +797,7 @@ class Settings(BaseSettings):
     # skipped entirely and every tool is byte-identical to pre-ADR behavior (the ~92 tools
     # that declare no post-condition are unaffected even when ON). Intended ON in
     # production once the gate is green (this powerful machine: correctness over latency).
-    acceptance_authority: bool = False
+    acceptance_authority: bool = True
     # ADR-4 — how the boot-time reachability census treats a registered-but-unreachable
     # capability. "warn" (default ⇒ byte-identical): log a loud degraded alert but start
     # anyway. "block": REFUSE READY (raise StartupError) so a dangling half-edge fails the
@@ -805,7 +805,7 @@ class Settings(BaseSettings):
     # blocks boot in either mode (only a definitive unreachable verdict does), so a probe
     # false-negative cannot brick a boot on a transient. Flip to "block" once the census is
     # burned-in green (it is, on this machine). General/config-driven — no per-feature logic.
-    reachability_enforcement: str = "warn"
+    reachability_enforcement: str = "block"
     # ADR-2 — on a TRANSIENT provider fault, retry the SAME tier once (via the
     # RecoveryActuator) before cascading to the next tier. A momentary blip (timeout /
     # transient circuit trip) may clear on an immediate retry without burning the
@@ -870,7 +870,7 @@ class Settings(BaseSettings):
     # to the operator alert. A recovered subsystem logs "recovered" and does NOT alert.
     # Default OFF ⇒ the sweep is the pre-ADR detect+alert path, byte-identical (no heal,
     # no re-collect). Safe on any box: with no healers wired the loop is a no-op even ON.
-    health_loop: bool = False
+    health_loop: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
