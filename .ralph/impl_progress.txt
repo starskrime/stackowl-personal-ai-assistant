@@ -305,3 +305,31 @@ health_loop default stays OFF for now — ship code-complete, flip in prod confi
 verified end-to-end on a real box). Flag OFF = byte-identical. [[feedback_ask_before_flag_default]].
 NEXT ADR: ADR-7 — DecisionLedger (feat/adr-7-decision-ledger). Read .ralph/adr/ADR-7-*.md + ROOT_CAUSES.
 Largely downstream of 1-6. This is the FINAL ADR — after it the 7-ADR Jarvis arc is complete.
+
+ITERATION 18 — ADR-7 STARTED: DecisionLedger infra shipped (step 1/3). — 2026-06-27
+SHIPPED @main 862b1d2d. Research-first: the turn-scoped ContextVar ledger idiom already
+exists twice (infra/recovery_context.py, infra/tool_outcome_ledger.py) — mirrored it
+EXACTLY, no new abstraction. New src/stackowl/infra/decision_ledger.py:
+  Decision{point, verdict, reason, inputs, alternatives_considered, evidence} (frozen) +
+  bind()/reset()/record_decision()/get_decisions(). Unbound turn → record no-ops (logged).
+Settings flag decision_ledger: bool = True. Both backends (asyncio + langgraph) bind a
+fresh ledger per turn GATED on settings.decision_ledger (OFF → bind skipped → record
+no-ops → byte-identical; the ADR-7 rollback). Gate uses self._services.settings; None
+(unit tests) → bind (default-ON posture). reset in finally behind `if token is not None`.
+  6 infra tests (tests/infra/test_decision_ledger.py) + 10 backend + 37 config green;
+  ruff+mypy clean on all changed files; code-reviewer APPROVE (4 invariants hold).
+★REMAINING for ADR-7 [x] (2 steps, next sessions):
+  STEP 2 — wire emitters: each ADR-1–6 authority calls record_decision at its verdict
+    point: AcceptanceAuthority (accepted/why @pipeline/acceptance_authority.py),
+    RecoveryActuator (rungs tried/surrendered @pipeline/recovery_actuator.py),
+    ReversibilityResolver (act-vs-ask @interaction/reversibility_resolver.py),
+    LearnedContext (which heuristic steered + provenance @pipeline/lesson_context.py),
+    router/classifier (verdict + confidence). Gate-free at emit sites (no-op when unbound).
+  STEP 3 — point consumers at the ledger: recovery_summary reads ledger (closes F-9/10),
+    crash path emits a crash Decision + user notice (F-39 already ships notice — add the
+    Decision row), next-step signal (F-28) → Decision kind=next_step, plus an /explain-style
+    surface that READS the ledger ("why did you do that?" = a read, not a confabulation).
+  VERIFY (ADR §Verification): a turn that recovered + acted-on-assumption + was steered by a
+    heuristic produces a ledger with all three Decisions+reasons.
+  After step 3 → ADR-7 [x] → 7-ADR Jarvis arc COMPLETE. Flag already ON (incremental;
+  empty/unread until emitters land, so ON is safe now).
