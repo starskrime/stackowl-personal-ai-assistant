@@ -18,6 +18,7 @@ from typing import Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
+from stackowl.exceptions import TransientError
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.owls.concurrency import ConcurrencyGovernor
@@ -51,6 +52,13 @@ _DELTA_UPPER = 0.1
 # LLM fallback + DB writes). Generous, since a real LLM fallback can be slow on a
 # weak host, but finite so one stuck owl can't wedge the nightly batch.
 EVOLUTION_PER_OWL_TIMEOUT_SECONDS = 120.0
+# F-55 — per-owl transient recovery. A timeout / network blip / rate-limit used
+# to drop the owl outright, silently no-op'ing its evolution until the next
+# nightly batch. Retry exactly once after a small backoff before giving up; an
+# owl still failing after the retry is surfaced for follow-up. Batch-isolation
+# is untouched — one owl's failure never propagates out of _evolve_one_bounded.
+_EVOLUTION_MAX_ATTEMPTS = 2  # original attempt + one retry on transient failure
+_EVOLUTION_RETRY_BACKOFF_SECONDS = 1.0
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.UNICODE)
 
 _FETCH_EXCERPTS_SQL = """
@@ -331,32 +339,66 @@ class EvolutionCoordinator(JobHandler):
         """Evolve one owl under the governor + a per-owl timeout (PARL-7 / F084).
 
         Returns ``True``/``False`` from :meth:`_evolve_one`, or ``None`` if the
-        owl timed out — a timeout is recorded (stuck), never propagated, so a
-        single hung owl cannot stall or fail the whole nightly batch.
+        owl could not be evolved — never propagated, so a single hung/crashed
+        owl cannot stall or fail the whole nightly batch (batch-isolation).
+
+        F-55 — TRANSIENT failures (timeout, network blip, rate-limit) get one
+        bounded retry after a small backoff before the owl is dropped; an owl
+        still failing after the retry is surfaced at WARNING with a clear
+        ``evolution.stuck_owl`` marker for follow-up. Non-transient crashes are
+        dropped on the first failure (no auto-retry).
         """
-        try:
-            if self._governor is None:
-                return await asyncio.wait_for(
-                    self._evolve_one(manifest), timeout=self._per_owl_timeout_s
+        for attempt in range(_EVOLUTION_MAX_ATTEMPTS):
+            is_last = attempt == _EVOLUTION_MAX_ATTEMPTS - 1
+            try:
+                return await self._evolve_one_attempt(manifest)
+            except (TimeoutError, TransientError) as exc:  # transient → recoverable
+                kind = "timeout" if isinstance(exc, TimeoutError) else "transient"
+                if not is_last:
+                    # DECISION — transient and budget left: back off, retry once.
+                    log.engine.info(
+                        "[dna] coordinator._evolve_one_bounded: transient failure — retrying once",
+                        extra={"_fields": {
+                            "owl": manifest.name, "kind": kind,
+                            "attempt": attempt + 1,
+                            "backoff_s": _EVOLUTION_RETRY_BACKOFF_SECONDS,
+                        }},
+                    )
+                    await asyncio.sleep(_EVOLUTION_RETRY_BACKOFF_SECONDS)
+                    continue
+                # EXIT — still failing after the retry: surface for follow-up.
+                log.engine.warning(
+                    "[dna] coordinator._evolve_one_bounded: evolution.stuck_owl — "
+                    "still failing after retry, needs follow-up",
+                    exc_info=exc, extra={"_fields": {
+                        "owl": manifest.name, "kind": kind,
+                        "attempts": attempt + 1,
+                        "timeout_s": self._per_owl_timeout_s,
+                    }},
                 )
-            async with self._governor.slot():
-                return await asyncio.wait_for(
-                    self._evolve_one(manifest), timeout=self._per_owl_timeout_s
+                return None
+            except Exception as exc:  # B5 — one owl's crash never sinks the batch
+                log.engine.warning(
+                    "[dna] coordinator._evolve_one_bounded: owl evolution failed — skipping",
+                    exc_info=exc, extra={"_fields": {"owl": manifest.name}},
                 )
-        except TimeoutError:
-            log.engine.warning(
-                "[dna] coordinator._evolve_one_bounded: owl timed out — skipping",
-                extra={"_fields": {
-                    "owl": manifest.name, "timeout_s": self._per_owl_timeout_s,
-                }},
+                return None
+        return None  # unreachable — loop always returns; satisfies the type-checker
+
+    async def _evolve_one_attempt(self, manifest: OwlAgentManifest) -> bool | None:
+        """One bounded evolution attempt: governor slot + per-owl timeout.
+
+        Raises :class:`TimeoutError` on timeout (handled as transient by the
+        caller); all other exceptions propagate unchanged.
+        """
+        if self._governor is None:
+            return await asyncio.wait_for(
+                self._evolve_one(manifest), timeout=self._per_owl_timeout_s
             )
-            return None
-        except Exception as exc:  # B5 — one owl's crash never sinks the batch
-            log.engine.warning(
-                "[dna] coordinator._evolve_one_bounded: owl evolution failed — skipping",
-                exc_info=exc, extra={"_fields": {"owl": manifest.name}},
+        async with self._governor.slot():
+            return await asyncio.wait_for(
+                self._evolve_one(manifest), timeout=self._per_owl_timeout_s
             )
-            return None
 
     async def _try_attribution(self, manifest: OwlAgentManifest) -> AttributionReport:
         """Pull scored outcomes for this owl and run the attributor.

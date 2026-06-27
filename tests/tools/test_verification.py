@@ -14,12 +14,47 @@ that effect OBSERVED before it is trusted. These tests pin:
 
 from __future__ import annotations
 
+import logging
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.verification import is_trustworthy_success, verify_artifact
+
+
+class _CaptureHandler(logging.Handler):
+    """Collects raw LogRecords so a test can read structured ``_fields``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@contextmanager
+def _capture_tool_logs() -> Iterator[_CaptureHandler]:
+    """Attach a capture handler directly to the ``stackowl.tool`` logger.
+
+    Attaching at the named logger (rather than relying on caplog + propagation)
+    is robust to the root ``stackowl`` logger having ``propagate=False`` once the
+    observability backend is configured.
+    """
+    logger = logging.getLogger("stackowl.tool")
+    handler = _CaptureHandler()
+    handler.setLevel(logging.DEBUG)
+    prev_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    try:
+        yield handler
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
 
 # asyncio_mode=auto (pyproject) runs async tests automatically — no marker needed.
 
@@ -397,3 +432,72 @@ async def test_call_transient_retry_second_failure_is_wrapped() -> None:
     assert tool.calls == 2                   # one retry max, then give up
     assert result.success is False
     assert result.error is not None and "Connection reset" in result.error
+
+
+# ------------------------- F-28: observable next-step signal on non-trust result
+_NEXT_STEP_MARKER = "next-step signal"
+
+
+def _next_step_records(handler: _CaptureHandler) -> list[logging.LogRecord]:
+    return [r for r in handler.records if _NEXT_STEP_MARKER in r.getMessage()]
+
+
+async def test_call_emits_next_step_signal_on_verified_false() -> None:
+    """A claim reality refuted (verified=False) emits ONE structured signal a
+    supervisor/observer can hook to drive the next step — tool + success + verified."""
+    with _capture_tool_logs() as handler:
+        result = await _ClaimsButProducesNothing()()
+    assert result.verified is False
+    signals = _next_step_records(handler)
+    assert len(signals) == 1
+    fields = signals[0]._fields  # type: ignore[attr-defined]
+    assert fields["tool"] == "fake_claimer"
+    assert fields["success"] is True
+    assert fields["verified"] is False
+
+
+async def test_call_emits_next_step_signal_on_plain_failure() -> None:
+    """A failed execute (success=False) is also non-trustworthy → signal fires."""
+
+    class _Fails(Tool):
+        @property
+        def name(self) -> str:
+            return "plain_fail"
+
+        @property
+        def description(self) -> str:
+            return "x"
+
+        @property
+        def parameters(self) -> dict[str, object]:
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs: object) -> ToolResult:
+            return ToolResult(success=False, output="", error="boom", duration_ms=1.0)
+
+    with _capture_tool_logs() as handler:
+        result = await _Fails()()
+    assert result.success is False
+    signals = _next_step_records(handler)
+    assert len(signals) == 1
+    fields = signals[0]._fields  # type: ignore[attr-defined]
+    assert fields["tool"] == "plain_fail"
+    assert fields["success"] is False
+    assert fields["verified"] is None
+
+
+async def test_call_no_next_step_signal_on_trustworthy_success(tmp_path: Path) -> None:
+    """A verified real win is trustworthy → NO next-step signal (no noise)."""
+    with _capture_tool_logs() as handler:
+        result = await _RealProducer(tmp_path / "out.txt")()
+    assert is_trustworthy_success(result.success, result.verified) is True
+    assert _next_step_records(handler) == []
+
+
+async def test_call_no_next_step_signal_on_unverified_success() -> None:
+    """A plain success with no verification (verified=None) is trustworthy by the
+    byte-identical fallback → still no signal."""
+    with _capture_tool_logs() as handler:
+        result = await _NoVerifyOverride()()
+    assert result.verified is None
+    assert _next_step_records(handler) == []

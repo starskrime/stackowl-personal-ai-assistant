@@ -812,12 +812,36 @@ class OpenAIProvider(ModelProvider):
         # cheap backstop. (With the output cap removed, mid-think truncation no
         # longer empties the content, so this rarely fires.)
         if not content:
+            # F-22 — replaying the IDENTICAL round would just reproduce a
+            # deterministic empty generation. VARY the retry: append a brief,
+            # vendor-neutral continuation nudge so the prompt differs (and steer
+            # the model away from a reasoning preamble that can eat the whole
+            # budget — the documented live cause of an empty draft).
+            retry_msgs = [
+                *oai_msgs,
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous reply was empty. Please give your answer "
+                        "directly now, without a reasoning preamble."
+                    ),
+                },
+            ]
             log.engine.warning(
-                "[openai] complete: empty after think-strip — retrying once",
+                "[openai] complete: empty after think-strip — retrying once with a varied prompt",
                 extra={"_fields": {"provider": self._name, "model": resolved_model}},
             )
+
+            async def _varied_round() -> Any:
+                return await self._client.chat.completions.create(
+                    model=resolved_model,
+                    messages=retry_msgs,  # type: ignore[arg-type]
+                    max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
+                    **self._ollama_extra_body(resolved_model),
+                )
+
             try:
-                retry = await self._resilient_round(_round)
+                retry = await self._resilient_round(_varied_round)
             except openai.APIError as exc:
                 log.engine.warning(
                     "[openai] complete: retry failed — keeping empty",
@@ -829,6 +853,15 @@ class OpenAIProvider(ModelProvider):
                 choice = retry.choices[0]
                 usage = retry.usage
                 content = strip_think(choice.message.content or "")
+            if not content:
+                # Still empty after a varied retry — surface honestly rather than
+                # passing "" off as a confident answer. The downstream give-up
+                # floor turns this into an honest "couldn't produce a reply".
+                log.engine.warning(
+                    "[openai] complete: still empty after varied retry — "
+                    "returning empty for the downstream floor",
+                    extra={"_fields": {"provider": self._name, "model": resolved_model}},
+                )
         result = CompletionResult(
             content=content,
             input_tokens=usage.prompt_tokens if usage else 0,

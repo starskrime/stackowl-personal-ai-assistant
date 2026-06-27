@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.infra.resilience import looks_like_dead_handle
+from stackowl.tools.verification import is_trustworthy_success
 
 
 class ToolResult(BaseModel):
@@ -245,6 +246,23 @@ class Tool(ABC):
                     extra={"_fields": {"tool": self.name, "artifact_path": result.artifact_path}},
                 )
                 result = result.model_copy(update={"verified": None})
+        # NEXT-STEP SIGNAL (F-28). The seam runs exactly one execute() and returns;
+        # there is no actuator HERE to drive a self-initiated follow-up when the call
+        # did not land. Make that gap at least OBSERVABLE: emit one structured trace
+        # line — carrying tool + success + verified — that a supervisor/observer can
+        # hook to drive the next step (retry / substitute / re-plan) whenever this
+        # call did NOT end in a trustworthy success: a plain failure OR a claim that
+        # reality refuted (verified=False). Pure signal — never mutates the result or
+        # control flow. A richer next-step ACTUATOR is deferred to the recovery layer
+        # (pipeline/steps/execute.py), which already owns retry/substitution.
+        if not is_trustworthy_success(result.success, result.verified):
+            log.tool.info(
+                "tool.__call__: next-step signal — result not trustworthy",
+                extra={"_fields": {
+                    "tool": self.name, "success": result.success,
+                    "verified": result.verified, "next_step": "recover",
+                }},
+            )
         log.tool.debug(
             "tool.__call__: exit",
             extra={"_fields": {

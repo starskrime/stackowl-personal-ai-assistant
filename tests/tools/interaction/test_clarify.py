@@ -166,6 +166,114 @@ async def test_timeout_default_not_in_menu_aborts(
     assert "ABORT" in result.output
 
 
+# ------------------------------------------------------------- pre-park (F-69)
+
+
+async def test_pre_park_one_item_menu_proceeds_without_asking(
+    with_gateway: ClarifyGateway,
+) -> None:
+    """F-69: a one-item menu has no real decision — proceed on the only option
+
+    WITHOUT parking the turn or routing anything to the human.
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        result = await ClarifyTool().execute(
+            question="Use the default profile?", choices=["default"],
+        )
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    assert "default" in result.output
+    assert "assum" in result.output.lower()
+    # Nothing was delivered and nothing parked — no human round-trip.
+    adapter = with_gateway._adapters["cli"]
+    assert isinstance(adapter, _FakeAdapter)
+    assert adapter.calls == []
+    assert with_gateway.try_resolve("s1", "cli", "x") is None
+
+
+async def test_pre_park_declared_default_proceeds_without_asking(
+    with_gateway: ClarifyGateway,
+) -> None:
+    """F-69: a reversible clarify with a declared, menu-consistent default proceeds
+
+    on the assumption immediately — it never parks the turn up to the full TTL.
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        result = await ClarifyTool().execute(
+            question="Which environment?",
+            choices=["staging", "production"],
+            default="staging",
+        )
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    assert "staging" in result.output
+    assert "assum" in result.output.lower()
+    assert "ABORT" not in result.output
+    # No delivery, no pending entry — the gate short-circuited before any park.
+    adapter = with_gateway._adapters["cli"]
+    assert isinstance(adapter, _FakeAdapter)
+    assert adapter.calls == []
+    assert with_gateway.try_resolve("s1", "cli", "x") is None
+
+
+async def test_pre_park_high_stakes_still_parks(with_gateway: ClarifyGateway) -> None:
+    """F-69: a high-stakes/irreversible gate is NEVER pre-resolved — it still parks
+
+    on the human even with a menu-consistent default (never assume consent).
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        task = asyncio.ensure_future(
+            ClarifyTool().execute(
+                question="Delete which database?",
+                choices=["primary", "replica"],
+                default="replica",
+                high_stakes=True,
+            ),
+        )
+        await asyncio.sleep(0)  # let it register + park on the waiter
+        adapter = with_gateway._adapters["cli"]
+        assert isinstance(adapter, _FakeAdapter)
+        assert len(adapter.calls) == 1  # it DID ask the human — no pre-resolve
+        resolved = with_gateway.try_resolve("s1", "cli", "replica")
+        assert resolved is not None  # a parked waiter was woken
+        result = await task
+    finally:
+        TraceContext.reset(trace)
+
+    assert result.success is True
+    assert "replica" in result.output
+
+
+async def test_pre_park_ambiguous_multi_choice_still_parks(
+    with_gateway: ClarifyGateway,
+) -> None:
+    """F-69: a genuine multi-choice decision with no default still parks on the
+
+    human — the pre-park gate only fires for a clear most-likely answer.
+    """
+    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    try:
+        task = asyncio.ensure_future(
+            ClarifyTool().execute(question="X or Y?", choices=["X", "Y"]),
+        )
+        await asyncio.sleep(0)  # let it register + park on the waiter
+        adapter = with_gateway._adapters["cli"]
+        assert isinstance(adapter, _FakeAdapter)
+        assert len(adapter.calls) == 1  # it DID ask the human
+        resolved = with_gateway.try_resolve("s1", "cli", "X")
+        assert resolved is not None
+        await task
+    finally:
+        TraceContext.reset(trace)
+
+
 async def test_interactive_pivot_returns_cancelled(with_gateway: ClarifyGateway) -> None:
     """A user PIVOT (cancel_pending) yields the DISTINCT set-aside result.
 
