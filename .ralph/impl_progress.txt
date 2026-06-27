@@ -12,9 +12,14 @@ after the ADR-4 merge left HEAD on main). Already pushed. NOT force-fixed — fo
 risk (prior landmine). Branch ref feat/adr-2-recovery-actuator created at b6645029 for traceability. GOING
 FORWARD: branch FIRST every iteration (git checkout main && git checkout -b feat/adr-<n>-... BEFORE any edit).
 
-ADR-2 still [ ]: the substrate exists but no subsystem routes to recover() on the live path yet (the ADR-2
-invariant needs ≥1 site delegating). NEXT INCREMENT (continue ADR-2): route subsystems to RecoveryActuator.recover(),
-one per step behind a flag, re-verifying each rung:
+UPDATE (iter 5, main @43de88a2): execute-loop now DELEGATES the retry DECISION too —
+RecoveryActuator.should_retry(classify_tool_failure(...)) replaced the inline guard (byte-identical).
+So the tool-dispatch path delegates to the authority END-TO-END (classifier + decision). ADR-2 still [ ]:
+the NON-TOOL failure paths still surrender on their own. Branch-first was honored this time
+(feat/adr-2-subsystem-routing).
+
+ADR-2 still [ ]: NEXT INCREMENT (continue ADR-2): route the NON-TOOL subsystems to
+RecoveryActuator.recover(), one per step behind a flag, re-verifying each rung:
   1. providers/llm_gateway.py except-blocks (:128/:241) — hand provider faults to recover() w/ reroute=next-tier
      (closes F-16/17/18/21; note: cascade already mostly works via is_cascadable_fault — make it DELEGATE).
   2. channel adapters transport drop (F-64/65/66) reroute=alt-channel.
