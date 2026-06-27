@@ -353,3 +353,23 @@ in isolation. Flag for a separate fix.
   VERIFY (full): a turn that recovered+acted-on-assumption+steered-by-heuristic → ledger has
     all 3+reasons (current test covers the first two; add heuristic after 2b).
   After step 3 → ADR-7 [x] → 7-ADR Jarvis arc COMPLETE.
+
+ITERATION 20 — ADR-7 [x] COMPLETE → 7-ADR JARVIS ARC COMPLETE. — 2026-06-27
+STEP 2b+3 SHIPPED @main f8ca91f2 (subagent-driven). Remaining 2 emitters + read surface:
+  - router/classifier: ClarifyIntentClassifier.explain_answer wraps _explain_answer, emits
+    "router" Decision (answer-vs-new + F-72 confidence + reason). is_answer routes through it
+    → both clear + low-confidence paths captured.
+  - learned_context: lesson_context.record_applied emits "learned_context" Decision (lesson_id
+    + what_you_did) where a heuristic actually steered.
+  - STEP 3 read surface: decision_ledger.render_why(decisions)->str (pure/total; "point —
+    verdict — reason" per line; "" empty). No /explain command exists yet → helper+tests are
+    the deliverable, wire when an explain surface lands.
+ALSO fixed pre-existing stale test @67c26cfc (test_execute_floor_invariant deadline=None: the
+default backstop deliberately has NO wall-clock cap; test was codifying removed 120s behavior).
+ALL 5 authority emitters live (acceptance/recovery/reversibility/learned_context/router); verify
+test asserts all 5 land in one turn each with a reason. 138 green; ruff+mypy clean. Additive,
+no-op when unbound, byte-identical OFF.
+═══ 7-ADR JARVIS ARC COMPLETE: ADR-1/2/3/4/5/6/7 all [x]. ═══
+REMAINING (NOT ADR work — operational): live e2e verification on a real box — NONE of the
+flag flips or ADR features confirmed against a running server, only unit/integration suites.
+Optional next: wire render_why into a user-facing /explain or "why did you do that?" surface.
