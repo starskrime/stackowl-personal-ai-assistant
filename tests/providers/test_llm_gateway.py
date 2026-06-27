@@ -265,7 +265,8 @@ def test_complete_falls_back_to_higher_tier_on_provider_fault() -> None:
     out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
     assert out.content == "recovered answer"
     assert out.model == "standard"
-    assert len(fast.complete_calls) == 1  # floor was attempted then cascaded
+    # ADR-2 (default ON): the floor is attempted + retried once on the same tier, THEN cascaded.
+    assert len(fast.complete_calls) == 2
     assert len(powerful.complete_calls) == 0  # stopped once standard answered
 
 
@@ -335,7 +336,8 @@ def test_complete_rate_limited_floor_cascades_to_higher_tier() -> None:
     out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
     assert out.content == "recovered after cap"
     assert out.model == "standard"
-    assert len(fast.complete_calls) == 1  # capped floor attempted then cascaded
+    # ADR-2 (default ON): capped floor attempted + same-tier retry once, THEN cascaded.
+    assert len(fast.complete_calls) == 2
     assert len(powerful.complete_calls) == 0  # stopped once standard answered
 
 
@@ -444,3 +446,59 @@ def test_complete_cascade_log_carries_degraded_from(
     assert any(f.get("degraded_from") == "fast-primary" for f in fields), (
         "the cascade fallback log must carry the degraded_from marker"
     )
+
+
+# --- ADR-2: same-tier retry-once on a transient provider fault -----------------
+
+
+class _FlakyProvider(_FakeProvider):
+    """Raises a classified fault on the first ``fail_times`` calls, then answers."""
+
+    def __init__(self, name: str, *, fail_times: int, reply: str) -> None:
+        super().__init__(name, reply=reply)
+        self._left = fail_times
+
+    async def complete(self, messages: list[Message], model: str, **kwargs: Any) -> CompletionResult:
+        if self._left > 0:
+            self._left -= 1
+            self.complete_calls.append(messages)
+            raise CircuitOpenError(self.name, 30.0)
+        return await super().complete(messages, model, **kwargs)
+
+
+def test_same_tier_retry_recovers_without_cascade(monkeypatch: Any) -> None:
+    from stackowl.providers import llm_gateway as _gw
+
+    monkeypatch.setattr(_gw, "_retry_same_tier_enabled", lambda: True)
+    fast = _FlakyProvider("fast", fail_times=1, reply="recovered same tier")
+    standard = _FakeProvider("standard", reply="should not be reached")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": standard}))
+    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    assert out.content == "recovered same tier"
+    assert out.model == "fast"  # stayed on the same tier — no cascade burned
+    assert len(fast.complete_calls) == 2  # initial fault + same-tier retry
+    assert len(standard.complete_calls) == 0  # never cascaded
+
+
+def test_flag_off_is_single_attempt_then_cascade(monkeypatch: Any) -> None:
+    from stackowl.providers import llm_gateway as _gw
+
+    monkeypatch.setattr(_gw, "_retry_same_tier_enabled", lambda: False)
+    fast = _FaultyProvider("fast", fault=CircuitOpenError("fast", 30.0))
+    standard = _FakeProvider("standard", reply="recovered answer")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": standard}))
+    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    assert out.content == "recovered answer"
+    assert len(fast.complete_calls) == 1  # flag OFF ⇒ no retry ⇒ immediate cascade (pre-ADR)
+
+
+def test_same_tier_retry_at_ceiling_recovers(monkeypatch: Any) -> None:
+    # Even with no headroom to cascade, a transient blip at the ceiling gets one retry.
+    from stackowl.providers import llm_gateway as _gw
+
+    monkeypatch.setattr(_gw, "_retry_same_tier_enabled", lambda: True)
+    powerful = _FlakyProvider("powerful", fail_times=1, reply="healed at ceiling")
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    out = asyncio.run(gw.complete([_user("hi")], floor="powerful", ceiling="powerful"))
+    assert out.content == "healed at ceiling"
+    assert len(powerful.complete_calls) == 2
