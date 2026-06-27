@@ -150,18 +150,22 @@ def _should_surface_failure_history(state: PipelineState) -> bool:
     return state.intent_class == "standard" and state.intent_classified
 
 
-async def _gather_recent_reflections(owl_name: str, limit: int = 3) -> str:
-    """Best-effort: surface the agent's most recent reflections for this owl.
+async def _gather_recent_reflections(
+    owl_name: str, query: str = "", limit: int = 3
+) -> str:
+    """Best-effort: surface the agent's reflections for this owl.
 
     Reflexion-style — what went wrong recently and what the agent suggested
     doing differently. Reads from the ``reflections`` table (Commit 2). When
     the table is empty or the DB pool isn't wired (tests, dry-run), returns
     "" and the rest of classify proceeds normally.
 
-    Note: this is a recency-based fallback. Semantic recall over the
-    embedding column lands in Commit 5 (lessons_index) which lets us surface
-    reflections matching the CURRENT query's failure pattern, not just the
-    most-recent-N.
+    ADR-5 (F-50): when ``settings.trustworthy_learning`` is ON and an embedding
+    registry + ``query`` are available, recall is SEMANTIC (``semantic_for_owl`` —
+    reflections matching the CURRENT intent) instead of recency-only. The semantic
+    path self-degrades to recency when embeddings are unavailable, so it is always
+    safe. OFF ⇒ recency-only (``recent_for_owl``), byte-identical. Reads only — never
+    surfaces a negative (reflections are positive-only by construction).
     """
     # 1. ENTRY
     log.engine.debug(
@@ -183,12 +187,29 @@ async def _gather_recent_reflections(owl_name: str, limit: int = 3) -> str:
     # from "nothing learned"). We never raise — the turn must stay alive.
     from stackowl.memory.reflection_store import ReflectionStore
 
+    # ADR-5 (F-50): prefer SEMANTIC recall when the flag is ON and both a query and an
+    # embedding registry are available; otherwise recency. ``semantic_for_owl`` itself
+    # falls back to recency on any embed failure, so this is fail-safe.
+    use_semantic = False
+    try:
+        from stackowl.config.settings import Settings
+
+        use_semantic = bool(Settings().trustworthy_learning)
+    except Exception:  # noqa: BLE001 — a flag read must never break recall
+        use_semantic = False
+    embeddings = getattr(services, "embedding_registry", None)
+
     reflections = None
     last_exc: Exception | None = None
     for attempt in (1, 2):  # original try + one retry
         try:
             store = ReflectionStore(db)
-            reflections = await store.recent_for_owl(owl_name, limit=limit)
+            if use_semantic and embeddings is not None and query.strip():
+                reflections = await store.semantic_for_owl(
+                    owl_name, query, embeddings, limit=limit
+                )
+            else:
+                reflections = await store.recent_for_owl(owl_name, limit=limit)
             last_exc = None
             break
         except Exception as exc:  # B5 — never crash classify on a recall hiccup
@@ -572,7 +593,11 @@ async def run(state: PipelineState) -> PipelineState:
     prefs_block = await _gather_preferences(state.identity_key or state.session_id)
     # Reflexion-style learnings from past failures (Commit 2).
     _surface_failures = _should_surface_failure_history(state)
-    reflections_block = await _gather_recent_reflections(state.owl_name, limit=3) if _surface_failures else ""
+    reflections_block = (
+        await _gather_recent_reflections(state.owl_name, query=state.input_text, limit=3)
+        if _surface_failures
+        else ""
+    )
     # Live action recall — what the agent DID on prior turns this session
     # (excludes the in-flight turn). Lets it answer "what did you just do?".
     actions_block = await _gather_recent_actions(
