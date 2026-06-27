@@ -838,6 +838,16 @@ class Settings(BaseSettings):
     # agrees with the bounded budget gates — the in-flight requeue / re-dispatch EXECUTION is
     # unchanged. Default ON (owner-approved); False ⇒ the inline decisions (byte-identical).
     unify_gateway_recovery: bool = True
+    # ADR-3 — route every interaction gate's "ask the human or act?" decision through the
+    # one ReversibilityResolver. A reversible, low-stakes decision with a clear most-likely
+    # answer resolves ACT_WITH_ASSUMPTION (act, state the assumption, keep the undo handle)
+    # instead of parking; only an irreversible-or-high-stakes-or-genuinely-ambiguous
+    # decision reaches the user. The gates (clarify ``_resolve_default``, consent
+    # ``reversible`` tier, cost-pause block-threshold, objective ``_park_is_irreversible``)
+    # DELEGATE to the resolver; nothing is removed. Default OFF ⇒ each gate runs its
+    # pre-ADR inline rule, byte-identical. Intended ON in production once green (this
+    # powerful machine affords a default-resolution check rather than over-asking).
+    reversibility_resolver: bool = False
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

@@ -55,6 +55,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.interaction.reversibility_resolver import (
+    Decision,
+    Reversibility,
+    ReversibilityResolver,
+    reversibility_resolver_enabled,
+)
 from stackowl.pipeline.budget.human_wait import record_human_wait
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -159,7 +165,30 @@ class ClarifyGateway:
           the default is one of them) → that default (a reversible assumption).
         * otherwise ``None`` — a real multi-choice decision with no default parks,
           so existing callers (Continue/Stop, Approve/Reject, …) are unchanged.
+
+        ADR-3: when ``settings.reversibility_resolver`` is ON this DELEGATES to the one
+        :class:`ReversibilityResolver` — a strict generalization of the rule below, so the
+        returned assumption is byte-identical. OFF ⇒ the inline pre-ADR rule runs.
         """
+        if reversibility_resolver_enabled():
+            # The clarify gate's reversibility: a high-stakes question is irreversible
+            # (always park); otherwise the assumption is correctable (reversible, no undo
+            # handle — the user simply re-answers). The resolver applies the same
+            # one-item-menu / consistent-default rule and returns the assumption (or None).
+            rev = (
+                Reversibility.irreversible()
+                if high_stakes
+                else Reversibility.reversible()
+            )
+            verdict = ReversibilityResolver().resolve(
+                Decision(
+                    reversibility=rev,
+                    high_stakes=high_stakes,
+                    choices=choices,
+                    default=default,
+                )
+            )
+            return verdict.assumption
         if high_stakes:
             return None
         if len(choices) == 1:
