@@ -863,6 +863,14 @@ class Settings(BaseSettings):
     # containment, so ON is safe on any box; set False for the pre-ADR recency-only recall
     # with no scratch (also byte-identical — the moves are dead when OFF).
     trustworthy_learning: bool = True
+    # ADR-6 — closed-loop lifecycle. When ON, the periodic health sweep stops being
+    # detect-only: a down/degraded subsystem with a registered HealableResource is
+    # HEALED (``ensure_available`` recycle, retry-bounded via the ADR-2 RecoveryActuator)
+    # then RE-VERIFIED (re-collect); only a subsystem still down AFTER the heal escalates
+    # to the operator alert. A recovered subsystem logs "recovered" and does NOT alert.
+    # Default OFF ⇒ the sweep is the pre-ADR detect+alert path, byte-identical (no heal,
+    # no re-collect). Safe on any box: with no healers wired the loop is a no-op even ON.
+    health_loop: bool = False
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
