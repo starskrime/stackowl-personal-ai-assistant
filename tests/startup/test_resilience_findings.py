@@ -169,3 +169,26 @@ async def test_respawn_reconnects_successfully_no_false_timeout(
     stop_event.set()
     release.set()
     await asyncio.wait_for(task, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_core_crash_emits_user_notice() -> None:
+    # F-39 — an unexpected core exit must reach the user, not just the operator log.
+    stop_event = asyncio.Event()
+    seen: list[int | None] = []
+
+    async def _on_crash(rc: int | None) -> None:
+        seen.append(rc)
+        stop_event.set()  # one crash is enough — stop before the respawn/backoff
+
+    proc_holder: dict[str, object] = {"proc": _FakeProc(7)}  # crashes with rc=7
+
+    await asyncio.wait_for(
+        orch._supervise_core(
+            proc_holder, Path("/tmp/owl.sock"), stop_event, None,  # type: ignore[arg-type]
+            on_crash=_on_crash,
+        ),
+        timeout=10,
+    )
+
+    assert seen == [7], "crash notice must fire once with the exit code"
