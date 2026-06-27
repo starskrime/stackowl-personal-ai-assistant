@@ -131,6 +131,20 @@ class SendMessageTool(Tool):
             toolset_group=_TOOLSET_GROUP,
         )
 
+    def post_condition(
+        self, args: dict[str, object], result: ToolResult
+    ) -> object | None:
+        """ADR-1 — observe the transport ACK through the AcceptanceAuthority. The
+        deliverer's ``delivery_status`` (distinct from the success bool) is the
+        observation; only ``'delivered'`` is a confirmed delivery. ``None`` for a
+        non-delivery call (``action='list'``). Keeps the self-stamp for flag-off
+        byte-identical behavior (batched stays verified=False)."""
+        from stackowl.tools.scheduling._delivery_postcondition import (
+            delivery_post_condition,
+        )
+
+        return delivery_post_condition(result.output)
+
     async def execute(self, **kwargs: object) -> ToolResult:
         t0 = time.monotonic()
         # 1. ENTRY
