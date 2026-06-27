@@ -27,6 +27,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.interaction.reversibility_resolver import (
+    Decision,
+    Reversibility,
+    ReversibilityResolver,
+    reversibility_resolver_enabled,
+)
 from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.acceptance import AcceptanceChecker
@@ -415,7 +421,22 @@ class ObjectiveDriverHandler(JobHandler):
         decision; a park with no consequential footprint is a trivial/reversible clarify
         the assistant may resolve itself with a best-effort default. Conservative on the
         boundary — when the snapshot is ambiguous we do NOT over-escalate, deferring to
-        the consequential-failure signal that the execute step stamps explicitly."""
+        the consequential-failure signal that the execute step stamps explicitly.
+
+        ADR-3: when ``settings.reversibility_resolver`` is ON this DELEGATES the
+        escalate-or-not classification to the one :class:`ReversibilityResolver` — a
+        consequential footprint maps to an ``irreversible`` signal, a clean park to
+        ``reversible``, and ``must_reach_user`` reproduces ``bool(consequential_failures)``
+        exactly (byte-identical). OFF ⇒ the inline check runs."""
+        if reversibility_resolver_enabled():
+            decision = Decision(
+                reversibility=(
+                    Reversibility.irreversible()
+                    if state.consequential_failures
+                    else Reversibility.reversible()
+                )
+            )
+            return ReversibilityResolver.must_reach_user(decision)
         return bool(state.consequential_failures)
 
     async def _requeue_recoverable(self, store: ObjectiveStore) -> int:
