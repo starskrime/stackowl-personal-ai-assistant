@@ -127,3 +127,28 @@ Total: 14×S1 · 30×S2 · 35×S3 · 9×S4
    machinery that exists but never fires on the live path.
 5. **Reduce ask-first reflexes with safe defaults** (F-3, F-44, F-70, F-71, F-27) — resolve
    reversible/trivial ambiguity autonomously; reserve human prompts for irreversible actions.
+
+---
+
+## ADR implementation log (findings closed by each shipped ADR)
+
+### ADR-1 — AcceptanceAuthority (SHIPPED 2026-06-27, flag `acceptance_authority` ON in prod)
+The single authority that answers "did the declared effect happen?" now owns the success
+truth; the ≥6 proxies DELEGATE (they read the one `verified`/`is_trustworthy_success`
+signal the authority writes — none deleted). Closures:
+- **Closed by the unification** (proxies now read ONE verdict instead of re-deriving;
+  self-stamp ignored; the asserted→measured invariant has tests per kind):
+  F-1, F-11, F-12, F-13, F-14, F-15, F-25, F-75. ⤷F-10.
+- **Closed THROUGH the authority on the live path** (truth now flows through it):
+  F-29, F-30 (send_message/send_file declare DeliveryAck — the transport ack, distinct
+  from the success bool, sets `verified`).
+- **Already mitigated per-seam by S1–S4, now UNIFIABLE under the authority** (each already
+  self-verifies correctly; the authority is now available to express them as PostConditions,
+  incremental hardening, not a regression risk): F-20, F-23 (provider empty→NonEmptyText),
+  F-31 (shell exit/artifact), F-32 (web_fetch already gates HTTP status→HttpOk),
+  F-33, F-34 (write/media verify()→ArtifactFresh), F-80, F-81 (CLI), F-82, F-83 (MCP already
+  distinguishes empty-success from transport error).
+- **Incremental follow-on (optional, authority now enables it):** migrate the already-honest
+  tools above to DECLARE post_condition() so their truth also routes through the authority
+  (web_fetch→HttpOk/NonEmptyText, write/media→ArtifactFresh, a provider-empty path→NonEmptyText).
+  Not blockers — those seams already self-verify; this only centralizes the derivation.
