@@ -540,20 +540,18 @@ def _record_substitution_success(
 
 
 def _is_transient_failure(tr: ToolResult) -> bool:
-    """F-7 — classify a GENUINE tool failure (success=False) as transient.
+    """F-7 / ADR-2 — classify a GENUINE tool failure (success=False) as transient.
 
-    A transient failure (a dropped connection, a reset socket, a momentarily
-    locked DB, a closed pipe) can self-heal on a second attempt, whereas a
-    deterministic failure (bad input, missing capability, refusal) will not.
-    Reuses the project's established dead-handle marker set
-    (``DEFAULT_DEAD_HANDLE_MARKERS``) — the SAME infrastructure-fault vocabulary
-    the resource-recycling layer already trusts — rather than inventing a new
-    keyword list. Reads only the structured error/output text the tool reported.
-    """
-    from stackowl.infra.resilience import DEFAULT_DEAD_HANDLE_MARKERS
+    DELEGATES to the RecoveryActuator's single classifier
+    (:func:`stackowl.pipeline.recovery_actuator.is_transient_result`) so the transient
+    vocabulary lives with the one recovery authority instead of in this loop. Behavior is
+    unchanged (the classifier is the relocated body of this function): a transient failure
+    (dropped connection, reset socket, locked DB, closed pipe) can self-heal on a second
+    attempt; a deterministic failure (bad input, missing capability, refusal) cannot. The
+    execute-loop B4 ladder is thus the actuator's tool-dispatch caller (nothing removed)."""
+    from stackowl.pipeline.recovery_actuator import is_transient_result
 
-    text = f"{tr.error or ''}\n{tr.output or ''}"
-    return any(marker in text for marker in DEFAULT_DEAD_HANDLE_MARKERS)
+    return is_transient_result(tr)
 
 
 # REACT-1/F032+F090 — hard ceiling on the FALLBACK window probe. The steady path
