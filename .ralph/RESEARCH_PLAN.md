@@ -48,4 +48,5 @@ Dependency note: T1 is upstream of T2/T5/T6/T7 (they all need a trustworthy
   Generates: F-9, F-19, F-28. ⤷F-10, F-39, F-47, F-72.
 
 ## Status
-Theme map built (iteration 1). 0/7 ADRs written. Next: T1 (AcceptanceAuthority) — the keystone.
+All 7 themes diagnosed (ROOT_CAUSES.md) + ADR-1..7 written (.ralph/adr/). RESEARCH COMPLETE.
+Build order: ADR-1 → ADR-4 → ADR-2 → ADR-3 → ADR-5 → ADR-6 → ADR-7 (ADR-1 is the keystone).
