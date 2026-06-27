@@ -850,6 +850,17 @@ class Settings(BaseSettings):
     # Default ON (owner-approved). Set False for the pre-ADR per-gate inline rules
     # (also byte-identical).
     reversibility_resolver: bool = True
+    # ADR-5 — trustworthy/verified-gated learning REACHABILITY. When ON, the live decision
+    # path READS what it learned with the richer-but-dormant machinery instead of the
+    # recency-only fallback: reflection recall becomes SEMANTIC (``semantic_for_owl`` —
+    # surfaces reflections matching the CURRENT intent, F-50) and the within-turn
+    # failed-approach scratch is consulted before re-trying (F-26/43/72). Reads only —
+    # NEVER persists a negative (positive-only directive). Mining is already gated on
+    # MEASURED success (ADR-1/B4b: a ``verified=False`` effect collapses to
+    # ``failure_class="unachieved_effect"`` which every learner already excludes). Default
+    # OFF ⇒ recency-only recall, byte-identical. ``semantic_for_owl`` self-degrades to
+    # recency when embeddings are unavailable, so ON is safe on any box.
+    trustworthy_learning: bool = False
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
