@@ -871,6 +871,13 @@ class Settings(BaseSettings):
     # Default OFF ⇒ the sweep is the pre-ADR detect+alert path, byte-identical (no heal,
     # no re-collect). Safe on any box: with no healers wired the loop is a no-op even ON.
     health_loop: bool = True
+    # ADR-7 — the DecisionLedger: per-turn, queryable record to which every ADR-1–6
+    # authority emits a typed Decision{point, verdict, reason, alternatives, evidence}.
+    # When ON the backend binds a fresh ledger per turn so emit sites and consumers
+    # (recovery_summary, the crash path, an /explain surface) can record/read verdicts.
+    # OFF ⇒ the backend skips the bind ⇒ record_decision is a silent no-op ⇒ ledger
+    # empty, logs unchanged: byte-identical to the pre-ADR-7 path (the ADR-7 rollback).
+    decision_ledger: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

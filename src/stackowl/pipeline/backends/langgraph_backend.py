@@ -21,7 +21,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from stackowl.exceptions import InfrastructureError
-from stackowl.infra import recovery_context, tool_outcome_ledger
+from stackowl.infra import decision_ledger, recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline import lesson_context as lc
@@ -150,6 +150,15 @@ class LangGraphBackend(OrchestratorBackend):
         lesson_token = lc.bind()
         recovery_token = recovery_context.bind()
         ledger_token = tool_outcome_ledger.bind()
+        # ADR-7 — bind the per-turn DecisionLedger only when enabled (default ON; off
+        # only if settings explicitly sets decision_ledger=False). Unbound ⇒
+        # record_decision no-ops ⇒ byte-identical to the pre-ADR-7 path.
+        _settings = self._services.settings
+        decision_token = (
+            decision_ledger.bind()
+            if _settings is None or _settings.decision_ledger
+            else None
+        )
         human_wait_token = human_wait_ctx.bind()
         try:
             compiled = await self._ensure_compiled()
@@ -200,6 +209,8 @@ class LangGraphBackend(OrchestratorBackend):
                     }},
                 )
             human_wait_ctx.reset(human_wait_token)
+            if decision_token is not None:
+                decision_ledger.reset(decision_token)
             tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
             lc.reset(lesson_token)
