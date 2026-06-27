@@ -1,3 +1,33 @@
+ITERATION 13 — ADR-5 KEYSTONE shipped (merged to main), ADR-5 still [ ] (move-3 remains). — 2026-06-27
+Done: ADR-1/4/2/3 [x]. ADR-5 = trustworthy/verified-gated learning. RECON FINDING (research-before-
+building): MOVE 1 was ALREADY enforced — ADR-1/B4b @asyncio_backend.py:336-340 collapses a verified=False
+effect (consequential_failures / refuted AcceptanceVerdict) into BOTH success=trustworthy AND
+failure_class="unachieved_effect"; ALL learners (miner tool_outcome_miner.py:112 `if o.failure_class:
+continue`, critic outcome_store.py:176, reflection reflection_store.py:76, dna_attribution.py:154) already
+gate on failure_class IS NULL. So "mine only MEASURED success" needs NO new code — there is NO `verified`
+column; failure_class="unachieved_effect" IS the persisted proxy for verified=False. Locked with invariant
+test (verified-false outcome never mined).
+SHIPPED THIS ITER (flag settings.trustworthy_learning default OFF=byte-identical):
+  - MOVE 1: invariant test only (already-enforced). F-26 source gate.
+  - MOVE 2 (F-50): classify._gather_recent_reflections now calls the CODED-BUT-DEAD
+    ReflectionStore.semantic_for_owl (reflection_store.py:266) when flag ON + query + embedding_registry
+    present; recency-only recent_for_owl when OFF. semantic_for_owl self-degrades to recency on embed
+    failure → ON safe on any box. Caller @classify.py:575 now passes query=state.input_text.
+    (F-46 mean_quality-in-ranking ALREADY DONE @heuristic_ranking.py:82 live via classify.py:436.)
+  5 ADR-5 tests @tests/learning/test_adr5_trustworthy_learning.py; learning 26 + classify 18 green; ruff+mypy clean.
+
+★REMAINING for ADR-5 [x] (next iteration, then ask owner to flip trustworthy_learning ON):
+  - MOVE 3 (F-43/72): ephemeral WITHIN-TURN failed-approaches scratch. PipelineState has NO scratch field
+    (state.py:242 has `no_progress_tools` tuple — mirror it: add `failed_approaches: tuple[str,...]=()`).
+    Loop records a failed approach @execute.py:1188 (the `else` non-trustworthy branch; circuit breaker
+    already bounces same-tool after threshold=3). Add a consult before re-trying. NOTE: loop failure
+    tracking currently lives in TurnProgressTracker/ContextVars, not PipelineState — decide where scratch lives.
+  - F-4 decision-time learned-heuristic consult @execute.py:1210 is DELIBERATELY DEAD (latency + weak-model
+    amplification safety; guarded by tests/learning/test_heuristic_demote.py). The code note says re-surfacing
+    needs its own design. DO NOT blindly re-add — honor the guard; ADR-5 doesn't resolve the amplification risk.
+    find_for_tool ORDER BY evidence_count (tool_heuristic_store.py:124) would need quality if re-wired.
+BUILD ORDER REMAINING: finish ADR-5 move-3 → ADR-6 → ADR-7.
+
 ITERATION 12 — ★ADR-3 COMPLETE & MARKED [x]. — 2026-06-27
 Done: ADR-1 [x], ADR-4 [x], ADR-2 [x], ADR-3 [x]. ALL 5 interaction gates now DELEGATE their
 ask-vs-act decision to the ONE ReversibilityResolver (interaction/reversibility_resolver.py):
