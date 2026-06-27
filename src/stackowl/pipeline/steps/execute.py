@@ -1225,19 +1225,25 @@ async def _run_with_tools(
         # Bounded to one retry per tool per turn (the shared retried_unverified set) —
         # never a retry spiral. CONSEQUENTIAL tools are NEVER auto-retried: an
         # irreversible effect must not be re-fired blind.
-        _unverified_effect = tr.success and tr.verified is False
-        _transient_genuine = (not tr.success) and _is_transient_failure(tr)
-        if (
-            (_unverified_effect or _transient_genuine)
-            and not is_consequential
-            and name not in retried_unverified
-        ):
+        # ADR-2 — DELEGATE the retry DECISION to the one RecoveryActuator. classify_tool_failure
+        # derives the same two recoverable shapes (unverified_effect = success∧verified is False;
+        # transient = ¬success∧dead-handle-marker) and should_retry applies the same
+        # not-consequential guard — byte-identical to the former inline predicate, but the policy
+        # now lives with the authority (the execute loop is its tool-dispatch caller). The
+        # one-retry-per-turn bound (retried_unverified) stays here (it is loop state, not policy).
+        from stackowl.pipeline.recovery_actuator import (
+            RecoveryActuator,
+            classify_tool_failure,
+        )
+
+        _failure = classify_tool_failure(tr, name=name, consequential=is_consequential)
+        if RecoveryActuator().should_retry(_failure) and name not in retried_unverified:
             retried_unverified.add(name)
             log.engine.info(
                 "[pipeline] execute: recoverable failure — retrying once (recovery rung 1)",
                 extra={"_fields": {
                     "tool": name, "trace_id": state.trace_id,
-                    "reason": "unverified_effect" if _unverified_effect else "transient_failure",
+                    "reason": "unverified_effect" if _failure.unverified_effect else "transient_failure",
                 }},
             )
             retry_tr = await _guarded_dispatch(args)
