@@ -232,8 +232,23 @@ class SendFileTool(Tool):
             "urgency": "normal",
             "delivery_status": status,
         }
+        # HONESTY (F-29): the success flag must reflect whether the bytes reached the
+        # user, not stay green while the failure hides in `delivery_status`.
+        #   "delivered"  → success + verified  (observed reaching transport)
+        #   "failed"     → success=False       (transport gave up after retry)
+        #   "batched"/"suppressed"/"deferred" → success but verified=False (queued/
+        #     not-yet-delivered; the floor/learner can tell this from a real send).
+        if status == "failed":
+            return self._err(
+                f"delivery to {target!r} failed: the transport could not upload the "
+                "file after retry — it did NOT reach the user.",
+                t0,
+                record=record,
+                extra={"action": "send_file", "channel": target, "delivery_status": status},
+            )
+        verified = status == "delivered"
         return self._ok(
-            record, t0, note=f"send_file {status}",
+            record, t0, note=f"send_file {status}", verified=verified,
             extra={"action": "send_file", "channel": target, "delivery_status": status},
         )
 
@@ -363,27 +378,56 @@ class SendFileTool(Tool):
 
     def _ok(
         self, record: dict[str, object], t0: float, *,
-        note: str | None = None, extra: dict[str, object] | None = None,
+        note: str | None = None, verified: bool | None = None,
+        extra: dict[str, object] | None = None,
     ) -> ToolResult:
-        # 4. EXIT
+        # 4. EXIT. ``verified`` is the reality check distinct from the self-reported
+        # success: None (default) ⇒ nothing to verify and the result is byte-identical
+        # to pre-verification behavior; True ⇒ the bytes were observed reaching the
+        # transport; False ⇒ accepted-but-queued (not yet delivered) so a downstream
+        # decider does NOT treat it as a real delivery.
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "send_file.execute: exit",
-            extra={"_fields": {"success": True, "duration_ms": duration_ms, **(extra or {})}},
+            extra={"_fields": {
+                "success": True, "verified": verified,
+                "duration_ms": duration_ms, **(extra or {}),
+            }},
         )
         payload: dict[str, object] = {"record": record}
         if note is not None:
             payload["note"] = note
         out = json.dumps(payload, ensure_ascii=False)
-        return ToolResult(success=True, output=out, duration_ms=duration_ms)
+        return ToolResult(
+            success=True, output=out, verified=verified, duration_ms=duration_ms
+        )
 
     @staticmethod
-    def _err(msg: str, t0: float) -> ToolResult:
-        """Structured FAILED result (model knows nothing was sent); never raises."""
+    def _err(
+        msg: str, t0: float, *,
+        record: dict[str, object] | None = None,
+        extra: dict[str, object] | None = None,
+    ) -> ToolResult:
+        """Structured FAILED result (model knows nothing was sent); never raises.
+
+        ``record`` carries the structured delivery record into ``output`` for the
+        delivery-failure path (so ``delivery_status`` survives for backward-compat);
+        pre-execution refusals pass none and keep an empty output.
+        """
         msg = f"send_file: {msg}"
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "send_file.execute: exit",
-            extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
+            extra={"_fields": {
+                "success": False, "error": msg,
+                "duration_ms": duration_ms, **(extra or {}),
+            }},
         )
-        return ToolResult(success=False, output="", error=msg, duration_ms=duration_ms)
+        out = (
+            json.dumps({"record": record}, ensure_ascii=False)
+            if record is not None
+            else ""
+        )
+        return ToolResult(
+            success=False, output=out, error=msg, duration_ms=duration_ms
+        )

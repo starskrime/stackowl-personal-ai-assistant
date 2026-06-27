@@ -172,7 +172,9 @@ class NotificationAssembly:
         # register_all_commands (commands/assembly.py) which runs after this
         # method returns and has access to the router via CommandDeps.
         focus_command = FocusCommand(router=router, event_bus=event_bus)
-        urgent_command = UrgentCommand(router=router)
+        # F-76 — give /urgent the REAL transport seam so it transports + counts
+        # genuine deliveries (the router alone never touches a channel adapter).
+        urgent_command = UrgentCommand(router=router, deliverer=proactive_deliverer)
         quiet_command = QuietHoursCommand(db=db)
         notifications_missed_command = NotificationsMissedCommand(db=db)
         log.notifications.info(

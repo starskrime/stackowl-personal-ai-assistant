@@ -101,6 +101,9 @@ class McpTool(Tool):
         return sanitize_mcp_schema(self._definition.input_schema)
 
     async def execute(self, **kwargs: object) -> ToolResult:
+        # Lazy import avoids a module-load cycle (client.py imports McpTool).
+        from stackowl.mcp.client import McpCallError
+
         log.debug(
             "mcp_tool.execute: entry",
             extra={"_fields": {"tool": self.name, "arg_keys": list(kwargs.keys())}},
@@ -117,7 +120,24 @@ class McpTool(Tool):
                 "mcp_tool.execute: exit",
                 extra={"_fields": {"tool": self.name, "duration_ms": duration_ms}},
             )
+            # A genuinely empty-but-successful tool result is preserved as
+            # success=True / output="" — only a raised McpCallError (transport or
+            # blocked) becomes success=False below (F-82, S1).
             return ToolResult(success=True, output=result_str, duration_ms=duration_ms)
+        except McpCallError as exc:
+            duration_ms = (time.monotonic() - t0) * 1000
+            if exc.kind == "blocked":
+                error = f"MCP call blocked: {exc.message}"
+            elif exc.kind == "not_installed":
+                error = f"MCP unavailable: {exc.message}"
+            else:  # transport
+                error = f"MCP call failed: {exc.message}"
+            log.error(
+                "mcp_tool.execute: call failed (typed)",
+                exc_info=exc,
+                extra={"_fields": {"tool": self.name, "kind": exc.kind, "duration_ms": duration_ms}},
+            )
+            return ToolResult(success=False, output="", error=error, duration_ms=duration_ms)
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             log.error(

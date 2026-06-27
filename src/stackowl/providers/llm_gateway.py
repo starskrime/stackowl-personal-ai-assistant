@@ -20,7 +20,9 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any
 
+from stackowl.exceptions import CircuitOpenError, RateLimitError
 from stackowl.infra.observability import log
+from stackowl.providers._resilient_round import is_provider_fault
 from stackowl.providers.base import CompletionResult, Message
 
 if TYPE_CHECKING:
@@ -41,6 +43,27 @@ ESCALATE_INSTRUCTION = (
     "more capable model. Only do this when you truly cannot produce a good answer; "
     "otherwise answer normally."
 )
+
+
+def is_cascadable_fault(exc: BaseException) -> bool:
+    """True when ``exc`` is a provider fault the gateway should CASCADE past.
+
+    This is the failure-fallback twin of the registry's complexity escalation: when
+    a resolved provider call raises, the gateway climbs to the next tier instead of
+    dead-ending at the user (F-16/F-17).
+
+    Reuses ``_resilient_round.is_provider_fault`` (transport/5xx/429/wrapped-cause
+    classification) and ADDS the two breaker-control signals it deliberately
+    excludes — :class:`CircuitOpenError` (the breaker short-circuited this provider)
+    and :class:`RateLimitError` (a deliberate cap refusal). Those two are NOT
+    recorded against the breaker, but for ROUTING they are exactly the faults a
+    higher tier should recover. Control-flow / our-own-bug errors (user-stop,
+    budget-kill, malformed-args ValueError, an arbitrary RuntimeError) stay False so
+    they propagate immediately, never masked by a silent fallback.
+    """
+    if isinstance(exc, (CircuitOpenError, RateLimitError)):
+        return True
+    return is_provider_fault(exc)
 
 
 def is_escalate_signal(text: str | None) -> bool:
@@ -100,7 +123,23 @@ class LLMGateway:
             can_escalate = idx < len(tiers) - 1
             provider, _degraded = self._registry.resolve_tier_with_fallback(tier)
             msgs = _augment_messages(messages, can_escalate)
-            result = await provider.complete(msgs, model="", **kwargs)
+            try:
+                result = await provider.complete(msgs, model="", **kwargs)
+            except BaseException as exc:
+                # F-16/F-17: a CLASSIFIED provider fault (circuit OPEN, rate-limit cap,
+                # 5xx/429, transport timeout) must cascade to the next tier — not
+                # dead-end at the user. Only on FAILURE; the happy path is unchanged.
+                # A non-fault (our bug / user-stop / budget-kill) or the LAST tier
+                # re-raises, preserving today's terminal behaviour.
+                if not (can_escalate and is_cascadable_fault(exc)):
+                    raise
+                log.engine.warning(
+                    "[llm_gateway] complete: tier failed — falling back",
+                    extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                       "to_tier": tiers[idx + 1],
+                                       "exc_type": type(exc).__name__}},
+                )
+                continue
             if can_escalate and is_escalate_signal(result.content):
                 log.engine.info(
                     "[llm_gateway] complete: model escalated — stepping up tier",
@@ -180,11 +219,29 @@ class LLMGateway:
             attempt_kwargs = dict(kwargs)
             if wrapup_deadline_fn is not None:
                 attempt_kwargs["wrapup_deadline_s"] = wrapup_deadline_fn()
-            final_text, calls = await provider.complete_with_tools(
-                user_text=user_text, system_text=sys, tool_schemas=schemas,
-                tool_dispatcher=tool_dispatcher, can_escalate=can_escalate,
-                **attempt_kwargs,
-            )
+            try:
+                final_text, calls = await provider.complete_with_tools(
+                    user_text=user_text, system_text=sys, tool_schemas=schemas,
+                    tool_dispatcher=tool_dispatcher, can_escalate=can_escalate,
+                    **attempt_kwargs,
+                )
+            except BaseException as exc:
+                # F-16/F-17: a CLASSIFIED provider fault on this tier cascades to the
+                # next tier up instead of dead-ending at the user. Reset turn-scoped
+                # state (the tool-outcome ledger) via on_escalate exactly like a
+                # discarded ESCALATE attempt so the failed attempt doesn't poison the
+                # recovery tier's give-up floor. Non-fault or LAST tier re-raises.
+                if not (can_escalate and is_cascadable_fault(exc)):
+                    raise
+                log.engine.warning(
+                    "[llm_gateway] tools: tier failed — falling back",
+                    extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                       "to_tier": tiers[idx + 1],
+                                       "exc_type": type(exc).__name__}},
+                )
+                if on_escalate is not None:
+                    await on_escalate(tier, tiers[idx + 1])
+                continue
             if can_escalate and is_escalate_signal(final_text):
                 log.engine.info(
                     "[llm_gateway] tools: model escalated mid-loop — discard + step up",

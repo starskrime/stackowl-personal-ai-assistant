@@ -194,12 +194,7 @@ class JobScheduler(SupervisedTask):
         else:
             new_retries = job.retry_count + 1
             if new_retries >= _MAX_RETRIES:
-                log.heartbeat.error(
-                    "[scheduler] %s: max retries reached — marking permanently failed",
-                    job.job_id,
-                    extra={"_fields": {"job_id": job.job_id, "retries": new_retries}},
-                )
-                await self._mark_failed(job)
+                await self._mark_failed(job, last_error=result.error)
             else:
                 # STEER-5/F113 — schedule the retry on the SEPARATE retry_at slot;
                 # NEVER touch next_run_at (the canonical recurring cadence). A
@@ -233,10 +228,91 @@ class JobScheduler(SupervisedTask):
             extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms, "next_run": next_run}},
         )
 
-    async def _mark_failed(self, job: Job) -> None:
+    @staticmethod
+    def _is_recurring(job: Job) -> bool:
+        """True when this job fires on a repeating cadence (must survive failure).
+
+        F-60: a RECURRING job (morning_brief, check_in, every-N sweeps, daily@,
+        cron) must NEVER go terminal ``failed`` after a burst of transient
+        failures — its next occurrence has to fire. A ONE-SHOT job (``run_once``,
+        which deletes its own row on success and would otherwise linger as a dead
+        ``failed`` row) stays terminal.
+
+        Detection reuses the SAME explicit marker the rest of the scheduler keys
+        on for the run-once/recurring fork (``goal_execution._delete_job``,
+        ``scheduler_mutations._restore_after_run``): ``params['run_once']``. This
+        is schedule-DSL-agnostic — any seeded standing job (none of which set
+        ``run_once``) is recurring, which is exactly the set that must self-heal.
+        """
+        return not bool(job.params.get("run_once"))
+
+    async def _mark_failed(self, job: Job, last_error: str | None = None) -> None:
+        """Terminate a one-shot job, or RE-ARM a recurring one (F-60).
+
+        For a recurring job, exhausting the within-occurrence retries must not
+        kill the schedule: recompute the canonical cadence slot (the same
+        ``compute_next_run`` used on normal completion), clear the transient
+        retry state (``retry_count=0``, ``retry_at=NULL``), and return the row to
+        ``pending`` so the NEXT occurrence fires. Terminal ``failed`` is reserved
+        for one-shots. Either transition writes an audit row (every other
+        lifecycle transition does) so a re-arm-after-failure is never silent.
+        """
+        if not self._is_recurring(job):
+            await self._db.execute(
+                "UPDATE jobs SET status = 'failed', last_error = ? WHERE job_id = ?",
+                (last_error, job.job_id),
+            )
+            log.heartbeat.error(
+                "[scheduler] %s: max retries reached — one-shot marked permanently failed",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id, "retries": job.retry_count + 1}},
+            )
+            await write_audit(
+                self._db,
+                "job_failed_terminal",
+                job.job_id,
+                actor="scheduler",
+                details={"handler": job.handler_name, "last_error": last_error},
+            )
+            return
+
+        # Recurring job: re-arm onto the next cadence slot instead of dying.
+        now_iso = datetime.now(UTC).isoformat()
+        next_run = compute_next_run(job.schedule, tz=self._tz)
         await self._db.execute(
-            "UPDATE jobs SET status = 'failed' WHERE job_id = ?",
-            (job.job_id,),
+            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
+            "retry_count = 0, retry_at = NULL, failure_count = failure_count + 1, "
+            "last_error = ? WHERE job_id = ?",
+            (now_iso, next_run, last_error, job.job_id),
+        )
+        log.heartbeat.warning(
+            "[scheduler] %s: max retries reached — recurring job RE-ARMED to next slot",
+            job.job_id,
+            extra={
+                "_fields": {
+                    "job_id": job.job_id,
+                    "handler": job.handler_name,
+                    "retries": job.retry_count + 1,
+                    "next_run": next_run,
+                }
+            },
+        )
+        # The audit row above is the durable, operator-visible record of the
+        # re-arm. A push notification is intentionally NOT wired here: the
+        # scheduler has no ready operator-notify seam at this layer (cron-born
+        # sends resolve a recipient via DeliverySpec inside the HANDLER, not from
+        # _mark_failed), so inventing one would be speculative. F-60's contract —
+        # survive the failure + leave an audited trail — is met by re-arm + audit.
+        await write_audit(
+            self._db,
+            "job_rearmed_after_failure",
+            job.job_id,
+            actor="scheduler",
+            details={
+                "handler": job.handler_name,
+                "next_run_at": next_run,
+                "last_error": last_error,
+            },
         )
 
     async def pause(self, job_id: str) -> None:

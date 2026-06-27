@@ -12,6 +12,14 @@ from stackowl.infra.observability import log
 
 _MAILBOX_MAX = 8
 
+# F-67 — a turn that WEDGES (task done but status never reached DONE, or expired)
+# has its own goal re-enqueued by the sweep so it is not silently lost. Bound the
+# re-dispatch so a genuinely-poisonous turn that keeps wedging cannot loop forever:
+# after this many wedge-driven re-dispatches the lineage is given up (logged, not
+# re-enqueued). The lineage is carried in the re-enqueued request_id suffix.
+_MAX_WEDGE_REDISPATCH = 2
+_REDISPATCH_SUFFIX = "-redispatch-"
+
 # Per-session intake queue bound (FIFO mailbox depth). Past this, ``enqueue``
 # raises ``QueueFull`` and the orchestrator rejects-with-notice (coalesce-oldest
 # is the §4.7 backlog alternative). Kept modest: a single chat backing up dozens
@@ -622,6 +630,71 @@ class TurnRegistry:
             extra={"_fields": {"request_id": request_id}},
         )
 
+    @staticmethod
+    def _wedge_redispatch_generation(request_id: str) -> int:
+        """How many wedge-driven re-dispatches this request_id already carries.
+
+        The re-dispatch lineage is encoded in the request_id suffix
+        (``{base}-redispatch-N``) so no extra ``Turn`` field / ``register`` arg is
+        needed (keeps the bound contained to the sweep). A request_id with no such
+        suffix is generation 0.
+        """
+        _base, sep, tail = request_id.rpartition(_REDISPATCH_SUFFIX)
+        if not sep:
+            return 0
+        try:
+            return int(tail)
+        except ValueError:
+            return 0
+
+    def _redispatch_wedged_goal(self, turn: Turn) -> None:
+        """F-67 — re-enqueue a reaped WEDGED turn's own goal as a queued-new intake.
+
+        Reuses the existing ``enqueue`` path (the same FIFO queue ``pop_next`` /
+        the orchestrator's drain consume), so the next drain re-dispatches the
+        wedged turn's ``original_input`` instead of it being silently discarded.
+        Bounded: after ``_MAX_WEDGE_REDISPATCH`` wedge re-dispatches the lineage is
+        given up (logged, never re-enqueued) so a genuinely-poisonous turn cannot
+        loop forever. A full intake queue is loud-but-non-fatal (logged via the
+        ``QueueFull`` guard), never raised into the sweep.
+        """
+        gen = self._wedge_redispatch_generation(turn.turn_id)
+        if gen >= _MAX_WEDGE_REDISPATCH:
+            log.gateway.error(
+                "[turn] wedged turn exhausted re-dispatch budget — goal given up",
+                extra={"_fields": {
+                    "request_id": turn.turn_id, "session_id": turn.session_id,
+                    "generation": gen, "max": _MAX_WEDGE_REDISPATCH,
+                }},
+            )
+            return
+        new_rid = f"{turn.turn_id}{_REDISPATCH_SUFFIX}{gen + 1}"
+        try:
+            self.enqueue(
+                turn.session_id,
+                original_input=turn.original_input,
+                request_id=new_rid,
+                target=turn.target,
+            )
+            log.gateway.warning(
+                "[turn] wedged turn re-dispatched — goal not lost (F-67)",
+                extra={"_fields": {
+                    "request_id": turn.turn_id, "new_request_id": new_rid,
+                    "session_id": turn.session_id, "generation": gen + 1,
+                }},
+            )
+        except QueueFull as exc:
+            # Intake queue full — cannot re-dispatch. Loud, never silent: the goal
+            # is dropped here but logged as lost (the alternative — unbounded queue
+            # growth — is worse). Never raised into the scheduler sweep.
+            log.gateway.error(
+                "[turn] wedged turn re-dispatch failed — intake queue full, goal DROPPED",
+                exc_info=exc,
+                extra={"_fields": {
+                    "request_id": turn.turn_id, "session_id": turn.session_id,
+                }},
+            )
+
     async def sweep(self, *, ttl_seconds: float) -> list[str]:
         """Backstop: reap a turn whose TASK IS DONE but status never reached DONE.
 
@@ -649,6 +722,7 @@ class TurnRegistry:
             # done-set, never reaps a not-done turn (the bare-expired foot-gun).
             if done and (turn.status is not TurnStatus.DONE or expired):
                 was_running = self._running.get(turn.session_id) == rid
+                wedged = turn.status is not TurnStatus.DONE
                 await self.deregister(rid)
                 if was_running:
                     freed_running = True
@@ -658,10 +732,19 @@ class TurnRegistry:
                     extra={"_fields": {
                         "request_id": rid,
                         "session_id": turn.session_id,
-                        "reason": "done_not_DONE" if turn.status is not TurnStatus.DONE
-                        else "expired_done",
+                        "reason": "done_not_DONE" if wedged else "expired_done",
                     }},
                 )
+                # F-67 — a WEDGED turn that held the running slot had its goal
+                # actively being worked when it stalled; reaping alone discards
+                # ``original_input`` and the user must re-ask. Re-enqueue its OWN
+                # goal as a fresh queued-new intake (the same path drain consumes),
+                # so the next drain re-dispatches it. Bounded by the re-dispatch
+                # lineage so a poisonous turn that keeps wedging cannot loop. NOT
+                # done for a turn that reached DONE (it completed) nor for a reaped
+                # non-running survivor key (it owns no live goal).
+                if was_running and wedged:
+                    self._redispatch_wedged_goal(turn)
         # Stranded-session drain: a reaped session may have a queued intake and no
         # running turn — only ANOTHER turn finishing would otherwise wake it (silent
         # unresponsiveness). Surface it to the global-cap drain seam.

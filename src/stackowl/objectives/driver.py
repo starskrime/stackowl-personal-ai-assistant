@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
-from stackowl.objectives.model import ExpectedOutcome, Objective
+from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.acceptance import AcceptanceChecker
 from stackowl.pipeline.state import PipelineState
@@ -44,6 +44,13 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
 _HANDLER = "objective_driver"
 _CATEGORY = "objective"
+
+# Bounded retry budget per sub-goal before the objective escalates to ``blocked``
+# (F-40). A single transient stumble must not permanently strand the goal: while a
+# sub-goal stays under this ceiling, a failure leaves it ``pending`` so the next
+# driver tick retries it. Small by design — this is operational resilience against
+# the transient, not an open-ended loop on a genuinely impossible step.
+_MAX_SUBGOAL_ATTEMPTS = 3
 
 
 class ObjectiveDriverHandler(JobHandler):
@@ -168,10 +175,7 @@ class ObjectiveDriverHandler(JobHandler):
 
         if final_state.errors:
             err = "; ".join(final_state.errors)
-            await store.update_subgoal(nxt.subgoal_id, "failed", result=err, task_id=task_id)
-            await store.update_status(objective.objective_id, "blocked", blocker=err)
-            await store.append_event(objective.objective_id, "subgoal_failed", err)
-            await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{err}")
+            await self._on_subgoal_failure(store, objective, nxt, err, task_id)
             return True
 
         # Goal-level acceptance (verification B3). When the sub-goal DECLARED an
@@ -194,8 +198,16 @@ class ObjectiveDriverHandler(JobHandler):
             acted=bool(final_state.responses or final_state.tool_calls),
         )
         if verdict.accepted is False:
+            # A DECLARED post-condition was refuted by reality — this is a VERIFIED
+            # failure (the turn claimed an outcome it did not produce), not a
+            # transient execution stumble. It escalates to ``blocked`` immediately
+            # (it is not subject to the F-40 transient-error retry budget): a clean
+            # retry of a step whose effect was measured-absent would just re-assert
+            # the same false claim. The owner is notified.
             reason = f"step did not achieve its goal: {verdict.reason}"
-            await store.update_subgoal(nxt.subgoal_id, "failed", result=reason, task_id=task_id)
+            await store.update_subgoal(
+                nxt.subgoal_id, "failed", result=reason, task_id=task_id, verified=False,
+            )
             await store.update_status(objective.objective_id, "blocked", blocker=reason)
             await store.append_event(objective.objective_id, "subgoal_failed", reason)
             await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
@@ -208,9 +220,64 @@ class ObjectiveDriverHandler(JobHandler):
             )
             return True
 
-        await store.update_subgoal(nxt.subgoal_id, "done", result=response_text, task_id=task_id)
+        # Done. Stamp the HONEST verification disposition (F-42): when a criterion
+        # was declared/derived and observed, verified=True; when NONE was available
+        # (the default — no declared criterion AND the LLM deriver off), the clean
+        # run is NOT proof of effect, so the sub-goal completes UNVERIFIED
+        # (verified=False) rather than over-claiming a verified success.
+        verified = verdict.accepted is True
+        await store.update_subgoal(
+            nxt.subgoal_id, "done", result=response_text, task_id=task_id,
+            verified=verified,
+        )
         await store.append_event(objective.objective_id, "subgoal_done", nxt.description)
         return True
+
+    async def _on_subgoal_failure(
+        self,
+        store: ObjectiveStore,
+        objective: Objective,
+        subgoal: Subgoal,
+        reason: str,
+        task_id: str | None,
+    ) -> None:
+        """Handle a sub-goal failure with a bounded retry budget (F-40).
+
+        ``subgoal.attempts`` is the count BEFORE this run; this run is one more, so
+        the new total is ``attempts + 1``. While that stays UNDER the ceiling the
+        sub-goal is returned to ``pending`` (objective stays ``active``, no owner
+        ping — the next tick simply retries). Only once the budget is exhausted does
+        the objective escalate to ``blocked`` and the owner get notified, exactly as
+        before. The attempt count is operational retry state, never a learned lesson."""
+        used = subgoal.attempts + 1
+        if used < _MAX_SUBGOAL_ATTEMPTS:
+            # Transient stumble: leave it pending so the next tick retries it. The
+            # whole objective stays active — a single failure no longer strands it.
+            await store.update_subgoal(
+                subgoal.subgoal_id, "pending", result=reason,
+                task_id=task_id, attempts=used,
+            )
+            await store.append_event(
+                objective.objective_id, "subgoal_retry",
+                f"attempt {used}/{_MAX_SUBGOAL_ATTEMPTS}: {reason}",
+            )
+            log.scheduler.info(
+                "[scheduler] objective_driver: sub-goal failed — retrying",
+                extra={"_fields": {
+                    "objective_id": objective.objective_id,
+                    "subgoal_id": subgoal.subgoal_id,
+                    "attempt": used, "max": _MAX_SUBGOAL_ATTEMPTS,
+                }},
+            )
+            return
+        # Budget exhausted — escalate to blocked and notify the owner (terminal).
+        await store.update_subgoal(
+            subgoal.subgoal_id, "failed", result=reason,
+            task_id=task_id, attempts=used,
+        )
+        await store.update_status(objective.objective_id, "blocked", blocker=reason)
+        await store.append_event(objective.objective_id, "subgoal_failed", reason)
+        await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
 
     async def _run_subgoal(
         self,

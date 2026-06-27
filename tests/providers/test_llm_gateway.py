@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
+from stackowl.exceptions import CircuitOpenError, ProviderError
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.llm_gateway import (
     ESCALATE_INSTRUCTION,
@@ -40,6 +43,23 @@ class _FakeProvider:
         self.can_escalate_seen.append(kwargs.get("can_escalate"))
         self.wrapup_seen.append(kwargs.get("wrapup_deadline_s"))
         return self._reply, [{"name": "t", "failed": False}]
+
+
+class _FaultyProvider(_FakeProvider):
+    """A provider whose every call raises a classified provider fault (F-16/F-17)."""
+
+    def __init__(self, name: str, *, fault: BaseException, supports_tools: bool = True) -> None:
+        super().__init__(name, reply="(never returned)", supports_tools=supports_tools)
+        self._fault = fault
+
+    async def complete(self, messages: list[Message], model: str, **kwargs: Any) -> CompletionResult:
+        self.complete_calls.append(messages)
+        raise self._fault
+
+    async def complete_with_tools(self, *, user_text: str, system_text: str | None,
+                                  tool_schemas: list, tool_dispatcher: Any, **kwargs: Any):
+        self.tool_calls.append(system_text)
+        raise self._fault
 
 
 class _FakeRegistry:
@@ -230,3 +250,66 @@ def test_tools_back_compat_uses_passed_schemas_when_no_builder() -> None:
     ))
     assert fast.tool_schemas_seen == [[{"name": "passed"}]]
     assert fast.can_escalate_seen == [False]
+
+
+# -- F-16/F-17: provider-FAULT fallback (not just ESCALATE success) ----------- #
+
+
+def test_complete_falls_back_to_higher_tier_on_provider_fault() -> None:
+    # Floor tier raises a classified provider fault (e.g. circuit OPEN on first trip);
+    # a higher tier answers normally → the gateway returns the higher-tier result.
+    fast = _FaultyProvider("fast", fault=CircuitOpenError("fast", 30.0))
+    standard = _FakeProvider("standard", reply="recovered answer")
+    powerful = _FakeProvider("powerful", reply="unused")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": powerful}))
+    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    assert out.content == "recovered answer"
+    assert out.model == "standard"
+    assert len(fast.complete_calls) == 1  # floor was attempted then cascaded
+    assert len(powerful.complete_calls) == 0  # stopped once standard answered
+
+
+def test_complete_reraises_provider_fault_at_last_tier() -> None:
+    # No headroom (single tier / at the ceiling): a fault must propagate, not be swallowed.
+    fault = ProviderError("powerful", ConnectionError("down"))
+    powerful = _FaultyProvider("powerful", fault=fault)
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    with pytest.raises(ProviderError):
+        asyncio.run(gw.complete([_user("hi")], floor="powerful", ceiling="powerful"))
+
+
+def test_complete_non_fault_error_is_not_caught() -> None:
+    # A non-provider-fault error (our own bug) must propagate immediately, no cascade.
+    boom = _FaultyProvider("fast", fault=RuntimeError("our bug"))
+    standard = _FakeProvider("standard", reply="should not reach")
+    gw = LLMGateway(_FakeRegistry({"fast": boom, "standard": standard}))
+    with pytest.raises(RuntimeError):
+        asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="standard"))
+    assert len(standard.complete_calls) == 0  # no fallback for a non-fault error
+
+
+def test_tools_falls_back_to_higher_tier_on_provider_fault() -> None:
+    fast = _FaultyProvider("fast", fault=CircuitOpenError("fast", 30.0))
+    standard = _FakeProvider("standard", reply="done with tools")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": standard}))
+    resets: list[tuple[str, str]] = []
+
+    async def on_escalate(frm: str, to: str) -> None:
+        resets.append((frm, to))
+
+    text, _ = asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+        tool_dispatcher=None, floor="fast", ceiling="powerful", on_escalate=on_escalate,
+    ))
+    assert text == "done with tools"
+    assert resets == [("fast", "standard")]  # ledger reset before the recovery tier
+
+
+def test_tools_reraises_provider_fault_at_last_tier() -> None:
+    powerful = _FaultyProvider("powerful", fault=ProviderError("powerful", TimeoutError("hung")))
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    with pytest.raises(ProviderError):
+        asyncio.run(gw.complete_with_tools(
+            user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+            tool_dispatcher=None, floor="powerful", ceiling="powerful",
+        ))

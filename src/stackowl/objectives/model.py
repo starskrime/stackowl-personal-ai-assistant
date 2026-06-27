@@ -95,6 +95,17 @@ class Subgoal(BaseModel):
     #: the driver gates ``done`` vs ``failed`` on the AcceptanceChecker's verdict
     #: instead of "no error thrown". None ⇒ legacy no-error path (byte-identical).
     acceptance_criteria: ExpectedOutcome | None = None
+    #: How many times the driver has run this sub-goal and hit a failure. OPERATIONAL
+    #: retry state (F-40): a transient stumble is retried up to a small ceiling before
+    #: the objective escalates to ``blocked`` — NOT a learned lesson (positive-only
+    #: learning is unaffected; nothing is mined from this count).
+    attempts: int = 0
+    #: Honest verification disposition (F-42), tri-state mirroring ``ToolResult.verified``:
+    #: ``True`` the declared post-condition was observed against reality; ``False``
+    #: completed but UNVERIFIED (no criterion to check — a clean run is not proof of
+    #: effect); ``None`` legacy / not yet evaluated. A ``done`` sub-goal with
+    #: ``verified is False`` is "completed but unverified" — completion is not over-claimed.
+    verified: bool | None = None
     #: The durable task id that ran this sub-goal (for crash-resume legibility).
     task_id: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
