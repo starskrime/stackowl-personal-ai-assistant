@@ -63,6 +63,31 @@ async def test_send_file_explicit_unresolvable_raises(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_file_attach_error_raises_delivery_error(tmp_path: Path) -> None:
+    """F-66: an attach-flow failure to a RESOLVED chat must not be swallowed.
+
+    Previously the browser attach exception was logged and swallowed, so the
+    user never got the file yet the deliverer recorded a clean send. It must
+    re-raise as DeliveryError so the ProactiveDeliverer maps it to ``failed``.
+    """
+    TestModeGuard.deactivate()
+    try:
+        adapter = _adapter()
+        adapter._browser.send_file = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("whatsapp attach boom")
+        )
+        f = tmp_path / "doc.pdf"
+        f.write_bytes(b"%PDF-1.4 data")
+        jid = "15551234567@s.whatsapp.net"
+        with pytest.raises(DeliveryError) as ei:
+            await adapter.send_file(str(f), caption="report", target=jid)
+        assert ei.value.channel == "whatsapp"
+        assert ei.value.reason == "transport_error"
+    finally:
+        TestModeGuard.deactivate()
+
+
+@pytest.mark.asyncio
 async def test_send_file_best_effort_noop(tmp_path: Path) -> None:
     TestModeGuard.deactivate()
     try:

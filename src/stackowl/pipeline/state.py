@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.objectives.model import ExpectedOutcome
+from stackowl.pipeline.acceptance import HttpProbeOutcome
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.providers.base import Message
 
@@ -180,8 +181,9 @@ class PipelineState(BaseModel, frozen=True):
     # primitive). On the objectives path the driver threads the sub-goal's
     # acceptance_criteria here; on a normal user turn it is None (the flag-OFF
     # LLM-derived acceptance layer is the only future populator). None ⇒ the
-    # AcceptanceChecker no-ops — byte-identical to pre-acceptance behavior.
-    expected_outcome: ExpectedOutcome | None = None
+    # AcceptanceChecker no-ops — byte-identical to pre-acceptance behavior. May also
+    # carry the general network re-probe kind (HttpProbeOutcome, F-12).
+    expected_outcome: ExpectedOutcome | HttpProbeOutcome | None = None
     memory_context: str | None = None
     # Query embedding computed once in classify (semantic only), forwarded so assemble
     # can score owned skills without re-embedding. None = no usable relevance signal. Story B.

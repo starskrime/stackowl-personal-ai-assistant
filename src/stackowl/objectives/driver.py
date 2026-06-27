@@ -52,6 +52,15 @@ _CATEGORY = "objective"
 # the transient, not an open-ended loop on a genuinely impossible step.
 _MAX_SUBGOAL_ATTEMPTS = 3
 
+# F-41: how long a TRANSIENT-blocked objective must sit before the driver re-queues
+# it. A blocked objective used to be abandoned forever (the loop scans active-only);
+# now a transient-class block (the retry budget was spent on a flaky step) is given
+# a cooldown backoff, after which the stuck sub-goal's attempt budget is reset and
+# the objective returns to ``active`` for a fresh try. A ``decision``-class block
+# (genuinely irreversible / verified-false) is NEVER auto-requeued — it waits for a
+# human. The clock is the objective's ``updated_at`` (stamped when it blocked).
+_BLOCKED_RETRY_COOLDOWN_S = 600.0
+
 
 class ObjectiveDriverHandler(JobHandler):
     """Advance every active objective by one sub-goal per scheduler tick."""
@@ -65,9 +74,13 @@ class ObjectiveDriverHandler(JobHandler):
         job_deliverer: ProactiveJobDeliverer | None = None,
         provider_registry: ProviderRegistry | None = None,
         owner_id: str = DEFAULT_PRINCIPAL_ID,
+        blocked_retry_cooldown_s: float = _BLOCKED_RETRY_COOLDOWN_S,
     ) -> None:
         self._db = db
         self._backend = backend
+        # F-41 cooldown before a TRANSIENT-blocked objective is re-queued. Injectable
+        # so tests can drive the recovery without wall-clock waits.
+        self._blocked_retry_cooldown_s = blocked_retry_cooldown_s
         # Gates durable routing per sub-goal (read live for hot-reload), mirroring
         # GoalExecutionHandler — flag off (default) ⇒ legacy ephemeral path.
         self._settings = settings
@@ -107,10 +120,13 @@ class ObjectiveDriverHandler(JobHandler):
             )
 
         store = ObjectiveStore(self._db, self._owner_id)
+        # F-41: first rescue any TRANSIENT-blocked objective whose cooldown has elapsed
+        # — return it to ``active`` so the very same tick can advance it (no abandonment).
+        requeued = await self._requeue_recoverable(store)
         active = await store.list_objectives(status="active")
         log.scheduler.debug(
             "[scheduler] objective_driver.execute: active objectives",
-            extra={"_fields": {"count": len(active)}},
+            extra={"_fields": {"count": len(active), "requeued": requeued}},
         )
 
         advanced = 0
@@ -164,13 +180,36 @@ class ObjectiveDriverHandler(JobHandler):
 
         if final_state.durable_parked:
             blocker = "; ".join(final_state.errors) or "awaiting a decision"
-            await store.update_subgoal(nxt.subgoal_id, "blocked", result=blocker, task_id=task_id)
-            await store.update_status(objective.objective_id, "blocked", blocker=blocker)
-            await store.append_event(objective.objective_id, "blocked", blocker)
-            await self._notify(
-                objective,
-                f"⏸ Objective needs your decision: {objective.intent}\n{blocker}",
+            if self._park_is_irreversible(final_state):
+                # ASK-ON-IRREVERSIBLE: a genuinely consequential/irreversible decision
+                # the assistant must not make unilaterally — block + ping the owner.
+                await store.update_subgoal(
+                    nxt.subgoal_id, "blocked", result=blocker, task_id=task_id
+                )
+                await store.update_status(
+                    objective.objective_id, "blocked",
+                    blocker=blocker, blocker_kind="decision",
+                )
+                await store.append_event(objective.objective_id, "blocked", blocker)
+                await self._notify(
+                    objective,
+                    f"⏸ Objective needs your decision: {objective.intent}\n{blocker}",
+                )
+                return True
+            # ACT-ON-REVERSIBLE (F-44): a trivial/reversible clarify that parked only
+            # because there is no human in this non-interactive context. Stranding the
+            # whole objective on it is over-escalation. Auto-resolve with the sensible
+            # default — defer to the bounded-retry path (act-first next tick), logged —
+            # so only genuinely irreversible choices ever reach the owner.
+            log.scheduler.info(
+                "[scheduler] objective_driver: reversible park — auto-resolving with "
+                "default (deferring to retry), not escalating to blocked",
+                extra={"_fields": {
+                    "objective_id": objective.objective_id,
+                    "subgoal_id": nxt.subgoal_id, "blocker": blocker,
+                }},
             )
+            await self._on_subgoal_failure(store, objective, nxt, blocker, task_id)
             return True
 
         if final_state.errors:
@@ -208,7 +247,11 @@ class ObjectiveDriverHandler(JobHandler):
             await store.update_subgoal(
                 nxt.subgoal_id, "failed", result=reason, task_id=task_id, verified=False,
             )
-            await store.update_status(objective.objective_id, "blocked", blocker=reason)
+            # A clean retry would only re-assert the same measured-absent claim, so this
+            # is NOT transient-recoverable — it waits for a human (blocker_kind=decision).
+            await store.update_status(
+                objective.objective_id, "blocked", blocker=reason, blocker_kind="decision",
+            )
             await store.append_event(objective.objective_id, "subgoal_failed", reason)
             await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
             log.scheduler.info(
@@ -270,14 +313,70 @@ class ObjectiveDriverHandler(JobHandler):
                 }},
             )
             return
-        # Budget exhausted — escalate to blocked and notify the owner (terminal).
+        # Budget exhausted — escalate to blocked and notify the owner. This is a
+        # TRANSIENT-class block (F-41): the step stalled on execution errors, so after a
+        # cooldown the driver will re-queue the objective for a fresh attempt budget
+        # rather than abandoning it. Nothing here is mined as a learned lesson.
         await store.update_subgoal(
             subgoal.subgoal_id, "failed", result=reason,
             task_id=task_id, attempts=used,
         )
-        await store.update_status(objective.objective_id, "blocked", blocker=reason)
+        await store.update_status(
+            objective.objective_id, "blocked", blocker=reason, blocker_kind="transient",
+        )
         await store.append_event(objective.objective_id, "subgoal_failed", reason)
         await self._notify(objective, f"⚠ Objective stalled: {objective.intent}\n{reason}")
+
+    @staticmethod
+    def _park_is_irreversible(state: PipelineState) -> bool:
+        """Classify a park as irreversible (needs a human) vs trivial/reversible (F-44).
+
+        REUSES the consequential snapshot already threaded onto the turn rather than
+        inventing a keyword list: a park that touched a consequential/irreversible tool
+        (it appears in ``consequential_failures``) is a genuine ask-on-irreversible
+        decision; a park with no consequential footprint is a trivial/reversible clarify
+        the assistant may resolve itself with a best-effort default. Conservative on the
+        boundary — when the snapshot is ambiguous we do NOT over-escalate, deferring to
+        the consequential-failure signal that the execute step stamps explicitly."""
+        return bool(state.consequential_failures)
+
+    async def _requeue_recoverable(self, store: ObjectiveStore) -> int:
+        """Return TRANSIENT-blocked objectives to ``active`` after their cooldown (F-41).
+
+        A ``decision``-class block (or an unclassified legacy block, treated as
+        ``decision``) is left untouched — it genuinely needs a human. A ``transient``
+        block is re-queued once ``updated_at`` is older than the cooldown: the stuck
+        sub-goal is reset to ``pending`` with a fresh attempt budget so the next advance
+        retries it. Returns how many objectives were recovered."""
+        blocked = await store.list_objectives(status="blocked")
+        now = datetime.now(tz=UTC)
+        recovered = 0
+        for objective in blocked:
+            if objective.blocker_kind != "transient":
+                continue  # decision / legacy → stays blocked until a human steps in
+            age_s = (now - objective.updated_at).total_seconds()
+            if age_s < self._blocked_retry_cooldown_s:
+                continue  # still cooling down
+            # Reset the stalled sub-goal (failed/blocked) to pending with a fresh budget.
+            for subgoal in await store.list_subgoals(objective.objective_id):
+                if subgoal.status in ("failed", "blocked"):
+                    await store.update_subgoal(
+                        subgoal.subgoal_id, "pending", attempts=0,
+                    )
+                    break
+            await store.update_status(objective.objective_id, "active")
+            await store.append_event(
+                objective.objective_id, "requeued",
+                f"transient block cooldown elapsed ({age_s:.0f}s) — retrying",
+            )
+            log.scheduler.info(
+                "[scheduler] objective_driver: re-queued transient-blocked objective",
+                extra={"_fields": {
+                    "objective_id": objective.objective_id, "age_s": age_s,
+                }},
+            )
+            recovered += 1
+        return recovered
 
     async def _run_subgoal(
         self,

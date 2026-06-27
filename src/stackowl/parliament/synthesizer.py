@@ -158,6 +158,9 @@ class ParliamentSynthesizer:
             confidence=confidence,
             synthesis_text=synthesis_text,
             mean_similarity=mean_sim,
+            # F-58 — carry the parser's trust flag through so a fallback (raw text
+            # dressed as a verdict) is never staged as durable knowledge.
+            parse_ok=parsed.parse_ok,
         )
         log.parliament.info(
             "[parliament] synthesizer.synthesize: exit",

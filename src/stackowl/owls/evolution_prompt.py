@@ -50,6 +50,7 @@ class EvolutionPromptBuilder:
                 ("formality", dna.formality),
                 ("creativity", dna.creativity),
                 ("precision", dna.precision),
+                ("completion_drive", dna.completion_drive),
             )
         ]
         excerpts_block = (
@@ -78,7 +79,8 @@ class EvolutionPromptBuilder:
                 "Based on these interactions, suggest a delta in the inclusive range "
                 "[-0.1, 0.1] for each trait. Return a JSON object exactly in this shape:\n"
                 '{"challenge_level": 0.05, "verbosity": -0.03, "curiosity": 0.00, '
-                '"formality": 0.0, "creativity": 0.02, "precision": 0.0}\n'
+                '"formality": 0.0, "creativity": 0.02, "precision": 0.0, '
+                '"completion_drive": 0.0}\n'
                 "Output ONLY the JSON object — no prose, no markdown fences."
             ),
         )

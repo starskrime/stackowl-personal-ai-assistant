@@ -8,7 +8,9 @@ from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
+from stackowl.objectives.model import ExpectedOutcome
 from stackowl.pipeline import lesson_context as lc
+from stackowl.pipeline.acceptance import AcceptanceChecker, AcceptanceVerdict
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.budget import human_wait as human_wait_ctx
@@ -55,6 +57,9 @@ class AsyncioBackend(OrchestratorBackend):
             },
         )
         t0 = time.monotonic()
+        # Wall-clock turn start — the acceptance freshness clock (a fresh artifact's
+        # mtime is compared against this). monotonic() is unsuitable (not epoch).
+        wall_t0 = time.time()
         token = set_services(self._services)
         trace_token = TraceContext.start(
             state.session_id,
@@ -194,14 +199,85 @@ class AsyncioBackend(OrchestratorBackend):
             "[asyncio_backend] run: exit",
             extra={"_fields": {"trace_id": state.trace_id, "total_ms": total_ms, "error_count": len(current.errors)}},
         )
+        # F-11 — goal-level acceptance on the NORMAL turn path. When the turn
+        # DECLARED an expected outcome (or the flag-ON LLM layer derives one), a
+        # clean run is not proof of effect — observe the declared post-condition
+        # against reality. No declared outcome AND the LLM layer OFF (the default) ⇒
+        # this returns None ⇒ byte-identical. A refuted verdict makes the captured
+        # outcome untrustworthy below (so the positive-only learner skips a false win).
+        acceptance = await _verify_turn_acceptance(current, wall_t0, self._services)
+
         # Outcome capture — best-effort; never block the response on a
         # telemetry write failure. Helper logs its own warning on error.
-        await _capture_outcome(current, total_ms, self._services)
+        await _capture_outcome(current, total_ms, self._services, acceptance=acceptance)
         return current
+
+
+async def _verify_turn_acceptance(
+    state: PipelineState, turn_started_at: float, services: StepServices,
+) -> AcceptanceVerdict | None:
+    """Observe this turn's DECLARED/DERIVED acceptance post-condition. Never raises.
+
+    Returns ``None`` (no opinion) when no outcome is declared on ``state`` and the
+    flag-OFF LLM-derived layer yields nothing — the default normal turn, kept
+    byte-identical. A declared (or derived) outcome is checked by the same
+    :class:`AcceptanceChecker` the objectives driver uses, mirroring its ``acted``
+    gate (a pure no-op turn is never penalized for an outcome it could not produce).
+    """
+    try:
+        criteria = state.expected_outcome
+        if criteria is None:
+            criteria = await _derive_turn_acceptance(state, services)
+        if criteria is None:
+            return None
+        verdict = AcceptanceChecker().check(
+            criteria,
+            turn_started_at=turn_started_at,
+            acted=bool(state.responses or state.tool_calls),
+        )
+        if verdict.accepted is not None:
+            log.engine.info(
+                "[acceptance] normal-turn verdict",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "accepted": verdict.accepted,
+                    "reason": verdict.reason[:160],
+                }},
+            )
+        return verdict
+    except Exception as exc:  # never let acceptance sink the turn's outcome capture
+        log.engine.warning(
+            "[acceptance] normal-turn check raised — no opinion",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+
+
+async def _derive_turn_acceptance(
+    state: PipelineState, services: StepServices,
+) -> ExpectedOutcome | None:
+    """OPTIONAL post-hoc LLM-derived acceptance (flag-OFF default). Mirrors
+    ``ObjectiveDriverHandler._derive_acceptance``: returns a derived ExpectedOutcome
+    ONLY when ``settings.acceptance_tier`` is set AND a provider registry is wired,
+    fail-CLOSED (the deriver returns None on any model error). None on every default
+    path ⇒ byte-identical."""
+    settings = services.settings
+    tier = settings.acceptance_tier if settings is not None else ""
+    if not tier or services.provider_registry is None:
+        return None
+    from stackowl.pipeline.acceptance_llm import LlmAcceptanceDeriver
+
+    response_text = "\n".join(c.content for c in state.responses if c.content)
+    if not response_text.strip():
+        return None
+    deriver = LlmAcceptanceDeriver(services.provider_registry, tier)
+    return await deriver.derive(intent=state.input_text, draft=response_text)
 
 
 async def _capture_outcome(
     state: PipelineState, total_ms: float, services: StepServices,
+    *, acceptance: AcceptanceVerdict | None = None,
 ) -> None:
     """Persist a row in task_outcomes for this run. Best-effort — logs on failure.
 
@@ -209,6 +285,11 @@ async def _capture_outcome(
     (from state.errors via classify_failure), step_durations, input_text,
     response_text. quality_score / scored_at start NULL — the CriticScorerHandler
     fills them in asynchronously later.
+
+    ``acceptance`` (F-11) is the normal-turn goal-level verdict. ``accepted is False``
+    is an UNACHIEVED EFFECT — the turn claimed an outcome reality refuted — so the
+    row is marked not-trustworthy and labelled so the positive-only learner skips it,
+    exactly mirroring the unrecovered-effect path. ``None`` (the default) is a no-op.
     """
     # 1. ENTRY
     log.engine.debug(
@@ -249,9 +330,14 @@ async def _capture_outcome(
         unrecovered_effects = (
             set(state.consequential_failures) - set(state.recovered_consequential)
         )
-        if failure_class is None and unrecovered_effects:
+        # F-11 — a REFUTED goal-level acceptance verdict is an unachieved effect too
+        # (the turn declared/derived a post-condition reality did not satisfy).
+        acceptance_refuted = acceptance is not None and acceptance.accepted is False
+        if failure_class is None and (unrecovered_effects or acceptance_refuted):
             failure_class = _UNACHIEVED_EFFECT_CLASS
-        trustworthy_success = len(state.errors) == 0 and not unrecovered_effects
+        trustworthy_success = (
+            len(state.errors) == 0 and not unrecovered_effects and not acceptance_refuted
+        )
         # Snapshot DNA from the owl registry so attribution-based evolution
         # (Learning Commit 4) can correlate trait values with outcome quality.
         # Best-effort — owl may not be registered (system commands, parliament).
@@ -267,6 +353,7 @@ async def _capture_outcome(
                     "formality": float(dna.formality),
                     "creativity": float(dna.creativity),
                     "precision": float(dna.precision),
+                    "completion_drive": float(dna.completion_drive),
                 }
             except Exception as exc:  # B5
                 log.engine.debug(

@@ -65,6 +65,7 @@ class SynthesisParser:
                 confidence=0.0,  # placeholder — overwritten by caller
                 synthesis_text=body,
                 mean_similarity=0.0,
+                parse_ok=True,
             )
         except Exception as exc:
             log.parliament.warning(
@@ -79,6 +80,11 @@ class SynthesisParser:
                 },
             )
             fallback_body = raw.strip()
+            # F-58 — mark the fallback NOT trustworthy: the structural markers
+            # could not be parsed, so this raw text is not a real verdict. The
+            # text is kept for display, but parse_ok=False tells the orchestrator
+            # to mark the session degraded and tells the pellet generator to skip
+            # staging — a parse failure must never be dressed as a real verdict.
             return SynthesisResult(
                 consensus=fallback_body[:200],
                 disagreements=[],
@@ -86,6 +92,7 @@ class SynthesisParser:
                 confidence=0.0,
                 synthesis_text=fallback_body,
                 mean_similarity=0.0,
+                parse_ok=False,
             )
 
     def _parse_disagreement_line(self, line: str) -> DisagreementPoint | None:

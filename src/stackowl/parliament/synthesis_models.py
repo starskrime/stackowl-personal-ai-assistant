@@ -33,6 +33,11 @@ class SynthesisResult(BaseModel):
       direct display to the user.
     * ``mean_similarity`` — mean pairwise cosine similarity across the
       final round responses; 0.0 when no embedder is available.
+    * ``parse_ok`` — False when the structural markers could NOT be parsed and
+      the result is a graceful fallback (raw text dressed as a verdict). A
+      ``parse_ok=False`` result is NOT trustworthy: callers must mark the session
+      degraded and must NEVER persist its consensus as durable knowledge
+      (F-58/F-59). Defaults True so every genuinely-parsed verdict is trusted.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -43,3 +48,4 @@ class SynthesisResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     synthesis_text: str
     mean_similarity: float = Field(default=0.0, ge=0.0, le=1.0)
+    parse_ok: bool = True

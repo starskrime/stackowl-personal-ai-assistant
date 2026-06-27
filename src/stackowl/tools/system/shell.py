@@ -238,6 +238,48 @@ def _shell_segments(args: list[str]) -> list[list[str]]:
     return segments
 
 
+# F-31 — recognized STDOUT redirection operators. ONLY stdout (`>`/`1>` and their
+# append forms) is treated as the produced artifact: stderr (`2>`) and combined
+# (`&>`) redirects are routinely EMPTY on a successful run, so verifying them would
+# wrongly flag a real success. `-o`/`--output` flags are intentionally NOT parsed
+# here — their value is too often a non-path option (e.g. `ssh -o Key=val`), which
+# would make verification unsafe (a documented deferral, not a silent gap).
+_STDOUT_REDIR_OPS: frozenset[str] = frozenset({">", ">>", "1>", "1>>"})
+_GLUED_STDOUT_REDIR_RE = re.compile(r"^1?>>?(?P<path>.+)$")
+
+
+def _redirect_target(argv: list[str]) -> str | None:
+    """Best-effort: the stdout-redirection target path named in a shell command.
+
+    ``argv`` is the shlex-split command. Returns the LAST stdout (`>`/`>>`) target
+    path (shell semantics — last redirect wins), or ``None`` when the command names
+    no such output file. Conservative: fd-2 / ``&>`` redirects, fd-dups (``>&2``)
+    and ``/dev/*`` sinks are ignored, so verification never misfires on a command
+    that legitimately writes nothing to a file. Pure-lexical, never raises.
+    """
+    target: str | None = None
+    i = 0
+    n = len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in _STDOUT_REDIR_OPS:  # spaced form: `... > file`
+            target = argv[i + 1] if i + 1 < n else None
+            i += 2
+            continue
+        if not tok.startswith("2>") and not tok.startswith("&>"):
+            m = _GLUED_STDOUT_REDIR_RE.match(tok)  # glued form: `>file`, `1>>file`
+            if m:
+                target = m.group("path")
+        i += 1
+    if not target:
+        return None
+    target = target.strip()
+    # fd-dup (`>&2`) and device sinks (`/dev/null`) are not real artifacts.
+    if not target or target.startswith("&") or target.startswith("/dev/"):
+        return None
+    return target
+
+
 def is_catastrophic(args: list[str]) -> tuple[bool, str]:
     """Detect a truly system-destroying command shape (conservative).
 
@@ -486,6 +528,19 @@ async def run_argv(
     success = proc.returncode == 0
     output = stdout.decode("utf-8", errors="replace").strip()
     error = stderr.decode("utf-8", errors="replace").strip() if not success else None
+    # F-31 — when the command UNAMBIGUOUSLY redirects stdout to a named file, record
+    # that file as the artifact this call produced so the verify() seam can read it
+    # back (exists + non-empty + fresh) and surface an exit-0-but-produced-nothing
+    # command as verified=False instead of a silent false success. Only meaningful
+    # for real shell execution — operators/redirects are inert under exec mode — and
+    # only when a file is named; otherwise artifact_path stays None ⇒ verified stays
+    # None (we never over-claim verification for a generic shell command).
+    artifact_path: str | None = None
+    if shell_command is not None:
+        redir = _redirect_target(argv)
+        if redir is not None:
+            base = cwd or os.getcwd()
+            artifact_path = redir if os.path.isabs(redir) else os.path.join(base, redir)
     log.tool.debug(
         "shell.execute: exit",
         extra={
@@ -493,11 +548,15 @@ async def run_argv(
                 "success": success,
                 "returncode": proc.returncode,
                 "output_len": len(output),
+                "artifact_path": artifact_path,
                 "duration_ms": duration_ms,
             }
         },
     )
-    return ToolResult(success=success, output=output, error=error, duration_ms=duration_ms)
+    return ToolResult(
+        success=success, output=output, error=error,
+        duration_ms=duration_ms, artifact_path=artifact_path,
+    )
 
 
 class ShellTool(Tool):
@@ -572,6 +631,21 @@ class ShellTool(Tool):
             },
             "required": ["command"],
         }
+
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """Post-condition: if the command redirected stdout to a named file, that
+        file now exists, is non-empty, and is THIS run's artifact (fresh).
+
+        No named output file ⇒ ``result.artifact_path`` is None ⇒ verify_artifact
+        returns None ⇒ ``verified`` stays None. Shell is a generic actuator: we
+        only read back the ONE effect the invocation explicitly names, and never
+        over-claim verification for an arbitrary command.
+        """
+        from stackowl.tools.verification import verify_artifact
+
+        return verify_artifact(result.artifact_path, not_before=started_at)
 
     async def execute(self, **kwargs: object) -> ToolResult:
         command = str(kwargs.get("command", ""))

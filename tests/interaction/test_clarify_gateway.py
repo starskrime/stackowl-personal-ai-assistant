@@ -107,6 +107,84 @@ async def test_ask_no_adapter_still_registers() -> None:
     assert entry.clarify_id == cid
 
 
+# ------------------------------------------------ F-71: pre-ask auto-resolution
+
+
+@pytest.mark.asyncio
+async def test_ask_single_choice_auto_resolves_without_human() -> None:
+    """A one-item menu has no decision to make → auto-answer, never deliver."""
+    adapter = _FakeAdapter("cli")
+    gw = ClarifyGateway()
+    gw.register_adapter("cli", adapter)  # type: ignore[arg-type]
+
+    cid = await gw.ask("s1", "cli", "Proceed?", choices=("Proceed",), blocking=True)
+
+    assert adapter.calls == []  # not routed to the human
+    answer, outcome = await gw.wait_for_answer(cid, timeout=0.1)
+    assert answer == "Proceed"
+    assert outcome == OUTCOME_ANSWERED
+
+
+@pytest.mark.asyncio
+async def test_ask_default_auto_resolves_low_stakes() -> None:
+    """A reversible clarify with an explicit default is assumed, not asked."""
+    adapter = _FakeAdapter("cli")
+    gw = ClarifyGateway()
+    gw.register_adapter("cli", adapter)  # type: ignore[arg-type]
+
+    cid = await gw.ask(
+        "s1", "cli", "Use compact view?", choices=("compact", "detailed"),
+        default="compact", blocking=True,
+    )
+    assert adapter.calls == []
+    answer, outcome = await gw.wait_for_answer(cid, timeout=0.1)
+    assert answer == "compact"
+    assert outcome == OUTCOME_ANSWERED
+
+
+@pytest.mark.asyncio
+async def test_ask_high_stakes_parks_even_with_default() -> None:
+    """A high-stakes/irreversible question always parks on the human."""
+    adapter = _FakeAdapter("cli")
+    gw = ClarifyGateway()
+    gw.register_adapter("cli", adapter)  # type: ignore[arg-type]
+
+    cid = await gw.ask(
+        "s1", "cli", "Delete everything?", choices=("yes", "no"),
+        default="no", high_stakes=True, blocking=True,
+    )
+    # Delivered to the human, NOT auto-answered.
+    assert len(adapter.calls) == 1
+    entry = gw.peek(cid)
+    assert entry is not None and entry.answer is None
+
+
+@pytest.mark.asyncio
+async def test_ask_multi_choice_no_default_still_parks() -> None:
+    """Existing callers (multi-choice, no default) are unchanged — still park."""
+    adapter = _FakeAdapter("cli")
+    gw = ClarifyGateway()
+    gw.register_adapter("cli", adapter)  # type: ignore[arg-type]
+
+    cid = await gw.ask("s1", "cli", "X or Y?", choices=("X", "Y"), blocking=True)
+    assert len(adapter.calls) == 1  # delivered, parked
+    entry = gw.peek(cid)
+    assert entry is not None and entry.answer is None
+
+
+@pytest.mark.asyncio
+async def test_ask_non_blocking_default_registers_nothing() -> None:
+    """A non-blocking auto-answered clarify leaves no lingering pending entry."""
+    adapter = _FakeAdapter("cli")
+    gw = ClarifyGateway()
+    gw.register_adapter("cli", adapter)  # type: ignore[arg-type]
+
+    cid = await gw.ask("s1", "cli", "ok?", choices=("ok",), blocking=False)
+    assert adapter.calls == []
+    assert gw.peek(cid) is None
+    assert gw.peek_for_session("s1", "cli") is None
+
+
 # ----------------------------------------------------------- try_resolve
 
 

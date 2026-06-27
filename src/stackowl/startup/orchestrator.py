@@ -86,6 +86,7 @@ _drain_tasks: set[asyncio.Task[object]] = set()
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.channels.telegram.voice_confirm import PendingTranscriptStore
+    from stackowl.health.aggregator import HealthAggregator
     from stackowl.pipeline.streaming import ResponseChunk
 
 
@@ -171,6 +172,7 @@ async def _supervise_core(
     proc_holder: dict[str, asyncio.subprocess.Process],
     socket_path: Path | None,
     stop_event: asyncio.Event,
+    first_conn_event: asyncio.Event | None = None,
 ) -> None:
     """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
 
@@ -179,6 +181,15 @@ async def _supervise_core(
     It returns only on a genuine crash, in which case we respawn with capped
     exponential backoff until the gateway itself is shutting down. The durable
     IpcServer listener never drops, so the fresh core simply reconnects.
+
+    F-36 — after a respawn we now AWAIT the fresh core's reconnect with the same
+    bounded ``_CORE_BOOT_TIMEOUT_S`` first boot uses (via ``first_conn_event``,
+    which the accept handler sets on every core connection). A respawned core that
+    boots but never connects back would otherwise leave the gateway buffering
+    forever; on reconnect-timeout we surface a LOUD operator failure and stop
+    supervising (set ``stop_event`` to bring the gateway down) rather than buffer
+    silently. ``first_conn_event`` is cleared BEFORE each respawn so we wait for
+    the NEW connection, not a stale set from the previous core.
     """
     from stackowl.runtime.supervisor import spawn_core
 
@@ -193,15 +204,94 @@ async def _supervise_core(
         if stop_event.is_set():
             return
         log.warning(
-            "[startup] gateway: core exited unexpectedly — respawning",
-            extra={"_fields": {"returncode": rc, "backoff_s": backoff}},
+            "[startup] gateway: core exited unexpectedly — respawning (rc=%s, backoff=%.1fs)",
+            rc,
+            backoff,
         )
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, 30.0)
         if stop_event.is_set():
             return
-        with contextlib.suppress(Exception):
+        # Clear BEFORE respawn so we wait for the fresh core's connection, not a
+        # stale set from the core that just died.
+        if first_conn_event is not None:
+            first_conn_event.clear()
+        try:
             proc_holder["proc"] = await spawn_core(socket_path)
+        except Exception as exc:  # spawn itself failed — log and retry on next loop
+            log.error("[startup] gateway: core respawn failed to spawn", exc_info=exc)
+            continue
+        # F-36 — verify the respawned core actually reconnects, bounded like boot.
+        if first_conn_event is not None:
+            try:
+                await asyncio.wait_for(
+                    first_conn_event.wait(), timeout=_CORE_BOOT_TIMEOUT_S
+                )
+                log.info("[startup] gateway: respawned core reconnected — link restored")
+            except TimeoutError:
+                if stop_event.is_set():
+                    return
+                log.error(
+                    "[startup] ★ CORE RESPAWN DID NOT RECONNECT ★ within %.0fs — the "
+                    "gateway will NOT keep buffering forever; shutting down so an "
+                    "external manager / operator can recover.",
+                    _CORE_BOOT_TIMEOUT_S,
+                )
+                stop_event.set()
+                return
+
+
+def detect_service_manager(
+    env: dict[str, str] | None = None, platform: str | None = None
+) -> str | None:
+    """Best-effort detect a host service manager that can auto-restart this process.
+
+    F-88 — in the default ``mono`` role there is NO in-process crash supervisor (a
+    full mono supervisor is a larger change); an unhandled crash relies on an
+    EXTERNAL service manager with ``Restart=always``. We can't read that external
+    unit's config, but we CAN detect whether a recognised manager is supervising
+    us via the well-known environment markers each one exports, plus the macOS
+    launchd case. Returns a short manager name (e.g. ``"systemd"``) or ``None`` if
+    none is detected — the caller warns LOUDLY on ``None`` so an operator running
+    bare (``python -m stackowl serve`` in a shell) knows a crash will NOT restart.
+
+    This is detection, not a guarantee of ``Restart=always``: a detected manager
+    still might be configured ``Restart=no``. The warning is calibrated to that —
+    it flags the ABSENCE of any supervisor, the common real-world footgun.
+    """
+    e = os.environ if env is None else env
+    plat = sys.platform if platform is None else platform
+    # systemd exports these for a supervised unit (notify/watchdog or just run).
+    if e.get("INVOCATION_ID") or e.get("NOTIFY_SOCKET") or e.get("WATCHDOG_USEC"):
+        return "systemd"
+    # Generic supervisors that export an identifying marker.
+    if e.get("SUPERVISOR_ENABLED") or e.get("SUPERVISOR_PROCESS_NAME"):
+        return "supervisord"
+    if e.get("PM2_HOME") or e.get("pm_id"):
+        return "pm2"
+    if e.get("RUNIT_SERVICE") or e.get("S6_SERVICE_PATH"):
+        return "runit/s6"
+    # macOS launchd marks managed jobs with an XPC service name.
+    if plat == "darwin" and e.get("XPC_SERVICE_NAME") not in (None, "", "0"):
+        return "launchd"
+    return None
+
+
+def _build_liveness_aggregator() -> HealthAggregator:
+    """A minimal HealthAggregator for the F-85 watchdog liveness gate.
+
+    Only the LOCAL critical subsystems whose failure means the process genuinely
+    cannot serve: the db pool and the data/log filesystem. Deliberately NOT the
+    network provider contributors (a provider outage must not kill the process)
+    nor browser/resilience (live-runtime refs, may report 'not constructed')."""
+    from stackowl.health.aggregator import HealthAggregator
+    from stackowl.health.contributors import DbContributor, FilesystemContributor
+    from stackowl.startup.fs_probe import _data_dir, _log_dir
+
+    agg = HealthAggregator()
+    agg.register(DbContributor(default_db_path()))
+    agg.register(FilesystemContributor(_data_dir(), _log_dir()))
+    return agg
 
 
 def _pid_path() -> Path:
@@ -287,6 +377,10 @@ class StartupOrchestrator:
                 raise StartupError(num, name, str(exc)) from exc
             log.info("[startup] phase %d (%s): ok (%.0fms)", num, name, (time.monotonic() - t0) * 1000)
 
+        # F-86 — fail-closed reachability census (advisory; never refuses READY).
+        if not self._dry_run:
+            await self._phase_reachability_census()
+
         # Write PID before the blocking gateway phase. The systemd watchdog +
         # READY=1 are now driven by the real WatchdogService INSIDE _phase_gateway
         # (F142): pinging must be recurring, and READY must fire only after the
@@ -345,6 +439,43 @@ class StartupOrchestrator:
                 self._browser_probe_result.error,
             )
 
+    async def _phase_reachability_census(self) -> None:
+        """F-86 — run the fail-closed reachability self-audit at boot.
+
+        :func:`run_census` already existed but nothing ever invoked it on the boot
+        path, so a subsystem that ships green-but-dead-on-default-path was never
+        caught at runtime. We run it here and, on failure, emit a LOUD degraded
+        operator alert — but DELIBERATELY do NOT refuse READY: a census miss must
+        not brick a boot (a probe can have false-negatives), so warn+alert is the
+        safe subset. Never raises: the audit is advisory, not a gate.
+        """
+        try:
+            # Importing the probes module self-registers every probe.
+            import stackowl.health.reachability.probes  # noqa: F401
+            from stackowl.health.reachability import census_passes, run_census
+
+            results = await run_census()
+            if census_passes(results):
+                log.info(
+                    "[startup] reachability census: ok — %d subsystems reachable",
+                    len(results),
+                )
+                return
+            unreachable = [f"{r.name}: {r.detail}" for r in results if not r.reachable]
+            log.error(
+                "[startup] ★ REACHABILITY CENSUS DEGRADED ★ — %d subsystem(s) "
+                "dead on the default path; the service is starting ANYWAY but these "
+                "are NOT reachable: %s",
+                len(unreachable),
+                "; ".join(unreachable),
+            )
+        except Exception as exc:
+            # Advisory phase — a broken census must never block boot.
+            log.error(
+                "[startup] reachability census: audit itself failed — skipping",
+                exc_info=exc,
+            )
+
     async def _phase_gateway(self) -> None:
         """Start channel adapters and run the main message loop.
 
@@ -354,6 +485,28 @@ class StartupOrchestrator:
         if self._dry_run:
             log.info("[startup] gateway: dry_run — skipping adapter start")
             return
+
+        # F-88 — in mono there is no in-process crash supervisor (only the split
+        # gateway role respawns the core). If NO external service manager is
+        # supervising us, an unhandled crash means the process just dies. Warn
+        # LOUDLY so an operator running bare in a shell knows. (gateway/core roles
+        # are covered by the gateway's crash-respawn supervisor.)
+        if self._role == "mono":
+            manager = detect_service_manager()
+            if manager is None:
+                log.error(
+                    "[startup] ★ NO SERVICE MANAGER DETECTED ★ — running mono with "
+                    "no in-process crash supervisor AND no external manager "
+                    "(systemd/launchd/supervisord/pm2/runit) with Restart=always. An "
+                    "unhandled crash will NOT auto-restart. Run under a service unit "
+                    "for resilience, or use the split gateway/core role.",
+                )
+            else:
+                log.info(
+                    "[startup] gateway: service manager detected (%s) — external "
+                    "auto-restart available for mono",
+                    manager,
+                )
 
         from stackowl.audit.logger import AuditLogger
         from stackowl.channels.base import ChannelAdapter
@@ -2842,8 +2995,16 @@ class StartupOrchestrator:
                 )
 
         # F142 — start the REAL recurring systemd watchdog (self-skips off-systemd).
+        # F-85 — gate the ping on a REAL liveness signal so a wedged-but-spinning
+        # loop can no longer keep telling systemd "healthy". We probe only the
+        # LOCAL critical subsystems (db pool + data/log dirs) — a wedged db or an
+        # unwritable data dir means the process genuinely cannot work, so the ping
+        # is skipped and systemd's watchdog-timeout restarts the unit. Network
+        # provider health is deliberately EXCLUDED: a provider outage is not a
+        # reason to kill this process. is_live() fails OPEN on probe error.
         watchdog = WatchdogService()
-        watchdog.start()
+        liveness_aggregator = _build_liveness_aggregator()
+        watchdog.start(liveness_check=liveness_aggregator.is_live)
         # READY=1 ONCE, AFTER all assembly is done and we are about to serve — never
         # earlier (premature READY would let systemd start dependents while startup
         # could still fail). No-op off-systemd.
@@ -2856,7 +3017,12 @@ class StartupOrchestrator:
         supervise_task: asyncio.Task[None] | None = None
         if self._role == "gateway":
             supervise_task = asyncio.create_task(
-                _supervise_core(core_proc_holder, gateway_socket_path, stop_event)
+                _supervise_core(
+                    core_proc_holder,
+                    gateway_socket_path,
+                    stop_event,
+                    gateway_first_conn_ready,
+                )
             )
         try:
             if self._role == "core":

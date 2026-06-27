@@ -79,6 +79,30 @@ async def test_send_file_best_effort_noop_no_target(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_file_upload_error_raises_delivery_error(tmp_path: Path) -> None:
+    """F-66: an upload failure to a RESOLVED live channel must not be swallowed.
+
+    Previously the upload exception was logged and swallowed, so the user never
+    got the file yet the deliverer recorded a clean send. It must re-raise as
+    DeliveryError so the ProactiveDeliverer maps it to ``failed``.
+    """
+    TestModeGuard.deactivate()
+    try:
+        adapter = _adapter()
+        ch, send = _channel(77)
+        send.side_effect = RuntimeError("discord upload boom")
+        adapter._channels[77] = ch
+        f = tmp_path / "report.txt"
+        f.write_text("hello report")
+        with pytest.raises(DeliveryError) as ei:
+            await adapter.send_file(str(f), caption="here", channel_id=77)
+        assert ei.value.channel == "discord"
+        assert ei.value.reason == "transport_error"
+    finally:
+        TestModeGuard.deactivate()
+
+
+@pytest.mark.asyncio
 async def test_download_media_reads_cached_attachment() -> None:
     TestModeGuard.deactivate()
     try:

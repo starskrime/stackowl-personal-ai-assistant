@@ -23,6 +23,19 @@ from stackowl.providers.base import Message
 # hardcode an English-only stopword list here.
 _WORD_RE = re.compile(r"\w{3,}", re.UNICODE)
 
+# F-49 — when the ONE live read of learned reflections FAILS (as opposed to
+# legitimately returning nothing), we must not silently revert to memoryless.
+# After a single retry the assembled context is annotated with this block so the
+# turn KNOWS its learned memory is degraded, rather than proceeding as if it had
+# simply learned nothing.
+_REFLECTIONS_DEGRADED_BLOCK = (
+    "## Recent Reflections: DEGRADED\n"
+    "Learned reflections could not be loaded this turn (memory recall failed "
+    "after a retry). Proceed WITHOUT learned-reflection context, and be aware "
+    "your recent-learning recall is currently unavailable — do not assume the "
+    "absence of reflections means nothing was learned."
+)
+
 
 def _candidate_entity_ids(query: str, limit: int = 5) -> list[str]:
     """Derive deterministic entity ids from query tokens.
@@ -163,18 +176,38 @@ async def _gather_recent_reflections(owl_name: str, limit: int = 3) -> str:
             "[pipeline] classify._gather_recent_reflections: exit — no db_pool",
         )
         return ""
-    # 3. STEP — pull recent reflections
-    try:
-        from stackowl.memory.reflection_store import ReflectionStore
+    # 3. STEP — pull recent reflections. F-49: distinguish "no reflections"
+    # (a legitimate empty below) from "recall FAILED" (an exception here). On
+    # failure we retry ONCE; if it still fails we annotate the context as
+    # DEGRADED rather than silently returning "" (which is indistinguishable
+    # from "nothing learned"). We never raise — the turn must stay alive.
+    from stackowl.memory.reflection_store import ReflectionStore
 
-        store = ReflectionStore(db)
-        reflections = await store.recent_for_owl(owl_name, limit=limit)
-    except Exception as exc:  # B5
-        log.engine.warning(
-            "[pipeline] classify._gather_recent_reflections: lookup failed — skipping",
-            exc_info=exc, extra={"_fields": {"owl_name": owl_name}},
+    reflections = None
+    last_exc: Exception | None = None
+    for attempt in (1, 2):  # original try + one retry
+        try:
+            store = ReflectionStore(db)
+            reflections = await store.recent_for_owl(owl_name, limit=limit)
+            last_exc = None
+            break
+        except Exception as exc:  # B5 — never crash classify on a recall hiccup
+            last_exc = exc
+            log.engine.warning(
+                "[pipeline] classify._gather_recent_reflections: lookup failed",
+                exc_info=exc,
+                extra={"_fields": {"owl_name": owl_name, "attempt": attempt}},
+            )
+    if last_exc is not None:
+        # 2. DECISION — recall is broken after a retry: surface DEGRADED so the
+        # turn knows its learned memory is unavailable (not just empty).
+        log.engine.error(
+            "[pipeline] classify._gather_recent_reflections: recall DEGRADED — "
+            "annotating context (learned memory unavailable this turn)",
+            exc_info=last_exc,
+            extra={"_fields": {"owl_name": owl_name}},
         )
-        return ""
+        return _REFLECTIONS_DEGRADED_BLOCK
     # 2. DECISION — nothing to surface
     if not reflections:
         log.engine.debug(

@@ -7,12 +7,15 @@ from stackowl.owls.dna_storage import _DNA_FIELDS
 from stackowl.owls.evolution import DeltaValidator
 from stackowl.owls.evolution_limits import DNA_NEUTRAL
 
-_EXPECTED = ("challenge_level", "verbosity", "curiosity", "formality", "creativity", "precision")
+_EXPECTED = (
+    "challenge_level", "verbosity", "curiosity", "formality", "creativity",
+    "precision", "completion_drive",
+)
 
 
 def test_canonical_traits_and_neutral():
     assert TRAIT_NAMES == _EXPECTED
-    assert len(TRAIT_NAMES) == 6
+    assert len(TRAIT_NAMES) == 7
     assert NEUTRAL == 0.5
 
 

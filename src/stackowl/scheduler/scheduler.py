@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
@@ -22,6 +22,9 @@ from stackowl.scheduler.scheduler_helpers import (
 )
 from stackowl.scheduler.scheduler_mutations import _won_transition, run_now, update_job
 from stackowl.supervisor.supervisor import SupervisedTask
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only import (no runtime cost / cycle)
+    from stackowl.notifications.proactive_job import ProactiveJobDeliverer
 
 _POLL_INTERVAL_SEC = 30.0
 _MAX_RETRIES = 3
@@ -43,10 +46,18 @@ class JobScheduler(SupervisedTask):
         tz: str = "UTC",
         turn_registry: Any = None,
         max_defer_sec: float = _MAX_DEFER_SEC,
+        job_deliverer: ProactiveJobDeliverer | None = None,
     ) -> None:
         self._db = db
         self._clock = clock
         self._registry = handler_registry or HandlerRegistry.instance()
+        # F-61 — the SHARED cron-born delivery seam (the same one morning_brief /
+        # check_in / goal_execution use). When wired, a job that exhausts its
+        # retries routes a proactive operator alert to its OWN durable recipients
+        # so an outage is not just a buried ERROR log line. None ⇒ no alert
+        # (back-compat for tests / non-orchestrated construction); the lifecycle
+        # write always completes regardless.
+        self._job_deliverer = job_deliverer
         # Optional TurnRegistry (duck-typed: needs has_active_turns()). When wired,
         # heavy `defer_under_load` handlers yield to live user turns. None ⇒ no
         # deferral (back-compat for tests / non-orchestrated construction).
@@ -168,12 +179,26 @@ class JobScheduler(SupervisedTask):
         t0 = time.monotonic()
         handler = self._registry.get(job.handler_name)
         if handler is None:
-            log.heartbeat.error(
-                "[scheduler] %s: unknown handler — marking failed",
-                job.job_id,
-                extra={"_fields": {"handler": job.handler_name}},
+            # F-62 — the handler is not registered AT THIS TICK. That is a wiring /
+            # registration-ordering condition (conditionally-registered handlers, or
+            # registration sequenced after the first poll), NOT a handler failure.
+            # Marking it terminally `failed` here made the job unreachable FOREVER —
+            # even once the handler later registers. Instead, release the dispatch
+            # claim (back to `pending`) and warn, leaving the row exactly as-due so a
+            # subsequent poll recovers it the moment the handler appears. Terminal
+            # `failed` is reserved for handler-RAISED errors past max-retries.
+            # retry_count is deliberately untouched — a registration gap must never
+            # consume the job's genuine handler-failure retry budget.
+            await self._db.execute(
+                "UPDATE jobs SET status = 'pending' WHERE job_id = ?",
+                (job.job_id,),
             )
-            await self._mark_failed(job)
+            log.heartbeat.warning(
+                "[scheduler] %s: handler not registered yet — left pending for "
+                "later recovery (NOT marked failed)",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
+            )
             return
 
         try:
@@ -274,6 +299,7 @@ class JobScheduler(SupervisedTask):
                 actor="scheduler",
                 details={"handler": job.handler_name, "last_error": last_error},
             )
+            await self._notify_failure(job, last_error, terminal=True)
             return
 
         # Recurring job: re-arm onto the next cadence slot instead of dying.
@@ -298,11 +324,9 @@ class JobScheduler(SupervisedTask):
             },
         )
         # The audit row above is the durable, operator-visible record of the
-        # re-arm. A push notification is intentionally NOT wired here: the
-        # scheduler has no ready operator-notify seam at this layer (cron-born
-        # sends resolve a recipient via DeliverySpec inside the HANDLER, not from
-        # _mark_failed), so inventing one would be speculative. F-60's contract —
-        # survive the failure + leave an audited trail — is met by re-arm + audit.
+        # re-arm. F-61 — a recurring job exhausting its retries is a genuine outage,
+        # so beyond the durable-but-silent audit row we ALSO push a proactive
+        # operator alert through the shared cron-born delivery seam (when wired).
         await write_audit(
             self._db,
             "job_rearmed_after_failure",
@@ -314,6 +338,66 @@ class JobScheduler(SupervisedTask):
                 "last_error": last_error,
             },
         )
+        await self._notify_failure(job, last_error, terminal=False)
+
+    async def _notify_failure(
+        self, job: Job, last_error: str | None, *, terminal: bool
+    ) -> None:
+        """Route an operator alert for a retry-exhausted job (F-61).
+
+        A job that exhausts its retries — whether it dies (one-shot ``terminal``)
+        or re-arms onto its next slot (recurring) — is an outage whose only prior
+        signal was a buried ERROR log line. This pushes a proactive notification
+        through the SAME delivery seam (:class:`ProactiveJobDeliverer`) that
+        morning_brief / check_in / goal_execution use, addressed from the job's
+        OWN durable recipients (``target_channels`` / ``target_addresses``).
+
+        Best-effort and HONEST: with no deliverer wired (non-orchestrated
+        construction, or no proactive channel configured) nothing is sent; a job
+        with no durable recipient is reported ``undeliverable`` by the seam (never
+        a fake "notified"); and any send error is logged but NEVER allowed to abort
+        the durable lifecycle write that already happened.
+        """
+        if self._job_deliverer is None:
+            log.heartbeat.debug(
+                "[scheduler] %s: no deliverer wired — failure alert skipped",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return
+        disposition = (
+            "permanently failed"
+            if terminal
+            else "is failing repeatedly (re-armed to its next slot)"
+        )
+        message = f"Scheduled job '{job.handler_name}' {disposition} after exhausting retries."
+        if last_error:
+            message += f" Last error: {last_error}"
+        try:
+            outcome = await self._job_deliverer.deliver_for_job(
+                job,
+                message=message,
+                category="job_failed",
+                urgency="high",
+            )
+            log.heartbeat.info(
+                "[scheduler] %s: failure alert routed",
+                job.job_id,
+                extra={
+                    "_fields": {
+                        "job_id": job.job_id,
+                        "terminal": terminal,
+                        "rollup": getattr(outcome, "rollup", None),
+                    }
+                },
+            )
+        except Exception as exc:  # B5 — a notify failure must not break the lifecycle
+            log.heartbeat.error(
+                "[scheduler] %s: failure alert delivery raised",
+                job.job_id,
+                exc_info=exc,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
 
     async def pause(self, job_id: str) -> None:
         """Pause a job — sets status='failed', enabled=0. Idempotent."""

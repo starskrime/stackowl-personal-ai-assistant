@@ -27,6 +27,9 @@ inability to observe reality (a filesystem error ⇒ ``accepted=None`` ⇒ no op
 from __future__ import annotations
 
 import os
+import urllib.error
+import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +45,62 @@ _MTIME_TOLERANCE_S = 2.0
 # enormous declared directory. Far above any real artifact-output dir; the first
 # fresh file short-circuits long before this.
 _MAX_SCAN_ENTRIES = 50_000
+
+# Re-probe timeout (seconds) for the HTTP observable kind. Short — a verification
+# re-probe must never become its own latency source.
+_HTTP_PROBE_TIMEOUT_S = 5.0
+
+
+@dataclass(frozen=True)
+class HttpProbeOutcome:
+    """A GENERAL side-effect re-probe post-condition (verification B3, F-12).
+
+    Where :class:`ExpectedOutcome` (``kind="artifact"``) observes the FILESYSTEM,
+    this observes the NETWORK: after the turn ran, re-fetch ``url`` and require a
+    success/redirect (2xx/3xx) status. Any effect that publishes a verifiable
+    endpoint — a deployed service, an uploaded object's public URL, a created
+    record's API resource — maps onto this one kind. It is deliberately
+    vendor-neutral: only a URL and a status-class check, no provider specifics.
+
+    The re-probe itself is a pluggable :class:`HttpProber` (the checker's default
+    issues a short-timeout ``HEAD``); a refuted/absent endpoint yields ``False``,
+    an unreachable one yields ``None`` (no opinion — never a fabricated failure).
+    """
+
+    url: str
+    kind: str = "http"
+
+
+#: A re-probe function: given a URL, return True (live / 2xx-3xx), False (observed
+#: error response, e.g. 4xx/5xx), or None (could not observe — no opinion).
+HttpProber = Callable[[str], "bool | None"]
+
+
+def _default_http_prober(url: str) -> bool | None:
+    """Issue a short-timeout HEAD and classify the result. Never raises.
+
+    True for a 2xx/3xx status; False for an observed 4xx/5xx error response; None on
+    any transport/timeout error (the endpoint could not be observed — no opinion, so
+    a real success is never flipped to a failure on our inability to reach it).
+
+    NOTE (deferral): callers wire the URL from a DECLARED/DERIVED outcome, not raw
+    user input; if a future producer lets untrusted text reach this prober, an
+    SSRF-hardening allowlist belongs here. No live populator exists today.
+    """
+    try:
+        req = urllib.request.Request(url, method="HEAD")  # noqa: S310 — declared outcome URL
+        with urllib.request.urlopen(req, timeout=_HTTP_PROBE_TIMEOUT_S) as resp:  # noqa: S310
+            status = getattr(resp, "status", None)
+            return None if status is None else 200 <= status < 400
+    except urllib.error.HTTPError as exc:
+        # A real HTTP error response WAS observed (4xx/5xx) — the effect is refuted.
+        return 200 <= exc.code < 400
+    except Exception as exc:  # noqa: BLE001 — unreachable ⇒ no opinion, never raise
+        log.engine.debug(
+            "[acceptance] http re-probe unreachable — no opinion",
+            extra={"_fields": {"err": type(exc).__name__}},
+        )
+        return None
 
 
 @dataclass(frozen=True)
@@ -108,11 +167,20 @@ def _dir_has_fresh_file(directory: Path, not_before: float) -> bool | None:
 
 
 class AcceptanceChecker:
-    """Observe a declared :class:`ExpectedOutcome` against reality. Stateless."""
+    """Observe a declared post-condition against reality.
+
+    Handles the FILESYSTEM kind (:class:`ExpectedOutcome` ``kind="artifact"``) and
+    the NETWORK kind (:class:`HttpProbeOutcome`). ``http_prober`` is injectable so
+    the network re-probe is unit-testable without touching the wire; the default
+    issues a short-timeout HEAD. Any unrecognized kind yields a clear no-opinion
+    verdict (never raises)."""
+
+    def __init__(self, *, http_prober: HttpProber | None = None) -> None:
+        self._http_prober: HttpProber = http_prober or _default_http_prober
 
     def check(
         self,
-        outcome: ExpectedOutcome | None,
+        outcome: ExpectedOutcome | HttpProbeOutcome | None,
         *,
         turn_started_at: float,
         acted: bool,
@@ -125,23 +193,52 @@ class AcceptanceChecker:
         nothing is never penalized — it had no chance to produce an outcome — which
         keeps a conversational/no-op turn byte-identical.
         """
-        if outcome is None or outcome.kind == "none":
+        if outcome is None:
+            return AcceptanceVerdict(None, "no declared outcome")
+        # An ExpectedOutcome with kind "none" is "no declared outcome" — the no-op.
+        if isinstance(outcome, ExpectedOutcome) and outcome.kind == "none":
             return AcceptanceVerdict(None, "no declared outcome")
         if not acted:
             return AcceptanceVerdict(None, "turn took no action — not engaged")
-        if outcome.kind == "artifact":
-            observed = _dir_has_fresh_file(_resolve_dir(outcome.artifact_dir), turn_started_at)
-            if observed is None:
-                log.engine.debug(
-                    "[acceptance] artifact directory unobservable — no opinion",
-                    extra={"_fields": {"artifact_dir": outcome.artifact_dir}},
-                )
-                return AcceptanceVerdict(None, "artifact directory could not be observed")
-            if observed:
-                return AcceptanceVerdict(True, "fresh artifact observed")
-            return AcceptanceVerdict(
-                False,
-                f"declared an artifact under {outcome.artifact_dir or 'the workspace'} "
-                "but no fresh file was produced",
+        if isinstance(outcome, ExpectedOutcome):
+            if outcome.kind == "artifact":
+                return self._check_artifact(outcome, turn_started_at)
+            return AcceptanceVerdict(None, f"unknown outcome kind: {outcome.kind}")
+        if isinstance(outcome, HttpProbeOutcome):
+            return self._check_http(outcome)
+        return AcceptanceVerdict(
+            None, f"unknown outcome kind: {getattr(outcome, 'kind', type(outcome).__name__)}"
+        )
+
+    def _check_artifact(
+        self, outcome: ExpectedOutcome, turn_started_at: float
+    ) -> AcceptanceVerdict:
+        observed = _dir_has_fresh_file(_resolve_dir(outcome.artifact_dir), turn_started_at)
+        if observed is None:
+            log.engine.debug(
+                "[acceptance] artifact directory unobservable — no opinion",
+                extra={"_fields": {"artifact_dir": outcome.artifact_dir}},
             )
-        return AcceptanceVerdict(None, f"unknown outcome kind: {outcome.kind}")
+            return AcceptanceVerdict(None, "artifact directory could not be observed")
+        if observed:
+            return AcceptanceVerdict(True, "fresh artifact observed")
+        return AcceptanceVerdict(
+            False,
+            f"declared an artifact under {outcome.artifact_dir or 'the workspace'} "
+            "but no fresh file was produced",
+        )
+
+    def _check_http(self, outcome: HttpProbeOutcome) -> AcceptanceVerdict:
+        observed = self._http_prober(outcome.url)
+        if observed is None:
+            log.engine.debug(
+                "[acceptance] endpoint unobservable — no opinion",
+                extra={"_fields": {"url": outcome.url}},
+            )
+            return AcceptanceVerdict(None, "endpoint could not be probed")
+        if observed:
+            return AcceptanceVerdict(True, "declared endpoint responded successfully")
+        return AcceptanceVerdict(
+            False,
+            f"declared endpoint {outcome.url} did not respond successfully",
+        )

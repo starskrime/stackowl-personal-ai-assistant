@@ -31,6 +31,12 @@ if TYPE_CHECKING:
     from stackowl.parliament.models import ParliamentSession
     from stackowl.parliament.synthesis_models import SynthesisResult
 
+# F-59 — durable-knowledge floor. A synthesis below this confidence is too weak
+# to persist as a long-lived fact (e.g. a mostly-truncated debate). This is a
+# SECONDARY guard; the PRIMARY gate is ``SynthesisResult.parse_ok`` — a parse
+# failure must never be staged regardless of its (caller-assigned) confidence.
+_MIN_PELLET_CONFIDENCE = 0.5
+
 
 class MemoryBridge(ABC):
     """Minimal staging interface for facts produced outside the memory subsystem.
@@ -102,9 +108,32 @@ class KnowledgePelletGenerator:
                     "session_id": session.session_id,
                     "disagreements": len(synthesis.disagreements),
                     "has_consensus": bool(synthesis.consensus),
+                    "parse_ok": getattr(synthesis, "parse_ok", True),
+                    "confidence": getattr(synthesis, "confidence", None),
                 }
             },
         )
+        # F-59 — NEVER stage a fallback/low-confidence synthesis as durable
+        # knowledge. ``parse_ok=False`` means the consensus is raw text the parser
+        # could not structure (a truncated body dressed as a verdict); staging it
+        # would pollute long-term memory with a confidence=0.7 trust="self" fact.
+        # A confidence below the floor is too weak to persist even when parsed.
+        parse_ok = getattr(synthesis, "parse_ok", True)
+        confidence = getattr(synthesis, "confidence", 1.0)
+        if not parse_ok or confidence < _MIN_PELLET_CONFIDENCE:
+            log.engine.warning(
+                "[parliament] pellet_generator.from_parliament: skipping — "
+                "synthesis not trustworthy enough to persist as durable knowledge",
+                extra={
+                    "_fields": {
+                        "session_id": session.session_id,
+                        "parse_ok": parse_ok,
+                        "confidence": confidence,
+                        "min_confidence": _MIN_PELLET_CONFIDENCE,
+                    }
+                },
+            )
+            return
         claims: list[str] = []
         if synthesis.consensus:
             claims.append(synthesis.consensus)

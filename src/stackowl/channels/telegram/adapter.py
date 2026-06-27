@@ -594,7 +594,7 @@ class TelegramChannelAdapter(ChannelAdapter):
     _PHOTO_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif"})
 
     async def send_file(
-        self, file_path: str, caption: str | None = None, *, chat_id: int | None = None
+        self, file_path: str, caption: str | None = None, *, chat_id: int | None = _UNSET
     ) -> None:
         """Upload ``file_path`` to a chat, picking the media kind by extension.
 
@@ -605,15 +605,25 @@ class TelegramChannelAdapter(ChannelAdapter):
         threaded from the notification); when omitted it falls back to
         ``self._last_chat_id`` (same resolution as :meth:`send_text`). Resolving an
         EXPLICIT target here is what stops a proactive file send from
-        cross-delivering to whatever chat last sent an inbound update. A missing
-        chat / uninitialised bot is a logged no-op (the deliverer surfaces
-        undeliverable as ``failed``). On a send error the file handle is always
-        closed and the exception propagates to the deliverer, which maps it to a
-        structured ``failed`` — never a crash.
+        cross-delivering to whatever chat last sent an inbound update.
+
+        No-target contract (F-65, mirrors :meth:`send_text`): an EXPLICIT
+        ``chat_id`` (the on-turn path) that cannot reach a live bot fails LOUD —
+        log ``error`` + raise ``DeliveryError("telegram", "no_channel")`` (bot
+        uninitialised) / ``"no_target"`` (unresolvable target) — so the file is
+        never silently dropped while the ledger records a clean send; the
+        :class:`ProactiveDeliverer` maps the raise to ``failed``. ``chat_id``
+        OMITTED (proactive/best-effort) with no ``_last_chat_id`` → loud
+        ``error``-level logged NO-OP, never a raise (preserves the proactive
+        deliverer never-raises contract). On a send error the file handle is
+        always closed and the exception propagates to the deliverer, which maps
+        it to a structured ``failed`` — never a crash.
         """
         from pathlib import Path
 
-        target = chat_id if chat_id is not None else self._last_chat_id
+        explicit = chat_id is not _UNSET
+        resolved = chat_id if explicit else None
+        target = resolved if resolved is not None else self._last_chat_id
         ext = Path(file_path).suffix.lower()
         log.telegram.debug(
             "[telegram] adapter.send_file: entry",
@@ -627,8 +637,25 @@ class TelegramChannelAdapter(ChannelAdapter):
         )
         TestModeGuard.assert_not_test_mode("telegram.send_file")
         if self._bot_app is None or target is None:
-            log.telegram.warning(
-                "[telegram] adapter.send_file: no active chat — file dropped",
+            # An explicit on-turn target that cannot reach a live bot must fail
+            # loud — the file would otherwise be silently lost while the ledger
+            # records a clean send (F-65). A resolved target with a missing bot
+            # app is a no_channel; any other unresolvable explicit target is a
+            # no_target. ``resolved is not None`` is load-bearing (NOT redundant):
+            # an explicit ``chat_id=None`` with no bot must still be no_target.
+            if explicit and resolved is not None and self._bot_app is None:
+                log.telegram.error(
+                    "[telegram] adapter.send_file: bot not initialised — failing loud",
+                )
+                raise DeliveryError("telegram", "no_channel")
+            if explicit:
+                log.telegram.error(
+                    "[telegram] adapter.send_file: explicit target unresolvable — failing loud",
+                    extra={"_fields": {"has_app": self._bot_app is not None}},
+                )
+                raise DeliveryError("telegram", "no_target")
+            log.telegram.error(
+                "[telegram] adapter.send_file: no active chat (best-effort) — file dropped",
                 extra={"_fields": {"has_app": self._bot_app is not None}},
             )
             return

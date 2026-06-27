@@ -1,0 +1,22 @@
+-- Migration 0069: recoverable `blocked` objectives — classify WHY an objective
+-- is blocked so the autonomous driver can re-queue the recoverable ones.
+--
+-- F-41: the driver only advances status='active' objectives; every failure/park
+-- path used to flip the objective to `blocked` permanently — a stalled objective
+-- was abandoned by the loop forever. `blocker_kind` records the CLASS of block:
+--
+--   'transient'  stalled on a transient execution error (the in-tick retry budget
+--                was exhausted). Recoverable: after a cooldown the driver resets the
+--                stuck sub-goal's attempt budget and returns the objective to
+--                `active` for a fresh try — operational backoff, NOT a learned lesson.
+--   'decision'   suspended awaiting a genuinely irreversible/consequential decision
+--                only the owner can make (act-on-reversible / ask-on-irreversible),
+--                or a verified-false outcome whose clean retry would only re-assert
+--                the same false claim. Stays blocked until a human intervenes.
+--   NULL         legacy / not-yet-classified (treated as 'decision' — never auto-
+--                requeued, the conservative default). Byte-identical for old rows.
+--
+-- The cooldown clock reuses the objective's `updated_at` (set when it blocked); no
+-- new timestamp column is needed.
+
+ALTER TABLE objectives ADD COLUMN blocker_kind TEXT;  -- transient | decision | NULL

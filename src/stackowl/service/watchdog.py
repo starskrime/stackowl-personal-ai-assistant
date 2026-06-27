@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 
 from stackowl.infra.observability import log
 
-if TYPE_CHECKING:
-    pass
+# A liveness gate: returns True if the process is genuinely healthy enough to keep
+# telling systemd "alive". May be sync or async. Returning False suppresses the
+# WATCHDOG=1 ping so systemd's watchdog-timeout can restart a wedged process.
+LivenessCheck = Callable[[], bool] | Callable[[], Awaitable[bool]]
 
 _WATCHDOG_INTERVAL_S = 30
 
@@ -25,15 +28,28 @@ class WatchdogService:
 
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
+        self._liveness_check: LivenessCheck | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
-        """Start the watchdog ping loop if running under systemd."""
+    def start(self, *, liveness_check: LivenessCheck | None = None) -> None:
+        """Start the watchdog ping loop if running under systemd.
+
+        ``liveness_check`` (F-85) is an optional sync-or-async predicate consulted
+        before EACH ping. When it returns ``False`` (a critical subsystem is down)
+        the ``WATCHDOG=1`` ping is SKIPPED so systemd's watchdog-timeout restarts
+        the unit — closing the "deadlocked-but-spinning loop reports healthy" gap.
+        A ``None`` check preserves the prior unconditional-ping behaviour. The gate
+        fails OPEN: if the check itself raises, the ping still fires (a broken probe
+        must not trigger a false restart)."""
         # 1. ENTRY
-        log.infra.debug("[watchdog] start: entry")
+        log.infra.debug(
+            "[watchdog] start: entry",
+            extra={"_fields": {"liveness_gated": liveness_check is not None}},
+        )
+        self._liveness_check = liveness_check
 
         watchdog_usec = os.environ.get("WATCHDOG_USEC")
 
@@ -111,10 +127,36 @@ class WatchdogService:
         try:
             while True:
                 await asyncio.sleep(interval_s)
+                # F-85 — gate the ping on a real liveness signal. A wedged-but-
+                # spinning loop must NOT keep reporting healthy.
+                if not await self._is_live():
+                    log.infra.warning(
+                        "[watchdog] _ping_loop: liveness DOWN — skipping WATCHDOG=1 "
+                        "ping so systemd can restart the unit",
+                    )
+                    continue
                 self._sd_notify("WATCHDOG=1")
         except asyncio.CancelledError:
             log.infra.debug("[watchdog] _ping_loop: cancelled")
             raise
+
+    async def _is_live(self) -> bool:
+        """Evaluate the optional liveness gate. Fails OPEN (True) on no check or
+        on a check that raises — a broken probe must never cause a false restart."""
+        check = self._liveness_check
+        if check is None:
+            return True
+        try:
+            result = check()
+            if inspect.isawaitable(result):
+                result = await result
+            return bool(result)
+        except Exception as exc:  # noqa: BLE001 — fail OPEN, never silence the dog
+            log.infra.error(
+                "[watchdog] _is_live: liveness check raised — failing OPEN (ping)",
+                exc_info=exc,
+            )
+            return True
 
     @staticmethod
     def _sd_notify(state: str) -> None:

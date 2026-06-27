@@ -316,8 +316,14 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         is a loud logged no-op (never navigate to an empty chat). ``caption`` is
         sent as the media caption.
 
-        Self-healing: a browser attach failure is logged and swallowed so a file
-        send never crashes the turn.
+        Transport honesty (F-66): a browser attach failure to a RESOLVED chat is
+        NOT swallowed — it is logged then re-raised as
+        ``DeliveryError("whatsapp", "transport_error")`` so the
+        :class:`ProactiveDeliverer` records ``failed`` (instead of a clean send
+        while the user never gets the file). "A file send must not crash the
+        turn" is still honoured: the DELIVERER catches the raise — that is its
+        job — rather than this adapter swallowing it. The attach flow is not
+        idempotent, so there is NO retry (a re-attempt risks a duplicate send).
         """
         explicit = target is not _UNSET
         resolved = target if explicit else None
@@ -344,12 +350,17 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         try:
             await self._browser.send_file(dest, file_path, caption)
             log.whatsapp.debug("[whatsapp] adapter.send_file: exit sent")
-        except Exception as exc:  # self-healing — a file send must not crash the turn
+        except Exception as exc:  # F-66 — an on-turn transport failure must surface
             log.whatsapp.error(
                 "[whatsapp] adapter.send_file: attach flow failed",
                 exc_info=exc,
                 extra={"_fields": {"jid_hash": hash_jid(dest)}},
             )
+            # The chat resolved but the attach/upload failed — the user never gets
+            # the file. Re-raise so the ProactiveDeliverer records ``failed``; the
+            # turn stays safe because the DELIVERER catches this, not because we
+            # swallow it. The attach flow is not idempotent → no retry.
+            raise DeliveryError("whatsapp", "transport_error") from exc
 
     async def stop(self) -> None:
         """Cancel the poll loop task and shut down the browser.
