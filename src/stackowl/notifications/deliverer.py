@@ -151,8 +151,61 @@ class ProactiveDeliverer:
             result = await self._transport(
                 channel, notification.message, chat_id=notification.target_chat_id
             )
+        # ADR-2 — a FAILED transport is not surrendered until the RecoveryActuator's
+        # reroute rung is exhausted: when an opt-in fallback channel is configured, the
+        # message is rerouted there before delivery reports failure (F-64/65/66).
+        result = await self._maybe_reroute(channel, notification, result)
         self._log_exit(result, channel, t0)
         return result
+
+    async def _maybe_reroute(
+        self, failed_channel: str, notification: Notification, status: DeliveryStatus
+    ) -> DeliveryStatus:
+        """ADR-2 — on a FAILED transport, hand the failure to the one RecoveryActuator,
+        which runs a reroute rung to the configured ``notifications.fallback_channel`` and
+        re-verifies it (a ``"delivered"`` status). Opt-in: an empty fallback (the default)
+        ⇒ no reroute (byte-identical); a fallback equal to the channel that just failed is
+        skipped. Never raises — any internal error leaves the original ``status``."""
+        try:
+            if status != "failed":
+                return status
+            fallback = self._settings.notifications.fallback_channel
+            if not fallback or fallback == failed_channel:
+                return status
+            from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+            async def _reroute() -> DeliveryStatus:
+                if notification.file_path is not None:
+                    return await self._transport_file(
+                        fallback, notification.file_path, notification.message,
+                        chat_id=notification.target_chat_id,
+                    )
+                return await self._transport(
+                    fallback, notification.message, chat_id=notification.target_chat_id
+                )
+
+            failure = Failure(
+                name=f"channel:{failed_channel}", kind="delivery", transient=True
+            )
+            outcome = await RecoveryActuator().recover(
+                failure, reroute=_reroute, verify=lambda r: r == "delivered", record=False,
+            )
+            if outcome.recovered:
+                log.notifications.info(
+                    "[notifications] deliverer: primary channel failed — rerouted to fallback",
+                    extra={"_fields": {
+                        "failed_channel": failed_channel, "fallback_channel": fallback,
+                    }},
+                )
+                return "delivered"
+            return status
+        except Exception as exc:  # B5 — reroute must never break delivery
+            log.notifications.error(
+                "[notifications] deliverer._maybe_reroute: failed — leaving original status",
+                exc_info=exc,
+                extra={"_fields": {"failed_channel": failed_channel}},
+            )
+            return status
 
     async def transport(self, channel: str, message: str) -> DeliveryStatus:
         """Transport an already-decided message body to ``channel``.

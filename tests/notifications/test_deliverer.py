@@ -21,7 +21,6 @@ from stackowl.notifications.router import (
 )
 
 
-
 def _settings(default_channel: str = "cli") -> Settings:
     ns = SimpleNamespace(
         notifications=NotificationSettings(default_channel=default_channel)
@@ -209,3 +208,75 @@ async def test_system_critical_preserved_without_clamp(tmp_db: DbPool) -> None:
     note = Notification(message="alarm", urgency="critical", category="sys")
     status = await router.deliver(note)
     assert status == "delivered"
+
+
+# --- ADR-2: reroute a FAILED transport to an opt-in fallback channel -----------
+
+
+def _deliverer_fb(
+    decision: DeliveryStatus, *, default_channel: str = "cli", fallback_channel: str = ""
+) -> tuple[ProactiveDeliverer, ChannelRegistry]:
+    router = _StubRouter(decision)
+    registry = ChannelRegistry.instance()
+    ns = SimpleNamespace(
+        notifications=NotificationSettings(
+            default_channel=default_channel, fallback_channel=fallback_channel
+        )
+    )
+    dlv = ProactiveDeliverer(
+        router=cast(NotificationRouter, router),
+        registry=registry,
+        settings=cast(Settings, ns),
+    )
+    return dlv, registry
+
+
+async def test_failed_transport_reroutes_to_fallback() -> None:
+    dlv, registry = _deliverer_fb("delivered", fallback_channel="telegram")
+    primary = _RecordingAdapter("cli")
+    primary.fail_times = 99  # both in-channel attempts fail
+    fallback = _RecordingAdapter("telegram")
+    registry.register(primary)
+    registry.register(fallback)
+
+    status = await dlv.deliver(_note("cli"))
+
+    assert status == "delivered"  # rerouted, not surrendered
+    assert fallback.sent == ["hello body"]  # the fallback channel got the message
+    assert primary.sent == []
+
+
+async def test_no_fallback_is_byte_identical() -> None:
+    dlv, registry = _deliverer_fb("delivered", fallback_channel="")  # opt-in OFF
+    primary = _RecordingAdapter("cli")
+    primary.fail_times = 99
+    registry.register(primary)
+
+    status = await dlv.deliver(_note("cli"))
+
+    assert status == "failed"  # no reroute — today's behavior
+
+
+async def test_reroute_skipped_when_fallback_equals_failed_channel() -> None:
+    dlv, registry = _deliverer_fb("delivered", fallback_channel="cli")
+    primary = _RecordingAdapter("cli")
+    primary.fail_times = 99
+    registry.register(primary)
+
+    status = await dlv.deliver(_note("cli"))
+
+    assert status == "failed"  # never reroute to the same channel that just failed
+
+
+async def test_reroute_that_also_fails_returns_failed() -> None:
+    dlv, registry = _deliverer_fb("delivered", fallback_channel="telegram")
+    primary = _RecordingAdapter("cli")
+    primary.fail_times = 99
+    fallback = _RecordingAdapter("telegram")
+    fallback.fail_times = 99  # fallback also down
+    registry.register(primary)
+    registry.register(fallback)
+
+    status = await dlv.deliver(_note("cli"))
+
+    assert status == "failed"  # ladder exhausted → honest failure
