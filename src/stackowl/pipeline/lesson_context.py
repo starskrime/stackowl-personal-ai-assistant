@@ -17,6 +17,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from stackowl.infra import decision_ledger
 from stackowl.infra.observability import log
 
 
@@ -93,6 +94,15 @@ def record_applied(lesson_id: str, what_you_did: str) -> SurfacedLesson | None:
         what_you_did=what_you_did,
         lesson_summary=match.content if match is not None else None,
     )))
+    # ADR-7: this is the point a learned heuristic actually STEERED the turn — emit one
+    # ``learned_context`` Decision so "which lesson steered you, and how?" is a read of
+    # the turn ledger. Independently no-ops when the ledger is unbound.
+    decision_ledger.record_decision(
+        point="learned_context",
+        verdict=lesson_id,
+        reason=what_you_did,
+        evidence={"matched_surfaced": match is not None},
+    )
     return match
 
 

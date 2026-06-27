@@ -90,3 +90,21 @@ def record_decision(
 def get_decisions() -> tuple[Decision, ...]:
     """Non-consuming read of this turn's decisions (empty if none/unbound)."""
     return _decisions.get() or ()
+
+
+def render_why(decisions: tuple[Decision, ...]) -> str:
+    """Render a turn's decisions as a concise human-readable "why" explanation.
+
+    ADR-7 step 3: "why did you do that?" becomes a READ of this ledger, not a
+    confabulation. One line per decision — ``point — verdict — reason`` (the reason
+    omitted when empty). Pure, total (never raises), and ``""`` on an empty ledger so a
+    caller can append it unconditionally."""
+    try:
+        lines = [
+            f"{d.point} — {d.verdict}" + (f" — {d.reason}" if d.reason else "")
+            for d in decisions
+        ]
+        return "\n".join(lines)
+    except Exception as exc:  # total — an explanation render must never break a turn
+        log.engine.error("[decision_ledger] render_why failed", exc_info=exc)
+        return ""

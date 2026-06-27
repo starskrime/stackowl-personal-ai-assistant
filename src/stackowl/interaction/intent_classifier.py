@@ -46,6 +46,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from stackowl.infra import decision_ledger
 from stackowl.infra.observability import log
 from stackowl.providers.base import Message, ModelProvider
 
@@ -173,6 +174,30 @@ class ClarifyIntentClassifier:
         self, *, question: str, choices: tuple[str, ...], message: str,
     ) -> AnswerVerdict:
         """Like :meth:`is_answer` but returns an EXPLAINABLE :class:`AnswerVerdict`.
+
+        Thin wrapper over :meth:`_explain_answer` (the verdict logic) that emits one
+        ADR-7 ``router`` Decision to the turn ledger — the answer-vs-new direction, the
+        diagnostic ``reason`` tag, and the F-72 confidence — so "why did it treat this as
+        an answer / a new request?" is a read of the ledger, not a reconstruction. The
+        wrapper is the single public boundary, so BOTH the clear-verdict and the
+        low-confidence (F-72) paths are captured by the one return. No-op when the ledger
+        is unbound (flag off / outside a turn). Never raises.
+        """
+        verdict = await self._explain_answer(
+            question=question, choices=choices, message=message,
+        )
+        decision_ledger.record_decision(
+            point="router",
+            verdict="answer" if verdict.value else "new",
+            reason=verdict.reason,
+            evidence={"confidence": "high" if verdict.confident else "low"},
+        )
+        return verdict
+
+    async def _explain_answer(
+        self, *, question: str, choices: tuple[str, ...], message: str,
+    ) -> AnswerVerdict:
+        """Classify whether ``message`` answers ``question`` (see :meth:`explain_answer`).
 
         Carries the same fail-safe bool in ``value`` PLUS ``confident`` (``False``
         when the verdict was a fail-safe fallback) and a diagnostic ``reason`` tag.
