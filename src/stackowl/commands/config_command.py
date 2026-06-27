@@ -136,6 +136,21 @@ class ConfigCommand(SlashCommand):
         log.config.debug("[commands] config.handle: exit", extra={"_fields": {"sub": sub}})
         return result
 
+    @staticmethod
+    def _lookup(data: dict[str, Any], key: str) -> tuple[bool, Any]:
+        """Walk a dotted ``key`` through ``data``; return ``(found, value)``.
+
+        Used to re-read the file after a write and verify the mutation landed.
+        ``load_yaml`` returns ``{}`` on a parse failure, so a corrupt write
+        surfaces here as ``found=False``.
+        """
+        cursor: Any = data
+        for part in key.split("."):
+            if not isinstance(cursor, dict) or part not in cursor:
+                return False, None
+            cursor = cursor[part]
+        return True, cursor
+
     def _list(self) -> str:
         log.config.debug("[commands] config.list: entry")
         path = config_path()
@@ -202,6 +217,17 @@ class ConfigCommand(SlashCommand):
             )
             return f"✗ Validation failed: {exc}"
         save_yaml(path, data)
+        # F-81: confirm the write actually persisted + parses before claiming ✓.
+        found, persisted_val = self._lookup(load_yaml(path), key)
+        if not found or stringify(persisted_val) != stringify(coerced):
+            log.config.error(
+                "[commands] config.set: write did not persist",
+                extra={"_fields": {"key": key}},
+            )
+            return (
+                f"✗ {key} was not saved — the config file did not reflect the "
+                "change (check file permissions/disk)."
+            )
         if self._bus is not None:
             self._bus.emit("settings_reloaded", {"key": key})
         hot = extra.get("hot_reload", True)
@@ -227,6 +253,17 @@ class ConfigCommand(SlashCommand):
         if not removed:
             return f"{key}: (already at default)"
         save_yaml(path, data)
+        # F-81: confirm the key is actually gone on disk before claiming ✓.
+        found, _ = self._lookup(load_yaml(path), key)
+        if found:
+            log.config.error(
+                "[commands] config.reset: write did not persist",
+                extra={"_fields": {"key": key}},
+            )
+            return (
+                f"✗ {key} was not reset — the config file still contains the "
+                "override (check file permissions/disk)."
+            )
         if self._bus is not None:
             self._bus.emit("settings_reloaded", {"key": key, "reset": True})
         log.config.info("[commands] config.reset: exit", extra={"_fields": {"key": key}})

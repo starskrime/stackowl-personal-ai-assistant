@@ -14,8 +14,8 @@ from stackowl.owls.dna_storage import upsert_owl_dna
 from stackowl.owls.registry import OwlRegistry
 
 _SELECT_AUTHORED = (
-    "SELECT challenge_level, verbosity, curiosity, formality, creativity, precision "
-    "FROM owl_dna_authored WHERE owl_name = ?"
+    "SELECT challenge_level, verbosity, curiosity, formality, creativity, precision, "
+    "completion_drive FROM owl_dna_authored WHERE owl_name = ?"
 )
 
 

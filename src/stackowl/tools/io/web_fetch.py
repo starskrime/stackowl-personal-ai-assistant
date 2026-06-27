@@ -177,6 +177,26 @@ class WebFetchTool(Tool):
         output = output[:_MAX_OUTPUT_BYTES]
         duration_ms = (time.monotonic() - t0) * 1000
 
+        # Gate the result on the HTTP status. A non-2xx page (404/500/403…) or an
+        # unreachable response (status 0 — no HTTP response object) is a FAILED
+        # fetch: it must not report success=True, and its error-page body must not
+        # be auto-staged into memory as a fact. 2xx is the only trustworthy success.
+        if not (200 <= status < 300):
+            log.tool.warning(
+                "web_fetch.execute: non-2xx status — treating as failure",
+                extra={"_fields": {
+                    "url": log_url, "mode": mode, "status": status,
+                    "output_len": len(output), "duration_ms": duration_ms,
+                }},
+            )
+            error = (
+                f"HTTP {status}" if status
+                else "unreachable: no HTTP response from server"
+            )
+            return ToolResult(
+                success=False, output=output, error=error, duration_ms=duration_ms,
+            )
+
         # Auto-stage as a low-confidence StagedFact for the memory promoter.
         await self._stage_in_memory(services, url, output, mode)
 

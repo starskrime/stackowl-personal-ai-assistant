@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
+from stackowl.infra.resilience import looks_like_dead_handle
 
 
 class ToolResult(BaseModel):
@@ -153,6 +154,21 @@ class Tool(ABC):
         """
         return None
 
+    def _is_retry_safe_severity(self) -> bool:
+        """True only for a declared READ-severity tool — the one case where re-running
+        execute() after a transient error cannot double-commit a side effect. Any
+        failure to classify (a raising manifest, a non-read severity) is treated as
+        unsafe so the retry never fires for an effectful tool (fail-safe, F-24)."""
+        try:
+            return self.manifest.action_severity == "read"
+        except Exception as exc:
+            log.tool.warning(
+                "tool.__call__: could not read action_severity — treating as non-retryable",
+                exc_info=exc,
+                extra={"_fields": {"tool": self.name}},
+            )
+            return False
+
     async def __call__(self, **kwargs: object) -> ToolResult:
         """Invoke execute() and wrap any unhandled exception into a failed ToolResult."""
         import time
@@ -164,21 +180,47 @@ class Tool(ABC):
         )
         t0 = time.monotonic()
         started_at = time.time()  # epoch — for verify() freshness (vs t0's monotonic)
-        try:
-            result = await self.execute(**kwargs)
-        except Exception as exc:
+
+        def _wrap_failure(exc: BaseException) -> ToolResult:
             duration_ms = (time.monotonic() - t0) * 1000
             log.tool.error(
                 "tool.__call__: unhandled exception — wrapping",
                 exc_info=exc,
                 extra={"_fields": {"tool": self.name, "duration_ms": duration_ms}},
             )
-            result = ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
-        # VERIFICATION seam — only after a success the tool ASSERTED, and only when it
-        # has not already stamped a verdict itself. A claim that reality refutes
-        # becomes verified=False (success preserved); a verify() that raises or
-        # cannot decide falls back to None so it never blocks a real success.
-        if result.success and result.verified is None:
+            return ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
+
+        try:
+            result = await self.execute(**kwargs)
+        except Exception as exc:
+            # BOUNDED RETRY-ONCE (F-24) — re-run execute() exactly once, but ONLY for a
+            # classifiably-transient exception (dead-handle/connection, via the project's
+            # one transient oracle) AND ONLY for a READ-severity tool, where re-executing
+            # is provably side-effect-free. Write/consequential tools are NEVER retried
+            # here (double-execution of a side effect); their recovery is owned by the
+            # substitution/retry actuator in pipeline/steps/execute.py.
+            if looks_like_dead_handle(exc) and self._is_retry_safe_severity():
+                log.tool.warning(
+                    "tool.__call__: transient (dead-handle) error on read-only tool — retrying once",
+                    exc_info=exc,
+                    extra={"_fields": {"tool": self.name}},
+                )
+                try:
+                    result = await self.execute(**kwargs)
+                except Exception as exc2:
+                    result = _wrap_failure(exc2)
+            else:
+                result = _wrap_failure(exc)
+        # VERIFICATION seam — only after a success the tool ASSERTED. A tool-supplied
+        # verified=True is a CLAIM, never proof: the seam still runs and its verdict
+        # takes precedence (B1/F-25 — a self-asserted verification must never be trusted
+        # as reality). verified=False (the tool honestly admitting its effect failed) is
+        # left untouched — never second-guessed upward. A claim reality refutes becomes
+        # verified=False; a verify() that raises or cannot decide falls back to None so it
+        # never blocks a real success — and an UNCONFIRMED self-claim of True is demoted
+        # to None (unverified) rather than honored.
+        if result.success and result.verified is not False:
+            self_claimed_verified = result.verified is True
             try:
                 verdict = await self.verify(kwargs, result, started_at=started_at)
             except Exception as exc:  # fail-safe — verification never blocks a success
@@ -195,6 +237,14 @@ class Tool(ABC):
                         extra={"_fields": {"tool": self.name, "artifact_path": result.artifact_path}},
                     )
                 result = result.model_copy(update={"verified": verdict})
+            elif self_claimed_verified:
+                # Self-asserted True with no independent confirmation — demote to None
+                # so a tool can never launder its own self-report into a 'verified' win.
+                log.tool.warning(
+                    "tool.__call__: self-asserted verified=True not independently confirmed — demoting to unverified",
+                    extra={"_fields": {"tool": self.name, "artifact_path": result.artifact_path}},
+                )
+                result = result.model_copy(update={"verified": None})
         log.tool.debug(
             "tool.__call__: exit",
             extra={"_fields": {

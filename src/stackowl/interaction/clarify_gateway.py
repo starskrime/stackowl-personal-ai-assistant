@@ -137,6 +137,37 @@ class ClarifyGateway:
             extra={"_fields": {"channel": channel}},
         )
 
+    # ------------------------------------------------------- pre-ask resolution
+
+    @staticmethod
+    def _resolve_default(
+        *, choices: tuple[str, ...], default: str | None, high_stakes: bool,
+    ) -> str | None:
+        """Pick an assumed answer for a reversible/trivial clarify, or ``None``.
+
+        The pre-ask gate (F-71): returns the value to auto-resolve WITHOUT a human
+        round-trip when the question is low-stakes AND has an obvious resolution;
+        returns ``None`` (park on the human) otherwise. A genuinely
+        high-stakes/irreversible question is NEVER auto-answered.
+
+        Resolution order:
+
+        * ``high_stakes`` → ``None`` (always park — keep the human in the loop).
+        * exactly one offered choice → that choice (a one-item menu has no
+          decision to make; asking a human to pick the only option is pointless).
+        * an explicit caller ``default`` consistent with the menu (no choices, or
+          the default is one of them) → that default (a reversible assumption).
+        * otherwise ``None`` — a real multi-choice decision with no default parks,
+          so existing callers (Continue/Stop, Approve/Reject, …) are unchanged.
+        """
+        if high_stakes:
+            return None
+        if len(choices) == 1:
+            return choices[0]
+        if default is not None and (not choices or default in choices):
+            return default
+        return None
+
     # --------------------------------------------------------------------- ask
 
     async def ask(
@@ -149,6 +180,8 @@ class ClarifyGateway:
         awaiting_text: bool = False,
         blocking: bool = False,
         deliver: bool = True,
+        default: str | None = None,
+        high_stakes: bool = False,
     ) -> str:
         """Register a pending clarify for ``session_id`` and deliver it.
 
@@ -167,6 +200,17 @@ class ClarifyGateway:
         (its event exists and is not set), that orphaned event is SET first (with
         ``answer=None``) so the old waiter unblocks instead of leaking forever.
 
+        PRE-ASK RESOLUTION (F-71): a reversible/trivial clarify with a clear
+        default does not need a human round-trip. When ``high_stakes`` is False
+        and either there is exactly one offered choice (the only possible answer)
+        or a caller-supplied ``default`` consistent with the menu, the question is
+        AUTO-ANSWERED here (logged, with the assumed value) instead of routed to
+        the user: no delivery, and a blocking caller's :meth:`wait_for_answer`
+        reads the assumed answer in-turn. Only a genuinely high-stakes/irreversible
+        question (or a real multi-choice decision with no default) is parked on the
+        human — existing callers that pass explicit multi-choice menus are
+        unchanged.
+
         Returns the ``clarify_id``. Never raises — a delivery error is logged and
         swallowed (the question is still registered, so the user's reply can
         still resolve it once delivery is retried by a higher layer).
@@ -184,9 +228,52 @@ class ClarifyGateway:
                     "awaiting_text": awaiting_text,
                     "blocking": blocking,
                     "deliver": deliver,
+                    "high_stakes": high_stakes,
                 }
             },
         )
+
+        # PRE-ASK RESOLUTION (F-71) — auto-answer a reversible/trivial clarify
+        # rather than stopping to ask a human. Resolved BEFORE the cap-one replace
+        # so a trivial auto-answer never clobbers a genuinely-pending question.
+        assumed = self._resolve_default(
+            choices=tuple(choices), default=default, high_stakes=high_stakes,
+        )
+        if assumed is not None:
+            log.gateway.info(
+                "clarify_gateway.ask: auto-resolved a reversible clarify with the "
+                "assumed default — not routed to the human",
+                extra={
+                    "_fields": {
+                        "session_id": session_id,
+                        "channel": channel,
+                        "clarify_id": clarify_id,
+                        "assumed": assumed,
+                        "blocking": blocking,
+                    }
+                },
+            )
+            if blocking:
+                # Register a PRE-RESOLVED blocking entry so the caller's
+                # wait_for_answer reads the assumed answer (ANSWERED) and pops it.
+                # No delivery — we answered it ourselves.
+                resolved_event = asyncio.Event()
+                resolved_event.set()
+                self._pending[clarify_id] = PendingClarify(
+                    clarify_id=clarify_id,
+                    session_id=session_id,
+                    channel=channel,
+                    question=question,
+                    choices=tuple(choices),
+                    awaiting_text=awaiting_text,
+                    created_at=self.time_fn(),
+                    answer=assumed,
+                    event=resolved_event,
+                )
+            # Non-blocking: nothing to park (we resolved it ourselves), so no entry
+            # is registered — a later inbound message is a fresh request, never an
+            # answer to this auto-resolved question.
+            return clarify_id
 
         # CAP ONE per session: drop any prior pending entry for this session so we
         # never accumulate (party Security INC-2; bounds per-session state). Any

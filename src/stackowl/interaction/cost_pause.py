@@ -60,6 +60,13 @@ _MAX_ASKED_TURNS = 4096
 # rather than wedging the turn forever.
 _DEFAULT_WAIT_TIMEOUT_S = 600.0
 
+# Default fraction of the hard DAILY cap at/above which a single turn's spend is
+# considered "near the hard limit" and the soft pause escalates from
+# continue-and-notify to a BLOCKING ask. Used only when no explicit
+# block_threshold_usd is wired; the absolute USD figure is always DERIVED from the
+# config-driven hard cap (never a hardcoded dollar amount).
+_DEFAULT_NEAR_LIMIT_FRACTION = 0.8
+
 
 class CostPauseGuard:
     """Gate the expensive paths behind a soft per-turn cost pause (clarify)."""
@@ -70,19 +77,35 @@ class CostPauseGuard:
         cost_tracker: CostTracker,
         clarify_gateway: ClarifyGateway | None,
         threshold_usd: float | None,
+        block_threshold_usd: float | None = None,
+        near_limit_fraction: float = _DEFAULT_NEAR_LIMIT_FRACTION,
         wait_timeout_s: float = _DEFAULT_WAIT_TIMEOUT_S,
         clock: Clock | None = None,
     ) -> None:
         """Wire the guard to the live CostTracker + ClarifyGateway.
 
         ``threshold_usd`` is ``BudgetSettings.per_turn_pause_usd`` (``None`` →
-        feature disabled → :meth:`gate` is a no-op that always continues).
+        feature disabled → :meth:`gate` is a no-op that always continues). Crossing
+        it no longer blocks by default: a soft crossing is a yes/no the assistant
+        decides itself (continue-and-notify) because the hard DAILY cap still
+        protects the user. The BLOCKING ask is reserved for spend NEAR the hard
+        limit (F-70).
+
+        ``block_threshold_usd`` is the per-turn USD spend at/above which the pause
+        escalates back to that blocking ask. It is config-driven, never hardcoded:
+        an explicit value (wired from settings) wins; otherwise it is DERIVED as
+        ``near_limit_fraction`` × the hard daily cap held by ``cost_tracker``. When
+        NO hard cap is configured there is no protective ceiling, so a soft
+        crossing still blocks (legacy behavior preserved).
+
         ``clarify_gateway`` may be ``None`` (no interactive channel wired) → the
         guard fails OPEN (continues) rather than wedging.
         """
         self._cost_tracker = cost_tracker
         self._clarify_gateway = clarify_gateway
         self._threshold_usd = threshold_usd
+        self._block_threshold_usd = block_threshold_usd
+        self._near_limit_fraction = near_limit_fraction
         self._wait_timeout_s = wait_timeout_s
         self._clock: Clock = clock or WallClock()
         # Bounded FIFO set of trace_ids already asked this server lifetime (the
@@ -93,6 +116,8 @@ class CostPauseGuard:
             extra={
                 "_fields": {
                     "threshold_usd": threshold_usd,
+                    "block_threshold_usd": block_threshold_usd,
+                    "near_limit_fraction": near_limit_fraction,
                     "has_clarify_gateway": clarify_gateway is not None,
                     "wait_timeout_s": wait_timeout_s,
                 }
@@ -179,6 +204,30 @@ class CostPauseGuard:
             )
             return True
 
+        # F-70 — Continue-and-notify for reversible spend that is NOT near the
+        # hard cap. A soft per-turn crossing is a yes/no the assistant can decide
+        # itself: the DAILY hard cap (CostTracker) still protects the user, so we
+        # reserve blocking the human for when THIS turn's spend approaches that
+        # hard limit. With NO hard cap (and no explicit block threshold) there is
+        # no protective ceiling, so the soft crossing still blocks (legacy). We do
+        # NOT mark the turn asked here, so a later op in the same turn that DOES
+        # reach the block threshold can still escalate to the blocking ask.
+        block_threshold = self._resolve_block_threshold()
+        if block_threshold is not None and cost < block_threshold:
+            log.gateway.info(
+                "cost_pause.gate: over soft budget but under near-hard-limit block "
+                "threshold — continue-and-notify (no blocking ask)",
+                extra={
+                    "_fields": {
+                        "trace_id": trace_id,
+                        "turn_cost_usd": cost,
+                        "soft_threshold_usd": threshold,
+                        "block_threshold_usd": block_threshold,
+                    }
+                },
+            )
+            return True
+
         # Mark asked BEFORE the round-trip so a concurrent second expensive op in
         # the same turn does not double-prompt while this one is parked.
         self._mark_asked(trace_id)
@@ -192,6 +241,25 @@ class CostPauseGuard:
         )
 
     # ---------------------------------------------------------------- helpers
+
+    def _resolve_block_threshold(self) -> float | None:
+        """Per-turn spend at/above which the soft pause escalates to a blocking ask.
+
+        Config-driven, never a hardcoded USD figure:
+
+        * an explicit ``block_threshold_usd`` (wired from settings) wins; else
+        * ``near_limit_fraction`` × the hard DAILY cap held by the live
+          :class:`CostTracker` — "near the hard limit"; else
+        * ``None`` when no hard cap is configured (no protective ceiling) → the
+          caller preserves the legacy behavior of blocking at the soft threshold.
+        """
+        explicit = self._block_threshold_usd
+        if explicit is not None and explicit > 0:
+            return explicit
+        hard_cap = getattr(self._cost_tracker, "_daily_limit_usd", None)
+        if not isinstance(hard_cap, (int, float)) or hard_cap <= 0:
+            return None
+        return self._near_limit_fraction * float(hard_cap)
 
     async def _ask(
         self,

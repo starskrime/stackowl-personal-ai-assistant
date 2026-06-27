@@ -30,6 +30,7 @@ from stackowl.providers.base import Message, ModelProvider
 
 __all__ = [
     "CAPABILITY_GAP_DIRECTIVE",
+    "JUDGE_CONSEQUENTIAL_FAILSAFE",
     "JUDGE_ERROR_REASON",
     "PERSISTENCE_DIRECTIVE",
     "TOOL_FAILED_MARKER",
@@ -55,6 +56,16 @@ TOOL_FAILED_MARKER = "\x00TOOL_FAILED\x00"
 # caller wanting a fallback judge tier (see build_persistence_check) detects a failed
 # primary by this reason, not by catching an exception. Structural token, not prose.
 JUDGE_ERROR_REASON = "judge-error"
+
+# Sentinel ``reason`` returned by judge_delivery when an UNVETTABLE judge (both the
+# primary and the optional fallback could not rule) coincides with a CONSEQUENTIAL
+# turn (F-15). Unlike JUDGE_ERROR_REASON this pairs with ``delivered=False`` and is a
+# VETTABLE reason (``reason != JUDGE_ERROR_REASON``), so the caller treats it as a
+# genuine give-up and CONTINUES rather than shipping an unvetted draft — failing
+# toward "not delivered / continue" instead of rubber-stamping a give-up. A
+# non-consequential turn keeps the historical fail-OPEN so ordinary chat is never
+# blocked by a flaky judge. Structural token, not prose.
+JUDGE_CONSEQUENTIAL_FAILSAFE = "judge-error-consequential-continue"
 
 # GLOBAL corrective directive — injected when the judge rules the agent gave up.
 # Deliberately capability-oriented and case-free: no domain words, no tool brand
@@ -363,11 +374,46 @@ def _build_messages(
     return [system, user]
 
 
+async def _judge_once(
+    provider: ModelProvider, messages: list[Message],
+) -> tuple[bool, str] | None:
+    """Run ONE judge attempt. Returns ``(delivered, reason)`` on a clean verdict, or
+    ``None`` when the judge could NOT vet (provider error / unparseable / wrong type).
+    Never raises — the unvettable cases are folded into the ``None`` return."""
+    try:
+        result = await provider.complete(messages, model="")
+    except Exception as exc:  # could-not-vet — caller decides fallback / fail-open
+        log.engine.error(
+            "[persistence] judge_delivery: provider.complete failed",
+            exc_info=exc,
+        )
+        return None
+    obj = parse_json_response(result.content, required_keys=["delivered"])
+    if obj is None:
+        log.engine.error(
+            "[persistence] judge_delivery: unparseable judge output",
+            extra={"_fields": {"raw_preview": (result.content or "")[:200]}},
+        )
+        return None
+    delivered = obj.get("delivered")
+    if not isinstance(delivered, bool):
+        log.engine.error(
+            "[persistence] judge_delivery: 'delivered' not a bool",
+            extra={"_fields": {"got": type(delivered).__name__}},
+        )
+        return None
+    reason = obj.get("reason")
+    return delivered, reason if isinstance(reason, str) else ""
+
+
 async def judge_delivery(
     provider: ModelProvider,
     user_request: str,
     draft_answer: str,
     tools_tried: list[str],
+    *,
+    fallback_provider: ModelProvider | None = None,
+    consequential: bool = False,
 ) -> tuple[bool, str]:
     """Judge whether ``draft_answer`` delivered ``user_request``.
 
@@ -376,10 +422,18 @@ async def judge_delivery(
     judge can tell a failed action from a successful one. A bare name list (no
     ``(failed)``) still works — it simply reads as no-tool-failed.
 
-    Returns ``(delivered, reason)``. ``delivered`` is False ONLY when the judge
-    explicitly rules a give-up. On ANY failure (provider error, unparseable
-    output, missing/badly-typed key) this fails OPEN — returns ``(True,
-    "judge-error")`` — so a broken judge never blocks the user's answer.
+    Returns ``(delivered, reason)``. ``delivered`` is False ONLY when a judge
+    explicitly rules a give-up — OR (F-15) when the turn is ``consequential`` and no
+    judge could vet at all.
+
+    Robustness ladder when the primary judge cannot vet (provider error / unparseable
+    output / bad type):
+      * if ``fallback_provider`` is given, retry the SAME prompt on it ONCE;
+      * if still unvettable and the turn is ``consequential``, fail toward "not
+        delivered / continue" — returns ``(False, JUDGE_CONSEQUENTIAL_FAILSAFE)`` so
+        the caller keeps the turn going rather than shipping an unvetted give-up;
+      * otherwise fail OPEN — returns ``(True, JUDGE_ERROR_REASON)`` — so a flaky
+        judge never blocks ordinary (non-consequential) chat.
     """
     # 1. ENTRY
     log.engine.debug(
@@ -388,40 +442,36 @@ async def judge_delivery(
             "request_len": len(user_request),
             "draft_len": len(draft_answer),
             "tools_tried": tools_tried[:_TOOLS_CAP],
+            "has_fallback": fallback_provider is not None,
+            "consequential": consequential,
         }},
     )
     messages = _build_messages(user_request, draft_answer, tools_tried)
 
-    # 3. STEP — provider call (fail open on any provider error). The provider
-    # strips the <think> trace and the output budget is window-sized, so a
-    # reasoning model reasons then emits the verdict JSON (no mid-think truncation).
-    try:
-        result = await provider.complete(messages, model="")
-    except Exception as exc:  # fail OPEN — never block the turn on a judge error
-        log.engine.error(
-            "[persistence] judge_delivery: provider.complete failed — failing open",
-            exc_info=exc,
+    # 3. STEP — primary judge, then ONE fallback retry if it could not vet.
+    verdict = await _judge_once(provider, messages)
+    if verdict is None and fallback_provider is not None:
+        log.engine.warning(
+            "[persistence] judge_delivery: primary unvettable — retrying fallback",
+        )
+        verdict = await _judge_once(fallback_provider, messages)
+
+    if verdict is None:
+        # No judge could vet. CONSEQUENTIAL ⇒ fail toward not-delivered/continue;
+        # otherwise preserve the historical fail-OPEN (never block ordinary chat).
+        if consequential:
+            log.engine.warning(
+                "[persistence] judge_delivery: unvettable on a consequential turn — "
+                "failing toward not-delivered (continue)",
+                extra={"_fields": {"tools_tried": tools_tried[:_TOOLS_CAP]}},
+            )
+            return False, JUDGE_CONSEQUENTIAL_FAILSAFE
+        log.engine.warning(
+            "[persistence] judge_delivery: unvettable — failing open",
         )
         return True, JUDGE_ERROR_REASON
 
-    # 2. DECISION — parse strict JSON (fail open on unparseable / wrong type)
-    obj = parse_json_response(result.content, required_keys=["delivered"])
-    if obj is None:
-        log.engine.error(
-            "[persistence] judge_delivery: unparseable judge output — failing open",
-            extra={"_fields": {"raw_preview": result.content[:200]}},
-        )
-        return True, JUDGE_ERROR_REASON
-    delivered = obj.get("delivered")
-    if not isinstance(delivered, bool):
-        log.engine.error(
-            "[persistence] judge_delivery: 'delivered' not a bool — failing open",
-            extra={"_fields": {"got": type(delivered).__name__}},
-        )
-        return True, JUDGE_ERROR_REASON
-    reason = obj.get("reason")
-    reason_str = reason if isinstance(reason, str) else ""
-
+    delivered, reason_str = verdict
     # 4. EXIT — log the verdict at INFO on EVERY run (no-hidden-decision): we must
     # always see in logs WHY the judge did or did not nudge, not only on a nudge.
     log.engine.info(

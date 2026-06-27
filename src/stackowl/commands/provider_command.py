@@ -180,6 +180,15 @@ class ProviderCommand(SlashCommand):
         if self._bus is not None:
             self._bus.emit("settings_reloaded", {"provider": name})
 
+    def _persisted(self, path: Any, name: str) -> bool:
+        """Re-read the YAML and confirm provider *name* is present + parses.
+
+        ``load_yaml`` returns ``{}`` on a parse failure, so a corrupt/partial
+        write also fails this check (the provider will be absent).
+        """
+        reloaded = load_yaml(path)
+        return any(p.get("name") == name for p in self._providers(reloaded))
+
     # -- list ------------------------------------------------------------------
 
     def _list(self) -> str:
@@ -285,6 +294,19 @@ class ProviderCommand(SlashCommand):
 
         providers.append(entry)
         save_yaml(path, data)
+        # F-81: save_yaml is otherwise fire-and-forget. Re-read the file and
+        # confirm the new provider actually persisted + parses before claiming
+        # success — a partial/permission-failed write must not print the ✓.
+        if not self._persisted(path, name):
+            log.config.error(
+                "[commands] provider.add: write did not persist",
+                extra={"_fields": {"name": name}},
+            )
+            return (
+                f"✗ Provider '{name}' was not saved — the config file did not "
+                "reflect the change (check file permissions/disk). Nothing was "
+                "added."
+            )
         self._emit_reloaded(name)
         log.config.info(
             "[commands] provider.add: exit — added",

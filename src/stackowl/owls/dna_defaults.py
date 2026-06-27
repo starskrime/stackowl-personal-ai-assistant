@@ -5,4 +5,7 @@ from __future__ import annotations
 NEUTRAL: float = 0.5
 TRAIT_NAMES: tuple[str, ...] = (
     "challenge_level", "verbosity", "curiosity", "formality", "creativity", "precision",
+    # F-52: persistence/initiative — drives task-completion drive (act-first &
+    # pursue the goal across blocked paths when HIGH), not tone/register.
+    "completion_drive",
 )

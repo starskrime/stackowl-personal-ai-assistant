@@ -36,6 +36,14 @@ _HIGH_DIRECTIVES: tuple[tuple[str, str], ...] = (
         "precision",
         "State specific, verifiable claims; cite sources, file paths, line numbers, or measurements whenever possible.",
     ),
+    (
+        "completion_drive",
+        "Pursue the goal to completion: when one path is blocked, try an "
+        "alternative approach and act on the next concrete step rather than "
+        "stopping to ask. Persist until the task is genuinely done; surrender "
+        "only after available options are exhausted, and then report honestly "
+        "what was tried — never claim success you did not achieve.",
+    ),
 )
 
 _LOW_DIRECTIVES: tuple[tuple[str, str], ...] = (

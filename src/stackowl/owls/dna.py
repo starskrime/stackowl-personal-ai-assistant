@@ -27,6 +27,9 @@ class OwlDNA(BaseModel):
     formality: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
     creativity: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
     precision: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
+    # F-52: persistence/initiative. HIGH → pursue the goal across blocked paths
+    # and act-first-and-persist; LOW → neutral (never instructed to give up early).
+    completion_drive: float = Field(default=NEUTRAL, ge=0.0, le=1.0)
     decay_rate_per_week: float = Field(default=0.05, ge=0.0, le=1.0)
 
     def mutate(self, trait: str, delta: float) -> OwlDNA:

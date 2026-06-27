@@ -35,6 +35,7 @@ _TRAIT_ABBR: dict[str, str] = {
     "formality": "fm",
     "creativity": "cr",
     "precision": "pr",
+    "completion_drive": "cd",
 }
 
 

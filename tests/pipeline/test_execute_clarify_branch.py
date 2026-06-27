@@ -9,8 +9,8 @@ The branch must:
 """
 
 import pytest
-from stackowl.pipeline.state import PipelineState
 
+from stackowl.pipeline.state import PipelineState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -184,3 +184,79 @@ async def test_clarify_branch_emits_question_and_registers_no_tool_loop(monkeypa
     # --- non-interactive: must return None (falls through to tool path) ---
     out_non_interactive = await _maybe_clarify(_clarify_state(interactive=False), _Services())
     assert out_non_interactive is None
+
+
+# ---------------------------------------------------------------------------
+# F-3 — before surfacing, try to resolve the ambiguity from available context.
+# A question already present in the turn's context is an unproductive re-ask:
+# ACT (fall through) instead of asking again. A genuine first-time question
+# still surfaces.
+# ---------------------------------------------------------------------------
+
+_Q = "Do you want me to create images, or find existing ones?"
+
+
+@pytest.mark.asyncio
+async def test_maybe_clarify_acts_when_question_already_in_history():
+    """The SAME question already in conversation history → act, don't re-ask."""
+    from stackowl.pipeline.steps.execute import _maybe_clarify
+    from stackowl.providers.base import Message
+
+    state = _clarify_state(history=(Message(role="assistant", content=_Q),))
+    asked: dict = {}
+
+    class _GW:
+        async def ask(self, *a, **kw):
+            asked["called"] = True
+            return "cid"
+
+    class _Services:
+        clarify_gateway = _GW()
+
+    result = await _maybe_clarify(state, _Services())
+    assert result is None              # resolved from context → falls through to act
+    assert "called" not in asked       # the question was NOT surfaced/registered
+
+
+@pytest.mark.asyncio
+async def test_maybe_clarify_acts_when_question_in_memory_context():
+    """The question already present in recalled durable memory → act, don't ask."""
+    from stackowl.pipeline.steps.execute import _maybe_clarify
+
+    state = _clarify_state(memory_context=f"earlier the assistant asked: {_Q}")
+    asked: dict = {}
+
+    class _GW:
+        async def ask(self, *a, **kw):
+            asked["called"] = True
+            return "cid"
+
+    class _Services:
+        clarify_gateway = _GW()
+
+    result = await _maybe_clarify(state, _Services())
+    assert result is None
+    assert "called" not in asked
+
+
+@pytest.mark.asyncio
+async def test_maybe_clarify_still_surfaces_genuine_first_time():
+    """A genuinely-unresolved first-time question (no resolving context) → surface."""
+    from stackowl.pipeline.steps.execute import _maybe_clarify
+
+    # Context exists but does NOT contain the question → not resolvable.
+    state = _clarify_state(memory_context="unrelated prior note about the weather")
+    asked: dict = {}
+
+    class _GW:
+        async def ask(self, session_id, channel, question, **kw):
+            asked["question"] = question
+            return "cid"
+
+    class _Services:
+        clarify_gateway = _GW()
+
+    result = await _maybe_clarify(state, _Services())
+    assert result is not None
+    assert asked.get("question") == _Q
+    assert len(result.responses) == 1

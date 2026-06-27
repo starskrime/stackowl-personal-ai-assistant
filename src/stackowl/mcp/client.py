@@ -69,28 +69,50 @@ class McpClient:
         if cached is not None:
             log.debug("mcp.client.discover_tools: cache hit", extra={"_fields": {"server": config.name, "count": len(cached)}})
             return cached
-        tools = await self._fetch_tools(config)
+        # F-84 (S2): a transient connection blip during discovery must NEVER persist
+        # as a cached "this server has no tools" entry for the whole TTL. _fetch_tools
+        # raises McpCallError on a failure path; a transport failure is retried once
+        # (bounded) and only a genuinely-successful discovery (even if empty) is cached.
+        try:
+            tools = await self._fetch_tools(config)
+        except McpCallError as exc:
+            if exc.kind == "transport":
+                log.warning("mcp.client.discover_tools: transport failure, retrying once", extra={"_fields": {"server": config.name}})
+                try:
+                    tools = await self._fetch_tools(config)
+                except McpCallError as exc2:
+                    log.error("mcp.client.discover_tools: discovery failed after retry — not caching", exc_info=exc2, extra={"_fields": {"server": config.name, "kind": exc2.kind}})
+                    return []
+            else:
+                log.error("mcp.client.discover_tools: discovery failed — not caching", exc_info=exc, extra={"_fields": {"server": config.name, "kind": exc.kind}})
+                return []
         self._cache.put(config.name, tools)
         log.debug("mcp.client.discover_tools: exit", extra={"_fields": {"server": config.name, "count": len(tools)}})
         return tools
 
     async def _fetch_tools(self, config: McpServerConfig) -> list[McpToolDefinition]:
-        """Connect to the MCP server and retrieve the tool list."""
+        """Connect to the MCP server and retrieve the tool list.
+
+        Raises :class:`McpCallError` on a failure path so the caller can distinguish a
+        genuinely-empty-but-successful discovery (returns ``[]``) from a failure that
+        merely yielded no tools — ``kind="transport"`` for a connection/init failure
+        (retryable, never cached) or ``kind="not_installed"`` when the SDK is absent
+        (F-84, S2). A successful discovery returns the (possibly empty) tool list.
+        """
         try:
             from mcp.client.session import ClientSession  # type: ignore[import]
             from mcp.client.sse import sse_client  # type: ignore[import]
             from mcp.client.stdio import stdio_client  # type: ignore[import]
         except ImportError as exc:
             log.error("mcp.client._fetch_tools: mcp not installed", exc_info=exc, extra={"_fields": {"server": config.name}})
-            return []
+            raise McpCallError("not_installed", "the 'mcp' SDK is not installed") from exc
         uri = config.uri
         try:
             if uri.startswith("sse://"):
-                async with sse_client(uri[len("sse://"):]) as (r, w):
-                    async with ClientSession(r, w) as session:
-                        await session.initialize()
-                        result = await session.list_tools()
-                        return self._convert_tools(result.tools, config.name)
+                async with sse_client(uri[len("sse://"):]) as (r, w), ClientSession(r, w) as session:
+                    await session.initialize()
+                    result = await session.list_tools()
+                    return self._convert_tools(result.tools, config.name)
             elif uri.startswith("stdio://"):
                 async with stdio_client(uri[len("stdio://"):]) as (r, w):
                     async with ClientSession(r, w) as session:
@@ -98,11 +120,13 @@ class McpClient:
                         result = await session.list_tools()
                         return self._convert_tools(result.tools, config.name)
             else:
+                # Deterministic config error (not transient): no tools, but safe to
+                # cache the empty result — retrying an unknown scheme cannot help.
                 log.warning("mcp.client._fetch_tools: unknown scheme", extra={"_fields": {"server": config.name}})
                 return []
         except Exception as exc:
             log.error("mcp.client._fetch_tools: connection failed", exc_info=exc, extra={"_fields": {"server": config.name}})
-            return []
+            raise McpCallError("transport", f"MCP discovery on '{config.name}' failed: {exc}") from exc
 
     def _convert_tools(self, mcp_tools: list[object], server_name: str) -> list[McpToolDefinition]:
         """Convert MCP SDK tool objects to McpToolDefinition."""
@@ -174,14 +198,12 @@ class McpClient:
 
         uri = config.uri
         if uri.startswith("sse://"):
-            async with sse_client(uri[len("sse://"):]) as (r, w):
-                async with ClientSession(r, w) as session:
-                    await session.initialize()
-                    return _extract_content(await session.call_tool(tool_name, args))
-        async with stdio_client(uri[len("stdio://"):]) as (r, w):
-            async with ClientSession(r, w) as session:
+            async with sse_client(uri[len("sse://"):]) as (r, w), ClientSession(r, w) as session:
                 await session.initialize()
                 return _extract_content(await session.call_tool(tool_name, args))
+        async with stdio_client(uri[len("stdio://"):]) as (r, w), ClientSession(r, w) as session:
+            await session.initialize()
+            return _extract_content(await session.call_tool(tool_name, args))
 
     async def register_server_tools(self, config: McpServerConfig, tool_registry: ToolRegistry) -> int:
         """Discover tools and register each as McpTool in tool_registry."""

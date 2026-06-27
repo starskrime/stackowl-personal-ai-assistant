@@ -29,6 +29,15 @@ ObjectiveStatus = Literal["active", "blocked", "done", "abandoned"]
 #: Lifecycle of a single sub-goal within an objective.
 SubgoalStatus = Literal["pending", "running", "done", "failed", "blocked"]
 
+#: WHY an objective is blocked (F-41) — drives whether the autonomous driver may
+#: recover it. ``transient`` = stalled on a transient execution error (the in-tick
+#: retry budget was spent); the driver re-queues it after a cooldown. ``decision``
+#: = awaiting a genuinely irreversible/consequential choice only the owner can make
+#: (or a verified-false outcome a clean retry would only re-assert); stays blocked
+#: until a human steps in. ``None`` = legacy / unclassified, treated as ``decision``
+#: (the conservative default — never auto-requeued).
+BlockerKind = Literal["transient", "decision"]
+
 
 class ExpectedOutcome(BaseModel, frozen=True):
     """A declared, deterministically-observable post-condition for a turn/sub-goal.
@@ -76,6 +85,10 @@ class Objective(BaseModel):
     target_addresses: dict[str, str | int] = Field(default_factory=dict)
     #: Why the objective is blocked (set only when status == "blocked").
     blocker: str | None = None
+    #: WHICH CLASS of block (F-41): ``transient`` ⇒ the driver re-queues after a
+    #: cooldown; ``decision`` (or ``None``) ⇒ stays blocked until a human intervenes.
+    #: Set only when status == "blocked"; cleared on every active/done transition.
+    blocker_kind: BlockerKind | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

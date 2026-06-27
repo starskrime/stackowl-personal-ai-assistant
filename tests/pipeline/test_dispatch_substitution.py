@@ -293,6 +293,167 @@ async def test_dispatch_no_sibling_falls_through(monkeypatch):
     assert out.startswith(TOOL_FAILED_MARKER)
 
 
+# ===========================================================================
+# F-6 — the substitution actuator loops over RANKED candidates: it marks only
+# the TRIED sibling exhausted (NOT the whole capability tag) and advances to the
+# next ranked sibling until one yields a trustworthy success or all are tried.
+# ===========================================================================
+
+def _two_read_siblings(*, search_succeeds: bool, fetch_succeeds: bool = True) -> _FakeRegistry:
+    """browser_browse (broken primary) + TWO read siblings BOTH servable when the
+    failed call carries a url AND a query: web_search (query) + web_fetch (url).
+    Registry order makes web_search the first-ranked candidate, web_fetch second."""
+    return _FakeRegistry([
+        _FakeTool(
+            "browser_browse", severity="consequential",
+            capability_tag="web_knowledge", succeed=False,
+        ),
+        _FakeTool(
+            "web_search", severity="read", capability_tag="web_knowledge",
+            output="SEARCH_OK", succeed=search_succeeds,
+        ),
+        _FakeTool(
+            "web_fetch", severity="read", capability_tag="web_knowledge",
+            output="FETCH_OK", succeed=fetch_succeeds,
+        ),
+    ])
+
+
+@pytest.mark.asyncio
+async def test_dispatch_advances_to_next_sibling_when_first_fails(monkeypatch):
+    """First ranked sibling FAILS → loop tries the SECOND, which succeeds. The
+    capability tag is NOT excluded on the first sibling's failure (the bug)."""
+    from stackowl.pipeline.steps import execute as exe
+
+    reg = _two_read_siblings(search_succeeds=False, fetch_succeeds=True)
+    dispatch = await _build_real_dispatch(monkeypatch, exe, reg)
+
+    out = await dispatch("browser_browse", {"seed_url": "http://x", "task": "weather"})
+
+    # web_search (rank 1) ran and failed; the loop advanced to web_fetch (rank 2).
+    assert reg.get("web_search").calls == [{"query": "weather"}]
+    assert reg.get("web_fetch").calls == [{"url": "http://x"}]
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+
+    assert not out.startswith(TOOL_FAILED_MARKER)
+    assert "FETCH_OK" in out
+
+
+@pytest.mark.asyncio
+async def test_dispatch_exhausts_all_siblings_then_falls_through(monkeypatch):
+    """ALL ranked siblings fail → each is tried EXACTLY once, then honest surrender."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+    from stackowl.pipeline.steps import execute as exe
+
+    reg = _two_read_siblings(search_succeeds=False, fetch_succeeds=False)
+    dispatch = await _build_real_dispatch(monkeypatch, exe, reg)
+
+    out = await dispatch("browser_browse", {"seed_url": "http://x", "task": "weather"})
+
+    # Both siblings tried once (no sibling skipped, none retried).
+    assert reg.get("web_search").calls == [{"query": "weather"}]
+    assert reg.get("web_fetch").calls == [{"url": "http://x"}]
+    assert out.startswith(TOOL_FAILED_MARKER)
+
+
+# ===========================================================================
+# F-7 — RUNG 1 retry-once now also covers a TRANSIENT genuine failure
+# (success=False whose error looks like an infrastructure fault), not only an
+# unverified effect. Bounded to once per tool; consequential tools never retried.
+# ===========================================================================
+
+class _FlakyTool(_FakeTool):
+    """A tool that fails its first ``fail_times`` calls with ``error`` then
+    succeeds. Models a transient (or deterministic, when fail_times is large)
+    genuine failure."""
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        severity: str = "write",
+        error: str = "Connection refused",
+        fail_times: int = 1,
+        output: str = "WROTE_OK",
+        capability_tag: str | None = None,
+    ) -> None:
+        super().__init__(name, severity=severity, capability_tag=capability_tag, output=output)
+        self._error = error
+        self._fail_times = fail_times
+        self._n = 0
+
+    async def execute(self, **kwargs: object) -> ToolResult:
+        self.calls.append(dict(kwargs))
+        self._n += 1
+        if self._n <= self._fail_times:
+            return ToolResult(success=False, output="", error=self._error, duration_ms=1.0)
+        return ToolResult(success=True, output=self._output, error=None, duration_ms=1.0)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_retries_transient_genuine_failure(monkeypatch):
+    """A transient (Connection refused) genuine failure is retried ONCE; the retry
+    succeeds and its output is returned."""
+    from stackowl.pipeline.steps import execute as exe
+
+    flaky = _FlakyTool("flaky_writer", error="Connection refused by host", fail_times=1)
+    reg = _FakeRegistry([flaky])
+    dispatch = await _build_real_dispatch(monkeypatch, exe, reg)
+
+    out = await dispatch("flaky_writer", {"path": "/tmp/x"})
+
+    assert len(flaky.calls) == 2  # initial + one retry
+    assert "WROTE_OK" in out
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_retry_nontransient_failure(monkeypatch):
+    """A deterministic (non-transient) genuine failure gets ZERO retries."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+    from stackowl.pipeline.steps import execute as exe
+
+    flaky = _FlakyTool("steady_fail", error="invalid argument: bad path", fail_times=99)
+    reg = _FakeRegistry([flaky])
+    dispatch = await _build_real_dispatch(monkeypatch, exe, reg)
+
+    out = await dispatch("steady_fail", {"path": "x"})
+
+    assert len(flaky.calls) == 1  # not retried
+    assert out.startswith(TOOL_FAILED_MARKER)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_transient_retry_bounded_to_once(monkeypatch):
+    """A transient failure that NEVER heals is retried exactly once, then floored."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+    from stackowl.pipeline.steps import execute as exe
+
+    flaky = _FlakyTool("flaky2", error="Connection reset", fail_times=99)
+    reg = _FakeRegistry([flaky])
+    dispatch = await _build_real_dispatch(monkeypatch, exe, reg)
+
+    out = await dispatch("flaky2", {"path": "x"})
+
+    assert len(flaky.calls) == 2  # initial + exactly one retry
+    assert out.startswith(TOOL_FAILED_MARKER)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_never_retries_consequential_transient_failure(monkeypatch):
+    """CONSEQUENTIAL tools are NEVER auto-retried even on a transient failure."""
+    from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
+    from stackowl.pipeline.steps import execute as exe
+
+    flaky = _FlakyTool("danger", severity="consequential", error="Connection reset", fail_times=99)
+    reg = _FakeRegistry([flaky])
+    dispatch = await _build_real_dispatch(monkeypatch, exe, reg)
+
+    out = await dispatch("danger", {"path": "x"})
+
+    assert len(flaky.calls) == 1  # consequential never re-fired blind
+    assert out.startswith(TOOL_FAILED_MARKER)
+
+
 # ---------------------------------------------------------------------------
 # Helper: build the REAL _dispatch closure with a stubbed services/bounds seam.
 # ---------------------------------------------------------------------------

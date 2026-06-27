@@ -187,3 +187,86 @@ async def test_mcp_tool_execute_preserves_genuine_empty_success(monkeypatch: pyt
     result = await tool.execute()
     assert result.success is True
     assert result.output == ""
+
+
+# --- F-84 (S2): a transient discovery failure must NOT be cached as "no tools" ---
+
+
+@pytest.mark.asyncio
+async def test_discover_tools_does_not_cache_transport_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transient connection blip during discovery must NOT persist as an empty cache entry."""
+    from stackowl.mcp.client import McpCallError
+
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", lambda op: None)
+    client, config = _client(allowed=True)
+
+    async def _boom(_cfg: McpServerConfig) -> list[McpToolDefinition]:
+        raise McpCallError("transport", "network blip")
+
+    monkeypatch.setattr(client, "_fetch_tools", _boom)
+    result = await client.discover_tools(config)
+    assert result == []
+    # The empty result came from a failure path — it must not be cached.
+    assert client._cache.get("test_srv") is None
+
+
+@pytest.mark.asyncio
+async def test_discover_tools_retries_once_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transport failure is retried once; a subsequent success is returned and cached."""
+    from stackowl.mcp.client import McpCallError
+
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", lambda op: None)
+    client, config = _client(allowed=True)
+
+    calls = {"n": 0}
+
+    async def _flaky(_cfg: McpServerConfig) -> list[McpToolDefinition]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise McpCallError("transport", "transient blip")
+        return [McpToolDefinition(name="t", description="d", server_name="test_srv")]
+
+    monkeypatch.setattr(client, "_fetch_tools", _flaky)
+    result = await client.discover_tools(config)
+    assert calls["n"] == 2  # one failure + one retry
+    assert len(result) == 1
+    # A successful (retried) discovery IS cached.
+    cached = client._cache.get("test_srv")
+    assert cached is not None and len(cached) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_tools_caches_genuine_empty_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A genuinely-empty but SUCCESSFUL discovery is still cached (distinguished from failure)."""
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", lambda op: None)
+    client, config = _client(allowed=True)
+
+    async def _empty(_cfg: McpServerConfig) -> list[McpToolDefinition]:
+        return []
+
+    monkeypatch.setattr(client, "_fetch_tools", _empty)
+    result = await client.discover_tools(config)
+    assert result == []
+    # Genuinely empty AND successful — this IS cached so we don't re-probe every call.
+    assert client._cache.get("test_srv") == []
+
+
+@pytest.mark.asyncio
+async def test_discover_tools_does_not_cache_after_retry_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If both the initial attempt and the single retry fail, nothing is cached."""
+    from stackowl.mcp.client import McpCallError
+
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", lambda op: None)
+    client, config = _client(allowed=True)
+
+    calls = {"n": 0}
+
+    async def _always_boom(_cfg: McpServerConfig) -> list[McpToolDefinition]:
+        calls["n"] += 1
+        raise McpCallError("transport", "still down")
+
+    monkeypatch.setattr(client, "_fetch_tools", _always_boom)
+    result = await client.discover_tools(config)
+    assert result == []
+    assert calls["n"] == 2  # initial + one retry, then give up
+    assert client._cache.get("test_srv") is None

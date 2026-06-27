@@ -252,3 +252,82 @@ async def test_gate_gateway_error_fails_open() -> None:
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
     # ask() raises inside the guard → it logs (B5) + fails OPEN (True), never raises.
     assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True) is True
+
+
+# --- F-70: continue-and-notify for reversible spend under the hard cap -------
+
+
+async def test_gate_soft_crossed_under_block_threshold_continues_without_asking() -> None:
+    """Soft per-turn budget crossed but spend is NOT near the hard limit →
+    continue-and-notify (no blocking yes/no the assistant could decide itself)."""
+    tracker = _tracker()
+    await _seed_turn_cost(tracker, "t", 0.10)
+    gw = _FakeClarifyGateway(answer="Stop")
+    guard = CostPauseGuard(
+        cost_tracker=tracker,
+        clarify_gateway=gw,
+        threshold_usd=0.05,  # soft notify threshold (crossed)
+        block_threshold_usd=1.00,  # near-hard-limit block point (NOT reached)
+    )
+    result = await guard.gate(
+        trace_id="t", session_id="s", channel="telegram", interactive=True
+    )
+    assert result is True
+    assert gw.asks == []  # no blocking ask — decided autonomously
+
+
+async def test_gate_near_hard_limit_still_blocks_and_stop_aborts() -> None:
+    """Spend NEAR the hard limit → the blocking ask is preserved; Stop aborts."""
+    tracker = _tracker()
+    await _seed_turn_cost(tracker, "t", 0.20)
+    gw = _FakeClarifyGateway(answer="Stop")
+    guard = CostPauseGuard(
+        cost_tracker=tracker,
+        clarify_gateway=gw,
+        threshold_usd=0.05,
+        block_threshold_usd=0.20,  # reached → blocks
+    )
+    result = await guard.gate(
+        trace_id="t", session_id="s", channel="telegram", interactive=True
+    )
+    assert result is False
+    assert len(gw.asks) == 1
+    assert gw.asks[0]["choices"] == ("Continue", "Stop")
+
+
+async def test_gate_block_threshold_derived_from_hard_cap() -> None:
+    """With no explicit block threshold, it derives from the hard daily cap:
+    a turn spending below near_limit_fraction*cap continues-and-notifies."""
+    tracker = CostTracker(db=_FakeDb(), event_bus=EventBus(), daily_limit_usd=0.50)  # type: ignore[arg-type]
+    await _seed_turn_cost(tracker, "t", 0.10)
+    gw = _FakeClarifyGateway(answer="Stop")
+    guard = CostPauseGuard(
+        cost_tracker=tracker,
+        clarify_gateway=gw,
+        threshold_usd=0.05,
+        near_limit_fraction=0.8,  # block point = 0.8 * 0.50 = 0.40
+    )
+    # 0.10 < 0.40 → continue-and-notify, no ask.
+    assert (
+        await guard.gate(
+            trace_id="t", session_id="s", channel="telegram", interactive=True
+        )
+        is True
+    )
+    assert gw.asks == []
+
+
+async def test_gate_no_hard_cap_preserves_legacy_blocking() -> None:
+    """No hard cap configured and no explicit block threshold → there is no
+    protective ceiling, so the soft crossing still blocks (legacy behavior)."""
+    tracker = _tracker()  # daily_limit_usd=None
+    await _seed_turn_cost(tracker, "t", 0.10)
+    gw = _FakeClarifyGateway(answer="Stop")
+    guard = _guard(tracker=tracker, gateway=gw, threshold=0.05)
+    assert (
+        await guard.gate(
+            trace_id="t", session_id="s", channel="telegram", interactive=True
+        )
+        is False
+    )
+    assert len(gw.asks) == 1

@@ -79,19 +79,21 @@ async def upsert_owl_dna(
 _INSERT_SQL = """
 INSERT INTO dna_checkpoints (
     owl_name, checkpoint_id, challenge_level, verbosity,
-    curiosity, formality, creativity, precision, reason, created_at, owner_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    curiosity, formality, creativity, precision, completion_drive,
+    reason, created_at, owner_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _SELECT_BY_ID_SQL = """
-SELECT challenge_level, verbosity, curiosity, formality, creativity, precision
+SELECT challenge_level, verbosity, curiosity, formality, creativity, precision,
+       completion_drive
 FROM dna_checkpoints
 WHERE owner_id = ? AND owl_name = ? AND checkpoint_id = ?
 """
 
 _LIST_SQL = """
 SELECT checkpoint_id, challenge_level, verbosity, curiosity,
-       formality, creativity, precision, reason, created_at
+       formality, creativity, precision, completion_drive, reason, created_at
 FROM dna_checkpoints
 WHERE owner_id = ? AND owl_name = ?
 ORDER BY created_at DESC
@@ -136,6 +138,7 @@ class DNACheckpointer(OwnedRepository):
                     dna.formality,
                     dna.creativity,
                     dna.precision,
+                    dna.completion_drive,
                     reason,
                     created_at,
                     self._owner_id,

@@ -39,12 +39,23 @@ async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
 
 
 class _FakeBackend:
-    """Echoes the input as a single response; configurable errors / park."""
+    """Echoes the input as a single response; configurable errors / park.
 
-    def __init__(self, *, text: str = "did it", errors: tuple[str, ...] = (), parked: bool = False) -> None:
+    ``consequential`` populates ``PipelineState.consequential_failures`` so a park can
+    be classified irreversible (touched a consequential tool) vs reversible (none)."""
+
+    def __init__(
+        self,
+        *,
+        text: str = "did it",
+        errors: tuple[str, ...] = (),
+        parked: bool = False,
+        consequential: tuple[str, ...] = (),
+    ) -> None:
         self._text = text
         self._errors = errors
         self._parked = parked
+        self._consequential = consequential
         self.runs = 0
 
     async def run(self, state: PipelineState) -> PipelineState:
@@ -55,6 +66,7 @@ class _FakeBackend:
         )
         return state.evolve(
             responses=(chunk,), errors=self._errors, durable_parked=self._parked,
+            consequential_failures=self._consequential,
         )
 
 
@@ -140,10 +152,16 @@ async def test_completes_objective_and_notifies_when_all_done(pool: DbPool) -> N
     assert "watch X and handle it" in message
 
 
-async def test_blocks_objective_when_subgoal_parks(pool: DbPool) -> None:
+async def test_blocks_objective_when_irreversible_subgoal_parks(pool: DbPool) -> None:
+    """F-44: a park that touched a CONSEQUENTIAL tool is a genuine ask-on-irreversible
+    decision — block the objective (blocker_kind=decision) and ping the owner."""
     store = ObjectiveStore(pool, "principal-default")
     await _make_objective(store, ["risky step"])
-    backend = _FakeBackend(parked=True, errors=("needs consent for an irreversible action",))
+    backend = _FakeBackend(
+        parked=True,
+        errors=("needs consent for an irreversible action",),
+        consequential=("send_email",),  # a consequential tool was attempted → irreversible
+    )
     deliverer = _FakeDeliverer()
     handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
 
@@ -152,9 +170,83 @@ async def test_blocks_objective_when_subgoal_parks(pool: DbPool) -> None:
     obj = await store.get("obj-1")
     assert obj.status == "blocked"
     assert obj.blocker and "irreversible" in obj.blocker
+    assert obj.blocker_kind == "decision"  # needs a human — never auto-requeued
     subs = await store.list_subgoals("obj-1")
     assert subs[0].status == "blocked"
     assert len(deliverer.calls) == 1  # owner pinged about the block
+
+
+async def test_reversible_park_auto_resolves_without_blocking(pool: DbPool) -> None:
+    """F-44: a park with NO consequential footprint is a trivial/reversible clarify the
+    assistant may resolve itself — it must NOT strand the whole objective. It defers to
+    the bounded-retry path (act-first next tick) and never pings the owner prematurely."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["mild clarify step"])
+    backend = _FakeBackend(parked=True, errors=("which colour do you prefer?",))
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    await handler.execute(_driver_job())
+
+    obj = await store.get("obj-1")
+    assert obj.status == "active"  # NOT blocked on a reversible clarify
+    subs = await store.list_subgoals("obj-1")
+    assert subs[0].status == "pending"  # re-queued for a best-effort retry
+    assert subs[0].attempts == 1
+    assert len(deliverer.calls) == 0  # owner NOT pinged for a trivial decision
+
+
+async def test_transient_blocked_objective_requeued_after_cooldown(pool: DbPool) -> None:
+    """F-41: a transient-blocked objective is recoverable — once the cooldown elapses the
+    driver resets the stuck sub-goal's budget and returns the objective to ``active``."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["doomed step"])
+    backend = _FakeBackend(errors=("boom",))
+    deliverer = _FakeDeliverer()
+    # cooldown=0 → an objective blocked this tick is immediately eligible next tick.
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, job_deliverer=deliverer, blocked_retry_cooldown_s=0.0,
+    )
+
+    # Exhaust the retry budget → transient block.
+    await handler.execute(_driver_job())  # attempt 1
+    await handler.execute(_driver_job())  # attempt 2
+    await handler.execute(_driver_job())  # attempt 3 → blocked (transient)
+    obj = await store.get("obj-1")
+    assert obj.status == "blocked"
+    assert obj.blocker_kind == "transient"
+
+    # Next tick: cooldown elapsed → re-queued to active AND advanced again same tick.
+    await handler.execute(_driver_job())
+    obj = await store.get("obj-1")
+    assert obj.status == "active"  # recovered, no longer abandoned
+    subs = await store.list_subgoals("obj-1")
+    # The stuck sub-goal was reset to a fresh budget then re-attempted once this tick.
+    assert subs[0].attempts == 1
+    kinds = [e.kind for e in await store.list_events("obj-1")]
+    assert "requeued" in kinds
+
+
+async def test_decision_blocked_objective_is_not_requeued(pool: DbPool) -> None:
+    """F-41: a decision-class block (irreversible / verified-false) is NEVER auto-requeued
+    — it waits for a human even after the cooldown would otherwise elapse."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["risky step"])
+    backend = _FakeBackend(
+        parked=True, errors=("irreversible action",), consequential=("send_email",),
+    )
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, blocked_retry_cooldown_s=0.0,
+    )
+
+    await handler.execute(_driver_job())  # → decision block
+    runs_after_block = backend.runs
+    await handler.execute(_driver_job())  # cooldown=0 but decision must NOT recover
+
+    obj = await store.get("obj-1")
+    assert obj.status == "blocked"
+    assert obj.blocker_kind == "decision"
+    assert backend.runs == runs_after_block  # the step was NOT re-attempted
 
 
 async def test_retries_subgoal_on_transient_error_before_blocking(pool: DbPool) -> None:

@@ -31,6 +31,24 @@ class HealthAggregator:
         log.info("[health] aggregator.collect: exit — ok=%d total=%d", ok, len(result_list))
         return result_list
 
+    async def is_live(self) -> bool:
+        """Liveness verdict for the systemd watchdog gate (F-85).
+
+        Returns ``False`` only when a contributor reports ``"down"`` — a genuinely
+        broken critical subsystem (e.g. the DB pool wedged, the data dir
+        unwritable). ``"degraded"`` does NOT trip liveness: a degraded subsystem is
+        still serving, and killing the process over it would be a false restart.
+        With NO contributors registered the process is considered live (fail-open),
+        so this is safe to wire before contributors exist."""
+        if not self._contributors:
+            return True
+        statuses = await self.collect()
+        down = [s.name for s in statuses if s.status == "down"]
+        if down:
+            log.warning("[health] aggregator.is_live: DOWN subsystems=%s", down)
+            return False
+        return True
+
     async def _run_contributor(self, contributor: HealthContributor) -> HealthStatus:
         name = contributor.contributor_name
         t0 = time.monotonic()

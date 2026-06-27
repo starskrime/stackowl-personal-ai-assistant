@@ -313,6 +313,20 @@ class ParliamentOrchestrator:
             )
             return session.complete_no_synthesis()
 
+        # F-58 — a parse-failed synthesis is a fallback (raw text dressed as a
+        # verdict), NOT a real conclusion. Treat it like a synthesis failure:
+        # mark the session degraded (completed_no_synthesis) and SKIP pellet
+        # staging so fabricated claims never enter durable memory. The fallback
+        # text still rides the returned SynthesisResult for display upstream.
+        if not getattr(synthesis_result, "parse_ok", True):
+            log.parliament.warning(
+                "[parliament] orchestrator._finalize_session: synthesis parse "
+                "failed — marking completed_no_synthesis (degraded), skipping "
+                "pellet staging of fabricated claims",
+                extra={"_fields": {"session_id": session.session_id}},
+            )
+            return session.complete_no_synthesis()
+
         final = session.complete(synthesis=synthesis_result.synthesis_text)
         if self._pellet_gen is not None:
             try:

@@ -19,6 +19,7 @@ from typing import Any
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.objectives.model import (
+    BlockerKind,
     ExpectedOutcome,
     Objective,
     ObjectiveEvent,
@@ -124,6 +125,7 @@ class ObjectiveStore(OwnedRepository):
                 "target_channels": _dumps(objective.target_channels),
                 "target_addresses": _dumps(objective.target_addresses),
                 "blocker": objective.blocker,
+                "blocker_kind": objective.blocker_kind,
                 "created_at": now,
                 "updated_at": now,
             },
@@ -156,12 +158,17 @@ class ObjectiveStore(OwnedRepository):
         status: ObjectiveStatus,
         *,
         blocker: str | None = None,
+        blocker_kind: BlockerKind | None = None,
     ) -> None:
-        """Transition the objective's status (and blocker when blocking)."""
+        """Transition the objective's status (and blocker + its CLASS when blocking).
+
+        ``blocker`` / ``blocker_kind`` are written unconditionally so every non-block
+        transition (``active`` / ``done`` / ``abandoned``) clears them — a recovered
+        or finished objective must not carry a stale blocker classification."""
         await self._update_owned(
             _OBJECTIVES,
-            set_sql="status = ?, blocker = ?, updated_at = ?",
-            set_params=(status, blocker, _now().isoformat()),
+            set_sql="status = ?, blocker = ?, blocker_kind = ?, updated_at = ?",
+            set_params=(status, blocker, blocker_kind, _now().isoformat()),
             where_sql="objective_id = ?",
             where_params=(objective_id,),
         )
@@ -319,6 +326,7 @@ class ObjectiveStore(OwnedRepository):
             target_channels=_loads_list(row.get("target_channels")),
             target_addresses=_loads_dict(row.get("target_addresses")),
             blocker=row.get("blocker"),
+            blocker_kind=row.get("blocker_kind"),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )

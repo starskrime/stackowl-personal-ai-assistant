@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -384,83 +385,81 @@ async def _try_substitute(
     from stackowl.authz.bounds_guard import check_effective_bounds
     from stackowl.pipeline.capability_substitution import find_substitute
     from stackowl.pipeline.durable.ledger_guard import ledger_guard
-    from stackowl.setup.localize import localize_format
 
     try:
-        match = find_substitute(
-            failed_tool,
-            failed_args,
-            registry=tool_registry,
-            in_bounds=lambda n: check_effective_bounds(effective, n) is None,
-            already_substituted=substituted_tags,
-        )
-        if match is None:
-            return None
-        sibling_name, sibling_args = match
-        sib = tool_registry.get(sibling_name)
-        if sib is None:  # raced/unregistered — degrade honestly
-            log.engine.warning(
-                "[pipeline] execute: substitute sibling vanished from registry",
-                extra={"_fields": {"sibling": sibling_name, "trace_id": trace_id}},
+        # F-6 — a capability class can have MULTIPLE ranked siblings. Loop over them,
+        # marking only the TRIED sibling as exhausted (NOT the whole capability tag),
+        # so one flaky sibling no longer surrenders the entire class while other
+        # ranked candidates remain. The tag is added to ``substituted_tags`` ONLY on a
+        # trustworthy success below (one SUCCESSFUL substitution per class per turn);
+        # a sibling that fails just advances to the next candidate. ``tried_siblings``
+        # is folded into the bounds predicate so ``find_substitute`` skips an
+        # already-tried sibling on the next pass (it is otherwise tag-gated).
+        tried_siblings: set[str] = set()
+        while True:
+            match = find_substitute(
+                failed_tool,
+                failed_args,
+                registry=tool_registry,
+                in_bounds=lambda n: (
+                    n not in tried_siblings and check_effective_bounds(effective, n) is None
+                ),
+                already_substituted=substituted_tags,
             )
-            return None
-        log.engine.info(
-            "[pipeline] execute: self-heal substitution — routing around failed tool",
-            extra={"_fields": {
-                "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
-            }},
-        )
-        # Run the sibling through the SAME guarded path the primary used. The
-        # sibling is read/write (find_substitute guarantees it), so under a durable
-        # context ledger_guard treats a read as passthrough and a write as
-        # exactly-once — identical to a direct dispatch of that tool.
-        sib_result = await ledger_guard(
-            sibling_name, sibling_args, sib.manifest.action_severity,
-            lambda: sib(**sibling_args),
-        )
-        tool_outcome_ledger.record_tool_outcome(
-            name=sibling_name, action_severity=sib.manifest.action_severity, success=sib_result.success,
-            side_effect_committed=sib_result.side_effect_committed,
-            # B4a — the substitute is held to the SAME reality check as the primary:
-            # a sibling that also CLAIMED success but produced nothing (verified=False)
-            # is not a route-around, it is a second false win.
-            verified=sib_result.verified,
-        )
-        if not is_trustworthy_success(sib_result.success, sib_result.verified):
+            if match is None:
+                return None
+            sibling_name, sibling_args = match
+            tried_siblings.add(sibling_name)
+            sib = tool_registry.get(sibling_name)
+            if sib is None:  # raced/unregistered — try the next ranked candidate
+                log.engine.warning(
+                    "[pipeline] execute: substitute sibling vanished from registry",
+                    extra={"_fields": {"sibling": sibling_name, "trace_id": trace_id}},
+                )
+                continue
             log.engine.info(
-                "[pipeline] execute: substitute sibling also failed — falling through",
+                "[pipeline] execute: self-heal substitution — routing around failed tool",
                 extra={"_fields": {
                     "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
                 }},
             )
-            return None
-        # SUCCESS — record the capability so this turn does not substitute again
-        # for the same class, and return the sibling's output as a fresh
-        # observation with a neutral localized note so the model knows an
-        # alternative produced it.
-        # Record the recovery so the user can be told (machinery-recorded, true by
-        # construction) and the turn's recovery log captures it.
-        recovery_context.record_recovery(
-            kind="substitution", failed=failed_tool,
-            recovered_via=sibling_name, user_visible=True,
-        )
-        tag = sib.manifest.capability_tag
-        if tag:
-            substituted_tags.add(tag)
-        # F030/REACT-4 — localize the user-facing note from the turn's resolved
-        # language (state.language, threaded as `locale`); localize_format
-        # en-fallbacks for any uncatalogued language. Never the hardcoded "en".
-        note = localize_format(
-            "self_heal_substituted", locale, failed=failed_tool, sibling=sibling_name,
-        )
-        log.engine.info(
-            "[pipeline] execute: self-heal substitution succeeded",
-            extra={"_fields": {
-                "failed_tool": failed_tool, "sibling": sibling_name,
-                "tag": tag, "trace_id": trace_id,
-            }},
-        )
-        return f"{note}\n{sib_result.output}"
+            # Run the sibling through the SAME guarded path the primary used. The
+            # sibling is read/write (find_substitute guarantees it), so under a durable
+            # context ledger_guard treats a read as passthrough and a write as
+            # exactly-once — identical to a direct dispatch of that tool.
+            # partial binds sib + args EAGERLY (a fresh zero-arg op each iteration)
+            # so the loop's rebinding never leaks into a deferred closure (B023).
+            sib_result = await ledger_guard(
+                sibling_name, sibling_args, sib.manifest.action_severity,
+                functools.partial(sib, **sibling_args),
+            )
+            tool_outcome_ledger.record_tool_outcome(
+                name=sibling_name, action_severity=sib.manifest.action_severity,
+                success=sib_result.success,
+                side_effect_committed=sib_result.side_effect_committed,
+                # B4a — the substitute is held to the SAME reality check as the primary:
+                # a sibling that also CLAIMED success but produced nothing (verified=False)
+                # is not a route-around, it is a second false win.
+                verified=sib_result.verified,
+            )
+            if not is_trustworthy_success(sib_result.success, sib_result.verified):
+                log.engine.info(
+                    "[pipeline] execute: substitute sibling also failed — trying next candidate",
+                    extra={"_fields": {
+                        "failed_tool": failed_tool, "sibling": sibling_name, "trace_id": trace_id,
+                    }},
+                )
+                continue
+            return _record_substitution_success(
+                failed_tool=failed_tool,
+                sib=sib,
+                sibling_name=sibling_name,
+                sib_output=sib_result.output,
+                substituted_tags=substituted_tags,
+                recovery_context=recovery_context,
+                locale=locale,
+                trace_id=trace_id,
+            )
     except Exception as exc:  # noqa: BLE001 — the actuator must never crash the turn
         log.engine.error(
             "[pipeline] execute: self-heal substitution actuator failed — falling through",
@@ -468,6 +467,68 @@ async def _try_substitute(
             extra={"_fields": {"failed_tool": failed_tool, "trace_id": trace_id}},
         )
         return None
+
+
+def _record_substitution_success(
+    *,
+    failed_tool: str,
+    sib: Any,
+    sibling_name: str,
+    sib_output: str,
+    substituted_tags: set[str],
+    recovery_context: Any,
+    locale: str,
+    trace_id: str,
+) -> str:
+    """Finalize a trustworthy substitution: record the recovery, mark the class
+    exhausted for this turn, and return the sibling's output prefixed with a
+    neutral localized note. Extracted so the F-6 candidate loop stays readable."""
+    from stackowl.setup.localize import localize_format
+
+    # SUCCESS — record the capability so this turn does not substitute again
+    # for the same class, and return the sibling's output as a fresh
+    # observation with a neutral localized note so the model knows an
+    # alternative produced it.
+    # Record the recovery so the user can be told (machinery-recorded, true by
+    # construction) and the turn's recovery log captures it.
+    recovery_context.record_recovery(
+        kind="substitution", failed=failed_tool,
+        recovered_via=sibling_name, user_visible=True,
+    )
+    tag = sib.manifest.capability_tag
+    if tag:
+        substituted_tags.add(tag)
+    # F030/REACT-4 — localize the user-facing note from the turn's resolved
+    # language (state.language, threaded as `locale`); localize_format
+    # en-fallbacks for any uncatalogued language. Never the hardcoded "en".
+    note = localize_format(
+        "self_heal_substituted", locale, failed=failed_tool, sibling=sibling_name,
+    )
+    log.engine.info(
+        "[pipeline] execute: self-heal substitution succeeded",
+        extra={"_fields": {
+            "failed_tool": failed_tool, "sibling": sibling_name,
+            "tag": tag, "trace_id": trace_id,
+        }},
+    )
+    return f"{note}\n{sib_output}"
+
+
+def _is_transient_failure(tr: ToolResult) -> bool:
+    """F-7 — classify a GENUINE tool failure (success=False) as transient.
+
+    A transient failure (a dropped connection, a reset socket, a momentarily
+    locked DB, a closed pipe) can self-heal on a second attempt, whereas a
+    deterministic failure (bad input, missing capability, refusal) will not.
+    Reuses the project's established dead-handle marker set
+    (``DEFAULT_DEAD_HANDLE_MARKERS``) — the SAME infrastructure-fault vocabulary
+    the resource-recycling layer already trusts — rather than inventing a new
+    keyword list. Reads only the structured error/output text the tool reported.
+    """
+    from stackowl.infra.resilience import DEFAULT_DEAD_HANDLE_MARKERS
+
+    text = f"{tr.error or ''}\n{tr.output or ''}"
+    return any(marker in text for marker in DEFAULT_DEAD_HANDLE_MARKERS)
 
 
 # REACT-1/F032+F090 — hard ceiling on the FALLBACK window probe. The steady path
@@ -1119,23 +1180,34 @@ async def _run_with_tools(
         # returns its (misleading) "done!" output here; it enters the recovery ladder.
         if is_trustworthy_success(tr.success, tr.verified):
             return tr.output
-        # B4a recovery ladder — RUNG 1: RETRY-ONCE on an unverified effect. A
-        # non-consequential effectful tool that CLAIMED success but whose result was
-        # not observed (success=True, verified=False) is re-run ONCE through the same
-        # guarded path. A transient miss (slow flush / race) self-heals; a genuine
-        # no-op (the disguised --simulate class) fails identically and falls through.
-        # Bounded to one retry per tool per turn (retried_unverified) — never a retry
-        # spiral. CONSEQUENTIAL tools are NEVER auto-retried: an irreversible effect
-        # must not be re-fired blind, so they drop straight to substitution / the floor.
+        # B4a recovery ladder — RUNG 1: RETRY-ONCE on a recoverable failure. Two
+        # recoverable shapes self-heal on a second attempt and so earn one retry:
+        #   (1) an UNVERIFIED EFFECT — a non-consequential effectful tool that CLAIMED
+        #       success but whose result was not observed (success=True, verified=False).
+        #       A transient miss (slow flush / race) self-heals; a genuine no-op (the
+        #       disguised --simulate class) fails identically and falls through.
+        #   (2) F-7 — a TRANSIENT GENUINE FAILURE (success=False) whose error looks
+        #       like an infrastructure fault (dropped connection, reset socket, locked
+        #       DB, closed pipe) per the shared dead-handle vocabulary. A deterministic
+        #       failure (bad input, refusal, missing capability) is NOT retried — it
+        #       would fail identically — and drops straight to substitution / the floor.
+        # Bounded to one retry per tool per turn (the shared retried_unverified set) —
+        # never a retry spiral. CONSEQUENTIAL tools are NEVER auto-retried: an
+        # irreversible effect must not be re-fired blind.
+        _unverified_effect = tr.success and tr.verified is False
+        _transient_genuine = (not tr.success) and _is_transient_failure(tr)
         if (
-            tr.success and tr.verified is False
+            (_unverified_effect or _transient_genuine)
             and not is_consequential
             and name not in retried_unverified
         ):
             retried_unverified.add(name)
             log.engine.info(
-                "[pipeline] execute: unverified effect — retrying once (recovery rung 1)",
-                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+                "[pipeline] execute: recoverable failure — retrying once (recovery rung 1)",
+                extra={"_fields": {
+                    "tool": name, "trace_id": state.trace_id,
+                    "reason": "unverified_effect" if _unverified_effect else "transient_failure",
+                }},
             )
             retry_tr = await _guarded_dispatch(args)
             if retry_tr is not None and is_trustworthy_success(retry_tr.success, retry_tr.verified):
@@ -1769,6 +1841,41 @@ def _open_stream(
     return guard.stream(provider, messages, model="")
 
 
+def _clarify_resolvable_from_context(state: PipelineState) -> bool:
+    """F-3 — True when an interactive clarify question can be RESOLVED from the
+    turn's available context, so the turn should ACT (fall through to the tool
+    path) instead of surfacing the question.
+
+    Act-first: the router emits a clarify verdict only for an ambiguous action it
+    judged consequential/irreversible (its prompt gates clarify on commitment
+    cost). But re-asking a question the user has ALREADY been shown this turn is an
+    unproductive loop, not a genuine ambiguity — so when the SAME question already
+    appears in the turn's prior context (recalled durable memory or the
+    conversation history threaded onto the state), resolve it by acting rather than
+    asking again. A first-time, genuinely-unresolved question still surfaces.
+
+    Deterministic + side-effect-free (no I/O, no LLM, no keyword list — it matches
+    the router-authored question text against context the turn already carries).
+
+    DEFERRED (architectural / out of this finding's safe subset): LLM-assisted
+    resolution of a never-before-seen question from durable memory, and a
+    structured consequential/irreversible signal threaded from the router so the
+    execute layer can re-apply the commitment-cost gate independently (today that
+    gate lives in the router prompt).
+    """
+    question = (state.clarify_question or "").strip()
+    if not question:
+        return False
+    haystacks: list[str] = []
+    if state.memory_context:
+        haystacks.append(state.memory_context)
+    for msg in state.history:
+        content = getattr(msg, "content", None)
+        if isinstance(content, str) and content:
+            haystacks.append(content)
+    return any(question in h for h in haystacks)
+
+
 async def _maybe_clarify(state: PipelineState, services: object) -> PipelineState | None:
     """If this is an INTERACTIVE clarify turn, surface ONE question and yield.
 
@@ -1801,6 +1908,18 @@ async def _maybe_clarify(state: PipelineState, services: object) -> PipelineStat
         log.engine.info(
             "[pipeline] _maybe_clarify: clarify verdict in a non-interactive context — "
             "falling through to the standard tool path",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+    # F-3 — before surfacing, try to resolve the ambiguity from the turn's own
+    # context. If it is resolvable (e.g. the same question is already in context —
+    # an unproductive re-ask), ACT instead of asking: fall through to the standard
+    # tool path so the assistant makes a best-effort action (act-first), exactly as
+    # the non-interactive path does.
+    if _clarify_resolvable_from_context(state):
+        log.engine.info(
+            "[pipeline] _maybe_clarify: ambiguity resolvable from context — "
+            "acting instead of re-asking (act-first)",
             extra={"_fields": {"trace_id": state.trace_id}},
         )
         return None

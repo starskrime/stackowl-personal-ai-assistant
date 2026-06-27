@@ -264,8 +264,14 @@ class DiscordChannelAdapter(ChannelAdapter):
         — a turn's file is never silently dropped — while the best-effort path with
         no target is a loud logged no-op. ``caption`` rides as the message content.
 
-        Self-healing: an upload error is logged and swallowed so a file send never
-        crashes the turn (the :class:`ProactiveDeliverer` maps it to ``failed``).
+        Transport honesty (F-66): an upload failure to a RESOLVED live channel is
+        NOT swallowed — it is logged then re-raised as
+        ``DeliveryError("discord", "transport_error")`` so the
+        :class:`ProactiveDeliverer` records ``failed`` (instead of a clean send
+        while the user never gets the file). "A file send must not crash the
+        turn" is still honoured: the DELIVERER catches the raise — that is its
+        job — rather than this adapter swallowing it. Upload is not idempotent,
+        so there is NO retry (a re-attempt risks a duplicate send).
         """
         explicit = channel_id is not _UNSET
         resolved = channel_id if explicit else None
@@ -301,12 +307,17 @@ class DiscordChannelAdapter(ChannelAdapter):
             discord_file = discord.File(file_path)
             await channel.send(caption or None, file=discord_file)
             log.discord.debug("[discord] adapter.send_file: exit uploaded")
-        except Exception as exc:  # self-healing — a file send must not crash the turn
+        except Exception as exc:  # F-66 — an on-turn transport failure must surface
             log.discord.error(
                 "[discord] adapter.send_file: upload failed",
                 exc_info=exc,
                 extra={"_fields": {"channel": target}},
             )
+            # The channel resolved to a live target but the upload itself failed —
+            # the user never gets the file. Re-raise so the ProactiveDeliverer
+            # records ``failed``; the turn stays safe because the DELIVERER catches
+            # this, not because we swallow it. Upload is not idempotent → no retry.
+            raise DeliveryError("discord", "transport_error") from exc
 
     async def download_media(self, file_id: str) -> bytes:
         """Read an inbound Discord attachment's bytes by its id (CHAN-4 / F013).

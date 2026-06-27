@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from stackowl.exceptions import CircuitOpenError, ProviderError
+from stackowl.exceptions import CircuitOpenError, ProviderError, RateLimitError
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.llm_gateway import (
     ESCALATE_INSTRUCTION,
@@ -309,6 +309,68 @@ def test_tools_reraises_provider_fault_at_last_tier() -> None:
     powerful = _FaultyProvider("powerful", fault=ProviderError("powerful", TimeoutError("hung")))
     gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
     with pytest.raises(ProviderError):
+        asyncio.run(gw.complete_with_tools(
+            user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+            tool_dispatcher=None, floor="powerful", ceiling="powerful",
+        ))
+
+
+# -- F-18: a rate-limited tier transparently shifts to another tier ----------- #
+#
+# The rate limiter (rate_limiter.py) fails CLOSED, raising RateLimitError when a
+# capped provider cannot grant a call. For ROUTING that fault is exactly like an
+# OPEN breaker: skip the capped provider and cascade to the next tier. F-18 must
+# never surface the cap as an error to the user when a healthy higher tier exists,
+# and must never fabricate a wrong "success". These tests lock that behaviour in
+# (the cap itself stays fail-closed — only the gateway's routing recovers it).
+
+
+def test_complete_rate_limited_floor_cascades_to_higher_tier() -> None:
+    # Floor tier is rate-limited (cap exhausted, zero-refill ⇒ RateLimitError);
+    # a healthy higher tier answers and its result is returned. No error surfaces.
+    fast = _FaultyProvider("fast", fault=RateLimitError("fast", 1, 0))
+    standard = _FakeProvider("standard", reply="recovered after cap")
+    powerful = _FakeProvider("powerful", reply="unused")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": powerful}))
+    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    assert out.content == "recovered after cap"
+    assert out.model == "standard"
+    assert len(fast.complete_calls) == 1  # capped floor attempted then cascaded
+    assert len(powerful.complete_calls) == 0  # stopped once standard answered
+
+
+def test_complete_rate_limited_ceiling_tier_reraises_terminally() -> None:
+    # Single / ceiling tier rate-limited: NO healthy higher tier exists, so the cap
+    # propagates terminally rather than silently fabricating a wrong success.
+    powerful = _FaultyProvider("powerful", fault=RateLimitError("powerful", 1, 0))
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    with pytest.raises(RateLimitError):
+        asyncio.run(gw.complete([_user("hi")], floor="powerful", ceiling="powerful"))
+
+
+def test_tools_rate_limited_floor_cascades_and_resets_ledger() -> None:
+    # Same cascade in the agentic tool loop; the ledger-reset hook fires before the
+    # recovery tier so the capped attempt does not poison its give-up floor.
+    fast = _FaultyProvider("fast", fault=RateLimitError("fast", 1, 0))
+    standard = _FakeProvider("standard", reply="done with tools")
+    gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": standard}))
+    resets: list[tuple[str, str]] = []
+
+    async def on_escalate(frm: str, to: str) -> None:
+        resets.append((frm, to))
+
+    text, _ = asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+        tool_dispatcher=None, floor="fast", ceiling="powerful", on_escalate=on_escalate,
+    ))
+    assert text == "done with tools"
+    assert resets == [("fast", "standard")]
+
+
+def test_tools_rate_limited_ceiling_tier_reraises_terminally() -> None:
+    powerful = _FaultyProvider("powerful", fault=RateLimitError("powerful", 1, 0))
+    gw = LLMGateway(_FakeRegistry({"powerful": powerful}))
+    with pytest.raises(RateLimitError):
         asyncio.run(gw.complete_with_tools(
             user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
             tool_dispatcher=None, floor="powerful", ceiling="powerful",

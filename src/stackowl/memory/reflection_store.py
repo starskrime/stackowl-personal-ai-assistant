@@ -39,9 +39,19 @@ class Reflection:
 
 
 # Filter applied to task_outcomes when picking the next batch to reflect on.
-# POSITIVE-ONLY LEARNING (operator directive): the platform reflects ONLY on
-# SUCCESSFUL, high-quality outcomes — it builds a library of "what worked" and
-# never accumulates "this failed / I can't" memories.
+#
+# F-48 (ACCEPTED BY DIRECTIVE — do NOT "fix" this): an audit flagged that
+# reflections are written only for successes and suggested also remembering
+# FAILURES. That suggestion is intentionally REJECTED. POSITIVE-ONLY LEARNING is
+# a hard operator product directive: the platform persists ONLY "what worked"
+# and must NEVER accumulate "this failed / I can't" memories into the store. The
+# `success = 1 AND failure_class IS NULL AND quality_score >= 0.6` predicate
+# below is therefore correct and load-bearing — leave it as-is.
+#
+# Rationale (memory): feedback_positive_only_learning. Within-turn FAILURE
+# AWARENESS (degradation signal that is never persisted) is handled elsewhere
+# (see classify._gather_recent_reflections F-49), which is the only honest place
+# a failure may surface — transiently, to the current turn, never written here.
 _HIGH_QUALITY_THRESHOLD = 0.6
 
 _LIST_PENDING_SQL = f"""

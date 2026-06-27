@@ -198,6 +198,23 @@ class TestProviderAdd:
         out = await _make_cmd().handle("add acme openai", _state())
         assert "Usage" in out or "usage" in out.lower()
 
+    @pytest.mark.asyncio
+    async def test_add_honest_error_when_write_does_not_persist(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # F-81: a fire-and-forget save that silently fails to persist must NOT
+        # print the ✓ — the handler re-reads the file to confirm the mutation.
+        import stackowl.commands.provider_command as pc
+
+        monkeypatch.setattr(pc, "save_yaml", lambda *a, **k: None)
+        bus = _SpyBus()
+        out = await _make_cmd(bus).handle("add acme openai gpt-x fast", _state())
+        assert "✓" not in out
+        assert "✗" in out
+        # Nothing persisted; no spurious reload event.
+        assert _load(tmp_yaml)["providers"] == []
+        assert not any(e == "settings_reloaded" for e, _ in bus.events)
+
 
 # ---------------------------------------------------------------------------
 # remove

@@ -125,6 +125,9 @@ async def synthesize_positions(
         confidence=_BASE_CONFIDENCE,
         synthesis_text=synthesis_text,
         mean_similarity=0.0,
+        # F-58 — carry the parser's trust flag through so a fallback aggregation
+        # (raw text dressed as a verdict) is never staged as durable knowledge.
+        parse_ok=parsed.parse_ok,
     )
     log.parliament.info(
         "[parliament] synthesize_positions: exit",

@@ -22,6 +22,7 @@ Per the wiring plan (gleaming-finding-puppy.md, Commit E):
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -32,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.events.bus import EventBus
+    from stackowl.health.aggregator import HealthAggregator
     from stackowl.memory.assembly import MemoryComponents
     from stackowl.memory.critic_scorer_handler import CriticScorerHandler
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
@@ -43,6 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.providers.registry import ProviderRegistry
     from stackowl.scheduler.handlers.check_in import CheckInHandler
     from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
+    from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
     from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
     from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
     from stackowl.scheduler.handlers.tool_outcome_miner_handler import (
@@ -80,6 +83,7 @@ class SchedulerComponents:
     reflection_writer_handler: ReflectionWriterHandler
     skill_synthesizer_handler: SkillSynthesizerHandler
     tool_outcome_miner_handler: ToolOutcomeMinerHandler
+    health_sweep_handler: HealthSweepHandler
 
 
 class SchedulerAssembly:
@@ -183,6 +187,12 @@ class SchedulerAssembly:
                 proactive_deliverer, delivery_ledger
             )
 
+        # F-61 (S2): give the scheduler the same delivery seam so a retry-exhausted
+        # job failure is audited AND surfaces a proactive operator notification,
+        # not just an ERROR log line. Wired post-construction because the deliverer
+        # depends on the ledger, which is built after the JobScheduler.
+        scheduler._job_deliverer = goal_job_deliverer
+
         goal_execution_handler = GoalExecutionHandler(
             backend=backend,
             db=db,
@@ -279,6 +289,25 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(tool_outcome_miner_handler)
 
+        # F-87 — periodic in-process HEALTH SWEEP. Health was detect-only / on
+        # demand (only the out-of-process `stackowl health` CLI ran the
+        # aggregator); nothing inside the running service ever noticed a subsystem
+        # going down. Build a live aggregator from the LOCAL, in-process-safe
+        # contributors (db / filesystem / graph / enabled providers — the same set
+        # the CLI uses, minus Browser/Resilience which need live-runtime refs) and
+        # register a handler that collects on a cadence and alerts on down/degraded.
+        # AUTO-RECYCLE (driving attempt_with_recycle via the live
+        # ResilienceContributor) is DEFERRED — that needs HealableResource refs from
+        # the serve process. This is the safe periodic detect+alert subset.
+        health_aggregator = _build_health_aggregator(settings)
+        health_alert = _build_health_alert_sink(proactive_deliverer, settings)
+        from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
+
+        health_sweep_handler = HealthSweepHandler(
+            health_aggregator, alert=health_alert
+        )
+        HandlerRegistry.instance().register(health_sweep_handler)
+
         # Report the ACTUAL registered set (self-maintaining — a hardcoded count
         # had drifted, omitting reflection_writer/skill_synthesizer/
         # tool_outcome_miner). Honest wiring logs are the whole point of this arc.
@@ -367,6 +396,12 @@ class SchedulerAssembly:
         # the digest's batching cadence.
         await _seed_minutes_schedule(
             db, handler_name="notification_digest", schedule="every 5m",
+            interval_minutes=5,
+        )
+        # F-87 — health sweep every 5m: collect in-process health, alert on
+        # down/degraded. Cheap when everything is healthy (a quiet debug exit).
+        await _seed_minutes_schedule(
+            db, handler_name="health_sweep", schedule="every 5m",
             interval_minutes=5,
         )
         # Critic scorer runs frequently — outcomes pile up fast.
@@ -464,7 +499,65 @@ class SchedulerAssembly:
             reflection_writer_handler=reflection_writer_handler,
             skill_synthesizer_handler=skill_synthesizer_handler,
             tool_outcome_miner_handler=tool_outcome_miner_handler,
+            health_sweep_handler=health_sweep_handler,
         )
+
+
+def _build_health_aggregator(settings: Settings) -> HealthAggregator:
+    """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
+
+    Mirrors the ``stackowl health`` CLI's contributor set MINUS the ones that need
+    live-runtime refs (Browser/Resilience) — those would only report "not
+    constructed" from a background sweep. Db / filesystem / graph / enabled
+    providers all probe from durable config alone, so the periodic sweep reports
+    TRUTHFUL status without threading live serve-process resources.
+    """
+    from stackowl.db.pool import default_db_path
+    from stackowl.health.aggregator import HealthAggregator
+    from stackowl.health.contributors import (
+        DbContributor,
+        FilesystemContributor,
+        GraphContributor,
+        ProviderContributor,
+    )
+    from stackowl.startup.fs_probe import _data_dir, _log_dir
+
+    agg = HealthAggregator()
+    agg.register(DbContributor(default_db_path()))
+    agg.register(FilesystemContributor(_data_dir(), _log_dir()))
+    agg.register(GraphContributor.probe())
+    for provider in settings.providers:
+        if provider.enabled:
+            agg.register(ProviderContributor(provider))
+    return agg
+
+
+def _build_health_alert_sink(
+    proactive_deliverer: ProactiveDeliverer | None, settings: Settings
+) -> Callable[[str], Awaitable[None]] | None:
+    """An operator-alert sink for the health sweep, or None if undeliverable.
+
+    Builds a closure that sends a CRITICAL operator notification through the same
+    :class:`ProactiveDeliverer` seam the briefs use. Returns None when no deliverer
+    is wired (the sweep then alerts via its LOUD log only — never a fake "sent").
+    """
+    if proactive_deliverer is None:
+        return None
+    brief_channels = list(settings.brief.channels)
+    channel = brief_channels[0] if brief_channels else None
+
+    async def _alert(message: str) -> None:
+        from stackowl.notifications.router import Notification
+
+        note = Notification(
+            message=message,
+            urgency="critical",
+            category="operator_health",
+            channel_name=channel,
+        )
+        await proactive_deliverer.deliver(note)
+
+    return _alert
 
 
 def _resolve_owner_addresses(

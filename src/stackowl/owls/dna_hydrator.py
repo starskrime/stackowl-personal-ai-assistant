@@ -15,7 +15,7 @@ from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 # principal's evolved DNA into the requesting principal's registry (tenant leak).
 _SELECT_ALL_DNA = (
     "SELECT owl_name, challenge_level, verbosity, curiosity, formality, "
-    "creativity, precision FROM owl_dna WHERE owner_id = ?"
+    "creativity, precision, completion_drive FROM owl_dna WHERE owner_id = ?"
 )
 
 

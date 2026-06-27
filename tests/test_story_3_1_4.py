@@ -278,6 +278,37 @@ class TestConfigCommand:
         reloaded: dict[str, Any] = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
         assert "daily_limit_usd" not in reloaded.get("budget", {})
 
+    # -- F-81: write-back verification (read-after-write before claiming ✓) ----
+
+    @pytest.mark.asyncio
+    async def test_set_honest_error_when_write_does_not_persist(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import stackowl.commands.config_command as cc
+
+        # Simulate a fire-and-forget save that silently fails to persist.
+        monkeypatch.setattr(cc, "save_yaml", lambda *a, **k: None)
+        out = await ConfigCommand().handle("set budget.daily_limit_usd 12.50", _state())
+        assert "✓" not in out
+        assert "✗" in out
+        # File unchanged → old value still there.
+        reloaded: dict[str, Any] = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
+        assert reloaded["budget"]["daily_limit_usd"] == 5.0
+
+    @pytest.mark.asyncio
+    async def test_reset_honest_error_when_write_does_not_persist(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import stackowl.commands.config_command as cc
+
+        monkeypatch.setattr(cc, "save_yaml", lambda *a, **k: None)
+        out = await ConfigCommand().handle("reset budget.daily_limit_usd", _state())
+        assert "✓" not in out
+        assert "✗" in out
+        # Key still present because the write never landed.
+        reloaded: dict[str, Any] = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
+        assert reloaded["budget"]["daily_limit_usd"] == 5.0
+
     @pytest.mark.asyncio
     async def test_export_dumps_file(self, tmp_yaml: Path) -> None:
         out = await ConfigCommand().handle("export", _state())

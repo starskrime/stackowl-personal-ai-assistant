@@ -119,6 +119,24 @@ class ConnectCommand(SlashCommand):
                 "connect_command._handle_connect: step — connect completed",
                 extra={"_fields": {"service": service}},
             )
+            # F-80: connect() returning without raising is NOT proof the OAuth
+            # flow persisted credentials. Confirm via the cheap is_connected()
+            # post-condition (same check the list path uses) before claiming
+            # success. Guard adapters that lack it — fall back to legacy behavior.
+            confirm = getattr(adapter, "is_connected", None)
+            if confirm is not None:
+                connected = await confirm()
+                if not connected:
+                    log.gateway.warning(
+                        "connect_command._handle_connect: exit — flow finished "
+                        "but credentials not detected",
+                        extra={"_fields": {"service": service}},
+                    )
+                    return (
+                        f"{service}: connection flow finished but credentials "
+                        "were not detected. Nothing was saved — please try "
+                        "/connect again."
+                    )
             log.gateway.debug("connect_command._handle_connect: exit — success")
             return f"{service} connected."
         except Exception as exc:
