@@ -719,6 +719,32 @@ def _circuit_open_refusal(name: str) -> str:
     )
 
 
+def _approach_signature(name: str, args: dict[str, object]) -> str:
+    """ADR-5 MOVE 3 — a stable, order-independent identity for ONE attempted approach
+    (a tool name + its inputs) so an EXACT repeat within the turn is recognisable.
+    Canonical JSON (sorted keys, ``default=str`` for non-JSON values) is deterministic
+    across dict ordering; a NUL joiner avoids name/arg collisions. Never raises — a
+    signature failure must not break dispatch."""
+    try:
+        canon = json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
+    except Exception:  # noqa: BLE001 — fall back to a repr; never break the call
+        canon = repr(sorted((str(k), repr(v)) for k, v in args.items()))
+    return f"{name}\x00{canon}"
+
+
+def _repeated_approach_refusal(name: str) -> str:
+    """ADR-5 MOVE 3 — stable, model-readable steer for an EXACT approach (this tool with
+    these same inputs) that already failed earlier THIS turn. Like the circuit-breaker
+    bounce this is CONTAINMENT, not a tool failure: it carries NO TOOL_FAILED_MARKER (so
+    the give-up judge never reads it as a failed consequential action) and records
+    NOTHING in the outcome ledger. Steers the model to change the approach."""
+    return (
+        f"You already tried '{name}' with these exact inputs earlier this turn and it "
+        f"failed. Do not repeat the same approach — change the inputs or use a different "
+        f"tool, or stop and tell the user what you could not do."
+    )
+
+
 def reset_ledger_for_tier_escalation(from_tier: str, to_tier: str, *, trace_id: str = "") -> None:
     """Reset turn-scoped state between discarded escalation attempts.
 
@@ -899,6 +925,21 @@ async def _run_with_tools(
     # honest floor; a second unverified effect from the same tool falls straight
     # through (bounded — never a retry spiral).
     retried_unverified: set[str] = set()
+    # ADR-5 MOVE 3 (F-26/43/72) — ephemeral, turn-scoped "approaches that already failed
+    # THIS turn" set. Keyed by ``_approach_signature`` (tool name + exact inputs) so a
+    # blind re-issue of the SAME approach is recognised and steered away instead of
+    # re-executed. NEVER persisted (positive-only directive honoured — this is pure
+    # within-turn awareness, gone at turn end). Distinct from the by-name circuit breaker
+    # (finer: exact args; fires on the FIRST repeat, not after a threshold). Flag-gated:
+    # ``trustworthy_learning`` OFF ⇒ the set is never consulted/filled ⇒ byte-identical.
+    failed_approaches: set[str] = set()
+    _trustworthy_learning = False
+    try:
+        from stackowl.config.settings import Settings
+
+        _trustworthy_learning = bool(Settings().trustworthy_learning)
+    except Exception:  # noqa: BLE001 — a flag read must never break dispatch
+        _trustworthy_learning = False
     # TurnProgressTracker — unified replacement for the P2 fail_streak/circuit_open
     # pair. Closes G1 (timeout) and G2 (no-op refusal) spiral gaps in addition to
     # the original same-tool repeated-failure containment. Window-scaled threshold:
@@ -941,6 +982,21 @@ async def _run_with_tools(
                                    "threshold": _np_threshold}},
             )
             return _circuit_open_refusal(name)
+        # ADR-5 MOVE 3 (F-26/43/72) — within-turn failed-approach consult. When the model
+        # blindly RE-ISSUES the EXACT approach (this tool + these same inputs) that already
+        # failed earlier this turn, do not re-execute it: steer to a different approach.
+        # This fires BEFORE the recovery ladder's internal retries (those re-enter
+        # ``_guarded_dispatch``, not ``_dispatch``), so a transient that self-heals is never
+        # blocked — only a model-issued blind repeat is. PRE-EXECUTION containment: records
+        # nothing, carries no TOOL_FAILED_MARKER (P0 honesty). Flag OFF ⇒ set is empty here
+        # ⇒ this branch is dead ⇒ byte-identical.
+        _approach_sig = _approach_signature(name, args) if _trustworthy_learning else ""
+        if _approach_sig and _approach_sig in failed_approaches:
+            log.engine.info(
+                "[pipeline] execute: within-turn approach already failed — steering to change",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
+            return _repeated_approach_refusal(name)
         # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
         # child (delegation_depth>0) is refused these tools even if it names one the
         # presented schema omitted: presentation gating is not authorization, so the
@@ -1186,6 +1242,11 @@ async def _run_with_tools(
             if is_trustworthy_success(r.success, r.verified):
                 progress.record_progress(name)
             else:
+                # ADR-5 MOVE 3 — remember this EXACT approach failed this turn so a later
+                # blind re-issue is steered away (consulted at the top of ``_dispatch``).
+                # Ephemeral, never persisted; ``_approach_sig`` is "" when the flag is OFF.
+                if _approach_sig:
+                    failed_approaches.add(_approach_sig)
                 opened = progress.record_no_progress(name)
                 if opened:
                     log.engine.warning(
