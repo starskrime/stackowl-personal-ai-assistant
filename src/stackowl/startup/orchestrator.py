@@ -10,7 +10,7 @@ import re
 import signal
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -173,6 +173,7 @@ async def _supervise_core(
     socket_path: Path | None,
     stop_event: asyncio.Event,
     first_conn_event: asyncio.Event | None = None,
+    on_crash: Callable[[int | None], Awaitable[None]] | None = None,
 ) -> None:
     """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
 
@@ -208,6 +209,16 @@ async def _supervise_core(
             rc,
             backoff,
         )
+        # F-39 — a crash was previously silent to the user (operator log only). Emit
+        # a user-visible notice so the human knows the assistant restarted itself.
+        # Fail-safe: a notice failure must never break the respawn loop.
+        if on_crash is not None:
+            try:
+                await on_crash(rc)
+            except Exception as exc:  # noqa: BLE001 — notice is best-effort
+                log.error(
+                    "[startup] gateway: crash notice failed", exc_info=exc
+                )
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, 30.0)
         if stop_event.is_set():
@@ -3047,12 +3058,35 @@ class StartupOrchestrator:
         # core supervisor (crash-respawn) runs alongside.
         supervise_task: asyncio.Task[None] | None = None
         if self._role == "gateway":
+            # F-39 — deliver a user-visible notice when the core crash-respawns, so a
+            # self-heal is not silent. Reuses the proactive deliverer; None when no
+            # deliverer is wired (the respawn then notifies via its LOUD log only).
+            _crash_brief_channels = list(self._settings.brief.channels)
+
+            async def _notify_core_crash(rc: int | None) -> None:
+                if proactive_deliverer is None:
+                    return
+                from stackowl.notifications.router import Notification
+
+                brief_channels = _crash_brief_channels
+                await proactive_deliverer.deliver(Notification(
+                    message=(
+                        "⚠ StackOwl restarted after an unexpected core exit "
+                        f"(rc={rc}). Recovering automatically — in-flight work may "
+                        "need to be re-sent."
+                    ),
+                    urgency="critical",
+                    category="operator_health",
+                    channel_name=brief_channels[0] if brief_channels else None,
+                ))
+
             supervise_task = asyncio.create_task(
                 _supervise_core(
                     core_proc_holder,
                     gateway_socket_path,
                     stop_event,
                     gateway_first_conn_ready,
+                    on_crash=_notify_core_crash,
                 )
             )
         try:
