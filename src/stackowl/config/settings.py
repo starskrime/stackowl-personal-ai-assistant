@@ -823,6 +823,13 @@ class Settings(BaseSettings):
     # inline decision (byte-identical). Consequential parks / verified-false steps escalate
     # before this path, exactly as before.
     unify_objective_recovery: bool = True
+    # ADR-2 — route the scheduler's retry-vs-terminal-fail DECISION for a failed job through
+    # the one RecoveryActuator (``should_retry``) instead of the inline ``retry_count >=
+    # _MAX_RETRIES`` guard. Byte-identical: a scheduled job failure is non-consequential and
+    # transient-by-policy, so the authority agrees with the budget gate — the flag toggles
+    # only WHERE the decision is made. Default ON (owner-approved); False ⇒ the inline
+    # decision (byte-identical). The STEER-5/F113 retry_at/retry_count EXECUTION is unchanged.
+    unify_scheduler_recovery: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

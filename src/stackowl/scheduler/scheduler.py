@@ -34,6 +34,18 @@ _RETRY_DELAY_MIN = 5
 _MAX_DEFER_SEC = 900.0
 
 
+def _unify_scheduler_enabled() -> bool:
+    """ADR-2 flag read (``unify_scheduler_recovery``). Fail-safe to True (the owner-approved
+    default) on any config error — a flag read must never break the poll loop. Consulted ONLY
+    on the failure path, so a healthy job never constructs Settings here."""
+    try:
+        from stackowl.config.settings import Settings
+
+        return bool(Settings().unify_scheduler_recovery)
+    except Exception:  # noqa: BLE001 — a flag read must never raise into the scheduler
+        return True
+
+
 class JobScheduler(SupervisedTask):
     """Polls SQLite jobs table and dispatches due handlers (ARCH-99)."""
 
@@ -47,9 +59,16 @@ class JobScheduler(SupervisedTask):
         turn_registry: Any = None,
         max_defer_sec: float = _MAX_DEFER_SEC,
         job_deliverer: ProactiveJobDeliverer | None = None,
+        recovery: Any = None,
     ) -> None:
         self._db = db
         self._clock = clock
+        # ADR-2 — the one recovery authority. The retry-vs-terminal-fail DECISION for a
+        # failed job delegates to its ``should_retry`` predicate (flag
+        # ``unify_scheduler_recovery``) so one policy governs every subsystem's recovery.
+        # Stateless; injectable for tests. Lazily constructed to avoid an import at module
+        # load (the actuator lives in the pipeline layer).
+        self._recovery = recovery
         self._registry = handler_registry or HandlerRegistry.instance()
         # F-61 — the SHARED cron-born delivery seam (the same one morning_brief /
         # check_in / goal_execution use). When wired, a job that exhausts its
@@ -227,9 +246,7 @@ class JobScheduler(SupervisedTask):
             await self._mark_completed(job, result, duration_ms)
         else:
             new_retries = job.retry_count + 1
-            if new_retries >= _MAX_RETRIES:
-                await self._mark_failed(job, last_error=result.error)
-            else:
+            if new_retries < _MAX_RETRIES and self._may_retry(result):
                 # STEER-5/F113 — schedule the retry on the SEPARATE retry_at slot;
                 # NEVER touch next_run_at (the canonical recurring cadence). A
                 # daily@08:00 job that fails retries at ~08:05 via retry_at while
@@ -239,6 +256,40 @@ class JobScheduler(SupervisedTask):
                     "UPDATE jobs SET status = 'pending', retry_count = ?, retry_at = ? WHERE job_id = ?",
                     (new_retries, retry_at, job.job_id),
                 )
+            else:
+                await self._mark_failed(job, last_error=result.error)
+
+    def _may_retry(self, result: JobResult) -> bool:
+        """Whether a failed job may be retried — the ONE recovery authority decides (ADR-2).
+
+        When ``unify_scheduler_recovery`` is on (default) the retry-vs-terminal-fail decision
+        is delegated to :meth:`RecoveryActuator.should_retry` over a typed ``Failure`` instead
+        of the inline budget guard. A scheduled job failure is non-consequential and
+        transient-by-policy (the scheduler's job is operational resilience), so the authority
+        returns True and the outcome is byte-identical to the inline ``retry_count <
+        _MAX_RETRIES`` gate — but the policy now lives in ONE place. Flag off ⇒ the inline
+        budget gate decides alone (the actuator is not consulted), byte-identical to pre-ADR.
+        A flag-read error fails safe to the unified path (the owner-approved default)."""
+        if not _unify_scheduler_enabled():
+            return True
+        from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+        if self._recovery is None:
+            self._recovery = RecoveryActuator()
+        failure = Failure(
+            name=self._job_handler_name_for_failure(result),
+            kind="scheduled_job",
+            transient=True,
+            consequential=False,
+            error=result.error,
+        )
+        return bool(self._recovery.should_retry(failure))
+
+    @staticmethod
+    def _job_handler_name_for_failure(result: JobResult) -> str:
+        """A stable label for the failure ledger — the job id (handler name is not on
+        JobResult). Kept tiny so the Failure construction stays a pure data shape."""
+        return result.job_id
 
     async def _advance_past_serviced_occurrence(self, job: Job) -> None:
         """Re-arm a recurring job past an already-serviced occurrence (F-63).
