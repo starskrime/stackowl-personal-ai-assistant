@@ -830,6 +830,14 @@ class Settings(BaseSettings):
     # only WHERE the decision is made. Default ON (owner-approved); False ⇒ the inline
     # decision (byte-identical). The STEER-5/F113 retry_at/retry_count EXECUTION is unchanged.
     unify_scheduler_recovery: bool = True
+    # ADR-2 — route the gateway's two turn-recovery DECISIONS through the one RecoveryActuator
+    # (``should_retry``) instead of inline budget guards: (1) the buffered-turn replay retry
+    # after a core restart (``GatewayLink._flush_pending``, F-38) and (2) the reaped wedged
+    # turn's re-dispatch (``TurnRegistry._redispatch_wedged_goal``, F-67). Byte-identical: a
+    # lost in-flight turn is non-consequential and transient-by-policy, so the authority
+    # agrees with the bounded budget gates — the in-flight requeue / re-dispatch EXECUTION is
+    # unchanged. Default ON (owner-approved); False ⇒ the inline decisions (byte-identical).
+    unify_gateway_recovery: bool = True
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)

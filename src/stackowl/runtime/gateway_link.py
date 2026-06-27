@@ -88,6 +88,18 @@ _REPLAY_FAILURE_NOTICE = (
 )
 
 
+def _unify_gateway_enabled() -> bool:
+    """ADR-2 flag read (``unify_gateway_recovery``). Fail-safe to True (the owner-approved
+    default) on any config error — a flag read must never break turn replay. Consulted ONLY
+    on the replay-failure path, so a healthy reconnect never constructs Settings here."""
+    try:
+        from stackowl.config.settings import Settings
+
+        return bool(Settings().unify_gateway_recovery)
+    except Exception:  # noqa: BLE001 — a flag read must never raise into the gateway link
+        return True
+
+
 class GatewayLink:
     """Socket-backed TurnClient + outbound frame router, resilient to core restart."""
 
@@ -101,10 +113,16 @@ class GatewayLink:
         demux: StreamDemux | None = None,
         event_bus: _EventSink | None = None,
         consent_router: _ConsentRouter | None = None,
+        recovery: object | None = None,
     ) -> None:
         # Mutable copy so channels started after construction (Telegram/Slack/…
         # in gateway role) can register themselves via register_adapter.
         self._adapters: dict[str, _Adapter] = dict(adapters)
+        # ADR-2 — the one recovery authority. The buffered-turn replay retry DECISION
+        # (F-38) delegates to its ``should_retry`` predicate (flag ``unify_gateway_recovery``)
+        # so one policy governs every subsystem's recovery. Lazily constructed (the actuator
+        # lives in the pipeline layer); injectable for tests.
+        self._recovery = recovery
         self._demux = demux if demux is not None else StreamDemux()
         self._event_bus = event_bus
         # The gateway's RoutingPrompter (holds the real per-channel consent UI).
@@ -241,7 +259,7 @@ class GatewayLink:
                 # owns this turn's fate).
                 self._inflight.pop(msg.trace_id, None)
                 attempts = self._replay_attempts.get(msg.trace_id, 0) + 1
-                if attempts < self._MAX_REPLAY_ATTEMPTS:
+                if attempts < self._MAX_REPLAY_ATTEMPTS and self._may_retry_replay(exc):
                     self._replay_attempts[msg.trace_id] = attempts
                     self._pending.append(msg)
                     log.gateway.warning(
@@ -271,6 +289,32 @@ class GatewayLink:
                     await self._notify_replay_failure(msg)
             else:
                 self._replay_attempts.pop(msg.trace_id, None)
+
+    def _may_retry_replay(self, exc: Exception) -> bool:
+        """Whether a failed turn replay may be retried — the ONE recovery authority decides (ADR-2).
+
+        When ``unify_gateway_recovery`` is on (default) the retry-vs-surface decision is
+        delegated to :meth:`RecoveryActuator.should_retry` over a typed ``Failure`` instead of
+        the inline replay-budget guard. A lost in-flight turn is non-consequential and
+        transient-by-policy (a faulted fresh-core socket self-heals on the next Hello), so the
+        authority returns True and the outcome is byte-identical to the inline ``attempts <
+        _MAX_REPLAY_ATTEMPTS`` gate — the policy now lives in ONE place. Flag off ⇒ the inline
+        budget gate decides alone (the actuator is not consulted), byte-identical to pre-ADR.
+        A flag-read error fails safe to the unified path (the owner-approved default)."""
+        if not _unify_gateway_enabled():
+            return True
+        from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+        if self._recovery is None:
+            self._recovery = RecoveryActuator()
+        failure = Failure(
+            name="gateway_replay",
+            kind="gateway_turn",
+            transient=True,
+            consequential=False,
+            error=str(exc),
+        )
+        return bool(self._recovery.should_retry(failure))  # type: ignore[attr-defined]
 
     async def _notify_replay_failure(self, msg: IngressMessage) -> None:
         """Surface a permanently-undeliverable replayed turn to its channel (F-38)."""
