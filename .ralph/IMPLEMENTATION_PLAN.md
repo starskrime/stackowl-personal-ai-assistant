@@ -34,9 +34,14 @@ Mark `[x]` only when the per-ADR Definition of Done in `IMPLEMENT_PROMPT.md` is 
   Closes: F-5, F-6, F-7, F-8, F-16, F-17, F-18, F-21, F-24, F-35, F-37, F-40, F-41, F-55,
   F-60, F-62, F-64, F-65, F-66, F-67.
 
-- [ ] **ADR-3 — ReversibilityResolver** (`feat/adr-3-reversibility-resolver`).
-  One reversibility/stakes signal + default-resolution authority so trivial reversible decisions
-  resolve act-first instead of bouncing to the user.
+- [x] **ADR-3 — ReversibilityResolver** (`feat/adr-3-*`). SHIPPED 2026-06-27, flag ON in code default.
+  One `ReversibilityResolver` authority + declared tri-state `Reversibility` signal answers
+  ACT_WITH_ASSUMPTION vs ASK for every interaction gate. ALL 5 gates DELEGATE their ask-vs-act
+  decision: clarify `_resolve_default` (F-68/69/71, shared by tool pre-park + timeout + gateway
+  pre-ask), objective `_park_is_irreversible` (F-44), consent `reversible`→auto-allow tier (F-27),
+  cost-pause continue-and-notify (F-70), router clarify-verdict `_maybe_clarify` (F-3/56). Each
+  delegation reproduces its gate's pre-ADR inline rule EXACTLY ⇒ flag ON is byte-identical (pure
+  unification, the ADR-2 pattern); owner approved ON-default via AskUserQuestion. Nothing removed.
   Closes: F-3, F-27, F-44, F-56, F-68, F-69, F-70, F-71.
 
 - [ ] **ADR-5 — Trustworthy (verified-gated) learning** (`feat/adr-5-trustworthy-learning`).

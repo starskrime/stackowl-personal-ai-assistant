@@ -1,3 +1,29 @@
+ITERATION 12 — ★ADR-3 COMPLETE & MARKED [x]. — 2026-06-27
+Done: ADR-1 [x], ADR-4 [x], ADR-2 [x], ADR-3 [x]. ALL 5 interaction gates now DELEGATE their
+ask-vs-act decision to the ONE ReversibilityResolver (interaction/reversibility_resolver.py):
+  1. clarify _resolve_default (F-68/69/71) — keystone; shared by tool pre-park + timeout + gateway pre-ask.
+  2. objective _park_is_irreversible (F-44) — via must_reach_user == bool(consequential_failures).
+  3. consent ConsentPolicy.request reversible→auto-allow tier (F-27) — must_reach_user(reversible)=False⇒auto-allow.
+  4. cost_pause CostPauseGuard.gate continue-and-notify (F-70) — high_stakes=not under_cap⇒must_reach_user==under_cap.
+  5. router/execute _maybe_clarify act-first-vs-park (F-3/56) — reversible iff _clarify_resolvable_from_context.
+EACH delegation reproduces its gate's pre-ADR inline rule EXACTLY ⇒ flag ON is BYTE-IDENTICAL (pure
+unification, ADR-2 pattern; the proactivity gains were already shipped as F-27/44/68-71 in prior arcs —
+ADR-3's value is ONE authority replacing 6 scattered ad-hoc checks). FLAG settings.reversibility_resolver
+flipped ON in code default (owner approved via AskUserQuestion — [[feedback_ask_before_flag_default]]).
+KEY API: ReversibilityResolver.resolve(Decision)->Verdict(act,assumption,undo_handle) for default-picking
+gates; must_reach_user(Decision)->bool (high_stakes or is_irreversible) for binary escalate-or-not gates.
+Reversibility tri-state via .reversible(via=)/.irreversible()/.unknown(). _most_likely mirrors clarify
+_resolve_default EXACTLY. INVARIANT preserved: resolver only DOWNGRADES park→act, never act→park (a2a/
+non-interactive fail-closed untouched). GATES GREEN with flag ON: 216 across interaction/consent/objective/
+clarify/config; ruff+mypy clean. Health green (db/fs/graph + 3 tiers). Closures: F-3/27/44/56/68/69/70/71.
+NOT live-restarted on a real turn yet (flag ON byte-identical so low risk; do a smoke next session).
+
+NEXT ADR in build order: ADR-5 — Trustworthy (verified-gated) learning (feat/adr-5-trustworthy-learning).
+  Once ADR-1 makes success MEASURED, mining/recall gate on the `verified` signal + ephemeral within-turn
+  failure-awareness. NEVER persists negatives (positive-only directive [[feedback_positive_only_learning]]).
+  Depends on ADR-1 (done). Read .ralph/adr/ADR-5-*.md + ROOT_CAUSES. Closes F-26/43/46/47/48/50/51/54/72.
+BUILD ORDER REMAINING: ADR-5 → ADR-6 → ADR-7.
+
 ITERATION 11 — ADR-3 KEYSTONE shipped (merged to main), ADR-3 still [ ]. — 2026-06-27
 Done: ADR-1 [x], ADR-4 [x], ADR-2 [x]. ADR-3 = ReversibilityResolver. Built the ONE authority +
 declared tri-state signal, and routed the FIRST TWO gates (ADR-2 playbook: keystone + per-gate

@@ -190,3 +190,6 @@ execution (rung handlers) — nothing removed. ALL 6 sites now delegate:
   → turn replays) not yet run. Replan rung for the objective driver (decompose remainder) is a future
   enhancement, intentionally NOT added (would change behavior; the F-43 different-approach retry +
   F-41 cooldown already cover the transient case).
+
+## ADR-3 — ReversibilityResolver (SHIPPED 2026-06-27, flag ON)
+All 5 interaction gates (clarify _resolve_default F-68/69/71, objective _park_is_irreversible F-44, consent reversible-auto F-27, cost_pause continue-and-notify F-70, router/execute _maybe_clarify F-3/56) DELEGATE their ask-vs-act decision to one ReversibilityResolver. Byte-identical unification (each reproduces its pre-ADR inline rule). Closes F-3/27/44/56/68/69/70/71.
