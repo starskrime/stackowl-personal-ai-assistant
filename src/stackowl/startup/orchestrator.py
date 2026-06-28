@@ -806,9 +806,13 @@ class StartupOrchestrator:
                 from stackowl.scheduler.handlers.screenshot_archive import (
                     register_screenshot_archive_handler,
                 )
+                from stackowl.scheduler.handlers.threshold_watch import (
+                    register_threshold_watch_handler,
+                )
                 from stackowl.scheduler.handlers.website_watch import register_website_watch_handler
 
                 watch_state_dir = browser_settings.browser_cache_dir / "watch"
+                threshold_state_dir = browser_settings.browser_cache_dir / "threshold"
                 screenshot_archive_dir = StackowlHome.knowledge_dir() / "screenshots"
                 profile_backups_dir = StackowlHome.home() / "backups" / "browser-profiles"
                 # WS-D — give the website_watch handler the SAME durable, exactly-
@@ -830,6 +834,12 @@ class StartupOrchestrator:
                     )
                 register_website_watch_handler(
                     browser_runtime, watch_state_dir, watch_job_deliverer
+                )
+                # ADR-C — threshold_watch shares the SAME runtime + durable delivery
+                # seam as website_watch (its conditional sibling). on_demand, projected
+                # from a scheduled owl's threshold trigger; no standing seed.
+                register_threshold_watch_handler(
+                    browser_runtime, threshold_state_dir, watch_job_deliverer
                 )
                 register_screenshot_archive_handler(browser_runtime, screenshot_archive_dir)
                 register_browser_recycle_handler(browser_runtime, browser_sessions)

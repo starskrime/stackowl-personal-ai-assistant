@@ -21,7 +21,7 @@ from stackowl.owls.owl_schedule_guards import (
     interval_floor_error,
 )
 from stackowl.owls.registry import OwlRegistry
-from stackowl.owls.trigger import CronTrigger, WatchTrigger
+from stackowl.owls.trigger import CronTrigger, ThresholdTrigger, WatchTrigger
 from stackowl.scheduler.owl_lifecycle import reconcile_owl_schedules
 from stackowl.scheduler.scheduler import JobScheduler
 
@@ -149,6 +149,34 @@ async def test_watch_trigger_projects_website_watch(db: DbPool) -> None:
     assert len(rows) == 1
     assert rows[0]["handler_name"] == "website_watch"
     assert rows[0]["params"]["url"] == "https://example.com"
+
+
+async def test_threshold_trigger_projects_threshold_watch(db: DbPool) -> None:
+    reg = OwlRegistry()
+    owl = OwlAgentManifest(
+        name="alerter", role="watcher", system_prompt="x", model_tier="fast",
+        lifecycle="scheduled",
+        trigger=ThresholdTrigger(
+            source="https://example.com/reading", op="gt", threshold=70000.0,
+            schedule="every 5m", prompt="ping me",
+        ),
+    )
+    reg.register(owl)
+    result = await reconcile_owl_schedules(reg, db)
+    rows = await _owned_rows(db)
+    assert result.created == 1
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["handler_name"] == "threshold_watch"
+    assert row["params"]["watch_source"] == "https://example.com/reading"
+    assert row["params"]["op"] == "gt"
+    assert row["params"]["threshold"] == 70000.0
+    assert row["params"]["prompt"] == "ping me"
+    assert row["params"]["owner"] == "alerter"
+    # Idempotent: a second pass makes no change (no duplicate row).
+    second = await reconcile_owl_schedules(reg, db)
+    assert second.created == 0 and second.updated == 0 and second.deleted == 0
+    assert len(await _owned_rows(db)) == 1
 
 
 async def test_quota_caps_scheduled_projection_at_five(db: DbPool) -> None:

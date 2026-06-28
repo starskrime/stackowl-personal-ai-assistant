@@ -16,8 +16,8 @@ re-reads the owl spec at fire time (handler reads ``params``); no mutable spec i
 snapshotted beyond the trigger fields it needs.
 
 Trigger → handler: ``cron`` → ``goal_execution`` (runs ``params['goal']``),
-``watch`` → ``website_watch`` (polls ``params['url']``). ``threshold`` has no handler
-yet (S12/S13) and is SKIPPED with a logged note — never a crash, never a dead row.
+``watch`` → ``website_watch`` (polls ``params['url']``), ``threshold`` →
+``threshold_watch`` (polls ``params['source']``, fires on a predicate edge).
 """
 
 from __future__ import annotations
@@ -46,9 +46,12 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.owls.manifest import OwlAgentManifest
     from stackowl.owls.registry import OwlRegistry
 
-# Trigger.kind → the handler that consumes its projected row. ``threshold`` is
-# absent on purpose: its handler ships in S12/S13, so it is skipped until then.
-_KIND_TO_HANDLER: dict[str, str] = {"cron": "goal_execution", "watch": "website_watch"}
+# Trigger.kind → the handler that consumes its projected row.
+_KIND_TO_HANDLER: dict[str, str] = {
+    "cron": "goal_execution",
+    "watch": "website_watch",
+    "threshold": "threshold_watch",
+}
 
 
 @dataclass(frozen=True)
@@ -73,10 +76,9 @@ def _job_id_for(name: str) -> str:
 def _desired(owl: OwlAgentManifest) -> tuple[str, str, dict[str, object]] | None:
     """Map a scheduled owl to ``(handler_name, schedule, content_params)`` or None.
 
-    ``None`` means "do not project" (no trigger, or a ``threshold`` trigger whose
-    handler does not exist yet). ``content_params`` carries only the handler's
-    input (goal/url) + owl attribution — the provenance marker is added by the
-    caller so it is identical on every row.
+    ``None`` means "do not project" (no trigger, or an unknown kind). ``content_params``
+    carries only the handler's input (goal/url/source+predicate) + owl attribution —
+    the provenance marker is added by the caller so it is identical on every row.
     """
     trig = owl.trigger
     if trig is None:
@@ -84,7 +86,7 @@ def _desired(owl: OwlAgentManifest) -> tuple[str, str, dict[str, object]] | None
     handler = _KIND_TO_HANDLER.get(trig.kind)
     if handler is None:
         log.scheduler.info(
-            "[owls] reconcile: threshold trigger has no handler yet (S12/S13) — skipped",
+            "[owls] reconcile: trigger kind has no handler — skipped",
             extra={"_fields": {"owl": owl.name, "kind": trig.kind}},
         )
         return None
@@ -93,7 +95,19 @@ def _desired(owl: OwlAgentManifest) -> tuple[str, str, dict[str, object]] | None
     if trig.kind == "watch":
         # website_watch reads params['url']; schedule from the trigger.
         return handler, trig.schedule, {"url": trig.target, "owl": owl.name}
-    return None  # unreachable (threshold filtered above) — keeps types total
+    if trig.kind == "threshold":
+        # threshold_watch reads params['watch_source'/'op'/'threshold'/'prompt'];
+        # 'owner' is added by _params_for. NB: the param key is 'watch_source', NOT
+        # 'source' — 'source' is RESERVED for the provenance marker added by
+        # _params_for, so reusing it would clobber the owl-ownership tag.
+        return handler, trig.schedule, {
+            "watch_source": trig.source,
+            "op": trig.op,
+            "threshold": trig.threshold,
+            "prompt": trig.prompt,
+            "owl": owl.name,
+        }
+    return None  # unreachable (all kinds handled) — keeps types total
 
 
 def _params_for(owl: OwlAgentManifest, content: dict[str, object]) -> dict[str, object]:
