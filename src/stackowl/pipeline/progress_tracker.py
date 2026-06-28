@@ -32,6 +32,14 @@ class TurnProgressTracker:
         self._open: list[str] = []
         self._made_progress = False
 
+    def reset(self) -> None:
+        """Clear streaks + open breakers on tier escalation so a stronger tier is
+        not pre-bounced by the weak tier's open breaker. Leaves ``_made_progress``
+        untouched — whether the turn ever advanced is a turn-level fact, not a
+        per-tier one."""
+        self._streak.clear()
+        self._open.clear()
+
     def record_progress(self, name: str) -> None:
         self._streak[name] = 0
         self._made_progress = True

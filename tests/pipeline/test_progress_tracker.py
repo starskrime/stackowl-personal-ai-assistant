@@ -86,6 +86,22 @@ def test_state_progress_defaults_are_byte_identical() -> None:
     assert s2.no_progress_tools == ("shell",)
 
 
+# PA3: reset() clears open + streak (re-arm for a fresh tier) but keeps made_progress.
+def test_reset_clears_open_and_streak_keeps_made_progress() -> None:
+    t = TurnProgressTracker(threshold=3)
+    t.record_progress("http")          # turn advanced once
+    for _ in range(3):
+        t.record_no_progress("shell")  # circuit opens
+    assert t.is_open("shell") is True
+    assert t.made_progress is True
+    t.reset()
+    # Open + streak cleared so a stronger tier starts clean...
+    assert t.is_open("shell") is False
+    assert t.record_no_progress("shell") is False   # streak restarted at 1
+    # ...but the turn-level "did we ever advance" fact survives.
+    assert t.made_progress is True
+
+
 # Review minor 2: open the circuit fully, then record_progress — is_open stays True
 def test_open_stays_open_after_progress() -> None:
     t = TurnProgressTracker(threshold=3)
@@ -341,3 +357,27 @@ async def test_state_stamped_made_progress() -> None:
     _provider, out = await _run([tool], calls)
     assert out.turn_made_progress is True
     assert out.no_progress_tools == ()
+
+
+# ---------------------------------------------------------------------------
+# PA3: the circuit-open bounce REQUESTS tier escalation (dispatch half of the
+# breaker→ladder path). The provider half — escalation_requested() → ESCALATE
+# SENTINEL — is covered in tests/providers/test_auto_escalate.py.
+# ---------------------------------------------------------------------------
+
+async def test_breaker_open_requests_escalation() -> None:
+    from stackowl.providers.escalation_signal import (
+        clear_escalation,
+        escalation_requested,
+    )
+
+    clear_escalation()
+    # 3 failures open the circuit; the 4th call is the bounce that requests escalation.
+    tool = _CountingTool("shell", results=[False, False, False, False])
+    calls = [("shell", {"x": str(i)}) for i in range(4)]
+    try:
+        _provider, _out = await _run([tool], calls)
+        assert tool.calls == 3, "4th call must be a bounce, not an execution"
+        assert escalation_requested() is True, "circuit-open bounce must request escalation"
+    finally:
+        clear_escalation()

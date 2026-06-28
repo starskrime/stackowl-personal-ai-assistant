@@ -127,3 +127,70 @@ async def test_budget_exhaustion_floors_at_top_tier(
     # Top tier: no escalation — the graceful wrap-up floor produces a real answer.
     assert text != ESCALATE_SENTINEL
     assert text.strip()
+
+
+# ---------------------------------------------------------------------------
+# PA3: a same-tool circuit breaker that opens mid-turn feeds the EXISTING tier
+# ladder instead of dead-ending. The dispatcher below stands in for the pipeline
+# breaker: after N failures it calls request_escalation() (exactly what
+# _dispatch's circuit-open branch does). The provider loop must then escalate
+# when can_escalate is set, and floor (NOT escalate) at the ceiling.
+# ---------------------------------------------------------------------------
+
+
+class _BreakerDispatch:
+    """Simulates the pipeline breaker: trips request_escalation after `trip_at` calls."""
+
+    def __init__(self, trip_at: int) -> None:
+        self.n = 0
+        self._trip_at = trip_at
+
+    async def __call__(self, name: str, args: dict[str, Any]) -> str:
+        from stackowl.providers.escalation_signal import request_escalation
+
+        self.n += 1
+        if self.n >= self._trip_at:
+            request_escalation(name)
+        return "boom — tool failed"
+
+
+@pytest.mark.asyncio
+async def test_circuit_open_escalates_when_possible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stackowl.providers.escalation_signal import clear_escalation
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    clear_escalation()
+    provider = _provider(_Client(_NeverStopsCompletions()))
+    try:
+        text, _calls = await provider.complete_with_tools(
+            user_text="do a hard task", system_text="sys",
+            tool_schemas=_SCHEMAS, tool_dispatcher=_BreakerDispatch(trip_at=2),
+            can_escalate=True, max_iterations=8,
+        )
+        assert text == ESCALATE_SENTINEL, "a circuit opened mid-turn must escalate, not dead-end"
+    finally:
+        clear_escalation()
+
+
+@pytest.mark.asyncio
+async def test_circuit_open_does_not_escalate_at_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stackowl.providers.escalation_signal import clear_escalation
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    clear_escalation()
+    provider = _provider(_Client(_NeverStopsCompletions()))
+    try:
+        text, _calls = await provider.complete_with_tools(
+            user_text="do a hard task", system_text="sys",
+            tool_schemas=_SCHEMAS, tool_dispatcher=_BreakerDispatch(trip_at=2),
+            can_escalate=False, max_iterations=3,
+        )
+        # At the ceiling the flag is ignored → existing wrap-up floor, never the sentinel.
+        assert text != ESCALATE_SENTINEL
+        assert text.strip()
+    finally:
+        clear_escalation()

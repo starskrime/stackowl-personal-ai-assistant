@@ -31,6 +31,7 @@ from stackowl.providers._truncate import (
 )
 from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.escalation_signal import escalation_requested
 from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
@@ -368,6 +369,16 @@ class OpenAIProvider(ModelProvider):
         _fmt_fix_count = 0  # bounded re-prompts when a final answer leaks as a tool call
         _MAX_FORMAT_FIX = 2
         for _iter_idx in range(resolved_iterations):
+            # PA3 — a circuit breaker opened on a PRIOR iteration's dispatch (the
+            # pipeline set the turn-scoped escalation flag). Escalate to a stronger
+            # tier instead of dead-ending. No-op for pinned owls (can_escalate
+            # False ⇒ byte-identical) and at the ceiling (falls through to floor).
+            if can_escalate and escalation_requested():
+                log.engine.warning(
+                    "[openai] complete_with_tools: circuit-open this turn — escalating to a stronger tier",
+                    extra={"_fields": {"provider": self._name}},
+                )
+                return ESCALATE_SENTINEL, all_calls
             # Bound total context BEFORE the call: elide oldest tool observations
             # if the accumulated history would overflow the model's window.
             messages = trim_messages_to_budget(messages, budget)

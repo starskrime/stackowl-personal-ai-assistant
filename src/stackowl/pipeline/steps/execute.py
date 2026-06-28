@@ -48,6 +48,7 @@ from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message, ModelProvider
+from stackowl.providers.escalation_signal import clear_escalation, request_escalation
 from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_window
 from stackowl.providers.react_callback import ReActIterationState
 from stackowl.tools.child_exclusion import CHILD_EXCLUDED_TOOLS
@@ -1043,6 +1044,18 @@ async def _run_with_tools(
                 extra={"_fields": {"tool": name, "trace_id": state.trace_id,
                                    "threshold": _np_threshold}},
             )
+            # PA3 — a dead-ended breaker used to leave the model stuck on the
+            # weak tier. Feed the open event INTO the existing model-tier ladder:
+            # request escalation so the provider loop returns ESCALATE_SENTINEL and
+            # the gateway re-runs one tier up. Containment is PRESERVED — the
+            # refusal string still returns, so THIS tier never re-offers the dead
+            # tool. At the ceiling (can_escalate False) the request is ignored and
+            # the existing honest floor takes over.
+            request_escalation(name)
+            log.engine.info(
+                "[pipeline] execute: circuit open — requested tier escalation",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
             return _circuit_open_refusal(name)
         # ADR-5 MOVE 3 (F-26/43/72) — within-turn failed-approach consult. When the model
         # blindly RE-ISSUES the EXACT approach (this tool + these same inputs) that already
@@ -1563,6 +1576,11 @@ async def _run_with_tools(
     # made EXACTLY as before (no context, no extra kwargs) — byte-for-byte.
     async def _on_tier_escalate(from_tier: str, to_tier: str) -> None:
         reset_ledger_for_tier_escalation(from_tier, to_tier, trace_id=state.trace_id)
+        # PA3 — clear the escalation request and re-arm the breaker so the fresh,
+        # stronger tier starts clean (it is not pre-bounced by the weak tier's
+        # open breaker, and won't immediately re-escalate off a stale flag).
+        clear_escalation()
+        progress.reset()
 
     async def _call_default() -> tuple[str, list[dict[str, Any]]]:
         _extra: dict[str, Any] = {}
