@@ -28,6 +28,7 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "provider",
     "tier",
     "browser",
+    "explain",
     # ── DI commands currently live (Pattern B, Epic A wired) ───────────────
     "skill",
     "memory",

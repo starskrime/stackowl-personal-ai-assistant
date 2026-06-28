@@ -194,6 +194,24 @@ class AsyncioBackend(OrchestratorBackend):
                 )
             human_wait_ctx.reset(human_wait_token)
             if decision_token is not None:
+                # ADR-7 — persist this turn's decisions durably (cross-process /
+                # restart-safe) BEFORE reset clears the ledger. Best-effort: a
+                # persistence failure must NEVER break the turn (B5).
+                _decisions = decision_ledger.get_decisions()
+                if self._services.db_pool is not None and state.session_id and _decisions:
+                    try:
+                        from stackowl.pipeline.decision_store import TurnDecisionStore
+                        await TurnDecisionStore(self._services.db_pool).save(
+                            session_id=state.session_id,
+                            trace_id=state.trace_id,
+                            decisions=_decisions,
+                        )
+                    except Exception as exc:
+                        log.engine.error(
+                            "[asyncio_backend] run: decision persist failed (swallowed)",
+                            exc_info=exc,
+                            extra={"_fields": {"session_id": state.session_id}},
+                        )
                 decision_ledger.reset(decision_token)
             tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
