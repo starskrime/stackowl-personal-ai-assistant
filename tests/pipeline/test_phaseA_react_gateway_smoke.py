@@ -199,6 +199,48 @@ class _RoutingProvider(ModelProvider):
 
 
 # --------------------------------------------------------------------------- #
+# Judge provider — the execute step's persistence give-up judge resolves the
+# config-driven ``judge_tier`` (default "standard") and, on its failure, the
+# "local" tier, calling ``complete()`` to rule deliver-vs-give-up. Without a
+# dedicated provider at those tiers the judge cascades onto the ReAct fake's
+# ``powerful`` provider and CONSUMES one of its sequenced responses (the
+# ACTION/final pair), exhausting the list. Give the judge its own deterministic
+# provider — exactly the _RoutingProvider rationale — that rules DELIVERED, which
+# is the truth here (the draft incorporates the tool marker). It returns the
+# verdict JSON ``judge_delivery`` parses; it never touches the ReAct responses.
+# --------------------------------------------------------------------------- #
+
+
+class _JudgeProvider(ModelProvider):
+    """Standard/local-tier provider whose ``complete`` rules the draft DELIVERED."""
+
+    @property
+    def name(self) -> str:
+        return "judge-fake"
+
+    @property
+    def protocol(self) -> Any:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        return CompletionResult(
+            content='{"delivered": true, "reason": "draft carries the tool result"}',
+            input_tokens=1,
+            output_tokens=1,
+            model="judge-fake",
+            provider_name="judge-fake",
+            duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield ""
+
+
+# --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 
@@ -219,6 +261,11 @@ def _build_services(
     # and calls complete() on it. Give it a dedicated routing provider so it does
     # NOT consume the ReAct fake client's sequenced (ACTION/final) responses.
     preg.register_mock("router", _RoutingProvider(), tier="fast")
+    # The persistence give-up judge resolves judge_tier ("standard") then "local";
+    # give it a dedicated provider at both so it rules DELIVERED without cascading
+    # onto — and consuming a response from — the ReAct fake's "powerful" provider.
+    preg.register_mock("judge-standard", _JudgeProvider(), tier="standard")
+    preg.register_mock("judge-local", _JudgeProvider(), tier="local")
     return StepServices(
         memory_bridge=bridge,
         provider_registry=preg,
