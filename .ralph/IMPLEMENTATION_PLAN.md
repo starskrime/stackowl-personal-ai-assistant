@@ -57,14 +57,19 @@ Mark `[x]` only when the per-ADR Definition of Done in `IMPLEMENT_PROMPT.md` is 
   heuristic consult left DELIBERATELY dead (weak-model amplification safety; needs its own design).
   Closes: F-26, F-43, F-46, F-47, F-48, F-50, F-51, F-54, F-72.
 
-- [ ] **ADR-6 — Closed detect→heal→verify lifecycle** (`feat/adr-6-closed-loop-lifecycle`).
-  Boot/health/supervisor/restart drive recovery toward a goal and re-verify, not just observe.
-  (Heal step depends on ADR-1/ADR-2.)
+- [x] **ADR-6 — Closed detect→heal→verify lifecycle** (`feat/adr-6-closed-loop-lifecycle`).
+  SHIPPED 2026-06-27, flag `health_loop` ON in code default. HealthSweepHandler closes
+  detect→heal→verify (recycle via HealableResource, retry via ADR-2, re-collect, escalate
+  only if still down). F-87 wired live serve healers; F-39 crash user-notice. F-36/73/74/85/88
+  found already-shipped in prior reliability arcs.
   Closes: F-36, F-39, F-73, F-74, F-85, F-87, F-88.
 
-- [ ] **ADR-7 — DecisionLedger** (`feat/adr-7-decision-ledger`).
-  One ledger every authority (routing/recovery/acceptance/heuristic) emits a typed verdict to;
-  decisions become reconstructable. (Largely downstream of ADR-1..6.)
+- [x] **ADR-7 — DecisionLedger** (`feat/adr-7-decision-ledger`).
+  SHIPPED 2026-06-27, flag `decision_ledger` ON in code default. infra @862b1d2d
+  (turn-scoped Decision ledger + render_why) + all 5 emitters (acceptance/recovery/
+  reversibility @25972f64, router/learned_context @f8ca91f2) + durable /explain surface
+  @94d06857 (migration 0071 turn_decisions + TurnDecisionStore + backend persist hook).
+  Built directly on main (not a feat branch). Each emit additive, no-op when ledger unbound.
   Closes: F-9, F-19, F-28. (⤷F-10, F-39, F-47, F-72)
 
 ## Completion
