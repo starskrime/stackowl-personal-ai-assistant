@@ -104,6 +104,32 @@ def format_owl_table(manifests: list[OwlAgentManifest]) -> str:
     return "\n".join(lines)
 
 
+def format_owl_roster(manifests: list[OwlAgentManifest]) -> str:
+    """Render the friendly "your assistants" roster for non-technical users.
+
+    One line per owl: spoken name — what it does · lifecycle status. A scheduled
+    owl is 🟢 active (it works in the background); an on-demand owl is 💤 resting
+    (it works when summoned). Shows the human ``display`` name, never the system
+    slug/IDs/tier — the user's world is the name and what it does. (UniOwl S14)
+    """
+    log.gateway.debug(
+        "[commands] owls.format_owl_roster: entry",
+        extra={"_fields": {"count": len(manifests)}},
+    )
+    if not manifests:
+        return "You have no assistants yet. Tell me what you'd like one to do."
+    lines: list[str] = ["Your assistants 🦉"]
+    for m in sorted(manifests, key=lambda x: x.display.casefold()):
+        status = "🟢 active" if m.lifecycle == "scheduled" else "💤 resting"
+        does = (m.role or "").strip() or "general help"
+        lines.append(f"{m.display} — {does} · {status}")
+    log.gateway.debug(
+        "[commands] owls.format_owl_roster: exit",
+        extra={"_fields": {"rows": len(manifests)}},
+    )
+    return "\n".join(lines)
+
+
 def _bar(value: float, width: int = 10) -> str:
     """Return a fixed-width unicode block bar representing ``value`` in [0,1]."""
     clamped = max(0.0, min(1.0, value))

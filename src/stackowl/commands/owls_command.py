@@ -17,7 +17,7 @@ from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, re
 from stackowl.commands.owls_helpers import (
     build_owl_manifest,
     format_dna_display,
-    format_owl_table,
+    format_owl_roster,
     manifest_to_yaml_entry,
     parse_add_args,
     parse_edit_args,
@@ -229,7 +229,7 @@ class OwlsCommand(SlashCommand):
         log.gateway.debug("[commands] owls.list: entry")
         if self._registry is None:
             return _NO_REGISTRY
-        result = format_owl_table(self._registry.list())
+        result = format_owl_roster(self._registry.list())
         log.gateway.debug("[commands] owls.list: exit")
         return result
 
