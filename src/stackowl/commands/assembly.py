@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
+    from stackowl.memory.preferences import PreferenceStore
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.router import NotificationRouter
     from stackowl.owls.registry import OwlRegistry
@@ -237,6 +238,13 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /focus
     from stackowl.commands.focus_command import FocusCommand
     _safe_register(registry, "focus", lambda: FocusCommand(router=deps.router, event_bus=deps.event_bus))
+
+    # /style — show the active enforced output style for this channel (LS5).
+    # preference_store is held loosely (object) on deps to avoid a heavy import;
+    # cast to the real type for the typed command constructor.
+    from stackowl.commands.style_command import StyleCommand
+    _safe_register(registry, "style", lambda: StyleCommand(
+        preference_store=cast("PreferenceStore | None", deps.preference_store)))
 
     # /urgent — wired through the REAL transport seam (F-76). When a deliverer
     # is present the command transports + counts genuine deliveries; absent it,

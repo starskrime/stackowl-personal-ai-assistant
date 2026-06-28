@@ -275,6 +275,24 @@ class OutputStyle(BaseModel):
         )
         return result
 
+    def describe_rules(self) -> list[str]:
+        """The enforced style as plain, observable rules (not field names).
+
+        Shared wording for the LS4 feedback confirmation and the LS5 ``/style``
+        command, so the plain-language description can never drift from (or
+        between) the surfaces that read the active style back to the user.
+        """
+        rules: list[str] = []
+        if self.markdown in ("minimal", "off"):
+            rules.append("no asterisks")
+        if self.tables == "off":
+            rules.append("no raw tables")
+        if self.links == "titles":
+            rules.append("links shown as titles")
+        if self.emoji == "off":
+            rules.append("no emoji")
+        return rules
+
 
 # Field names of the style record — derived from the model (no hardcoded list to
 # drift) so callers can tell a style sub-field from another preference key.

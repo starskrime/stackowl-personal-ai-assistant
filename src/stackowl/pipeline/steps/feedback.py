@@ -321,23 +321,9 @@ async def _record_rejection(services: object, state: PipelineState, render: str)
 # --------------------------------------------------------------------------- #
 
 
-def _describe_rules(style: OutputStyle) -> list[str]:
-    """The enforced style as plain, observable rules (not field names)."""
-    rules: list[str] = []
-    if style.markdown in ("minimal", "off"):
-        rules.append("no asterisks")
-    if style.tables == "off":
-        rules.append("no raw tables")
-    if style.links == "titles":
-        rules.append("links shown as titles")
-    if style.emoji == "off":
-        rules.append("no emoji")
-    return rules
-
-
 def _positive_confirmation(style: OutputStyle) -> str:
     """Read the pinned rule back plainly; the next render is the receipt."""
-    rules = _describe_rules(style)
+    rules = style.describe_rules()
     if rules:
         return (f"Got it — from now on here: {_join(rules)}. "
                 "The reply below already follows it.")
@@ -346,7 +332,7 @@ def _positive_confirmation(style: OutputStyle) -> str:
 
 def _negative_confirmation(defects: list[str], style: OutputStyle) -> str:
     """Name the exact detected defect, no cheer; state the now-enforced rule."""
-    rules = _describe_rules(style)
+    rules = style.describe_rules()
     rule_clause = f" From now on here: {_join(rules)}." if rules else ""
     if defects:
         return f"Last message had {_join(defects)} — fixed.{rule_clause}"
