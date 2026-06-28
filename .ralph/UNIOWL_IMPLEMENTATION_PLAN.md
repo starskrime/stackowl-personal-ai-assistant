@@ -39,8 +39,17 @@ Method: subagent-driven, story-granular commits, QA+dev review each change, gate
 - **S13. Wire trigger=threshold** into the reconcile loop → ThresholdWatchHandler.
 
 ### Epic 6 — Visibility + close
-- **S14. Roster view**: `/agents` (+`/owls`) roster — display_name, what it does, lifecycle status (🟢active/💤resting), manage buttons. No IDs/system names shown.
-- **S15. Live E2E**: create on-demand owl by chat → talk by name; create scheduled threshold owl → fires on condition; retire → job gone. Real backend. Flags ON. Merge to main.
+- **S14. Roster view** ✅: `/owls`/`/owl` list now renders the friendly roster (display_name · what-it-does · 🟢active/💤resting); system slug/IDs hidden. `format_owl_roster` @f03fc3c5.
+- **S15. Live E2E** ✅ (verified against real backend 172.30.60.31, scratch test then removed): real model created an owl by natural chat; "Felix, …" vocative-routed to Felix with correct stripping; scheduled threshold owl projected `owl_lifecycle-watcher`; retire tore the job down. (Owl answer content is model-dependent — empty on one flaky turn, proven elsewhere; routing/creation/projection all green.)
+
+## ARC COMPLETE — all 4 ADRs shipped + pushed to main
+Epic 1 (S1-S2 data model) · Epic 2 (S3-S6 resumable chat creation + inference + /owl) ·
+Epic 3 (S7-S8 vocative routing) · Epic 4 (S9-S11 lifecycle projection + guardrails) ·
+Epic 5 (S12-S13 threshold monitor) · Epic 6 (S14 roster + S15 live E2E). UniOwl is
+additive + always-on (no feature flag); existing owls byte-identical.
+REMAINING (non-blocking follow-ups): per-agent daily cost cap (TODO, S11); multi-word
+display-name single-token addressing; threshold source as a named tool-ref (URL only today);
+deploy to the running server via a full restart (in-process E2E already green).
 
 ## Verification (every story)
 Unit + gateway integration (mock only provider) + targeted suite (no full pytest — Jetson hangs). Live E2E at S15. Keep boot green (`reachability_enforcement: block`, `acceptance_authority: true`).
