@@ -147,6 +147,19 @@ class SkillViewTool(Tool):
                     t0,
                 )
             output = self._render(skill)
+            # LS7 application seam: the model pulled this playbook to APPLY it —
+            # count it as USED *here* (NOT at prompt injection: an injected-but-
+            # unloaded skill leaves no skill_view call, so its counter never moves).
+            # This revives the synthesizer's n_executions>=5 refine/deprecate gate.
+            # Best-effort (B5): a stats-write error must never sink the read.
+            try:
+                await store.increment_n_executions(skill.skill_id)
+            except Exception as exc:
+                log.tool.warning(
+                    "skill_view.execute: n_executions bump failed — view still served",
+                    exc_info=exc,
+                    extra={"_fields": {"skill": skill.name}},
+                )
             # Hysteresis: record this view so the skill stays stickier next turn.
             ctx = TraceContext.get()
             owl = ctx.get("owl_name")

@@ -34,6 +34,59 @@ from stackowl.pipeline.turn_persist import persist_turn
 # and vendor-neutral — names the SHAPE of the failure, not any tool/site.
 _UNACHIEVED_EFFECT_CLASS = "unachieved_effect"
 
+# LS7 — how hard one turn's MEASURED outcome nudges a skill's success_rate. EWMA
+# so a single bad turn corrects rather than overwrites accumulated history.
+_SKILL_SUCCESS_EWMA_ALPHA = 0.3
+
+
+async def _update_skill_success_rates(
+    services: StepServices, state: PipelineState, *, success: bool,
+) -> None:
+    """Feed the turn's MEASURED outcome into the success_rate of every skill the
+    model APPLIED this turn — the read side that revives the synthesizer's
+    refine/deprecate gates (they read success_rate + n_executions).
+
+    The application seam is the ``skill_view`` tool calls recorded this turn (the
+    model pulled the playbook to apply it) — NOT prompt injection: an injected-but-
+    unloaded skill leaves no skill_view call, so it never moves. EWMA blend with the
+    prior rate (seed on first sample). Best-effort (B5): a stats-write error must
+    never crash the turn.
+    """
+    store = services.skill_store
+    if store is None:
+        return
+    viewed: list[str] = []
+    for tc in state.tool_calls:
+        if tc.tool_name != "skill_view":
+            continue
+        raw = str(tc.args.get("name", "")).strip()
+        # Strip a 'source:' qualifier to a bare name for store resolution.
+        bare = raw.partition(":")[2].strip() if ":" in raw else raw
+        if bare:
+            viewed.append(bare)
+    if not viewed:
+        return
+    try:
+        skills = await store.get_many_by_name(tuple(dict.fromkeys(viewed)))
+        outcome = 1.0 if success else 0.0
+        for sk in skills:
+            new_rate = outcome if sk.success_rate is None else (
+                _SKILL_SUCCESS_EWMA_ALPHA * outcome
+                + (1.0 - _SKILL_SUCCESS_EWMA_ALPHA) * sk.success_rate
+            )
+            await store.set_success_rate(sk.skill_id, new_rate)
+        log.engine.debug(
+            "[outcomes] skill success_rate nudged",
+            extra={"_fields": {
+                "trace_id": state.trace_id, "success": success, "skills": len(skills),
+            }},
+        )
+    except Exception as exc:  # B5 — telemetry must never crash the turn
+        log.engine.warning(
+            "[outcomes] skill success_rate update failed",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+
 
 class AsyncioBackend(OrchestratorBackend):
     """Executes the 8 pipeline steps sequentially using plain asyncio.
@@ -410,6 +463,11 @@ async def _capture_outcome(
             tool_sequence=tuple(tc.tool_name for tc in state.tool_calls),
             dna_snapshot=dna_snapshot,
             overclaim_blocked=state.overclaim_blocked,
+        )
+        # LS7 — close the skill-usage loop: nudge applied skills' success_rate
+        # from this turn's MEASURED outcome. Internally fail-open.
+        await _update_skill_success_rates(
+            services, state, success=trustworthy_success,
         )
     except Exception as exc:  # B5 — log, never raise from telemetry
         log.engine.warning(
