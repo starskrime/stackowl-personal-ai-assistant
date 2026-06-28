@@ -63,10 +63,19 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
   remains → nudge once more / deliver honest floor, never silent-accept an unvetted draft. Must NOT regress the
   conversational happy-path (a plain chat turn with no tools still ships). (MR5)
 
-- [ ] **PA3 — Breaker → ladder.** Circuit-breaker-open (`_circuit_open_refusal`, execute.py:723) currently dead-ends
-  ("stop and tell the user"). Route the open event into the Persistence Authority ladder: escalate model tier (reuse
-  llm_gateway escalation), and if still stuck, surface to PA4. Keep the containment (don't re-offer the dead tool);
-  add the escalation the containment was missing. This is the core loop-engineering move. (MR5)
+- [x] **PA3 — Breaker → ladder.** DONE. commit `d95ed926` (+ harness fix `4aa75468`). New turn-scoped
+  `providers/escalation_signal.py` ContextVar bridges the breaker (pipeline SETs) and the escalation ladder
+  (provider READs — providers can't import pipeline). `_dispatch` circuit-open branch calls `request_escalation(name)`
+  BEFORE returning the refusal (containment PRESERVED, escalation ADDED). Both provider ReAct loops, at iteration top:
+  `if can_escalate and escalation_requested(): return ESCALATE_SENTINEL` — reuses the EXISTING sentinel path the
+  LLMGateway already handles (discard attempt → on_escalate reset → re-run one tier up). `_on_tier_escalate` now
+  `clear_escalation()` + `progress.reset()` (new `TurnProgressTracker.reset()`) so the stronger tier starts clean,
+  not pre-bounced by the weak tier's open breaker. Pinned owls (no can_escalate → False) byte-identical; at ceiling
+  the flag is ignored → existing honest floor takes over (no new give-up path). Also fixed a PRE-EXISTING harness
+  failure (`test_weak_model_react_tool_dispatch_through_gateway`, fails on PA2 HEAD too): the give-up judge resolves
+  `judge_tier`="standard"/"local" and cascaded onto the ReAct fake's powerful provider, consuming a sequenced response
+  → IndexError. Gave the judge a dedicated `_JudgeProvider` (rules DELIVERED) — same drift class PA2 fixed. Verified:
+  21 PA3 tests + the previously-red smoke green; 837 pipeline/provider tests pass; ruff + mypy clean on changed src. (MR5)
 
 - [ ] **PA4 — Hand-to-better-owl rung.** Inside the ladder, a stuck owl delegates to a better-fit owl. Reuse
   `delegate_task` / `A2ADelegator` / resolver. Bounded (one hand-off per turn, budget-gated). Honest if no better owl.
