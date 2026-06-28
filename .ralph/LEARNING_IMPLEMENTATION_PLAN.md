@@ -4,7 +4,16 @@ Spec: [[LEARNING_ARCHITECTURE.md]]. Build the FULL fix, ENFORCEMENT-FIRST, reuse
 Method: subagent-driven, story-granular commits+push, QA+dev review, eval test per story. Use the `code-simplifier`
 agent on each story's diff to cut it to the minimum. Follow MEMORY.md. Ships ON.
 
-## STATUS: LS1 @f360b20d ✅ · LS2 @c80c9382 ✅ · LS3 @641775c4 ✅ · LS4 @fa906dd7 ✅ · LS5 @a4fe3d95 ✅ · LS6 @cb8b8d55 ✅ — next: LS7
+## STATUS: LS1 @f360b20d ✅ · LS2 @c80c9382 ✅ · LS3 @641775c4 ✅ · LS4 @fa906dd7 ✅ · LS5 @a4fe3d95 ✅ · LS6 @cb8b8d55 ✅ · LS7 @8f9b8dcb ✅ · LS8 @1eadb69d (evals) + @17432a78 (live fix) ✅ — ARC COMPLETE
+
+## LEARNING ARC COMPLETE — all LS1-LS8 shipped + pushed + DEPLOYED (boot green, census ok)
+LS8 live re-test (real model, backend 172.30.60.31): "Noo. Again you lost the copy style — I keep
+seeing the * characters" → classified negative/format @0.95 referent=last → output_style markdown=minimal
+captured → next render asterisk-free, content intact. Live caught + fixed a classifier thinking-model
+starvation (timeout 4→45s, max_tokens 256→8192). Acceptance gate: tests/acceptance/test_learning_acceptance.py
+(6 evals on stores+bytes). Server restarted onto the learning code; /style + feedback step pass the census.
+FOLLOW-UPS (non-blocking): length:terse summariser; bare-name skill attribution exactness; HTML parse mode
+for Telegram links if richer rendering wanted; skill_manage _elicit_missing.
 
 ## Epic L1 — Enforcement core (the load-bearing 20% — build first)
 - **LS1. `output_style` preference key**: a structured record (JSON) on PreferenceStore (reuse it; per-(identity,channel)
