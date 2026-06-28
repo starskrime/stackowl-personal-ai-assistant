@@ -678,6 +678,12 @@ class StartupOrchestrator:
         memory_components = await MemoryAssembly.build(
             db=db_pool, settings=self._settings, provider_registry=provider_registry,
             identity_resolver=identity_resolver,
+            # Kuzu is single-writer: in the gateway+core split only the CORE opens the
+            # graph (it runs the pipeline + memory jobs that use it). The gateway routes
+            # only, so it skips the open and avoids racing the core for the file lock
+            # (the race made one process degrade to a None graph with a spurious ERROR
+            # every boot). mono/core open it as before.
+            open_graph=(self._role != "gateway"),
         )
         memory_bridge = memory_components.bridge
         preference_store = memory_components.preference_store

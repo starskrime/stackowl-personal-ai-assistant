@@ -102,6 +102,30 @@ async def test_healthy_kuzu_reports_ok(tmp_db: DbPool) -> None:
     assert health.status == "ok"
 
 
+async def test_open_graph_false_skips_open_without_error(
+    tmp_db: DbPool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The gateway role passes open_graph=False: the adapter is a clean None with NO
+    ERROR (it's expected, not a failure) so the gateway never races the core for the
+    single-writer Kuzu lock. health is 'down' (graph owned by the core)."""
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        components = await MemoryAssembly.build(
+            db=tmp_db, settings=Settings(memory=MemorySettings()),
+            provider_registry=_stub_registry(), open_graph=False,
+        )
+
+    assert components.kuzu_adapter is None
+    # NOT an error — skipping the open in the gateway role is expected.
+    assert not any(
+        r.levelno >= logging.ERROR and "kuzu" in r.getMessage().lower()
+        for r in caplog.records
+    ), "open_graph=False must NOT log an ERROR (it is expected, not a failure)"
+    health = await components.graph_health.health_check()
+    assert health.status == "down"
+
+
 async def test_kuzu_sync_handler_noops_when_adapter_none() -> None:
     """The kuzu_sync handler must tolerate a None adapter (graph degraded) —
     return a successful no-op rather than raising AttributeError."""

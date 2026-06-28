@@ -86,11 +86,19 @@ class MemoryAssembly:
         settings: Settings,
         provider_registry: ProviderRegistry,
         identity_resolver: IdentityResolver | None = None,
+        *,
+        open_graph: bool = True,
     ) -> MemoryComponents:
         """Construct every memory component and register scheduler handlers.
 
-        Raises if Kuzu fails to initialise (operator-approved hard-fail per
-        the wiring plan's Decision Protocol vote).
+        ``open_graph`` — whether THIS process should open the embedded Kuzu graph
+        DB. Kuzu is a single-writer embedded store, so in the two-process split
+        (gateway + core) only ONE process may hold it. The graph is consumed by the
+        pipeline (recall/classify) and the background memory jobs, which all run in
+        the CORE; the GATEWAY only routes, so it passes ``open_graph=False`` to avoid
+        racing the core for the file lock (which made one process degrade to a None
+        graph with a spurious ERROR every boot). When False the adapter is None — the
+        exact degrade state classify + kuzu_sync already tolerate.
         """
         log.memory.info("[memory] assembly.build: entry")
 
@@ -159,24 +167,37 @@ class MemoryAssembly:
 
         kuzu_dir = StackowlHome.home() / "kuzu"
         kuzu_adapter: KuzuAdapter | None
-        try:
-            kuzu_adapter = KuzuAdapter(data_dir=kuzu_dir)
-            graph_health = GraphContributor(available=True)
-            log.memory.info(
-                "[memory] assembly: kuzu adapter ready",
-                extra={"_fields": {"data_dir": str(kuzu_dir)}},
-            )
-        except Exception as exc:
-            # B5 / no-hidden-errors — surface LOUDLY, then degrade (don't crash).
-            reason = f"{type(exc).__name__}: {exc}"
+        if not open_graph:
+            # This process (the gateway) must NOT open the single-writer Kuzu DB —
+            # the core owns it. Clean, expected None; NOT an error. health surfaces
+            # 'not owned by this role' rather than a failure.
             kuzu_adapter = None
-            graph_health = GraphContributor(available=False, reason=reason)
-            log.memory.error(
-                "[memory] assembly: kuzu adapter FAILED to initialise — graph "
-                "layer DEGRADED to None (recall continues without the graph)",
-                exc_info=exc,
-                extra={"_fields": {"data_dir": str(kuzu_dir)}},
+            graph_health = GraphContributor(
+                available=False, reason="graph owned by core role (not opened here)"
             )
+            log.memory.info(
+                "[memory] assembly: kuzu adapter not opened in this role "
+                "(graph is owned by the core process)",
+            )
+        else:
+            try:
+                kuzu_adapter = KuzuAdapter(data_dir=kuzu_dir)
+                graph_health = GraphContributor(available=True)
+                log.memory.info(
+                    "[memory] assembly: kuzu adapter ready",
+                    extra={"_fields": {"data_dir": str(kuzu_dir)}},
+                )
+            except Exception as exc:
+                # B5 / no-hidden-errors — surface LOUDLY, then degrade (don't crash).
+                reason = f"{type(exc).__name__}: {exc}"
+                kuzu_adapter = None
+                graph_health = GraphContributor(available=False, reason=reason)
+                log.memory.error(
+                    "[memory] assembly: kuzu adapter FAILED to initialise — graph "
+                    "layer DEGRADED to None (recall continues without the graph)",
+                    exc_info=exc,
+                    extra={"_fields": {"data_dir": str(kuzu_dir)}},
+                )
 
         # 5) Consolidation building blocks.
         from stackowl.infra.clock import WallClock
