@@ -336,10 +336,12 @@ class JobScheduler(SupervisedTask):
         run_id = str(uuid.uuid4())
         # STEER-5/F113 — on success, recompute the canonical cadence AND clear the
         # transient retry state (retry_count=0, retry_at=NULL) so a previously
-        # flaky job returns to a clean steady state on its real schedule.
+        # flaky job returns to a clean steady state on its real schedule. Also reset
+        # failure_count: it counts CONSECUTIVE failed runs (the circuit-breaker
+        # input, S11c) — one success closes the breaker.
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = NULL WHERE job_id = ?",
+            "retry_count = 0, retry_at = NULL, failure_count = 0 WHERE job_id = ?",
             (now_iso, next_run, job.job_id),
         )
         await self._db.execute(
@@ -401,14 +403,54 @@ class JobScheduler(SupervisedTask):
             await self._notify_failure(job, last_error, terminal=True)
             return
 
+        # CIRCUIT-BREAKER (S11c) — a scheduled OWL's job that fails this many
+        # consecutive runs is PAUSED (not re-armed) and the user is alerted ONCE,
+        # so a broken owl never fires forever. Scoped to owl-lifecycle jobs by
+        # provenance marker; every other recurring job keeps its re-arm behavior.
+        from stackowl.owls.owl_schedule_guards import (
+            MAX_CONSECUTIVE_FAILURES,
+            OWL_LIFECYCLE_SOURCE,
+        )
+
+        new_failure_count = job.failure_count + 1
+        is_owl_job = job.params.get("source") == OWL_LIFECYCLE_SOURCE
+        if is_owl_job and new_failure_count >= MAX_CONSECUTIVE_FAILURES:
+            await self._db.execute(
+                "UPDATE jobs SET status = 'failed', enabled = 0, "
+                "retry_count = 0, retry_at = NULL, failure_count = ?, last_error = ? "
+                "WHERE job_id = ?",
+                (new_failure_count, last_error, job.job_id),
+            )
+            log.heartbeat.error(
+                "[scheduler] %s: scheduled owl job circuit-broken — paused after "
+                "%d consecutive failures",
+                job.job_id,
+                new_failure_count,
+                extra={"_fields": {
+                    "job_id": job.job_id,
+                    "owner": job.params.get("owner"),
+                    "failures": new_failure_count,
+                }},
+            )
+            await write_audit(
+                self._db,
+                "owl_job_circuit_broken",
+                job.job_id,
+                actor="scheduler",
+                details={"owner": job.params.get("owner"), "failures": new_failure_count,
+                         "last_error": last_error},
+            )
+            await self._notify_failure(job, last_error, terminal=True)
+            return
+
         # Recurring job: re-arm onto the next cadence slot instead of dying.
         now_iso = datetime.now(UTC).isoformat()
         next_run = compute_next_run(job.schedule, tz=self._tz)
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = NULL, failure_count = failure_count + 1, "
+            "retry_count = 0, retry_at = NULL, failure_count = ?, "
             "last_error = ? WHERE job_id = ?",
-            (now_iso, next_run, last_error, job.job_id),
+            (now_iso, next_run, new_failure_count, last_error, job.job_id),
         )
         log.heartbeat.warning(
             "[scheduler] %s: max retries reached — recurring job RE-ARMED to next slot",
@@ -437,7 +479,12 @@ class JobScheduler(SupervisedTask):
                 "last_error": last_error,
             },
         )
-        await self._notify_failure(job, last_error, terminal=False)
+        # An owl-lifecycle job stays SILENT on each intermediate re-arm so its only
+        # alert is the single circuit-break notification at the failure threshold
+        # above (S11c: "pause + ONE notification"). Every other recurring job keeps
+        # the F-61 per-re-arm operator alert.
+        if not is_owl_job:
+            await self._notify_failure(job, last_error, terminal=False)
 
     async def _notify_failure(
         self, job: Job, last_error: str | None, *, terminal: bool

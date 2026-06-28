@@ -2882,6 +2882,35 @@ class StartupOrchestrator:
                     extra={"_fields": {}},
                 )
 
+            # ADR-B / S9 — project every `lifecycle="scheduled"` owl into its owned
+            # scheduler row (manifest = truth; rows = derived projection). Idempotent:
+            # creates missing rows, deletes rows for gone/on-demand/retired owls,
+            # never touches hand-made cronjobs. Runs in the SAME core-owns-scheduler
+            # block as recover() so the gateway never races it. Fail-open: a reconcile
+            # error must not block startup.
+            try:
+                from stackowl.scheduler.owl_lifecycle import reconcile_owl_schedules
+
+                reconcile = await reconcile_owl_schedules(
+                    owl_registry,
+                    db_pool,
+                    tz=self._settings.system.timezone or "UTC",
+                    settings=self._settings,
+                )
+                log.info(
+                    "[startup] gateway: owl schedules reconciled",
+                    extra={"_fields": {
+                        "created": reconcile.created, "updated": reconcile.updated,
+                        "deleted": reconcile.deleted, "skipped": reconcile.skipped,
+                    }},
+                )
+            except Exception as exc:
+                log.error(
+                    "[startup] gateway: owl schedule reconcile failed — starting anyway",
+                    exc_info=exc,
+                    extra={"_fields": {}},
+                )
+
         # WS-E — STARTUP WIRING-CLOSURE audit. Runs AFTER recover() so seeded rows
         # exist, then warns loudly (never fails startup) when a registered "seeded"
         # handler has no standing jobs row (it would never fire) or a subscribed

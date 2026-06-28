@@ -134,4 +134,14 @@ class OwlAgentManifest(BaseModel):
             raise ManifestValidationError("trigger", "scheduled owl requires a trigger")
         if self.lifecycle == "on_demand" and self.trigger is not None:
             raise ManifestValidationError("trigger", "on_demand owl must not have a trigger")
+        # Interval floor (S11a): the manifest is the single source of truth, so a
+        # scheduled owl can never even be CONSTRUCTED with a trigger that fires
+        # faster than the floor — the projected job is thus always within budget.
+        # Lazy import keeps the manifest module light (and avoids an import cycle).
+        if self.lifecycle == "scheduled" and self.trigger is not None:
+            from stackowl.owls.owl_schedule_guards import interval_floor_error
+
+            floor_err = interval_floor_error(self.trigger.schedule)
+            if floor_err is not None:
+                raise ManifestValidationError("trigger", floor_err)
         return self

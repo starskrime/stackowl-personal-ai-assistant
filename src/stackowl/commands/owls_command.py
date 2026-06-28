@@ -328,6 +328,10 @@ class OwlsCommand(SlashCommand):
         self._registry.deregister(name)
         self._remove_from_yaml(name)
         await self._delete_dna_rows(name)
+        # S10 — TRANSACTIONAL teardown: reconcile so the removed owl's owned
+        # scheduler row (if it was a scheduled owl) is deleted in this SAME op.
+        # A retired owl with a live job is the exact failure this prevents.
+        await self._reconcile_schedules()
         if self._bus is not None:
             self._bus.emit("owl_removed", {"name": name})
         log.gateway.info(
@@ -335,6 +339,21 @@ class OwlsCommand(SlashCommand):
             extra={"_fields": {"name": name}},
         )
         return f"✓ owl '{name}' removed"
+
+    async def _reconcile_schedules(self) -> None:
+        """Re-project owl schedules after a removal (ADR-B / S10). Fail-safe."""
+        if self._db is None or self._registry is None:
+            return
+        try:
+            from stackowl.scheduler.owl_lifecycle import reconcile_owl_schedules
+
+            await reconcile_owl_schedules(self._registry, self._db)
+        except Exception as exc:  # B5 — never fail the removal on a reconcile hiccup
+            log.gateway.error(
+                "[commands] owls.remove: schedule reconcile failed — owl already removed",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
 
     # ---------------------------------------------------------------- health
     async def _health(self) -> str:

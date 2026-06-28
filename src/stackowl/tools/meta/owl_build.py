@@ -548,7 +548,11 @@ class OwlBuildTool(Tool):
 
             await capture_one_authored(svc.db_pool, manifest.name, manifest.dna)
 
-        # 10. Success.
+        # 10. Reconcile the scheduler projection (ADR-B) — a scheduled owl gets its
+        #     owned job now, without a reboot. No-op for an on-demand owl.
+        await self._reconcile_schedules()
+
+        # 11. Success.
         tools_str = ", ".join(sorted(resolved_tools)) or "(none)"
         msg = (
             f"Created owl '{manifest.name}' ({manifest.role}). Tools: {tools_str}."
@@ -559,6 +563,36 @@ class OwlBuildTool(Tool):
         return self._ok(msg, t0, extra={"owl": manifest.name, "op": "create"})
 
     # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    async def _reconcile_schedules() -> None:
+        """Re-project owl schedules after a create/edit/retire (ADR-B / S9+S10).
+
+        Manifest = truth; the scheduler rows are reconciled, never imperatively
+        poked — so a retired/edited owl's owned job is torn down/updated in the SAME
+        operation (no reboot, no orphaned cron). Fail-safe: a reconcile error is
+        logged but never fails the build (the manifest mutation already committed).
+        """
+        svc = get_services()
+        db = svc.db_pool
+        registry = svc.owl_registry
+        if db is None or registry is None:
+            log.tool.debug(
+                "owl_build.execute: no db/registry for schedule reconcile — skipped"
+            )
+            return
+        try:
+            from stackowl.scheduler.owl_lifecycle import reconcile_owl_schedules
+
+            settings = svc.settings
+            tz = settings.system.timezone if settings is not None else "UTC"
+            await reconcile_owl_schedules(registry, db, tz=tz or "UTC", settings=settings)
+        except Exception as exc:  # B5 — never fail the build on a reconcile hiccup
+            log.tool.error(
+                "owl_build.execute: schedule reconcile failed — owl change persisted",
+                exc_info=exc,
+                extra={"_fields": {}},
+            )
 
     @staticmethod
     def _exists(registry: object, name: str) -> bool:
@@ -733,6 +767,10 @@ class OwlBuildTool(Tool):
 
         await self._audit("edit", rebuilt.name, creator)
 
+        # Reconcile the scheduler projection — a changed lifecycle/trigger updates
+        # the owned job in place (no duplicate), an on_demand edit tears it down.
+        await self._reconcile_schedules()
+
         tools_str = ", ".join(sorted(new_tools)) or "(none)"
         msg = f"Updated owl '{rebuilt.name}'. Tools: {tools_str}."
         if dropped:
@@ -787,6 +825,12 @@ class OwlBuildTool(Tool):
             )
 
         await self._audit("retire", spec.name, creator)
+
+        # S10 — TRANSACTIONAL teardown: the retired owl's owned scheduler row is
+        # deleted in the SAME operation (reconcile sees the owl is gone). A retired
+        # owl with a live job is the exact failure this prevents.
+        await self._reconcile_schedules()
+
         return self._ok(f"Retired owl '{spec.name}'.", t0, extra={"owl": spec.name, "op": "retire"})
 
     # ------------------------------------------------------------------ results
