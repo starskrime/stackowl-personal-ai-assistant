@@ -113,15 +113,29 @@ def build_agent_manifest(
     requested = built.bounds if built.bounds is not None else BoundsSpec()
     clamped, dropped = clamp_bounds(requested, ceiling)
 
-    manifest = built.model_copy(
-        update={
-            "bounds": clamped,
-            "tools": sorted(clamped.tools) if clamped.tools is not None else [],
-            "origin": "agent",
-            "created_by": creator,
-            "creation_ceiling": ceiling,
-        }
-    )
+    update: dict[str, object] = {
+        "bounds": clamped,
+        "tools": sorted(clamped.tools) if clamped.tools is not None else [],
+        "origin": "agent",
+        "created_by": creator,
+        "creation_ceiling": ceiling,
+    }
+    # Schedule slot (TS8): a present cadence makes this a SCHEDULED persona woken by a
+    # CronTrigger that runs its recurring goal each tick. Cadence + interval floor were
+    # already validated upstream (validate_owl_build_spec); the goal defaults to the
+    # standing specialty. No cadence ⇒ no trigger ⇒ on_demand (byte-identical default).
+    schedule = (spec.schedule or "").strip()
+    if schedule:
+        from stackowl.owls.trigger import CronTrigger
+
+        goal = (spec.goal or "").strip() or specialty
+        update["lifecycle"] = "scheduled"
+        update["trigger"] = CronTrigger(schedule=schedule, prompt=goal)
+        log.engine.debug(
+            "[owl_build] authz.build: scheduled trigger attached",
+            extra={"_fields": {"name": spec.name, "schedule": schedule}},
+        )
+    manifest = built.model_copy(update=update)
     log.engine.debug(
         "[owl_build] authz.build: exit",
         extra={"_fields": {

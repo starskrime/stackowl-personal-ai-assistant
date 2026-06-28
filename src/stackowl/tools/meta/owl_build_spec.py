@@ -17,6 +17,16 @@ class OwlBuildSpec(BaseModel):
     explicit_tools: list[str] | None = None
     specialty: str | None = None
     model_tier: str | None = None
+    # UniOwl schedule slot (ADR-T4 / TS8): a recurring cadence makes this owl a
+    # SCHEDULED persona woken by a CronTrigger. ``schedule`` is the platform cadence
+    # ("every 2h" / "every 30m" / "daily@09:00" / 5-field cron); ``goal`` is the
+    # recurring instruction run each tick (defaults to ``specialty``); ``lifecycle``
+    # lets the caller mark a recurring intent even before naming a cadence — then the
+    # cadence is ASKED for via the resumable clarify path. All additive + optional, so
+    # an on-demand create is byte-identical (no schedule ⇒ no trigger ⇒ on_demand).
+    schedule: str | None = None
+    goal: str | None = None
+    lifecycle: Literal["on_demand", "scheduled"] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +68,15 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
     # remaining gaps are RECOVERABLE missing required fields (ask the user).
     if spec.preset and spec.explicit_tools:
         return "provide either 'preset' or 'explicit_tools', not both."
+    # Schedule slot (TS8): a PRESENT cadence must be a valid, within-floor schedule.
+    # An invalid format / a sub-floor cadence is a HARD value error (re-asking the
+    # same slot cannot fix a malformed value), surfaced clearly — never a crash. The
+    # floor refusal reuses the SAME guard the manifest validator enforces.
+    sched = (spec.schedule or "").strip()
+    if sched:
+        sched_err = _schedule_value_error(sched)
+        if sched_err is not None:
+            return sched_err
     missing: list[str] = []
     if not spec.name or not spec.name.strip():
         missing.append("name")
@@ -65,6 +84,33 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
         missing.append("capability")
     if not spec.specialty or not spec.specialty.strip():
         missing.append("specialty")
+    # A recurring owl needs a cadence: ``lifecycle='scheduled'`` with no schedule is
+    # a RECOVERABLE gap → ASK for it via the resumable clarify path (reuses
+    # _elicit_missing — no parallel flow). Detecting "recurring intent" is the
+    # model's job (it sets lifecycle), never a keyword scan here.
+    if spec.lifecycle == "scheduled" and not sched:
+        missing.append("schedule")
     if missing:
         return MissingFields(fields=tuple(missing), partial=spec)
     return None
+
+
+def _schedule_value_error(schedule: str) -> str | None:
+    """Validate a present schedule cadence; return a clear error or ``None``.
+
+    Reuses the scheduler's own validator (:func:`is_valid_schedule`) so owl_build can
+    never advertise a cadence the scheduler then mis-arms, and the interval-floor
+    guard (:func:`interval_floor_error`) so a too-fast schedule is refused with the
+    same message the manifest validator would raise — surfaced as a structured error
+    instead of a manifest-construction crash. Lazy imports keep this envelope module
+    free of a scheduler import cycle (mirrors the manifest validator's pattern).
+    """
+    from stackowl.owls.owl_schedule_guards import interval_floor_error
+    from stackowl.tools.scheduling.cron_helpers import is_valid_schedule
+
+    if not is_valid_schedule(schedule):
+        return (
+            f"'{schedule}' is not a valid schedule — use a cadence like 'every 2h', "
+            "'every 30m', 'daily@09:00', or a 5-field cron expression."
+        )
+    return interval_floor_error(schedule)

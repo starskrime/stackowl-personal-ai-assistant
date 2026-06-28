@@ -7,8 +7,10 @@ structured chokepoint, and depth-0 only (defense in depth — the execute step a
 child-excludes it so a sub-agent can never recurse into owl creation).
 
 The agent-facing :class:`OwlBuildSpec` carries NO authority fields; origin / created_by /
-creation_ceiling / bounds are forced server-side in the action handlers. ``create`` /
-``edit`` / ``retire`` land in Tasks 9/10 — they raise ``NotImplementedError`` here.
+creation_ceiling / bounds are forced server-side in the ``create`` / ``edit`` /
+``retire`` handlers. A ``create`` may also carry a ``schedule`` cadence, which makes
+the owl a SCHEDULED persona (lifecycle="scheduled" + a CronTrigger) auto-provisioned
+into a recurring job by the UniOwl reconcile loop.
 """
 
 from __future__ import annotations
@@ -67,10 +69,15 @@ _FIELD_QUESTIONS: dict[str, str] = {
         "(e.g. 'researcher') or the specific tools it needs."
     ),
     "specialty": "In one sentence, what is this owl's standing role?",
+    "schedule": (
+        "How often should this owl run? Give a cadence like 'every 2h', 'every 30m', "
+        "or 'daily@09:00' (minimum every 5 minutes)."
+    ),
 }
-# The create required set is fixed (name, capability, specialty) so the elicitation
-# loop can never run longer than this — a hard bound against any re-validate cycle.
-_MAX_ELICIT_ROUNDS = 3
+# The create required set is bounded (name, capability, specialty, and — for a
+# scheduled owl — schedule), so the elicitation loop can never run longer than this:
+# a hard bound against any re-validate cycle.
+_MAX_ELICIT_ROUNDS = 4
 
 
 def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None:
@@ -107,13 +114,16 @@ class OwlBuildTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "RARE. Create/edit/retire a SPECIALIST OWL — a standing, named, reusable "
-            "persona. Almost every request is NOT this: first answer directly; if it "
-            "needs a specialist, delegate_task to an EXISTING owl; only mint a new owl "
-            "for a recurring role the human will reuse. Doing a research task once is "
-            "NOT a reason to mint a research owl — do the task. action='create' mints a "
-            "new owl, 'edit' adjusts one, 'retire' removes one. Requires human approval "
-            "(consequential) and fails closed with no interactive user present."
+            "Create / edit / retire a persistent, NAMED AGENT — an owl persona that "
+            "acts on the user's behalf, can run on a SCHEDULE, and can reach the user "
+            "PROACTIVELY. This is what a user means by 'create an agent / assistant / "
+            "bot that ...' (e.g. an agent that pokes me every 2 hours with AI news). "
+            "action='create' mints a new agent — pass a 'schedule' cadence (e.g. "
+            "'every 2h', 'daily@09:00') to make it recurring and proactive; 'edit' "
+            "adjusts one; 'retire' removes one. RARE: for a one-off task just do the "
+            "task, or delegate_task to an EXISTING owl — only mint an agent for a "
+            "standing role the human will reuse. Consequential: requires human approval "
+            "and fails closed with no interactive user present."
         )
 
     @property
@@ -154,6 +164,29 @@ class OwlBuildTool(Tool):
                 "model_tier": {
                     "type": "string",
                     "description": "Optional model tier hint for the owl.",
+                },
+                "schedule": {
+                    "type": "string",
+                    "description": (
+                        "Optional recurring cadence (create) — makes this a scheduled, "
+                        "proactive agent. Platform format: 'every 2h', 'every 30m', "
+                        "'daily@09:00', or a 5-field cron. Minimum interval is 5 minutes."
+                    ),
+                },
+                "goal": {
+                    "type": "string",
+                    "description": (
+                        "Optional instruction the scheduled owl runs each tick "
+                        "(defaults to its specialty). Only meaningful with a schedule."
+                    ),
+                },
+                "lifecycle": {
+                    "type": "string",
+                    "enum": ["on_demand", "scheduled"],
+                    "description": (
+                        "Optional. 'scheduled' marks a recurring agent; if you set it "
+                        "without a 'schedule', you will be asked for the cadence."
+                    ),
                 },
             },
             "required": ["action", "name"],

@@ -92,17 +92,18 @@ class SkillManageTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Create or modify the agent's OWN skills (reusable procedures / "
-            "how-tos that become future system-prompt context). "
-            "action='create' writes a new skill (full SKILL.md); 'edit' replaces "
+            "Author or modify a reusable PROCEDURE (a skill / how-to capability) that "
+            "an EXISTING agent invokes while doing a task. A skill is NOT a standalone "
+            "agent: it has no persona or name of its own, it never runs on a schedule, "
+            "and it never messages the user — to create a named AGENT that acts on a "
+            "schedule or reaches the user proactively, use owl_build instead. "
+            "action='create' writes a new procedure (full SKILL.md); 'edit' replaces "
             "an existing skill's SKILL.md; 'patch' does a find/replace inside "
             "SKILL.md; 'delete' removes a skill; 'enable'/'disable' toggle it "
             "without deleting. Every write is security-scanned, audited, and "
-            "restorable. "
-            "LANE: authoring/changing procedural skills the agent can reuse. "
-            "ANTI-LANE: do NOT use this to READ a skill (use skill_view) or to "
-            "LIST skills (use skills_list); do NOT use it to remember a FACT "
-            "(use memory). It edits skills, not capabilities/tools."
+            "restorable. ANTI-LANE: do NOT use this to READ a skill (use skill_view) "
+            "or to LIST skills (use skills_list); do NOT use it to remember a FACT "
+            "(use memory)."
         )
 
     @property

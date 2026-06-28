@@ -3,7 +3,7 @@
 Spec: [[TRUST_ARCHITECTURE.md]]. Build the FULL fix, honesty-first, no patches.
 Method: subagent-driven, story-granular commits, QA+dev review, gateway/eval test per story, reuse-first. Ships ON.
 
-## STATUS: TS1+TS2 @9d421e82 ✅ · TS3 @140739a7 ✅ · TS4 @743c8d91 ✅ — next: TS5+TS6
+## STATUS: TS1+TS2 @9d421e82 ✅ · TS3 @140739a7 ✅ · TS4 @743c8d91 ✅ · TS5+TS6 @90a64bce ✅ — next: TS7+TS8
 
 ## Epic T1 — Stop the lie (ADR-T2 + ADR-T1)
 - **TS1. effect_class on tools**: add `effect_class` to ToolManifest (`creates_persistent_entity|sends_message|schedules|None`). Tag owl_build, skill_manage, cronjob, send_file/telegram send, etc. Read-only tools = None.
