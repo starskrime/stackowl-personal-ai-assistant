@@ -13,6 +13,7 @@ from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
 from stackowl.owls.base_prompt import build_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
+from stackowl.pipeline.capability_manifest import CapabilityManifest
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.skills.instruction_injector import (
@@ -167,7 +168,22 @@ async def run(state: PipelineState) -> PipelineState:
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
         base = ""
-    parts = [p for p in (base, persona, skills_block, state.memory_context) if p]
+    # Runtime capability manifest (TS4/ADR-T1): a plain-language statement of what
+    # the PLATFORM can do this run, derived from live reachability (not a registry
+    # list). Kills the self-invented "I can't…" by stating present capability as a
+    # measured fact. Fail-open + byte-absent when nothing is reachable.
+    capabilities = ""
+    try:
+        capabilities = CapabilityManifest.probe(services).render()
+    except Exception as exc:  # no-hidden-errors: never crash the turn over a manifest
+        log.engine.error(
+            "[pipeline] assemble: capability manifest FAILED — skipped",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        capabilities = ""
+    parts = [
+        p for p in (base, capabilities, persona, skills_block, state.memory_context) if p
+    ]
     system_prompt = "\n\n".join(parts) or None
     log.engine.debug(
         "[pipeline] assemble: exit",
