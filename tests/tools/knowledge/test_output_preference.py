@@ -9,9 +9,11 @@ user expresses a format preference, persisting a canonical value GLOBALLY (under
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from stackowl.channels._format import OUTPUT_STYLE_KEY, load_output_style
 from stackowl.db.pool import DbPool
 from stackowl.memory.preferences import GLOBAL_OWNER_KEY, PreferenceStore
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -103,3 +105,65 @@ def test_registered_in_with_defaults() -> None:
 
     reg = ToolRegistry.with_defaults()
     assert isinstance(reg.get("set_output_preference"), SetOutputPreferenceTool)
+
+
+# --------------------------------------------------------------------------- #
+# Structured output_style write path (LS1)                                     #
+# --------------------------------------------------------------------------- #
+async def test_set_style_field_persists_and_reads_back(tmp_db: DbPool) -> None:
+    store = PreferenceStore(db=tmp_db)
+    tool = SetOutputPreferenceTool()
+    with _services(preference_store=store):
+        r1 = await tool.execute(key="markdown", value="minimal")
+        r2 = await tool.execute(key="links", value="titles")
+    assert r1.success and r2.success
+    # Stored as one JSON record of explicitly-set fields under the canonical key.
+    raw = await store.get(GLOBAL_OWNER_KEY, OUTPUT_STYLE_KEY)
+    assert json.loads(raw) == {"markdown": "minimal", "links": "titles"}
+    # Read helper resolves it.
+    style = await load_output_style(store, "telegram:1")
+    assert style.markdown == "minimal"
+    assert style.links == "titles"
+
+
+async def test_set_output_style_whole_record_json(tmp_db: DbPool) -> None:
+    store = PreferenceStore(db=tmp_db)
+    tool = SetOutputPreferenceTool()
+    with _services(preference_store=store):
+        r = await tool.execute(
+            key="output_style", value='{"markdown":"minimal","tables":"off"}',
+        )
+    assert r.success
+    style = await load_output_style(store, "local")
+    assert style.markdown == "minimal"
+    assert style.tables == "off"
+
+
+async def test_unknown_style_value_refused_without_write(tmp_db: DbPool) -> None:
+    store = PreferenceStore(db=tmp_db)
+    tool = SetOutputPreferenceTool()
+    with _services(preference_store=store):
+        result = await tool.execute(key="markdown", value="sparkly")
+    assert not result.success
+    assert result.side_effect_committed is False
+    assert await store.list_for_owner(GLOBAL_OWNER_KEY) == {}
+
+
+async def test_unknown_style_subkey_in_record_refused(tmp_db: DbPool) -> None:
+    store = PreferenceStore(db=tmp_db)
+    tool = SetOutputPreferenceTool()
+    with _services(preference_store=store):
+        result = await tool.execute(key="output_style", value='{"font_size":"big"}')
+    assert not result.success
+    assert result.side_effect_committed is False
+    assert await store.list_for_owner(GLOBAL_OWNER_KEY) == {}
+
+
+async def test_partial_style_merges_not_resets(tmp_db: DbPool) -> None:
+    store = PreferenceStore(db=tmp_db)
+    tool = SetOutputPreferenceTool()
+    with _services(preference_store=store):
+        await tool.execute(key="markdown", value="minimal")
+        await tool.execute(key="links", value="titles")  # second field merges in
+    raw = await store.get(GLOBAL_OWNER_KEY, OUTPUT_STYLE_KEY)
+    assert json.loads(raw) == {"markdown": "minimal", "links": "titles"}

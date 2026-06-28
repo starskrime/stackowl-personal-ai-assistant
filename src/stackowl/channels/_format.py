@@ -10,8 +10,17 @@ anchors on a header row immediately followed by a delimiter row (cells of only
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from stackowl.infra.observability import log
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, avoids import cycle
+    from stackowl.memory.preferences import PreferenceStore
 
 _DELIM_CELL = re.compile(r"^\s*:?-{1,}:?\s*$")
 
@@ -140,6 +149,92 @@ def apply_output_preferences(text: str, prefs: Mapping[str, str]) -> str:
     if tables is not None and tables.strip().casefold() in _OFF_VALUES:
         return tables_to_plain_list(text)
     return text
+
+
+# --------------------------------------------------------------------------- #
+# Structured output style (LS1)                                               #
+# --------------------------------------------------------------------------- #
+# One durable preference key holding a small CLOSED record of DELIVERY TRANSFORMS.
+# Each field is something the delivery seam can mechanically enforce (the
+# key-admissibility rule) — free-form style desires route to the owl charter,
+# not here. LS2 enforces these in ``_enforce_output_prefs``; LS1 is storage +
+# vocabulary + this read helper only. Persisted as a JSON object of *explicitly
+# set* fields under ``OUTPUT_STYLE_KEY`` (so the ``output_tables`` alias can fill
+# the ``tables`` field only when the style did not set it).
+OUTPUT_STYLE_KEY = "output_style"
+
+
+class OutputStyle(BaseModel):
+    """A closed vocabulary of independently-enforceable delivery transforms.
+
+    Every field is optional with a no-op default, so a partial style (one field
+    set) is valid and an all-default record changes nothing. ``tables`` subsumes
+    the legacy ``output_tables`` key — see :func:`resolve_output_style`.
+    """
+
+    markdown: Literal["off", "minimal", "full"] = "full"
+    links: Literal["inline", "titles"] = "inline"
+    tables: Literal["on", "off"] = "on"
+    emoji: Literal["on", "off"] = "on"
+    length: Literal["terse", "normal"] = "normal"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+# Field names of the style record — derived from the model (no hardcoded list to
+# drift) so callers can tell a style sub-field from another preference key.
+OUTPUT_STYLE_FIELDS: frozenset[str] = frozenset(OutputStyle.model_fields)
+
+
+def resolve_output_style(prefs: Mapping[str, str]) -> OutputStyle:
+    """Resolve the effective :class:`OutputStyle` from a merged preference map.
+
+    ``prefs`` is an already-merged ``{key: value}`` map (e.g. global UNDER
+    channel). Reads the JSON under ``OUTPUT_STYLE_KEY`` (only the fields actually
+    set), then back-fills ``tables`` from the legacy ``output_tables`` key when
+    the style itself did not set ``tables`` (so anything still writing
+    ``output_tables`` keeps working, read through as ``tables``). A missing or
+    corrupt record degrades to an all-default (no-op) style — never raises.
+    """
+    raw: dict[str, object] = {}
+    encoded = prefs.get(OUTPUT_STYLE_KEY)
+    if encoded:
+        try:
+            parsed = json.loads(encoded)
+            if isinstance(parsed, dict):
+                raw = {k: v for k, v in parsed.items() if k in OUTPUT_STYLE_FIELDS}
+        except (ValueError, TypeError) as exc:  # corrupt store — degrade loudly
+            log.gateway.warning(
+                "[format] resolve_output_style: corrupt output_style — using defaults",
+                extra={"_fields": {"error": str(exc)}},
+            )
+    # Back-compat alias: output_tables=off ⇒ tables=off, unless style set tables.
+    if "tables" not in raw:
+        legacy = prefs.get("output_tables")
+        if legacy is not None and legacy.strip().casefold() in _OFF_VALUES:
+            raw["tables"] = "off"
+    try:
+        return OutputStyle.model_validate(raw)
+    except Exception as exc:  # value out of vocabulary in store — degrade loudly
+        log.gateway.warning(
+            "[format] resolve_output_style: invalid stored style — using defaults",
+            extra={"_fields": {"error": str(exc)}},
+        )
+        return OutputStyle()
+
+
+async def load_output_style(store: PreferenceStore, owner_key: str) -> OutputStyle:
+    """Read the resolved :class:`OutputStyle` for ``owner_key``, merging scopes.
+
+    Merges the cross-channel GLOBAL prefs UNDER the per-channel ``owner_key``
+    prefs (channel overrides global), mirroring the delivery seam, then resolves.
+    The consumer for LS2 enforcement and the LS5 ``/style`` command.
+    """
+    from stackowl.memory.preferences import GLOBAL_OWNER_KEY
+
+    global_prefs = await store.list_for_owner(GLOBAL_OWNER_KEY)
+    owner_prefs = await store.list_for_owner(owner_key)
+    return resolve_output_style({**global_prefs, **owner_prefs})
 
 
 def _render_block(header: list[str], body: list[list[str]]) -> str:
