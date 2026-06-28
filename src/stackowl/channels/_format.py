@@ -14,6 +14,7 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 
@@ -140,15 +141,13 @@ def apply_output_preferences(text: str, prefs: Mapping[str, str]) -> str:
     """Deterministically ENFORCE an owner's stored output-format preferences.
 
     Channel-agnostic, applied at the delivery seam so a recalled preference
-    becomes an enforced constraint (not a hint the model may ignore). Currently
-    honors the canonical ``output_tables`` key: a value in :data:`_OFF_VALUES`
-    converts tables to a plain list. No matching preference → text unchanged
-    (byte-identical baseline).
+    becomes an enforced constraint (not a hint the model may ignore). Resolves
+    the structured :class:`OutputStyle` (which subsumes the legacy
+    ``output_tables`` key) and applies every enforceable transform + a
+    post-transform verifier (LS2). An all-default style (no preference set) is a
+    byte-identical no-op.
     """
-    tables = prefs.get("output_tables")
-    if tables is not None and tables.strip().casefold() in _OFF_VALUES:
-        return tables_to_plain_list(text)
-    return text
+    return resolve_output_style(prefs).enforce(text)
 
 
 # --------------------------------------------------------------------------- #
@@ -180,10 +179,203 @@ class OutputStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # --- LS2 deterministic enforcement (the load-bearing 20%) --------------- #
+    # Each ``_enforce_*`` is the mechanical transform for ONE field; every one is
+    # idempotent (applying twice == once) and code-fence-safe where it matters, so
+    # they double as both the apply pass and the verifier's repair pass.
+
+    def _enforce_tables(self, text: str) -> str:
+        return tables_to_plain_list(text) if self.tables == "off" else text
+
+    def _enforce_markdown(self, text: str) -> str:
+        if self.markdown == "full":
+            return text
+        text = _apply_outside_code(text, _strip_emphasis)
+        if self.markdown == "off":
+            text = _ATX_HEADER_RE.sub("", text)
+        return text
+
+    def _enforce_links(self, text: str) -> str:
+        if self.links != "titles":
+            return text
+        return _apply_outside_code(text, _title_bare_links)
+
+    def _enforce_emoji(self, text: str) -> str:
+        return _strip_emoji(text) if self.emoji == "off" else text
+
+    def _enforce_length(self, text: str) -> str:
+        # ponytail: length=terse is a logged no-op — honest truncation needs an
+        # LLM summary (LS-future); fabricating a cut that drops content is worse
+        # than leaving the text whole. Upgrade path: route terse through a summariser.
+        if self.length == "terse":
+            log.gateway.debug(
+                "[format] OutputStyle: length=terse not yet enforced (no-op)",
+                extra={"_fields": {"text_len": len(text)}},
+            )
+        return text
+
+    def apply(self, text: str) -> str:
+        """Run every enabled transform in dependency order.
+
+        Tables first (their fenced output is then protected from emphasis/link
+        transforms), then markdown, links, emoji, length.
+        """
+        text = self._enforce_tables(text)
+        text = self._enforce_markdown(text)
+        text = self._enforce_links(text)
+        text = self._enforce_emoji(text)
+        text = self._enforce_length(text)
+        return text
+
+    def verify(self, text: str) -> str:
+        """Post-transform VERIFIER — assert on the produced bytes, repair drift.
+
+        Re-runs each enforcer; because every enforcer is idempotent, a
+        well-applied text is a fixed point and this is a silent no-op. Any change
+        means the spec did NOT hold (a transform bug, or text that never went
+        through :meth:`apply`) — it is logged loudly and the repaired bytes are
+        returned. This is the "measured, not asserted" guarantee.
+        """
+        repaired = text
+        for field, enforce in (
+            ("tables", self._enforce_tables),
+            ("markdown", self._enforce_markdown),
+            ("links", self._enforce_links),
+            ("emoji", self._enforce_emoji),
+        ):
+            fixed = enforce(repaired)
+            if fixed != repaired:
+                log.gateway.warning(
+                    "[format] OutputStyle.verify: spec drift repaired",
+                    extra={"_fields": {"field": field,
+                                       "value": getattr(self, field),
+                                       "before_len": len(repaired),
+                                       "after_len": len(fixed)}},
+                )
+                repaired = fixed
+        return repaired
+
+    def enforce(self, text: str) -> str:
+        """Apply every transform then verify — the single delivery-seam entry.
+
+        An all-default style is a byte-identical fast path (the back-compat
+        baseline: no preference set → output untouched, no logs).
+        """
+        if self == OutputStyle():
+            return text
+        log.gateway.debug(
+            "[format] OutputStyle.enforce: entry",
+            extra={"_fields": {"style": self.model_dump(), "text_len": len(text)}},
+        )
+        result = self.verify(self.apply(text))
+        log.gateway.info(
+            "[format] OutputStyle.enforce: exit",
+            extra={"_fields": {"changed": result != text,
+                               "before_len": len(text), "after_len": len(result)}},
+        )
+        return result
+
 
 # Field names of the style record — derived from the model (no hardcoded list to
 # drift) so callers can tell a style sub-field from another preference key.
 OUTPUT_STYLE_FIELDS: frozenset[str] = frozenset(OutputStyle.model_fields)
+
+
+# --------------------------------------------------------------------------- #
+# LS2 mechanical transforms (channel-agnostic GFM in, GFM out)                #
+# --------------------------------------------------------------------------- #
+# These run at the channel-AGNOSTIC delivery seam and emit GFM, which each
+# adapter's existing converter then renders in ITS native parse mode (Telegram
+# ``to_telegram_markdownv2`` already escapes link labels/URLs; Slack mrkdwn; CLI
+# plain). So link-titling emits GFM ``[Title](URL)`` rather than channel-specific
+# HTML — see :func:`_title_bare_links`.
+
+# Emphasis pairs, double-delimiter before single so ``**`` is not read as two
+# italics; mirrors the formatter's GFM regexes but STRIPS instead of converting.
+_EMPH_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
+_EMPH_BOLD_UNDER_RE = re.compile(r"__(.+?)__", re.DOTALL | re.UNICODE)
+_EMPH_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL | re.UNICODE)
+_EMPH_ITALIC_STAR_RE = re.compile(r"\*(.+?)\*", re.UNICODE)
+_EMPH_ITALIC_UNDER_RE = re.compile(r"_(.+?)_", re.UNICODE)
+_ATX_HEADER_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+")
+
+# Code spans/fences are protected from emphasis/link transforms so e.g. ``2 ** 8``
+# or a literal URL inside a code block is never rewritten.
+_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`]*`", re.DOTALL | re.UNICODE)
+
+# A bare URL is an http(s) run NOT already inside a markdown/autolink target —
+# the lookbehind skips ``](url)``, ``(url)``, ``<url>`` and ``[url]`` so titling
+# is idempotent and never double-wraps an existing link.
+_BARE_URL_RE = re.compile(r"""(?<![(\[\]<"'])(https?://[^\s)>\]]+)""", re.UNICODE)
+_URL_TRAILING = ".,;:!?)”’\"'"
+
+# Emoji/pictograph codepoint ranges (no English/word list — pure Unicode blocks):
+# symbols & pictographs (incl. 🔗 U+1F517), emoticons, transport, supplemental &
+# extended-A, regional-indicator flags, dingbats, misc symbols/arrows, plus the
+# variation-selector and zero-width-joiner that glue emoji sequences.
+_EMOJI_RE = re.compile(
+    "[\U0001f000-\U0001faff\U00002600-\U000027bf\U00002b00-\U00002bff"
+    "\U00002190-\U000021ff\U0001f1e6-\U0001f1ff\U0000fe0f\U0000200d]+",
+    re.UNICODE,
+)
+
+
+def _apply_outside_code(text: str, fn: Callable[[str], str]) -> str:
+    """Apply ``fn`` to every span OUTSIDE code fences/inline code, verbatim within."""
+    if "`" not in text:
+        return fn(text)
+    out: list[str] = []
+    last = 0
+    for m in _CODE_SPAN_RE.finditer(text):
+        out.append(fn(text[last:m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(fn(text[last:]))
+    return "".join(out)
+
+
+def _strip_emphasis(text: str) -> str:
+    """Remove ``*``/``**``/``_``/``__``/``~~`` emphasis delimiters, keep inner text.
+
+    Idempotent: a second pass finds no remaining paired delimiters. ``***x***``
+    collapses bold→italic to ``x`` in one pass (bold runs before italic)."""
+    text = _EMPH_BOLD_STAR_RE.sub(r"\1", text)
+    text = _EMPH_BOLD_UNDER_RE.sub(r"\1", text)
+    text = _EMPH_STRIKE_RE.sub(r"\1", text)
+    text = _EMPH_ITALIC_STAR_RE.sub(r"\1", text)
+    text = _EMPH_ITALIC_UNDER_RE.sub(r"\1", text)
+    return text
+
+
+def _url_title(url: str) -> str:
+    """Derive a tappable link title from a URL — its host, ``www.`` stripped."""
+    host = urlparse(url).netloc or url
+    return host[4:] if host.startswith("www.") else host
+
+
+def _title_bare_links(text: str) -> str:
+    """Wrap each bare URL as a titled GFM link ``[host](url)`` (never a dead 🔗).
+
+    Already-formatted ``[label](url)`` links are left untouched (the lookbehind
+    skips them), so this is idempotent. Trailing sentence punctuation stays
+    OUTSIDE the link."""
+    def repl(m: re.Match[str]) -> str:
+        url = m.group(1)
+        trail = ""
+        while url and url[-1] in _URL_TRAILING:
+            trail = url[-1] + trail
+            url = url[:-1]
+        if not url:
+            return m.group(0)
+        return f"[{_url_title(url)}]({url}){trail}"
+
+    return _BARE_URL_RE.sub(repl, text)
+
+
+def _strip_emoji(text: str) -> str:
+    """Remove emoji/pictographs and tidy the trailing whitespace they leave."""
+    stripped = _EMOJI_RE.sub("", text)
+    return re.sub(r"(?m)[ \t]+$", "", stripped)
 
 
 def resolve_output_style(prefs: Mapping[str, str]) -> OutputStyle:

@@ -108,3 +108,93 @@ async def test_load_output_style_channel_overrides_global(tmp_db: DbPool) -> Non
     style = await load_output_style(store, "telegram:42")
     assert style.markdown == "minimal"  # channel wins
     assert style.tables == "off"  # global alias still applies
+
+
+# --------------------------------------------------------------------------- #
+# LS2 deterministic enforcement + verifier — assert on POST-SEAM bytes         #
+# --------------------------------------------------------------------------- #
+def _prefs(**fields: str) -> dict[str, str]:
+    return {OUTPUT_STYLE_KEY: json.dumps(fields)}
+
+
+def test_markdown_minimal_strips_bold_artifacts() -> None:
+    src = "Here is **bold** and *italic* and __also__ and ~~gone~~ text."
+    out = apply_output_preferences(src, _prefs(markdown="minimal"))
+    assert "*" not in out and "~" not in out and "__" not in out
+    # Inner text survives — only the delimiters are removed.
+    for word in ("bold", "italic", "also", "gone", "text"):
+        assert word in out
+
+
+def test_markdown_minimal_leaves_code_asterisks_untouched() -> None:
+    src = "math `2 ** 8` and ```\nx = a ** b ** c\n``` stay."
+    out = apply_output_preferences(src, _prefs(markdown="minimal"))
+    assert "2 ** 8" in out  # inline code preserved verbatim
+    assert "a ** b ** c" in out  # fenced code preserved verbatim
+
+
+def test_markdown_off_also_strips_headers() -> None:
+    out = apply_output_preferences("# Title\n\nBody **x**", _prefs(markdown="off"))
+    assert "#" not in out and "*" not in out
+    assert "Title" in out and "Body" in out
+
+
+def test_links_titles_wraps_bare_url_no_dead_link() -> None:
+    src = "See https://www.example.com/ai-news for the story."
+    out = apply_output_preferences(src, _prefs(links="titles"))
+    assert "[example.com](https://www.example.com/ai-news)" in out
+    assert "🔗" not in out
+    # The raw URL no longer appears outside the link target.
+    assert "See https://" not in out
+
+
+def test_links_titles_preserves_existing_markdown_link() -> None:
+    src = "Read [the report](https://example.com/r) now."
+    out = apply_output_preferences(src, _prefs(links="titles"))
+    assert out == src  # already titled → untouched
+
+
+def test_links_titles_keeps_trailing_punctuation_outside_link() -> None:
+    out = apply_output_preferences("Go to https://example.com.", _prefs(links="titles"))
+    assert "[example.com](https://example.com)." in out
+
+
+def test_emoji_off_strips_emoji_keeps_text() -> None:
+    out = apply_output_preferences("Done ✅ shipped 🚀 link 🔗 here", _prefs(emoji="off"))
+    assert "✅" not in out and "🚀" not in out and "🔗" not in out
+    assert "Done" in out and "shipped" in out and "here" in out
+
+
+def test_idempotent_apply_twice_equals_once() -> None:
+    prefs = _prefs(markdown="minimal", links="titles", emoji="off", tables="off")
+    src = (
+        "## News ✅\n\n**Big** story at https://www.site.com/x 🚀\n\n"
+        "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+    )
+    once = apply_output_preferences(src, prefs)
+    twice = apply_output_preferences(once, prefs)
+    assert once == twice
+
+
+def test_no_style_set_is_byte_identical() -> None:
+    src = "Keep **this** exactly 🚀 with https://x.com and a # heading."
+    assert apply_output_preferences(src, {}) == src
+    # An all-default explicit style is also a no-op.
+    assert apply_output_preferences(src, _prefs()) == src
+
+
+def test_tables_off_via_style_still_flattens() -> None:
+    out = apply_output_preferences(_TABLE, _prefs(tables="off"))
+    assert "|" not in out and "Name: Bob" in out
+
+
+def test_verifier_catches_and_repairs_violation() -> None:
+    # Feed the verifier text that VIOLATES the spec (raw, un-applied) and prove it
+    # repairs to a conforming result — the "measured on produced bytes" guarantee.
+    style = OutputStyle(markdown="minimal", links="titles")
+    bad = "Stray **bold** and bare https://example.com/x remain."
+    repaired = style.verify(bad)
+    assert "*" not in repaired
+    assert "[example.com](https://example.com/x)" in repaired
+    # And the repaired bytes are themselves a fixed point.
+    assert style.verify(repaired) == repaired

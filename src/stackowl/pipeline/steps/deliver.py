@@ -46,7 +46,7 @@ async def run(state: PipelineState) -> PipelineState:
         return state
 
     services = get_services()
-    # Enforce the owner's stored output-format preferences (e.g. table-free output)
+    # Enforce the owner's stored OutputStyle (markdown/links/tables/emoji/length)
     # at this single channel-agnostic seam, BEFORE both the live-stream write and
     # the proactive fallback — so a recalled preference is an enforced constraint,
     # not a hint the model may ignore. No-op (byte-identical) when no preference set.
@@ -108,14 +108,18 @@ async def run(state: PipelineState) -> PipelineState:
 
 
 async def _enforce_output_prefs(state: PipelineState, services: StepServices) -> PipelineState:
-    """Apply the owner's stored output-format preferences to the response text.
+    """Apply the owner's resolved :class:`OutputStyle` to the response text.
 
+    Loads+merges the per-(owner,channel) prefs UNDER which the structured
+    ``output_style`` (markdown/links/tables/emoji/length) is resolved, then
+    deterministically enforces + verifies every transform via
+    ``apply_output_preferences`` — independent of whether the model complied.
     Channel-agnostic and fail-safe (B5): a missing store, no preferences, or any
     error returns ``state`` unchanged — enforcement never crashes delivery. When a
-    preference actually rewrites the text (e.g. tables → plain list), the response
-    chunks are collapsed into one transformed content chunk (preserving the turn's
-    owl, target, and floor marker). owner_key mirrors classify: ``identity_key``
-    when set, else ``session_id``.
+    transform actually rewrites the text, the response chunks are collapsed into
+    one transformed content chunk (preserving the turn's owl, target, and floor
+    marker). owner_key mirrors classify: ``identity_key`` when set, else
+    ``session_id``.
     """
     store = services.preference_store
     if store is None or not state.responses:
