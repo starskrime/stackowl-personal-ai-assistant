@@ -68,8 +68,11 @@ _MAX_REFERENT_CHARS = 600
 _MAX_CONTEXT_CHARS = 600
 # Truncation budget for LOGGED text (sensitive-data + log-size hygiene).
 _LOG_TEXT_CHARS = 120
-# JSON verdict needs room for several signals; still cheap on the fast tier.
-_MAX_TOKENS = 256
+# A reasoning model (thinking always on) burns output tokens on its <think> block
+# BEFORE the JSON verdict — a tight cap truncates mid-thought and yields an empty
+# verdict (the exact judge-empty bug from memory). Give it room to think AND emit the
+# small JSON; the verdict itself is tiny, so this is spent only when the model thinks.
+_MAX_TOKENS = 8192
 
 _SYSTEM_PROMPT = (
     "You classify what a user's message MEANS as feedback on the assistant's "
@@ -154,7 +157,7 @@ class FeedbackClassifier:
         self,
         provider_registry: ProviderRegistry,
         *,
-        timeout_s: float = 4.0,
+        timeout_s: float = 45.0,
         abstain_threshold: float = 0.5,
     ) -> None:
         self._registry = provider_registry
