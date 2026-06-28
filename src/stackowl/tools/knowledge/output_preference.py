@@ -77,8 +77,10 @@ class SetOutputPreferenceTool(Tool):
         return (
             "Persist a durable output-format preference that is then ENFORCED on "
             "EVERY future reply, on every channel, deterministically (not a hint "
-            "the model may ignore). Call this whenever the user expresses how they "
-            "want responses formatted — in ANY language. "
+            "the model may ignore). This is THE tool for remembering HOW the user "
+            "wants output formatted — when they ask you to remember a format, say "
+            "they like the current formatting, or want you to always/never do "
+            "something to the OUTPUT (in ANY language). "
             "Set one style field at a time: key=<field>, value=<value>, where "
             f"fields are: {vocab}. "
             "(markdown=minimal strips asterisk bold/italics; links=titles renders "
@@ -88,7 +90,8 @@ class SetOutputPreferenceTool(Tool):
             "the 'tables' field. "
             "LANE: a standing FORMAT rule for all output. "
             "ANTI-LANE: do NOT use 'memory' for this — a recalled note is not "
-            "enforced; this tool is."
+            "enforced; this tool is. Do NOT use 'skill_manage' — that authors a "
+            "reusable step-by-step PROCEDURE, not a formatting preference."
         )
 
     @property

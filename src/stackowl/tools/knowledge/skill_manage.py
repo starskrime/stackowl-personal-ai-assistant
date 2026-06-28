@@ -97,13 +97,16 @@ class SkillManageTool(Tool):
             "agent: it has no persona or name of its own, it never runs on a schedule, "
             "and it never messages the user — to create a named AGENT that acts on a "
             "schedule or reaches the user proactively, use owl_build instead. "
-            "action='create' writes a new procedure (full SKILL.md); 'edit' replaces "
-            "an existing skill's SKILL.md; 'patch' does a find/replace inside "
+            "action='create' writes a new procedure and REQUIRES both 'name' and the "
+            "full SKILL.md 'content' (never call create without 'content'); 'edit' "
+            "replaces an existing skill's SKILL.md; 'patch' does a find/replace inside "
             "SKILL.md; 'delete' removes a skill; 'enable'/'disable' toggle it "
             "without deleting. Every write is security-scanned, audited, and "
-            "restorable. ANTI-LANE: do NOT use this to READ a skill (use skill_view) "
-            "or to LIST skills (use skills_list); do NOT use it to remember a FACT "
-            "(use memory)."
+            "restorable. ANTI-LANE: do NOT use this to remember how the user wants "
+            "OUTPUT FORMATTED (no asterisks, links as titles, terse, etc.) — that is a "
+            "durable enforced output preference, use set_output_preference; do NOT use "
+            "it to READ a skill (use skill_view) or to LIST skills (use skills_list); "
+            "do NOT use it to remember a FACT (use memory)."
         )
 
     @property
@@ -124,7 +127,8 @@ class SkillManageTool(Tool):
                     "type": "string",
                     "description": (
                         "Full SKILL.md text (YAML frontmatter with name+description, "
-                        "then a markdown body). Required for create/edit."
+                        "then a markdown body). REQUIRED and non-empty for "
+                        "action='create' and 'edit' — an empty content is rejected."
                     ),
                 },
                 "category": {
@@ -141,6 +145,19 @@ class SkillManageTool(Tool):
                 },
             },
             "required": ["action"],
+            # HONEST SCHEMA (LS6): make 'content' (and 'name') genuinely required
+            # FOR action='create' so the model never sends an empty spec — the
+            # empty-content path fast-failed in ~3ms and tripped the same-tool
+            # circuit breaker. A top-level required list would wrongly mark content
+            # required for delete/enable/disable (which legitimately omit it), so
+            # the requirement is scoped to the create action via if/then.
+            "allOf": [
+                {
+                    "if": {"properties": {"action": {"const": "create"}},
+                           "required": ["action"]},
+                    "then": {"required": ["name", "content"]},
+                },
+            ],
         }
 
     @property
@@ -205,6 +222,11 @@ class SkillManageTool(Tool):
         content = str(kwargs.get("content", ""))
         category = self._opt_str(kwargs.get("category"))
 
+        # ponytail: no _elicit_missing resume here — the honest schema (LS6) makes
+        # the model supply 'content' on create, so the empty-spec cascade is closed
+        # at the source; the structured _err below is already a recoverable, actionable
+        # message if it ever does arrive empty. Upgrade path: reuse owl_build's
+        # _elicit_missing if a measured gap remains after routing lands.
         gate = self._validate_content(name, content, category)
         if gate is not None:
             return self._err(gate, t0)
