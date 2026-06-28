@@ -92,3 +92,19 @@ async def test_all_hits_owned_returns_empty_string() -> None:
         reset_services(token)
 
     assert out == ""
+
+
+async def test_relevant_block_names_a_loadable_tool_not_dead_cli_verb() -> None:
+    """PA1 — the load hint must name the skill_view TOOL (callable mid-turn), not the
+    /skill show CLI command (which the model cannot call). A dead verb here means the
+    single best skill recommendation routes to a no-op."""
+    token = set_services(
+        StepServices(skill_store=_Store(), embedding_registry=_EmbReg())
+    )
+    try:
+        out = await classify._gather_relevant_skills("q", limit=3)
+    finally:
+        reset_services(token)
+
+    assert "/skill show" not in out  # the dead CLI verb must be gone
+    assert "skill_view" in out  # the reachable load tool must be named

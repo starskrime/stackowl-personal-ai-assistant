@@ -332,8 +332,8 @@ async def _gather_relevant_skills(
 
     Per the Commit 3 sub-phase 3d operator vote:
     * K=3 surfaced max (token-bloat ceiling)
-    * Description + when_to_use only — body NOT included (agent can read full
-      playbook via ``/skill show <name>`` when it wants it)
+    * Description + when_to_use only — body NOT included (agent loads the full
+      playbook via the ``skill_view`` tool when it wants it)
 
     Returns ``""`` when skill_store or embedding_registry isn't wired (tests,
     dry-run, early boot before SkillsAssembly is built) or when nothing scores
@@ -402,7 +402,10 @@ async def _gather_relevant_skills(
         if sk.when_to_use:
             line += f" — _{sk.when_to_use[:160]}_"
         lines.append(line)
-    lines.append("(Use `/skill show <name>` for the full playbook.)")
+    # PA1 — the model loads a skill mid-turn via the skill_view TOOL, not the
+    # /skill show CLI command (which it cannot call). Match the verb the catalog
+    # injector uses (instruction_injector.py) so the only reachable load path is named.
+    lines.append("(Use `skill_view <name>` to load the full playbook.)")
     result = "\n".join(lines)
     log.engine.debug(
         "[pipeline] classify._gather_relevant_skills: exit",

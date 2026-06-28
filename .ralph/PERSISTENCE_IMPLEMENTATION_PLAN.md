@@ -45,9 +45,11 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
   re-derivations READ it instead of recomputing. No behavior change yet — pure consolidation + characterization test
   proving every old site now agrees with the one object. Kills the two-brains scatter (MR5).
 
-- [ ] **PA1 — Dead-verb fix.** classify.py:405 emits ``/skill show`` (a CLI command the model can't call). Replace with
-  the real loadable tool verb (`skill_view`). Test asserts the emitted verb names a tool present in the registry.
-  Grep ±20 lines first — if templated, fix the template. (MR1)
+- [x] **PA1 — Dead-verb fix.** DONE. classify.py `_gather_relevant_skills` now emits ``skill_view <name>``
+  (the reachable load tool) instead of ``/skill show <name>`` (a CLI command the model can't call mid-turn);
+  stale docstring updated too. Test asserts the block names a loadable tool, never the dead CLI verb. The
+  `/skill show` references in commands/skill_command.py are the real human CLI command — left intact.
+  Verified: classify suite (7) + skill injection/discovery journeys (6) + ruff + mypy green. (MR1)
 
 - [ ] **PA2 — Tighten the residual fail-open hole.** execute.py persistence check: the final `not seen_giveup` branch
   accepts on judge error. Close the residual case — judge erred on its ONLY pass AND no give-up ever vetted AND budget
