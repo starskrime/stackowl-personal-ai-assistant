@@ -3,7 +3,18 @@
 Spec: [[TRUST_ARCHITECTURE.md]]. Build the FULL fix, honesty-first, no patches.
 Method: subagent-driven, story-granular commits, QA+dev review, gateway/eval test per story, reuse-first. Ships ON.
 
-## STATUS: TS1+TS2 @9d421e82 ✅ · TS3 @140739a7 ✅ · TS4 @743c8d91 ✅ · TS5+TS6 @90a64bce ✅ · TS7+TS8 @0572643c ✅ · TS10 @32e6e1da ✅ · TS9+TS11 @6c22cda3 ✅ — next: TS12 then TS13
+## STATUS: TS1+TS2 @9d421e82 ✅ · TS3 @140739a7 ✅ · TS4 @743c8d91 ✅ · TS5+TS6 @90a64bce ✅ · TS7+TS8 @0572643c ✅ · TS10 @32e6e1da ✅ · TS9+TS11 @6c22cda3 ✅ · TS12 @48dee38a ✅ · TS13 ✅ (live re-test PASSED) — ARC COMPLETE
+
+## TRUST ARC COMPLETE — all stories shipped + pushed; trust code DEPLOYED (boot green, census ok)
+TS13 live re-test on the real backend: real model created "Brain" as a scheduled owl
+(CronTrigger every 2h, goal "find and share fresh AI news") → reachable in registry →
+job owl_lifecycle-Brain projected @ every 2h → pause via OwlScheduleTool disabled the job
+and kept the owl (recoverable). Honesty/grounding/empty-cycle proven in
+tests/acceptance/test_trust_acceptance.py. Server restarted onto the trust code; boot green,
+reachability census ok (5 subsystems), OwlScheduleTool + capability manifest + gates all reachable.
+FOLLOW-UPS (non-blocking, logged): per-owl daily research budget + dedup (reuse BudgetGovernor/cosine);
+partial-grounding husk (entity-in-source); floor-message localization; tie capability manifest to a
+real scheduler/proactive health contributor.
 
 ## Epic T1 — Stop the lie (ADR-T2 + ADR-T1)
 - **TS1. effect_class on tools**: add `effect_class` to ToolManifest (`creates_persistent_entity|sends_message|schedules|None`). Tag owl_build, skill_manage, cronjob, send_file/telegram send, etc. Read-only tools = None.
