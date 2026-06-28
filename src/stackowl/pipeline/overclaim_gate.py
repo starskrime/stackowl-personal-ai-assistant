@@ -15,20 +15,32 @@ from stackowl.pipeline.state import PipelineState
 def _is_overclaim(state: PipelineState) -> tuple[bool, str | None]:
     """Return (True, culprit) if the current draft is a structural overclaim.
 
-    Conditions (ALL must hold):
-    - draft responses are non-empty
-    - no response is already an honest floor (is_floor=True)
-    - delivered_successes is empty (nothing crossed the OUT boundary)
-    - at least one tool failed/bounced: unrecovered consequential failure OR
-      a no-progress bounce recorded by the TPS tracker
+    Two INDEPENDENT triggers (an affirmative non-floor draft fires the first that
+    holds); both read MEASURED ledger truth, never the claim prose:
 
-    A pure conversational/clarify turn (0 tool calls, no failures, no no_progress_tools)
-    is CLEARED — never blocked.
+    1. MEASURED effect veto (ADR-T2 / TS3) — the turn invoked a tool that declared a
+       durable ``effect_class`` (creates_persistent_entity / sends_message / schedules)
+       whose result was NOT verified==True. DEFAULT-DENY: verified∈{False, unknown} or a
+       plain failure all qualify (``state.unverified_effects`` is non-empty). The burden
+       is on PROOF — absence of a verified receipt vetoes a "✅ done" claim regardless of
+       how richly it is phrased, so it cannot be gamed by wording. ``unknown`` is NOT
+       success — it routes to the floor.
+    2. STRUCTURAL give-up (the original) — nothing crossed the OUT boundary
+       (``delivered_successes`` empty) AND at least one tool failed/bounced (an
+       unrecovered consequential failure OR a TPS no-progress bounce).
+
+    The empty-draft and already-floor guards clear both. A pure conversational/clarify
+    turn (no effect-classed tool, no failures, no no_progress_tools) is CLEARED.
     """
     if not state.responses or all(not c.content.strip() for c in state.responses):
         return (False, None)
     if any(getattr(c, "is_floor", False) for c in state.responses):
         return (False, None)
+    # Trigger 1 — MEASURED: an unproven durable effect vetoes the affirmative draft
+    # FIRST, before the delivery clear: a turn that delivered ONE thing but could not
+    # prove it created the agent must still not claim the agent exists.
+    if state.unverified_effects:
+        return (True, state.unverified_effects[0])
     if state.delivered_successes:
         # Something crossed the OUT boundary — legitimate delivery.
         return (False, None)

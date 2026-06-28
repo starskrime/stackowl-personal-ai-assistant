@@ -459,6 +459,7 @@ async def _try_substitute(
                     # a sibling that also CLAIMED success but produced nothing (verified=False)
                     # is not a route-around, it is a second false win.
                     verified=sib_result.verified,
+                    effect_class=sib.manifest.effect_class,  # TS3 — carry the durable-effect class
                 )
                 if not is_trustworthy_success(sib_result.success, sib_result.verified):
                     log.engine.info(
@@ -691,11 +692,24 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             e.failed for e in recovery_context.get_recovery()
             if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
         )
+        # ADR-T2 / TS3 — names of tools that declared a durable EFFECT (effect_class
+        # set: creates_persistent_entity / sends_message / schedules) whose result was
+        # NOT MEASURED verified==True. DEFAULT-DENY: verified∈{False, None(unknown)} or
+        # a plain failure all qualify — absence of a verified receipt = unproven effect.
+        # The ledger-driven overclaim veto reads this off immutable state (the live
+        # ContextVar may be unbound by the time the gate runs) and floors an affirmative
+        # non-floor draft that claims an effect we cannot prove. Keys on effect_class
+        # PRESENCE, never on the answer prose.
+        unverified_effects = tuple(
+            o.name for o in outcomes
+            if o.effect_class is not None and o.verified is not True
+        )
         return state.evolve(
             consequential_failures=failures,
             consequential_successes=successes,
             delivered_successes=delivered,
             recovered_consequential=recovered,
+            unverified_effects=unverified_effects,
             consequential_snapshot_taken=True,
         )
     except Exception as exc:  # B5 — never break the turn; fall back to the live ledger
@@ -1143,6 +1157,7 @@ async def _run_with_tools(
                     # The tool never started — no side effect was attempted, so this
                     # must not count as an unachieved consequential give-up.
                     side_effect_committed=False,
+                    effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
                 )
                 return f"{TOOL_FAILED_MARKER}Not run — the turn is stopping at your request."
 
@@ -1175,6 +1190,7 @@ async def _run_with_tools(
                 tool_outcome_ledger.record_tool_outcome(
                     name=name, action_severity=t.manifest.action_severity, success=False,
                     side_effect_committed=False,
+                    effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
                 )
                 # G2 — a missing-param refusal is zero-progress: advance the streak so
                 # a weak model that omits a required arg on every call gets bounced.
@@ -1216,6 +1232,7 @@ async def _run_with_tools(
                 )
                 tool_outcome_ledger.record_tool_outcome(
                     name=name, action_severity=t.manifest.action_severity, success=False,
+                    effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
                 )
                 # G1 — a timeout is zero-progress: advance the streak so a tool that
                 # keeps timing out gets bounced rather than spiralling the budget.
@@ -1232,6 +1249,7 @@ async def _run_with_tools(
                 # unachieved outcome, so the honest floor owns the turn. None ⇒
                 # byte-identical.
                 verified=r.verified,
+                effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
             )
             # TurnProgressTracker — update from this REAL completed dispatch. A
             # TRUSTWORTHY success resets the streak; ANY non-trustworthy result (a

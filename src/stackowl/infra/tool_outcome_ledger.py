@@ -32,6 +32,13 @@ class ToolOutcome:
     # False ⇒ the tool claimed success but the effect was NOT observed: an effectful
     # `verified=False` is an UNACHIEVED outcome even though `success` is True.
     verified: bool | None = None
+    # ADR-T2 / TS3 — the tool's declared durable-effect class (mirrors
+    # ToolManifest.effect_class): "creates_persistent_entity" | "sends_message" |
+    # "schedules". None ⇒ read-only / no durable effect (the default). The
+    # ledger-driven overclaim veto demands a MEASURED verified==True receipt before a
+    # success of an effect-classed tool may stand — an effect-classed outcome whose
+    # verified is NOT True (False OR unknown) is an unproven effect (default-deny).
+    effect_class: str | None = None
 
 
 def is_effectful_failure(
@@ -72,7 +79,7 @@ def reset(token: Token[tuple[ToolOutcome, ...] | None]) -> None:
 
 def record_tool_outcome(
     *, name: str, action_severity: str, success: bool, side_effect_committed: bool = True,
-    verified: bool | None = None,
+    verified: bool | None = None, effect_class: str | None = None,
 ) -> None:
     """Record one dispatched tool's outcome. No-op (logged) when unbound; never raises.
 
@@ -80,7 +87,9 @@ def record_tool_outcome(
     pre-execution refusal (bad/missing args, unavailable store) so it is excluded from
     the unachieved-consequential tally — see :func:`is_effectful_failure`. ``verified``
     mirrors ToolResult.verified (None ⇒ not checked, byte-identical; False ⇒ claimed
-    but unobserved → an effectful failure).
+    but unobserved → an effectful failure). ``effect_class`` mirrors
+    ToolManifest.effect_class (None ⇒ read-only) so the overclaim veto can default-deny
+    an effect-classed tool whose effect was not MEASURED verified==True.
     """
     current = _outcomes.get()
     if current is None:
@@ -94,6 +103,7 @@ def record_tool_outcome(
         ToolOutcome(
             name=name, action_severity=action_severity, success=success,
             side_effect_committed=side_effect_committed, verified=verified,
+            effect_class=effect_class,
         ),
     ))
 

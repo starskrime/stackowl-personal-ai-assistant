@@ -234,6 +234,17 @@ class PipelineState(BaseModel, frozen=True):
     # Empty/False = no change to today's paths.
     delivered_successes: tuple[str, ...] = ()
     budget_capped: bool = False
+    # ADR-T2 / TS3 — MEASURED overclaim veto input. Names of tools that declared a
+    # durable ``effect_class`` (creates_persistent_entity / sends_message / schedules)
+    # whose result this turn was NOT verified==True. DEFAULT-DENY: a ``verified`` of
+    # False OR None (unknown), or a plain failure, all land a tool's name here — the
+    # burden is on PROOF, and ``unknown`` is NOT success. Stamped by execute's
+    # consequential snapshot (rides immutable state, since the live tool_outcome_ledger
+    # ContextVar may be unbound by the time the overclaim gate runs). The gate floors an
+    # affirmative non-floor draft when this is non-empty — keyed on the LEDGER (effect
+    # presence), never on the claim prose. Empty () = byte-identical: no effect-classed
+    # tool ran, or every one returned a verified receipt.
+    unverified_effects: tuple[str, ...] = ()
     # Turn-progress supervisor (TPS). ``turn_made_progress`` defaults True so any
     # non-tool path is byte-identical (never floored as no-progress). execute stamps
     # False + ``no_progress_tools`` when the tracker saw no PROGRESS dispatch.
