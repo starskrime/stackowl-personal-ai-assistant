@@ -424,3 +424,51 @@ async def test_traversal_name_blocked(wired) -> None:  # noqa: ANN001
         res = await tool.execute(action="create", name=bad, content=_skill_md("x"))
         assert res.success is False, bad
     assert reindex_calls == []
+
+
+# ----------------------------------------------------- TS2 self-verification
+
+
+async def test_create_stamps_artifact_and_verifies_true(wired) -> None:  # noqa: ANN001
+    """TS2 — create stamps the SKILL.md path and verify() MEASURES it exists on
+    disk (re-read), so the created skill is a trustworthy success."""
+    import time as _time
+
+    tool, _store, _calls = wired
+    res = await tool.execute(action="create", name="real-skill", content=_skill_md("real-skill"))
+    assert res.success, res.error
+    from stackowl.paths import StackowlHome
+
+    expected = StackowlHome.skills_dir() / "learned" / "real-skill" / "SKILL.md"
+    assert res.artifact_path == str(expected)
+    verdict = await tool.verify({}, res, started_at=_time.time() - 5)
+    assert verdict is True
+
+
+async def test_verify_false_when_artifact_absent(wired) -> None:  # noqa: ANN001
+    """TS2 — a claimed create whose SKILL.md is NOT on disk → verify=False (the
+    create's ok flag is never trusted; reality is re-read)."""
+    import time as _time
+
+    from stackowl.tools.base import ToolResult
+
+    tool, _store, _calls = wired
+    claimed = ToolResult(
+        success=True, output="Created skill 'ghost'.", duration_ms=1.0,
+        artifact_path="/nonexistent/ghost/SKILL.md",
+    )
+    verdict = await tool.verify({}, claimed, started_at=_time.time())
+    assert verdict is False
+
+
+async def test_verify_none_when_no_artifact_stamped(wired) -> None:  # noqa: ANN001
+    """TS2 — edit/patch/delete stamp no artifact → verify() returns None ⇒
+    byte-identical (back-compat for the non-create actions)."""
+    import time as _time
+
+    from stackowl.tools.base import ToolResult
+
+    tool, _store, _calls = wired
+    edited = ToolResult(success=True, output="Edited skill 'x'.", duration_ms=1.0)
+    verdict = await tool.verify({}, edited, started_at=_time.time())
+    assert verdict is None

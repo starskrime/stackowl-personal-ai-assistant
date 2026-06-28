@@ -149,6 +149,7 @@ class SendFileTool(Tool):
             action_severity="consequential",
             commit_coupling="unconfirmed",
             toolset_group=_TOOLSET_GROUP,
+            effect_class="sends_message",
         )
 
     def post_condition(

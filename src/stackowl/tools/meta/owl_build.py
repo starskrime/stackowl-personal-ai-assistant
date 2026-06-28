@@ -168,6 +168,7 @@ class OwlBuildTool(Tool):
             action_severity="consequential",
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
+            effect_class="creates_persistent_entity",
         )
 
     # ------------------------------------------------------------------ dispatch
@@ -237,6 +238,108 @@ class OwlBuildTool(Tool):
                 extra={"_fields": {"action": spec.action, "name": spec.name}},
             )
             return self._err(f"owl_build failed: {exc}", t0)
+
+    # --------------------------------------------------------- verification (TS2)
+
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """ADR-T2 / TS2 — MEASURE that a created owl truly landed, by RE-READING the
+        world, never trusting the create's own ``success`` flag (this is where the
+        "0 owls but ✅" lie dies). Runs at the ``__call__`` seam after a success the
+        tool asserted; the create path stamps the owl name in ``artifact_path``, so
+        edit/retire (no stamp) return ``None`` ⇒ byte-identical (out of TS2 scope).
+
+        Three world-reads — ANY observed failure ⇒ ``False`` (``success`` is NOT
+        mutated; the claim-vs-confirmation split is preserved):
+          1. the owl is present in the LIVE/reachable registry,
+          2. its persisted YAML entry exists + parses + carries the owl,
+          3. if the persisted manifest is ``scheduled``, its projected job row exists.
+        A read that genuinely cannot be performed (no registry / no db wired) ⇒
+        ``None`` (no opinion — never flip a real success on an inability to look).
+        """
+        name = result.artifact_path
+        if not name:
+            return None  # not a create success — edit/retire are out of TS2 scope
+        registry = get_services().owl_registry
+        if registry is None:
+            log.tool.warning(
+                "owl_build.verify: no owl registry to observe — no opinion",
+                extra={"_fields": {"owl": name}},
+            )
+            return None
+        # READ 1 — present in the LIVE/reachable registry (not a stale list).
+        try:
+            manifest = registry.get(name)
+        except Exception:  # OwlNotFoundError (or unreadable) — claimed, but absent
+            log.tool.warning(
+                "owl_build.verify: claimed created but owl NOT in live registry",
+                extra={"_fields": {"owl": name}},
+            )
+            return False
+        # READ 2 — the durable YAML record exists + parses + carries this owl.
+        if not self._yaml_has_owl(name):
+            log.tool.warning(
+                "owl_build.verify: claimed created but owl absent from persisted yaml",
+                extra={"_fields": {"owl": name}},
+            )
+            return False
+        # READ 3 — a scheduled owl MUST have its projected job row (no-op on_demand).
+        if getattr(manifest, "lifecycle", "on_demand") == "scheduled":
+            job_present = await self._scheduled_job_exists(name)
+            if job_present is None:
+                return None  # scheduler/db unobservable — no opinion
+            if not job_present:
+                log.tool.warning(
+                    "owl_build.verify: scheduled owl has NO projected job row",
+                    extra={"_fields": {"owl": name}},
+                )
+                return False
+        log.tool.debug(
+            "owl_build.verify: all world-reads passed — owl observed",
+            extra={"_fields": {"owl": name}},
+        )
+        return True
+
+    @staticmethod
+    def _yaml_has_owl(name: str) -> bool:
+        """Read-back: does the persisted owls YAML carry an entry named ``name``?
+
+        Reuses :func:`load_yaml` (total — returns ``{}`` on missing/invalid, never
+        raises), so a missing file, an unparseable file, or an absent entry all read
+        as ``False`` (the durable record is not trustworthily present)."""
+        from stackowl.commands.config_helpers import load_yaml
+
+        data = load_yaml(config_path())
+        owls = data.get("owls")
+        if not isinstance(owls, list):
+            return False
+        return any(isinstance(e, dict) and e.get("name") == name for e in owls)
+
+    @staticmethod
+    async def _scheduled_job_exists(name: str) -> bool | None:
+        """Read-back for a scheduled owl: is its projected job row present?
+
+        ``None`` when the scheduler/db cannot be observed (no opinion). Keys on the
+        SAME deterministic id the projection writes (:func:`_job_id_for`) so the
+        check can never drift from the writer."""
+        db = get_services().db_pool
+        if db is None:
+            return None
+        from stackowl.scheduler.owl_lifecycle import _job_id_for
+        from stackowl.scheduler.scheduler import JobScheduler
+
+        try:
+            jobs = await JobScheduler(db=db).list_jobs()
+        except Exception as exc:  # B5 — unobservable, never raise into the seam
+            log.tool.warning(
+                "owl_build.verify: job read-back failed — no opinion",
+                exc_info=exc,
+                extra={"_fields": {"owl": name}},
+            )
+            return None
+        target = _job_id_for(name)
+        return any(getattr(j, "job_id", None) == target for j in jobs)
 
     # ------------------------------------------------------------------ consent
 
@@ -560,7 +663,13 @@ class OwlBuildTool(Tool):
         if dropped:
             msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
         msg += " Delegate to it with delegate_task."
-        return self._ok(msg, t0, extra={"owl": manifest.name, "op": "create"})
+        # Stamp the created owl's NAME as the artifact locator so verify() (TS2) can
+        # re-read the world for exactly this owl. Only create sets it → verify() is a
+        # no-op for edit/retire (out of TS2 scope).
+        return self._ok(
+            msg, t0, extra={"owl": manifest.name, "op": "create"},
+            artifact_path=manifest.name,
+        )
 
     # ------------------------------------------------------------------ helpers
 
@@ -836,13 +945,21 @@ class OwlBuildTool(Tool):
     # ------------------------------------------------------------------ results
 
     @staticmethod
-    def _ok(output: str, t0: float, *, extra: dict[str, object] | None = None) -> ToolResult:
+    def _ok(
+        output: str,
+        t0: float,
+        *,
+        extra: dict[str, object] | None = None,
+        artifact_path: str | None = None,
+    ) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "owl_build.execute: exit",
             extra={"_fields": {"success": True, "duration_ms": duration_ms, **(extra or {})}},
         )
-        return ToolResult(success=True, output=output, duration_ms=duration_ms)
+        return ToolResult(
+            success=True, output=output, duration_ms=duration_ms, artifact_path=artifact_path,
+        )
 
     @staticmethod
     def _err(msg: str, t0: float) -> ToolResult:

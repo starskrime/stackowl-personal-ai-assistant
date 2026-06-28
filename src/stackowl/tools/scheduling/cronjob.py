@@ -134,6 +134,7 @@ class CronjobTool(Tool):
             action_severity="write",
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
+            effect_class="schedules",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

@@ -151,6 +151,7 @@ class SkillManageTool(Tool):
             action_severity="consequential",
             commit_coupling="transactional",
             toolset_group="knowledge_write",
+            effect_class="creates_persistent_entity",
         )
 
     # ------------------------------------------------------------------ dispatch
@@ -238,9 +239,13 @@ class SkillManageTool(Tool):
             details={"category": category} if category else None,
         )
         reindex_note = await self._reindex(store)
+        # Stamp the on-disk SKILL.md as the artifact locator so verify() (TS2) can
+        # re-read the world and confirm the skill truly persisted. Only create stamps
+        # it → verify() is a no-op for edit/patch/delete/enable/disable.
         return self._ok(
             f"Created skill '{name}'." + reindex_note, t0,
             extra={"skill": name, "op": "create"},
+            artifact_path=str(target_dir / _SKILL_MD),
         )
 
     async def _edit(
@@ -575,16 +580,40 @@ class SkillManageTool(Tool):
             "(reindex pending — retrieval will pick it up on next boot)."
         )
 
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """ADR-T2 / TS2 — MEASURE that a created skill artifact truly exists on disk,
+        by RE-READING it, never trusting the create's ``success`` flag. Only create
+        stamps ``artifact_path`` (the SKILL.md), so edit/patch/delete/enable/disable
+        return ``None`` ⇒ byte-identical. Reuses the shared existence oracle
+        :func:`verify_artifact`: a present, non-empty, this-run file ⇒ ``True``;
+        absent/empty ⇒ ``False``; an unobservable FS ⇒ ``None`` (no opinion)."""
+        if not result.artifact_path:
+            return None
+        from stackowl.tools.verification import verify_artifact
+
+        observed = verify_artifact(result.artifact_path, not_before=started_at)
+        if observed is False:
+            log.tool.warning(
+                "skill_manage.verify: claimed created but SKILL.md absent/empty",
+                extra={"_fields": {"path": result.artifact_path}},
+            )
+        return observed
+
     @staticmethod
     def _ok(
         output: str, t0: float, *, extra: dict[str, object] | None = None,
+        artifact_path: str | None = None,
     ) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "skill_manage.execute: exit",
             extra={"_fields": {"success": True, "duration_ms": duration_ms, **(extra or {})}},
         )
-        return ToolResult(success=True, output=output, duration_ms=duration_ms)
+        return ToolResult(
+            success=True, output=output, duration_ms=duration_ms, artifact_path=artifact_path,
+        )
 
     @staticmethod
     def _err(msg: str, t0: float) -> ToolResult:

@@ -107,6 +107,16 @@ class ToolManifest(BaseModel):
     commit_coupling: Literal[
         "transactional", "idempotent_keyed", "unconfirmed"
     ] | None = None
+    # ADR-T2 / TS1 — the KIND of durable world-effect this tool produces, so the
+    # honesty layer (overclaim gate, TS3) can demand a MEASURED `verified==True`
+    # before a success of that class is allowed into the answer:
+    #   "creates_persistent_entity" — mints a standing record (an owl, a skill).
+    #   "sends_message"             — emits an outbound message to the user.
+    #   "schedules"                 — installs a recurring/future job.
+    # None ⇒ read-only / no durable effect (the default — existing tools unchanged).
+    effect_class: Literal[
+        "creates_persistent_entity", "sends_message", "schedules"
+    ] | None = None
 
 
 class Tool(ABC):
