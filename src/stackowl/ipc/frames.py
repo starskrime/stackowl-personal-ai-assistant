@@ -66,6 +66,7 @@ class IngressFrame(_Frame):
     trace_id: str
     chat_id: int | str | None = None
     is_reply: bool = False
+    is_direct: bool = False  # ADR-D — carries the 1:1 vocative-routing gate across IPC.
 
 
 class ChunkFrame(_Frame):

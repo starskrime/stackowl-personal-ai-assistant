@@ -18,6 +18,7 @@ def ingress_to_frame(msg: IngressMessage) -> IngressFrame:
         trace_id=msg.trace_id,
         chat_id=msg.chat_id,
         is_reply=msg.is_reply,
+        is_direct=msg.is_direct,
     )
 
 
@@ -29,4 +30,5 @@ def frame_to_ingress(frame: IngressFrame) -> IngressMessage:
         trace_id=frame.trace_id,
         chat_id=frame.chat_id,
         is_reply=frame.is_reply,
+        is_direct=frame.is_direct,
     )

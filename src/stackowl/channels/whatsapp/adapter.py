@@ -194,6 +194,9 @@ class WhatsAppChannelAdapter(ChannelAdapter):
             # may overwrite. The session_id is a lossy hash, so the JID itself
             # rides the chunk (resolved back from `_targets` on the proactive path).
             chat_id=jid,
+            # ADR-D — a WhatsApp group jid ends with "@g.us"; a 1:1 chat does not.
+            # Only the 1:1 chat enables bare-name vocative routing.
+            is_direct=not jid.endswith("@g.us"),
         )
         self._queue.put_nowait(ingress)
         # Record the session→JID map + proactive-only fallback.

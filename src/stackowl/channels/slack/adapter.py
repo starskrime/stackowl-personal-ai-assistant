@@ -792,6 +792,10 @@ class SlackChannelAdapter(ChannelAdapter):
             # channel — never the shared `_last_target`, which a newer concurrent
             # inbound event may overwrite before this turn finishes.
             chat_id=channel_id,
+            # ADR-D — a Slack IM (direct message) channel id starts with "D";
+            # only there does bare-name vocative routing apply. Public/private
+            # channels (C…/G…) stay @Name-only to avoid human-name hijack.
+            is_direct=isinstance(channel_id, str) and channel_id.startswith("D"),
         )
         # Record the session→target map (Phase B) + single-terminal fallback for
         # best-effort callers that carry no explicit target.

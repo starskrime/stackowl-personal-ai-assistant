@@ -548,6 +548,9 @@ class DiscordChannelAdapter(ChannelAdapter):
             channel=self.channel_name,
             trace_id=uuid4().hex,
             chat_id=channel_id,
+            # ADR-D — a Discord DM has no guild; only there does bare-name vocative
+            # routing apply. Guild (server) channels stay @Name-only.
+            is_direct=getattr(message, "guild", None) is None,
         )
         self._queue.put_nowait(ingress)
         # Record the session→channel-id map + the live channel handle so the

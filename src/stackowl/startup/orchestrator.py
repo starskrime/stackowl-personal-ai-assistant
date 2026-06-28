@@ -1920,6 +1920,7 @@ class StartupOrchestrator:
                         channel=msg.channel,
                         trace_id=msg.trace_id,
                         chat_id=msg.chat_id,
+                        is_direct=msg.is_direct,  # ADR-D — preserve the 1:1 gate on re-scan.
                     )
                     routed_decision = scanner.scan(routed_msg)
                     routed_input = (

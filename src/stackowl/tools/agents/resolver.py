@@ -18,6 +18,7 @@ have not yet migrated to the structured result; it unwraps ``.name``.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -63,13 +64,32 @@ def resolve_target(
     if to_owl:
         try:
             registry.get(to_owl)
-            return TargetResolution(to_owl, None)
+            return TargetResolution(to_owl, None)  # exact slug — byte-identical legacy path
         except OwlNotFoundError:
-            log.tool.warning(
-                "delegate_task.resolve: requested to_owl not found",
-                extra={"_fields": {"to_owl": to_owl}},
+            pass
+        # S8 — consistency with the gateway's vocative routing: an explicit target
+        # may be spoken in any case or as the human display_name ("Tony" → slug
+        # "tony"). Match case-folded against both `name` and `display`; a unique
+        # hit resolves, a token shared by >1 owl stays unresolved (never guess).
+        wanted = unicodedata.normalize("NFC", to_owl).casefold()
+        hits = {
+            m.name
+            for m in registry.list()
+            if unicodedata.normalize("NFC", m.name).casefold() == wanted
+            or unicodedata.normalize("NFC", m.display).casefold() == wanted
+        }
+        if len(hits) == 1:
+            resolved = next(iter(hits))
+            log.tool.info(
+                "delegate_task.resolve: case/display-folded to_owl → slug",
+                extra={"_fields": {"to_owl": to_owl, "resolved": resolved}},
             )
-            return TargetResolution(None, "target_not_found")  # do NOT fall through
+            return TargetResolution(resolved, None)
+        log.tool.warning(
+            "delegate_task.resolve: requested to_owl not found",
+            extra={"_fields": {"to_owl": to_owl, "ambiguous": len(hits) > 1}},
+        )
+        return TargetResolution(None, "target_not_found")  # do NOT fall through
 
     candidates = [m for m in registry.list() if m.name != caller]
 

@@ -170,6 +170,7 @@ class CLIAdapter(ChannelAdapter):
             session_id=self._session_id,
             channel=self.channel_name,
             trace_id=trace_id,
+            is_direct=True,  # ADR-D — the CLI is inherently a private 1:1 terminal.
         )
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:

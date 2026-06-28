@@ -874,6 +874,9 @@ class TelegramChannelAdapter(ChannelAdapter):
             # update may overwrite before this turn finishes (cross-deliver fix).
             chat_id=chat_id,
             is_reply=is_reply_to_bot,
+            # ADR-D — only a private 1:1 DM enables bare-name vocative routing; a
+            # group/supergroup/channel stays @Name-only to avoid human-name hijack.
+            is_direct=(chat is not None and getattr(chat, "type", None) == "private"),
         )
         self._queue.put_nowait(ingress)
         self._last_update_at = time.monotonic()
