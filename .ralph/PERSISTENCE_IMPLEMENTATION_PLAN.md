@@ -51,7 +51,14 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
   `/skill show` references in commands/skill_command.py are the real human CLI command — left intact.
   Verified: classify suite (7) + skill injection/discovery journeys (6) + ruff + mypy green. (MR1)
 
-- [ ] **PA2 — Tighten the residual fail-open hole.** execute.py persistence check: the final `not seen_giveup` branch
+- [x] **PA2 — Tighten the residual fail-open hole.** DONE. The persistence judge's final fail-open path (judge
+  never vetted + no give-up flagged) used to always accept an unvetted draft. Now a three-way split on the existing
+  ledger: effectful work → accept (consequential floor backstops); clean turn (no tools) → accept (never nudge
+  ordinary chat); substantive non-effectful work the judge never vetted → fail CLOSED, nudge ONCE (closure latch
+  `pa2_nudged`, bounded). Review caught a re-fire bug (fired every pass) → fixed with the latch. Also fixed a
+  pre-existing harness failure: `test_gateway_agent_does_not_give_up` (`_FakeResponse.usage` missing + judge fake
+  registered fast-only while the judge now resolves standard/local tiers). Verified: 49 persistence/judge/journey
+  tests green incl. the previously-red gateway test, ruff + mypy clean. execute.py persistence check: the final `not seen_giveup` branch
   accepts on judge error. Close the residual case — judge erred on its ONLY pass AND no give-up ever vetted AND budget
   remains → nudge once more / deliver honest floor, never silent-accept an unvetted draft. Must NOT regress the
   conversational happy-path (a plain chat turn with no tools still ships). (MR5)
@@ -75,6 +82,20 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
     scheduler/goal_execution.py — that path was wrong; find the actual one). Job-row whose handler doesn't resolve +
     a quiet-hours delivery → assert a durable NACK / dead-letter row exists IN THE STORE (read it back). Never a log.
     Cover BOTH delivery substrates in one fixture. (MR6/MR1)
+
+## RESUME NOTE (paused 2026-06-28 — cost stop at iteration 4/12)
+DONE + pushed to main: PA0 `7273edb6`, PA1 `2dcfcfdb`, PA2 (this commit). The `decide_delivery` seam
+(giveup_floor.py) is the hook point for PA3/PA4 — the escalation ladder reads/extends it.
+TO RESUME: re-launch `ralph-loop:ralph-loop` with this plan + PERSISTENCE_RALPH_PROMPT.md (set active:true,
+max_iterations:12 in .claude/ralph-loop.local.md), start at PA3.
+- PA3 next = the centerpiece: route the circuit-breaker-open event (`_circuit_open_refusal`, execute.py ~723)
+  into an escalation ladder (escalate model tier via llm_gateway fast→ceiling) instead of dead-ending. Keep the
+  containment (don't re-offer the dead tool); add the escalation it lacks. This is where "never give up" actually lives.
+- PA4/PA4b = stuck-owl hands to better-fit owl (reuse delegate_task/A2ADelegator/resolver) + synth-skill ownership
+  (synthesizer.py attaches the learned skill to its owning owl — born-unreachable fix, MR1/MR4).
+- PA5 = Murat's 2 ratchet gates (lying-success parametrized over registry; silent-delivery reads the STORE not a log)
+  + verify()-coverage ratchet on NEW tools. NOTE: locate the REAL quiet-hours/dead-letter path (scheduler/goal_execution.py
+  did NOT exist — that anchor was wrong; find the actual substrate before writing the gate).
 
 ## Completion promise (STOP only when ALL true)
 PA0–PA5 implemented, committed at sub-story granularity, pushed to main with hashes recorded here;

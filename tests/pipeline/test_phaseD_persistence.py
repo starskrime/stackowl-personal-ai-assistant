@@ -395,6 +395,9 @@ class _FakeResponse:
     def __init__(self, message: _FakeMessage) -> None:
         self.choices = [_FakeChoice(message)]
         self.model = "gemma4:e4b"
+        # Production OpenAIProvider.complete reads response.usage; None = no token
+        # accounting available (the SDK leaves it None when the endpoint omits it).
+        self.usage = None
 
 
 class _FakeCompletions:
@@ -622,8 +625,14 @@ def _build_services(
     preg = ProviderRegistry()
     preg.register_mock("secretary", provider, tier="powerful")
     preg.register_mock("powerful", provider, tier="powerful")
-    # The FAST tier serves BOTH triage routing AND the persistence judge.
-    preg.register_mock("router", _JudgeRoutingProvider(), tier="fast")
+    # The same fake serves triage routing AND the persistence judge. The judge now
+    # resolves the "standard" tier (primary) + "local" (fallback) — see
+    # build_persistence_check — so register the fake on those tiers, not only "fast",
+    # or the judge call cascades to the powerful provider and returns unparseable text.
+    judge = _JudgeRoutingProvider()
+    preg.register_mock("router", judge, tier="fast")
+    preg.register_mock("judge-standard", judge, tier="standard")
+    preg.register_mock("judge-local", judge, tier="local")
     return StepServices(
         memory_bridge=bridge,
         provider_registry=preg,

@@ -142,14 +142,16 @@ async def test_primary_delivered_no_directive(
 
 
 @pytest.mark.asyncio
-async def test_both_judges_raise_fail_open(
+async def test_both_judges_raise_clean_turn_fail_open(
     fake_state: PipelineState, fake_services: StepServices
 ) -> None:
-    # Primary AND fallback raise -> final fail-open (None), turn never blocked.
+    # CLEAN turn (NO tool work): primary AND fallback raise -> final fail-open (None),
+    # ordinary conversation is never blocked by a judge outage. The substantive-work
+    # slice of this case is closed in test_pa2_* below.
     check = build_persistence_check(
         fake_state, fake_services, primary=_RaisingJudge(), fallback=_RaisingJudge()
     )
-    assert await check("a give-up draft", ["browser_browse(failed)"]) is None
+    assert await check("a plain reply", []) is None
 
 
 @pytest.mark.asyncio
@@ -238,3 +240,105 @@ async def test_checker_built_for_delegated_turn(
     )
     assert check is not None
     assert await check("a fine answer", ["shell(ok)"]) is None
+
+
+# =========================================================================== #
+# PA2 — close the residual fail-OPEN hole: a substantive NON-EFFECTFUL turn the
+# judge never vetted (judge-error on every pass, no give-up flagged) must NOT ship
+# an unvetted draft. It has no consequential-floor backstop, so fail CLOSED: nudge
+# once. A CLEAN turn (no tools) and an EFFECTFUL turn (floor backstops it) still
+# accept, so the fix neither blocks ordinary chat nor double-handles effectful work.
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+async def test_pa2_substantive_uneffectful_unvetted_turn_nudges(
+    fake_state: PipelineState, fake_services: StepServices
+) -> None:
+    """THE HOLE: both judges fail to vet, no give-up was ever seen, but the turn ran
+    substantive (non-effectful) tool work the judge never vetted. Pre-fix this
+    silently accepted (returned None, shipping an unvetted draft). It must now nudge
+    once toward an honest, grounded answer."""
+    from stackowl.infra import tool_outcome_ledger
+
+    token = tool_outcome_ledger.bind()  # bound turn, NO effectful outcomes recorded
+    try:
+        # A long read/research synthesis: read tool ran (substantive), nothing effectful.
+        tool_outcome_ledger.record_tool_outcome(
+            name="read_file", action_severity="read", success=True,
+        )
+        check = build_persistence_check(
+            fake_state, fake_services, primary=_RaisingJudge(), fallback=_EmptyJudge()
+        )
+        directive = await check(
+            "Here is a synthesis I never let anything verify.", ["read_file(ok)"]
+        )
+        assert directive == PERSISTENCE_DIRECTIVE
+    finally:
+        tool_outcome_ledger.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_pa2_fires_at_most_once_across_reanswer_passes(
+    fake_state: PipelineState, fake_services: StepServices
+) -> None:
+    """`tools_tried` and the tally do not change between re-answer passes, so the PA2
+    block must NOT re-fire each pass and drain the nudge budget on an already-honest
+    draft. First unvetted-substantive pass → nudge; the second → accept (None)."""
+    from stackowl.infra import tool_outcome_ledger
+
+    token = tool_outcome_ledger.bind()
+    try:
+        tool_outcome_ledger.record_tool_outcome(
+            name="read_file", action_severity="read", success=True,
+        )
+        check = build_persistence_check(
+            fake_state, fake_services, primary=_RaisingJudge(), fallback=_EmptyJudge()
+        )
+        first = await check("Honest synthesis, take 1.", ["read_file(ok)"])
+        second = await check("Honest synthesis, take 2.", ["read_file(ok)"])
+        assert first == PERSISTENCE_DIRECTIVE  # nudge ONCE
+        assert second is None  # then accept — no budget-draining re-fire
+    finally:
+        tool_outcome_ledger.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_pa2_clean_conversational_turn_still_ships(
+    fake_state: PipelineState, fake_services: StepServices
+) -> None:
+    """REGRESSION GUARD: a plain conversational turn (no tool work) with the judge
+    down MUST still ship its draft — a judge outage must NOT start nudging ordinary
+    chat into a loop. Empty tools_tried => nothing to deliver-or-give-up => accept."""
+    from stackowl.infra import tool_outcome_ledger
+
+    token = tool_outcome_ledger.bind()  # bound but EMPTY: no tools ran
+    try:
+        check = build_persistence_check(
+            fake_state, fake_services, primary=_RaisingJudge(), fallback=_EmptyJudge()
+        )
+        assert await check("Sure, happy to chat about that.", []) is None
+    finally:
+        tool_outcome_ledger.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_pa2_effectful_turn_left_to_consequential_floor(
+    fake_state: PipelineState, fake_services: StepServices
+) -> None:
+    """A turn that ran EFFECTFUL work is backstopped by the consequential give-up
+    floor (has_consequential_snapshot), so the unvettable judge accepts here exactly
+    as before — the fix must not double-handle effectful turns with a spurious nudge."""
+    from stackowl.infra import tool_outcome_ledger
+
+    token = tool_outcome_ledger.bind()
+    try:
+        tool_outcome_ledger.record_tool_outcome(
+            name="write_file", action_severity="write", success=True,
+        )
+        check = build_persistence_check(
+            fake_state, fake_services, primary=_RaisingJudge(), fallback=_EmptyJudge()
+        )
+        assert await check("Wrote the file.", ["write_file(ok)"]) is None
+    finally:
+        tool_outcome_ledger.reset(token)

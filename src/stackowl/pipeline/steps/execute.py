@@ -125,9 +125,15 @@ def build_persistence_check(
     # draft. The closure is built once per turn and reused across provider
     # iterations, so this flag spans the whole turn.
     seen_giveup = False
+    # PA2 — fire the unvetted-substantive nudge AT MOST ONCE per turn. `tools_tried`
+    # and the consequential tally do not change between re-answer passes, so without
+    # this latch the block would re-fire every pass until the nudge budget drains —
+    # spurious round-trips on an already-honest read+summarise turn. One chance, then
+    # accept (the same one-shot discipline as `seen_giveup`, opposite resolution).
+    pa2_nudged = False
 
     async def _persistence_check(draft: str, tools_tried: list[str]) -> str | None:
-        nonlocal seen_giveup
+        nonlocal seen_giveup, pa2_nudged
         preg = services.provider_registry
         # PRIMARY judge — resolve (injected or "fast" tier) and rule. judge_delivery
         # is itself fail-OPEN: on a provider/parse error it returns
@@ -201,8 +207,7 @@ def build_persistence_check(
         # Fail-open: neither judge could vet (empty/unparseable/unavailable). Never
         # let that ship a draft after a real give-up was seen this turn — keep
         # nudging (the nudge ceiling + budget backstop bound the loop, then the
-        # honest floor delivers). With no prior give-up, preserve the historical
-        # fail-open behaviour and accept so the turn never blocks.
+        # honest floor delivers).
         if seen_giveup:
             log.engine.warning(
                 "[pipeline] execute: persistence judge failed open after a give-up "
@@ -210,6 +215,49 @@ def build_persistence_check(
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
             return PERSISTENCE_DIRECTIVE
+
+        # PA2 — close the residual fail-OPEN hole. We only reach here when the judge
+        # could NOT vet on EVERY pass this turn (`could_vet` was never True) and no
+        # give-up was ever flagged. Historically that always accepted, shipping a draft
+        # nothing vetted. Distinguish two un-vetted cases by the signals already on the
+        # turn ledger (no new heuristic, no keyword list):
+        #   * EFFECTFUL work (write/consequential tally non-zero) → the consequential
+        #     give-up floor (`has_consequential_snapshot`) is the backstop; accept here
+        #     exactly as before so the floor — not a doubled nudge — resolves it.
+        #   * A CLEAN turn (no tool work) had nothing to deliver-or-give-up → accept, so
+        #     a judge outage never starts nudging ordinary conversation.
+        #   * SUBSTANTIVE non-effectful work (tools ran, none effectful) the judge never
+        #     vetted is the genuinely-unsafe slice with NO backstop → fail CLOSED: nudge
+        #     once toward an honest, grounded answer. The provider's nudge ceiling (2) +
+        #     budget governor bound the loop, then the never-empty floor delivers.
+        # The latch makes "nudge once" literally true: after one PA2 nudge the model
+        # got its chance, so a still-unvettable re-answer pass falls through to accept
+        # rather than burning the remaining nudge budget on the same honest draft.
+        cons_failures, cons_successes = tool_outcome_ledger.consequential_tally()
+        backstopped = (cons_failures + cons_successes) > 0
+        if tools_tried and not backstopped and not pa2_nudged:
+            pa2_nudged = True
+            log.engine.warning(
+                "[pipeline] execute: persistence judge never vetted a substantive "
+                "non-effectful turn — nudging once toward an honest grounded answer",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "tools_tried": len(tools_tried),
+                }},
+            )
+            return PERSISTENCE_DIRECTIVE
+        # Accept fall-through — record which branch resolved a judge-down turn so the
+        # logs are not blind: effectful (floor backstops) / clean / already-nudged.
+        _branch = (
+            "effectful-backstop" if backstopped
+            else "already-nudged" if pa2_nudged
+            else "clean-turn" if not tools_tried
+            else "accepted"
+        )
+        log.engine.debug(
+            "[pipeline] execute: persistence judge unvettable — accepting draft",
+            extra={"_fields": {"trace_id": state.trace_id, "branch": _branch}},
+        )
         return None
 
     return _persistence_check
