@@ -6,13 +6,35 @@ import re
 import unicodedata
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.owls.dna import OwlDNA
+from stackowl.owls.trigger import TriggerSpec
 
 _NAME_RE = re.compile(r"^\w+$", re.UNICODE)
 _MAX_NAME_LEN = 16
+# Human display name ("Tony from Accounting") — spaces/case allowed, unlike the
+# `^\w+$` routing slug. Generous cap; this is what the user sees and speaks.
+_MAX_DISPLAY_NAME_LEN = 48
+# Non-word runs collapse to one separator when slugifying a display name → slug.
+_NON_WORD_RE = re.compile(r"\W+", re.UNICODE)
+
+
+def slugify_owl_name(display: str) -> str:
+    """Derive a routing slug (``^\\w+$``, ≤16, NFC) from a human display name.
+
+    "Tony from Accounting" → "Tony_from_Accou" (trimmed to the length cap). Used
+    so a user only ever picks a spoken name; the system name is generated silently.
+    Raises ManifestValidationError if nothing usable remains (e.g. all punctuation).
+    """
+    nfc = unicodedata.normalize("NFC", display).strip()
+    slug = _NON_WORD_RE.sub("_", nfc).strip("_")[:_MAX_NAME_LEN].rstrip("_")
+    if not slug or not _NAME_RE.match(slug):
+        from stackowl.exceptions import ManifestValidationError
+
+        raise ManifestValidationError("display_name", f"cannot derive a name from {display!r}")
+    return slug
 
 # The single source of truth for an owl's model tier. Reused by the owl-builder
 # (OwlSpec) and command parsing (`_VALID_TIERS = get_args(ModelTier)`) so the
@@ -26,6 +48,16 @@ class OwlAgentManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
+    # Human-facing name the user speaks ("Tony") — spaces/case allowed. Empty means
+    # "use name". Additive + defaulted so every existing owl loads byte-identical;
+    # read via the `display` property which falls back to `name`. (ADR-A/ADR-D)
+    display_name: str = ""
+    # Lifecycle: an on-demand owl replies only when summoned; a scheduled owl is
+    # woken by its `trigger` via the reconcile loop (ADR-B). Defaulted → existing
+    # owls are unchanged on-demand personas.
+    lifecycle: Literal["on_demand", "scheduled"] = "on_demand"
+    # How a scheduled owl is woken. None for on-demand; required for scheduled.
+    trigger: TriggerSpec | None = None
     role: str
     system_prompt: str
     model_tier: ModelTier
@@ -58,6 +90,11 @@ class OwlAgentManifest(BaseModel):
     created_by: str | None = None  # the owl that minted this owl (agent origin only)
     creation_ceiling: BoundsSpec | None = None  # creator's effective bounds at mint
 
+    @property
+    def display(self) -> str:
+        """The name to show/speak — display_name if set, else the routing slug."""
+        return self.display_name or self.name
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -71,3 +108,30 @@ class OwlAgentManifest(BaseModel):
 
             raise ManifestValidationError("name", f"invalid characters in owl name: {nfc!r}")
         return nfc
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, v: str) -> str:
+        nfc = unicodedata.normalize("NFC", v).strip()
+        if len(nfc) > _MAX_DISPLAY_NAME_LEN:
+            from stackowl.exceptions import ManifestValidationError
+
+            raise ManifestValidationError(
+                "display_name", f"exceeds {_MAX_DISPLAY_NAME_LEN} characters: {nfc!r}"
+            )
+        return nfc
+
+    @model_validator(mode="after")
+    def validate_lifecycle_trigger(self) -> OwlAgentManifest:
+        """A scheduled owl MUST carry a trigger; an on-demand owl MUST NOT.
+
+        Cross-field invariant so a contradictory spec (scheduled w/o trigger, or
+        on_demand w/ a trigger) can never be minted — caught before persistence.
+        """
+        from stackowl.exceptions import ManifestValidationError
+
+        if self.lifecycle == "scheduled" and self.trigger is None:
+            raise ManifestValidationError("trigger", "scheduled owl requires a trigger")
+        if self.lifecycle == "on_demand" and self.trigger is not None:
+            raise ManifestValidationError("trigger", "on_demand owl must not have a trigger")
+        return self

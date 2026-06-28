@@ -339,6 +339,14 @@ def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:
         "model_tier": manifest.model_tier,
         "temperature": manifest.temperature,
     }
+    # UniOwl (ADR-A/B): human name + lifecycle/trigger. Written only when non-default
+    # so existing on-demand owls keep byte-identical yaml entries.
+    if manifest.display_name:
+        entry["display_name"] = manifest.display_name
+    if manifest.lifecycle != "on_demand":
+        entry["lifecycle"] = manifest.lifecycle
+    if manifest.trigger is not None:
+        entry["trigger"] = manifest.trigger.model_dump(mode="json", exclude_none=True)
     if manifest.provider_name:
         entry["provider_name"] = manifest.provider_name
     if manifest.tools:
