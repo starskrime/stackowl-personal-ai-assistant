@@ -17,6 +17,7 @@ from stackowl.pipeline.budget import human_wait as human_wait_ctx
 from stackowl.pipeline.command_hint import surface_command_hint
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.grounding_gate import surface_grounding_gate
 from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS
@@ -136,6 +137,10 @@ class AsyncioBackend(OrchestratorBackend):
             # was delivered while a tool failed/bounced, replace it with the honest
             # floor. Structural — reads ledger state, not response text. Never raises.
             current = await surface_overclaim_gate(current)
+            # Grounding gate (ADR-T3 / TS5+TS6): strip fabricated citations (URLs the
+            # turn never retrieved) and floor an ungrounded external-info answer.
+            # Keyed on URLs + the retrieval ledger, never the prose. Never raises.
+            current = await surface_grounding_gate(current)
             # Phase 2 #2 — surface a CRITICAL (execute) step failure to the user
             # BEFORE deliver, so silence is replaced by a localized apology. Shared
             # with LangGraphBackend; self-healing (never raises into the backend).

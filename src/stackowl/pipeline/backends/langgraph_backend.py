@@ -32,6 +32,7 @@ from stackowl.pipeline.budget import human_wait as human_wait_ctx
 from stackowl.pipeline.command_hint import surface_command_hint
 from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.grounding_gate import surface_grounding_gate
 from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
@@ -63,6 +64,10 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     # non-floor draft with the honest floor when nothing was delivered and a tool
     # failed/bounced. Parity with AsyncioBackend. Never raises.
     surfaced = await surface_overclaim_gate(surfaced)
+    # Grounding gate (ADR-T3 / TS5+TS6): strip fabricated citations (URLs the turn
+    # never retrieved) and floor an ungrounded external-info answer. Keyed on URLs +
+    # the retrieval ledger, never the prose. Parity with AsyncioBackend. Never raises.
+    surfaced = await surface_grounding_gate(surfaced)
     surfaced = await surface_critical_failure(surfaced, get_services())
     # WS-D issue 3 — additive NL→command hint (+ routing-correction notice) on a
     # REAL answer. Gated by ui.command_hints (no-op when off); parity with
