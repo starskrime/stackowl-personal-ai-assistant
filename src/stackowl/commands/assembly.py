@@ -224,6 +224,16 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         tool_registry=deps.tool_registry,
     ))
 
+    # /owl — singular alias to the owl system (same surface as /owls), so a
+    # non-technical user reaches owls whether they type the singular or plural.
+    from stackowl.commands.owls_command import OwlCommand
+    _safe_register(registry, "owl", lambda: OwlCommand(
+        owl_registry=deps.owl_registry,
+        db=deps.db,
+        event_bus=deps.event_bus,
+        tool_registry=deps.tool_registry,
+    ))
+
     # /focus
     from stackowl.commands.focus_command import FocusCommand
     _safe_register(registry, "focus", lambda: FocusCommand(router=deps.router, event_bus=deps.event_bus))

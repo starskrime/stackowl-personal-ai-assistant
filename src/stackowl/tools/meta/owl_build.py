@@ -33,6 +33,7 @@ from stackowl.tools.meta.owl_build_guards import (
     count_agent_owls,
     name_quality_error,
 )
+from stackowl.tools.meta.owl_build_infer import infer_capability, suggest_display_name
 from stackowl.tools.meta.owl_build_spec import (
     MissingFields,
     OwlBuildSpec,
@@ -302,6 +303,24 @@ class OwlBuildTool(Tool):
             "owl_build.execute: eliciting missing create fields",
             extra={"_fields": {"name": missing.partial.name, "missing": list(missing.fields)}},
         )
+
+        # 1b. S5 — goal→type inference (fail-open). Fill capability/specialty from the
+        # goal and pre-suggest a name BEFORE asking, so the user is never asked "what
+        # type?" and the questions shrink to ~the name. If the LLM is unavailable or
+        # low-confidence this is a no-op and the loop below simply ASKS (the S4 path).
+        spec, name_suggestion = await self._infer_from_goal(missing.partial)
+        check0 = validate_owl_build_spec(spec)
+        if check0 is None:
+            # Inference closed every gap — mint with ZERO questions asked.
+            log.tool.info(
+                "owl_build.execute: create spec completed via inference (no questions asked)",
+                extra={"_fields": {"name": spec.name}},
+            )
+            return spec, None
+        if isinstance(check0, str):  # inference surfaced a hard (unfixable) error
+            return missing.partial, check0
+        missing = check0  # narrowed to whatever inference could not fill (e.g. name)
+
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
@@ -314,7 +333,7 @@ class OwlBuildTool(Tool):
                 "owl_build.execute: underspecified create off-TTY — fail closed (no ask)",
                 extra={"_fields": {"missing": list(missing.fields), "interactive": interactive}},
             )
-            return missing.partial, self._gap_message(missing.fields)
+            return spec, self._gap_message(missing.fields)
 
         gateway = get_services().clarify_gateway
         if gateway is None:
@@ -323,9 +342,8 @@ class OwlBuildTool(Tool):
                 exc_info=None,
                 extra={"_fields": {"missing": list(missing.fields)}},
             )
-            return missing.partial, self._gap_message(missing.fields)
+            return spec, self._gap_message(missing.fields)
 
-        spec = missing.partial
         # Bounded by the fixed create required set — terminates regardless of input.
         for _ in range(_MAX_ELICIT_ROUNDS):
             check = validate_owl_build_spec(spec)
@@ -333,6 +351,8 @@ class OwlBuildTool(Tool):
                 break  # complete (None) or a freshly surfaced hard error (str)
             field = check.fields[0]
             question = _FIELD_QUESTIONS.get(field, f"Please provide the owl's {field}.")
+            if field == "name" and name_suggestion:
+                question += f" (I suggest '{name_suggestion}' — reply with it or another name.)"
             try:
                 # 3. STEP — blocking ask + park until the user replies (or times out).
                 clarify_id = await gateway.ask(
@@ -371,6 +391,34 @@ class OwlBuildTool(Tool):
             extra={"_fields": {"name": spec.name}},
         )
         return spec, None
+
+    @staticmethod
+    async def _infer_from_goal(spec: OwlBuildSpec) -> tuple[OwlBuildSpec, str | None]:
+        """S5 pre-pass — fill missing capability/specialty from the goal and pre-suggest
+        a name, via a fast-tier LLM. The goal source is the spec's ``specialty`` (the
+        role sentence the agent passes through). Fail-open: on any miss the spec is
+        returned unchanged with no suggestion, and the caller falls back to ASKING."""
+        goal = (spec.specialty or "").strip()
+        if not goal:
+            return spec, None
+        # capability — only when it is the gap; keep the user's specialty if present.
+        if not spec.preset and not spec.explicit_tools:
+            inferred = await infer_capability(goal)
+            if inferred is not None:
+                preset, refined = inferred
+                update: dict[str, object] = {"preset": preset}
+                if not (spec.specialty and spec.specialty.strip()):
+                    update["specialty"] = refined
+                spec = spec.model_copy(update=update)
+                log.tool.info(
+                    "owl_build.execute: capability inferred from goal",
+                    extra={"_fields": {"name": spec.name, "preset": preset}},
+                )
+        # name — pre-suggest only when it is missing (the question seeds the suggestion).
+        name_suggestion: str | None = None
+        if not spec.name or not spec.name.strip():
+            name_suggestion = await suggest_display_name(goal)
+        return spec, name_suggestion
 
     @staticmethod
     def _merge_answer(spec: OwlBuildSpec, field: str, answer: str) -> OwlBuildSpec:

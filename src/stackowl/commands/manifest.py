@@ -33,6 +33,7 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "skill",
     "memory",
     "owls",
+    "owl",
     "focus",
     "urgent",
     "quiet",

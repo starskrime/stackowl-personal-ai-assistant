@@ -573,3 +573,17 @@ class OwlsCommand(SlashCommand):
         cmd = cls(owl_registry=owl_registry, db=db, event_bus=event_bus, tool_registry=tool_registry)
         CommandRegistry.instance().register(cmd)
         return cmd
+
+
+class OwlCommand(OwlsCommand):
+    """``/owl`` — singular alias of ``/owls`` (S6 entry point).
+
+    The slash entry to the owl system, so a non-technical user reaches owls
+    whether they type the singular or plural. Inherits the full surface
+    (``list``/``add``/``edit``/``remove``/``health``/``dna``/objectives); only the
+    command token differs. Registered unconditionally through the assembly spine.
+    """
+
+    @property
+    def command(self) -> str:
+        return "owl"
