@@ -43,3 +43,12 @@ class ProviderConfig(BaseModel):
     # ~80% of this as its total-context trim budget instead of the global default,
     # so a small-context model gets trimmed sooner and a large one less aggressively.
     context_chars: int | None = None
+    # Whether the endpoint supports NATIVE tool-calling (`tools=[...]` →
+    # `response.tool_calls`). True for every modern OpenAI-compatible / Ollama
+    # endpoint, so it is the default. When True we do NOT inject the text "ACTION:"
+    # tool catalog into the prompt — injecting it competes with native tool_calls
+    # and makes capable models emit a bare-JSON call as message *content* that the
+    # text parser can't dispatch (the call is then bounced and the turn fails). The
+    # text-protocol parser still runs as a fallback if a native call is ever absent.
+    # Set False only for a legacy endpoint that genuinely lacks native tool-calling.
+    supports_native_tools: bool = True

@@ -58,6 +58,45 @@ def test_parse_without_known_trusts_name_backcompat() -> None:
     assert parse_react_action(text) == ("web_search", {"query": "x"})
 
 
+# --------------------------------------------------------------------------- #
+# Bare-JSON tool call (native shape emitted as content) — symmetric with
+# looks_like_tool_call so a capable model's call is dispatched, not bounced.
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_bare_json_name_arguments() -> None:
+    text = '{"name": "skill_manage", "arguments": {"action": "create"}}'
+    assert parse_react_action(text, known={"skill_manage"}) == (
+        "skill_manage",
+        {"action": "create"},
+    )
+
+
+def test_parse_bare_json_alt_keys() -> None:
+    # tool/args and action/action_input variants the model may emit.
+    assert parse_react_action('{"tool": "web_search", "args": {"query": "x"}}') == (
+        "web_search",
+        {"query": "x"},
+    )
+    assert parse_react_action(
+        '{"action": "read_file", "action_input": {"path": "/etc/hosts"}}'
+    ) == ("read_file", {"path": "/etc/hosts"})
+
+
+def test_parse_bare_json_no_args_is_empty_dict() -> None:
+    assert parse_react_action('{"name": "list_tools"}') == ("list_tools", {})
+
+
+def test_parse_bare_json_unknown_name_rejected() -> None:
+    text = '{"name": "definitely_not_a_tool", "arguments": {}}'
+    assert parse_react_action(text, known={"web_search"}) is None
+
+
+def test_parse_bare_json_not_a_tool_call_returns_none() -> None:
+    # An object-shaped value with no name key is not a tool call.
+    assert parse_react_action('{"answer": "Paris", "confidence": 0.9}') is None
+
+
 def test_looks_like_tool_call_detects_action_block() -> None:
     from stackowl.providers._react import looks_like_tool_call
 
@@ -226,13 +265,16 @@ class _FakeClient:
         self.chat = _FakeChat(_FakeCompletions(responses))
 
 
-def _make_provider(client: _FakeClient) -> OpenAIProvider:
+def _make_provider(
+    client: _FakeClient, *, supports_native_tools: bool = True
+) -> OpenAIProvider:
     config = ProviderConfig(
         name="ollama",
         protocol="openai",
         base_url="http://localhost:11434/v1",
         default_model="gemma4:e4b",
         tier="local",
+        supports_native_tools=supports_native_tools,
     )
     provider = OpenAIProvider(config, api_key="")
     provider._client = client  # type: ignore[assignment]
@@ -253,7 +295,8 @@ async def test_react_fallback_dispatches_tool_and_returns_final(
     # Call 2: plain final answer.
     final_msg = _FakeMessage(content="It is sunny in Tokyo.", tool_calls=None)
     client = _FakeClient([_FakeResponse(react_msg), _FakeResponse(final_msg)])
-    provider = _make_provider(client)
+    # Legacy endpoint WITHOUT native tool-calls — the text catalog IS injected here.
+    provider = _make_provider(client, supports_native_tools=False)
 
     dispatched: list[tuple[str, dict[str, Any]]] = []
 
@@ -299,6 +342,58 @@ async def test_react_fallback_dispatches_tool_and_returns_final(
     assert system_msgs
     assert "ACTION:" in str(system_msgs[0]["content"])
     assert "web_search" in str(system_msgs[0]["content"])
+
+
+@pytest.mark.asyncio
+async def test_native_default_skips_catalog_and_dispatches_native_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root-cause regression: with supports_native_tools=True (the default), the text
+    ACTION catalog is NOT injected (no interference) and a native tool_call dispatches."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    # Call 1: native tool_call (the shape capable Ollama models actually emit).
+    native_msg = _FakeMessage(
+        content=None,
+        tool_calls=[_FakeToolCall("call_1", "web_search", '{"query": "tokyo"}')],
+    )
+    # Call 2: plain final answer.
+    final_msg = _FakeMessage(content="It is sunny in Tokyo.", tool_calls=None)
+    client = _FakeClient([_FakeResponse(native_msg), _FakeResponse(final_msg)])
+    provider = _make_provider(client)  # default: supports_native_tools=True
+
+    dispatched: list[tuple[str, dict[str, Any]]] = []
+
+    async def dispatcher(name: str, args: dict[str, Any]) -> str:
+        dispatched.append((name, args))
+        return "RESULT: sunny, 22C"
+
+    schemas: list[dict[str, Any]] = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web.",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+        }
+    ]
+
+    text, calls = await provider.complete_with_tools(
+        user_text="what is the weather in tokyo?",
+        system_text="You are a helpful owl.",
+        tool_schemas=schemas,
+        tool_dispatcher=dispatcher,
+    )
+
+    assert dispatched == [("web_search", {"query": "tokyo"})]
+    assert text == "It is sunny in Tokyo."
+    # The text catalog was NOT appended — system message is the clean prompt only.
+    first_call_messages = client.chat.completions.calls[0]
+    system_msgs = [m for m in first_call_messages if m.get("role") == "system"]
+    assert system_msgs
+    assert "ACTION:" not in str(system_msgs[0]["content"])
+    assert str(system_msgs[0]["content"]) == "You are a helpful owl."
 
 
 # --------------------------------------------------------------------------- #

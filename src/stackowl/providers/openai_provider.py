@@ -259,8 +259,10 @@ class OpenAIProvider(ModelProvider):
             # results are appended) never dangles; this guards future/cross-provider
             # /hand-crafted transcripts.
             validate_resume_transcript(resume_messages, provider_kind="openai")
-            # B3-TODO (catalog staleness): on resume the text-protocol tool catalog
-            # is embedded in messages[0] (system) from the ORIGINAL run.  If
+            # B3-TODO (catalog staleness): applies ONLY to supports_native_tools=False
+            # providers (the default True path embeds no catalog, so nothing to stale).
+            # On resume the text-protocol tool catalog is embedded in messages[0]
+            # (system) from the ORIGINAL run.  If
             # tool_schemas have changed between the crashed run and this resume, that
             # embedded catalog is STALE.  Native tool_calls are unaffected — they use
             # the fresh `tools=` registry passed to create() below — so only the
@@ -271,9 +273,16 @@ class OpenAIProvider(ModelProvider):
             history_dicts = [{"role": m.role, "content": m.content} for m in (history or [])]
             messages = []
             # Text-protocol fallback: teach the model how to call tools via ACTION:/json
-            # text, so weak models without native tool_calls can still act (parsed back
-            # by parse_react_action below). Native tool_calls still take priority.
-            catalog = _render_tool_catalog(tool_schemas) if tool_schemas else ""
+            # text, so weak models WITHOUT native tool_calls can still act (parsed back
+            # by parse_react_action below). When the endpoint supports native tool-calls
+            # (the default — every modern Ollama/OpenAI-compatible model), injecting this
+            # catalog is pure interference: the model obeys the prompt and emits a bare-
+            # JSON call as message content that can't be dispatched, so the call is
+            # bounced and the turn fails. Skip it; rely on the native `tools=` registry
+            # passed to create() below. The parser still runs as a fallback if a native
+            # call is ever absent.
+            inject_catalog = bool(tool_schemas) and not self._config.supports_native_tools
+            catalog = _render_tool_catalog(tool_schemas) if inject_catalog else ""
             if catalog:
                 system_text = f"{system_text}\n\n{catalog}" if system_text else catalog
             if system_text:
