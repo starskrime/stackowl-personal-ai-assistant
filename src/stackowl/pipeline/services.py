@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from stackowl.gateway.turn_registry import TurnRegistry
     from stackowl.interaction.clarify_gateway import ClarifyGateway
     from stackowl.interaction.cost_pause import CostPauseGuard
+    from stackowl.interaction.feedback_classifier import FeedbackClassifier
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
     from stackowl.memory.bridge import MemoryBridge
@@ -67,6 +68,11 @@ class StepServices:
     heuristic_store: ToolHeuristicStore | None = field(default=None)
     consent_gate: ConsequentialActionGate | None = field(default=None)
     clarify_gateway: ClarifyGateway | None = field(default=None)
+    # LS4 — the feedback-capture classifier. The pipeline ``feedback`` step reads
+    # THIS off services to decide whether a user message is a reaction to the last
+    # render (and, if so, its aspect-scoped polarity) before writing an
+    # ``output_style`` preference. None → the step is a byte-identical no-op.
+    feedback_classifier: FeedbackClassifier | None = field(default=None)
     web_search_registry: WebSearchRegistry | None = field(default=None)
     # E8-S0 — shared budget for in-flight delegated + parliament pipelines.
     # ONE instance, injected here AND into the parliament fan-out so both draw

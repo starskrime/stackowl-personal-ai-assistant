@@ -2109,6 +2109,16 @@ async def run(state: PipelineState) -> PipelineState:
         "[pipeline] execute: entry",
         extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
     )
+    # LS4 — the feedback step already captured a reaction to the last render and
+    # stamped the confirmation onto responses; that confirmation IS the turn's
+    # reply, so skip the tool loop entirely (no provider call). Byte-identical to
+    # every normal turn (feedback_handled default False).
+    if state.feedback_handled:
+        log.engine.info(
+            "[pipeline] execute: feedback handled this turn — skipping tool loop",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return state
     services = get_services()
     registry = services.provider_registry
     tool_registry = services.tool_registry

@@ -12,6 +12,7 @@ from stackowl.pipeline.steps import (
     consolidate,
     dispatch,
     execute,
+    feedback,
     parliament_step,
     triage,
 )
@@ -35,6 +36,11 @@ PIPELINE_STEPS: list[tuple[str, StepFn]] = [
     ("dispatch", dispatch.run),
     ("classify", classify.run),
     ("assemble", assemble.run),
+    # LS4 — capture a reaction to the LAST render into the durable output_style
+    # preference (aspect-scoped) BEFORE execute. After classify (history carries
+    # the prior render) and assemble; on a handled reaction it stamps
+    # ``feedback_handled`` + a confirmation so execute short-circuits the tool loop.
+    ("feedback", feedback.run),
     ("execute", execute.run),
     ("parliament_step", parliament_step.run),
     ("consolidate", consolidate.run),

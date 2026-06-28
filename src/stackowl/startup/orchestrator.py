@@ -904,6 +904,12 @@ class StartupOrchestrator:
         # fail-safe→answer) so a user who pivots isn't silently answered with their
         # unrelated message. The clarify pumps consult it before resolving.
         clarify_classifier = ClarifyIntentClassifier(provider_registry)
+        # LS4 — the feedback-capture classifier (fast tier, fail-open→abstain). The
+        # pipeline ``feedback`` step reads it off services to turn a reaction to the
+        # last render into an aspect-scoped ``output_style`` preference write.
+        from stackowl.interaction.feedback_classifier import FeedbackClassifier
+
+        feedback_classifier = FeedbackClassifier(provider_registry)
         # §6/§7 (P3 Task 16) — the mid-turn arrival TurnRouter. Reuses the SAME
         # fast-tier ``ClarifyIntentClassifier`` (its ``is_steer`` is the
         # conservative high-confidence STEER-vs-NEW propose stage), so there is ONE
@@ -1109,6 +1115,7 @@ class StartupOrchestrator:
             heuristic_store=_build_heuristic_store(db_pool),
             consent_gate=consent_gate,
             clarify_gateway=clarify_gateway,
+            feedback_classifier=feedback_classifier,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
             session_registry=session_registry,

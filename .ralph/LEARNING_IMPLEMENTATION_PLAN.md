@@ -4,7 +4,7 @@ Spec: [[LEARNING_ARCHITECTURE.md]]. Build the FULL fix, ENFORCEMENT-FIRST, reuse
 Method: subagent-driven, story-granular commits+push, QA+dev review, eval test per story. Use the `code-simplifier`
 agent on each story's diff to cut it to the minimum. Follow MEMORY.md. Ships ON.
 
-## STATUS: LS1 @f360b20d ✅ · LS2 @c80c9382 ✅ (enforcement core done) — next: LS3
+## STATUS: LS1 @f360b20d ✅ · LS2 @c80c9382 ✅ · LS3 @641775c4 ✅ — next: LS4
 
 ## Epic L1 — Enforcement core (the load-bearing 20% — build first)
 - **LS1. `output_style` preference key**: a structured record (JSON) on PreferenceStore (reuse it; per-(identity,channel)

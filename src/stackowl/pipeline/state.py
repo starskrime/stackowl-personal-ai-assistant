@@ -110,6 +110,13 @@ class PipelineState(BaseModel, frozen=True):
     # producer (e.g. a scheduler handler) owns delivery via the durable seam.
     # Prevents double-send. Default False = unchanged behavior.
     defer_delivery: bool = False
+    # LS4 — set True by the ``feedback`` step when it captured a reaction to the
+    # last render into the durable ``output_style`` preference and stamped a
+    # plain-language confirmation onto ``responses``. ``execute`` reads this and
+    # SKIPS the tool loop (the confirmation IS the turn's reply); ``deliver`` then
+    # enforces the freshly-written style on that confirmation. Default False =
+    # byte-identical to every non-feedback turn.
+    feedback_handled: bool = False
     # Recursion depth of this (sub-)pipeline in the delegation tree. 0 for a
     # top-level user turn; incremented by one each time A2ADelegator spawns a
     # specialist child (see _run_specialist). Carried across evolve() like every
