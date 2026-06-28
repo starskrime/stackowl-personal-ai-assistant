@@ -13,10 +13,12 @@ ledger (``state.tool_calls``), never on classifying the topic of the answer:
   * Any http(s) URL in the answer NOT in the fetched set (and not one the USER
     themselves pasted this turn — echoing the user is not fabrication) is a
     FABRICATED citation → stripped.
-  * TS5 retrieval gate: if the answer carries external URLs but ZERO retrieval ran,
+  * TS5 retrieval gate: if the answer carries external URLs but the turn retrieved
+    ZERO sources — no retrieval tool ran, OR one ran and came back EMPTY (the
+    "empty scheduled cycle": a recurring poke whose web_search found nothing) —
     every URL is fabricated by definition and the external claim is ungrounded →
-    floor to the honest "I didn't actually look this up." Likewise if stripping
-    guts the answer of substance → floor.
+    floor to the honest "I didn't actually look this up", never a husk of invented
+    prose with the link stripped. Likewise if stripping guts the answer → floor.
 
 Runs pre-deliver in both backends, AFTER the give-up / overclaim floors (so it
 no-ops on an already-floored draft). Never raises. Byte-identical when the answer
@@ -193,11 +195,21 @@ async def surface_grounding_gate(state: PipelineState) -> PipelineState:
             },
         )
 
-        # 3. STEP — TS5: external URLs but zero retrieval ⇒ wholly ungrounded ⇒ floor.
-        if not retrieval_ran:
+        # 3. STEP — TS5: floor when the turn RETRIEVED ZERO SOURCES. This covers BOTH
+        # "no retrieval tool ran" AND the dangerous "empty scheduled cycle" — a
+        # web_search that ran but came back EMPTY (ADR-T5, Mary's #1 risk: a 2-hourly
+        # poke whose search found nothing must never fabricate). With no fetched
+        # source, every cited URL is fabricated by definition and the external claim
+        # is wholly ungrounded; stripping the URLs would leave an ungrounded HUSK of
+        # invented prose (e.g. "GPT-5.6 just launched" with the link removed). Floor
+        # instead. When SOME source WAS fetched, fall through and strip only the
+        # fabricated URLs, keeping the grounded remainder.
+        if not fetched:
             log.engine.warning(
-                "grounding.floored_no_retrieval",
-                extra={"_fields": {"trace_id": state.trace_id}},
+                "grounding.floored_no_sources",
+                extra={"_fields": {
+                    "trace_id": state.trace_id, "retrieval_ran": retrieval_ran,
+                }},
             )
             return state.evolve(
                 responses=(_grounding_floor_chunk(state),), overclaim_blocked=True

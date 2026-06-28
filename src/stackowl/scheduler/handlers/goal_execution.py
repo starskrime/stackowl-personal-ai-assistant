@@ -400,6 +400,18 @@ class GoalExecutionHandler(JobHandler):
             )
             return "completed", False
 
+        # TS10 (ADR-T5 quiet-hours, reuse-existing) — a RECURRING scheduled poke
+        # (a scheduled-owl projection; ``run_once`` unset) is PROACTIVE, so route it
+        # at "normal" urgency: the NotificationRouter then COALESCES it (batched,
+        # body persisted, delivered at the window's end) inside the configured
+        # quiet-hours window instead of interrupting — reusing the router's existing
+        # quiet-hours decision, not a new check here. A one-shot goal the user
+        # explicitly queued (``run_once``) stays "critical": a direct request is
+        # delivered promptly and never quiet-batched.
+        # ponytail: dedup (cosine/pellet) + per-owl daily research budget
+        # (BudgetGovernor) are TS10 NICE-to-haves — deferred, reuse those existing
+        # subsystems when prioritized rather than building new ones here.
+        urgency = "critical" if job.params.get("run_once") else "normal"
         log.scheduler.debug(
             "[scheduler] goal_execution._deliver_answer: delivering",
             extra={
@@ -407,6 +419,7 @@ class GoalExecutionHandler(JobHandler):
                     "job_id": job.job_id,
                     "answer_len": len(response_text),
                     "channels": list(job.target_channels),
+                    "urgency": urgency,
                 }
             },
         )
@@ -414,7 +427,7 @@ class GoalExecutionHandler(JobHandler):
             job,
             message=response_text,
             category="goal_answer",
-            urgency="critical",
+            urgency=urgency,
         )
         # HONESTY INVARIANT — map the transport rollup to a job_results status AND
         # a retry signal. delivered/suppressed → completed; an undeliverable body is

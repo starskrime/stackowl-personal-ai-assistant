@@ -97,7 +97,10 @@ class TestGoalExecutionDelivery:
         assert call["message"] == "weather: sunny"
         assert call["job"] is job
         assert call["category"] == "goal_answer"
-        assert call["urgency"] == "critical"
+        # TS10 — a RECURRING poke (no run_once) routes at "normal" urgency so the
+        # NotificationRouter can coalesce it inside quiet hours (see the one-shot
+        # case in test_delivery_before_run_once_delete, which stays "critical").
+        assert call["urgency"] == "normal"
         assert _status_of(db) == "completed"
 
     async def test_pipeline_state_defers_delivery_and_uses_job_channel(
@@ -258,6 +261,9 @@ class TestGoalExecutionDelivery:
         assert "deliver" in order
         assert "delete" in order
         assert order.index("deliver") < order.index("delete")
+        # TS10 — a one-shot goal (run_once) is a direct user request: it stays
+        # "critical" so it is delivered promptly and never quiet-hours batched.
+        assert deliverer.calls[0]["urgency"] == "critical"
 
     async def test_empty_response_skips_delivery(
         self, monkeypatch: pytest.MonkeyPatch
