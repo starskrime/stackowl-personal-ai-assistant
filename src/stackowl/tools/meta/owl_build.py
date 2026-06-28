@@ -21,6 +21,7 @@ from stackowl.commands.owls_command import OwlsCommand
 from stackowl.commands.owls_helpers import manifest_to_yaml_entry
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.interaction.clarify_gateway import CLARIFY_TTL_SECONDS, OUTCOME_ANSWERED
 from stackowl.owls.registry import _SECRETARY_NAME
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -32,7 +33,11 @@ from stackowl.tools.meta.owl_build_guards import (
     count_agent_owls,
     name_quality_error,
 )
-from stackowl.tools.meta.owl_build_spec import OwlBuildSpec, validate_owl_build_spec
+from stackowl.tools.meta.owl_build_spec import (
+    MissingFields,
+    OwlBuildSpec,
+    validate_owl_build_spec,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.skills.manifest import SkillSource
@@ -50,6 +55,21 @@ _AUDIT_SOURCE: SkillSource = "learned"
 _ACTOR = "agent_self:owl_build"
 
 _VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire")
+
+# One natural-language question per recoverable create field (ADR-A: the validator
+# decides WHICH field is missing; this only PHRASES the ask). User-facing prose,
+# not a classification keyword list — same register as the clarify tool's prompts.
+_FIELD_QUESTIONS: dict[str, str] = {
+    "name": "What should I name this owl?",
+    "capability": (
+        "What should this owl be able to do? Name a capability preset "
+        "(e.g. 'researcher') or the specific tools it needs."
+    ),
+    "specialty": "In one sentence, what is this owl's standing role?",
+}
+# The create required set is fixed (name, capability, specialty) so the elicitation
+# loop can never run longer than this — a hard bound against any re-validate cycle.
+_MAX_ELICIT_ROUNDS = 3
 
 
 def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None:
@@ -72,6 +92,12 @@ def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None
 
 class OwlBuildTool(Tool):
     """Create / edit / retire a specialist owl (consent-gated, depth-0 only)."""
+
+    def __init__(self, *, clarify_timeout_s: float = CLARIFY_TTL_SECONDS) -> None:
+        """Store the mid-turn clarify park timeout (seconds) used to elicit any
+        missing create fields. Defaults to the shared clarify TTL; tests override
+        it with a tiny value to exercise the timeout (fail-closed) path."""
+        self._clarify_timeout_s = clarify_timeout_s
 
     @property
     def name(self) -> str:
@@ -163,10 +189,12 @@ class OwlBuildTool(Tool):
             )
             return self._err(f"invalid owl_build request: {exc}", t0)
 
-        # 3. Structured spec validation (preset XOR explicit_tools, specialty, etc.).
-        spec_err = validate_owl_build_spec(spec)
-        if spec_err is not None:
-            return self._err(spec_err, t0)
+        # 3. Structured spec validation. A HARD error (invalid value) refuses now;
+        # a MissingFields result (recoverable, create only) is resolved by ASKING
+        # the user below, after the depth gate.
+        spec_check = validate_owl_build_spec(spec)
+        if isinstance(spec_check, str):
+            return self._err(spec_check, t0)
 
         # 4. Depth-0 only — also child-excluded at the execute-step dispatch; this is
         # defense in depth so a sub-agent can never recurse into owl creation.
@@ -181,6 +209,16 @@ class OwlBuildTool(Tool):
             return self._err(
                 "owl_build is only available to the root owl (refused for sub-agents).", t0
             )
+
+        # 4b. Resumable, validator-gated creation (ADR-A). The validator is the state
+        # machine — it said which required fields are missing; ask the user for them
+        # mid-turn via the ClarifyGateway, merge, re-validate, loop until complete,
+        # then mint via the existing _create path. Fail-closed off-TTY (returns the
+        # gap as an error; never hangs).
+        if isinstance(spec_check, MissingFields):
+            spec, gap_err = await self._elicit_missing(spec_check)
+            if gap_err is not None:
+                return self._err(gap_err, t0)
 
         # 5. DECISION — dispatch by validated action (handlers land in Tasks 9/10).
         try:
@@ -243,6 +281,114 @@ class OwlBuildTool(Tool):
         if not allowed:
             return f"declined by user — owl '{name}' was not built."
         return None
+
+    # ------------------------------------------------------- elicitation (ADR-A)
+
+    async def _elicit_missing(
+        self, missing: MissingFields,
+    ) -> tuple[OwlBuildSpec, str | None]:
+        """Ask the user for the validator-reported missing create fields, mid-turn.
+
+        Carries ``missing.partial`` as the ONLY session state through each
+        ClarifyGateway resume: ask one field → merge the answer → re-validate (the
+        validator decides what is still missing) → loop until the schema is
+        satisfied. Returns ``(completed_spec, None)`` on success, or
+        ``(partial, error)`` when it cannot complete — off-TTY (fail-closed, never
+        hangs), no gateway, gateway failure, or a timeout/pivot (never assume an
+        answer). The caller refuses on a non-None error.
+        """
+        # 1. ENTRY
+        log.tool.info(
+            "owl_build.execute: eliciting missing create fields",
+            extra={"_fields": {"name": missing.partial.name, "missing": list(missing.fields)}},
+        )
+        ctx = TraceContext.get()
+        interactive = bool(ctx.get("interactive", False))
+        channel = ctx.get("channel")
+        session_id = ctx.get("session_id")
+
+        # 2. DECISION — fail closed off-TTY (no user to ask). Return the gap as an
+        # error so the turn ends cleanly instead of hanging (current behavior).
+        if not interactive or not channel or not session_id:
+            log.tool.info(
+                "owl_build.execute: underspecified create off-TTY — fail closed (no ask)",
+                extra={"_fields": {"missing": list(missing.fields), "interactive": interactive}},
+            )
+            return missing.partial, self._gap_message(missing.fields)
+
+        gateway = get_services().clarify_gateway
+        if gateway is None:
+            log.tool.error(
+                "owl_build.execute: no clarify gateway — cannot ask for missing fields",
+                exc_info=None,
+                extra={"_fields": {"missing": list(missing.fields)}},
+            )
+            return missing.partial, self._gap_message(missing.fields)
+
+        spec = missing.partial
+        # Bounded by the fixed create required set — terminates regardless of input.
+        for _ in range(_MAX_ELICIT_ROUNDS):
+            check = validate_owl_build_spec(spec)
+            if not isinstance(check, MissingFields):
+                break  # complete (None) or a freshly surfaced hard error (str)
+            field = check.fields[0]
+            question = _FIELD_QUESTIONS.get(field, f"Please provide the owl's {field}.")
+            try:
+                # 3. STEP — blocking ask + park until the user replies (or times out).
+                clarify_id = await gateway.ask(
+                    str(session_id), str(channel), question,
+                    awaiting_text=True, blocking=True,
+                )
+                answer, outcome = await gateway.wait_for_answer(
+                    clarify_id, timeout=self._clarify_timeout_s,
+                )
+            except Exception as exc:  # self-healing — never raise out of the tool
+                log.tool.error(
+                    "owl_build.execute: clarify ask/wait failed — fail closed",
+                    exc_info=exc,
+                    extra={"_fields": {"field": field}},
+                )
+                return missing.partial, self._gap_message(missing.fields)
+            if outcome != OUTCOME_ANSWERED or not answer or not answer.strip():
+                log.tool.info(
+                    "owl_build.execute: clarify not answered — aborting create (no assume)",
+                    extra={"_fields": {"field": field, "outcome": outcome}},
+                )
+                return missing.partial, (
+                    "owl creation set aside — still need: "
+                    + ", ".join(check.fields) + "."
+                )
+            spec = self._merge_answer(spec, field, answer.strip())
+
+        final = validate_owl_build_spec(spec)
+        if isinstance(final, MissingFields):
+            return missing.partial, self._gap_message(final.fields)
+        if isinstance(final, str):
+            return missing.partial, final
+        # 4. EXIT — fully specified; the caller mints via the existing _create path.
+        log.tool.info(
+            "owl_build.execute: create spec completed via clarify",
+            extra={"_fields": {"name": spec.name}},
+        )
+        return spec, None
+
+    @staticmethod
+    def _merge_answer(spec: OwlBuildSpec, field: str, answer: str) -> OwlBuildSpec:
+        """Merge one clarify answer into the partial spec (frozen → model_copy).
+
+        The "capability" field maps to ``preset`` (a named capability the builder
+        resolves); ``name``/``specialty`` map to their like-named spec fields."""
+        key = "preset" if field == "capability" else field
+        return spec.model_copy(update={key: answer})
+
+    @staticmethod
+    def _gap_message(fields: tuple[str, ...]) -> str:
+        """A concise off-TTY/abort refusal naming the still-missing required fields."""
+        return (
+            "cannot create the owl yet — still missing: "
+            + ", ".join(fields)
+            + " (no interactive user to ask)."
+        )
 
     # ------------------------------------------------------------------ actions
 
