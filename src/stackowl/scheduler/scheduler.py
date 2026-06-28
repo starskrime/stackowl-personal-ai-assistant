@@ -574,6 +574,28 @@ class JobScheduler(SupervisedTask):
             extra={"_fields": {"job_id": job_id, "next_run_at": next_run}},
         )
 
+    async def snooze(self, job_id: str, until_iso: str) -> None:
+        """Snooze a job until ``until_iso``, then let it auto-resume its cadence.
+
+        Unlike :meth:`pause` (which disables the row), snooze keeps ``enabled=1``
+        and simply pushes ``next_run_at`` into the future: the poller selects
+        ``pending AND enabled=1 AND next_run_at <= now``, so the job is silent until
+        ``until_iso`` and then fires + re-arms on its normal schedule — no manual
+        resume needed. Survives reconcile (no manifest change → owned-row no-op)."""
+        log.scheduler.debug(
+            "[scheduler] snooze: entry",
+            extra={"_fields": {"job_id": job_id, "until": until_iso}},
+        )
+        await self._db.execute(
+            "UPDATE jobs SET status = 'pending', enabled = 1, next_run_at = ? WHERE job_id = ?",
+            (until_iso, job_id),
+        )
+        await write_audit(self._db, "job_snoozed", job_id, details={"until": until_iso})
+        log.scheduler.info(
+            "[scheduler] snooze: exit",
+            extra={"_fields": {"job_id": job_id, "until": until_iso}},
+        )
+
     async def stop_job(self, job_id: str) -> None:
         """Permanently remove a job from the schedule."""
         log.scheduler.debug("[scheduler] stop_job: entry", extra={"_fields": {"job_id": job_id}})

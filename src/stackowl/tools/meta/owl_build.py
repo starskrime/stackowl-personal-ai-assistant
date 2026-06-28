@@ -374,6 +374,37 @@ class OwlBuildTool(Tool):
         target = _job_id_for(name)
         return any(getattr(j, "job_id", None) == target for j in jobs)
 
+    @staticmethod
+    async def _scheduled_next_run(name: str) -> str | None:
+        """Read the MEASURED next fire time from the owl's projected job row (TS9).
+
+        Returns the row's ``next_run_at`` ISO timestamp so the create confirmation can
+        PROVE the schedule with a concrete, user-verifiable instant instead of a bare
+        checkmark — never a fabricated time. ``None`` when the scheduler/db is
+        unobservable OR no projected row exists yet (the caller then says so honestly,
+        rather than claim a schedule that is not really there). Keys on the SAME
+        deterministic id the projection writes so it can never drift from the writer."""
+        db = get_services().db_pool
+        if db is None:
+            return None
+        from stackowl.scheduler.owl_lifecycle import _job_id_for
+        from stackowl.scheduler.scheduler import JobScheduler
+
+        try:
+            jobs = await JobScheduler(db=db).list_jobs()
+        except Exception as exc:  # B5 — unobservable, never raise into the success path
+            log.tool.warning(
+                "owl_build.execute: next-run read-back failed — confirming without a time",
+                exc_info=exc,
+                extra={"_fields": {"owl": name}},
+            )
+            return None
+        target = _job_id_for(name)
+        for job in jobs:
+            if getattr(job, "job_id", None) == target:
+                return job.next_run_at
+        return None
+
     # ------------------------------------------------------------------ consent
 
     async def _consent_or_refuse(self, summary: str, name: str) -> str | None:
@@ -688,20 +719,59 @@ class OwlBuildTool(Tool):
         #     owned job now, without a reboot. No-op for an on-demand owl.
         await self._reconcile_schedules()
 
-        # 11. Success.
+        # 11. Success. A SCHEDULED owl PROVES itself (TS9): the confirmation shows the
+        #     MEASURED next fire time read from the projected job row + an honest "it
+        #     reaches you on its own" line + a one-line off-ramp — never a bare ✅.
         tools_str = ", ".join(sorted(resolved_tools)) or "(none)"
-        msg = (
-            f"Created owl '{manifest.name}' ({manifest.role}). Tools: {tools_str}."
-        )
-        if dropped:
-            msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
-        msg += " Delegate to it with delegate_task."
+        if manifest.lifecycle == "scheduled":
+            msg = await self._scheduled_success_message(manifest, tools_str, dropped)
+        else:
+            msg = (
+                f"Created owl '{manifest.name}' ({manifest.role}). Tools: {tools_str}."
+            )
+            if dropped:
+                msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
+            msg += " Delegate to it with delegate_task."
         # Stamp the created owl's NAME as the artifact locator so verify() (TS2) can
         # re-read the world for exactly this owl. Only create sets it → verify() is a
         # no-op for edit/retire (out of TS2 scope).
         return self._ok(
             msg, t0, extra={"owl": manifest.name, "op": "create"},
             artifact_path=manifest.name,
+        )
+
+    async def _scheduled_success_message(
+        self, manifest: object, tools_str: str, dropped: frozenset[str] | set[str],
+    ) -> str:
+        """Build the TS9 trustworthy-confirmation for a scheduled owl — prove, don't claim.
+
+        Reads the REAL next fire time from the projected job row (never fabricated). If
+        that row is genuinely absent/unobservable, it says so honestly instead of
+        promising a schedule that may not exist. Always states it will reach the user
+        proactively on its own + names the one-line off-ramp to pause it."""
+        name = getattr(manifest, "name", "")
+        display = getattr(manifest, "display", None) or name
+        role = getattr(manifest, "role", "")
+        next_run = await self._scheduled_next_run(name)
+        tail = f" Tools: {tools_str}."
+        if dropped:
+            tail += f" Dropped above your authority: {', '.join(sorted(dropped))}."
+        if next_run is None:
+            # Honest gap — do NOT claim a fire time we could not read back.
+            log.tool.warning(
+                "owl_build.execute: scheduled owl created but no job row observed — honest confirmation",
+                extra={"_fields": {"owl": name}},
+            )
+            return (
+                f"Created {display} ({role}), but I could NOT confirm its schedule yet — "
+                f"no projected job row is readable, so I can't promise when it will first "
+                f"run. Check it with the schedule/health surface before relying on it." + tail
+            )
+        return (
+            f"Created {display} ({role}) — it runs on its own and will reach you "
+            f"proactively (durably, via your messaging channel). Next run: {next_run}." + tail
+            + f" To pause it, say 'stop {display}' anytime — that pauses the pokes "
+            "without deleting the owl, and 'resume " + display + "' starts them again."
         )
 
     # ------------------------------------------------------------------ helpers

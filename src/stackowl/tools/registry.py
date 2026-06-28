@@ -545,6 +545,7 @@ class ToolRegistry:
         from stackowl.tools.scheduling.cronjob import CronjobTool
         from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
         from stackowl.tools.scheduling.objective_tool import ObjectiveTool
+        from stackowl.tools.scheduling.owl_schedule import OwlScheduleTool
         from stackowl.tools.scheduling.send_file import SendFileTool
         from stackowl.tools.scheduling.send_message import SendMessageTool
         from stackowl.tools.search.web_search import WebSearchTool
@@ -641,6 +642,10 @@ class ToolRegistry:
         # owl_build — self-extending owl-builder (Phase-2 A): create/edit/retire a
         # specialist owl (consent-gated, depth-0 only, child-excluded at dispatch).
         registry.register(OwlBuildTool())
+        # owl_schedule — the user's off-ramp (TS11): pause/snooze/resume a scheduled
+        # owl's proactive pokes (recoverable; never deletes the owl). write-severity
+        # (instant, no consent); toggles the owl's projected job row via the scheduler.
+        registry.register(OwlScheduleTool())
         registry.register(MemoryTool())
         registry.register(SetOutputPreferenceTool())
         registry.register(SkillManageTool())
