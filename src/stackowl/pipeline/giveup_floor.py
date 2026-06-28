@@ -13,6 +13,7 @@ from __future__ import annotations
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
+from stackowl.pipeline.delivery_decision import DeliveryDecision
 from stackowl.pipeline.persistence import is_unachieved_consequential_giveup
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
@@ -96,6 +97,79 @@ def is_consequential_giveup_now(state: PipelineState | None = None) -> bool:
         return False
 
 
+def _name_failed_capability(
+    state: PipelineState, unrecovered: frozenset[str]
+) -> str | None:
+    """The first unrecovered consequential failure to name in the honest floor.
+
+    Snapshot path: first of ``state.consequential_failures`` that is unrecovered.
+    Live fallback (no snapshot): first such name in ledger order. This is the EXACT
+    ``failed_name`` logic the floor used inline before PA0 — extracted so the verdict
+    and its named capability are computed in one place. The live-fallback branch reads
+    the ledger ContextVar; it can propagate if that read raises (the caller wraps it)."""
+    log.engine.debug(
+        "[giveup_floor] _name_failed_capability: entry",
+        extra={"_fields": {"trace_id": state.trace_id, "snapshot": state.has_consequential_snapshot}},
+    )
+    if state.has_consequential_snapshot:
+        name = next((n for n in state.consequential_failures if n in unrecovered), None)
+    else:
+        name = next(
+            (o.name for o in tool_outcome_ledger.get_outcomes()
+             if tool_outcome_ledger.is_effectful_failure(
+                 o.action_severity, o.success, o.side_effect_committed, o.verified,
+             ) and o.name in unrecovered),
+            None,
+        )
+    log.engine.debug(
+        "[giveup_floor] _name_failed_capability: exit",
+        extra={"_fields": {"trace_id": state.trace_id, "failed_capability": name}},
+    )
+    return name
+
+
+def decide_delivery(state: PipelineState) -> DeliveryDecision:
+    """Resolve the ONE give-up verdict for this turn (PA0 consolidation seam).
+
+    Computes the verdict at READ time from the existing predicates
+    (``is_consequential_giveup_now`` / ``_unrecovered_consequential_failures``) — the
+    single source of truth is THIS FUNCTION, not a stamped field, so the verdict always
+    reflects the FINAL state passed in (e.g. ``budget_capped`` set on the terminal
+    return). Byte-identical to the floor's pre-PA0 inline logic: when there is no
+    give-up it short-circuits WITHOUT touching the unrecovered set (no extra live-ledger
+    read on a clean turn). ``is_consequential_giveup_now`` itself never raises; the
+    unrecovered/name computation on the give-up path can propagate a live-ledger read
+    error, which the caller's B5 wrapper backstops.
+
+    1. ENTRY — state in. 2. DECISION — give-up vs not. 3. STEP — name on give-up only.
+    4. EXIT — the bundled verdict.
+    """
+    log.engine.debug(
+        "[giveup_floor] decide_delivery: entry",
+        extra={"_fields": {"trace_id": state.trace_id}},
+    )
+    if not is_consequential_giveup_now(state):
+        log.engine.debug(
+            "[giveup_floor] decide_delivery: exit — no give-up",
+            extra={"_fields": {"trace_id": state.trace_id, "consequential_giveup": False}},
+        )
+        return DeliveryDecision()
+    unrecovered = frozenset(_unrecovered_consequential_failures(state))
+    decision = DeliveryDecision(
+        consequential_giveup=True,
+        unrecovered_failures=unrecovered,
+        failed_capability=_name_failed_capability(state, unrecovered),
+    )
+    log.engine.debug(
+        "[giveup_floor] decide_delivery: exit — give-up",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "failed_capability": decision.failed_capability,
+        }},
+    )
+    return decision
+
+
 def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk:
     """Build an is_floor=True honest-floor ResponseChunk naming ``failed_name``.
 
@@ -169,9 +243,11 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
             "[giveup_floor] surface_consequential_giveup_floor: entry",
             extra={"_fields": {"trace_id": state.trace_id, "n_responses": len(state.responses)}},
         )
-        # 2. DECISION — fast exit: shared predicate covers ledger tally + substitution guard.
-        # Prefer the state snapshot (F099) so the decision rides immutable state.
-        if not is_consequential_giveup_now(state):
+        # 2. DECISION — read the ONE consolidated verdict (PA0). decide_delivery
+        # returns the snapshot-stamped decision (F099) or computes it once from the
+        # same predicates — byte-identical to the previous inline re-derivation.
+        decision = decide_delivery(state)
+        if not decision.consequential_giveup:
             log.engine.debug(
                 "[giveup_floor] surface_consequential_giveup_floor: no unachieved consequential — no-op",
                 extra={"_fields": {"trace_id": state.trace_id}},
@@ -188,20 +264,7 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
                 )
                 return state.evolve(responses=(_floor_chunk(state, state.no_progress_tools[0]),))
             return state
-        unrecovered = _unrecovered_consequential_failures(state)
-        if state.has_consequential_snapshot:
-            # Name from the snapshot's ordered failures (first unrecovered).
-            failed_name = next(
-                (n for n in state.consequential_failures if n in unrecovered), None,
-            )
-        else:
-            failed_name = next(
-                (o.name for o in tool_outcome_ledger.get_outcomes()
-                 if tool_outcome_ledger.is_effectful_failure(
-                     o.action_severity, o.success, o.side_effect_committed, o.verified,
-                 ) and o.name in unrecovered),
-                None,
-            )
+        failed_name = decision.failed_capability
         # 3. STEP — build honest floor (pure, deterministic, no model call)
         log.engine.info(
             "[giveup_floor] consequential outcome not achieved — replacing draft with honest floor",
