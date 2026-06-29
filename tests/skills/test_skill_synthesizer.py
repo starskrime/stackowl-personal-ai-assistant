@@ -17,11 +17,11 @@ from stackowl.skills.assembly import SkillsAssembly
 from stackowl.skills.loader import LoadedSkill
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.synthesizer import (
+    _DEFAULT_VERIFICATION_SECTION,
+    _VERIFICATION_HEADING,
     SkillSynthesizer,
     SkillSynthesizerPromptBuilder,
     ToolSequenceCluster,
-    _DEFAULT_VERIFICATION_SECTION,
-    _VERIFICATION_HEADING,
     cluster_outcomes_by_tool_sequence,
     parse_new_skill_response,
     parse_refined_body,
@@ -387,6 +387,43 @@ async def test_deprecate_moves_low_performer_to_underscored_dir(synth_env) -> No
     assert any(e.op == "deprecate" for e in audit)
 
 
+async def test_synth_attaches_skill_to_owning_owl(tmp_db: DbPool, tmp_path: Path) -> None:
+    """PA4b: discover attaches the learned skill to the owl that ran the cluster
+    (live manifest.skills) AND records it durably (skill_ownership row)."""
+    from stackowl.owls.manifest import OwlAgentManifest
+    from stackowl.owls.skill_ownership import read_all_skill_ownership
+
+    skills_root = tmp_path / "ws" / "skills"
+    skills_root.mkdir(parents=True)
+    registry = OwlRegistry.with_default_secretary()
+    registry.register(
+        OwlAgentManifest(name="scout", role="research", system_prompt="P", model_tier="fast")
+    )
+    components = await SkillsAssembly.build(
+        db=tmp_db, tool_registry=ToolRegistry(), owl_registry=registry,
+        skills_root=skills_root, builtin_seed_dir=tmp_path / "no_builtins",
+    )
+    store = components.store
+    # _seed_outcomes records owl_name="scout" → scout is the owning owl.
+    await _seed_outcomes(tmp_db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "scrape-and-process", "description": "x",
+        "when_to_use": "y", "body": "# Steps\n1. go",
+    })])
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(tmp_db), skill_store=store,
+        provider=provider, skills_root=skills_root,
+        owl_registry=registry, db=tmp_db,
+        lookback_days=30, min_cluster_size=3, min_mean_quality=0.75,
+    )
+    assert await synth.discover_new_skills() == 1
+    # Live: the owning owl's manifest now records ownership (injection-reachable).
+    assert "scrape-and-process" in registry.get("scout").skills
+    # Durable: a skill_ownership row exists so it survives restart.
+    owned = await read_all_skill_ownership(tmp_db)
+    assert "scrape-and-process" in owned.get("scout", [])
+
+
 async def test_run_all_aggregates_counts(synth_env) -> None:
     db, root, store = synth_env
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
@@ -520,6 +557,7 @@ def test_refine_prompt_mentions_verification() -> None:
     ## Steps / ## Verification / ## Pitfalls with Verification mandatory."""
     # Build a minimal Skill-like object — use a real Skill dataclass from the store.
     import time
+
     from stackowl.skills.store import Skill
 
     sk = Skill(

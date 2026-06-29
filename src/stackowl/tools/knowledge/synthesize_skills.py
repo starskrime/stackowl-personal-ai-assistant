@@ -109,6 +109,7 @@ class SynthesizeSkillsTool(Tool):
                 skill_store=services.skill_store,  # type: ignore[arg-type]
                 skills_root=StackowlHome.skills_dir(),
                 embedding_registry=services.embedding_registry,
+                owl_registry=services.owl_registry,
             )
             job = self._synthetic_job()
             result = await handler.execute(job)

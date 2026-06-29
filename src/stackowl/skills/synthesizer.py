@@ -27,7 +27,7 @@ import json
 import re
 import shutil
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -43,7 +43,9 @@ from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.store import Skill, SkillIndexStore
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
+    from stackowl.owls.registry import OwlRegistry
     from stackowl.skills.loader import LoadedSkill
 
 # ---------- clustering ------------------------------------------------------
@@ -84,6 +86,19 @@ class ToolSequenceCluster:
         if not slug or not slug[0].isalpha():
             slug = f"learned-{slug}".strip("-")
         return slug[:40]
+
+
+def _owning_owl(cluster: ToolSequenceCluster) -> str | None:
+    """The owl that ran this cluster: most frequent non-empty ``owl_name``.
+
+    Ties resolve to the first owl in cluster order (``Counter`` preserves
+    insertion order and ``most_common`` is a stable sort). Returns ``None`` when
+    no outcome carries an owl_name.
+    """
+    names = [o.owl_name for o in cluster.outcomes if o.owl_name]
+    if not names:
+        return None
+    return Counter(names).most_common(1)[0][0]
 
 
 def cluster_outcomes_by_tool_sequence(
@@ -309,6 +324,8 @@ class SkillSynthesizer:
         provider: ModelProvider,
         skills_root: Path,
         embedding_registry: EmbeddingRegistry | None = None,
+        owl_registry: OwlRegistry | None = None,
+        db: DbPool | None = None,
         lookback_days: int = _LOOKBACK_DAYS_DEFAULT,
         min_cluster_size: int = _MIN_CLUSTER_SIZE_DEFAULT,
         min_mean_quality: float = _MIN_MEAN_QUALITY_DEFAULT,
@@ -328,6 +345,8 @@ class SkillSynthesizer:
         self._provider = provider
         self._root = skills_root
         self._embedding_registry = embedding_registry
+        self._owl_registry = owl_registry
+        self._db = db
         self._lookback_days = lookback_days
         self._min_cluster_size = min_cluster_size
         self._min_mean_quality = min_mean_quality
@@ -460,12 +479,17 @@ class SkillSynthesizer:
         skill_md = _emit_skill_md(manifest, parsed["body"])
         (target_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
         after_hash = hash_dir(target_dir)
+        # PA4b — attach the learned skill to its OWNING owl (the owl that ran the
+        # clustered tasks) so it becomes reachable on the injection/capability
+        # path AND survives restart. Best-effort: a failed attach logs and leaves
+        # the skill on disk unowned (no worse than before PA4b) — never aborts.
+        owl_attached = await self._attach_to_owner(cluster, final_name)
         # Index + audit
         from stackowl.skills.loader import LoadedSkill
 
         loaded = LoadedSkill(
             manifest=manifest, path=target_dir, body=parsed["body"],
-            tools_registered=0, owls_registered=0,
+            tools_registered=0, owls_registered=1 if owl_attached else 0,
         )
         await self._skills.upsert(loaded)
         await self._embed_one_if_wired(loaded)
@@ -488,6 +512,71 @@ class SkillSynthesizer:
             }},
         )
         return True
+
+    async def _attach_to_owner(
+        self, cluster: ToolSequenceCluster, skill_name: str
+    ) -> bool:
+        """Attach *skill_name* to the cluster's owning owl (live + durable).
+
+        Returns True only when the live overlay actually changed the manifest.
+        No-ops (logged) when the owl_registry/db aren't wired or no owl owns the
+        cluster. Wrapped in try/except — a failure leaves the skill unowned but
+        never aborts synthesis.
+        """
+        owner = _owning_owl(cluster)
+        if owner is None or self._owl_registry is None or self._db is None:
+            log.skills.debug(
+                "[synth] attach_to_owner: no-op",
+                extra={"_fields": {
+                    "skill": skill_name, "owner": owner,
+                    "have_registry": self._owl_registry is not None,
+                    "have_db": self._db is not None,
+                }},
+            )
+            return False
+        try:
+            from stackowl.owls.skill_ownership import (
+                attach_skill_to_owl,
+                persist_skill_ownership,
+            )
+
+            attached = attach_skill_to_owl(self._owl_registry, owner, skill_name)
+            # Persist regardless of the live result so the durable record exists
+            # for the next boot even if the owl wasn't loaded this process
+            # (idempotent upsert — boot hydrate then attaches it).
+            await persist_skill_ownership(self._db, owner, skill_name)
+            log.skills.info(
+                "[synth] attach_to_owner: exit",
+                extra={"_fields": {
+                    "skill": skill_name, "owner": owner, "live_attached": attached,
+                }},
+            )
+            return attached
+        except Exception as exc:  # B5 — never abort synthesis on attach failure
+            log.skills.warning(
+                "[synth] attach_to_owner: failed — skill left unowned",
+                exc_info=exc,
+                extra={"_fields": {"skill": skill_name, "owner": owner}},
+            )
+            return False
+
+    async def _purge_ownership(self, skill_name: str) -> None:
+        """Drop a deleted skill's ownership (live detach + durable delete). Best-
+        effort: a failure logs and leaves a stale row (the orphan-safe hydrator
+        tolerates it) — never aborts deprecation."""
+        if self._db is None:
+            return
+        try:
+            from stackowl.owls.skill_ownership import purge_skill_ownership
+
+            await purge_skill_ownership(
+                self._db, skill_name, registry=self._owl_registry
+            )
+        except Exception as exc:  # B5 — never abort deprecation on purge failure
+            log.skills.warning(
+                "[synth] purge_ownership: failed — ownership row may linger",
+                exc_info=exc, extra={"_fields": {"skill": skill_name}},
+            )
 
     # ----- phase 2 — refine -------------------------------------------------
 
@@ -623,6 +712,7 @@ class SkillSynthesizer:
                 extra={"_fields": {"name": skill.name, "path": str(src)}},
             )
             await self._skills.delete(skill.skill_id)
+            await self._purge_ownership(skill.name)
             return False
         before = hash_dir(src)
         # Capture snapshot BEFORE the move so /skill restore can resurrect it.
@@ -643,6 +733,9 @@ class SkillSynthesizer:
         # Drop the index row — the loader's _-prefix skip rule means the moved
         # dir won't be re-discovered next boot.
         await self._skills.delete(skill.skill_id)
+        # PA4b — also drop ownership: detach live + delete the durable row, else the
+        # boot hydrator re-attaches this now-dead skill to its owl forever.
+        await self._purge_ownership(skill.name)
         await self._skills.audit_write(
             skill_name=skill.name, source="learned", op="deprecate",
             actor="agent:synthesizer", before_hash=before,

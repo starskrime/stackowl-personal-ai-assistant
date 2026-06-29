@@ -23,6 +23,7 @@ from stackowl.skills.synthesizer import SkillSynthesizer
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
+    from stackowl.owls.registry import OwlRegistry
 
 _HANDLER_NAME = "skill_synthesizer"
 
@@ -40,6 +41,7 @@ class SkillSynthesizerHandler(JobHandler):
         skills_root: Path,
         *,
         embedding_registry: EmbeddingRegistry | None = None,
+        owl_registry: OwlRegistry | None = None,
         synth_tier: str = "fast",
         lookback_days: int = 14,
         min_cluster_size: int = 3,
@@ -50,6 +52,7 @@ class SkillSynthesizerHandler(JobHandler):
         self._skill_store = skill_store
         self._skills_root = skills_root
         self._embedding_registry = embedding_registry
+        self._owl_registry = owl_registry
         self._synth_tier = synth_tier
         self._lookback_days = lookback_days
         self._min_cluster_size = min_cluster_size
@@ -99,6 +102,8 @@ class SkillSynthesizerHandler(JobHandler):
             provider=provider,
             skills_root=self._skills_root,
             embedding_registry=self._embedding_registry,
+            owl_registry=self._owl_registry,
+            db=self._db,
             lookback_days=self._lookback_days,
             min_cluster_size=self._min_cluster_size,
             min_mean_quality=self._min_mean_quality,

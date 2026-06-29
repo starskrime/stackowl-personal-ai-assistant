@@ -275,6 +275,7 @@ class SchedulerAssembly:
             skill_store=skills_components.store,
             skills_root=StackowlHome.skills_dir(),
             embedding_registry=memory_components.embedding_registry,
+            owl_registry=owl_registry,
         )
         HandlerRegistry.instance().register(skill_synthesizer_handler)
 

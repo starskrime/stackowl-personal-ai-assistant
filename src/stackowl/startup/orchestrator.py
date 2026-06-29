@@ -660,6 +660,11 @@ class StartupOrchestrator:
         from stackowl.owls.dna_hydrator import hydrate_dna
 
         await hydrate_dna(owl_registry, db_pool)
+        # PA4b — re-attach synth-learned skills to their owning owls (durable
+        # ownership survives restart, mirrors hydrate_dna). Fail-safe internally.
+        from stackowl.owls.skill_ownership import hydrate_skill_ownership
+
+        await hydrate_skill_ownership(owl_registry, db_pool)
         from stackowl.owls.owl_revalidator import revalidate_agent_owls
 
         revalidate_agent_owls(owl_registry)
