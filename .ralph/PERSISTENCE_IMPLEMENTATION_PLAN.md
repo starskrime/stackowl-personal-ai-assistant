@@ -112,7 +112,10 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
     that reads the JobScheduler back to confirm the job row exists, for the schedule-CREATING actions (create/watch)
     only — then DELETE `cronjob` from `_KNOWN_UNVERIFIED` (the ratchet self-policing test enforces removal). Multi-action
     tool → own sub-story with QA, not a one-liner.
-  - [ ] (b) **Silent-delivery gate** — SPLIT OUT, do FRESH (needs careful substrate analysis). The real substrate is
+  - [ ] (b) **Silent-delivery gate** — ARCHITECTED: see [`.ralph/PA5B_DESIGN.md`](PA5B_DESIGN.md) (dedicated
+    `undelivered_outbox` store: silent-drop paths → durable row → next-contact banner → clear; policy = defer +
+    surface-on-next-contact, next-session banner; scope = prod NACK seam + ratchet). Implement per that doc. The real
+    substrate is
     `scheduler/scheduler.py` + `notifications/proactive_job.py::ProactiveJobDeliverer` + `scheduler/scheduler_helpers.py`
     quiet-hours (NOT goal_execution.py). ★LANDMINE: scheduler F-62 (scheduler.py:209) INTENTIONALLY leaves a
     handler-not-registered job PENDING (registration-ordering, recoverable) — that is NOT a dead-letter. Distinct
