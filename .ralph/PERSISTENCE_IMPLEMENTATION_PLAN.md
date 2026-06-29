@@ -79,9 +79,16 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
 
 - [ ] **PA4 — Hand-to-better-owl rung.** Inside the ladder, a stuck owl delegates to a better-fit owl. Reuse
   `delegate_task` / `A2ADelegator` / resolver. Bounded (one hand-off per turn, budget-gated). Honest if no better owl.
-  - [ ] **PA4b — Synth-skill ownership (pulled fwd from Arc B).** synthesizer.py builds a manifest with
-    `owls_registered=0` and never edits any owl — born unreachable. On synth, attach the skill to its owning owl so
-    the hand-off rung (and injection) can actually reach it. Minimal capability read only; full resolver = Arc B. (MR1/MR4)
+  - [x] **PA4b — Synth-skill ownership (pulled fwd from Arc B).** DONE. commit `61bb0f65`. New
+    `owls/skill_ownership.py` mirrors the DNA subsystem (attach_skill_to_owl live overlay + persist/read +
+    hydrate_skill_ownership boot overlay), migration `0072_skill_ownership.sql` (PK incl owner_id for tenant
+    isolation). `_synthesize_one` attaches the learned skill to its OWNING owl (most-frequent owl_name across
+    `cluster.outcomes`) live + durable; boot re-hydrates. Best-effort (failed attach never aborts synth).
+    ★Verified `owl.skills` IS read by injection (assemble.py:118 owned-skill playbook + classify.py:617 dedup) →
+    attach is necessary AND sufficient (closes born-unreachable, not just the PA4 prereq). Opus QA caught a MEDIUM
+    phantom-ownership bug (deprecate deleted the skill but not its ownership row → boot re-attached a dead skill
+    forever) → fixed with `purge_skill_ownership` (live detach + durable DELETE) on both deprecate delete sites.
+    36 tests green; ruff + mypy clean. (MR1/MR4)
 
 - [ ] **PA5 — Murat's ratchet gates (assert on the STORE, never a log).**
   - [ ] (a) **Lying-success gate** — fake tool returning `verified=False` + persistence judge stubbed to raise →
