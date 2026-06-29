@@ -24,3 +24,4 @@ stackowl.yaml
 *.webm
 .claude/
 _bmad/
+logs/

@@ -1,0 +1,17 @@
+# Ralph history — persistence/never-give-up arc (Arc A)
+# Append one line per loop iteration: breakthroughs, blockers, learnings.
+# Shared cross-iteration memory (each loop runs a fresh context).
+
+2026-06-28  SHIPPED (interactive, pre-harness): PA0 7273edb6 (decide_delivery seam),
+            PA1 2dcfcfdb (dead-verb->skill_view), PA2 79fd56c6 (fail-open close),
+            PA3 d95ed926 (breaker->escalation ladder), PA4b 61bb0f65 (synth-skill
+            ownership), PA4 c934f123 (hand-to-better-owl rung), PA5a 14365661
+            (lying-success + coverage ratchet).
+2026-06-28  REMAINING: PA5(b) silent-delivery gate (DEFINE the right NACK invariant
+            first -- F-62 leaves handler-not-registered jobs PENDING, not dead-letter);
+            cronjob post_condition (empties _KNOWN_UNVERIFIED); live re-test on box.
+2026-06-28  LEARN: never-give-up = ONE bounded ladder (retry -> tier-escalate ->
+            hand-to-better-owl -> honest floor). Arc invariant: uncertainty fails
+            CLOSED + durable NACK, never a silent log. Reviews caught 3 real bugs
+            (judge harness drift, phantom skill-ownership, child snapshot leak);
+            PA5a ratchet caught a real prod hole (cronjob over-claims scheduling).
