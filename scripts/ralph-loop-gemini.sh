@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Ralph Loop for Claude Code
+# Ralph Loop for Google Gemini CLI
 #
 # Based on Geoffrey Huntley's Ralph Wiggum methodology:
 # https://github.com/ghuntley/how-to-ralph-wiggum
@@ -19,9 +19,13 @@
 # 2. specs/ folder - pick highest priority incomplete spec
 #
 # Usage:
-#   ./scripts/ralph-loop.sh              # Build mode (unlimited)
-#   ./scripts/ralph-loop.sh 20           # Build mode (max 20 iterations)
-#   ./scripts/ralph-loop.sh plan         # Planning mode (creates IMPLEMENTATION_PLAN.md)
+#   ./scripts/ralph-loop-gemini.sh              # Build mode (unlimited)
+#   ./scripts/ralph-loop-gemini.sh 20           # Build mode (max 20 iterations)
+#   ./scripts/ralph-loop-gemini.sh plan         # Planning mode (creates IMPLEMENTATION_PLAN.md)
+#
+# Requirements:
+#   - Gemini CLI installed: npm install -g @google/gemini-cli
+#   - Authenticated via: gemini (interactive login on first run)
 #
 
 set -e
@@ -35,9 +39,9 @@ CONSTITUTION="$PROJECT_DIR/.specify/memory/constitution.md"
 # Configuration
 MAX_ITERATIONS=0  # 0 = unlimited
 MODE="build"
-CLAUDE_CMD="${CLAUDE_CMD:-claude}"
-CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-7}"
-YOLO_FLAG="--dangerously-skip-permissions"
+GEMINI_CMD="${GEMINI_CMD:-gemini}"
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.1-pro-preview}"
+YOLO_FLAG="--yolo"
 TAIL_LINES=5
 TAIL_RENDERED_LINES=0
 ROLLING_OUTPUT_LINES=5
@@ -54,8 +58,6 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 mkdir -p "$LOG_DIR"
-
-# Source spec queue helpers
 source "$SCRIPT_DIR/lib/spec_queue.sh"
 
 # Check constitution for YOLO setting
@@ -68,15 +70,15 @@ fi
 
 show_help() {
     cat <<EOF
-Ralph Loop for Claude Code
+Ralph Loop for Google Gemini CLI
 
 Based on Geoffrey Huntley's Ralph Wiggum methodology + SpecKit specs.
 https://github.com/ghuntley/how-to-ralph-wiggum
 
 Usage:
-  ./scripts/ralph-loop.sh              # Build mode, unlimited iterations
-  ./scripts/ralph-loop.sh 20           # Build mode, max 20 iterations  
-  ./scripts/ralph-loop.sh plan         # Planning mode (optional)
+  ./scripts/ralph-loop-gemini.sh              # Build mode, unlimited iterations
+  ./scripts/ralph-loop-gemini.sh 20           # Build mode, max 20 iterations
+  ./scripts/ralph-loop-gemini.sh plan         # Planning mode (optional)
 
 Modes:
   build (default)  Pick spec/task and implement
@@ -88,11 +90,14 @@ Work Sources (checked in order):
 
 The plan mode is OPTIONAL. Most projects can work directly from specs.
 
+Model (default: gemini-3.1-pro-preview):
+  Override with: GEMINI_MODEL=gemini-2.5-pro ./scripts/ralph-loop-gemini.sh
+
 How it works:
-  1. Each iteration feeds PROMPT.md to Claude via stdin
-  2. Claude picks the HIGHEST PRIORITY incomplete spec/task
-  3. Claude implements, tests, and verifies acceptance criteria
-  4. Claude outputs <promise>DONE</promise> ONLY if criteria are met
+  1. Each iteration feeds PROMPT.md to Gemini CLI via stdin
+  2. Gemini picks the HIGHEST PRIORITY incomplete spec/task
+  3. Gemini implements, tests, and verifies acceptance criteria
+  4. Gemini outputs <promise>DONE</promise> ONLY if criteria are met
   5. Bash loop checks for the magic phrase
   6. If found, loop continues to next iteration (fresh context)
   7. If not found, loop retries
@@ -102,7 +107,7 @@ EOF
 
 print_latest_output() {
     local log_file="$1"
-    local label="${2:-Claude}"
+    local label="${2:-Gemini}"
     local target="/dev/tty"
 
     [ -f "$log_file" ] || return 0
@@ -127,7 +132,7 @@ print_latest_output() {
 
 watch_latest_output() {
     local log_file="$1"
-    local label="${2:-Claude}"
+    local label="${2:-Gemini}"
     local target="/dev/tty"
     local use_tty=false
     local use_tput=false
@@ -213,15 +218,18 @@ done
 cd "$PROJECT_DIR"
 
 # Session log (captures ALL output)
-SESSION_LOG="$LOG_DIR/ralph_${MODE}_session_$(date '+%Y%m%d_%H%M%S').log"
+SESSION_LOG="$LOG_DIR/ralph_gemini_${MODE}_session_$(date '+%Y%m%d_%H%M%S').log"
 exec > >(tee -a "$SESSION_LOG") 2>&1
 
-# Check if Claude CLI is available
-if ! command -v "$CLAUDE_CMD" &> /dev/null; then
-    echo -e "${RED}Error: Claude CLI not found${NC}"
+# Check if Gemini CLI is available
+if ! command -v "$GEMINI_CMD" &> /dev/null; then
+    echo -e "${RED}Error: Gemini CLI not found${NC}"
     echo ""
-    echo "Install Claude Code CLI and authenticate first."
-    echo "https://claude.ai/code"
+    echo "Install Gemini CLI:"
+    echo "  npm install -g @google/gemini-cli"
+    echo ""
+    echo "Then authenticate by running once interactively:"
+    echo "  gemini"
     exit 1
 fi
 
@@ -265,10 +273,13 @@ if [ ! -f "$PROMPT_FILE" ]; then
     exit 1
 fi
 
-# Build Claude flags
-CLAUDE_FLAGS="-p --model $CLAUDE_MODEL"
+# Build Gemini flags
+# Gemini reads prompt from stdin; -p "" enables non-interactive mode
+# The prompt content is piped in via stdin
+GEMINI_FLAGS="-p \"\""
+GEMINI_MODEL_FLAG="-m $GEMINI_MODEL"
 if [ "$YOLO_ENABLED" = true ]; then
-    CLAUDE_FLAGS="$CLAUDE_FLAGS $YOLO_FLAG"
+    GEMINI_FLAGS="$GEMINI_FLAGS $YOLO_FLAG"
 fi
 
 # Get current branch
@@ -292,11 +303,11 @@ fi
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}              RALPH LOOP (Claude Code) STARTING              ${NC}"
+echo -e "${GREEN}              RALPH LOOP (Gemini CLI) STARTING               ${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "${BLUE}Mode:${NC}     $MODE"
-echo -e "${BLUE}Model:${NC}    $CLAUDE_MODEL"
+echo -e "${BLUE}Model:${NC}    $GEMINI_MODEL"
 echo -e "${BLUE}Prompt:${NC}   $PROMPT_FILE"
 echo -e "${BLUE}Branch:${NC}   $CURRENT_BRANCH"
 echo -e "${YELLOW}YOLO:${NC}     $([ "$YOLO_ENABLED" = true ] && echo "ENABLED" || echo "DISABLED")"
@@ -319,7 +330,7 @@ else
 fi
 echo ""
 
-# Exit early if all specs are complete and no plan
+# Exit early if all specs are complete
 if [ "$MODE" = "build" ] && [ "$HAS_PLAN" = false ] && [ "$HAS_SPECS" = true ] && [ "$INCOMPLETE_SPEC_COUNT" -eq 0 ]; then
     echo -e "${GREEN}All $SPEC_COUNT specs are COMPLETE. Nothing to do.${NC}"
     echo -e "${CYAN}To add more work, create a new spec in specs/ without 'Status: COMPLETE'.${NC}"
@@ -352,37 +363,40 @@ while true; do
     echo ""
 
     # Log file for this iteration
-    LOG_FILE="$LOG_DIR/ralph_${MODE}_iter_${ITERATION}_$(date '+%Y%m%d_%H%M%S').log"
+    LOG_FILE="$LOG_DIR/ralph_gemini_${MODE}_iter_${ITERATION}_$(date '+%Y%m%d_%H%M%S').log"
     : > "$LOG_FILE"
     WATCH_PID=""
 
     if [ "$ROLLING_OUTPUT_INTERVAL" -gt 0 ] && [ "$ROLLING_OUTPUT_LINES" -gt 0 ] && [ -t 1 ] && [ -w /dev/tty ]; then
-        watch_latest_output "$LOG_FILE" "Claude" &
+        watch_latest_output "$LOG_FILE" "Gemini" &
         WATCH_PID=$!
     fi
 
-    # Run Claude with prompt via stdin, capture output
-    CLAUDE_OUTPUT=""
-    if CLAUDE_OUTPUT=$(cat "$PROMPT_FILE" | "$CLAUDE_CMD" $CLAUDE_FLAGS 2>&1 | tee "$LOG_FILE"); then
+    # Run Gemini CLI with prompt piped via stdin
+    # -p "" enables non-interactive mode; stdin is appended before -p value
+    # --yolo auto-approves all tool calls
+    # -m sets the model
+    GEMINI_OUTPUT=""
+    if GEMINI_OUTPUT=$(cat "$PROMPT_FILE" | "$GEMINI_CMD" -p "" $GEMINI_MODEL_FLAG $([ "$YOLO_ENABLED" = true ] && echo "$YOLO_FLAG") 2>&1 | tee "$LOG_FILE"); then
         if [ -n "$WATCH_PID" ]; then
             kill "$WATCH_PID" 2>/dev/null || true
             wait "$WATCH_PID" 2>/dev/null || true
         fi
         echo ""
-        echo -e "${GREEN}✓ Claude execution completed${NC}"
-        
+        echo -e "${GREEN}✓ Gemini execution completed${NC}"
+
         # Check if DONE promise was output (accept both DONE and ALL_DONE variants)
-        if echo "$CLAUDE_OUTPUT" | grep -qE "<promise>(ALL_)?DONE</promise>"; then
-            DETECTED_SIGNAL=$(echo "$CLAUDE_OUTPUT" | grep -oE "<promise>(ALL_)?DONE</promise>" | tail -1)
+        if echo "$GEMINI_OUTPUT" | grep -qE "<promise>(ALL_)?DONE</promise>"; then
+            DETECTED_SIGNAL=$(echo "$GEMINI_OUTPUT" | grep -oE "<promise>(ALL_)?DONE</promise>" | tail -1)
             echo -e "${GREEN}✓ Completion signal detected: ${DETECTED_SIGNAL}${NC}"
             echo -e "${GREEN}✓ Task completed successfully!${NC}"
             CONSECUTIVE_FAILURES=0
-            
+
             # For planning mode, stop after one successful plan
             if [ "$MODE" = "plan" ]; then
                 echo ""
                 echo -e "${GREEN}Planning complete!${NC}"
-                echo -e "${CYAN}Run './scripts/ralph-loop.sh' to start building.${NC}"
+                echo -e "${CYAN}Run './scripts/ralph-loop-gemini.sh' to start building.${NC}"
                 echo -e "${CYAN}Or delete IMPLEMENTATION_PLAN.md to work directly from specs.${NC}"
                 break
             fi
@@ -392,8 +406,8 @@ while true; do
             echo -e "${YELLOW}  This means acceptance criteria were not met.${NC}"
             echo -e "${YELLOW}  Retrying in next iteration...${NC}"
             CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-            print_latest_output "$LOG_FILE" "Claude"
-            
+            print_latest_output "$LOG_FILE" "Gemini"
+
             if [ $CONSECUTIVE_FAILURES -ge $MAX_CONSECUTIVE_FAILURES ]; then
                 echo ""
                 echo -e "${RED}⚠ $MAX_CONSECUTIVE_FAILURES consecutive iterations without completion.${NC}"
@@ -410,10 +424,10 @@ while true; do
             kill "$WATCH_PID" 2>/dev/null || true
             wait "$WATCH_PID" 2>/dev/null || true
         fi
-        echo -e "${RED}✗ Claude execution failed${NC}"
+        echo -e "${RED}✗ Gemini execution failed${NC}"
         echo -e "${YELLOW}Check log: $LOG_FILE${NC}"
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-        print_latest_output "$LOG_FILE" "Claude"
+        print_latest_output "$LOG_FILE" "Gemini"
     fi
 
     # Push changes after each iteration (if any)
@@ -432,5 +446,5 @@ done
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}         RALPH LOOP FINISHED ($ITERATION iterations)         ${NC}"
+echo -e "${GREEN}      RALPH LOOP (Gemini) FINISHED ($ITERATION iterations)   ${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

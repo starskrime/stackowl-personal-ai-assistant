@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Ralph Loop for Claude Code
+# Ralph Loop for GitHub Copilot CLI
 #
 # Based on Geoffrey Huntley's Ralph Wiggum methodology:
 # https://github.com/ghuntley/how-to-ralph-wiggum
@@ -19,13 +19,18 @@
 # 2. specs/ folder - pick highest priority incomplete spec
 #
 # Usage:
-#   ./scripts/ralph-loop.sh              # Build mode (unlimited)
-#   ./scripts/ralph-loop.sh 20           # Build mode (max 20 iterations)
-#   ./scripts/ralph-loop.sh plan         # Planning mode (creates IMPLEMENTATION_PLAN.md)
+#   ./scripts/ralph-loop-copilot.sh              # Build mode (unlimited)
+#   ./scripts/ralph-loop-copilot.sh 20           # Build mode (max 20 iterations)
+#   ./scripts/ralph-loop-copilot.sh plan         # Planning mode (creates IMPLEMENTATION_PLAN.md)
 #
 
 set -e
 set -o pipefail
+
+# Ensure Node.js v24+ is in PATH (required by GitHub Copilot CLI)
+if [ -d "/opt/nodejs24/bin" ]; then
+    export PATH="/opt/nodejs24/bin:$PATH"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -35,9 +40,10 @@ CONSTITUTION="$PROJECT_DIR/.specify/memory/constitution.md"
 # Configuration
 MAX_ITERATIONS=0  # 0 = unlimited
 MODE="build"
-CLAUDE_CMD="${CLAUDE_CMD:-claude}"
-CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-7}"
-YOLO_FLAG="--dangerously-skip-permissions"
+COPILOT_CMD="${COPILOT_CMD:-copilot}"
+COPILOT_MODEL="${COPILOT_MODEL:-gpt-5.5}"
+COPILOT_REASONING_EFFORT="${COPILOT_REASONING_EFFORT:-xhigh}"
+YOLO_FLAG="--allow-all-tools"
 TAIL_LINES=5
 TAIL_RENDERED_LINES=0
 ROLLING_OUTPUT_LINES=5
@@ -54,8 +60,6 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 mkdir -p "$LOG_DIR"
-
-# Source spec queue helpers
 source "$SCRIPT_DIR/lib/spec_queue.sh"
 
 # Check constitution for YOLO setting
@@ -68,15 +72,15 @@ fi
 
 show_help() {
     cat <<EOF
-Ralph Loop for Claude Code
+Ralph Loop for GitHub Copilot CLI
 
 Based on Geoffrey Huntley's Ralph Wiggum methodology + SpecKit specs.
 https://github.com/ghuntley/how-to-ralph-wiggum
 
 Usage:
-  ./scripts/ralph-loop.sh              # Build mode, unlimited iterations
-  ./scripts/ralph-loop.sh 20           # Build mode, max 20 iterations  
-  ./scripts/ralph-loop.sh plan         # Planning mode (optional)
+  ./scripts/ralph-loop-copilot.sh              # Build mode, unlimited iterations
+  ./scripts/ralph-loop-copilot.sh 20           # Build mode, max 20 iterations  
+  ./scripts/ralph-loop-copilot.sh plan         # Planning mode (optional)
 
 Modes:
   build (default)  Pick spec/task and implement
@@ -89,20 +93,25 @@ Work Sources (checked in order):
 The plan mode is OPTIONAL. Most projects can work directly from specs.
 
 How it works:
-  1. Each iteration feeds PROMPT.md to Claude via stdin
-  2. Claude picks the HIGHEST PRIORITY incomplete spec/task
-  3. Claude implements, tests, and verifies acceptance criteria
-  4. Claude outputs <promise>DONE</promise> ONLY if criteria are met
+  1. Each iteration feeds PROMPT.md to GitHub Copilot CLI
+  2. Copilot picks the HIGHEST PRIORITY incomplete spec/task
+  3. Copilot implements, tests, and verifies acceptance criteria
+  4. Copilot outputs <promise>DONE</promise> ONLY if criteria are met
   5. Bash loop checks for the magic phrase
   6. If found, loop continues to next iteration (fresh context)
   7. If not found, loop retries
+
+Important Notes:
+  - GitHub Copilot CLI automatically loads AGENTS.md as custom instructions
+  - Use --no-custom-instructions flag to disable this behavior
+  - The AGENTS.md file should contain project-specific instructions
 
 EOF
 }
 
 print_latest_output() {
     local log_file="$1"
-    local label="${2:-Claude}"
+    local label="${2:-Copilot}"
     local target="/dev/tty"
 
     [ -f "$log_file" ] || return 0
@@ -127,7 +136,7 @@ print_latest_output() {
 
 watch_latest_output() {
     local log_file="$1"
-    local label="${2:-Claude}"
+    local label="${2:-Copilot}"
     local target="/dev/tty"
     local use_tty=false
     local use_tput=false
@@ -216,12 +225,31 @@ cd "$PROJECT_DIR"
 SESSION_LOG="$LOG_DIR/ralph_${MODE}_session_$(date '+%Y%m%d_%H%M%S').log"
 exec > >(tee -a "$SESSION_LOG") 2>&1
 
-# Check if Claude CLI is available
-if ! command -v "$CLAUDE_CMD" &> /dev/null; then
-    echo -e "${RED}Error: Claude CLI not found${NC}"
+# Check if GitHub CLI is available (for git operations)
+if ! command -v gh &> /dev/null; then
+    echo -e "${YELLOW}Warning: GitHub CLI (gh) not found${NC}"
+    echo -e "${YELLOW}Git push operations may fail. Install from: https://cli.github.com/${NC}"
     echo ""
-    echo "Install Claude Code CLI and authenticate first."
-    echo "https://claude.ai/code"
+fi
+
+# Check if user is authenticated with GitHub (optional but recommended)
+if ! gh auth status &> /dev/null 2>&1; then
+    echo -e "${YELLOW}Warning: Not authenticated with GitHub CLI${NC}"
+    echo -e "${YELLOW}Git push operations may fail. Run: gh auth login${NC}"
+    echo ""
+fi
+
+# Test if Copilot CLI is available
+if ! command -v $COPILOT_CMD &> /dev/null; then
+    echo -e "${RED}Error: GitHub Copilot CLI not found${NC}"
+    echo ""
+    echo "Install GitHub Copilot CLI first:"
+    echo "  brew install copilot-cli                    # macOS/Linux with Homebrew"
+    echo "  npm install -g @github/copilot             # with npm"
+    echo "  curl -fsSL https://gh.io/copilot-install | bash  # install script"
+    echo ""
+    echo "Then authenticate:"
+    echo "  copilot    # and use /login command"
     exit 1
 fi
 
@@ -265,10 +293,10 @@ if [ ! -f "$PROMPT_FILE" ]; then
     exit 1
 fi
 
-# Build Claude flags
-CLAUDE_FLAGS="-p --model $CLAUDE_MODEL"
+# Build Copilot flags (note: -p "prompt" must be together, other flags come after)
+COPILOT_POST_FLAGS="--model $COPILOT_MODEL --reasoning-effort $COPILOT_REASONING_EFFORT"
 if [ "$YOLO_ENABLED" = true ]; then
-    CLAUDE_FLAGS="$CLAUDE_FLAGS $YOLO_FLAG"
+    COPILOT_POST_FLAGS="$COPILOT_POST_FLAGS $YOLO_FLAG"
 fi
 
 # Get current branch
@@ -277,10 +305,12 @@ CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 # Check for work sources
 HAS_PLAN=false
 HAS_SPECS=false
+HAS_AGENTS=false
 SPEC_COUNT=0
 INCOMPLETE_SPEC_COUNT=0
 FIRST_INCOMPLETE_SPEC=""
 [ -f "IMPLEMENTATION_PLAN.md" ] && HAS_PLAN=true
+[ -f "AGENTS.md" ] && HAS_AGENTS=true
 if [ -d "specs" ]; then
     SPEC_COUNT=$(count_root_specs "specs")
     INCOMPLETE_SPEC_COUNT=$(count_incomplete_root_specs "specs")
@@ -292,16 +322,23 @@ fi
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}              RALPH LOOP (Claude Code) STARTING              ${NC}"
+echo -e "${GREEN}         RALPH LOOP (GitHub Copilot CLI) STARTING            ${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "${BLUE}Mode:${NC}     $MODE"
-echo -e "${BLUE}Model:${NC}    $CLAUDE_MODEL"
+echo -e "${BLUE}Model:${NC}    $COPILOT_MODEL ($COPILOT_REASONING_EFFORT)"
 echo -e "${BLUE}Prompt:${NC}   $PROMPT_FILE"
 echo -e "${BLUE}Branch:${NC}   $CURRENT_BRANCH"
 echo -e "${YELLOW}YOLO:${NC}     $([ "$YOLO_ENABLED" = true ] && echo "ENABLED" || echo "DISABLED")"
 [ -n "$SESSION_LOG" ] && echo -e "${BLUE}Log:${NC}      $SESSION_LOG"
 [ $MAX_ITERATIONS -gt 0 ] && echo -e "${BLUE}Max:${NC}      $MAX_ITERATIONS iterations"
+echo ""
+echo -e "${BLUE}Custom Instructions:${NC}"
+if [ "$HAS_AGENTS" = true ]; then
+    echo -e "  ${GREEN}✓${NC} AGENTS.md found (will be loaded automatically)"
+else
+    echo -e "  ${YELLOW}○${NC} AGENTS.md not found (optional)"
+fi
 echo ""
 echo -e "${BLUE}Work source:${NC}"
 if [ "$HAS_PLAN" = true ]; then
@@ -311,7 +348,7 @@ else
 fi
 if [ "$HAS_SPECS" = true ]; then
     echo -e "  ${GREEN}✓${NC} specs/ folder ($SPEC_COUNT specs, $INCOMPLETE_SPEC_COUNT incomplete)"
-    if [ "$HAS_PLAN" = false ] && [ "$INCOMPLETE_SPEC_COUNT" -gt 0 ]; then
+    if [ "$INCOMPLETE_SPEC_COUNT" -gt 0 ]; then
         echo -e "    ${CYAN}Next incomplete:${NC} $FIRST_INCOMPLETE_SPEC"
     fi
 else
@@ -319,7 +356,7 @@ else
 fi
 echo ""
 
-# Exit early if all specs are complete and no plan
+# Exit early if all specs are complete
 if [ "$MODE" = "build" ] && [ "$HAS_PLAN" = false ] && [ "$HAS_SPECS" = true ] && [ "$INCOMPLETE_SPEC_COUNT" -eq 0 ]; then
     echo -e "${GREEN}All $SPEC_COUNT specs are COMPLETE. Nothing to do.${NC}"
     echo -e "${CYAN}To add more work, create a new spec in specs/ without 'Status: COMPLETE'.${NC}"
@@ -357,23 +394,27 @@ while true; do
     WATCH_PID=""
 
     if [ "$ROLLING_OUTPUT_INTERVAL" -gt 0 ] && [ "$ROLLING_OUTPUT_LINES" -gt 0 ] && [ -t 1 ] && [ -w /dev/tty ]; then
-        watch_latest_output "$LOG_FILE" "Claude" &
+        watch_latest_output "$LOG_FILE" "Copilot" &
         WATCH_PID=$!
     fi
 
-    # Run Claude with prompt via stdin, capture output
-    CLAUDE_OUTPUT=""
-    if CLAUDE_OUTPUT=$(cat "$PROMPT_FILE" | "$CLAUDE_CMD" $CLAUDE_FLAGS 2>&1 | tee "$LOG_FILE"); then
+    # Read the prompt content
+    PROMPT_CONTENT=$(cat "$PROMPT_FILE")
+
+    # Run GitHub Copilot CLI with prompt, capture output
+    # Syntax: copilot -p "prompt" --model MODEL --allow-all-tools
+    COPILOT_OUTPUT=""
+    if COPILOT_OUTPUT=$($COPILOT_CMD -p "$PROMPT_CONTENT" $COPILOT_POST_FLAGS 2>&1 | tee "$LOG_FILE"); then
         if [ -n "$WATCH_PID" ]; then
             kill "$WATCH_PID" 2>/dev/null || true
             wait "$WATCH_PID" 2>/dev/null || true
         fi
         echo ""
-        echo -e "${GREEN}✓ Claude execution completed${NC}"
+        echo -e "${GREEN}✓ Copilot execution completed${NC}"
         
         # Check if DONE promise was output (accept both DONE and ALL_DONE variants)
-        if echo "$CLAUDE_OUTPUT" | grep -qE "<promise>(ALL_)?DONE</promise>"; then
-            DETECTED_SIGNAL=$(echo "$CLAUDE_OUTPUT" | grep -oE "<promise>(ALL_)?DONE</promise>" | tail -1)
+        if echo "$COPILOT_OUTPUT" | grep -qE "<promise>(ALL_)?DONE</promise>"; then
+            DETECTED_SIGNAL=$(echo "$COPILOT_OUTPUT" | grep -oE "<promise>(ALL_)?DONE</promise>" | tail -1)
             echo -e "${GREEN}✓ Completion signal detected: ${DETECTED_SIGNAL}${NC}"
             echo -e "${GREEN}✓ Task completed successfully!${NC}"
             CONSECUTIVE_FAILURES=0
@@ -382,7 +423,7 @@ while true; do
             if [ "$MODE" = "plan" ]; then
                 echo ""
                 echo -e "${GREEN}Planning complete!${NC}"
-                echo -e "${CYAN}Run './scripts/ralph-loop.sh' to start building.${NC}"
+                echo -e "${CYAN}Run './scripts/ralph-loop-copilot.sh' to start building.${NC}"
                 echo -e "${CYAN}Or delete IMPLEMENTATION_PLAN.md to work directly from specs.${NC}"
                 break
             fi
@@ -392,7 +433,7 @@ while true; do
             echo -e "${YELLOW}  This means acceptance criteria were not met.${NC}"
             echo -e "${YELLOW}  Retrying in next iteration...${NC}"
             CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-            print_latest_output "$LOG_FILE" "Claude"
+            print_latest_output "$LOG_FILE" "Copilot"
             
             if [ $CONSECUTIVE_FAILURES -ge $MAX_CONSECUTIVE_FAILURES ]; then
                 echo ""
@@ -410,10 +451,10 @@ while true; do
             kill "$WATCH_PID" 2>/dev/null || true
             wait "$WATCH_PID" 2>/dev/null || true
         fi
-        echo -e "${RED}✗ Claude execution failed${NC}"
+        echo -e "${RED}✗ Copilot execution failed${NC}"
         echo -e "${YELLOW}Check log: $LOG_FILE${NC}"
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-        print_latest_output "$LOG_FILE" "Claude"
+        print_latest_output "$LOG_FILE" "Copilot"
     fi
 
     # Push changes after each iteration (if any)

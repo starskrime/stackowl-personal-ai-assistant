@@ -1,27 +1,14 @@
 #!/bin/bash
 #
-# Ralph Loop for Claude Code
+# Ralph Loop for OpenAI Codex CLI
 #
-# Based on Geoffrey Huntley's Ralph Wiggum methodology:
-# https://github.com/ghuntley/how-to-ralph-wiggum
-#
+# Based on Geoffrey Huntley's Ralph Wiggum methodology.
 # Combined with SpecKit-style specifications.
 #
-# Key principles:
-# - Each iteration picks ONE task/spec to work on
-# - Agent works until acceptance criteria are met
-# - Only outputs <promise>DONE</promise> when truly complete
-# - Bash loop checks for magic phrase before continuing
-# - Fresh context window each iteration
-#
-# Work sources (in priority order):
-# 1. IMPLEMENTATION_PLAN.md (if exists) - pick highest priority task
-# 2. specs/ folder - pick highest priority incomplete spec
-#
 # Usage:
-#   ./scripts/ralph-loop.sh              # Build mode (unlimited)
-#   ./scripts/ralph-loop.sh 20           # Build mode (max 20 iterations)
-#   ./scripts/ralph-loop.sh plan         # Planning mode (creates IMPLEMENTATION_PLAN.md)
+#   ./scripts/ralph-loop-codex.sh              # Build mode (unlimited)
+#   ./scripts/ralph-loop-codex.sh 20           # Build mode (max 20 iterations)
+#   ./scripts/ralph-loop-codex.sh plan         # Planning mode (optional)
 #
 
 set -e
@@ -35,9 +22,9 @@ CONSTITUTION="$PROJECT_DIR/.specify/memory/constitution.md"
 # Configuration
 MAX_ITERATIONS=0  # 0 = unlimited
 MODE="build"
-CLAUDE_CMD="${CLAUDE_CMD:-claude}"
-CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-7}"
-YOLO_FLAG="--dangerously-skip-permissions"
+CODEX_CMD="${CODEX_CMD:-codex}"
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.5}"
+CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 TAIL_LINES=5
 TAIL_RENDERED_LINES=0
 ROLLING_OUTPUT_LINES=5
@@ -54,8 +41,6 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 mkdir -p "$LOG_DIR"
-
-# Source spec queue helpers
 source "$SCRIPT_DIR/lib/spec_queue.sh"
 
 # Check constitution for YOLO setting
@@ -68,41 +53,28 @@ fi
 
 show_help() {
     cat <<EOF
-Ralph Loop for Claude Code
-
-Based on Geoffrey Huntley's Ralph Wiggum methodology + SpecKit specs.
-https://github.com/ghuntley/how-to-ralph-wiggum
+Ralph Loop for OpenAI Codex CLI
 
 Usage:
-  ./scripts/ralph-loop.sh              # Build mode, unlimited iterations
-  ./scripts/ralph-loop.sh 20           # Build mode, max 20 iterations  
-  ./scripts/ralph-loop.sh plan         # Planning mode (optional)
+  ./scripts/ralph-loop-codex.sh              # Build mode, unlimited
+  ./scripts/ralph-loop-codex.sh 20           # Build mode, max 20 iterations
+  ./scripts/ralph-loop-codex.sh plan         # Planning mode (OPTIONAL)
 
 Modes:
-  build (default)  Pick spec/task and implement
-  plan             Create IMPLEMENTATION_PLAN.md from specs (OPTIONAL)
+  build (default)  Pick incomplete spec and implement
+  plan             Create IMPLEMENTATION_PLAN.md (OPTIONAL)
 
-Work Sources (checked in order):
-  1. IMPLEMENTATION_PLAN.md - If exists, pick highest priority task
-  2. specs/ folder - Otherwise, pick highest priority incomplete spec
+Work Source:
+  Agent reads specs/*.md and picks the highest priority incomplete spec.
 
-The plan mode is OPTIONAL. Most projects can work directly from specs.
-
-How it works:
-  1. Each iteration feeds PROMPT.md to Claude via stdin
-  2. Claude picks the HIGHEST PRIORITY incomplete spec/task
-  3. Claude implements, tests, and verifies acceptance criteria
-  4. Claude outputs <promise>DONE</promise> ONLY if criteria are met
-  5. Bash loop checks for the magic phrase
-  6. If found, loop continues to next iteration (fresh context)
-  7. If not found, loop retries
+YOLO Mode: Uses --dangerously-bypass-approvals-and-sandbox
 
 EOF
 }
 
 print_latest_output() {
     local log_file="$1"
-    local label="${2:-Claude}"
+    local label="${2:-Codex}"
     local target="/dev/tty"
 
     [ -f "$log_file" ] || return 0
@@ -127,7 +99,7 @@ print_latest_output() {
 
 watch_latest_output() {
     local log_file="$1"
-    local label="${2:-Claude}"
+    local label="${2:-Codex}"
     local target="/dev/tty"
     local use_tty=false
     local use_tput=false
@@ -213,19 +185,22 @@ done
 cd "$PROJECT_DIR"
 
 # Session log (captures ALL output)
-SESSION_LOG="$LOG_DIR/ralph_${MODE}_session_$(date '+%Y%m%d_%H%M%S').log"
+SESSION_LOG="$LOG_DIR/ralph_codex_${MODE}_session_$(date '+%Y%m%d_%H%M%S').log"
 exec > >(tee -a "$SESSION_LOG") 2>&1
 
-# Check if Claude CLI is available
-if ! command -v "$CLAUDE_CMD" &> /dev/null; then
-    echo -e "${RED}Error: Claude CLI not found${NC}"
+# Check if Codex CLI is available
+if ! command -v "$CODEX_CMD" &> /dev/null; then
+    echo -e "${RED}Error: Codex CLI not found${NC}"
     echo ""
-    echo "Install Claude Code CLI and authenticate first."
-    echo "https://claude.ai/code"
+    echo "Install Codex CLI:"
+    echo "  npm install -g @openai/codex"
+    echo ""
+    echo "Then authenticate:"
+    echo "  codex login"
     exit 1
 fi
 
-# Determine which prompt to use based on mode and available files
+# Determine prompt file
 if [ "$MODE" = "plan" ]; then
     PROMPT_FILE="PROMPT_plan.md"
 else
@@ -259,28 +234,20 @@ Do NOT implement anything.
 When the plan is complete, output `<promise>DONE</promise>`.
 PLANEOF
 
-# Check prompt file exists
-if [ ! -f "$PROMPT_FILE" ]; then
-    echo -e "${RED}Error: $PROMPT_FILE not found${NC}"
-    exit 1
-fi
-
-# Build Claude flags
-CLAUDE_FLAGS="-p --model $CLAUDE_MODEL"
+# Build Codex flags for exec mode
+CODEX_FLAGS="exec -m $CODEX_MODEL -c model_reasoning_effort=\"$CODEX_REASONING_EFFORT\""
 if [ "$YOLO_ENABLED" = true ]; then
-    CLAUDE_FLAGS="$CLAUDE_FLAGS $YOLO_FLAG"
+    CODEX_FLAGS="$CODEX_FLAGS --dangerously-bypass-approvals-and-sandbox"
 fi
 
 # Get current branch
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 
 # Check for work sources
-HAS_PLAN=false
 HAS_SPECS=false
 SPEC_COUNT=0
 INCOMPLETE_SPEC_COUNT=0
 FIRST_INCOMPLETE_SPEC=""
-[ -f "IMPLEMENTATION_PLAN.md" ] && HAS_PLAN=true
 if [ -d "specs" ]; then
     SPEC_COUNT=$(count_root_specs "specs")
     INCOMPLETE_SPEC_COUNT=$(count_incomplete_root_specs "specs")
@@ -292,11 +259,11 @@ fi
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}              RALPH LOOP (Claude Code) STARTING              ${NC}"
+echo -e "${GREEN}              RALPH LOOP (Codex) STARTING                    ${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "${BLUE}Mode:${NC}     $MODE"
-echo -e "${BLUE}Model:${NC}    $CLAUDE_MODEL"
+echo -e "${BLUE}Model:${NC}    $CODEX_MODEL ($CODEX_REASONING_EFFORT)"
 echo -e "${BLUE}Prompt:${NC}   $PROMPT_FILE"
 echo -e "${BLUE}Branch:${NC}   $CURRENT_BRANCH"
 echo -e "${YELLOW}YOLO:${NC}     $([ "$YOLO_ENABLED" = true ] && echo "ENABLED" || echo "DISABLED")"
@@ -304,14 +271,9 @@ echo -e "${YELLOW}YOLO:${NC}     $([ "$YOLO_ENABLED" = true ] && echo "ENABLED" 
 [ $MAX_ITERATIONS -gt 0 ] && echo -e "${BLUE}Max:${NC}      $MAX_ITERATIONS iterations"
 echo ""
 echo -e "${BLUE}Work source:${NC}"
-if [ "$HAS_PLAN" = true ]; then
-    echo -e "  ${GREEN}✓${NC} IMPLEMENTATION_PLAN.md (will use this)"
-else
-    echo -e "  ${YELLOW}○${NC} IMPLEMENTATION_PLAN.md (not found, that's OK)"
-fi
 if [ "$HAS_SPECS" = true ]; then
     echo -e "  ${GREEN}✓${NC} specs/ folder ($SPEC_COUNT specs, $INCOMPLETE_SPEC_COUNT incomplete)"
-    if [ "$HAS_PLAN" = false ] && [ "$INCOMPLETE_SPEC_COUNT" -gt 0 ]; then
+    if [ "$INCOMPLETE_SPEC_COUNT" -gt 0 ]; then
         echo -e "    ${CYAN}Next incomplete:${NC} $FIRST_INCOMPLETE_SPEC"
     fi
 else
@@ -319,15 +281,15 @@ else
 fi
 echo ""
 
-# Exit early if all specs are complete and no plan
-if [ "$MODE" = "build" ] && [ "$HAS_PLAN" = false ] && [ "$HAS_SPECS" = true ] && [ "$INCOMPLETE_SPEC_COUNT" -eq 0 ]; then
+# Exit early if all specs are complete
+if [ "$MODE" = "build" ] && [ "$HAS_SPECS" = true ] && [ "$INCOMPLETE_SPEC_COUNT" -eq 0 ]; then
     echo -e "${GREEN}All $SPEC_COUNT specs are COMPLETE. Nothing to do.${NC}"
     echo -e "${CYAN}To add more work, create a new spec in specs/ without 'Status: COMPLETE'.${NC}"
     exit 0
 fi
 
-echo -e "${CYAN}The loop checks for <promise>DONE</promise> in each iteration.${NC}"
-echo -e "${CYAN}Agent must verify acceptance criteria before outputting it.${NC}"
+echo -e "${CYAN}Using: $CODEX_CMD $CODEX_FLAGS${NC}"
+echo -e "${CYAN}Agent must output <promise>DONE</promise> when complete.${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the loop${NC}"
 echo ""
@@ -352,56 +314,61 @@ while true; do
     echo ""
 
     # Log file for this iteration
-    LOG_FILE="$LOG_DIR/ralph_${MODE}_iter_${ITERATION}_$(date '+%Y%m%d_%H%M%S').log"
+    LOG_FILE="$LOG_DIR/ralph_codex_${MODE}_iter_${ITERATION}_$(date '+%Y%m%d_%H%M%S').log"
+    OUTPUT_FILE="$LOG_DIR/ralph_codex_output_iter_${ITERATION}_$(date '+%Y%m%d_%H%M%S').txt"
     : > "$LOG_FILE"
     WATCH_PID=""
 
     if [ "$ROLLING_OUTPUT_INTERVAL" -gt 0 ] && [ "$ROLLING_OUTPUT_LINES" -gt 0 ] && [ -t 1 ] && [ -w /dev/tty ]; then
-        watch_latest_output "$LOG_FILE" "Claude" &
+        watch_latest_output "$LOG_FILE" "Codex" &
         WATCH_PID=$!
     fi
 
-    # Run Claude with prompt via stdin, capture output
-    CLAUDE_OUTPUT=""
-    if CLAUDE_OUTPUT=$(cat "$PROMPT_FILE" | "$CLAUDE_CMD" $CLAUDE_FLAGS 2>&1 | tee "$LOG_FILE"); then
+    # Run Codex with exec mode, reading prompt from stdin with "-"
+    # Use --output-last-message to capture the final response for checking
+    echo -e "${BLUE}Running: cat $PROMPT_FILE | $CODEX_CMD $CODEX_FLAGS - --output-last-message $OUTPUT_FILE${NC}"
+    echo ""
+    
+    CODEX_EXIT=0
+    if cat "$PROMPT_FILE" | "$CODEX_CMD" $CODEX_FLAGS - --output-last-message "$OUTPUT_FILE" 2>&1 | tee "$LOG_FILE"; then
         if [ -n "$WATCH_PID" ]; then
             kill "$WATCH_PID" 2>/dev/null || true
             wait "$WATCH_PID" 2>/dev/null || true
         fi
         echo ""
-        echo -e "${GREEN}✓ Claude execution completed${NC}"
+        echo -e "${GREEN}✓ Codex execution completed${NC}"
         
         # Check if DONE promise was output (accept both DONE and ALL_DONE variants)
-        if echo "$CLAUDE_OUTPUT" | grep -qE "<promise>(ALL_)?DONE</promise>"; then
-            DETECTED_SIGNAL=$(echo "$CLAUDE_OUTPUT" | grep -oE "<promise>(ALL_)?DONE</promise>" | tail -1)
+        if [ -f "$OUTPUT_FILE" ] && grep -qE "<promise>(ALL_)?DONE</promise>" "$OUTPUT_FILE"; then
+            DETECTED_SIGNAL=$(grep -oE "<promise>(ALL_)?DONE</promise>" "$OUTPUT_FILE" | tail -1)
             echo -e "${GREEN}✓ Completion signal detected: ${DETECTED_SIGNAL}${NC}"
             echo -e "${GREEN}✓ Task completed successfully!${NC}"
             CONSECUTIVE_FAILURES=0
             
-            # For planning mode, stop after one successful plan
             if [ "$MODE" = "plan" ]; then
                 echo ""
                 echo -e "${GREEN}Planning complete!${NC}"
-                echo -e "${CYAN}Run './scripts/ralph-loop.sh' to start building.${NC}"
-                echo -e "${CYAN}Or delete IMPLEMENTATION_PLAN.md to work directly from specs.${NC}"
                 break
             fi
+        # Also check the main log
+        elif grep -qE "<promise>(ALL_)?DONE</promise>" "$LOG_FILE"; then
+            DETECTED_SIGNAL=$(grep -oE "<promise>(ALL_)?DONE</promise>" "$LOG_FILE" | tail -1)
+            echo -e "${GREEN}✓ Completion signal detected: ${DETECTED_SIGNAL}${NC}"
+            echo -e "${GREEN}✓ Task completed successfully!${NC}"
+            CONSECUTIVE_FAILURES=0
         else
             echo -e "${YELLOW}⚠ No completion signal found${NC}"
             echo -e "${YELLOW}  Agent did not output <promise>DONE</promise> or <promise>ALL_DONE</promise>${NC}"
-            echo -e "${YELLOW}  This means acceptance criteria were not met.${NC}"
             echo -e "${YELLOW}  Retrying in next iteration...${NC}"
             CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-            print_latest_output "$LOG_FILE" "Claude"
+            print_latest_output "$LOG_FILE" "Codex"
             
             if [ $CONSECUTIVE_FAILURES -ge $MAX_CONSECUTIVE_FAILURES ]; then
                 echo ""
                 echo -e "${RED}⚠ $MAX_CONSECUTIVE_FAILURES consecutive iterations without completion.${NC}"
-                echo -e "${RED}  The agent may be stuck. Consider:${NC}"
-                echo -e "${RED}  - Checking the logs in $LOG_DIR${NC}"
-                echo -e "${RED}  - Simplifying the current spec${NC}"
-                echo -e "${RED}  - Manually fixing blocking issues${NC}"
-                echo ""
+                echo -e "${RED}  The agent may be stuck. Check logs:${NC}"
+                echo -e "${RED}  - $LOG_FILE${NC}"
+                echo -e "${RED}  - $OUTPUT_FILE${NC}"
                 CONSECUTIVE_FAILURES=0
             fi
         fi
@@ -410,16 +377,16 @@ while true; do
             kill "$WATCH_PID" 2>/dev/null || true
             wait "$WATCH_PID" 2>/dev/null || true
         fi
-        echo -e "${RED}✗ Claude execution failed${NC}"
+        CODEX_EXIT=$?
+        echo -e "${RED}✗ Codex execution failed (exit code: $CODEX_EXIT)${NC}"
         echo -e "${YELLOW}Check log: $LOG_FILE${NC}"
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-        print_latest_output "$LOG_FILE" "Claude"
+        print_latest_output "$LOG_FILE" "Codex"
     fi
 
-    # Push changes after each iteration (if any)
+    # Push changes after each iteration
     git push origin "$CURRENT_BRANCH" 2>/dev/null || {
         if git log origin/$CURRENT_BRANCH..HEAD --oneline 2>/dev/null | grep -q .; then
-            echo -e "${YELLOW}Push failed, creating remote branch...${NC}"
             git push -u origin "$CURRENT_BRANCH" 2>/dev/null || true
         fi
     }
@@ -432,5 +399,5 @@ done
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}         RALPH LOOP FINISHED ($ITERATION iterations)         ${NC}"
+echo -e "${GREEN}       RALPH LOOP (Codex) FINISHED ($ITERATION iterations)   ${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
