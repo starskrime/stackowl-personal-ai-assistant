@@ -100,13 +100,26 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
     36 tests green; ruff + mypy clean. (MR1/MR4)
 
 - [ ] **PA5 — Murat's ratchet gates (assert on the STORE, never a log).**
-  - [ ] (a) **Lying-success gate** — fake tool returning `verified=False` + persistence judge stubbed to raise →
-    assert turn outcome ≠ delivered_success (escalates or honest-confesses). PARAMETRIZE over the tool registry:
-    no tool that declares an `effect_class` may ship with `verified` absent. Coverage ratchet on NEW tools only.
-  - [ ] (b) **Silent-delivery gate** — locate the real quiet-hours / unreachable-handler delivery path (NOT
-    scheduler/goal_execution.py — that path was wrong; find the actual one). Job-row whose handler doesn't resolve +
-    a quiet-hours delivery → assert a durable NACK / dead-letter row exists IN THE STORE (read it back). Never a log.
-    Cover BOTH delivery substrates in one fixture. (MR6/MR1)
+  - [x] (a) **Lying-success gate + coverage ratchet.** DONE. commit `14365661`. Two judge-INDEPENDENT, store-asserting
+    gates (test-only, zero prod change): (1) `tests/tools/test_effect_class_verification_ratchet.py` enumerates the real
+    registry (`ToolRegistry.with_defaults`) and fails if any `effect_class` tool overrides NEITHER `Tool.verify` NOR
+    `Tool.post_condition` — non-vacuous (send_message/skill_manage/owl_build covered) + self-policing allowlist;
+    (2) `tests/pipeline/test_lying_success_gate.py` — `verified=False` + persistence judge STUBBED TO RAISE still floors
+    (structural veto is judge-independent). ★Ratchet caught a REAL hole: `CronjobTool` declares `effect_class="schedules"`
+    but verifies nothing → over-claims "scheduled!" on silent install failure. Documented in `_KNOWN_UNVERIFIED` debt +
+    follow-up below. 30 tests green; ruff clean. (MR5)
+  - [ ] **(a-followup) cronjob verification surface.** CronjobTool needs a `post_condition` (DeliveryAck/Custom)
+    that reads the JobScheduler back to confirm the job row exists, for the schedule-CREATING actions (create/watch)
+    only — then DELETE `cronjob` from `_KNOWN_UNVERIFIED` (the ratchet self-policing test enforces removal). Multi-action
+    tool → own sub-story with QA, not a one-liner.
+  - [ ] (b) **Silent-delivery gate** — SPLIT OUT, do FRESH (needs careful substrate analysis). The real substrate is
+    `scheduler/scheduler.py` + `notifications/proactive_job.py::ProactiveJobDeliverer` + `scheduler/scheduler_helpers.py`
+    quiet-hours (NOT goal_execution.py). ★LANDMINE: scheduler F-62 (scheduler.py:209) INTENTIONALLY leaves a
+    handler-not-registered job PENDING (registration-ordering, recoverable) — that is NOT a dead-letter. Distinct
+    stored states: pending (F-62) vs failure-ledger (handler RAISED past retries, scheduler.py:280/401) vs
+    quiet-hours-deferred vs dead-letter. The ratchet must assert the RIGHT invariant per state, not conflate them —
+    a wrong ratchet is worse than none. Define which state SHOULD produce a durable NACK before writing the gate.
+    (MR6/MR1)
 
 ## RESUME NOTE (paused 2026-06-28 — cost stop at iteration 4/12)
 DONE + pushed to main: PA0 `7273edb6`, PA1 `2dcfcfdb`, PA2 (this commit). The `decide_delivery` seam
