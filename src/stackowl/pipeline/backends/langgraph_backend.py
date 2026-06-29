@@ -34,6 +34,7 @@ from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.grounding_gate import surface_grounding_gate
 from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
+from stackowl.pipeline.persistence_handoff import surface_persistence_handoff
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
@@ -59,6 +60,9 @@ async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
     # success, REPLACE the (potentially dressed-up) draft with an honest floor
     # naming the failed capability. Runs BEFORE surface_critical_failure so the
     # critical-failure cascade sees an honest state (never hides behind a giveup).
+    # Never-give-up rung (PA4): hand a would-give-up turn to a better-fit owl and
+    # deliver its answer; a failed hand-off falls through to the honest floor below.
+    surfaced = await surface_persistence_handoff(surfaced, get_services())
     surfaced = await surface_consequential_giveup_floor(surfaced)
     # Overclaim delivery-gate (Task 6): structural gate that replaces a confident
     # non-floor draft with the honest floor when nothing was delivered and a tool

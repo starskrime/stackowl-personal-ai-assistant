@@ -19,6 +19,7 @@ from stackowl.pipeline.critical_failure import surface_critical_failure
 from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
 from stackowl.pipeline.grounding_gate import surface_grounding_gate
 from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
+from stackowl.pipeline.persistence_handoff import surface_persistence_handoff
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -185,6 +186,10 @@ class AsyncioBackend(OrchestratorBackend):
             # success, REPLACE the (potentially dressed-up) draft with an honest floor
             # naming the failed capability. Runs BEFORE surface_critical_failure so the
             # critical-failure cascade sees an honest state (never hides behind a giveup).
+            # Never-give-up rung (PA4): a turn that would give up first tries to hand
+            # the whole request to a better-fit owl and deliver ITS answer. A failed
+            # hand-off leaves responses untouched → the honest floor below still fires.
+            current = await surface_persistence_handoff(current, self._services)
             current = await surface_consequential_giveup_floor(current)
             # Overclaim delivery-gate (Task 6): if the draft is confident but nothing
             # was delivered while a tool failed/bounced, replace it with the honest
