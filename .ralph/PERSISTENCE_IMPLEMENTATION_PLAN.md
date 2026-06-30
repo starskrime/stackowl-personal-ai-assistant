@@ -108,10 +108,13 @@ Ladder (bounded; budget + max-iter cap = real ralph discipline):
     (structural veto is judge-independent). ★Ratchet caught a REAL hole: `CronjobTool` declares `effect_class="schedules"`
     but verifies nothing → over-claims "scheduled!" on silent install failure. Documented in `_KNOWN_UNVERIFIED` debt +
     follow-up below. 30 tests green; ruff clean. (MR5)
-  - [ ] **(a-followup) cronjob verification surface.** CronjobTool needs a `post_condition` (DeliveryAck/Custom)
-    that reads the JobScheduler back to confirm the job row exists, for the schedule-CREATING actions (create/watch)
-    only — then DELETE `cronjob` from `_KNOWN_UNVERIFIED` (the ratchet self-policing test enforces removal). Multi-action
-    tool → own sub-story with QA, not a one-liner.
+  - [x] **(a-followup) cronjob verification surface.** DONE. CronjobTool now overrides `verify()` (async):
+    on `action in {"create", "watch"}` it re-reads `JobScheduler.list_jobs()` and confirms the claimed
+    `job_id` is persisted (True observed / False missing / None unobservable — DB down, payload not JSON,
+    scheduler raises). Other actions return None (no opinion). `cronjob` removed from
+    `_KNOWN_UNVERIFIED` in the ratchet; the self-policing test now ENFORCES the verification surface stays
+    wired. 8 new verify tests + 30 cronjob/3 ratchet + 9 regression (test_effect_class +
+    scheduled_goal_delivers) green; ruff + mypy clean on changed files. (MR5)
   - [ ] (b) **Silent-delivery gate** — ARCHITECTED: see [`.ralph/PA5B_DESIGN.md`](PA5B_DESIGN.md) (dedicated
     `undelivered_outbox` store: silent-drop paths → durable row → next-contact banner → clear; policy = defer +
     surface-on-next-contact, next-session banner; scope = prod NACK seam + ratchet). Implement per that doc. The real

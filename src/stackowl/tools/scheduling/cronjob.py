@@ -137,6 +137,68 @@ class CronjobTool(Tool):
             effect_class="schedules",
         )
 
+    async def verify(
+        self, args: dict[str, object], result: ToolResult, *, started_at: float
+    ) -> bool | None:
+        """PA5(a-followup) — confirm a schedule-CREATING action persisted a job row.
+
+        Closes the ``effect_class="schedules"`` honesty hole: ``create``/``watch``
+        each claim "scheduled ✓" after an INSERT they did not re-read. This re-queries
+        the scheduler through the SAME db facade :meth:`execute` used and confirms
+        the claimed ``job_id`` is present — turning the over-claim into a MEASURED
+        success/failure that the honesty layer can demand a receipt for.
+
+        Scope: only the two schedule-CREATING actions (``create``, ``watch``). Every
+        other action returns ``None`` (no opinion):
+
+        * ``list`` is a read — nothing to verify.
+        * ``update`` / ``pause`` / ``resume`` / ``remove`` mutate an EXISTING row;
+          their post-condition (changed schedule / paused flag / deleted row) is
+          out of scope here — wire its own probe later.
+        * ``run`` invokes a job out of band — its effect is the handler's, not the
+          scheduler's.
+        * A success payload without a job_id (the soft-cap nudge ``created: False``)
+          is a deliberate non-creation — no row to confirm.
+
+        Total / never raises (the seam catches but stay total here). A DB outage at
+        verify-time yields ``None`` (cannot observe), never ``False`` — an unobservable
+        reality must not flip a real success.
+        """
+        action = args.get("action")
+        if action not in ("create", "watch"):
+            return None
+        try:
+            payload = json.loads(result.output)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(payload, dict) or not payload.get("created"):
+            return None
+        job_id = payload.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            return None
+        db = get_services().db_pool
+        if db is None:
+            log.tool.warning(
+                "cronjob.verify: db unavailable — no opinion",
+                extra={"_fields": {"job_id": job_id}},
+            )
+            return None
+        try:
+            jobs = await JobScheduler(db=db).list_jobs()
+        except Exception as exc:
+            log.tool.warning(
+                "cronjob.verify: scheduler read failed — no opinion",
+                exc_info=exc,
+                extra={"_fields": {"job_id": job_id}},
+            )
+            return None
+        observed = any(getattr(j, "job_id", None) == job_id for j in jobs)
+        log.tool.debug(
+            "cronjob.verify: exit",
+            extra={"_fields": {"job_id": job_id, "observed": observed}},
+        )
+        return observed
+
     async def execute(self, **kwargs: object) -> ToolResult:
         # 1. ENTRY
         t0 = time.monotonic()

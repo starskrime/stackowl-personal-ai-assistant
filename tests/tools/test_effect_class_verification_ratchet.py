@@ -24,13 +24,7 @@ from stackowl.tools.registry import ToolRegistry
 # verification surface. The ratchet exempts ONLY these, so it still catches every
 # NEW addition while keeping the existing gap visible. Keep this set EMPTY where
 # possible; each entry needs a reason + a removal path.
-#
-# TODO(persistence-arc): cronjob declares effect_class="schedules" but overrides
-# neither verify() nor post_condition() — installing a recurring job is not yet
-# proven by a world-read (e.g. re-querying the scheduler that the row exists). It
-# can over-claim "scheduled!" on a silent install failure. Wire a post_condition
-# (DeliveryAck/Custom reading the JobScheduler back) and DELETE this entry.
-_KNOWN_UNVERIFIED: frozenset[str] = frozenset({"cronjob"})
+_KNOWN_UNVERIFIED: frozenset[str] = frozenset()
 
 
 def _overrides_verification_surface(tool: Tool) -> bool:

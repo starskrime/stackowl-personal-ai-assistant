@@ -15,3 +15,11 @@
             CLOSED + durable NACK, never a silent log. Reviews caught 3 real bugs
             (judge harness drift, phantom skill-ownership, child snapshot leak);
             PA5a ratchet caught a real prod hole (cronjob over-claims scheduling).
+2026-06-30  SHIPPED: PA5(a-followup) cronjob verification surface. CronjobTool.verify()
+            re-reads JobScheduler.list_jobs() on create/watch to confirm the claimed
+            job_id row exists (True observed / False missing / None unobservable);
+            removed cronjob from _KNOWN_UNVERIFIED ratchet allowlist. 8 new verify
+            tests + 30 cronjob + 3 ratchet + 9 regression all green; ruff + mypy
+            clean. Closes the effect_class="schedules" honesty hole the PA5(a)
+            ratchet caught: "scheduled ✓" can no longer ship over a silent INSERT
+            failure.

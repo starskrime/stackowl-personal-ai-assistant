@@ -587,3 +587,189 @@ async def test_watch_requires_url_or_path(migrated_db: DbPool) -> None:
     result = await _run(migrated_db, action="watch", schedule="every 5m")
     assert not result.success
     assert "watch_url" in (result.error or "") or "watch_path" in (result.error or "")
+
+
+# --------------------------------------------------------------- verify() — PA5(a-followup)
+# Closes the effect_class="schedules" honesty hole: create/watch claim "scheduled ✓"
+# from an INSERT they did not re-read. verify() re-queries the scheduler and stamps
+# verified accordingly so the honesty layer can demand a MEASURED receipt.
+
+
+async def test_verify_create_observes_persisted_job(migrated_db: DbPool) -> None:
+    """create lands → verify reads the scheduler back → verified=True."""
+    import time
+
+    await _seed_session(migrated_db)
+    args: dict[str, object] = {
+        "action": "create", "prompt": "x", "schedule": "daily@09:00"
+    }
+    token = set_services(StepServices(db_pool=migrated_db))
+    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    try:
+        tool = CronjobTool()
+        result = await tool.execute(**args)
+        assert result.success
+        verdict = await tool.verify(args, result, started_at=time.time())
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+    assert verdict is True
+
+
+async def test_verify_watch_observes_persisted_job(migrated_db: DbPool) -> None:
+    """watch lands → verify reads the scheduler back → verified=True."""
+    import time
+
+    await _seed_session(migrated_db)
+    args: dict[str, object] = {
+        "action": "watch", "watch_url": "https://example.test/page",
+        "schedule": "every 5m",
+    }
+    token = set_services(StepServices(db_pool=migrated_db))
+    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    try:
+        tool = CronjobTool()
+        result = await tool.execute(**args)
+        assert result.success
+        verdict = await tool.verify(args, result, started_at=time.time())
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+    assert verdict is True
+
+
+async def test_verify_returns_false_when_row_missing(migrated_db: DbPool) -> None:
+    """A success payload that names a job_id NOT in the scheduler ⇒ verified=False
+    (the lying-success the honesty layer must catch)."""
+    import time
+
+    fake = ToolResult(
+        success=True,
+        output=json.dumps({"created": True, "job_id": "goal_execution-deadbeef"}),
+        error=None,
+        duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "create"}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is False
+
+
+async def test_verify_returns_none_for_non_creating_action(migrated_db: DbPool) -> None:
+    """list/update/pause/resume/remove/run are out of scope here ⇒ no opinion."""
+    import time
+
+    fake = ToolResult(
+        success=True, output=json.dumps({"count": 0, "jobs": []}),
+        error=None, duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "list"}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is None
+
+
+async def test_verify_returns_none_for_soft_cap_nudge(migrated_db: DbPool) -> None:
+    """A soft-cap result ({created: False, nudge: ...}) is a deliberate non-creation
+    — no job row to confirm ⇒ no opinion."""
+    import time
+
+    nudge = ToolResult(
+        success=True,
+        output=json.dumps({"created": False, "nudge": "cap", "active_count": 20}),
+        error=None,
+        duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "create"}, nudge, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is None
+
+
+async def test_verify_returns_none_when_db_unavailable() -> None:
+    """A DB outage at verify-time yields None (cannot observe), never False —
+    an unobservable reality must not flip a real success."""
+    import time
+
+    fake = ToolResult(
+        success=True,
+        output=json.dumps({"created": True, "job_id": "goal_execution-abc"}),
+        error=None,
+        duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=None))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "create"}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is None
+
+
+async def test_verify_returns_none_on_unparseable_output() -> None:
+    """A non-JSON success.output ⇒ no opinion (never raises, never False)."""
+    import time
+
+    fake = ToolResult(
+        success=True, output="not json", error=None, duration_ms=1.0,
+    )
+    verdict = await CronjobTool().verify(
+        {"action": "create"}, fake, started_at=time.time()
+    )
+    assert verdict is None
+
+
+async def test_verify_returns_none_when_scheduler_read_raises(
+    migrated_db: DbPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """list_jobs raising ⇒ no opinion (total, fail-CLOSED-as-unobservable)."""
+    import time
+
+    async def _boom(self: object) -> list[object]:
+        raise RuntimeError("scheduler down")
+
+    monkeypatch.setattr(JobScheduler, "list_jobs", _boom)
+    fake = ToolResult(
+        success=True,
+        output=json.dumps({"created": True, "job_id": "goal_execution-x"}),
+        error=None,
+        duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "create"}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is None
+
+
+async def test_call_seam_runs_verify_and_stamps_verified_true(migrated_db: DbPool) -> None:
+    """End-to-end through __call__: a successful create comes out with verified=True
+    (the seam ran verify() and observed the row). This is the lying-success guard."""
+    await _seed_session(migrated_db)
+    token = set_services(StepServices(db_pool=migrated_db))
+    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    try:
+        result = await CronjobTool()(
+            action="create", prompt="ping me", schedule="daily@09:00"
+        )
+    finally:
+        TraceContext.reset(ttoken)
+        reset_services(token)
+    assert result.success
+    assert result.verified is True
