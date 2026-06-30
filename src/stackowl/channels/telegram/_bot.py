@@ -10,8 +10,18 @@ from typing import TYPE_CHECKING, Any
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
-    from telegram import InlineKeyboardMarkup
     from telegram.ext import Application
+
+# PB1: bounded timeouts so a stalled socket fails LOUD (raises TimedOut) and PTB
+# reconnects, instead of hanging the long-poll loop indefinitely (RC0 fix).
+# get_updates_read_timeout MUST be strictly greater than the long-poll `timeout`
+# kwarg or PTB raises BadRequest; +10s headroom for clock skew + handshake.
+TELEGRAM_CONNECT_TIMEOUT = 10.0
+TELEGRAM_READ_TIMEOUT = 20.0
+TELEGRAM_WRITE_TIMEOUT = 20.0
+TELEGRAM_POOL_TIMEOUT = 10.0
+TELEGRAM_LONG_POLL_TIMEOUT = 30  # seconds the bot asks Telegram to hold the long-poll open
+TELEGRAM_GET_UPDATES_READ_TIMEOUT = float(TELEGRAM_LONG_POLL_TIMEOUT + 10)
 
 
 async def start_bot(
@@ -24,10 +34,34 @@ async def start_bot(
     Returns:
         ``(app, bot_user_id, bot_username)`` triple.
     """
-    from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters  # noqa: F811
+    from telegram.ext import ApplicationBuilder
 
-    log.telegram.debug("[telegram] _bot.start_bot: entry")
-    app: Application = ApplicationBuilder().token(bot_token).build()  # type: ignore[type-arg]
+    log.telegram.debug(
+        "[telegram] _bot.start_bot: entry",
+        extra={
+            "_fields": {
+                "connect_timeout": TELEGRAM_CONNECT_TIMEOUT,
+                "read_timeout": TELEGRAM_READ_TIMEOUT,
+                "write_timeout": TELEGRAM_WRITE_TIMEOUT,
+                "pool_timeout": TELEGRAM_POOL_TIMEOUT,
+                "long_poll_timeout": TELEGRAM_LONG_POLL_TIMEOUT,
+                "get_updates_read_timeout": TELEGRAM_GET_UPDATES_READ_TIMEOUT,
+            }
+        },
+    )
+    app: Application = (  # type: ignore[type-arg]
+        ApplicationBuilder()
+        .token(bot_token)
+        .connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
+        .read_timeout(TELEGRAM_READ_TIMEOUT)
+        .write_timeout(TELEGRAM_WRITE_TIMEOUT)
+        .pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .get_updates_connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
+        .get_updates_read_timeout(TELEGRAM_GET_UPDATES_READ_TIMEOUT)
+        .get_updates_write_timeout(TELEGRAM_WRITE_TIMEOUT)
+        .get_updates_pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .build()
+    )
     await app.initialize()
 
     bot_info = await app.bot.get_me()
@@ -57,7 +91,10 @@ async def start_bot(
         log.telegram.debug("[telegram] _bot.start_bot: decision polling_mode")
         await app.start()
         if app.updater:
-            await app.updater.start_polling(drop_pending_updates=True)
+            await app.updater.start_polling(
+                drop_pending_updates=True,
+                timeout=TELEGRAM_LONG_POLL_TIMEOUT,
+            )
 
     log.telegram.debug("[telegram] _bot.start_bot: exit")
     return app, bot_user_id, bot_username

@@ -14,9 +14,16 @@ UTC), confirmed `[telegram] adapter.receive: entry` resumed. The underlying time
 
 ## Stories
 
-- [ ] **PB1** — Add timeout to the Telegram long-poll/API calls (`channels/telegram/_bot.py`,
-      `channels/telegram/adapter.py`) so a network stall fails loud and reconnects instead of hanging forever.
-      This is the actual RC0 fix. Land before PB0c.
+- [x] **PB1** — DONE. `ApplicationBuilder` now carries bounded
+      connect/read/write/pool timeouts (10/20/20/10s) plus `get_updates_*` siblings, and
+      `start_polling` is called with `timeout=30s` (get_updates read timeout = 40s, strictly
+      greater per PTB requirement). A stalled long-poll now raises `telegram.error.TimedOut`
+      and PTB auto-reconnects instead of hanging forever (RC0 fix). 4 new tests in
+      `tests/channels/telegram/test_bot_timeouts.py` (invariant + polling-mode witness +
+      webhook-mode witness + black-hole fault-injection); 29 adapter+wiring regression tests
+      green; ruff + mypy clean on changed files. Adapter-side API calls (`send_message`,
+      `send_chat_action`, `set_webhook`, `get_me`, etc.) inherit the builder timeouts
+      automatically — no per-call wrappers needed.
 - [ ] **PB0b** — Cross-process liveness timestamp for the Telegram channel + a real `ChannelRegistry.health_check`
       that reads it (`channels/registry.py:127-142`, `scheduler/assembly.py:320`). MUST be cross-process state
       (DB row or shared file) — gateway and core are split processes, an in-proc variable won't be visible to
@@ -41,11 +48,18 @@ UTC), confirmed `[telegram] adapter.receive: entry` resumed. The underlying time
 - [ ] **PB6b** — Migrate `JobHandler` subclasses to the new contract, one handler per commit, bisectable. Include
       the `webhook_handler` dangling-handler finding (wiring_audit warning: "registered as seeded but has NO
       standing jobs row") found during the PB0a restart — fix or explicitly defer with a ticket, don't drop it.
-- [ ] **PB5** — `cronjob.py:137` `verify()`/`post_condition()` reading back the inserted job row. Build AFTER PB6a,
-      against the new contract, mirroring `owl_build.py:277`/`skill_manage.py:606`. Watch for a read-after-write
-      race against the job store's commit boundary.
-- [ ] **PB7a** — Build `undelivered_outbox` exactly per `.ralph/PA5B_DESIGN.md` (already fully specified, do not
-      redesign). Migration `0073_undelivered_outbox.sql` (tip is 0072).
+- [x] **PB5** — DONE @92379d07. `cronjob.py` `verify()` re-reads `JobScheduler.list_jobs()` to confirm the
+      claimed `job_id` row exists (tri-state: True observed / False missing / None unobservable-fail-closed).
+      8 new verify tests + ratchet enforcement (cronjob removed from `_KNOWN_UNVERIFIED`), 9 regression green,
+      ruff+mypy clean. Correction to original ordering note below: PB5 is `ToolResult`-based (mirrors
+      `owl_build.py`/`skill_manage.py` exactly as specified), NOT `JobResult`-based — it never actually depended
+      on PB6a landing first. Landed out of sequence but cleanly; no rework needed. NOTE: this commit was filed
+      under the wrong arc plan (`PERSISTENCE_IMPLEMENTATION_PLAN.md` instead of this file) by a loop iteration
+      that drifted scope — content is correct, bookkeeping is fixed here.
+- [ ] **PB7a** — IN PROGRESS, uncommitted in working tree (`src/stackowl/notifications/undelivered_outbox.py`,
+      `src/stackowl/db/migrations/0073_undelivered_outbox.sql`) from an interrupted iteration — CONTINUE this,
+      do not restart from scratch. Build `undelivered_outbox` exactly per `.ralph/PA5B_DESIGN.md` (already fully
+      specified, do not redesign).
 - [ ] **PB7b** — Design + build outbox generalization to scheduled-job failures (gap c). Separate design pass,
       hard-blocked on PB6a (no `verified` signal to gate on until the contract exists). Do not silently fold into
       PB7a's scope.
