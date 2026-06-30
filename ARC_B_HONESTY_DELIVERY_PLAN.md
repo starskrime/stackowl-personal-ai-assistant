@@ -3,27 +3,36 @@
 Full context, root-cause evidence, and BMAD party verdict: see the approved plan at
 `/home/boss/.claude/plans/i-want-you-analayze-quizzical-stonebraker.md` (read it before starting any story).
 
+Prior arc docs (Persistence/Trust/Learning/UniOwl + this arc's design doc `PA5B_DESIGN.md`) are archived at
+`docs_archive_ralph_2026-06-30/` (was `.ralph/`) for reference — the Ralph Wiggum script/skill/harness has been
+removed from this repo. **This arc is now implemented directly in-session (no autonomous loop script), one story
+at a time, subagent-driven per project convention** (fresh implementer subagent per story → QA+dev review →
+verify → commit → push). This file is the resumable source of truth for story status.
+
 **Do not rebuild the scheduler.** `src/stackowl/scheduler/scheduler.py` is already ONE poll loop over ONE `jobs`
 table (migration `0009_scheduler_jobs.sql`) dispatching all 27 handler types — internal sweeps, cognitive jobs,
 and user cronjobs alike. Confirmed by research, not assumed. The gap is the honesty/verification layer on top
 of it, not the scheduling primitive itself.
 
-**PB0a is already DONE** — gateway process tree was manually restarted live during planning (2026-06-30 23:20
-UTC), confirmed `[telegram] adapter.receive: entry` resumed. The underlying timeout bug (PB1) that caused the
-30+ hour hang is NOT yet fixed — PB0a was the symptom-relief restart, not the fix.
+**PB0a is DONE** — gateway process tree was manually restarted live during planning (2026-06-30 23:20 UTC),
+confirmed `[telegram] adapter.receive: entry` resumed. **PB1 is DONE @9fd28768** — the underlying timeout bug
+that caused the 30+ hour hang is fixed in code, not just symptom-relieved.
+
+## Status (2026-06-30, resuming in-session — no script)
+2 of 13 stories done (PB1, PB5). 1 in progress, uncommitted in the working tree — **continue it, do not restart**:
+`src/stackowl/notifications/undelivered_outbox.py` + `src/stackowl/db/migrations/0073_undelivered_outbox.sql`
+(PB7a, per `docs_archive_ralph_2026-06-30/PA5B_DESIGN.md`).
 
 ## Stories
 
-- [x] **PB1** — DONE. `ApplicationBuilder` now carries bounded
-      connect/read/write/pool timeouts (10/20/20/10s) plus `get_updates_*` siblings, and
-      `start_polling` is called with `timeout=30s` (get_updates read timeout = 40s, strictly
-      greater per PTB requirement). A stalled long-poll now raises `telegram.error.TimedOut`
-      and PTB auto-reconnects instead of hanging forever (RC0 fix). 4 new tests in
-      `tests/channels/telegram/test_bot_timeouts.py` (invariant + polling-mode witness +
-      webhook-mode witness + black-hole fault-injection); 29 adapter+wiring regression tests
-      green; ruff + mypy clean on changed files. Adapter-side API calls (`send_message`,
-      `send_chat_action`, `set_webhook`, `get_me`, etc.) inherit the builder timeouts
-      automatically — no per-call wrappers needed.
+- [x] **PB1** — DONE @9fd28768. `ApplicationBuilder` now carries bounded connect/read/write/pool timeouts
+      (10/20/20/10s) plus `get_updates_*` siblings, and `start_polling` is called with `timeout=30s` (get_updates
+      read timeout = 40s, strictly greater per PTB requirement). A stalled long-poll now raises
+      `telegram.error.TimedOut` and PTB auto-reconnects instead of hanging forever (RC0 fix). 4 new tests in
+      `tests/channels/telegram/test_bot_timeouts.py` (invariant + polling-mode witness + webhook-mode witness +
+      black-hole fault-injection); 29 adapter+wiring regression tests green; ruff + mypy clean on changed files.
+      Adapter-side API calls (`send_message`, `send_chat_action`, `set_webhook`, `get_me`, etc.) inherit the
+      builder timeouts automatically — no per-call wrappers needed.
 - [ ] **PB0b** — Cross-process liveness timestamp for the Telegram channel + a real `ChannelRegistry.health_check`
       that reads it (`channels/registry.py:127-142`, `scheduler/assembly.py:320`). MUST be cross-process state
       (DB row or shared file) — gateway and core are split processes, an in-proc variable won't be visible to
@@ -43,7 +52,7 @@ UTC), confirmed `[telegram] adapter.receive: entry` resumed. The underlying time
       sibling bare `asyncio.create_task()` calls without exception-inspecting done-callbacks; fix this call site,
       file the rest as backlog (do not scope-creep into an asyncio-wide audit in this story).
 - [ ] **PB6a** — Define the unified `verified`/`effect_class`/`post_condition` contract on `JobResult` (the spine —
-      land before PB5/PB7b). `grep -r "JobResult(" src/stackowl/` and `grep -rn "class.*JobHandler" src/stackowl/`
+      land before PB7b). `grep -r "JobResult(" src/stackowl/` and `grep -rn "class.*JobHandler" src/stackowl/`
       first for the real fan-out count.
 - [ ] **PB6b** — Migrate `JobHandler` subclasses to the new contract, one handler per commit, bisectable. Include
       the `webhook_handler` dangling-handler finding (wiring_audit warning: "registered as seeded but has NO
@@ -51,14 +60,11 @@ UTC), confirmed `[telegram] adapter.receive: entry` resumed. The underlying time
 - [x] **PB5** — DONE @92379d07. `cronjob.py` `verify()` re-reads `JobScheduler.list_jobs()` to confirm the
       claimed `job_id` row exists (tri-state: True observed / False missing / None unobservable-fail-closed).
       8 new verify tests + ratchet enforcement (cronjob removed from `_KNOWN_UNVERIFIED`), 9 regression green,
-      ruff+mypy clean. Correction to original ordering note below: PB5 is `ToolResult`-based (mirrors
-      `owl_build.py`/`skill_manage.py` exactly as specified), NOT `JobResult`-based — it never actually depended
-      on PB6a landing first. Landed out of sequence but cleanly; no rework needed. NOTE: this commit was filed
-      under the wrong arc plan (`PERSISTENCE_IMPLEMENTATION_PLAN.md` instead of this file) by a loop iteration
-      that drifted scope — content is correct, bookkeeping is fixed here.
+      ruff+mypy clean. PB5 is `ToolResult`-based (mirrors `owl_build.py`/`skill_manage.py`), NOT `JobResult`-based
+      — it never actually depended on PB6a landing first.
 - [ ] **PB7a** — IN PROGRESS, uncommitted in working tree (`src/stackowl/notifications/undelivered_outbox.py`,
-      `src/stackowl/db/migrations/0073_undelivered_outbox.sql`) from an interrupted iteration — CONTINUE this,
-      do not restart from scratch. Build `undelivered_outbox` exactly per `.ralph/PA5B_DESIGN.md` (already fully
+      `src/stackowl/db/migrations/0073_undelivered_outbox.sql`) — CONTINUE this, do not restart from scratch.
+      Build `undelivered_outbox` exactly per `docs_archive_ralph_2026-06-30/PA5B_DESIGN.md` (already fully
       specified, do not redesign).
 - [ ] **PB7b** — Design + build outbox generalization to scheduled-job failures (gap c). Separate design pass,
       hard-blocked on PB6a (no `verified` signal to gate on until the contract exists). Do not silently fold into
@@ -81,8 +87,8 @@ UTC), confirmed `[telegram] adapter.receive: entry` resumed. The underlying time
   before/after the outbox commit.
 - RC0 staleness: unit-test the decision function with an injectable clock (no real 30-hour wait); one real soak
   test with the staleness threshold lowered via test config.
-- PA5(b) gate test per `.ralph/PA5B_DESIGN.md` section 5, verbatim, for PB7a; an equivalent gate test designed
-  fresh for PB7b.
+- PA5(b) gate test per `docs_archive_ralph_2026-06-30/PA5B_DESIGN.md` section 5, verbatim, for PB7a; an
+  equivalent gate test designed fresh for PB7b.
 
 ## Completion
 Stop ONLY when: every story above is checked done with a commit hash, targeted tests + `uv run ruff check` +

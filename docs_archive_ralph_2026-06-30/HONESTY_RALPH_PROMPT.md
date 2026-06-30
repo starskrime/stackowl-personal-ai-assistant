@@ -3,10 +3,22 @@
 Spec + story status: `.ralph/HONESTY_IMPLEMENTATION_PLAN.md`.
 Approved plan with full root-cause evidence + BMAD party verdict: `/home/boss/.claude/plans/i-want-you-analayze-quizzical-stonebraker.md`.
 
+## SCOPE LOCK — read this before anything else
+This repo has MULTIPLE arc plans under `.ralph/` (`PERSISTENCE_IMPLEMENTATION_PLAN.md`, `TRUST_IMPLEMENTATION_PLAN.md`,
+`LEARNING_IMPLEMENTATION_PLAN.md`, `UNIOWL_IMPLEMENTATION_PLAN.md`, this one). **You work ONLY from
+`.ralph/HONESTY_IMPLEMENTATION_PLAN.md` for this loop, in PB-id order, full stop.** If, while working a PB-story,
+you notice related debt tracked in a DIFFERENT arc's plan (e.g. a `_KNOWN_UNVERIFIED` exemption in
+`PERSISTENCE_IMPLEMENTATION_PLAN.md`) — do not switch to it and do not "pay it down" under that arc's name. Either
+it's in scope for the PB-story you're on (implement it there, commit under the PB-id, update
+`HONESTY_IMPLEMENTATION_PLAN.md`'s checkbox), or it's out of scope (note it as a one-line backlog item in
+`HONESTY_IMPLEMENTATION_PLAN.md` and move on). Also ignore the `specs/` folder and any root-level
+`IMPLEMENTATION_PLAN.md` entirely for this loop — they belong to the generic Ralph harness default, not this arc.
+
 ## Each iteration
 1. Read `.ralph/HONESTY_IMPLEMENTATION_PLAN.md`; pick the FIRST story not checked done, respecting its stated
    ordering dependencies (PB1 before PB0c; PB6a before PB5 and PB7b; PB3 is an explicitly-flagged interim fix,
-   not a substitute for PB6a/6b).
+   not a substitute for PB6a/6b). If a story has uncommitted work already sitting in the working tree from a prior
+   interrupted iteration (check `git status` before starting), CONTINUE it — do not discard or restart from scratch.
 2. Delegate implementation to a fresh subagent with a precise spec grounded in the plan and the story's exact
    file:line citations. REUSE-FIRST: route through existing primitives — RecoveryActuator, the PA3
    breaker→escalation-ladder, the existing `ToolResult.verified` tri-state + `effect_class` machinery, the
