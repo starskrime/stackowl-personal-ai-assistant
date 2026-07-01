@@ -72,13 +72,15 @@ class CredentialRotationHandler(JobHandler):
         )
         if not profile or not check_url:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="read_only", success=False, output=None,
                 error="Missing 'profile_name' or 'check_url' in params",
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
         if not self._runtime.available:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="read_only", success=False, output=None,
                 error=f"Browser unavailable: {self._runtime.unavailable_reason or 'not started'}",
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
@@ -143,6 +145,7 @@ class CredentialRotationHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="read_only",
             success=error is None,
             output=f"session_alive={session_alive} final_url={url_path_only(final_url)}",
             error=error,
