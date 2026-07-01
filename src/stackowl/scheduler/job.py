@@ -6,6 +6,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# What KIND of effect a job claims — mirrors ToolResult.verified's tri-state
+# reality check, adapted for the scheduler's heterogeneous effect shapes.
+# "delivery" = sent something to a channel/user, "state_change" = mutated
+# durable state without delivering, "read_only" = no mutation (sweeps, health
+# checks).
+JobEffectClass = Literal["delivery", "state_change", "read_only"]
+
 
 class Job(BaseModel):
     """A persistent scheduled job entry."""
@@ -54,3 +61,22 @@ class JobResult(BaseModel):
     error: str | None
     duration_ms: float
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # VERIFICATION (the reality check, distinct from `success` the self-report).
+    # Same tri-state semantics as `ToolResult.verified` (tools/base.py).
+    # None  ⇒ not checked — falls back to `success` (byte-identical to pre-
+    #         verification behavior; the default for every un-migrated handler).
+    # True  ⇒ the claimed effect was OBSERVED in reality.
+    # False ⇒ the handler claimed success but reality disagreed (the effect was
+    #         not confirmed). `success` is NOT mutated — the claim-vs-confirmation
+    #         distinction is preserved. `tools.verification.is_trustworthy_success`
+    #         collapses the two for the scheduler's dispatch decision.
+    verified: bool | None = None
+    # What KIND of effect this job claims. Default "state_change" is the
+    # conservative default for un-migrated handlers (PB6b sets the real value
+    # per handler).
+    effect_class: JobEffectClass = "state_change"
+    # Free-form description/locator of what was checked to produce `verified`
+    # (a DB row, a sent message, a pellet — job effects are heterogeneous, so
+    # this is a description string rather than a path). None when `verified`
+    # is None (nothing was checked).
+    post_condition: str | None = None

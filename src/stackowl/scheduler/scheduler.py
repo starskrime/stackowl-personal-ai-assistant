@@ -22,6 +22,7 @@ from stackowl.scheduler.scheduler_helpers import (
 )
 from stackowl.scheduler.scheduler_mutations import _won_transition, run_now, update_job
 from stackowl.supervisor.supervisor import SupervisedTask
+from stackowl.tools.verification import is_trustworthy_success
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only import (no runtime cost / cycle)
     from stackowl.notifications.proactive_job import ProactiveJobDeliverer
@@ -242,7 +243,12 @@ class JobScheduler(SupervisedTask):
             result = JobResult(job_id=job.job_id, success=False, output=None, error=str(exc), duration_ms=duration_ms)
 
         duration_ms = (time.monotonic() - t0) * 1000
-        if result.success:
+        # PB6a — a job that self-reports success=True but was checked and found
+        # verified=False (claimed-but-not-observed) is never a trustworthy win;
+        # route it through the same retry/terminal-fail path as an ordinary
+        # failure. verified=None (every un-migrated handler) falls back to
+        # `success` unchanged — byte-identical to pre-existing dispatch.
+        if is_trustworthy_success(result.success, result.verified):
             await self._mark_completed(job, result, duration_ms)
         else:
             new_retries = job.retry_count + 1
