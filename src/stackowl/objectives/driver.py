@@ -127,7 +127,8 @@ class ObjectiveDriverHandler(JobHandler):
         )
         if self._db is None or self._backend is None:
             return JobResult(
-                job_id=job.job_id, success=True,
+                job_id=job.job_id,
+                effect_class="state_change", success=True,
                 output="objective_driver: noop (no db/backend)", error=None,
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
@@ -161,7 +162,8 @@ class ObjectiveDriverHandler(JobHandler):
             extra={"_fields": {"advanced": advanced, "duration_ms": duration_ms}},
         )
         return JobResult(
-            job_id=job.job_id, success=True,
+            job_id=job.job_id,
+            effect_class="state_change", success=True,
             output=f"advanced {advanced} objective(s)", error=None,
             duration_ms=duration_ms, metadata={"advanced": advanced},
         )
