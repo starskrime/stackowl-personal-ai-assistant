@@ -55,6 +55,7 @@ class KnowledgePruneHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=str(exc),
@@ -75,6 +76,7 @@ class KnowledgePruneHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=not report.errors,
             output=f"pruned={report.pruned_count} kept={report.kept_count}",
             error="; ".join(report.errors) if report.errors else None,
