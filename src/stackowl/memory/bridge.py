@@ -76,6 +76,18 @@ class MemoryBridge(ABC):
         """List staged facts filtered by status."""
         ...
 
+    async def find_committed_by_prefix(self, prefix: str) -> StagedFact | None:
+        """Find one committed fact whose ``fact_id`` starts with *prefix*.
+
+        Reads ``committed_facts`` directly — unlike :meth:`list_staged`, which
+        (for ``status="committed"``) only ever sees a residual ``staged_facts``
+        row and misses facts that live solely in ``committed_facts``. Used by
+        :func:`stackowl.commands.staged_helpers.find_staged_by_id` to resolve
+        an id prefix for ``/memory delete``. Default no-op (``None``); concrete
+        bridges backed by a real ``committed_facts`` table override this.
+        """
+        return None
+
     async def clear_session(self, session_id: str) -> int:
         """Delete all conversation staged facts for *session_id*.
 

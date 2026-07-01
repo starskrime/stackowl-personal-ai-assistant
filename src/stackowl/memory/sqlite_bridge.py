@@ -15,6 +15,7 @@ from stackowl.memory.recall_ranker import RecallRanker
 from stackowl.memory.sqlite_helpers import (
     fts_recall,
     pack_embedding,
+    parse_iso,
     row_to_staged,
     semantic_recall,
 )
@@ -366,6 +367,56 @@ class SqliteMemoryBridge(MemoryBridge):
             extra={"_fields": {"status": status, "n_results": len(results)}},
         )
         return results
+
+    async def find_committed_by_prefix(self, prefix: str) -> StagedFact | None:
+        """Find one committed fact whose ``fact_id`` starts with *prefix*.
+
+        Queries ``committed_facts`` directly (bound LIKE param — never
+        string-formatted) so facts that live only there (no residual
+        ``staged_facts`` row) are still resolvable by ``/memory delete``.
+        ``committed_facts`` has no ``confidence`` column (dropped at
+        promotion); the mapped :class:`StagedFact` uses ``1.0`` since
+        promotion already passed the confidence gate.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] sqlite_bridge.find_committed_by_prefix: entry",
+            extra={"_fields": {"prefix_len": len(prefix)}},
+        )
+        rows = await self._db.fetch_all(
+            """SELECT fact_id, content, source_type, source_ref, committed_at,
+                      reinforcement_count, trust
+               FROM committed_facts
+               WHERE fact_id LIKE ? || '%'
+               ORDER BY committed_at DESC
+               LIMIT 1""",
+            (prefix,),
+        )
+        if not rows:
+            # 4. EXIT — miss
+            log.memory.debug(
+                "[memory] sqlite_bridge.find_committed_by_prefix: miss",
+                extra={"_fields": {"prefix": prefix[:16]}},
+            )
+            return None
+        row = rows[0]
+        fact = StagedFact(
+            fact_id=row["fact_id"],
+            content=row["content"],
+            source_type=row["source_type"],
+            source_ref=row["source_ref"],
+            confidence=1.0,
+            staged_at=parse_iso(row["committed_at"]),
+            reinforcement_count=int(row["reinforcement_count"]),
+            status="committed",
+            trust=row["trust"],
+        )
+        # 4. EXIT — hit
+        log.memory.debug(
+            "[memory] sqlite_bridge.find_committed_by_prefix: exit — hit",
+            extra={"_fields": {"fact_id": fact.fact_id}},
+        )
+        return fact
 
     async def recent_conversation_turns(
         self, session_id: str, limit: int = 6, staged_before: str | None = None,

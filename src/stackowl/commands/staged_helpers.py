@@ -86,7 +86,11 @@ async def find_staged_by_id(
     """Find one StagedFact whose ``fact_id`` starts with ``prefix``.
 
     Scans all three status buckets in order: ``staged`` → ``committed`` →
-    ``rejected``. Returns ``None`` when nothing matches.
+    ``rejected``. For ``committed``, resolution goes through
+    :meth:`MemoryBridge.find_committed_by_prefix` (reads ``committed_facts``
+    directly) rather than ``list_staged(status="committed")`` — the latter
+    only ever reads ``staged_facts`` and misses facts that live solely in
+    ``committed_facts`` (F0-PREEXIST). Returns ``None`` when nothing matches.
     """
     log.memory.debug(
         "[commands] staged_helpers.find_staged_by_id: entry",
@@ -95,6 +99,25 @@ async def find_staged_by_id(
     if not prefix:
         return None
     for status in _VALID_STATUSES:
+        if status == "committed":
+            try:
+                fact = await bridge.find_committed_by_prefix(prefix)
+            except Exception as exc:
+                # B5 — never silently skip a status bucket
+                log.memory.warning(
+                    "[commands] staged_helpers.find_staged_by_id: "
+                    "find_committed_by_prefix failed",
+                    exc_info=exc,
+                    extra={"_fields": {"status": status}},
+                )
+                continue
+            if fact is not None:
+                log.memory.debug(
+                    "[commands] staged_helpers.find_staged_by_id: hit",
+                    extra={"_fields": {"fact_id": fact.fact_id, "status": status}},
+                )
+                return fact
+            continue
         try:
             facts = await bridge.list_staged(status=status)  # type: ignore[arg-type]
         except Exception as exc:
