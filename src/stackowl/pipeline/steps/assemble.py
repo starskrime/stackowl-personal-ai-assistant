@@ -190,7 +190,6 @@ async def run(state: PipelineState) -> PipelineState:
     # never crashes the turn.
     banner = ""
     if state.delegation_depth == 0 and services.db_pool is not None:
-        owner_key = state.identity_key or state.session_id
         try:
             from stackowl.notifications.undelivered_outbox import (
                 UndeliveredOutbox,
@@ -198,7 +197,7 @@ async def run(state: PipelineState) -> PipelineState:
             )
 
             outbox = UndeliveredOutbox(services.db_pool)
-            pending = await outbox.list_pending(owner_key)
+            pending = await outbox.list_pending()
             log.engine.debug(
                 "[pipeline] assemble: undelivered banner lookup",
                 extra={"_fields": {"trace_id": state.trace_id, "n": len(pending)}},

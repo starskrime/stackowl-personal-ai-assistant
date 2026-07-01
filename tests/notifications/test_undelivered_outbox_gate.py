@@ -28,7 +28,12 @@ from stackowl.notifications.delivery_ledger import DeliveryLedger
 from stackowl.notifications.digest_job import NotificationDigestJob
 from stackowl.notifications.proactive_job import ProactiveJobDeliverer
 from stackowl.notifications.router import Notification, NotificationRouter
-from stackowl.notifications.undelivered_outbox import ALLOWED_REASONS, UndeliveredOutbox
+from stackowl.notifications.undelivered_outbox import (
+    ALLOWED_REASONS,
+    MAX_BANNER_BODY_CHARS,
+    UndeliveredOutbox,
+    render_banner,
+)
 from stackowl.pipeline.services import StepServices, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import assemble
@@ -291,7 +296,7 @@ async def test_undeliverable_rollup_writes_durable_row(tmp_db: DbPool) -> None:
     )
     assert outcome.rollup == "undeliverable"
 
-    rows = await UndeliveredOutbox(tmp_db).list_pending(DEFAULT_PRINCIPAL_ID)
+    rows = await UndeliveredOutbox(tmp_db).list_pending()
     assert len(rows) == 1
     assert rows[0]["reason"] == "undeliverable"
     assert rows[0]["body"] == "brief body"
@@ -366,13 +371,13 @@ async def test_undeliverable_row_surfaces_once_pa5b_parity(tmp_db: DbPool) -> No
     )
     assert ok is True
 
-    pending = await outbox.list_pending(DEFAULT_PRINCIPAL_ID)
+    pending = await outbox.list_pending()
     assert len(pending) == 1
     row_id = pending[0]["id"]
 
     await outbox.mark_surfaced([row_id])
 
-    pending_after = await outbox.list_pending(DEFAULT_PRINCIPAL_ID)
+    pending_after = await outbox.list_pending()
     assert pending_after == []
 
 
@@ -418,8 +423,93 @@ async def test_digest_dead_letter_writes_durable_row(tmp_db: DbPool) -> None:
     )
     assert queue_rows == []  # dead-lettered (deleted)
 
-    outbox_rows = await UndeliveredOutbox(tmp_db).list_pending(DEFAULT_PRINCIPAL_ID)
+    outbox_rows = await UndeliveredOutbox(tmp_db).list_pending()
     assert len(outbox_rows) == 1
     assert outbox_rows[0]["reason"] == "transport_failed"
     assert outbox_rows[0]["body"] == "digest body lost otherwise"
     assert outbox_rows[0]["channel"] == "cli"
+
+
+# --- PB7c: owner-scoped read fixes cross-channel banner surfacing ----------
+
+
+async def test_list_pending_ignores_identity_key_returns_all_owner_rows(
+    tmp_db: DbPool,
+) -> None:
+    """Two rows for the same owner but DIFFERENT identity_key values (one
+    telegram-chat-id-shaped, one DEFAULT_PRINCIPAL_ID/slack-shaped) must BOTH
+    surface — proving the old exact-match-on-identity_key behavior is gone."""
+    outbox = UndeliveredOutbox(tmp_db)
+    ok1 = await outbox.record_undelivered(
+        identity_key="123456789",  # telegram-chat-id-shaped
+        body="telegram-keyed row",
+        reason="transport_failed",
+        channel="telegram",
+    )
+    ok2 = await outbox.record_undelivered(
+        identity_key=DEFAULT_PRINCIPAL_ID,  # slack/no-resolvable-recipient-shaped
+        body="default-principal-keyed row",
+        reason="undeliverable",
+        channel="slack",
+    )
+    assert ok1 is True
+    assert ok2 is True
+
+    rows = await outbox.list_pending()
+    assert len(rows) == 2
+    bodies = {r["body"] for r in rows}
+    assert bodies == {"telegram-keyed row", "default-principal-keyed row"}
+
+
+async def test_banner_surfaces_row_written_under_different_identity_key(
+    tmp_db: DbPool,
+) -> None:
+    """A row written under an identity_key that does NOT match the turn's
+    session_id/identity_key must still surface on a real top-level turn —
+    the "Slack row surfaces on a telegram turn" proof without a Slack adapter."""
+    outbox = UndeliveredOutbox(tmp_db)
+    ok = await outbox.record_undelivered(
+        identity_key="some-other-channels-address",
+        body="dropped on a different channel entirely",
+        reason="suppressed",
+        channel="slack",
+    )
+    assert ok is True
+
+    set_services(StepServices(db_pool=tmp_db))
+    state = PipelineState(
+        trace_id="t-pb7c-1",
+        session_id="turn-user-pb7c",  # does not match "some-other-channels-address"
+        input_text="hi",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="assemble",
+    )
+    out = await assemble.run(state)
+    assert "dropped on a different channel entirely" in (out.system_prompt or "")
+
+    row = (
+        await tmp_db.fetch_all(
+            "SELECT surfaced_at FROM undelivered_outbox WHERE identity_key = ?",
+            ("some-other-channels-address",),
+        )
+    )[0]
+    assert row["surfaced_at"] is not None
+
+
+async def test_render_banner_truncates_oversized_body() -> None:
+    """render_banner bounds row COUNT via DEFAULT_LIST_LIMIT but not per-row
+    body size — a single multi-KB dropped body must still be truncated."""
+    oversized_body = "x" * (MAX_BANNER_BODY_CHARS + 200)
+    rows = [
+        {
+            "category": "digest",
+            "reason": "transport_failed",
+            "body": oversized_body,
+        }
+    ]
+    rendered = render_banner(rows)
+    assert "x" * (MAX_BANNER_BODY_CHARS + 200) not in rendered
+    assert rendered.rstrip().endswith("…")
+    body_line = rendered.splitlines()[1]
+    assert len(body_line) <= MAX_BANNER_BODY_CHARS + len("- [digest/transport_failed] ") + 1

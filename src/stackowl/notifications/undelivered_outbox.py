@@ -48,9 +48,9 @@ _INSERT_SQL = (
 _LIST_PENDING_SQL = (
     "SELECT id, channel, category, urgency, body, reason, job_id, created_at "
     "FROM undelivered_outbox "
-    "WHERE owner_id = ? AND identity_key = ? AND surfaced_at IS NULL "
-    "ORDER BY created_at ASC "
-    "LIMIT ?"
+    "WHERE owner_id = ? AND surfaced_at IS NULL "        # ponytail: single-user — owner_id IS the
+    "ORDER BY created_at ASC "                            # cross-channel identity. Re-add identity_key
+    "LIMIT ?"                                             # predicate only if this box goes multi-tenant.
 )
 
 _COUNT_PENDING_SQL = (
@@ -62,6 +62,11 @@ _COUNT_PENDING_SQL = (
 # Bounded list size for the next-contact banner. A flood is still a flood —
 # the banner shows the oldest N, the rest stay pending until the next turn.
 DEFAULT_LIST_LIMIT = 20
+
+# Per-row cap on the rendered banner body. DEFAULT_LIST_LIMIT bounds the row
+# COUNT, not a single row's size — a multi-KB dropped digest/morning-brief
+# body could otherwise blow the system-prompt budget on its own.
+MAX_BANNER_BODY_CHARS = 500
 
 # Allowed reason set — kept here so callers and the ratchet agree on the
 # vocabulary. A new reason MUST land here first; downstream tests gate on it.
@@ -173,38 +178,36 @@ class UndeliveredOutbox:
 
     async def list_pending(
         self,
-        identity_key: str,
         *,
         owner_id: str = DEFAULT_PRINCIPAL_ID,
         limit: int = DEFAULT_LIST_LIMIT,
     ) -> list[dict[str, Any]]:
-        """Return oldest-first pending rows for ``identity_key`` (surfaced_at IS NULL).
+        """Return oldest-first pending rows for ``owner_id`` (surfaced_at IS NULL).
 
-        Bounded by ``limit`` — a flood is still a flood; the banner shows the
-        oldest N and the rest stay pending for the next turn. Empty list on any
-        DB failure (the banner is best-effort).
+        Scoped by ``owner_id``, not ``identity_key`` — this is a single-user
+        assistant, so the owner already IS the stable cross-channel identity;
+        the per-channel ``identity_key`` recorded at write time is kept for
+        audit/telemetry only. Bounded by ``limit`` — a flood is still a flood;
+        the banner shows the oldest N and the rest stay pending for the next
+        turn. Empty list on any DB failure (the banner is best-effort).
         """
         log.notifications.debug(
             "[notifications] undelivered_outbox.list_pending: entry",
-            extra={"_fields": {"identity_key": identity_key, "limit": limit}},
+            extra={"_fields": {"owner_id": owner_id, "limit": limit}},
         )
-        if not identity_key:
-            return []
         try:
-            rows = await self._db.fetch_all(
-                _LIST_PENDING_SQL, (owner_id, identity_key, limit)
-            )
+            rows = await self._db.fetch_all(_LIST_PENDING_SQL, (owner_id, limit))
         except Exception as exc:  # B5 — never silent
             log.notifications.error(
                 "[notifications] undelivered_outbox.list_pending: query failed",
                 exc_info=exc,
-                extra={"_fields": {"identity_key": identity_key}},
+                extra={"_fields": {"owner_id": owner_id}},
             )
             return []
         out = [dict(r) for r in rows]
         log.notifications.debug(
             "[notifications] undelivered_outbox.list_pending: exit",
-            extra={"_fields": {"identity_key": identity_key, "n": len(out)}},
+            extra={"_fields": {"owner_id": owner_id, "n": len(out)}},
         )
         return out
 
@@ -290,5 +293,7 @@ def render_banner(rows: list[dict[str, Any]]) -> str:
         reason = r.get("reason") or ""
         prefix = f"[{cat}/{reason}]" if cat else f"[{reason}]"
         body = (r.get("body") or "").strip()
+        if len(body) > MAX_BANNER_BODY_CHARS:
+            body = body[:MAX_BANNER_BODY_CHARS].rstrip() + "…"
         lines.append(f"- {prefix} {body}")
     return header + "\n" + "\n".join(lines)
