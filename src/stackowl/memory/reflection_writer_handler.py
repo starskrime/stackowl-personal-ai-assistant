@@ -96,7 +96,8 @@ class ReflectionWriterHandler(JobHandler):
             )
             duration_ms = (time.monotonic() - t0) * 1000
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="state_change", success=False, output=None,
                 error=str(exc), duration_ms=duration_ms,
                 metadata={"written": 0},
             )
@@ -108,7 +109,8 @@ class ReflectionWriterHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
             return JobResult(
-                job_id=job.job_id, success=True, output="written:0",
+                job_id=job.job_id,
+                effect_class="state_change", success=True, output="written:0",
                 error=None, duration_ms=duration_ms,
                 metadata={"written": 0, "pending_count": 0},
             )
@@ -129,7 +131,8 @@ class ReflectionWriterHandler(JobHandler):
             )
             duration_ms = (time.monotonic() - t0) * 1000
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="state_change", success=False, output=None,
                 error=f"no provider for tier {self._critic_tier}: {exc}",
                 duration_ms=duration_ms,
                 metadata={"written": 0, "pending_count": len(pending)},
@@ -151,7 +154,8 @@ class ReflectionWriterHandler(JobHandler):
             }},
         )
         return JobResult(
-            job_id=job.job_id, success=True, output=f"written:{written}",
+            job_id=job.job_id,
+            effect_class="state_change", success=True, output=f"written:{written}",
             error=None, duration_ms=duration_ms,
             metadata={"written": written, "pending_count": len(pending)},
         )
