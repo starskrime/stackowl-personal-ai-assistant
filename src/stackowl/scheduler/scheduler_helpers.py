@@ -36,6 +36,40 @@ def parse_every(schedule: str) -> timedelta | None:
     return timedelta(seconds=count * _EVERY_UNIT_SECONDS[match.group(2).lower()])
 
 
+# One-shot relative-delay schedule DSL token: ``in <n><unit>`` — short (s/m/h/d)
+# or long (sec/min/hour/day, singular or plural) unit spellings, e.g. ``in 5m``,
+# ``in 2 hours``. Unlike ``every``, this is NOT recurring — it fires exactly once
+# (REMINDER-FIX: the engine's existing ``run_once`` primitive was unreachable
+# from any tool; this token is how ``cronjob`` reaches it).
+_IN_RE = re.compile(
+    r"^in\s+(\d+)\s*(s|sec|secs|second|seconds|"
+    r"m|min|mins|minute|minutes|"
+    r"h|hr|hrs|hour|hours|"
+    r"d|day|days)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_in(schedule: str) -> timedelta | None:
+    """Parse an ``in <n><unit>`` one-shot relative-delay token into a delay.
+
+    Returns ``None`` (not an error) when ``schedule`` is not an ``in`` token or
+    the count is non-positive — mirrors :func:`parse_every`. Unlike ``every``,
+    the delay this returns is a ONE-TIME offset from now, not a recurring
+    interval: ``compute_next_run`` returns a single ``now + delta`` instant and
+    the caller (``cronjob._create``) arms the job with ``run_once=True`` so it
+    fires once and self-deletes (``goal_execution`` already honors that flag).
+    """
+    match = _IN_RE.match(schedule.strip())
+    if match is None:
+        return None
+    count = int(match.group(1))
+    if count <= 0:
+        return None
+    unit = match.group(2).lower()[0]
+    return timedelta(seconds=count * _EVERY_UNIT_SECONDS[unit])
+
+
 _INSERT_JOB_SQL = (
     "INSERT INTO jobs "
     "(job_id, handler_name, schedule, idempotency_key, last_run_at, next_run_at, "
@@ -125,6 +159,14 @@ def compute_next_run(
         next_iso = (datetime.now(UTC) + interval).isoformat()
         log.scheduler.debug(
             "[scheduler] compute_next_run: every-interval",
+            extra={"_fields": {"schedule": schedule, "next_run": next_iso}},
+        )
+        return next_iso
+    delay = parse_in(schedule)
+    if delay is not None:
+        next_iso = (datetime.now(UTC) + delay).isoformat()
+        log.scheduler.debug(
+            "[scheduler] compute_next_run: one-shot in-delay",
             extra={"_fields": {"schedule": schedule, "next_run": next_iso}},
         )
         return next_iso

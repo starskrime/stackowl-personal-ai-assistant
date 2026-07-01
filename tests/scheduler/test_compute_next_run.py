@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from stackowl.scheduler.scheduler_helpers import compute_next_run, parse_every
+from stackowl.scheduler.scheduler_helpers import compute_next_run, parse_every, parse_in
 
 
 def _delta_seconds(schedule: str) -> float:
@@ -68,3 +68,40 @@ def test_daily_and_cron_still_work() -> None:
 )
 def test_parse_every_agrees(schedule: str, ok: bool) -> None:
     assert (parse_every(schedule) is not None) is ok
+
+
+# --------------------------------------------------------------------------- REMINDER-FIX
+# ``parse_in`` — one-shot relative-delay token ("remind me in 5 minutes" bug fix).
+
+
+@pytest.mark.parametrize(
+    ("schedule", "expected_seconds"),
+    [
+        ("in 5m", 300),
+        ("in 2 hours", 7200),
+        ("in 30s", 30),
+        ("in 1d", 86400),
+        ("IN 10M", 600),  # case-insensitive
+        ("in 15 min", 900),
+        ("in 1 hour", 3600),
+        ("in 2 days", 172800),
+    ],
+)
+def test_parse_in_unit_table(schedule: str, expected_seconds: int) -> None:
+    delta = parse_in(schedule)
+    assert delta is not None
+    assert delta.total_seconds() == expected_seconds
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    ["every 5m", "in 0m", "in -1m", "daily@09:00", "0 9 * * *", "garbage", "increment 5m"],
+)
+def test_parse_in_rejects_non_one_shot_tokens(schedule: str) -> None:
+    assert parse_in(schedule) is None
+
+
+def test_compute_next_run_in_5m_is_one_shot_not_recurring() -> None:
+    """The exact bug fix: 'in 5m' must arm ~5m out, not recur or fall back to +1d."""
+    delta = _delta_seconds("in 5m")
+    assert abs(delta - 300) < 5, f"'in 5m' armed to +{delta}s, expected ~+300s"
