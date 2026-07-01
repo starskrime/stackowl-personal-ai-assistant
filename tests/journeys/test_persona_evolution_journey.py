@@ -358,20 +358,21 @@ async def test_negative_control_no_registry_means_no_vector(db: DbPool) -> None:
 async def test_dna_evolves_live_and_survives_restart(db: DbPool) -> None:
     owl = "nova"
     # Start curiosity near the top of the band so ONE governor-capped +0.05 batch
-    # crosses the injector's 0.7 high threshold (0.69 → 0.74) — making the
-    # evolved directive observable end-to-end.
-    start_dna = OwlDNA(curiosity=0.69)
+    # crosses the injector's 0.62 high threshold (0.61 → 0.66) — making the
+    # evolved directive observable end-to-end. (Threshold narrowed 0.70→0.62 by
+    # FR-1's directive-latch retune; fixture updated to match.)
+    start_dna = OwlDNA(curiosity=0.61)
     live_registry = OwlRegistry()
     live_registry.register(_manifest(owl, dna=start_dna))
     await _seed_messages(db, owl, count=3)
 
     injector = DNAPromptInjector()
     manifest_before = live_registry.get(owl)
-    # Pre-condition: at 0.69 the high-curiosity directive is NOT present yet.
-    assert "clarifying" not in injector.inject(manifest_before, manifest_before.dna).lower()
+    # Pre-condition: at 0.61 the high-curiosity directive is NOT present yet.
+    assert "explore the problem broadly" not in injector.inject(manifest_before, manifest_before.dna).lower()
 
     # --- One REAL evolution batch: LLM proposes a big +curiosity; governor caps
-    # to +0.05 (0.69 → 0.74), persists FIRST, then live-overlays the registry.
+    # to +0.05 (0.61 → 0.66), persists FIRST, then live-overlays the registry.
     await _run_batch(
         db,
         live_registry,
@@ -382,11 +383,11 @@ async def test_dna_evolves_live_and_survives_restart(db: DbPool) -> None:
 
     # LIVE: the registry DNA changed in place, bounded by MAX_DELTA (0.05).
     live_dna = live_registry.get(owl).dna
-    assert live_dna.curiosity == pytest.approx(0.74)
+    assert live_dna.curiosity == pytest.approx(0.66)
 
     # PERSISTED == LIVE (DB is source of truth).
     persisted = await _persisted_dna(db, owl)
-    assert persisted["curiosity"] == pytest.approx(0.74)
+    assert persisted["curiosity"] == pytest.approx(0.66)
 
     # --- Simulated RESTART: a brand-new registry with NEUTRAL authored DNA, then
     # hydrate from the SAME db. The fresh owl must recover the persisted value.
@@ -397,12 +398,12 @@ async def test_dna_evolves_live_and_survives_restart(db: DbPool) -> None:
     hydrated = await hydrate_dna(fresh_registry, db)
     assert hydrated == 1
     fresh_manifest = fresh_registry.get(owl)
-    assert fresh_manifest.dna.curiosity == pytest.approx(0.74)  # == persisted bounded value
+    assert fresh_manifest.dna.curiosity == pytest.approx(0.66)  # == persisted bounded value
 
     # The injector now emits the evolved high-curiosity directive for the
     # hydrated owl — the personality change is visible after restart.
     injected = injector.inject(fresh_manifest, fresh_manifest.dna)
-    assert "clarifying" in injected.lower()
+    assert "explore the problem broadly" in injected.lower()
     assert injected != fresh_manifest.system_prompt  # differs from neutral-DNA output
 
 
