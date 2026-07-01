@@ -51,7 +51,8 @@ class ProfileBackupHandler(JobHandler):
                 extra={"_fields": {"path": str(self._profiles_dir)}},
             )
             return JobResult(
-                job_id=job.job_id, success=True, output="no profiles",
+                job_id=job.job_id,
+                effect_class="state_change", success=True, output="no profiles",
                 error=None, duration_ms=(time.monotonic() - t0) * 1000,
             )
 
@@ -96,6 +97,7 @@ class ProfileBackupHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=len(errors) == 0,
             output=f"created={len(archives_created)} pruned={pruned}",
             error="; ".join(errors) if errors else None,
