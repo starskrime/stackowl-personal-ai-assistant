@@ -115,6 +115,7 @@ class GoalExecutionHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=True,
                 output="goal_execution: noop",
                 error=None,
@@ -131,6 +132,7 @@ class GoalExecutionHandler(JobHandler):
             await self._record_result(job.job_id, "failed", "empty goal", duration_ms)
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=False,
                 output=None,
                 error="goal is empty — nothing to execute",
@@ -209,6 +211,7 @@ class GoalExecutionHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=False,
                 output=None,
                 error=str(exc),
@@ -286,6 +289,7 @@ class GoalExecutionHandler(JobHandler):
             blocker = "; ".join(final_state.errors) or "durable replay uncertain"
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=False,
                 output=f"PARKED awaiting input — {blocker}",
                 error=None,
@@ -297,6 +301,7 @@ class GoalExecutionHandler(JobHandler):
             error = f"answer produced but delivery {status} — scheduler will retry"
         return JobResult(
             job_id=job.job_id,
+            effect_class="delivery",
             success=delivered_success,
             output=response_text or None,
             error=error,
