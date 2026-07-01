@@ -6,9 +6,14 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.health.status import HealthStatus
+
+if TYPE_CHECKING:
+    from stackowl.channels.liveness import ChannelLivenessStore
+    from stackowl.infra.clock import Clock
 
 log = logging.getLogger("stackowl.health")
 
@@ -200,6 +205,64 @@ def _process_rss_mb() -> int:
     except OSError:
         pass
     return 0
+
+
+_STALE_AFTER_S = 120.0  # 4 missed 30s heartbeats — matches adapter degrade intent
+
+
+class ChannelLivenessContributor:
+    """Health contributor: is a channel's receive loop actually receiving (RC0)?
+
+    Reads the cross-process ``channel_liveness`` row the gateway stamps every
+    heartbeat and turns its AGE into honest health. This is the signal that would
+    have caught the 30-hour outage where the sweep saw "registered" (in-proc) and
+    reported ok while the real long-poll loop was dead in another process.
+
+    Constructed with a ``ChannelLivenessStore`` (any DbPool + Clock) plus the
+    channel name to watch. Kept as a SEPARATE contributor rather than folded into
+    ``ChannelRegistry.health_check`` on purpose: the registry is a channel-agnostic
+    classmethod singleton with no DbPool, and making it telegram-aware + DB-coupled
+    would break its single responsibility. Same end result, cleaner seam.
+    """
+
+    def __init__(
+        self, store: ChannelLivenessStore, channel: str, clock: Clock
+    ) -> None:
+        self._store = store
+        self._channel = channel
+        self._clock = clock
+
+    @property
+    def contributor_name(self) -> str:
+        return f"{self._channel}_receive"
+
+    async def health_check(self) -> HealthStatus:
+        t0 = time.monotonic()
+        log.debug("[health] channel_liveness_contributor: entry channel=%s", self._channel)
+        last = await self._store.read_last_receive_at(self._channel)
+        latency_ms = (time.monotonic() - t0) * 1000
+        name = f"{self._channel}_receive"
+        if last is None:
+            return HealthStatus(
+                name=name,
+                status="down",
+                message=f"{self._channel} receive loop never reported alive",
+                latency_ms=latency_ms,
+            )
+        age = (self._clock.now() - last).total_seconds()
+        if age > _STALE_AFTER_S:
+            return HealthStatus(
+                name=name,
+                status="degraded",
+                message=f"{self._channel} receive loop stale — last update {int(age)}s ago",
+                latency_ms=latency_ms,
+            )
+        return HealthStatus(
+            name=name,
+            status="ok",
+            message=f"last update {int(age)}s ago",
+            latency_ms=latency_ms,
+        )
 
 
 class ProviderContributor:

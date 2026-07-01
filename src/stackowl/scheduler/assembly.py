@@ -531,9 +531,10 @@ def _build_health_aggregator(settings: Settings) -> HealthAggregator:
     providers all probe from durable config alone, so the periodic sweep reports
     TRUTHFUL status without threading live serve-process resources.
     """
-    from stackowl.db.pool import default_db_path
+    from stackowl.db.pool import DbPool, default_db_path
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.health.contributors import (
+        ChannelLivenessContributor,
         DbContributor,
         FilesystemContributor,
         GraphContributor,
@@ -548,6 +549,16 @@ def _build_health_aggregator(settings: Settings) -> HealthAggregator:
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))
+    # RC0 — telegram receive-loop liveness. Only registered when telegram is
+    # configured, else it would falsely report "down" for a channel the operator
+    # never enabled. Reads the cross-process channel_liveness row (own DbPool —
+    # this sweep runs in core and has no live gateway adapter ref).
+    if settings.telegram_channel.bot_token:
+        from stackowl.channels.liveness import ChannelLivenessStore
+        from stackowl.infra.clock import WallClock
+
+        liveness_store = ChannelLivenessStore(DbPool(default_db_path()), WallClock())
+        agg.register(ChannelLivenessContributor(liveness_store, "telegram", WallClock()))
     return agg
 
 

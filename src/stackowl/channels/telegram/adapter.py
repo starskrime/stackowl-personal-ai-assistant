@@ -13,6 +13,7 @@ callbacks.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -39,9 +40,14 @@ from stackowl.infra.observability import log
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:
+    from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.channels.telegram.voice import TelegramVoiceHandler
 
 _UPDATE_DEGRADED_AFTER_S = 120.0
+
+# How often the gateway stamps the cross-process receive-liveness row (PB0b/RC0).
+# The core health sweep flags degraded after 4 missed beats (_STALE_AFTER_S=120).
+HEARTBEAT_INTERVAL_S = 30.0
 
 # Sentinel distinguishing "no chat_id kwarg passed" (proactive/best-effort →
 # logged no-op on miss) from "chat_id explicitly passed" (on-turn → raise on an
@@ -73,6 +79,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         settings: TelegramSettings,
         *,
         progress: ProgressSettings | None = None,
+        liveness: ChannelLivenessStore | None = None,
     ) -> None:
         self._settings = settings
         self._progress = progress or ProgressSettings()
@@ -80,6 +87,11 @@ class TelegramChannelAdapter(ChannelAdapter):
         self._formatter = TelegramMarkdownFormatter()
         self._splitter = TelegramMessageSplitter()
         self._bot_app: Any = None
+        # PB0b/RC0 — cross-process receive-liveness. When present, start() spawns a
+        # heartbeat that stamps the shared DB while the updater is polling, so the
+        # core health sweep can tell "quiet-but-alive" from "dead".
+        self._liveness = liveness
+        self._liveness_task: asyncio.Task[None] | None = None
         self._last_update_at: float | None = None
         self._last_chat_id: int | None = None
         self._bot_user_id: int = 0
@@ -165,11 +177,58 @@ class TelegramChannelAdapter(ChannelAdapter):
         from stackowl.commands.registry import CommandRegistry
 
         await register_commands(app.bot, CommandRegistry.instance().list())
+        # PB0b/RC0 — start the cross-process receive-liveness heartbeat. Seed the
+        # row once immediately so the sweep never sees a transient "down" at boot,
+        # then stamp every HEARTBEAT_INTERVAL_S while the updater is polling.
+        if self._liveness is not None:
+            await self._liveness.mark_alive(self.channel_name)
+            self._liveness_task = asyncio.create_task(self._liveness_heartbeat())
+            self._liveness_task.add_done_callback(self._on_liveness_task_done)
+            log.telegram.debug("[telegram] adapter.start: liveness heartbeat started")
         log.telegram.debug("[telegram] adapter.start: exit")
+
+    async def _beat_once(self) -> None:
+        """Stamp liveness IFF the updater is actually running (PB0b/RC0).
+
+        Gating on ``updater.running`` means a crashed/stopped updater stops
+        advancing the timestamp, so it goes stale and the sweep reports degraded.
+        """
+        if self._liveness is None:
+            return
+        app = self._bot_app
+        updater = getattr(app, "updater", None) if app is not None else None
+        # ponytail: webhook-mode deployments have no polling updater and won't
+        # stamp — the live path here is long-poll; add a webhook heartbeat if that
+        # deployment ever ships.
+        if updater is not None and getattr(updater, "running", False):
+            await self._liveness.mark_alive(self.channel_name)
+
+    async def _liveness_heartbeat(self) -> None:
+        """Periodic stamp loop; cancelled cleanly in stop()."""
+        log.telegram.debug("[telegram] adapter.liveness_heartbeat: entry")
+        while True:
+            await self._beat_once()
+            await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+
+    def _on_liveness_task_done(self, task: asyncio.Task[None]) -> None:
+        """Log loudly if the heartbeat crashed — never a silent fire-and-forget."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.telegram.error(
+                "[telegram] adapter.liveness_heartbeat: crashed — receive-liveness signal lost",
+                extra={"_fields": {"err": repr(exc)}},
+            )
 
     async def stop(self) -> None:
         """Gracefully shut down the Telegram session."""
         log.telegram.debug("[telegram] adapter.stop: entry")
+        if self._liveness_task is not None:
+            self._liveness_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._liveness_task
+            self._liveness_task = None
         await stop_bot(self._bot_app)
         log.telegram.debug("[telegram] adapter.stop: exit")
 

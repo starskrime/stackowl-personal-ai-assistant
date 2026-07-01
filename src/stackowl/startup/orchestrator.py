@@ -2253,7 +2253,9 @@ class StartupOrchestrator:
                     exc_info=exc,
                 )
             else:
+                from stackowl.channels.liveness import ChannelLivenessStore
                 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
+                from stackowl.infra.clock import WallClock
 
                 resolved_tg_settings = tg_cfg.model_copy(
                     update={"bot_token": resolved_token, "webhook_secret": resolved_webhook_secret}
@@ -2261,6 +2263,9 @@ class StartupOrchestrator:
                 telegram_adapter = TelegramChannelAdapter(
                     resolved_tg_settings,
                     progress=self._settings.progress if self._settings else None,
+                    # PB0b/RC0 — gateway writes cross-process receive-liveness into
+                    # the already-open shared pool; core's health sweep reads it.
+                    liveness=ChannelLivenessStore(db_pool, WallClock()),
                 )
 
                 # E0-S1 — wire the Telegram consent round-trip BEFORE start() so a
