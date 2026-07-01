@@ -94,6 +94,7 @@ class DownloadsJanitorHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"removed={removed} freed_bytes={freed}",
             error=None,
