@@ -18,14 +18,16 @@ of it, not the scheduling primitive itself.
 confirmed `[telegram] adapter.receive: entry` resumed. **PB1 is DONE @9fd28768** — the underlying timeout bug
 that caused the 30+ hour hang is fixed in code, not just symptom-relieved.
 
-## Status (2026-06-30, subagent-driven in worktree `arc-b-honesty-delivery`, PAUSED at user request)
-7 of 13 stories done. On main pre-worktree: PB1, PB5. In this worktree (all reviewed APPROVED): PB7a @85056c1c,
-PB2 @93da573b, PB3 @d09dc7bc, PB0b @1e7796af (RC0 centerpiece), PB0c @c360797f. Worktree branched from main
-@a4ad781e; current tip c360797f. Remaining: PB4, PB6a (spine — brief already drafted in scratchpad/pb6a-brief.md),
-PB6b, PB7b, PBC, PB7c, PB-CANARY. NOT yet merged to main. Progress ledger: `.superpowers/sdd/progress.md`.
-Resume: continue subagent-driven; next PB6a (spine, blocks PB6b/PB7b) or independent PB4/PBC. PB6a design is
-fully locked in the ledger + the drafted brief (3 fields verified/effect_class/post_condition on JobResult +
-scheduler verified-veto, backward-compat defaults, JobEffectClass=Literal["delivery","state_change","read_only"]).
+## Status (2026-07-01, subagent-driven in worktree `arc-b-honesty-delivery`) — ALL 13 STORIES COMPLETE
+13 of 13 stories done, all reviewed APPROVED. On main pre-worktree: PB1 @9fd28768, PB5 @92379d07. In this
+worktree: PB7a @85056c1c, PB2 @93da573b, PB3 @d09dc7bc, PB0b @1e7796af (RC0 centerpiece), PB0c @c360797f,
+PB6a @ea8a43ed (spine), PB6b @ea8a43ed..d67d255c (32 commits, all 33 handlers classified), PB7b @5695d732/
+@5700d920 (undeliverable-outbox chokepoint), PB4 @4dbc461f (clarify_pump recovery routing), PBC @50fa46f4/
+@78eaee1e (retrieval-intent floor, model-driven classifier), PB7c @d73b28ed (owner-scoped banner fix),
+PB-CANARY @64d32a72/@56da8a0b/@d5076b4a (final acceptance gate). Also fixed 2 pre-existing bugs found
+incidentally during PB6b's test run (`ab3f1dbc`, `00d2e4f4`), per `feedback_no_skipping_preexisting_fails`.
+Full detail per story in `.superpowers/sdd/progress.md`. Worktree branched from main @a4ad781e; merging to
+main + pushing next, followed by a live re-test against the real Telegram bot.
 
 ## Stories
 
@@ -66,18 +68,30 @@ scheduler verified-veto, backward-compat defaults, JobEffectClass=Literal["deliv
       Fix `check_in.py:115-127` / `morning_brief.py:166-192` hardcoded `JobResult(success=True)`; reuse
       `goal_execution.py:438-451`'s `outcome.rollup → success` mapping. INTERIM fix — flag explicitly in the
       commit message that this gets superseded (not just reused) by PB6a/6b, do not mark gap (a)/(b) done here.
-- [ ] **PB4** — `clarify_pump.py` `_cleanup` (lines 199-210): inspect `task.exception()`, log loudly, route into
-      `RecoveryActuator`. FIRST write a one-paragraph design note: does `_cleanup` synthesize a minimal
-      verification-failure record to feed the existing ToolResult-shaped ladder, or does `RecoveryActuator` need
-      a narrower entry point for non-tool async failures? Land that decision before touching the file. Audit for
-      sibling bare `asyncio.create_task()` calls without exception-inspecting done-callbacks; fix this call site,
-      file the rest as backlog (do not scope-creep into an asyncio-wide audit in this story).
-- [ ] **PB6a** — Define the unified `verified`/`effect_class`/`post_condition` contract on `JobResult` (the spine —
-      land before PB7b). `grep -r "JobResult(" src/stackowl/` and `grep -rn "class.*JobHandler" src/stackowl/`
-      first for the real fan-out count.
-- [ ] **PB6b** — Migrate `JobHandler` subclasses to the new contract, one handler per commit, bisectable. Include
-      the `webhook_handler` dangling-handler finding (wiring_audit warning: "registered as seeded but has NO
-      standing jobs row") found during the PB0a restart — fix or explicitly defer with a ticket, don't drop it.
+- [x] **PB4** — DONE @4dbc461f (review APPROVED, no Critical/Important findings). Design decision: no new
+      `RecoveryActuator` entry point needed — `recover(failure)` called with ZERO rungs already emits an ADR-7
+      ledger decision on surrender (nothing to retry, the stream is already consumed) — that IS "route into
+      RecoveryActuator." `_cleanup` now guards `task.cancelled()` before `.exception()` (plain teardown stays
+      silent), and on a genuine exception logs loudly + builds `Failure(consequential=True, kind="send_task")` +
+      fires the recovery call via `asyncio.create_task` with a strong ref (renamed `_close_tasks`→`_bg_tasks`,
+      now covers both writer-close and recovery tasks). Sibling `create_task` audit (this file only, per the
+      scope-creep guard): both other sites call never-raising functions, need no done-callback.
+- [x] **PB6a** — DONE @ea8a43ed (worktree, review APPROVED, no findings). `JobResult` += `verified: bool | None
+      = None` (tri-state, mirrors `ToolResult.verified`), `effect_class: JobEffectClass = "state_change"`
+      (`JobEffectClass = Literal["delivery", "state_change", "read_only"]`), `post_condition: str | None = None`.
+      Scheduler dispatch veto reuses `tools.verification.is_trustworthy_success` (not reimplemented) — a job
+      reporting `success=True` with `verified=False` now routes to retry/terminal-fail, never `_mark_completed`.
+      All 80 pre-existing `JobResult(...)` call sites untouched; zero `JobHandler` subclasses touched.
+- [x] **PB6b** — DONE (32 commits, `ea8a43ed..d67d255c`, review APPROVED, no Critical/Important findings). All 33
+      `JobHandler` subclasses classified: 8 `delivery`, 2 `read_only`, 22 `state_change`, 1 confirmed pure
+      pass-through (untouched). `WebhookHandlerJob.trigger_kind` fixed to `"on_demand"` (matches its actual
+      per-event enqueue pattern, no boot-time seed) + pinning test — dangling-handler finding resolved, not
+      dropped. `verified`/`post_condition` correctly left unpopulated (PB7b's scope).
+      Incidental, approved separately: 2 pre-existing test failures surfaced during this story's test run
+      (confirmed byte-identical to `main`, not caused by PB6a/PB6b) were root-caused and fixed per
+      `feedback_no_skipping_preexisting_fails` — `ab3f1dbc` (`/memory delete` couldn't find committed-only
+      facts) and `00d2e4f4` (phaseB self-improvement mock fixture — 2 stale-fixture bugs, confirmed NOT
+      product regressions on review).
 - [x] **PB5** — DONE @92379d07. `cronjob.py` `verify()` re-reads `JobScheduler.list_jobs()` to confirm the
       claimed `job_id` row exists (tri-state: True observed / False missing / None unobservable-fail-closed).
       8 new verify tests + ratchet enforcement (cronjob removed from `_KNOWN_UNVERIFIED`), 9 regression green,
@@ -88,26 +102,36 @@ scheduler verified-veto, backward-compat defaults, JobEffectClass=Literal["deliv
       next-contact banner surfaced in `assemble.py`'s `parts` composition gated on `delegation_depth == 0` (verified
       to exclude proactive/scheduled turns, not just delegated children); 6 gate tests (DB read-back, all 4 spec
       scenarios incl. distinctness) + 94 regression green.
-- [ ] **PB7c** (NEW, follow-up from PB7a review — Important) — the outbox row is durably written on every seam, but
-      the next-contact BANNER can only surface on telegram: `identity_key` falls back to `DEFAULT_PRINCIPAL_ID` for
-      any non-telegram channel (Slack etc) because `router_helpers.py:72 _SESSION_IS_CHAT_ID_CHANNELS={"telegram"}`
-      makes `resolve_target_chat_id()` return None, and `assemble.py:193` keys surfacing on `identity_key or
-      session_id` which never equals the static principal constant. Fix needs a per-notification cross-channel
-      identity resolver (does not exist in the codebase today — its own design task). Not a regression: row is
-      written, not dropped; telegram (the box's only live channel) surfaces correctly. Also fold in the 2 Minor
-      findings: router builds outbox unconditionally vs deliverer's optional inject (style asymmetry); `render_banner`
-      caps row COUNT (20) but not per-row body size.
-- [ ] **PB7b** — Design + build outbox generalization to scheduled-job failures (gap c). Separate design pass,
-      hard-blocked on PB6a (no `verified` signal to gate on until the contract exists). Do not silently fold into
-      PB7a's scope.
-- [ ] **PBC** — `overclaim_gate.py` third trigger (lines 15-56, alongside the existing unverified-effects check at
-      line 42): floor responses where the turn's classified intent requires retrieval but `state.tool_calls` has
-      no `web_search`/`web_fetch` call. MUST route through the existing model-driven intent-classification pattern
-      (same family as the clarify/feedback classifiers) — NOT a hardcoded English keyword scan
-      ("research"/"look up"/etc). Violating this is a hard stop per project convention
-      (`feedback_no_hardcoded_keyword_lists`, `feedback_no_hardcoded_english`).
-- [ ] **PB-CANARY** — Synthetic heartbeat message round-tripping the real Telegram path on an interval, with
-      alerting on its own absence. Final acceptance gate for the whole arc.
+- [x] **PB7c** — DONE @d73b28ed (review APPROVED, zero findings). Design (Opus,
+      `.superpowers/sdd/task-PB7c-design.md`) found this was a write/read KEY MISMATCH, not a missing resolver —
+      `owner_id` is already `DEFAULT_PRINCIPAL_ID` at every write+read site (single-user assistant), so it IS the
+      stable cross-channel identity. Fix: `list_pending()` drops the `identity_key` exact-match predicate, scopes
+      by `owner_id` only. Zero write-site edits, no migration. Also fixed Minor(b): `render_banner` now caps
+      per-row body length (`MAX_BANNER_BODY_CHARS=500`) at render time. Minor(a) (router/deliverer construction
+      asymmetry) confirmed a non-bug, left as-is.
+- [x] **PB7b** — DONE (commits `5695d732`, `5700d920`, review APPROVED, no Critical/Important findings). Design
+      (Opus, `.superpowers/sdd/task-PB7b-design.md`) found gap (c) was one rollup value ("undeliverable") on one
+      shared path, not 8 separate handler edits: `deliver_for_job`'s undeliverable block now writes a
+      `record_undelivered` NACK per unresolvable channel (covers all 6 rollup handlers at once) + a secondary
+      dead-letter NACK site in `NotificationDigestJob` (bypasses the router/deliverer seams). Deliberately did
+      NOT flip `verified=False` for undeliverable (would reverse PB3's no-retry decision). `identity_key=
+      DEFAULT_PRINCIPAL_ID` at both sites — rows write durably now, surface once PB7c lands (same as PB7a's
+      `no_deliverer` rows today). `HealthSweepHandler` (operator alert, no user identity) explicitly out of scope.
+- [x] **PBC** — DONE (commits `50fa46f4`, `78eaee1e`, review APPROVED, no Critical/Important findings). Design
+      (Opus, `.superpowers/sdd/task-PBC-design.md`) added a NEW single-purpose `RetrievalIntentClassifier`
+      (mirrors `ClarifyIntentClassifier`'s one-token verdict shape, fast tier, fail-safe→False), a conservative
+      LOOKUP/KNOWN prompt (math/code/definitions/opinions all KNOWN), and trigger 3 appended at the tail of
+      `_is_overclaim` (after `delivered_successes`/give-up — measured truth always wins over the classifier
+      guess). Classifier call lives only in the async wrapper, cost-gated to skip conversational/retrieved/
+      delivered turns — `_is_overclaim` stays pure/sync. Zero hardcoded keyword lists (the entire point of the
+      story) — verified as the top review check.
+- [x] **PB-CANARY** — DONE (commits `64d32a72`, `56da8a0b`, `d5076b4a`, review APPROVED, no Critical/Important
+      findings). `TelegramCanaryHandler` sends a fixed marker every 20m via the existing delivery seam; only
+      `rollup=="delivered"` stamps send-path liveness. `ChannelLivenessContributor` generalized (`kind`/
+      `stale_after_s`, backward-compat) to alert on absence via the pre-existing `HealthSweepHandler`/`AlertSink`
+      path — zero new alert code. Implementer caught and fixed a real bug in the design (the literal seed call
+      would have produced a permanently-undeliverable, never-stamping job — reviewer independently confirmed the
+      bug and the fix, which mirrors `_seed_daily_schedule`/`check_in.py`'s existing patterns exactly).
 
 ## Test strategy (apply per-story, not just at the end)
 - Convert every failure path into a witness (log record / ledger entry / outbox row / captured exception) and
