@@ -52,12 +52,14 @@ class ScreenshotArchiveHandler(JobHandler):
         )
         if not urls:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="state_change", success=False, output=None,
                 error="Missing 'urls' list in params", duration_ms=0.0,
             )
         if not self._runtime.available:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="state_change", success=False, output=None,
                 error=f"Browser unavailable: {self._runtime.unavailable_reason or 'not started'}",
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
@@ -110,6 +112,7 @@ class ScreenshotArchiveHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=len(errors) == 0,
             output=f"captured={len(captured)} errors={len(errors)} dir={date_dir}",
             error="; ".join(errors) if errors else None,
