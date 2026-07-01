@@ -96,12 +96,14 @@ class WebsiteWatchHandler(JobHandler):
         )
         if not url:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error="Missing 'url' in params", duration_ms=0.0,
             )
         if not self._runtime.available:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error=f"Browser unavailable: {self._runtime.unavailable_reason or 'not started'}",
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
@@ -124,7 +126,8 @@ class WebsiteWatchHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error=str(exc), duration_ms=duration_ms,
             )
         finally:
@@ -191,6 +194,7 @@ class WebsiteWatchHandler(JobHandler):
             metadata["delivery"] = delivery
         return JobResult(
             job_id=job.job_id,
+            effect_class="delivery",
             success=True,
             output=f"changed={changed} hash={current_hash[:12]}",
             error=None,
