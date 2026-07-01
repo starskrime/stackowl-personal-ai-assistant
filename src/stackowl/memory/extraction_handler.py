@@ -101,6 +101,7 @@ class FactExtractionJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=f"idempotency_key must start with {_IDEMPOTENCY_PREFIX!r}",
@@ -120,6 +121,7 @@ class FactExtractionJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=f"fetch_messages failed: {exc}",
@@ -134,6 +136,7 @@ class FactExtractionJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=True,
                 output="no_messages",
                 error=None,
@@ -153,6 +156,7 @@ class FactExtractionJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=f"extract failed: {exc}",
@@ -196,6 +200,7 @@ class FactExtractionJobHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"extracted={len(facts)} staged={staged_count}",
             error=None,
