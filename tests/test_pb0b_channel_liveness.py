@@ -101,6 +101,41 @@ async def test_contributor_no_row_is_down(tmp_path: Path) -> None:
         await pool.close()
 
 
+# 4b. PB-CANARY regression pin — the default (kind="receive") construction is
+# BYTE-IDENTICAL to before the generalization: same contributor_name, same
+# down/degraded/ok message text. This is the single most important
+# backward-compat check for the generalization (must never drift).
+async def test_default_kind_is_byte_identical_to_pre_generalization(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    pool = await _migrated_pool(tmp_path)
+    try:
+        store = ChannelLivenessStore(pool, clock)
+        contrib = ChannelLivenessContributor(store, "telegram", clock)
+        assert contrib.contributor_name == "telegram_receive"
+
+        # down (no row)
+        status = await contrib.health_check()
+        assert status.status == "down"
+        assert status.message == "telegram receive loop never reported alive"
+
+        # ok (fresh)
+        await store.mark_alive("telegram")
+        clock.advance(10)
+        status = await contrib.health_check()
+        assert status.status == "ok"
+        assert status.message == "last update 10s ago"
+
+        # degraded (stale)
+        clock.advance(300)
+        status = await contrib.health_check()
+        assert status.status == "degraded"
+        assert status.message == "telegram receive loop stale — last update 310s ago"
+    finally:
+        await pool.close()
+
+
 # 5. Cross-connection realism (the cross-process property) ------------------
 async def test_signal_survives_across_separate_instances(tmp_path: Path) -> None:
     clock = FakeClock()

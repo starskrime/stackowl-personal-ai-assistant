@@ -6,7 +6,7 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.health.status import HealthStatus
@@ -211,56 +211,90 @@ _STALE_AFTER_S = 120.0  # 4 missed 30s heartbeats — matches adapter degrade in
 
 
 class ChannelLivenessContributor:
-    """Health contributor: is a channel's receive loop actually receiving (RC0)?
+    """Health contributor: is a channel's receive/send path actually alive (RC0)?
 
-    Reads the cross-process ``channel_liveness`` row the gateway stamps every
-    heartbeat and turns its AGE into honest health. This is the signal that would
-    have caught the 30-hour outage where the sweep saw "registered" (in-proc) and
-    reported ok while the real long-poll loop was dead in another process.
+    Reads a cross-process ``channel_liveness`` row and turns its AGE into honest
+    health. This is the signal that would have caught the 30-hour outage where
+    the sweep saw "registered" (in-proc) and reported ok while the real long-poll
+    loop was dead in another process.
 
     Constructed with a ``ChannelLivenessStore`` (any DbPool + Clock) plus the
     channel name to watch. Kept as a SEPARATE contributor rather than folded into
     ``ChannelRegistry.health_check`` on purpose: the registry is a channel-agnostic
     classmethod singleton with no DbPool, and making it telegram-aware + DB-coupled
     would break its single responsibility. Same end result, cleaner seam.
+
+    ``kind`` distinguishes two complementary signals sharing the same
+    channel-agnostic table: ``"receive"`` (PB0b — is the inbound poll/long-poll
+    loop alive?) and ``"send"`` (PB-CANARY — did a real outbound send recently get
+    confirmed delivered?). Defaults to ``"receive"`` and ``stale_after_s`` defaults
+    to the original module constant, so PB0b's existing registration call (which
+    passes neither) is BYTE-IDENTICAL to before this generalization.
     """
 
     def __init__(
-        self, store: ChannelLivenessStore, channel: str, clock: Clock
+        self,
+        store: ChannelLivenessStore,
+        channel: str,
+        clock: Clock,
+        *,
+        kind: Literal["receive", "send"] = "receive",
+        stale_after_s: float = _STALE_AFTER_S,
     ) -> None:
         self._store = store
         self._channel = channel
         self._clock = clock
+        self._kind = kind
+        self._stale_after_s = stale_after_s
 
     @property
     def contributor_name(self) -> str:
-        return f"{self._channel}_receive"
+        return f"{self._channel}_{self._kind}"
 
     async def health_check(self) -> HealthStatus:
         t0 = time.monotonic()
-        log.debug("[health] channel_liveness_contributor: entry channel=%s", self._channel)
+        log.debug(
+            "[health] channel_liveness_contributor: entry channel=%s kind=%s",
+            self._channel, self._kind,
+        )
         last = await self._store.read_last_receive_at(self._channel)
         latency_ms = (time.monotonic() - t0) * 1000
-        name = f"{self._channel}_receive"
+        name = f"{self._channel}_{self._kind}"
         if last is None:
+            never_msg = (
+                f"{self._channel} receive loop never reported alive"
+                if self._kind == "receive"
+                else f"{self._channel} — no successful send ever confirmed"
+            )
             return HealthStatus(
                 name=name,
                 status="down",
-                message=f"{self._channel} receive loop never reported alive",
+                message=never_msg,
                 latency_ms=latency_ms,
             )
         age = (self._clock.now() - last).total_seconds()
-        if age > _STALE_AFTER_S:
+        if age > self._stale_after_s:
+            stale_msg = (
+                f"{self._channel} receive loop stale — last update {int(age)}s ago"
+                if self._kind == "receive"
+                else f"{self._channel} — no successful send confirmed in the last "
+                f"{int(self._stale_after_s)}s (last confirmed {int(age)}s ago)"
+            )
             return HealthStatus(
                 name=name,
                 status="degraded",
-                message=f"{self._channel} receive loop stale — last update {int(age)}s ago",
+                message=stale_msg,
                 latency_ms=latency_ms,
             )
+        ok_msg = (
+            f"last update {int(age)}s ago"
+            if self._kind == "receive"
+            else f"last send confirmed {int(age)}s ago"
+        )
         return HealthStatus(
             name=name,
             status="ok",
-            message=f"last update {int(age)}s ago",
+            message=ok_msg,
             latency_ms=latency_ms,
         )
 
