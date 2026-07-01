@@ -8,7 +8,7 @@ their ``.execute()`` — no logic reimplementation:
   * ``synthesize_skills`` -> :class:`SkillSynthesizerHandler` (gap-analysis/skill-build)
 
 Coverage:
-  1. Unit: ``reflect_now`` with a stub provider + a seeded low-quality outcome
+  1. Unit: ``reflect_now`` with a stub provider + a seeded high-quality outcome
      constructs the real handler and surfaces its ``written:N`` output; a missing
      service degrades to a structured failure (no raise).
   2. Unit: ``synthesize_skills`` with ≥3 same-tool-sequence successful outcomes
@@ -114,18 +114,25 @@ def _disable_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def _seed_low_quality_outcome(db: DbPool, *, trace_id: str) -> None:
-    """Insert one critic-scored low-quality outcome → eligible for reflection."""
+async def _seed_reflectable_outcome(db: DbPool, *, trace_id: str) -> None:
+    """Insert one critic-scored outcome eligible for reflection.
+
+    ``ReflectionStore.list_pending`` is positive-only (success=1 AND
+    failure_class IS NULL AND quality_score >= 0.6 — see
+    ``_HIGH_QUALITY_THRESHOLD`` in ``reflection_store.py``); the platform
+    learns only from what worked. This seeds a passing 0.75 score so the
+    fixture stays eligible under that (already-shipped) trigger.
+    """
     store = TaskOutcomeStore(db)
     await store.record(
         trace_id=trace_id, session_id="s", owl_name="secretary", channel="cli",
         success=True, latency_ms=10.0, tool_call_count=0,
         failure_class=None, step_durations={}, input_text="do a thing",
-        response_text="weak answer",
+        response_text="solid answer",
     )
     out = await store.get_by_trace_id(trace_id)
     assert out is not None
-    await store.set_quality_score(out.outcome_id, 0.3)
+    await store.set_quality_score(out.outcome_id, 0.75)
 
 
 async def _seed_success_cluster(
@@ -155,7 +162,7 @@ async def _seed_success_cluster(
 async def test_reflect_now_runs_real_handler_and_writes_reflection(
     tmp_db: DbPool,
 ) -> None:
-    await _seed_low_quality_outcome(tmp_db, trace_id="rn-1")
+    await _seed_reflectable_outcome(tmp_db, trace_id="rn-1")
     provider = _ScriptedProvider(responses=[json.dumps({
         "summary": "the answer was too thin",
         "suggested_strategy": "gather more context before answering",
@@ -358,8 +365,8 @@ async def test_agent_triggers_reflect_now_through_gateway(
     from stackowl.providers.base import ModelProvider
     from stackowl.providers.openai_provider import OpenAIProvider
 
-    # Seed an eligible low-quality outcome so the reflection has something to do.
-    await _seed_low_quality_outcome(tmp_db, trace_id="gw-reflect-1")
+    # Seed an eligible outcome so the reflection has something to do.
+    await _seed_reflectable_outcome(tmp_db, trace_id="gw-reflect-1")
 
     # --- Fake SDK responses: a NO-native-tool_calls weak model -----------------
     react_msg = _FakeMessage(
@@ -367,7 +374,20 @@ async def test_agent_triggers_reflect_now_through_gateway(
         tool_calls=None,
     )
     final_msg = _FakeMessage(content="Done — I reflected on my recent work.", tool_calls=None)
-    client = _FakeClient([_FakeResponse(react_msg), _FakeResponse(final_msg)])
+    # The persistence/give-up judge (Phase D — see pipeline/persistence.py) runs on
+    # EVERY turn's final draft and, since no "standard" tier is registered here,
+    # cascades to this SAME "powerful" provider for its verdict call — a 3rd real
+    # round-trip on `client` beyond the 2 ReAct rounds above. Without this response
+    # the judge's provider.complete() raises IndexError (caught there, logged, and
+    # failed open), but the resulting unvetted-turn nudge then drives a genuine 3rd
+    # ReAct round that DOES crash uncaught. A real "delivered" verdict here lets the
+    # judge vet cleanly so the turn ends after the 2 real ReAct rounds, matching
+    # what this test is actually verifying.
+    judge_msg = _FakeMessage(
+        content=json.dumps({"delivered": True, "reason": "reflection was written"}),
+        tool_calls=None,
+    )
+    client = _FakeClient([_FakeResponse(react_msg), _FakeResponse(final_msg), _FakeResponse(judge_msg)])
 
     config = ProviderConfig(
         name="ollama", protocol="openai",
