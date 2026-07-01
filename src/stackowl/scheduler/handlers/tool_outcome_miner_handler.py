@@ -80,7 +80,8 @@ class ToolOutcomeMinerHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="state_change", success=False, output=None,
                 error=str(exc), duration_ms=duration_ms,
                 metadata={"n_heuristics_written": 0, "n_lessons_published": 0},
             )
@@ -98,7 +99,8 @@ class ToolOutcomeMinerHandler(JobHandler):
             }},
         )
         return JobResult(
-            job_id=job.job_id, success=True,
+            job_id=job.job_id,
+            effect_class="state_change", success=True,
             output=(
                 f"outcomes={report.n_outcomes_scanned} "
                 f"heuristics={report.n_heuristics_written} "
