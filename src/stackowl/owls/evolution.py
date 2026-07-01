@@ -46,8 +46,8 @@ __all__ = [
     "EvolutionPromptBuilder",
 ]
 
-_DELTA_LOWER = -0.1
-_DELTA_UPPER = 0.1
+_DELTA_LOWER = -0.25
+_DELTA_UPPER = 0.25
 # PARL-7 (F084) — bound for a single owl's evolution (attribution query + optional
 # LLM fallback + DB writes). Generous, since a real LLM fallback can be slow on a
 # weak host, but finite so one stuck owl can't wedge the nightly batch.

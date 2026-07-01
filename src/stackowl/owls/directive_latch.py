@@ -1,18 +1,20 @@
 """In-memory Schmitt-trigger hysteresis for DNA->prompt directives. Per (owl, trait, direction)
-latch: a HIGH directive turns on at >=0.70 and stays on until the trait drops <0.60 (symmetric
-LOW at <=0.30 / >0.40). The gap (0.10 = 2*MAX_DELTA) ensures one evolution batch can't cross it.
-In-memory (DNA changes per-batch, not per-turn; cold-start re-seeds from value); fail-OPEN (any
-error -> plain threshold). Module-singleton, mirrors FOCUS_TRACKER."""
+latch: a HIGH directive turns on at >=0.62 and stays on until the trait drops <0.55 (symmetric
+LOW at <=0.38 / >0.45). FR-1 narrowed these bands (were 0.70/0.60 and 0.30/0.40) so directives
+actually fire under real evolution deltas; ENTER stays stricter than EXIT on both sides so the
+hysteresis still prevents flapping. In-memory (DNA changes per-batch, not per-turn; cold-start
+re-seeds from value); fail-OPEN (any error -> plain threshold). Module-singleton, mirrors
+FOCUS_TRACKER."""
 from __future__ import annotations
 
 from threading import Lock
 
 from stackowl.infra.observability import log
 
-HIGH_ENTER = 0.70
-HIGH_EXIT = 0.60
-LOW_ENTER = 0.30
-LOW_EXIT = 0.40
+HIGH_ENTER = 0.62
+HIGH_EXIT = 0.55
+LOW_ENTER = 0.38
+LOW_EXIT = 0.45
 _MAX_KEYS = 512
 
 
