@@ -79,6 +79,7 @@ class TurnSweepHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"reaped={len(reaped)}",
             error=None,
