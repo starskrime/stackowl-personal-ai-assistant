@@ -52,6 +52,7 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.interaction.feedback_classifier import FeedbackSignal
     from stackowl.memory.preferences import PreferenceStore
 
 # A clarifying question is the ONE thing we surface when the classifier is sure it
@@ -63,6 +64,11 @@ _CLARIFY_QUESTION = (
     "(for example: drop the asterisks, or show links as titles), "
     "or was that about something else?"
 )
+
+# FR-2 (de-complication PRD) — aspects captured as durable preference NOTES
+# (verbatim user text), independent of the FORMAT/output_style path above.
+# "overall" stays excluded (too vague to be an enforceable preference).
+_NOTE_ASPECTS = frozenset({"content", "tone", "length"})
 
 
 async def run(state: PipelineState) -> PipelineState:
@@ -108,18 +114,45 @@ async def run(state: PipelineState) -> PipelineState:
         return state
 
     # Only the FORMAT aspect is mechanically enforceable (LS2). content / tone /
-    # length / overall are out of LS4 scope: writing a format rule for them is the
-    # wrong-capture bug, so they are a no-op write here (a positive on content
-    # therefore leaves output_style untouched).
+    # length are captured separately below as preference NOTES (FR-2); "overall"
+    # stays a no-op write either way (too vague to be a specific preference).
     fmt = [s for s in result.signals
            if s.aspect == "format" and s.polarity in ("positive", "negative")]
-    if not fmt:
+    notes = [s for s in result.signals
+             if s.aspect in _NOTE_ASPECTS and s.polarity in ("positive", "negative")]
+    if not fmt and not notes:
         log.gateway.debug(
-            "[pipeline] feedback: no enforceable format signal — pass-through",
+            "[pipeline] feedback: no enforceable signal — pass-through",
             extra={"_fields": {"trace_id": state.trace_id,
                                "signals": [(s.polarity, s.aspect) for s in result.signals]}},
         )
         return state
+
+    owner_key = state.identity_key or state.session_id
+
+    # FR-2 — confident content/tone/length reactions are captured as a durable
+    # preference NOTE (verbatim state.input_text, aspect-keyed), independent of
+    # the FORMAT path below: "good content but lose the asterisks" writes BOTH.
+    # This never short-circuits the turn (no confirmation message) and never
+    # writes on a low-confidence/abstain verdict (mirrors the format guard) —
+    # the decision to write is 100% classifier-verdict-driven.
+    if notes and not result.abstain:
+        try:
+            await _write_preference_notes(store, owner_key, notes, state.input_text)
+            log.gateway.info(
+                "[pipeline] feedback: preference note(s) captured",
+                extra={"_fields": {"trace_id": state.trace_id, "owner_key": owner_key,
+                                   "aspects": [s.aspect for s in notes]}},
+            )
+        except Exception as exc:  # B5 — a note-write fault must never crash the turn
+            log.gateway.error(
+                "[pipeline] feedback: preference note write failed — pass-through",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id, "owner_key": owner_key}},
+            )
+
+    if not fmt:
+        return state  # only the note path applied — the turn proceeds normally
 
     if result.abstain:
         # Confident it is FORMAT feedback but not of the polarity → ask one
@@ -131,7 +164,6 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return _short_circuit(state, _CLARIFY_QUESTION)
 
-    owner_key = state.identity_key or state.session_id
     try:
         negative = any(s.polarity == "negative" for s in fmt)
         if negative:
@@ -253,6 +285,23 @@ def _explicit_fields(style: OutputStyle) -> dict[str, str]:
     default = OutputStyle()
     return {f: getattr(style, f) for f in OUTPUT_STYLE_FIELDS
             if getattr(style, f) != getattr(default, f)}
+
+
+async def _write_preference_notes(
+    store: PreferenceStore, owner_key: str, signals: list[FeedbackSignal], text: str,
+) -> None:
+    """Persist each non-format signal as a durable preference NOTE (FR-2).
+
+    ``text`` is the user's own reaction message verbatim — never a
+    synthesized/templated phrase, so capture stays multilingual and adds no
+    summarization step. One write per signal so "too long AND too formal"
+    (two note-aspects in one message) persists both independently."""
+    from stackowl.memory.preferences import write_preference_note
+
+    for signal in signals:
+        await write_preference_note(
+            store, owner_key, aspect=signal.aspect, polarity=signal.polarity, text=text,
+        )
 
 
 # --------------------------------------------------------------------------- #

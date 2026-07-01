@@ -12,6 +12,7 @@ owner_key conventions (matches BrowserSessionRegistry):
 
 from __future__ import annotations
 
+import json
 import time
 
 from stackowl.db.pool import DbPool
@@ -25,6 +26,64 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 # "global" means cross-channel, NOT cross-principal. Readers merge a global pref
 # UNDER the per-owner pref (owner-specific overrides global).
 GLOBAL_OWNER_KEY = "__global__"
+
+# FR-2 (de-complication PRD) — the single key under which ALL non-format
+# preference NOTES (content/tone/length feedback) live, as a JSON list of
+# ``{"aspect", "polarity", "text", "ts"}`` entries. Mirrors the read-merge-write
+# JSON-under-one-key shape ``channels/_format.py::OUTPUT_STYLE_KEY`` already
+# uses for ``output_style`` — same ``PreferenceStore`` contract (one
+# JSON-serializable string value per key), reused rather than a new table.
+PREFERENCE_NOTES_KEY = "preference_notes"
+# PRD FR-2: cap at ~20 entries, evicting the OLDEST (FIFO) when a new note
+# would exceed it. A same-aspect note replaces (moves to newest) rather than
+# duplicating, so in practice the list rarely nears the cap.
+MAX_PREFERENCE_NOTES = 20
+
+
+def parse_preference_notes(raw: str | None) -> list[dict[str, object]]:
+    """Pure parse of the ``PREFERENCE_NOTES_KEY`` JSON value into a list of dicts.
+
+    A missing value, corrupt JSON, or a non-list payload all degrade to ``[]``
+    (B5) — callers never need their own try/except around this. Split out from
+    :func:`load_preference_notes` so a caller that already has the raw string
+    (e.g. ``classify._gather_preferences``, which already fetched every key via
+    ``list_for_owner``) can parse it without a second DB round-trip."""
+    if not raw:
+        return []
+    try:
+        loaded = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(loaded, list):
+        return []
+    return [n for n in loaded if isinstance(n, dict) and "aspect" in n]
+
+
+async def load_preference_notes(
+    store: PreferenceStore, owner_key: str,
+) -> list[dict[str, object]]:
+    """Fetch + parse the preference-notes list for ``owner_key``. Never raises."""
+    raw = await store.get(owner_key, PREFERENCE_NOTES_KEY)
+    return parse_preference_notes(raw)
+
+
+async def write_preference_note(
+    store: PreferenceStore, owner_key: str, *, aspect: str, polarity: str, text: str,
+) -> list[dict[str, object]]:
+    """Read-merge-write ONE preference note into the capped notes list (FR-2).
+
+    A note with the SAME ``aspect`` already present is replaced (moved to
+    newest) rather than duplicated; the list is capped at
+    :data:`MAX_PREFERENCE_NOTES`, evicting the OLDEST entry (FIFO) once a new
+    note would exceed it. Mirrors ``feedback.py::_merge_write_style``'s
+    read-merge-write shape. Returns the resulting list."""
+    notes = await load_preference_notes(store, owner_key)
+    notes = [n for n in notes if n.get("aspect") != aspect]  # same-aspect → replace
+    notes.append({"aspect": aspect, "polarity": polarity, "text": text, "ts": time.time()})
+    if len(notes) > MAX_PREFERENCE_NOTES:
+        notes = notes[-MAX_PREFERENCE_NOTES:]  # FIFO — drop the oldest
+    await store.set(owner_key, PREFERENCE_NOTES_KEY, json.dumps(notes))
+    return notes
 
 
 class PreferenceStore(OwnedRepository):

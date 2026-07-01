@@ -246,6 +246,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     _safe_register(registry, "style", lambda: StyleCommand(
         preference_store=cast("PreferenceStore | None", deps.preference_store)))
 
+    # /preferences — list/remove learned content/tone/length preference notes (FR-2).
+    from stackowl.commands.preferences_command import PreferencesCommand
+    _safe_register(registry, "preferences", lambda: PreferencesCommand(
+        preference_store=cast("PreferenceStore | None", deps.preference_store)))
+
     # /urgent — wired through the REAL transport seam (F-76). When a deliverer
     # is present the command transports + counts genuine deliveries; absent it,
     # the command degrades to an honest routing-only report.

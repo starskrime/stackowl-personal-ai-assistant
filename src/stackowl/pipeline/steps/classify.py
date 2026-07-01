@@ -127,7 +127,7 @@ async def _gather_preferences(owner_key: str) -> str:
     if store is None:
         return ""
     try:
-        from stackowl.memory.preferences import GLOBAL_OWNER_KEY
+        from stackowl.memory.preferences import GLOBAL_OWNER_KEY, PREFERENCE_NOTES_KEY, parse_preference_notes
 
         # Surface cross-channel GLOBAL prefs too (owner-specific overrides global),
         # so a globally-enforced preference (e.g. output_tables=off) is also VISIBLE
@@ -143,8 +143,17 @@ async def _gather_preferences(owner_key: str) -> str:
         return ""
     if not prefs:
         return ""
+    # FR-2 (de-complication PRD) — preference NOTES are a JSON list under one
+    # key; rendering them through the generic ``- {k}: {v}`` loop below would
+    # dump raw JSON into the prompt, so they are popped out and rendered as
+    # one plain-language line per note instead.
+    notes_raw = prefs.pop(PREFERENCE_NOTES_KEY, None)
     lines = ["## Learned Preferences"]
     lines.extend(f"- {k}: {v}" for k, v in sorted(prefs.items()))
+    for note in parse_preference_notes(notes_raw):
+        aspect, polarity, text = note.get("aspect"), note.get("polarity"), note.get("text")
+        if isinstance(aspect, str) and isinstance(polarity, str) and isinstance(text, str):
+            lines.append(f'- {aspect} ({polarity}): "{text}"')
     return "\n".join(lines)
 
 
