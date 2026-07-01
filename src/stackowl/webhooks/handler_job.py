@@ -16,7 +16,7 @@ import time as _time
 from typing import Any
 
 from stackowl.infra.observability import log
-from stackowl.scheduler.base import HandlerRegistry, JobHandler
+from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 
 
@@ -26,6 +26,17 @@ class WebhookHandlerJob(JobHandler):
     @property
     def handler_name(self) -> str:
         return "webhook_handler"
+
+    @property
+    def trigger_kind(self) -> TriggerKind:
+        # PB6b dangling-handler finding — the wiring audit flagged this handler
+        # as "registered as seeded but has NO standing jobs row" during a boot
+        # audit. It isn't dangling: stackowl.webhooks.receiver enqueues one
+        # `@once` job per incoming webhook event (`create_job(handler_name=
+        # "webhook_handler", schedule="@once", ...)`) — there is no standing
+        # SchedulerAssembly seed by design. Declares on_demand so the audit
+        # stops flagging the expected absence of a boot-time row.
+        return "on_demand"
 
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY — never logs the event payload
@@ -47,6 +58,7 @@ class WebhookHandlerJob(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error="webhook_handler: job.params['event'] missing",
@@ -75,6 +87,7 @@ class WebhookHandlerJob(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"event:{event_id}",
             error=None,

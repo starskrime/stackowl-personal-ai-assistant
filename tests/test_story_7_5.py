@@ -338,6 +338,15 @@ def test_webhook_handler_job_has_correct_handler_name() -> None:
     assert handler.handler_name == "webhook_handler"
 
 
+def test_webhook_handler_job_is_on_demand_not_seeded() -> None:
+    """PB6b dangling-handler finding: receiver.handle enqueues one `@once` job
+    per webhook event (no standing SchedulerAssembly seed by design), so the
+    handler must declare on_demand — the base class "seeded" default would
+    make the boot wiring audit wrongly flag it as dangling."""
+    handler = WebhookHandlerJob()
+    assert handler.trigger_kind == "on_demand"
+
+
 # ---------------------------------------------------------------------------
 # Receiver health probe — bound state
 # ---------------------------------------------------------------------------
