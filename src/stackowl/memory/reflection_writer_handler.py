@@ -74,7 +74,9 @@ class ReflectionWriterHandler(JobHandler):
 
     @property
     def defer_under_load(self) -> bool:
-        return True  # Phase L — LLM reflection pass; yield to live user turns
+        # FR-5 — light, 15-min-cadence handler; the 900s starvation cap can
+        # chronically slip it a full cycle on an active box. Never defer.
+        return False
 
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY
