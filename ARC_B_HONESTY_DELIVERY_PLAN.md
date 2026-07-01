@@ -19,10 +19,13 @@ confirmed `[telegram] adapter.receive: entry` resumed. **PB1 is DONE @9fd28768**
 that caused the 30+ hour hang is fixed in code, not just symptom-relieved.
 
 ## Status (2026-06-30, subagent-driven in worktree `arc-b-honesty-delivery`, PAUSED at user request)
-3 of 13 stories done (PB1, PB5 on main; PB7a in this worktree @85056c1c, reviewed APPROVED). Worktree branched
-from main @a4ad781e. Remaining: PB0b, PB0c, PB2, PB3, PB4, PB6a, PB6b, PB7b, PBC, PB-CANARY + new follow-up PB7c.
-Session paused at ~$224 cost. Resume: continue subagent-driven from this worktree, next story PB0b (or PB2/PB3
-which are independent and cheap). Progress ledger: `.superpowers/sdd/progress.md`.
+7 of 13 stories done. On main pre-worktree: PB1, PB5. In this worktree (all reviewed APPROVED): PB7a @85056c1c,
+PB2 @93da573b, PB3 @d09dc7bc, PB0b @1e7796af (RC0 centerpiece), PB0c @c360797f. Worktree branched from main
+@a4ad781e; current tip c360797f. Remaining: PB4, PB6a (spine — brief already drafted in scratchpad/pb6a-brief.md),
+PB6b, PB7b, PBC, PB7c, PB-CANARY. NOT yet merged to main. Progress ledger: `.superpowers/sdd/progress.md`.
+Resume: continue subagent-driven; next PB6a (spine, blocks PB6b/PB7b) or independent PB4/PBC. PB6a design is
+fully locked in the ledger + the drafted brief (3 fields verified/effect_class/post_condition on JobResult +
+scheduler verified-veto, backward-compat defaults, JobEffectClass=Literal["delivery","state_change","read_only"]).
 
 ## Stories
 
@@ -34,16 +37,33 @@ which are independent and cheap). Progress ledger: `.superpowers/sdd/progress.md
       black-hole fault-injection); 29 adapter+wiring regression tests green; ruff + mypy clean on changed files.
       Adapter-side API calls (`send_message`, `send_chat_action`, `set_webhook`, `get_me`, etc.) inherit the
       builder timeouts automatically — no per-call wrappers needed.
-- [ ] **PB0b** — Cross-process liveness timestamp for the Telegram channel + a real `ChannelRegistry.health_check`
+- [x] **PB0b** — DONE @1e7796af (worktree, review APPROVED). RC0 centerpiece: migration 0074 channel_liveness
+      (channel-keyed) + `ChannelLivenessStore` + gateway periodic heartbeat (gated `updater.running`, seeded at
+      start) + core-side `ChannelLivenessContributor` (separate contributor, approved deviation from the literal
+      "ChannelRegistry.health_check" wording — registry stays channel-agnostic). Stale→degraded @T+300s witness +
+      2-connection cross-process proof. Detection only. Original spec below:
+      Cross-process liveness timestamp for the Telegram channel + a real `ChannelRegistry.health_check`
       that reads it (`channels/registry.py:127-142`, `scheduler/assembly.py:320`). MUST be cross-process state
       (DB row or shared file) — gateway and core are split processes, an in-proc variable won't be visible to
       the health-check caller. Spec the storage location before coding.
-- [ ] **PB0c** — Bounded auto-restart on staleness. Reuse the PA3 breaker→escalation-ladder pattern (`@d95ed926`).
-      Do NOT hand-roll a second bespoke retry/backoff implementation.
-- [ ] **PB2** — Thread `chat_id`/`target` through `SocketChannelAdapter.send_text()` (`channels/socket_adapter.py:55-56`)
+- [x] **PB0c** — DONE @c360797f (worktree, review APPROVED). Bounded gateway-local auto-restart of the dead
+      telegram poll loop via `RecoveryActuator` (ADR-2; retry-once→surrender), one attempt per outage episode
+      (`_recovery_attempted`, re-arms on running tick). New `_bot.restart_polling(app)` = restart-IN-PLACE
+      (guarded `updater.stop()`+`start_polling()`, NOT `stop_bot` which shutdown()s the updater). Plan-text
+      correction: PA3/`@d95ed926` is LLM model-tier escalation, NOT the generic ladder — reused `RecoveryActuator`.
+      Minor deferred: webhook-mode fires a spurious one-time ERROR (guard on updater-not-None later).
+- [x] **PB2** — DONE @93da573b (worktree, review APPROVED). `SocketChannelAdapter.send_text` takes keyword `chat_id`
+      → stamps `SendTextFrame.target`; gateway_link threads it to the real adapter — full mirror of the send_file
+      seam. Backlog (pre-existing, not new): gateway_link calls telegram(chat_id=)/whatsapp(target=) uniformly with
+      chat_id= — send_file has the same latent whatsapp bug. Original spec below:
+      Thread `chat_id`/`target` through `SocketChannelAdapter.send_text()` (`channels/socket_adapter.py:55-56`)
       and `gateway_link.py:351-354`, mirroring the already-fixed `send_file` path (lines 58-78, 355-363).
       Add a parity test so text/file send paths can't silently diverge again.
-- [ ] **PB3** — Fix `check_in.py:115-127` / `morning_brief.py:166-192` hardcoded `JobResult(success=True)`; reuse
+- [x] **PB3** — DONE @d09dc7bc (worktree, review APPROVED). INTERIM (superseded by PB6a/6b, gaps (a)/(b) NOT
+      marked done). One shared helper `job_success_for_rollup` (proactive_job.py): delivered/suppressed/
+      undeliverable/batched→True, partial/failed/unknown→False (fail-closed). `batched` caught mid-review as a
+      reachable router-deferral rollup (retry would duplicate). Original spec below:
+      Fix `check_in.py:115-127` / `morning_brief.py:166-192` hardcoded `JobResult(success=True)`; reuse
       `goal_execution.py:438-451`'s `outcome.rollup → success` mapping. INTERIM fix — flag explicitly in the
       commit message that this gets superseded (not just reused) by PB6a/6b, do not mark gap (a)/(b) done here.
 - [ ] **PB4** — `clarify_pump.py` `_cleanup` (lines 199-210): inspect `task.exception()`, log loudly, route into
