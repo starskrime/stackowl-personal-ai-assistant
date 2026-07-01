@@ -52,6 +52,7 @@ class ToolPruningHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="read_only",
             success=True,
             output="tool_pruning: noop",
             error=None,
