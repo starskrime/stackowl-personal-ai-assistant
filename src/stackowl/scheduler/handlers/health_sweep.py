@@ -91,6 +91,7 @@ class HealthSweepHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=False,
                 output=None,
                 error=str(exc),
@@ -109,6 +110,7 @@ class HealthSweepHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=True,
                 output=f"healthy={len(statuses)}",
                 error=None,
@@ -137,6 +139,7 @@ class HealthSweepHandler(JobHandler):
                 # 4. EXIT — every unhealthy subsystem was healed + re-verified. No alert.
                 return JobResult(
                     job_id=job.job_id,
+                    effect_class="delivery",
                     success=True,
                     output=f"healed={len(healed)}",
                     error=None,
@@ -170,6 +173,7 @@ class HealthSweepHandler(JobHandler):
         # succeeded at its detection task (down count is metadata, not a job error).
         return JobResult(
             job_id=job.job_id,
+            effect_class="delivery",
             success=True,
             output=message,
             error=None,
