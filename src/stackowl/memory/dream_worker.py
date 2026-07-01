@@ -147,6 +147,7 @@ class DreamWorkerJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=f"{checkpoint.phase}: {exc}",
@@ -181,6 +182,7 @@ class DreamWorkerJobHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=output,
             error=None,
