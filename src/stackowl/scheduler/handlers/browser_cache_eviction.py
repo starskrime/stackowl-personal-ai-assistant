@@ -82,6 +82,7 @@ class BrowserCacheEvictionHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"removed={total_removed} freed_bytes={total_freed}",
             error=None,
