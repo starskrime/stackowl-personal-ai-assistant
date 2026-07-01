@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.events.bus import EventBus
@@ -189,6 +190,29 @@ class SchedulerAssembly:
                 proactive_deliverer, delivery_ledger
             )
 
+        # PB-CANARY — ONE ChannelLivenessStore instance shared by PB0b's receive
+        # contributor, the new send-path canary contributor, AND this handler's
+        # writer (same channel-agnostic channel_liveness table; only the
+        # registration site names a channel). Built once here — NOT inside
+        # _build_health_aggregator — so the handler can write to the identical
+        # store the health sweep reads from. Gated on bot_token exactly like the
+        # existing receive contributor: no telegram configured => no signal to
+        # produce or consume.
+        liveness_store: ChannelLivenessStore | None = None
+        if settings.telegram_channel.bot_token:
+            from stackowl.channels.liveness import ChannelLivenessStore
+            from stackowl.db.pool import DbPool, default_db_path
+            from stackowl.infra.clock import WallClock
+
+            liveness_store = ChannelLivenessStore(DbPool(default_db_path()), WallClock())
+
+        from stackowl.scheduler.handlers.telegram_canary import TelegramCanaryHandler
+
+        telegram_canary_handler = TelegramCanaryHandler(
+            job_deliverer=goal_job_deliverer, liveness_store=liveness_store,
+        )
+        HandlerRegistry.instance().register(telegram_canary_handler)
+
         # F-61 (S2): give the scheduler the same delivery seam so a retry-exhausted
         # job failure is audited AND surfaces a proactive operator notification,
         # not just an ERROR log line. Wired post-construction because the deliverer
@@ -299,7 +323,7 @@ class SchedulerAssembly:
         # contributors (db / filesystem / graph / enabled providers — the same set
         # the CLI uses, minus Browser/Resilience which need live-runtime refs) and
         # register a handler that collects on a cadence and alerts on down/degraded.
-        health_aggregator = _build_health_aggregator(settings)
+        health_aggregator = _build_health_aggregator(settings, liveness_store)
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
@@ -380,6 +404,27 @@ class SchedulerAssembly:
         else:
             log.scheduler.debug(
                 "[scheduler] check_in disabled — skipping seed",
+            )
+        # PB-CANARY — synthetic telegram send-path round-trip heartbeat: every
+        # 20m, send a small marker through the real Telegram Bot API; a
+        # confirmed 'delivered' stamps the send-path liveness row the second
+        # ChannelLivenessContributor (kind="send") reads, alerting on absence via
+        # the existing HealthSweepHandler/AlertSink path. Ships ON by default
+        # (no settings flag) — same honesty rule as check_in: never seed a
+        # permanently-undeliverable row when telegram has no single resolvable
+        # owner.
+        canary_channels = ["telegram"]
+        canary_addresses = _resolve_owner_addresses(settings, canary_channels)
+        if canary_addresses:
+            await _seed_minutes_schedule(
+                db, handler_name="telegram_canary", schedule="every 20m",
+                interval_minutes=20,
+                target_channels=canary_channels, target_addresses=canary_addresses,
+            )
+        else:
+            log.scheduler.warning(
+                "[scheduler] telegram_canary has no resolvable recipient — NOT "
+                "scheduled (no single resolvable telegram owner)",
             )
         # LANDMINE: _seed_daily_schedule is idempotent by handler_name (early-returns
         # if a row exists). So flipping enabled OFF→ON (or fixing the recipient) AFTER
@@ -522,7 +567,9 @@ class SchedulerAssembly:
         )
 
 
-def _build_health_aggregator(settings: Settings) -> HealthAggregator:
+def _build_health_aggregator(
+    settings: Settings, liveness_store: ChannelLivenessStore | None = None
+) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
     Mirrors the ``stackowl health`` CLI's contributor set MINUS the ones that need
@@ -530,8 +577,13 @@ def _build_health_aggregator(settings: Settings) -> HealthAggregator:
     constructed" from a background sweep. Db / filesystem / graph / enabled
     providers all probe from durable config alone, so the periodic sweep reports
     TRUTHFUL status without threading live serve-process resources.
+
+    ``liveness_store`` is the ONE shared :class:`ChannelLivenessStore` instance
+    built by the caller (gated on ``telegram_channel.bot_token`` — no telegram
+    configured means no signal to produce or consume). ``None`` skips both
+    registrations below, exactly as before this PB-CANARY generalization.
     """
-    from stackowl.db.pool import DbPool, default_db_path
+    from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.health.contributors import (
         ChannelLivenessContributor,
@@ -540,6 +592,7 @@ def _build_health_aggregator(settings: Settings) -> HealthAggregator:
         GraphContributor,
         ProviderContributor,
     )
+    from stackowl.infra.clock import WallClock
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     agg = HealthAggregator()
@@ -551,14 +604,19 @@ def _build_health_aggregator(settings: Settings) -> HealthAggregator:
             agg.register(ProviderContributor(provider))
     # RC0 — telegram receive-loop liveness. Only registered when telegram is
     # configured, else it would falsely report "down" for a channel the operator
-    # never enabled. Reads the cross-process channel_liveness row (own DbPool —
-    # this sweep runs in core and has no live gateway adapter ref).
-    if settings.telegram_channel.bot_token:
-        from stackowl.channels.liveness import ChannelLivenessStore
-        from stackowl.infra.clock import WallClock
-
-        liveness_store = ChannelLivenessStore(DbPool(default_db_path()), WallClock())
+    # never enabled. Reads the cross-process channel_liveness row.
+    if liveness_store is not None:
         agg.register(ChannelLivenessContributor(liveness_store, "telegram", WallClock()))
+        # PB-CANARY — send-path sibling signal: a confirmed real send (not just
+        # the receive loop) stamps this row. stale_after_s = 2x the 20-min canary
+        # interval so one missed tick isn't a false alarm, but a genuinely dead
+        # canary is caught within ~40 min.
+        agg.register(
+            ChannelLivenessContributor(
+                liveness_store, "telegram_canary", WallClock(),
+                kind="send", stale_after_s=2400.0,
+            )
+        )
     return agg
 
 
@@ -772,8 +830,17 @@ async def seed_browser_maintenance_schedules(db: DbPool) -> None:
 
 async def _seed_minutes_schedule(
     db: DbPool, *, handler_name: str, schedule: str, interval_minutes: int,
+    target_channels: list[str] | None = None,
+    target_addresses: dict[str, str | int] | None = None,
 ) -> None:
-    """Idempotent: insert one ``jobs`` row for a frequent (minute-scale) handler."""
+    """Idempotent: insert one ``jobs`` row for a frequent (minute-scale) handler.
+
+    ``target_channels``/``target_addresses`` optionally stamp a durable
+    recipient (C1/F101) — mirrors ``_seed_daily_schedule``'s target-stamping
+    branch, for a minute-scale handler whose ``execute()`` must resolve a real
+    send target (e.g. PB-CANARY's send-path proof). Omitted (the default for
+    every existing every-Nm caller) preserves the exact prior no-target insert.
+    """
     existing = await db.fetch_all(_SELECT_EXISTING_SQL, (handler_name,))
     if existing:
         log.scheduler.debug(
@@ -784,6 +851,32 @@ async def _seed_minutes_schedule(
     job_id = f"{handler_name}-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC)
     next_run = (now + timedelta(minutes=interval_minutes)).isoformat()
+    if target_channels:
+        from stackowl.scheduler.job import Job
+        from stackowl.scheduler.scheduler_helpers import insert_job
+
+        job = Job(
+            job_id=job_id,
+            handler_name=handler_name,
+            schedule=schedule,
+            idempotency_key=f"{handler_name}:every-{interval_minutes}m",
+            last_run_at=None,
+            next_run_at=next_run,
+            status="pending",
+            target_channels=list(target_channels),
+            target_addresses=dict(target_addresses or {}),
+        )
+        await insert_job(db, job)
+        log.scheduler.info(
+            "[scheduler] schedule seeded (minutes, durable target)",
+            extra={"_fields": {
+                "handler": handler_name, "schedule": schedule,
+                "interval_minutes": interval_minutes, "job_id": job_id,
+                "target_channels": list(target_channels),
+                "addressed_channels": sorted(target_addresses or {}),
+            }},
+        )
+        return
     await db.execute(
         _INSERT_JOB_SQL,
         (
