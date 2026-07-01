@@ -70,6 +70,12 @@ _CLARIFY_QUESTION = (
 # "overall" stays excluded (too vague to be an enforceable preference).
 _NOTE_ASPECTS = frozenset({"content", "tone", "length"})
 
+# FR-8 (de-complication PRD) — messages this long or longer skip the classifier
+# LLM call entirely: reactions to a prior render are short; a message this long
+# is a new task, and the classifier's own `referent != "last"` check would
+# reject it anyway, but only after paying for the LLM call.
+_PREFILTER_MAX_CHARS = 200
+
 
 async def run(state: PipelineState) -> PipelineState:
     """Capture a confident FORMAT reaction to the last render into ``output_style``.
@@ -94,6 +100,13 @@ async def run(state: PipelineState) -> PipelineState:
     render = _last_agent_render(state)
     if not render:
         return state  # nothing to react to → byte-identical
+
+    if len(state.input_text) >= _PREFILTER_MAX_CHARS:
+        log.gateway.debug(
+            "[pipeline] feedback: message too long for a reaction — pass-through",
+            extra={"_fields": {"trace_id": state.trace_id, "input_len": len(state.input_text)}},
+        )
+        return state  # a message this long is a new task, not a reaction (FR-8)
 
     try:
         result = await classifier.classify(
