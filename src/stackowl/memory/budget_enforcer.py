@@ -85,6 +85,7 @@ class MemoryBudgetEnforcer(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=f"usage probe failed: {exc}",
@@ -106,6 +107,7 @@ class MemoryBudgetEnforcer(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=True,
                 output=f"under_budget pruned=0 usage={usage} ceiling={ceiling}",
                 error=None,
@@ -127,6 +129,7 @@ class MemoryBudgetEnforcer(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"pruned={pruned} ceiling={ceiling}",
             error=None,
