@@ -85,6 +85,7 @@ class ClarifySweepHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"dropped={dropped}",
             error=None,
