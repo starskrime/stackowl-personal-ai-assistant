@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 from stackowl.notifications.recipient import DeliverySpec
 from stackowl.notifications.router import Notification
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.notifications.deliverer import ProactiveDeliverer
@@ -138,6 +139,23 @@ class ProactiveJobDeliverer:
                     "_fields": {"job_id": job.job_id, "undeliverable": list(undeliverable)}
                 },
             )
+            # PB7b (gap c) — an undeliverable channel is a silent drop today:
+            # success=True (job_success_for_rollup), no Notification is ever
+            # built, so neither downstream seam (deliverer transport_failed,
+            # router suppressed) can fire. ADDITIVE: persist the durable NACK
+            # per unresolvable channel; never changes the rollup/return.
+            outbox = self._deliverer.outbox
+            if outbox is not None:
+                for channel in undeliverable:
+                    await outbox.record_undelivered(
+                        identity_key=DEFAULT_PRINCIPAL_ID,
+                        body=message,
+                        reason="undeliverable",
+                        channel=channel,
+                        category=category,
+                        urgency=urgency,
+                        job_id=job.job_id,
+                    )
 
         for channel, target in spec.pairs():
             # 3. STEP — claim the occurrence BEFORE the side-effect. A lost claim

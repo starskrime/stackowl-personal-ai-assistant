@@ -66,7 +66,7 @@ DEFAULT_LIST_LIMIT = 20
 # Allowed reason set — kept here so callers and the ratchet agree on the
 # vocabulary. A new reason MUST land here first; downstream tests gate on it.
 ALLOWED_REASONS: frozenset[str] = frozenset(
-    {"transport_failed", "suppressed", "no_deliverer"}
+    {"transport_failed", "suppressed", "no_deliverer", "undeliverable"}
 )
 
 

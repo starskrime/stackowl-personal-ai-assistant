@@ -104,6 +104,11 @@ class ProactiveDeliverer:
         # today); wired for real at assembly time (notifications/assembly.py).
         self._outbox = outbox
 
+    @property
+    def outbox(self) -> UndeliveredOutbox | None:
+        """The durable NACK store this deliverer was wired with (PB7b reuse)."""
+        return self._outbox
+
     async def deliver(self, notification: Notification) -> DeliveryStatus:
         """Route + transport ``notification``; never raises.
 

@@ -24,14 +24,17 @@ from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.notifications.deliverer import ProactiveDeliverer
+from stackowl.notifications.delivery_ledger import DeliveryLedger
+from stackowl.notifications.proactive_job import ProactiveJobDeliverer
 from stackowl.notifications.router import Notification, NotificationRouter
-from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
+from stackowl.notifications.undelivered_outbox import ALLOWED_REASONS, UndeliveredOutbox
 from stackowl.pipeline.services import StepServices, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import assemble
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job
 from stackowl.scheduler.scheduler_helpers import insert_job
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 pytestmark = pytest.mark.asyncio
 
@@ -248,3 +251,125 @@ async def test_quiet_hours_batched_deferral_does_not_create_outbox_row(
 
     outbox_rows = await tmp_db.fetch_all("SELECT id FROM undelivered_outbox", ())
     assert outbox_rows == []
+
+
+def _scheduled_job(
+    job_id: str, target_channels: list[str], target_addresses: dict[str, str | int]
+) -> Job:
+    return Job(
+        job_id=job_id,
+        handler_name="morning_brief",
+        schedule="daily@08:00",
+        idempotency_key=f"key-{job_id}",
+        last_run_at=None,
+        next_run_at="2026-06-30T08:00:00Z",
+        status="pending",
+        target_channels=target_channels,
+        target_addresses=target_addresses,
+    )
+
+
+async def test_undeliverable_rollup_writes_durable_row(tmp_db: DbPool) -> None:
+    """PB7b gap (c): an unresolvable channel is a silent drop (success=True,
+    zero seams) unless the shared `deliver_for_job` chokepoint records it."""
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job("brief-undeliverable-1", ["telegram"], {})
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="brief body", category="morning_brief"
+    )
+    assert outcome.rollup == "undeliverable"
+
+    rows = await UndeliveredOutbox(tmp_db).list_pending(DEFAULT_PRINCIPAL_ID)
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "undeliverable"
+    assert rows[0]["body"] == "brief body"
+    assert rows[0]["channel"] == "telegram"
+    assert rows[0]["job_id"] == job.job_id
+
+
+async def test_undeliverable_channel_alongside_resolvable_no_double_write(
+    tmp_db: DbPool,
+) -> None:
+    """One resolvable (failing) + one unresolvable channel -> exactly one row
+    per reason, no duplication between the deliverer seam and the chokepoint."""
+    TestModeGuard.deactivate()
+    ChannelRegistry.instance().register(_AlwaysFailAdapter("cli"))
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job(
+        "brief-mixed-1", ["telegram", "cli"], {"cli": 999}
+    )
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="mixed body", category="morning_brief", urgency="critical"
+    )
+    assert outcome.undeliverable == ("telegram",)
+
+    rows = await tmp_db.fetch_all(
+        "SELECT reason, channel FROM undelivered_outbox ORDER BY reason", ()
+    )
+    assert len(rows) == 2
+    reasons = {(r["reason"], r["channel"]) for r in rows}
+    assert reasons == {("transport_failed", "cli"), ("undeliverable", "telegram")}
+
+
+async def test_undeliverable_reason_ratchet() -> None:
+    """The vocabulary must land before the write — the ratchet asserts it's there."""
+    assert "undeliverable" in ALLOWED_REASONS
+
+
+async def test_undeliverable_reason_accepted_not_skipped(tmp_db: DbPool) -> None:
+    ok = await UndeliveredOutbox(tmp_db).record_undelivered(
+        identity_key=DEFAULT_PRINCIPAL_ID,
+        body="a scheduled body with no recipient",
+        reason="undeliverable",
+        channel="telegram",
+        category="morning_brief",
+        urgency="normal",
+        job_id="job-1",
+    )
+    assert ok is True
+
+
+async def test_undeliverable_row_surfaces_once_pa5b_parity(tmp_db: DbPool) -> None:
+    """Mirror the PB7a gate parity test freshly for the scheduled-job path:
+    write -> list_pending read-back -> mark_surfaced -> second read empty."""
+    outbox = UndeliveredOutbox(tmp_db)
+    ok = await outbox.record_undelivered(
+        identity_key=DEFAULT_PRINCIPAL_ID,
+        body="undeliverable scheduled body",
+        reason="undeliverable",
+        channel="telegram",
+        category="morning_brief",
+        urgency="normal",
+        job_id="job-2",
+    )
+    assert ok is True
+
+    pending = await outbox.list_pending(DEFAULT_PRINCIPAL_ID)
+    assert len(pending) == 1
+    row_id = pending[0]["id"]
+
+    await outbox.mark_surfaced([row_id])
+
+    pending_after = await outbox.list_pending(DEFAULT_PRINCIPAL_ID)
+    assert pending_after == []
