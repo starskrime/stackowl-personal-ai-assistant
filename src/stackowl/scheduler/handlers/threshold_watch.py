@@ -182,14 +182,16 @@ class ThresholdWatchHandler(JobHandler):
         # silently no-ops.
         if not source or op not in _OPS or not isinstance(threshold_raw, (int, float)):
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error=f"Invalid threshold params (source/op/threshold): op={op!r}",
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
         threshold = float(threshold_raw)
         if not self._runtime.available:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error=f"Browser unavailable: {self._runtime.unavailable_reason or 'not started'}",
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
@@ -205,7 +207,8 @@ class ThresholdWatchHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error=str(exc), duration_ms=duration_ms,
             )
         if value is None:
@@ -215,7 +218,8 @@ class ThresholdWatchHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id, "source": url_path_only(source)}},
             )
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error="No numeric value found in source", duration_ms=duration_ms,
             )
 
@@ -286,6 +290,7 @@ class ThresholdWatchHandler(JobHandler):
             metadata["delivery"] = delivery
         return JobResult(
             job_id=job.job_id,
+            effect_class="delivery",
             success=True,
             output=f"value={value} state={current_state} fired={fired}",
             error=None,
