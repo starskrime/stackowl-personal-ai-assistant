@@ -33,8 +33,10 @@ from typing import TYPE_CHECKING
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.notifications.router_helpers import write_log_row
+from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
@@ -69,6 +71,11 @@ class NotificationDigestJob(JobHandler):
     def __init__(self, db: DbPool, deliverer: ProactiveDeliverer | None = None) -> None:
         self._db = db
         self._deliverer = deliverer
+        # PB7b — the digest bypasses deliver()/router (it transports directly
+        # below), so its own dead-letter branch is the only seam that can ever
+        # see this drop; wire the durable NACK store here (mirrors
+        # morning_brief.py's construction).
+        self._outbox = UndeliveredOutbox(db)
 
     @property
     def handler_name(self) -> str:
@@ -226,6 +233,20 @@ class NotificationDigestJob(JobHandler):
                         created_at=now,
                         delivered_at=None,
                         message_hash=message_hash,
+                    )
+                    # PB7b — dead-lettering here bypasses deliver()/router
+                    # entirely (this handler transports directly above), so
+                    # this is the ONLY seam that ever sees this body. Without
+                    # it the write_log_row above is hash-only audit and the
+                    # body is gone the moment the queue row is deleted below.
+                    await self._outbox.record_undelivered(
+                        identity_key=DEFAULT_PRINCIPAL_ID,
+                        body=body,
+                        reason="transport_failed",
+                        channel=channel,
+                        category=category,
+                        urgency=urgency,
+                        job_id=job_id,
                     )
                     try:
                         await self._db.execute(_DELETE_QUEUE_SQL, (notification_id,))

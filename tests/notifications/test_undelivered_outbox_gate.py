@@ -25,6 +25,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.delivery_ledger import DeliveryLedger
+from stackowl.notifications.digest_job import NotificationDigestJob
 from stackowl.notifications.proactive_job import ProactiveJobDeliverer
 from stackowl.notifications.router import Notification, NotificationRouter
 from stackowl.notifications.undelivered_outbox import ALLOWED_REASONS, UndeliveredOutbox
@@ -373,3 +374,52 @@ async def test_undeliverable_row_surfaces_once_pa5b_parity(tmp_db: DbPool) -> No
 
     pending_after = await outbox.list_pending(DEFAULT_PRINCIPAL_ID)
     assert pending_after == []
+
+
+class _AlwaysFailDeliverer:
+    """A digest-injected deliverer whose transport always fails."""
+
+    async def transport(self, channel: str, message: str) -> str:
+        return "failed"
+
+
+def _digest_job() -> Job:
+    return Job(
+        job_id="digest-dead-letter-1",
+        handler_name="notification_digest",
+        schedule="every 1m",
+        idempotency_key="k-dead-letter",
+        last_run_at=None,
+        next_run_at="2026-06-30T08:00:00Z",
+        status="pending",
+    )
+
+
+async def test_digest_dead_letter_writes_durable_row(tmp_db: DbPool) -> None:
+    """The digest bypasses deliver()/router (its own `transport()` call), so its
+    dead-letter branch (past `_MAX_FLUSH_ATTEMPTS`) had no seam before PB7b — the
+    body was gone the moment the queue row was deleted. Assert the NACK now
+    lands and the queue row is still dead-lettered (deleted)."""
+    TestModeGuard.deactivate()
+    nid = "note-dead-letter-1"
+    due = (datetime(2026, 6, 30, tzinfo=UTC) - timedelta(minutes=1)).isoformat()
+    await tmp_db.execute(
+        "INSERT INTO notification_queue "
+        "(notification_id, message_hash, urgency, category, channel, job_id, "
+        "scheduled_for, message, attempts) VALUES (?,?,?,?,?,?,?,?,?)",
+        (nid, "hash16", "normal", "digest", "cli", None, due, "digest body lost otherwise", 4),
+    )
+    handler = NotificationDigestJob(tmp_db, _AlwaysFailDeliverer())  # type: ignore[arg-type]
+
+    await handler.execute(_digest_job())
+
+    queue_rows = await tmp_db.fetch_all(
+        "SELECT notification_id FROM notification_queue WHERE notification_id = ?", (nid,)
+    )
+    assert queue_rows == []  # dead-lettered (deleted)
+
+    outbox_rows = await UndeliveredOutbox(tmp_db).list_pending(DEFAULT_PRINCIPAL_ID)
+    assert len(outbox_rows) == 1
+    assert outbox_rows[0]["reason"] == "transport_failed"
+    assert outbox_rows[0]["body"] == "digest body lost otherwise"
+    assert outbox_rows[0]["channel"] == "cli"
