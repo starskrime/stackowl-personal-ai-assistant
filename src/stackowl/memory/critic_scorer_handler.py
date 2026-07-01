@@ -1,12 +1,17 @@
 """CriticScorerHandler — async job that fills in quality_score for pending outcomes.
 
-Polls ``task_outcomes WHERE quality_score IS NULL`` every 10 minutes,
-runs a fast-tier LLM critic call on each pending row, writes the score
-back. Mirrors :class:`stackowl.notifications.digest_job.NotificationDigestJob`
-exactly — same handler pattern, same 4-point logging, same JobResult shape.
+Polls ``task_outcomes WHERE quality_score IS NULL``, runs a fast-tier LLM
+critic call on each pending row, writes the score back. Mirrors
+:class:`stackowl.notifications.digest_job.NotificationDigestJob` — same
+handler pattern, same 4-point logging, same JobResult shape.
 
-Per the Commit 1 placement vote: critic is async-via-scheduler so it adds
-zero latency to the user-facing pipeline.
+FR-4 (learning-loop consolidation): this handler is no longer scheduled on
+its own standing job/cadence. :class:`stackowl.memory.reflection_writer_handler.ReflectionWriterHandler`
+composes an instance of this class and calls its :meth:`execute` at the start
+of its own ``execute()``, so one scheduler job (reflection_writer, every 15m)
+does both scoring and reflection. This class is kept as its own unit
+(independently testable, still async-via-scheduler relative to the
+user-facing pipeline) rather than inlined.
 """
 
 from __future__ import annotations

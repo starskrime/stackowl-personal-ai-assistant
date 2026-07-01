@@ -37,7 +37,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.infra.resilience import HealableResource
     from stackowl.memory.assembly import MemoryComponents
-    from stackowl.memory.critic_scorer_handler import CriticScorerHandler
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.objectives.driver import ObjectiveDriverHandler
@@ -67,6 +66,7 @@ INSERT INTO jobs
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 _SELECT_EXISTING_SQL = "SELECT job_id FROM jobs WHERE handler_name = ?"
+_DELETE_RETIRED_JOB_SQL = "DELETE FROM jobs WHERE handler_name = ?"
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,6 @@ class SchedulerComponents:
     tool_pruning_handler: ToolPruningHandler
     goal_execution_handler: GoalExecutionHandler
     objective_driver_handler: ObjectiveDriverHandler
-    critic_scorer_handler: CriticScorerHandler
     reflection_writer_handler: ReflectionWriterHandler
     skill_synthesizer_handler: SkillSynthesizerHandler
     tool_outcome_miner_handler: ToolOutcomeMinerHandler
@@ -262,19 +261,14 @@ class SchedulerAssembly:
             delegation_governor=delegation_governor,
         )
 
-        # Learning Commit 1 — CriticScorerHandler scores pending task_outcomes
-        # async (every 10 min). Reuses the existing JobHandler/scheduler pattern.
-        from stackowl.memory.critic_scorer_handler import CriticScorerHandler
-
-        critic_scorer_handler = CriticScorerHandler(
-            db=db, provider_registry=provider_registry,
-        )
-        HandlerRegistry.instance().register(critic_scorer_handler)
-
-        # Learning Commit 2 — ReflectionWriterHandler turns failed / low-quality
-        # outcomes into Reflexion-style reflections (every 15 min). Uses the
-        # MemoryAssembly's embedding registry so reflections can be retrieved
-        # semantically by classify.py.
+        # FR-4 (learning-loop consolidation) — ReflectionWriterHandler now scores
+        # AND reflects in one execute() call (every 15 min). The standalone
+        # critic_scorer job (was every 10 min) is gone: ReflectionWriterHandler
+        # composes a CriticScorerHandler internally and calls its execute() first,
+        # so one scheduler job replaces two and a fresh outcome can be
+        # scored-then-reflected in the SAME run instead of waiting on two
+        # cadences. Uses the MemoryAssembly's embedding registry so reflections
+        # can be retrieved semantically by classify.py.
         from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
 
         reflection_writer_handler = ReflectionWriterHandler(
@@ -282,8 +276,19 @@ class SchedulerAssembly:
             provider_registry=provider_registry,
             embedding_registry=memory_components.embedding_registry,
             lessons_index=memory_components.lessons_index,
+            # Preserves the standalone critic_scorer job's original
+            # defer-under-load behavior (heavy LLM batch yields to live
+            # turns) now that it's composed inside this handler instead of
+            # being separately scheduled/deferred.
+            turn_registry=turn_registry,
         )
         HandlerRegistry.instance().register(reflection_writer_handler)
+        # FR-4 cleanup — an already-running install may have a critic_scorer
+        # row seeded from before this consolidation (it was a standalone
+        # every-10m job). No handler claims it anymore, so it would otherwise
+        # be claimed→released on every poll forever, logging a misleading
+        # "handler not registered" warning. Idempotent: no-op once removed.
+        await db.execute(_DELETE_RETIRED_JOB_SQL, ("critic_scorer",))
 
         # Learning Commit 3 sub-phase 3c — SkillSynthesizerHandler runs daily
         # against accumulated task_outcomes + reflections + existing learned
@@ -468,13 +473,9 @@ class SchedulerAssembly:
             db, handler_name="health_sweep", schedule="every 5m",
             interval_minutes=5,
         )
-        # Critic scorer runs frequently — outcomes pile up fast.
-        await _seed_minutes_schedule(
-            db, handler_name="critic_scorer", schedule="every 10m",
-            interval_minutes=10,
-        )
-        # Reflection writer runs slightly less often (depends on critic having
-        # filled in quality_score first; 5min stagger keeps them in step).
+        # FR-4 — reflection_writer now scores (composed CriticScorerHandler)
+        # THEN reflects in one run; the separate critic_scorer job/seed row is
+        # gone (was every 10m — see handler docstring for the merge rationale).
         await _seed_minutes_schedule(
             db, handler_name="reflection_writer", schedule="every 15m",
             interval_minutes=15,
@@ -559,7 +560,6 @@ class SchedulerAssembly:
             tool_pruning_handler=tool_pruning_handler,
             goal_execution_handler=goal_execution_handler,
             objective_driver_handler=objective_driver_handler,
-            critic_scorer_handler=critic_scorer_handler,
             reflection_writer_handler=reflection_writer_handler,
             skill_synthesizer_handler=skill_synthesizer_handler,
             tool_outcome_miner_handler=tool_outcome_miner_handler,

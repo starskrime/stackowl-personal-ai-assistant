@@ -42,8 +42,8 @@ class JobHandler(ABC):
         """Whether the scheduler should DEFER this job while a user turn is live.
 
         Defaults to ``False`` (every existing handler keeps running exactly as
-        before). Heavy, CPU/IO-hungry background jobs (dream_worker, kuzu_sync,
-        critic_scorer) override to ``True`` so they yield the
+        before). Heavy, CPU/IO-hungry background jobs (dream_worker, kuzu_sync)
+        override to ``True`` so they yield the
         resource-constrained box to the foreground turn — the scheduler skips
         them while ``TurnRegistry`` reports active turns, up to a starvation cap
         (see :class:`JobScheduler`), then runs them anyway so background work is
