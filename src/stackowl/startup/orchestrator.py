@@ -915,6 +915,15 @@ class StartupOrchestrator:
         from stackowl.interaction.feedback_classifier import FeedbackClassifier
 
         feedback_classifier = FeedbackClassifier(provider_registry)
+        # PBC — overclaim trigger 3's retrieval-intent classifier (fast tier,
+        # fail-safe→known). surface_overclaim_gate's wrapper reads it off services
+        # to lazily judge whether a clean, non-delivering, non-conversational
+        # turn's intent required a live lookup that never ran.
+        from stackowl.interaction.retrieval_intent_classifier import (
+            RetrievalIntentClassifier,
+        )
+
+        retrieval_intent_classifier = RetrievalIntentClassifier(provider_registry)
         # §6/§7 (P3 Task 16) — the mid-turn arrival TurnRouter. Reuses the SAME
         # fast-tier ``ClarifyIntentClassifier`` (its ``is_steer`` is the
         # conservative high-confidence STEER-vs-NEW propose stage), so there is ONE
@@ -1121,6 +1130,7 @@ class StartupOrchestrator:
             consent_gate=consent_gate,
             clarify_gateway=clarify_gateway,
             feedback_classifier=feedback_classifier,
+            retrieval_intent_classifier=retrieval_intent_classifier,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
             session_registry=session_registry,

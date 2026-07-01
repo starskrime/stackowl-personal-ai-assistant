@@ -11,8 +11,17 @@ from typing import get_args
 
 import pytest
 
-from stackowl.pipeline.overclaim_gate import _is_overclaim, surface_overclaim_gate
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.overclaim_gate import (
+    _is_overclaim,
+    _should_classify_retrieval,
+    surface_overclaim_gate,
+)
+from stackowl.pipeline.services import (
+    StepServices,
+    reset_services,
+    set_services,
+)
+from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk  # noqa: F401
 from stackowl.tools.base import ToolManifest
 
@@ -314,3 +323,187 @@ def test_meta_every_effect_class_is_vetoed() -> None:
         is_oc, culprit = _is_overclaim(state)
         assert is_oc is True, f"effect class {cls!r} is NOT vetoed by the gate"
         assert culprit == f"tool_for_{cls}"
+
+
+# ---------------------------------------------------------------------------
+# PBC — Trigger 3: RETRIEVAL-INTENT overclaim (classifier-stamped, no-URL
+# sibling of the grounding gate)
+# ---------------------------------------------------------------------------
+
+
+def _tool_call(name: str) -> ToolCall:
+    return ToolCall(tool_name=name, args={}, result="ok", error=None, duration_ms=1.0)
+
+
+def test_retrieval_intent_fires() -> None:
+    """requires_retrieval=True + no retrieval tool ran + clean turn → floored."""
+    state = _state(
+        responses=(_draft("iOS 17 is the latest version."),),
+        requires_retrieval=True,
+        delivered_successes=(),
+        consequential_failures=(),
+        unverified_effects=(),
+        no_progress_tools=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert is_oc is True
+    assert culprit == "retrieval"
+
+
+def test_retrieval_ran_not_blocked() -> None:
+    """requires_retrieval=True but a retrieval tool DID run → not an overclaim."""
+    state = _state(
+        responses=(_draft("iOS 18 is the latest version."),),
+        requires_retrieval=True,
+        tool_calls=(_tool_call("web_search"),),
+        delivered_successes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_knowledge_answer_not_blocked() -> None:
+    """requires_retrieval=False (default) + no tools → knowledge answer, CLEARED."""
+    state = _state(
+        responses=(_draft("2 + 2 = 4."),),
+        delivered_successes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_retrieval_intent_does_not_nuke_real_delivery() -> None:
+    """requires_retrieval=True but something WAS delivered → delivered_successes
+    early-return wins; the classifier guess never nukes a real delivery."""
+    state = _state(
+        responses=(_draft("Sent your report and here's today's news."),),
+        requires_retrieval=True,
+        delivered_successes=("send_message",),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_retrieval_intent_already_floored_cleared() -> None:
+    """Already-floored draft + requires_retrieval=True → cleared (no double floor)."""
+    state = _state(
+        responses=(_draft("I wasn't able to complete that.", is_floor=True),),
+        requires_retrieval=True,
+        delivered_successes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_measured_trigger_wins_over_retrieval_guess() -> None:
+    """unverified_effects non-empty AND requires_retrieval=True → the MEASURED
+    trigger (1) wins; the classifier guess (3) never overrides it."""
+    state = _state(
+        responses=(_draft("✅ Cronjob scheduled and here's the latest news."),),
+        consequential_snapshot_taken=True,
+        unverified_effects=("cronjob",),
+        requires_retrieval=True,
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (True, "cronjob")
+
+
+class _FakeRetrievalClassifier:
+    """Records calls; returns a scripted verdict. Mirrors the real classifier's
+    ``requires_lookup(*, request: str) -> bool`` signature."""
+
+    def __init__(self, verdict: bool) -> None:
+        self._verdict = verdict
+        self.calls: list[str] = []
+
+    async def requires_lookup(self, *, request: str) -> bool:
+        self.calls.append(request)
+        return self._verdict
+
+
+def _with_classifier(classifier: object | None) -> object:
+    return set_services(StepServices(retrieval_intent_classifier=classifier))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_wrapper_conversational_skips_classifier() -> None:
+    """A conversational-intent turn never pays for the classify call."""
+    fake = _FakeRetrievalClassifier(True)
+    token = _with_classifier(fake)
+    try:
+        state = _state(
+            responses=(_draft("Sure, happy to help!"),),
+            intent_class="conversational",
+            delivered_successes=(),
+        )
+        result = await surface_overclaim_gate(state)
+    finally:
+        reset_services(token)
+    assert fake.calls == []
+    assert result.overclaim_blocked is False
+    assert result.responses[0].content == "Sure, happy to help!"
+
+
+@pytest.mark.asyncio
+async def test_wrapper_classifies_and_floors_on_lookup_verdict() -> None:
+    """Standard turn, no retrieval tool, classifier says LOOKUP → grounding floor."""
+    fake = _FakeRetrievalClassifier(True)
+    token = _with_classifier(fake)
+    try:
+        state = _state(
+            responses=(_draft("The latest iOS version is 17."),),
+            intent_class="standard",
+            delivered_successes=(),
+        )
+        result = await surface_overclaim_gate(state)
+    finally:
+        reset_services(token)
+    assert fake.calls == ["send my report"]
+    assert result.overclaim_blocked is True
+    chunk = result.responses[0]
+    assert chunk.is_floor is True
+    assert "didn't actually retrieve it" in chunk.content
+
+
+@pytest.mark.asyncio
+async def test_wrapper_classifier_none_is_byte_identical_noop() -> None:
+    """Unwired classifier (None, default StepServices) → no floor, no error."""
+    token = _with_classifier(None)
+    try:
+        state = _state(
+            responses=(_draft("The latest iOS version is 17."),),
+            intent_class="standard",
+            delivered_successes=(),
+        )
+        result = await surface_overclaim_gate(state)
+    finally:
+        reset_services(token)
+    assert result.overclaim_blocked is False
+    assert result.responses[0].content == "The latest iOS version is 17."
+
+
+def test_should_classify_retrieval_precondition() -> None:
+    """Direct precondition unit coverage for the cost-gate itself."""
+    conversational = _state(
+        responses=(_draft("hi"),), intent_class="conversational",
+    )
+    assert _should_classify_retrieval(conversational) is False
+
+    retrieved = _state(
+        responses=(_draft("news"),), tool_calls=(_tool_call("web_search"),),
+    )
+    assert _should_classify_retrieval(retrieved) is False
+
+    delivered = _state(
+        responses=(_draft("sent"),), delivered_successes=("send_message",),
+    )
+    assert _should_classify_retrieval(delivered) is False
+
+    floored = _state(responses=(_draft("x", is_floor=True),))
+    assert _should_classify_retrieval(floored) is False
+
+    empty = _state(responses=(_draft("   "),))
+    assert _should_classify_retrieval(empty) is False
+
+    suspicious = _state(responses=(_draft("iOS 17 is latest"),))
+    assert _should_classify_retrieval(suspicious) is True

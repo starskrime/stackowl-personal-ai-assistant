@@ -252,6 +252,12 @@ class PipelineState(BaseModel, frozen=True):
     # presence), never on the claim prose. Empty () = byte-identical: no effect-classed
     # tool ran, or every one returned a verified receipt.
     unverified_effects: tuple[str, ...] = ()
+    # PBC — overclaim trigger 3 (retrieval-intent). Stamped lazily by
+    # surface_overclaim_gate's async wrapper (never inside the pure predicate)
+    # via RetrievalIntentClassifier.requires_lookup when a clean, non-delivering,
+    # non-conversational turn used no retrieval tool. Default False = byte-
+    # identical for every un-classified/legacy turn — never floors on its own.
+    requires_retrieval: bool = False
     # Turn-progress supervisor (TPS). ``turn_made_progress`` defaults True so any
     # non-tool path is byte-identical (never floored as no-progress). execute stamps
     # False + ``no_progress_tools`` when the tracker saw no PROGRESS dispatch.
