@@ -89,7 +89,8 @@ class SkillSynthesizerHandler(JobHandler):
             )
             duration_ms = (time.monotonic() - t0) * 1000
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="state_change", success=False, output=None,
                 error=f"no provider for tier {self._synth_tier}: {exc}",
                 duration_ms=duration_ms,
                 metadata={"created": 0, "refined": 0, "deprecated": 0},
@@ -121,7 +122,8 @@ class SkillSynthesizerHandler(JobHandler):
             }},
         )
         return JobResult(
-            job_id=job.job_id, success=True,
+            job_id=job.job_id,
+            effect_class="state_change", success=True,
             output=f"created:{report.created} refined:{report.refined} "
                    f"deprecated:{report.deprecated}",
             error=None, duration_ms=duration_ms,
