@@ -106,6 +106,7 @@ class CheckInHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=True,
                 output=None,
                 error=None,
@@ -139,6 +140,7 @@ class CheckInHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="delivery",
             success=job_success_for_rollup(outcome.rollup),
             output=rendered,
             error=None,
