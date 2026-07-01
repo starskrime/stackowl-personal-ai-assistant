@@ -96,6 +96,7 @@ class NotificationDigestJob(JobHandler):
             duration_ms = (_time.monotonic() - t0) * 1000
             return JobResult(
                 job_id=job.job_id,
+                effect_class="delivery",
                 success=False,
                 output=None,
                 error=str(exc),
@@ -130,6 +131,7 @@ class NotificationDigestJob(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="delivery",
             success=True,
             output=f"flushed:{flushed}",
             error=None,
