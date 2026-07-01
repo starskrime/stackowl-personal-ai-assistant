@@ -37,7 +37,10 @@ from stackowl.brief.models import BriefSection, MorningBrief
 from stackowl.brief.renderer import BriefRenderer
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
-from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
+from stackowl.notifications.proactive_job import (
+    ProactiveDeliveryOutcome,
+    job_success_for_rollup,
+)
 from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
@@ -185,7 +188,7 @@ class MorningBriefHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
-            success=True,
+            success=job_success_for_rollup(outcome.rollup),
             output=rendered,
             error=None,
             duration_ms=duration_ms,

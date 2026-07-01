@@ -240,3 +240,16 @@ class ProactiveJobDeliverer:
         if suppressed_replay:
             return "suppressed"
         return "undeliverable"
+
+
+def job_success_for_rollup(rollup: str) -> bool:
+    """Map a :class:`ProactiveDeliveryOutcome` rollup to an honest ``JobResult.success``.
+
+    Interim shim (PB3) mirroring ``goal_execution._deliver_answer``'s rollup->retry
+    semantics; the PB6a/6b ``verified``/``effect_class`` contract supersedes it.
+    ``delivered``/``suppressed``/``undeliverable`` -> ``True`` (an unresolvable
+    target is undeliverable, which a retry can't fix). ``partial``/``failed``/
+    anything unrecognized -> ``False`` (transient or unknown, so the scheduler
+    retries — fail-closed, unlike ``goal_execution``'s else-branch).
+    """
+    return rollup in ("delivered", "suppressed", "undeliverable")
