@@ -102,6 +102,7 @@ class ProactiveJobDeliverer:
         message: str,
         category: str,
         urgency: str = "normal",
+        surface_undelivered: bool = True,
     ) -> ProactiveDeliveryOutcome:
         """Deliver ``message`` to every durable recipient of ``job``; never raises.
 
@@ -110,6 +111,15 @@ class ProactiveJobDeliverer:
         ``delivered``). A channel whose occurrence was already dispatched (replay)
         is suppressed. ``delivered`` appears in ``per_channel`` ONLY after a real
         transport success.
+
+        ``surface_undelivered`` (CANARY-LEAK, default ``True`` — preserves exact
+        existing behavior for every one of the 6 real delivery handlers) gates
+        BOTH undelivered-outbox NACK writes this call can trigger: the local
+        ``undeliverable`` (no durable address) write below, and the
+        ``deliverer.deliver`` terminal-failed (``transport_failed``) write. A
+        synthetic probe (PB-CANARY) passes ``False`` — its own marker is not lost
+        user content and must never surface in the user-facing next-contact
+        banner. The rollup/``JobResult`` mapping is otherwise unaffected.
         """
         # 1. ENTRY
         log.scheduler.debug(
@@ -119,6 +129,7 @@ class ProactiveJobDeliverer:
                     "job_id": job.job_id,
                     "category": category,
                     "message_len": len(message),
+                    "surface_undelivered": surface_undelivered,
                 }
             },
         )
@@ -145,7 +156,7 @@ class ProactiveJobDeliverer:
             # router suppressed) can fire. ADDITIVE: persist the durable NACK
             # per unresolvable channel; never changes the rollup/return.
             outbox = self._deliverer.outbox
-            if outbox is not None:
+            if outbox is not None and surface_undelivered:
                 for channel in undeliverable:
                     await outbox.record_undelivered(
                         identity_key=DEFAULT_PRINCIPAL_ID,
@@ -188,7 +199,9 @@ class ProactiveJobDeliverer:
                 job_id=job.job_id,
                 target=target,
             )
-            status: DeliveryStatus = await self._deliverer.deliver(notification)
+            status: DeliveryStatus = await self._deliverer.deliver(
+                notification, surface_undelivered=surface_undelivered
+            )
             per_channel[channel] = status
             # Flip the ledger row to the ACTUAL transport outcome. A non-delivered
             # decision (batched/suppressed/failed) is marked 'failed' in the ledger

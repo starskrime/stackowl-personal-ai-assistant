@@ -109,13 +109,21 @@ class ProactiveDeliverer:
         """The durable NACK store this deliverer was wired with (PB7b reuse)."""
         return self._outbox
 
-    async def deliver(self, notification: Notification) -> DeliveryStatus:
+    async def deliver(
+        self, notification: Notification, *, surface_undelivered: bool = True
+    ) -> DeliveryStatus:
         """Route + transport ``notification``; never raises.
 
         Returns the router decision verbatim for ``batched`` / ``suppressed``
         (the router already queued / logged those), the router's ``delivered``
         on a successful ``send_text``, or ``"failed"`` if transport could not
         complete (unknown channel / adapter error after one retry).
+
+        ``surface_undelivered`` (CANARY-LEAK, default ``True`` — preserves exact
+        existing behavior for every caller) gates the terminal-failed NACK write
+        below. A synthetic probe (PB-CANARY) passes ``False`` so its own marker
+        never durably lands in the user-facing undelivered-outbox banner — a
+        failed canary send is an operator-alerting signal, not lost user content.
         """
         # 1. ENTRY
         log.notifications.debug(
@@ -126,6 +134,7 @@ class ProactiveDeliverer:
                     "category": notification.category,
                     "channel": notification.channel_name,
                     "has_file": notification.file_path is not None,
+                    "surface_undelivered": surface_undelivered,
                 }
             },
         )
@@ -170,7 +179,7 @@ class ProactiveDeliverer:
         # PA5(b) — a terminal FAILED transport (retry + reroute both exhausted)
         # is a silent drop today: the body is gone, only the status is returned.
         # ADDITIVE: persist the durable NACK; never changes control flow/return.
-        if result == "failed" and self._outbox is not None:
+        if result == "failed" and self._outbox is not None and surface_undelivered:
             await self._outbox.record_undelivered(
                 identity_key=(
                     str(notification.target)

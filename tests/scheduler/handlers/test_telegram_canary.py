@@ -112,6 +112,21 @@ async def test_handler_name_and_trigger_kind() -> None:
     assert handler.trigger_kind == "seeded"
 
 
+async def test_canary_opts_out_of_undelivered_outbox_surfacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CANARY-LEAK: the canary marker must never surface in the user-facing
+    next-contact banner — its deliver_for_job call opts out via
+    surface_undelivered=False regardless of the send outcome."""
+    disable_guard(monkeypatch)
+    deliverer = _FakeJobDeliverer("failed")
+    handler = TelegramCanaryHandler(job_deliverer=deliverer, liveness_store=None)
+
+    await handler.execute(make_job(handler="telegram_canary"))
+
+    assert deliverer.calls[0]["surface_undelivered"] is False
+
+
 async def test_liveness_write_failure_does_not_flip_honest_delivered_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

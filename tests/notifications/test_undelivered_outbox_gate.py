@@ -304,6 +304,98 @@ async def test_undeliverable_rollup_writes_durable_row(tmp_db: DbPool) -> None:
     assert rows[0]["job_id"] == job.job_id
 
 
+async def test_surface_undelivered_false_suppresses_transport_failed_row(
+    tmp_db: DbPool,
+) -> None:
+    """CANARY-LEAK: surface_undelivered=False (the canary's opt-out) must
+    suppress the deliverer.py transport_failed NACK even on a genuine send
+    failure — this is the exact reason string ('transport_failed') the
+    canary's marker was observed leaking under during a real outage."""
+    TestModeGuard.deactivate()
+    ChannelRegistry.instance().register(_AlwaysFailAdapter("telegram"))
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job("canary-1", ["telegram"], {"telegram": 42})
+
+    outcome = await job_deliverer.deliver_for_job(
+        job,
+        message="canary marker",
+        category="canary",
+        urgency="low",
+        surface_undelivered=False,
+    )
+    assert outcome.rollup == "failed"
+
+    rows = await UndeliveredOutbox(tmp_db).list_pending()
+    assert rows == []
+
+
+async def test_surface_undelivered_false_suppresses_undeliverable_row(
+    tmp_db: DbPool,
+) -> None:
+    """Same opt-out for the OTHER chokepoint (no durable address at all)."""
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job("canary-2", ["telegram"], {})
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="canary marker", category="canary", surface_undelivered=False
+    )
+    assert outcome.rollup == "undeliverable"
+
+    rows = await UndeliveredOutbox(tmp_db).list_pending()
+    assert rows == []
+
+
+async def test_surface_undelivered_false_leaves_rollup_mapping_unaffected(
+    tmp_db: DbPool,
+) -> None:
+    """The outbox-write opt-out must not change JobResult/rollup semantics —
+    job_success_for_rollup is computed identically whether or not the write
+    happens."""
+    from stackowl.notifications.proactive_job import job_success_for_rollup
+
+    TestModeGuard.deactivate()
+    ChannelRegistry.instance().register(_AlwaysFailAdapter("telegram"))
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job("canary-3", ["telegram"], {"telegram": 42})
+
+    outcome = await job_deliverer.deliver_for_job(
+        job,
+        message="canary marker",
+        category="canary",
+        surface_undelivered=False,
+    )
+    assert outcome.rollup == "failed"
+    assert job_success_for_rollup(outcome.rollup) is False  # unchanged mapping
+
+
 async def test_undeliverable_channel_alongside_resolvable_no_double_write(
     tmp_db: DbPool,
 ) -> None:

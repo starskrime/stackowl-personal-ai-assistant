@@ -88,8 +88,17 @@ class TelegramCanaryHandler(JobHandler):
 
         # 3. STEP — send through the SAME seam every delivery handler uses (a real
         # Telegram Bot API round trip, not an assertion).
+        # CANARY-LEAK — this synthetic probe's own marker is not lost user
+        # content: opt out of the undelivered-outbox NACK so a failed canary
+        # send (the exact outage it exists to detect) never surfaces in the
+        # user-facing next-contact banner. Operator alerting still happens via
+        # the liveness/health-sweep path below, unaffected by this flag.
         outcome: ProactiveDeliveryOutcome = await self._job_deliverer.deliver_for_job(
-            job, message=_MARKER, category=_CATEGORY, urgency=_URGENCY
+            job,
+            message=_MARKER,
+            category=_CATEGORY,
+            urgency=_URGENCY,
+            surface_undelivered=False,
         )
         duration_ms = (time.monotonic() - t0) * 1000
 
