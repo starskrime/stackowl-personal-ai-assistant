@@ -77,6 +77,7 @@ class BrowserSessionRecycleHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"evicted={evicted} recycle_check_ok={recycled}",
             error=None,
