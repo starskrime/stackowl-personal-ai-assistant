@@ -36,6 +36,8 @@ from stackowl.notifications.router_helpers import (
     next_scheduled_for,
     write_log_row,
 )
+from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.config.settings import Settings
@@ -118,6 +120,8 @@ class NotificationRouter:
         self._settings = settings
         self._clock = clock
         self._focus_mode: FocusMode = "off"
+        # PA5(b) — the durable NACK store for the `suppressed` silent-drop seam.
+        self._outbox = UndeliveredOutbox(db)
 
     def set_focus_mode(self, mode: FocusMode) -> None:
         """Update the in-memory focus mode. Persistence is intentionally out of scope."""
@@ -295,6 +299,21 @@ class NotificationRouter:
             log.notifications.debug(
                 "[notifications] router.deliver: suppressed",
                 extra={"_fields": log_fields},
+            )
+            # PA5(b) — suppressed today means audit-only (message_hash, body
+            # gone). ADDITIVE: persist the durable NACK; no control-flow change.
+            await self._outbox.record_undelivered(
+                identity_key=(
+                    str(notification.target)
+                    if notification.target is not None
+                    else DEFAULT_PRINCIPAL_ID
+                ),
+                body=notification.message,
+                reason="suppressed",
+                channel=channel,
+                category=notification.category,
+                urgency=notification.urgency,
+                job_id=notification.job_id,
             )
 
         await write_log_row(

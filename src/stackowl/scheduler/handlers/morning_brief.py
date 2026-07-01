@@ -38,8 +38,10 @@ from stackowl.brief.renderer import BriefRenderer
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
+from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.config.settings import Settings
@@ -97,6 +99,8 @@ class MorningBriefHandler(JobHandler):
             if proactive_deliverer is not None and delivery_ledger is not None
             else None
         )
+        # PA5(b) — the durable NACK store for the no-deliverer-wired seam below.
+        self._outbox = UndeliveredOutbox(db)
         self._renderer = BriefRenderer()
         self._assemblers: list[BriefSectionAssembler] = [
             DateAndPrioritiesAssembler(db=db),
@@ -209,6 +213,19 @@ class MorningBriefHandler(JobHandler):
                 "[scheduler] morning_brief._deliver: no deliverer wired — rendered "
                 "but NOT sent (no fake 'delivered')",
                 extra={"_fields": {"job_id": job.job_id}},
+            )
+            # PA5(b) — no wired deliverer means the rendered brief is dropped
+            # today (telemetry only). ADDITIVE: persist the durable NACK. No
+            # live recipient is resolvable here (no deliverer ran), so the
+            # single-user owner scope is the identity to surface to.
+            await self._outbox.record_undelivered(
+                identity_key=DEFAULT_PRINCIPAL_ID,
+                body=rendered,
+                reason="no_deliverer",
+                channel=None,
+                category=_CATEGORY,
+                urgency=None,
+                job_id=job.job_id,
             )
             return ProactiveDeliveryOutcome(rollup="undeliverable")
         return await self._job_deliverer.deliver_for_job(

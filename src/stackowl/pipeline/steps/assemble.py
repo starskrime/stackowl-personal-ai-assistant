@@ -181,8 +181,44 @@ async def run(state: PipelineState) -> PipelineState:
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
         capabilities = ""
+    # PA5(b) — next-contact banner: surface any undelivered_outbox rows pending
+    # for THIS identity before the owl's first response, then mark them shown
+    # (exactly once). Gated to delegation_depth == 0 — a real top-level user
+    # turn, never a delegated child turn (proactive/scheduled surfaces never
+    # run this pipeline step at all, so no separate gate is needed for them).
+    # Fail-open (no-hidden-errors): any failure here degrades to no banner,
+    # never crashes the turn.
+    banner = ""
+    if state.delegation_depth == 0 and services.db_pool is not None:
+        owner_key = state.identity_key or state.session_id
+        try:
+            from stackowl.notifications.undelivered_outbox import (
+                UndeliveredOutbox,
+                render_banner,
+            )
+
+            outbox = UndeliveredOutbox(services.db_pool)
+            pending = await outbox.list_pending(owner_key)
+            log.engine.debug(
+                "[pipeline] assemble: undelivered banner lookup",
+                extra={"_fields": {"trace_id": state.trace_id, "n": len(pending)}},
+            )
+            if pending:
+                banner = render_banner(pending)
+                await outbox.mark_surfaced([row["id"] for row in pending])
+                log.engine.info(
+                    "[pipeline] assemble: undelivered banner surfaced",
+                    extra={"_fields": {"trace_id": state.trace_id, "n": len(pending)}},
+                )
+        except Exception as exc:  # no-hidden-errors: never crash the turn over the banner
+            log.engine.error(
+                "[pipeline] assemble: undelivered banner FAILED — skipped",
+                exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+            )
+            banner = ""
+
     parts = [
-        p for p in (base, capabilities, persona, skills_block, state.memory_context) if p
+        p for p in (base, capabilities, banner, persona, skills_block, state.memory_context) if p
     ]
     system_prompt = "\n\n".join(parts) or None
     log.engine.debug(
@@ -191,6 +227,7 @@ async def run(state: PipelineState) -> PipelineState:
             "trace_id": state.trace_id,
             "base_len": len(base),
             "persona_len": len(persona),
+            "banner_len": len(banner),
             "system_len": len(system_prompt or ""),
         }},
     )

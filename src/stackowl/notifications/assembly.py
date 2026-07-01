@@ -98,6 +98,7 @@ class NotificationAssembly:
         from stackowl.notifications.deliverer import ProactiveDeliverer
         from stackowl.notifications.digest_job import NotificationDigestJob
         from stackowl.notifications.router import NotificationRouter
+        from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
         from stackowl.scheduler.base import HandlerRegistry
         # (FocusCommand / UrgentCommand / QuietHoursCommand / NotificationsMissedCommand
         # are imported here to construct the objects for NotificationComponents;
@@ -155,6 +156,8 @@ class NotificationAssembly:
             router=router,
             registry=ChannelRegistry.instance(),
             settings=settings,
+            # PA5(b) — the durable NACK store for the transport-failed seam.
+            outbox=UndeliveredOutbox(db),
         )
 
         # 2) Digest job — register handler + seed 5-minute schedule. The

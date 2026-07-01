@@ -25,11 +25,13 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from stackowl.infra.observability import log
 from stackowl.notifications.router import DeliveryStatus
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.channels.registry import ChannelRegistry
     from stackowl.config.settings import Settings
     from stackowl.notifications.router import Notification, NotificationRouter
+    from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
 
 
 class _TargetedSender(Protocol):
@@ -92,10 +94,15 @@ class ProactiveDeliverer:
         router: NotificationRouter,
         registry: ChannelRegistry,
         settings: Settings,
+        outbox: UndeliveredOutbox | None = None,
     ) -> None:
         self._router = router
         self._registry = registry
         self._settings = settings
+        # PA5(b) — the durable NACK store. None keeps every existing test/
+        # construction site byte-identical (no silent-drop persistence, same as
+        # today); wired for real at assembly time (notifications/assembly.py).
+        self._outbox = outbox
 
     async def deliver(self, notification: Notification) -> DeliveryStatus:
         """Route + transport ``notification``; never raises.
@@ -155,6 +162,23 @@ class ProactiveDeliverer:
         # reroute rung is exhausted: when an opt-in fallback channel is configured, the
         # message is rerouted there before delivery reports failure (F-64/65/66).
         result = await self._maybe_reroute(channel, notification, result)
+        # PA5(b) — a terminal FAILED transport (retry + reroute both exhausted)
+        # is a silent drop today: the body is gone, only the status is returned.
+        # ADDITIVE: persist the durable NACK; never changes control flow/return.
+        if result == "failed" and self._outbox is not None:
+            await self._outbox.record_undelivered(
+                identity_key=(
+                    str(notification.target)
+                    if notification.target is not None
+                    else DEFAULT_PRINCIPAL_ID
+                ),
+                body=notification.message,
+                reason="transport_failed",
+                channel=channel,
+                category=notification.category,
+                urgency=notification.urgency,
+                job_id=notification.job_id,
+            )
         self._log_exit(result, channel, t0)
         return result
 
