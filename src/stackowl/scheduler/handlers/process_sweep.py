@@ -73,6 +73,7 @@ class ProcessSweepHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=(
                 f"auto_killed={counts['auto_killed']} "
