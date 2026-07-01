@@ -27,6 +27,7 @@ class FakeAdapter:
     def __init__(self) -> None:
         self.chunks: list[str] = []
         self.texts: list[str] = []
+        self.text_targets: list[str | int | None] = []
         self.files: list[tuple[str, str | None, str | int | None]] = []
         self.done = asyncio.Event()
 
@@ -35,8 +36,9 @@ class FakeAdapter:
             self.chunks.append(chunk.content)
         self.done.set()
 
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str, *, chat_id: str | int | None = None) -> None:
         self.texts.append(text)
+        self.text_targets.append(chat_id)
 
     async def send_file(
         self,
@@ -131,6 +133,56 @@ async def test_proactive_send_text_routes_to_adapter(socket_path) -> None:
 
     assert adapter.texts == ["out-of-band ping"]
     assert adapter.chunks == ["done"]
+
+
+async def test_proactive_send_text_with_target_routes_to_specific_chat(socket_path) -> None:
+    """A proactive text sent via SocketChannelAdapter with a chat_id reaches the
+    gateway's real adapter with that chat_id (mirrors send_file's target threading;
+    the split bug was the target silently getting dropped at the socket seam)."""
+    from stackowl.channels.socket_adapter import SocketChannelAdapter
+
+    async def announce(msg: IngressMessage, sink: CoreSink) -> None:
+        chan = SocketChannelAdapter(sink._conn, "cli")
+        await chan.send_text("targeted ping", chat_id=123)
+        await sink.stream_writer().write(ResponseChunk(
+            content="done", is_final=False, chunk_index=0,
+            trace_id=msg.trace_id, owl_name="owl"))
+        await sink.close_stream()
+
+    adapter = FakeAdapter()
+    link, stop = await _run_split(socket_path, announce, adapter)
+    try:
+        await link.submit(_msg())
+        await asyncio.wait_for(adapter.done.wait(), timeout=5)
+    finally:
+        await stop()
+
+    assert adapter.texts == ["targeted ping"]
+    assert adapter.text_targets == [123]
+
+
+async def test_proactive_send_text_without_target_uses_default_destination(socket_path) -> None:
+    """No explicit chat_id -> the adapter's default destination (chat_id=None)."""
+    from stackowl.channels.socket_adapter import SocketChannelAdapter
+
+    async def announce(msg: IngressMessage, sink: CoreSink) -> None:
+        chan = SocketChannelAdapter(sink._conn, "cli")
+        await chan.send_text("untargeted ping")
+        await sink.stream_writer().write(ResponseChunk(
+            content="done", is_final=False, chunk_index=0,
+            trace_id=msg.trace_id, owl_name="owl"))
+        await sink.close_stream()
+
+    adapter = FakeAdapter()
+    link, stop = await _run_split(socket_path, announce, adapter)
+    try:
+        await link.submit(_msg())
+        await asyncio.wait_for(adapter.done.wait(), timeout=5)
+    finally:
+        await stop()
+
+    assert adapter.texts == ["untargeted ping"]
+    assert adapter.text_targets == [None]
 
 
 async def test_send_file_routes_across_split_to_adapter(socket_path) -> None:

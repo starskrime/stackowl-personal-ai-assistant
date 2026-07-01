@@ -52,8 +52,15 @@ class SocketChannelAdapter(ChannelAdapter):
         async for chunk in chunks:
             await self._conn.send(chunk_to_frame(chunk))
 
-    async def send_text(self, text: str) -> None:
-        await self._conn.send(SendTextFrame(channel=self._channel, text=text))
+    async def send_text(self, text: str, *, chat_id: str | int | None = None) -> None:
+        """Emit a SendTextFrame so the gateway's real adapter delivers the text.
+
+        Accepts the ``chat_id`` keyword (mirroring ``send_file``) so a
+        proactive/notification text reaches a specific chat.
+        """
+        await self._conn.send(
+            SendTextFrame(channel=self._channel, text=text, target=chat_id)
+        )
 
     async def send_file(
         self,

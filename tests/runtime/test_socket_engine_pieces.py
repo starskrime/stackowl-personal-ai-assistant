@@ -97,6 +97,22 @@ async def test_adapter_send_text_stamps_channel() -> None:
     assert conn.sent[0].text == "Busy — I'll start that soon."
 
 
+async def test_adapter_send_text_with_chat_id_stamps_target() -> None:
+    conn = FakeConn()
+    adapter = SocketChannelAdapter(conn, channel_name="telegram")  # type: ignore[arg-type]
+    await adapter.send_text("targeted", chat_id=123)
+    assert isinstance(conn.sent[0], SendTextFrame)
+    assert conn.sent[0].target == 123
+
+
+async def test_adapter_send_text_without_chat_id_leaves_target_none() -> None:
+    conn = FakeConn()
+    adapter = SocketChannelAdapter(conn, channel_name="telegram")  # type: ignore[arg-type]
+    await adapter.send_text("untargeted")
+    assert isinstance(conn.sent[0], SendTextFrame)
+    assert conn.sent[0].target is None
+
+
 async def test_adapter_send_forwards_chunks() -> None:
     conn = FakeConn()
     adapter = SocketChannelAdapter(conn, channel_name="cli")  # type: ignore[arg-type]

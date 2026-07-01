@@ -63,7 +63,9 @@ class _Adapter(Protocol):
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None: ...  # noqa: D102
 
-    async def send_text(self, text: str) -> None: ...  # noqa: D102
+    async def send_text(  # noqa: D102
+        self, text: str, *, chat_id: str | int | None = ...
+    ) -> None: ...
 
     async def send_file(  # noqa: D102
         self, file_path: str, caption: str | None = ..., *, chat_id: str | int | None = ...
@@ -351,7 +353,12 @@ class GatewayLink:
         elif isinstance(frame, SendTextFrame):
             adapter = self._adapters.get(frame.channel)
             if adapter is not None:
-                await adapter.send_text(frame.text)
+                # Target the specific chat when the core resolved one; otherwise
+                # the adapter's default destination.
+                if frame.target is not None:
+                    await adapter.send_text(frame.text, chat_id=frame.target)
+                else:
+                    await adapter.send_text(frame.text)
         elif isinstance(frame, SendFileFrame):
             adapter = self._adapters.get(frame.channel)
             if adapter is not None:
