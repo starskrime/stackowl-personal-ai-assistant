@@ -148,7 +148,8 @@ class PerchHandler(JobHandler):
         )
         if not path:
             return JobResult(
-                job_id=job.job_id, success=False, output=None,
+                job_id=job.job_id,
+                effect_class="delivery", success=False, output=None,
                 error="Missing 'path' in params", duration_ms=(time.monotonic() - t0) * 1000,
             )
         TestModeGuard.assert_not_test_mode("perch.execute")
@@ -205,7 +206,8 @@ class PerchHandler(JobHandler):
         if delivery is not None:
             metadata["delivery"] = delivery
         return JobResult(
-            job_id=job.job_id, success=True,
+            job_id=job.job_id,
+            effect_class="delivery", success=True,
             output=f"changed={changed} files={len(current)}",
             error=None, duration_ms=duration_ms, metadata=metadata,
         )
