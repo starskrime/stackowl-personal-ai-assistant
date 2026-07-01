@@ -104,6 +104,7 @@ class KuzuSyncJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=True,
                 output="synced_count=0 graph_degraded",
                 error=None,
@@ -125,6 +126,7 @@ class KuzuSyncJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=False,
                 output=None,
                 error=f"fetch failed: {exc}",
@@ -139,6 +141,7 @@ class KuzuSyncJobHandler(JobHandler):
             )
             return JobResult(
                 job_id=job.job_id,
+                effect_class="state_change",
                 success=True,
                 output="synced_count=0",
                 error=None,
@@ -177,6 +180,7 @@ class KuzuSyncJobHandler(JobHandler):
         )
         return JobResult(
             job_id=job.job_id,
+            effect_class="state_change",
             success=True,
             output=f"synced_count={synced_count} entities={entity_total}",
             error=None,
