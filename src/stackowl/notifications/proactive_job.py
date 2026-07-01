@@ -247,9 +247,12 @@ def job_success_for_rollup(rollup: str) -> bool:
 
     Interim shim (PB3) mirroring ``goal_execution._deliver_answer``'s rollup->retry
     semantics; the PB6a/6b ``verified``/``effect_class`` contract supersedes it.
-    ``delivered``/``suppressed``/``undeliverable`` -> ``True`` (an unresolvable
-    target is undeliverable, which a retry can't fix). ``partial``/``failed``/
-    anything unrecognized -> ``False`` (transient or unknown, so the scheduler
-    retries — fail-closed, unlike ``goal_execution``'s else-branch).
+    ``delivered``/``suppressed``/``undeliverable``/``batched`` -> ``True``:
+    delivered reached a channel; suppressed and batched are intentional router
+    deferrals (batched will be sent later by the batch mechanism — retrying would
+    duplicate); an unresolvable target is undeliverable, which a retry can't fix.
+    ``partial``/``failed`` -> ``False`` (a transport failure, so the scheduler
+    retries). A genuinely unrecognized rollup also -> ``False`` (fail-closed —
+    never a claimed success for an unknown status).
     """
-    return rollup in ("delivered", "suppressed", "undeliverable")
+    return rollup in ("delivered", "suppressed", "undeliverable", "batched")

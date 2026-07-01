@@ -19,10 +19,10 @@ from stackowl.notifications.proactive_job import job_success_for_rollup
         ("delivered", True),
         ("suppressed", True),
         ("undeliverable", True),
+        ("batched", True),  # intentional router deferral; retry would duplicate
         ("partial", False),
         ("failed", False),
-        ("batched", False),  # unrecognized here -> fail-closed, not a claimed win
-        ("some_future_rollup", False),  # fail-closed deviation from goal_execution
+        ("weird", False),  # genuinely-unknown -> fail-closed, not a claimed win
     ],
 )
 def test_job_success_for_rollup(rollup: str, expected: bool) -> None:
