@@ -26,7 +26,12 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import TelegramMessageSplitter
-from stackowl.channels.telegram._bot import build_inline_keyboard, start_bot, stop_bot
+from stackowl.channels.telegram._bot import (
+    build_inline_keyboard,
+    restart_polling,
+    start_bot,
+    stop_bot,
+)
 from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
 from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention, strip_command_bot_suffix
 from stackowl.channels.telegram.progress_render import TelegramProgressView
@@ -92,6 +97,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         # core health sweep can tell "quiet-but-alive" from "dead".
         self._liveness = liveness
         self._liveness_task: asyncio.Task[None] | None = None
+        # PB0c/RC0 — bounds gateway-local self-heal to ONE restart per outage
+        # episode. Set True before a restart attempt; reset to False on any tick
+        # that observes updater.running (the episode is over).
+        self._recovery_attempted = False
         self._last_update_at: float | None = None
         self._last_chat_id: int | None = None
         self._bot_user_id: int = 0
@@ -188,20 +197,83 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.start: exit")
 
     async def _beat_once(self) -> None:
-        """Stamp liveness IFF the updater is actually running (PB0b/RC0).
+        """One heartbeat tick: stamp liveness when alive, else self-heal (PB0b/PB0c).
 
-        Gating on ``updater.running`` means a crashed/stopped updater stops
-        advancing the timestamp, so it goes stale and the sweep reports degraded.
+        * updater running -> stamp the cross-process liveness row (so a stale stamp
+          means "dead", not "quiet") AND clear the recovery flag: the outage episode,
+          if any, is over.
+        * updater NOT running -> attempt exactly ONE bounded restart per episode via
+          the RecoveryActuator (PB0c). ``_recovery_attempted`` gates re-entry so a
+          persistently-dead updater is NOT hammered every tick; it re-arms only when
+          the updater next reports running (a fresh episode).
+
+        ponytail: webhook-mode deployments have no polling updater — the else-branch's
+        restart is a logged no-op there; the live path here is long-poll.
         """
-        if self._liveness is None:
-            return
         app = self._bot_app
         updater = getattr(app, "updater", None) if app is not None else None
-        # ponytail: webhook-mode deployments have no polling updater and won't
-        # stamp — the live path here is long-poll; add a webhook heartbeat if that
-        # deployment ever ships.
         if updater is not None and getattr(updater, "running", False):
-            await self._liveness.mark_alive(self.channel_name)
+            self._recovery_attempted = False
+            if self._liveness is not None:
+                await self._liveness.mark_alive(self.channel_name)
+            return
+        # Updater is down. Attempt one bounded self-heal per outage episode.
+        if self._recovery_attempted:
+            return
+        self._recovery_attempted = True  # bound BEFORE attempting (no re-entry)
+        await self._self_heal_polling()
+
+    async def _self_heal_polling(self) -> None:
+        """Hand the dead poll loop to the one RecoveryActuator for a bounded restart.
+
+        The ladder is retry -> surrender (no reroute/substitute — nothing to reroute a
+        single channel to), so exactly one restart is attempted and the outcome is
+        re-verified: a "recovery" only counts if the updater actually comes back up.
+        Never lets an exception escape — the heartbeat task must survive forever.
+        """
+        from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+        log.telegram.debug("[telegram] adapter._self_heal_polling: entry — updater down")
+        try:
+            outcome = await RecoveryActuator().recover(
+                Failure(name="channel:telegram", kind="channel", transient=True),
+                attempt=self._restart_polling,
+                verify=lambda _r: getattr(
+                    getattr(self._bot_app, "updater", None), "running", False
+                ),
+            )
+            if outcome.recovered:
+                log.telegram.info(
+                    "[telegram] adapter._self_heal_polling: telegram poll loop self-healed",
+                    extra={"_fields": {"via": outcome.via}},
+                )
+            else:
+                log.telegram.error(
+                    "[telegram] adapter._self_heal_polling: telegram poll loop restart "
+                    "surrendered — staying down; operator alert via health sweep",
+                    extra={"_fields": {"rungs_tried": outcome.rungs_tried}},
+                )
+        except Exception as exc:  # noqa: BLE001 — heartbeat must never die
+            log.telegram.error(
+                "[telegram] adapter._self_heal_polling: self-heal raised — heartbeat continues",
+                extra={"_fields": {"err": repr(exc)}},
+            )
+
+    async def _restart_polling(self) -> None:
+        """Restart the long-poll updater in-place (the RecoveryActuator retry rung).
+
+        Delegates to the ``_bot`` lifecycle helper so the ``start_polling`` params live
+        in one place. No-op (warn) when there is no app/updater (webhook mode / not yet
+        started) — a documented PB0b gap that must not crash the heartbeat.
+        """
+        log.telegram.debug("[telegram] adapter._restart_polling: entry")
+        if self._bot_app is None:
+            log.telegram.warning(
+                "[telegram] adapter._restart_polling: no bot app — no-op (webhook / not started)"
+            )
+            return
+        await restart_polling(self._bot_app)
+        log.telegram.debug("[telegram] adapter._restart_polling: exit")
 
     async def _liveness_heartbeat(self) -> None:
         """Periodic stamp loop; cancelled cleanly in stop()."""

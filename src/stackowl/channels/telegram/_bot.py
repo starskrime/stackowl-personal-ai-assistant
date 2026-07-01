@@ -100,6 +100,38 @@ async def start_bot(
     return app, bot_user_id, bot_username
 
 
+async def restart_polling(app: Any) -> None:
+    """Restart ONLY the long-poll updater on an already-initialized Application,
+    WITHOUT rebuilding or shutting it down (PB0c/RC0 gateway-local self-heal).
+
+    Verified against PTB 22.7: ``Updater.stop()`` sets ``running=False`` but leaves
+    the updater ``_initialized``, so ``start_polling()`` can be called again on the
+    SAME app (it only requires ``_initialized`` True + ``running`` False). We
+    deliberately do NOT reuse ``stop_bot`` here — that also ``app.stop()`` +
+    ``app.shutdown()``s, which de-initializes the updater and would force a full
+    rebuild. No-op (warn) in webhook mode / before start() — there is no updater.
+    """
+    log.telegram.debug("[telegram] _bot.restart_polling: entry")
+    updater = getattr(app, "updater", None) if app is not None else None
+    if updater is None:
+        log.telegram.warning(
+            "[telegram] _bot.restart_polling: no updater — no-op (webhook mode / not started)"
+        )
+        return
+    # stop() raises if the updater is not running; only stop a still-running one.
+    if getattr(updater, "running", False):
+        log.telegram.debug(
+            "[telegram] _bot.restart_polling: decision updater still running — stopping first"
+        )
+        await updater.stop()
+    log.telegram.debug("[telegram] _bot.restart_polling: step re-starting long-poll")
+    await updater.start_polling(
+        drop_pending_updates=True,
+        timeout=TELEGRAM_LONG_POLL_TIMEOUT,
+    )
+    log.telegram.debug("[telegram] _bot.restart_polling: exit — polling restarted")
+
+
 async def stop_bot(app: Any) -> None:
     """Gracefully stop and shut down a PTB Application."""
     log.telegram.debug("[telegram] _bot.stop_bot: entry")
