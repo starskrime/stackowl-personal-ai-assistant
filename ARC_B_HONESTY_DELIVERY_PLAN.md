@@ -18,10 +18,11 @@ of it, not the scheduling primitive itself.
 confirmed `[telegram] adapter.receive: entry` resumed. **PB1 is DONE @9fd28768** — the underlying timeout bug
 that caused the 30+ hour hang is fixed in code, not just symptom-relieved.
 
-## Status (2026-06-30, resuming in-session — no script)
-2 of 13 stories done (PB1, PB5). 1 in progress, uncommitted in the working tree — **continue it, do not restart**:
-`src/stackowl/notifications/undelivered_outbox.py` + `src/stackowl/db/migrations/0073_undelivered_outbox.sql`
-(PB7a, per `docs_archive_ralph_2026-06-30/PA5B_DESIGN.md`).
+## Status (2026-06-30, subagent-driven in worktree `arc-b-honesty-delivery`, PAUSED at user request)
+3 of 13 stories done (PB1, PB5 on main; PB7a in this worktree @85056c1c, reviewed APPROVED). Worktree branched
+from main @a4ad781e. Remaining: PB0b, PB0c, PB2, PB3, PB4, PB6a, PB6b, PB7b, PBC, PB-CANARY + new follow-up PB7c.
+Session paused at ~$224 cost. Resume: continue subagent-driven from this worktree, next story PB0b (or PB2/PB3
+which are independent and cheap). Progress ledger: `.superpowers/sdd/progress.md`.
 
 ## Stories
 
@@ -62,10 +63,20 @@ that caused the 30+ hour hang is fixed in code, not just symptom-relieved.
       8 new verify tests + ratchet enforcement (cronjob removed from `_KNOWN_UNVERIFIED`), 9 regression green,
       ruff+mypy clean. PB5 is `ToolResult`-based (mirrors `owl_build.py`/`skill_manage.py`), NOT `JobResult`-based
       — it never actually depended on PB6a landing first.
-- [ ] **PB7a** — IN PROGRESS, uncommitted in working tree (`src/stackowl/notifications/undelivered_outbox.py`,
-      `src/stackowl/db/migrations/0073_undelivered_outbox.sql`) — CONTINUE this, do not restart from scratch.
-      Build `undelivered_outbox` exactly per `docs_archive_ralph_2026-06-30/PA5B_DESIGN.md` (already fully
-      specified, do not redesign).
+- [x] **PB7a** — DONE @85056c1c (worktree), review APPROVED. `record_undelivered` wired additively into all 3
+      silent-drop seams (`deliverer.py` terminal-failed, `router.py` suppressed, `morning_brief.py` no-deliverer);
+      next-contact banner surfaced in `assemble.py`'s `parts` composition gated on `delegation_depth == 0` (verified
+      to exclude proactive/scheduled turns, not just delegated children); 6 gate tests (DB read-back, all 4 spec
+      scenarios incl. distinctness) + 94 regression green.
+- [ ] **PB7c** (NEW, follow-up from PB7a review — Important) — the outbox row is durably written on every seam, but
+      the next-contact BANNER can only surface on telegram: `identity_key` falls back to `DEFAULT_PRINCIPAL_ID` for
+      any non-telegram channel (Slack etc) because `router_helpers.py:72 _SESSION_IS_CHAT_ID_CHANNELS={"telegram"}`
+      makes `resolve_target_chat_id()` return None, and `assemble.py:193` keys surfacing on `identity_key or
+      session_id` which never equals the static principal constant. Fix needs a per-notification cross-channel
+      identity resolver (does not exist in the codebase today — its own design task). Not a regression: row is
+      written, not dropped; telegram (the box's only live channel) surfaces correctly. Also fold in the 2 Minor
+      findings: router builds outbox unconditionally vs deliverer's optional inject (style asymmetry); `render_banner`
+      caps row COUNT (20) but not per-row body size.
 - [ ] **PB7b** — Design + build outbox generalization to scheduled-job failures (gap c). Separate design pass,
       hard-blocked on PB6a (no `verified` signal to gate on until the contract exists). Do not silently fold into
       PB7a's scope.
