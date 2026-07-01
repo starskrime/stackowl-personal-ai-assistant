@@ -305,3 +305,157 @@ async def test_safe_close_unexpected_failure_logs_warning(monkeypatch: object) -
     # Must NOT raise (self-healing teardown), but must surface as a WARNING.
     await ClarifyPump._safe_close(_BrokenWriter())  # type: ignore[arg-type]
     assert len(warns) == 1 and debugs == [], (debugs, warns)
+
+
+# ------------------------------------------------------------ PB4 _cleanup
+
+
+class _RaisingAdapter:
+    """An adapter whose send() blows up mid-drain — a genuine send failure."""
+
+    async def send(self, reader: StreamReader) -> None:
+        raise RuntimeError("transport reset by peer")
+
+
+class _HangingAdapter:
+    """An adapter whose send() never returns — the test cancels it directly."""
+
+    async def send(self, reader: StreamReader) -> None:
+        await asyncio.Event().wait()
+
+
+async def _noop_producer() -> None:
+    return None
+
+
+async def test_cleanup_logs_loudly_and_routes_real_send_failure_to_recovery(
+    monkeypatch: object,
+) -> None:
+    """PB4 — a send_task that RAISES must be logged at ERROR and routed to the
+    RecoveryActuator with a consequential Failure (no auto-retry rung offered:
+    the stream is already terminally consumed by the time send_task is done)."""
+    import stackowl.gateway.clarify_pump as cp
+
+    pump, _, reg = _pump()
+    request_id = "req-fail"
+    writer, reader = reg.create(request_id)
+
+    errors: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        cp.log.gateway, "error",
+        lambda msg, *a, **k: errors.append((msg, k)),
+    )
+    recovered: list[cp.Failure] = []
+
+    async def _fake_recover(failure: cp.Failure) -> None:
+        recovered.append(failure)
+
+    monkeypatch.setattr(pump._recovery, "recover", _fake_recover)  # type: ignore[attr-defined]
+
+    producer = asyncio.create_task(_noop_producer())
+    pump.spawn_send(
+        channel_adapter=_RaisingAdapter(), reader=reader, session_id=request_id,
+        producer=producer, writer=writer,
+    )
+    await asyncio.wait_for(producer, 1.0)
+    send_task = pump._inflight.get(request_id)  # type: ignore[attr-defined]
+    assert send_task is not None
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(send_task, 1.0)
+
+    await asyncio.sleep(0)  # let _cleanup's done-callback run (schedules recovery)
+    bg_tasks = list(pump._bg_tasks)  # type: ignore[attr-defined]
+    assert len(bg_tasks) == 1  # the recovery task, tracked so it can't be GC'd
+    await asyncio.wait_for(bg_tasks[0], 1.0)  # PB4 req 4: it actually ran
+
+    assert len(errors) == 1
+    assert errors[0][1].get("exc_info") is not None  # logged loudly, with the exception
+    assert len(recovered) == 1
+    assert recovered[0].consequential is True
+    assert recovered[0].error == "transport reset by peer"
+    assert request_id not in pump._inflight  # type: ignore[attr-defined]
+    assert reg.get_writer(request_id) is None
+
+
+async def test_cleanup_ignores_plain_cancellation(monkeypatch: object) -> None:
+    """PB4 regression guard — a cleanly CANCELLED send_task (ordinary teardown,
+    e.g. loop shutdown) must NOT log an error or invoke recovery."""
+    import stackowl.gateway.clarify_pump as cp
+
+    pump, _, reg = _pump()
+    request_id = "req-cancel"
+    writer, reader = reg.create(request_id)
+
+    errors: list[str] = []
+    monkeypatch.setattr(cp.log.gateway, "error", lambda msg, *a, **k: errors.append(msg))  # type: ignore[attr-defined]
+    recovered: list[object] = []
+
+    async def _fake_recover(failure: object) -> None:
+        recovered.append(failure)
+
+    monkeypatch.setattr(pump._recovery, "recover", _fake_recover)  # type: ignore[attr-defined]
+
+    producer = asyncio.create_task(_noop_producer())
+    pump.spawn_send(
+        channel_adapter=_HangingAdapter(), reader=reader, session_id=request_id,
+        producer=producer, writer=None,
+    )
+    await asyncio.wait_for(producer, 1.0)
+    send_task = pump._inflight.get(request_id)  # type: ignore[attr-defined]
+    assert send_task is not None
+    send_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(send_task, 1.0)
+
+    await asyncio.sleep(0)  # let _cleanup's done-callback run
+    assert errors == []
+    assert recovered == []
+    assert not pump._bg_tasks  # type: ignore[attr-defined]  # nothing scheduled
+    assert request_id not in pump._inflight  # type: ignore[attr-defined]
+    assert reg.get_writer(request_id) is None
+
+
+async def test_cleanup_normal_completion_unchanged(monkeypatch: object) -> None:
+    """PB4 regression guard — a send_task with NO exception and NOT cancelled
+    (the ordinary success path) still reaps stream+inflight exactly as before,
+    and the new exception-check does not fire an error log or recovery call."""
+    import stackowl.gateway.clarify_pump as cp
+
+    pump, _, reg = _pump()
+    request_id = "req-ok"
+    writer, reader = reg.create(request_id)
+    adapter = _DrainingAdapter()
+
+    errors: list[str] = []
+    monkeypatch.setattr(cp.log.gateway, "error", lambda msg, *a, **k: errors.append(msg))  # type: ignore[attr-defined]
+    recovered: list[object] = []
+
+    async def _fake_recover(failure: object) -> None:
+        recovered.append(failure)
+
+    monkeypatch.setattr(pump._recovery, "recover", _fake_recover)  # type: ignore[attr-defined]
+
+    async def _producer() -> None:
+        await writer.write(
+            ResponseChunk(
+                content="hi", is_final=False, chunk_index=0, trace_id=request_id, owl_name="o"
+            )
+        )
+        await writer.close()
+
+    producer = asyncio.create_task(_producer())
+    pump.spawn_send(
+        channel_adapter=adapter, reader=reader, session_id=request_id,
+        producer=producer, writer=writer,
+    )
+    await asyncio.wait_for(producer, 1.0)
+    send_task = pump._inflight.get(request_id)  # type: ignore[attr-defined]
+    assert send_task is not None
+    await asyncio.wait_for(send_task, 1.0)
+    await asyncio.sleep(0)
+
+    assert adapter.chunks == ["hi"]
+    assert reg.get_writer(request_id) is None
+    assert request_id not in pump._inflight  # type: ignore[attr-defined]
+    assert errors == []
+    assert recovered == []

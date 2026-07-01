@@ -32,6 +32,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Protocol
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.interaction.clarify_gateway import ClarifyGateway
@@ -78,9 +79,15 @@ class ClarifyPump:
         # turn per session + a FIFO intake queue), so the map is purely a
         # drain/reap ledger now (§4.3).
         self._inflight: dict[str, asyncio.Task[None]] = {}
-        # Strong refs for the B-1 producer-failure writer-close tasks so the loop
-        # can't GC them before they close the writer (asyncio weak-refs tasks).
-        self._close_tasks: set[asyncio.Task[None]] = set()
+        # Strong refs for fire-and-forget background tasks spawned from done-
+        # callbacks (asyncio only weak-refs tasks, so an unreferenced one can be
+        # GC'd mid-flight): the B-1 producer-failure writer-close task AND
+        # (PB4) the RecoveryActuator call a failed send_task schedules.
+        self._bg_tasks: set[asyncio.Task[None]] = set()
+        # PB4 — the recovery authority a failed send_task routes to (see
+        # _cleanup). No flag-gating concern here (unlike scheduler._may_retry),
+        # so it's constructed eagerly rather than lazily.
+        self._recovery = RecoveryActuator()
 
     # ----------------------------------------------------------- resolve-router
 
@@ -207,6 +214,37 @@ class ClarifyPump:
             if self._inflight.get(sid) is task:
                 self._inflight.pop(sid, None)
 
+            # PB4 — a genuine send failure must be logged loudly and routed to
+            # the RecoveryActuator (never silently swallowed). A plain
+            # cancellation is expected teardown (loop shutdown, drain), NOT a
+            # failure — check task.cancelled() FIRST since .exception() raises
+            # CancelledError on a cancelled task.
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is None:
+                return
+            log.gateway.error(
+                "clarify_pump._cleanup: send_task failed — response was not "
+                "delivered to the user",
+                exc_info=exc,
+                extra={"_fields": {"session_id": sid, "stream_key": skey}},
+            )
+            # consequential=True: the reader/stream is already terminally
+            # consumed once send_task is done, so there is no re-runnable rung
+            # to retry — should_retry() correctly returns False and the ladder
+            # falls straight to an honest surrender, still emitting the ADR-7
+            # recovery Decision that is the audit trail for this failure.
+            failure = Failure(
+                name="clarify_pump.send_task",
+                kind="send_task",
+                consequential=True,
+                error=str(exc),
+            )
+            recovery_task = asyncio.create_task(self._recovery.recover(failure))
+            self._bg_tasks.add(recovery_task)  # type: ignore[arg-type]
+            recovery_task.add_done_callback(self._bg_tasks.discard)
+
         send_task.add_done_callback(_cleanup)
 
         # B-1 — guarantee the writer is closed if the producer fails/cancels
@@ -227,8 +265,8 @@ class ClarifyPump:
                 )
                 with contextlib.suppress(RuntimeError):
                     close_task = asyncio.create_task(self._safe_close(w))  # type: ignore[arg-type]
-                    self._close_tasks.add(close_task)
-                    close_task.add_done_callback(self._close_tasks.discard)
+                    self._bg_tasks.add(close_task)
+                    close_task.add_done_callback(self._bg_tasks.discard)
 
             producer.add_done_callback(_close_on_producer_failure)
 
