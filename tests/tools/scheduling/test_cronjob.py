@@ -27,6 +27,7 @@ from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.tools.base import ToolResult
+from stackowl.tools.scheduling.cron_helpers import is_valid_schedule, render_recurrence
 from stackowl.tools.scheduling.cronjob import CronjobTool
 
 pytestmark = pytest.mark.asyncio
@@ -593,6 +594,73 @@ async def test_watch_requires_url_or_path(migrated_db: DbPool) -> None:
 # Closes the effect_class="schedules" honesty hole: create/watch claim "scheduled ✓"
 # from an INSERT they did not re-read. verify() re-queries the scheduler and stamps
 # verified accordingly so the honesty layer can demand a MEASURED receipt.
+
+
+# --------------------------------------------------------------- REMINDER-FIX
+# cron_helpers unit coverage: the DSL now accepts a one-shot 'in <n><unit>'
+# token and renders it honestly (never "forever").
+
+
+@pytest.mark.parametrize("schedule", ["in 5m", "in 2 hours", "in 30s", "in 1d"])
+async def test_is_valid_schedule_accepts_one_shot_in_token(schedule: str) -> None:
+    assert is_valid_schedule(schedule) is True
+
+
+@pytest.mark.parametrize("schedule", ["in 0m", "in -1m", "in five minutes"])
+async def test_is_valid_schedule_rejects_malformed_one_shot_token(schedule: str) -> None:
+    assert is_valid_schedule(schedule) is False
+
+
+async def test_render_recurrence_one_shot_says_once_not_forever() -> None:
+    rendered = render_recurrence("in 5m")
+    assert "once" in rendered
+    assert "forever" not in rendered
+    assert "5 min" in rendered
+
+
+async def test_render_recurrence_recurring_still_says_forever() -> None:
+    assert "forever" in render_recurrence("every 30m")
+    assert "forever" in render_recurrence("daily@09:00")
+
+
+async def test_create_one_shot_reminder_wires_run_once(migrated_db: DbPool) -> None:
+    """REMINDER-FIX — 'in 5m' arms run_once=True and renders as "once", never
+    "forever". This is the live-bug fix: a one-time reminder must not fall
+    back to a memory fact or a recurring 'every 5m' nag."""
+    await _seed_session(migrated_db)
+    result = await _run(
+        migrated_db, action="create", prompt="go out", schedule="in 5m"
+    )
+    assert result.success
+    body = _payload(result)
+    assert body["created"] is True
+    assert "once" in body["recurrence"]
+    assert "forever" not in body["recurrence"]
+
+    persisted = {
+        j.job_id: j for j in await JobScheduler(db=migrated_db).list_jobs()
+    }[body["job_id"]]
+    assert persisted.handler_name == "goal_execution"
+    assert persisted.params["run_once"] is True
+    next_run = datetime.fromisoformat(persisted.next_run_at)
+    delta = (next_run - datetime.now(UTC)).total_seconds()
+    assert abs(delta - 300) < 30, f"'in 5m' armed to +{delta}s, expected ~+300s"
+
+
+async def test_create_recurring_schedule_does_not_set_run_once(
+    migrated_db: DbPool,
+) -> None:
+    """A recurring schedule must never pick up run_once (no accidental one-shot
+    behaviour for 'every'/'daily@'/cron creates)."""
+    await _seed_session(migrated_db)
+    result = await _run(
+        migrated_db, action="create", prompt="daily digest", schedule="daily@09:00"
+    )
+    body = _payload(result)
+    persisted = {
+        j.job_id: j for j in await JobScheduler(db=migrated_db).list_jobs()
+    }[body["job_id"]]
+    assert "run_once" not in persisted.params
 
 
 async def test_verify_create_observes_persisted_job(migrated_db: DbPool) -> None:

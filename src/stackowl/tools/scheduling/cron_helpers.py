@@ -6,11 +6,12 @@ here is side-effect free except for structured logging; no clock, no I/O.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.scheduler.job import Job
-from stackowl.scheduler.scheduler_helpers import parse_every
+from stackowl.scheduler.scheduler_helpers import parse_every, parse_in
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
@@ -36,6 +37,12 @@ def render_recurrence(schedule: str) -> str:
     lowered = text.lower()
     per_day: float | None = None
 
+    delay = parse_in(text)
+    if delay is not None:
+        # HONESTY (REMINDER-FIX) — a one-shot must never be echoed as "forever";
+        # it fires once and the job self-deletes (goal_execution run_once).
+        return f"once, in ~{_format_delay(delay)}"
+
     if lowered.startswith("every "):
         rest = lowered[len("every ") :].strip()
         per_day = _per_day_from_every(rest)
@@ -52,6 +59,21 @@ def render_recurrence(schedule: str) -> str:
         every_days = round(1 / per_day) if per_day > 0 else 0
         freq = f"~every {every_days} days" if every_days > 1 else "~daily"
     return f"runs {freq}, forever"
+
+
+def _format_delay(delta: timedelta) -> str:
+    """Render a one-shot :class:`~datetime.timedelta` as a short human string."""
+    total_seconds = int(delta.total_seconds())
+    if total_seconds >= 86400 and total_seconds % 86400 == 0:
+        n = total_seconds // 86400
+        return f"{n} day" if n == 1 else f"{n} days"
+    if total_seconds >= 3600 and total_seconds % 3600 == 0:
+        n = total_seconds // 3600
+        return f"{n} hour" if n == 1 else f"{n} hours"
+    if total_seconds >= 60 and total_seconds % 60 == 0:
+        n = total_seconds // 60
+        return f"{n} min"
+    return f"{total_seconds} sec"
 
 
 def _per_day_from_every(rest: str) -> float | None:
@@ -105,6 +127,10 @@ def is_valid_schedule(schedule: str) -> bool:
     if not text:
         return False
     lowered = text.lower()
+    if lowered.startswith("in "):
+        # Single source of truth with ``compute_next_run`` — a one-shot
+        # relative delay (REMINDER-FIX), never recurring.
+        return parse_in(text) is not None
     if lowered.startswith("daily@"):
         body = text[len("daily@") :]
         parts = body.split(":")

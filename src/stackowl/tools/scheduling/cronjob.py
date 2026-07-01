@@ -31,6 +31,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.pipeline.services import get_services
 from stackowl.scheduler.scheduler import JobScheduler
+from stackowl.scheduler.scheduler_helpers import parse_in
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.scheduling.cron_helpers import (
     CREATED_BY_TAG,
@@ -83,19 +84,22 @@ class CronjobTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "SCHEDULE a natural-language goal to run automatically on a recurrence. "
-            "Actions: create (needs 'prompt' + 'schedule'), watch (needs "
-            "'schedule' + either 'watch_url' to poll a web page or 'watch_path' to "
-            "watch a filesystem path — ping you when it changes), "
+            "SCHEDULE a natural-language goal to run automatically later — once or "
+            "on a recurrence. Actions: create (needs 'prompt' + 'schedule') — use "
+            "this for reminders too: a ONE-TIME reminder like 'remind me in 5 "
+            "minutes to go out' is schedule='in 5m' (fires once, then stops); "
+            "watch (needs 'schedule' + either 'watch_url' to poll a web page or "
+            "'watch_path' to watch a filesystem path — ping you when it changes), "
             "list (your scheduled jobs), update (by 'job_id'; re-checks the "
             "prompt), pause, resume, remove, run (execute one job now) — the last "
             "four take 'job_id'. "
-            "'schedule' accepts 5-field cron ('0 9 * * *'), 'every 30m'/'every 2h', "
-            "or 'daily@09:00'. A flagged prompt (injection/exfil) is BLOCKED with a "
-            "reason; relay it and do not retry verbatim. LANE: durable, recurring "
-            "background work the user wants to happen on a clock. ANTI-LANE: do NOT "
-            "use this to wait for a user reply (use clarify) or to run a one-off "
-            "command right now (just do it)."
+            "'schedule' accepts 'in 5m'/'in 2h' (ONE-TIME, fires once), 5-field cron "
+            "('0 9 * * *'), 'every 30m'/'every 2h', or 'daily@09:00' (all three "
+            "recurring). A flagged prompt (injection/exfil) is BLOCKED with a "
+            "reason; relay it and do not retry verbatim. LANE: durable background "
+            "work — a one-time delayed reminder OR recurring work on a clock. "
+            "ANTI-LANE: do NOT use this to wait for a user reply mid-turn (use "
+            "clarify) or to run something synchronously right now (just do it)."
         )
 
     @property
@@ -107,7 +111,11 @@ class CronjobTool(Tool):
                 "prompt": {"type": "string", "description": "Goal to schedule (create/update)."},
                 "schedule": {
                     "type": "string",
-                    "description": "cron '0 9 * * *', 'every 30m'/'every 2h', or 'daily@09:00'.",
+                    "description": (
+                        "'in 5m'/'in 2h' for a ONE-TIME reminder (fires once), or "
+                        "recurring: cron '0 9 * * *', 'every 30m'/'every 2h', "
+                        "'daily@09:00'."
+                    ),
                 },
                 "job_id": {
                     "type": "string",
@@ -279,8 +287,8 @@ class CronjobTool(Tool):
 
         if not is_valid_schedule(schedule):
             return self._err(
-                f"unparseable schedule {schedule!r} — use 5-field cron, "
-                "'every Nm'/'every Nh', or 'daily@HH:MM'",
+                f"unparseable schedule {schedule!r} — use 'in Nm'/'in Nh' (once), "
+                "5-field cron, 'every Nm'/'every Nh', or 'daily@HH:MM'",
                 t0,
             )
 
@@ -304,10 +312,20 @@ class CronjobTool(Tool):
         target_channels, target_addresses = self._resolve_durable_target(channel)
         unreachable = not target_channels
 
+        # REMINDER-FIX — a one-shot 'in <n><unit>' schedule arms the existing
+        # goal_execution run_once path: fire exactly once, deliver via the same
+        # proactive seam as any other cron goal, then self-delete. Reuses the
+        # engine's own primitive; no new tool/handler.
+        one_shot = parse_in(schedule) is not None
         job = await scheduler.create_job(
             handler_name=_HANDLER,
             schedule=schedule,
-            params={"goal": prompt, "created_by": CREATED_BY_TAG, "owl": owl},
+            params={
+                "goal": prompt,
+                "created_by": CREATED_BY_TAG,
+                "owl": owl,
+                **({"run_once": True} if one_shot else {}),
+            },
             primary_channel=channel,
             target_channels=target_channels,
             target_addresses=target_addresses,
@@ -376,8 +394,8 @@ class CronjobTool(Tool):
 
         if not is_valid_schedule(schedule):
             return self._err(
-                f"unparseable schedule {schedule!r} — use 5-field cron, "
-                "'every Nm'/'every Nh', or 'daily@HH:MM'",
+                f"unparseable schedule {schedule!r} — use 'in Nm'/'in Nh' (once), "
+                "5-field cron, 'every Nm'/'every Nh', or 'daily@HH:MM'",
                 t0,
             )
 
