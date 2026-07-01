@@ -36,6 +36,18 @@ _REFLECTIONS_DEGRADED_BLOCK = (
     "absence of reflections means nothing was learned."
 )
 
+# F-49 (carried into FR-3) — since the lessons_index is now the SOLE surface for
+# reflections (the direct SQLite reflections block was removed), a search failure
+# here must not silently look identical to "no lessons exist" — same rationale as
+# _REFLECTIONS_DEGRADED_BLOCK above, applied to the merged channel.
+_LESSONS_DEGRADED_BLOCK = (
+    "## Cross-Source Lessons: DEGRADED\n"
+    "Learned lessons (reflections, tool heuristics, pellets) could not be loaded "
+    "this turn (recall failed after a retry). Proceed WITHOUT lesson context, and "
+    "be aware your recent-learning recall is currently unavailable — do not assume "
+    "the absence of lessons means nothing was learned."
+)
+
 
 def _candidate_entity_ids(query: str, limit: int = 5) -> list[str]:
     """Derive deterministic entity ids from query tokens.
@@ -439,15 +451,31 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
             "[pipeline] classify._gather_lessons: exit — no lessons_index wired",
         )
         return ""
-    # 3. STEP — single ANN query across all source_types
-    try:
-        hits = await lessons_index.search(query, limit=limit)
-    except Exception as exc:  # B5
-        log.engine.warning(
-            "[pipeline] classify._gather_lessons: lessons.search failed — skipping",
-            exc_info=exc,
+    # 3. STEP — single ANN query across all source_types, one retry before
+    # declaring the channel DEGRADED (F-49 — a failed recall must not look
+    # identical to "no lessons exist").
+    hits = None
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            hits = await lessons_index.search(query, limit=limit)
+            last_exc = None
+            break
+        except Exception as exc:  # B5
+            last_exc = exc
+            log.engine.warning(
+                "[pipeline] classify._gather_lessons: lessons.search failed",
+                exc_info=exc,
+                extra={"_fields": {"attempt": attempt}},
+            )
+    if last_exc is not None:
+        log.engine.error(
+            "[pipeline] classify._gather_lessons: recall DEGRADED — "
+            "annotating context (learned lessons unavailable this turn)",
+            exc_info=last_exc,
         )
-        return ""
+        return _LESSONS_DEGRADED_BLOCK
+    assert hits is not None  # loop only exits without last_exc after a successful search
     # Filter out skill source — those already come through _gather_relevant_skills.
     # Lessons surface adds the OTHER sources (reflections/heuristics/pellets).
     non_skill_hits = [h for h in hits if h.source_type != "skill"]
@@ -594,13 +622,16 @@ async def run(state: PipelineState) -> PipelineState:
     # Use identity_key when resolved (cross-channel identity) so preferences
     # follow the user across channels; fall back to session_id when unconfigured.
     prefs_block = await _gather_preferences(state.identity_key or state.session_id)
-    # Reflexion-style learnings from past failures (Commit 2).
+    # FR-3 (de-complication PRD): reflections are surfaced ONCE per turn, via
+    # lessons_block (`_gather_lessons` → the unified LanceDB lessons_index,
+    # which reflection_writer_handler already publishes reflections into).
+    # The direct-SQLite recent-reflections read used to duplicate that same
+    # content into a second prompt block — removed here. `_gather_recent_reflections`
+    # and `_should_surface_failure_history` are kept (exercised directly by
+    # tests/journeys/test_no_false_history_journey.py and
+    # tests/pipeline/test_classify_reflections_degraded.py) but are no longer
+    # invoked from this assembly.
     _surface_failures = _should_surface_failure_history(state)
-    reflections_block = (
-        await _gather_recent_reflections(state.owl_name, query=state.input_text, limit=3)
-        if _surface_failures
-        else ""
-    )
     # Live action recall — what the agent DID on prior turns this session
     # (excludes the in-flight turn). Lets it answer "what did you just do?".
     actions_block = await _gather_recent_actions(
@@ -651,13 +682,13 @@ async def run(state: PipelineState) -> PipelineState:
     # pellets from the unified LanceDB lessons index.
     lessons_block = "" if _lean else await _gather_lessons(state.input_text, limit=3)
     # Combine: prefs first (always in view), then skills (what tactics apply),
-    # then lessons (cross-source learnings), then reflections (what went wrong
-    # before), then long-term context, then graph.
+    # then lessons (cross-source learnings, including reflections — FR-3),
+    # then actions (what was done before), then long-term context, then graph.
     # NOTE: prior conversation turns are NO LONGER included here — they are
     # passed as real message history via state.history to avoid duplication.
     parts = [
         p for p in (
-            prefs_block, skills_block, lessons_block, reflections_block,
+            prefs_block, skills_block, lessons_block,
             actions_block, context, graph_context,
         ) if p
     ]
@@ -671,7 +702,6 @@ async def run(state: PipelineState) -> PipelineState:
                 "prefs_len": len(prefs_block),
                 "skills_len": len(skills_block),
                 "lessons_len": len(lessons_block),
-                "reflections_len": len(reflections_block),
                 "actions_len": len(actions_block),
                 "history_len": len(history),
                 "graph_context_len": len(graph_context),

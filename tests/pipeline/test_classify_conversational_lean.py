@@ -2,8 +2,12 @@
 
 Intent: a greeting or small-talk turn marked intent_class="conversational"
 must NOT invoke _gather_lessons, _gather_relevant_skills,
-_gather_recent_reflections, _gather_graph_context, or _gather_recent_actions.
+_gather_graph_context, or _gather_recent_actions.
 A standard turn (the default) must still invoke every heavy gather.
+
+FR-3 (de-complication PRD): reflections are surfaced once per turn via
+_gather_lessons (lessons_index) only — _gather_recent_reflections is no
+longer invoked from classify.run, so it is not tracked here.
 """
 
 from __future__ import annotations
@@ -39,11 +43,10 @@ class _StubBridge:
 
 @pytest.mark.asyncio
 async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """All five heavy gathers must be bypassed for a conversational turn."""
+    """All four heavy gathers must be bypassed for a conversational turn."""
     called: dict[str, bool] = {
         "lessons": False,
         "skills": False,
-        "reflections": False,
         "graph": False,
         "actions": False,
     }
@@ -56,10 +59,6 @@ async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch
         called["skills"] = True
         return ""
 
-    async def _no_reflections(*a: object, **k: object) -> str:
-        called["reflections"] = True
-        return ""
-
     async def _no_graph(*a: object, **k: object) -> str:
         called["graph"] = True
         return ""
@@ -70,7 +69,6 @@ async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(classify, "_gather_lessons", _no_lessons)
     monkeypatch.setattr(classify, "_gather_relevant_skills", _no_skills)
-    monkeypatch.setattr(classify, "_gather_recent_reflections", _no_reflections)
     monkeypatch.setattr(classify, "_gather_graph_context", _no_graph)
     monkeypatch.setattr(classify, "_gather_recent_actions", _no_actions)
 
@@ -82,7 +80,6 @@ async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch
 
     assert called["lessons"] is False, "lessons must NOT be called for conversational"
     assert called["skills"] is False, "skills must NOT be called for conversational"
-    assert called["reflections"] is False, "reflections must NOT be called for conversational"
     assert called["graph"] is False, "graph must NOT be called for conversational"
     assert called["actions"] is False, "actions must NOT be called for conversational"
     # State must be returned with no memory context — heavy blocks were skipped.
@@ -95,7 +92,6 @@ async def test_standard_still_gathers(monkeypatch: pytest.MonkeyPatch) -> None:
     called: dict[str, bool] = {
         "lessons": False,
         "skills": False,
-        "reflections": False,
         "graph": False,
         "actions": False,
     }
@@ -108,10 +104,6 @@ async def test_standard_still_gathers(monkeypatch: pytest.MonkeyPatch) -> None:
         called["skills"] = True
         return ""
 
-    async def _yes_reflections(*a: object, **k: object) -> str:
-        called["reflections"] = True
-        return ""
-
     async def _yes_graph(*a: object, **k: object) -> str:
         called["graph"] = True
         return ""
@@ -122,7 +114,6 @@ async def test_standard_still_gathers(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(classify, "_gather_lessons", _yes_lessons)
     monkeypatch.setattr(classify, "_gather_relevant_skills", _yes_skills)
-    monkeypatch.setattr(classify, "_gather_recent_reflections", _yes_reflections)
     monkeypatch.setattr(classify, "_gather_graph_context", _yes_graph)
     monkeypatch.setattr(classify, "_gather_recent_actions", _yes_actions)
 
@@ -146,7 +137,6 @@ async def test_standard_still_gathers(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert called["lessons"] is True, "lessons MUST be called for standard"
     assert called["skills"] is True, "skills MUST be called for standard"
-    assert called["reflections"] is True, "reflections MUST be called for standard"
     assert called["graph"] is True, "graph MUST be called for standard"
     assert called["actions"] is True, "actions MUST be called for standard"
     assert out is not None
