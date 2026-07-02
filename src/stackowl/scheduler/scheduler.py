@@ -345,11 +345,33 @@ class JobScheduler(SupervisedTask):
         # flaky job returns to a clean steady state on its real schedule. Also reset
         # failure_count: it counts CONSECUTIVE failed runs (the circuit-breaker
         # input, S11c) — one success closes the breaker.
-        await self._db.execute(
+        #
+        # ROOT-CAUSE FIX (QA/Murat, live reminder crash) — a run_once handler
+        # (goal_execution) self-deletes its OWN jobs row on success BEFORE
+        # returning here. ``rowcount`` from THIS update tells us, for free,
+        # whether that row still exists: 0 rows means the handler already
+        # removed it. job_runs.job_id is a real FK to jobs (foreign_keys=ON in
+        # production) — inserting a job_runs row for a job_id that no longer
+        # exists raises sqlite3.IntegrityError, uncaught, which used to burn one
+        # of the supervisor's 5 consecutive-failure lives PER successful
+        # reminder and could park the entire scheduler (every recurring job
+        # too) permanently failed. job_runs is a dedup/history table only
+        # (migration 0040: "no other table references it") and a deleted
+        # one-shot can never be re-polled, so skipping its row here loses
+        # nothing.
+        rows_affected = await self._db.execute_returning_rowcount(
             "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
             "retry_count = 0, retry_at = NULL, failure_count = 0 WHERE job_id = ?",
             (now_iso, next_run, job.job_id),
         )
+        if rows_affected == 0:
+            log.heartbeat.info(
+                "[scheduler] %s: exit — completed (job self-deleted by handler, "
+                "job_runs insert skipped)",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
+            )
+            return
         await self._db.execute(
             "INSERT INTO job_runs (run_id, job_id, idempotency_key, status, duration_ms, ran_at) VALUES (?,?,?,?,?,?)",
             (run_id, job.job_id, self._occurrence_key(job), "completed", duration_ms, now_iso),
