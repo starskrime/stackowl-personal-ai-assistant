@@ -125,7 +125,7 @@ async def test_urgent_command_delivers_critical(tmp_path: Path) -> None:
         router = NotificationRouter(db=db, settings=settings, clock=frozen_clock(midnight))
         cmd = UrgentCommand(router=router, channels=["cli", "telegram"])
         out = await cmd.handle("server down", make_state())
-        assert "broadcast to 2 channels" in out
+        assert "routed to 2 channels" in out
         rows = await db.fetch_all(
             "SELECT urgency, delivery_status FROM notification_log", ()
         )

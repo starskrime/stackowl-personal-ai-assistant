@@ -21,6 +21,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING
 
+from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
@@ -62,11 +63,20 @@ class HealthSweepHandler(JobHandler):
         alert: AlertSink | None = None,
         healers: dict[str, HealableResource] | None = None,
         recovery: RecoveryActuator | None = None,
+        clock: Clock | None = None,
+        realert_backoff_s: float = 3600.0,
     ) -> None:
         self._aggregator = aggregator
         self._alert = alert
         self._healers = healers or {}
         self._recovery = recovery
+        self._clock = clock or WallClock()
+        self._realert_backoff_s = realert_backoff_s
+        # Live-alert dedup state (F-88-ish): subsystem name -> (last-alerted
+        # status, monotonic() at that alert). Plain in-memory dict — no new
+        # store/table; it doesn't need to survive a restart (a fresh process
+        # re-alerts once on the next unhealthy tick, which is fine).
+        self._alert_state: dict[str, tuple[str, float]] = {}
 
     @property
     def handler_name(self) -> str:
@@ -104,6 +114,8 @@ class HealthSweepHandler(JobHandler):
 
         # 2. DECISION — all healthy → quiet exit; unhealthy → LOUD log + alert.
         if not down and not degraded:
+            _, resolved = self._dedupe_and_update([], [])
+            await self._maybe_send_resolved(resolved)
             log.scheduler.debug(
                 "[scheduler] health_sweep.execute: all healthy",
                 extra={"_fields": {"job_id": job.job_id, "total": len(statuses)}},
@@ -137,6 +149,8 @@ class HealthSweepHandler(JobHandler):
                 )
             if not down and not degraded:
                 # 4. EXIT — every unhealthy subsystem was healed + re-verified. No alert.
+                _, resolved = self._dedupe_and_update([], [])
+                await self._maybe_send_resolved(resolved)
                 return JobResult(
                     job_id=job.job_id,
                     effect_class="delivery",
@@ -148,7 +162,12 @@ class HealthSweepHandler(JobHandler):
                               "total": len(statuses)},
                 )
 
+        to_alert, resolved = self._dedupe_and_update(down, degraded)
+        await self._maybe_send_resolved(resolved)
+
         message = _compose_alert(down, degraded)
+        # This log fires every tick regardless of alert-sink dedup — dedup only
+        # ever suppresses the OUTBOUND alert send below, never the operator log.
         log.scheduler.error(
             "[scheduler] health_sweep.execute: UNHEALTHY subsystems detected",
             extra={
@@ -159,9 +178,15 @@ class HealthSweepHandler(JobHandler):
                 }
             },
         )
-        if self._alert is not None:
+        # Only alert for subsystems that survived dedup (a new incident, an
+        # escalation, or a backoff-elapsed heartbeat) — an unrelated ongoing
+        # incident's suppression must never swallow a different, new incident.
+        if to_alert and self._alert is not None:
+            alert_names = {s.name for s in to_alert}
+            filtered_down = [s for s in down if s.name in alert_names]
+            filtered_degraded = [s for s in degraded if s.name in alert_names]
             try:
-                await self._alert(message)
+                await self._alert(_compose_alert(filtered_down, filtered_degraded))
             except Exception as exc:  # alert failure must not fail the sweep itself
                 log.scheduler.error(
                     "[scheduler] health_sweep.execute: alert sink raised",
@@ -224,6 +249,62 @@ class HealthSweepHandler(JobHandler):
                     extra={"_fields": {"job_id": job.job_id, "subsystem": s.name}},
                 )
         return attempted
+
+    def _dedupe_and_update(
+        self, down: Sequence[HealthStatus], degraded: Sequence[HealthStatus]
+    ) -> tuple[list[HealthStatus], list[str]]:
+        """De-dupe/backoff the alert-sink send against an ONGOING incident.
+
+        A status LEVEL change (e.g. degraded -> down) always bypasses backoff
+        and alerts immediately; the SAME status only re-alerts once
+        ``realert_backoff_s`` has elapsed since the last alert for it (a
+        heartbeat re-alert, not a flood every tick). Never suppresses the
+        caller's operator log — only the outbound alert-sink send.
+
+        Returns ``(to_alert, resolved)``: subsystems to alert on THIS tick, and
+        the names of previously-tracked subsystems no longer unhealthy (state
+        for those is cleared here).
+        """
+        current = {s.name: s for s in (*down, *degraded)}
+        to_alert: list[HealthStatus] = []
+        for name, s in current.items():
+            prior = self._alert_state.get(name)
+            if prior is None or prior[0] != s.status:
+                # New incident, or a level change (e.g. degraded -> down) —
+                # bypass backoff and alert immediately.
+                to_alert.append(s)
+                self._alert_state[name] = (s.status, self._clock.monotonic())
+            elif self._clock.monotonic() - prior[1] >= self._realert_backoff_s:
+                # Same ongoing incident, backoff elapsed — heartbeat re-alert.
+                to_alert.append(s)
+                self._alert_state[name] = (s.status, self._clock.monotonic())
+            # else: within backoff — suppressed, state left untouched.
+
+        resolved = [name for name in self._alert_state if name not in current]
+        for name in resolved:
+            del self._alert_state[name]
+        return to_alert, resolved
+
+    @staticmethod
+    def _compose_resolved(names: list[str]) -> str:
+        """Human-readable operator notice for subsystems that recovered."""
+        parts: list[str] = ["✅ recovered:"]
+        for name in names:
+            parts.append(f"  {name}")
+        return "\n".join(parts)
+
+    async def _maybe_send_resolved(self, resolved: list[str]) -> None:
+        """Best-effort recovery notice; no-op when nothing recovered or unwired."""
+        if not resolved or self._alert is None:
+            return
+        try:
+            await self._alert(self._compose_resolved(resolved))
+        except Exception as exc:  # alert failure must not fail the sweep itself
+            log.scheduler.error(
+                "[scheduler] health_sweep._maybe_send_resolved: alert sink raised",
+                exc_info=exc,
+                extra={"_fields": {"resolved": resolved}},
+            )
 
 
 def _compose_alert(

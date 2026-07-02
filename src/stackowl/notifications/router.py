@@ -95,6 +95,12 @@ class Notification(BaseModel):
         default=None,
         validation_alias=AliasChoices("target", "target_chat_id"),
     )
+    # Health-canary path (PB-CANARY silent send). When True AND the resolved
+    # channel supports it (telegram only), the deliverer sends via
+    # ``send_ephemeral`` (silent, muted) and self-deletes once confirmed sent,
+    # instead of a normal visible ``send_text``. False for every other caller —
+    # byte-identical default.
+    ephemeral: bool = False
 
     @property
     def target_chat_id(self) -> str | int | None:

@@ -47,6 +47,33 @@ class _RecordingAdapter:
         self.sent.append(text)
 
 
+class _EphemeralRecordingAdapter(_RecordingAdapter):
+    """Telegram-shaped adapter exposing send_ephemeral + delete_message."""
+
+    def __init__(self, name: str = "telegram") -> None:
+        super().__init__(name)
+        self.ephemeral_sent: list[tuple[str | int, str]] = []
+        self.deleted: list[tuple[str | int, int]] = []
+        self.next_message_id = 100
+        self.ephemeral_fail_times = 0
+        self.delete_raises = False
+
+    async def send_ephemeral(self, chat_id: str | int, text: str) -> int:
+        if self.ephemeral_fail_times > 0:
+            self.ephemeral_fail_times -= 1
+            raise RuntimeError("ephemeral send failed")
+        self.ephemeral_sent.append((chat_id, text))
+        message_id = self.next_message_id
+        self.next_message_id += 1
+        return message_id
+
+    async def delete_message(self, chat_id: str | int, message_id: int) -> bool:
+        if self.delete_raises:
+            raise RuntimeError("delete failed")
+        self.deleted.append((chat_id, message_id))
+        return True
+
+
 class _StubRouter:
     """Router stub that returns a preset decision without DB/test-mode checks."""
 
@@ -280,3 +307,79 @@ async def test_reroute_that_also_fails_returns_failed() -> None:
     status = await dlv.deliver(_note("cli"))
 
     assert status == "failed"  # ladder exhausted → honest failure
+
+
+# --- health-canary: ephemeral (silent, self-deleting) transport ---------------
+
+
+async def test_transport_ephemeral_happy_path_sends_then_deletes() -> None:
+    dlv, _router, registry = _deliverer("delivered")
+    adapter = _EphemeralRecordingAdapter("telegram")
+    registry.register(adapter)
+
+    status = await dlv._transport(
+        "telegram", "probe body", chat_id=555, ephemeral=True
+    )
+
+    assert status == "delivered"
+    assert adapter.ephemeral_sent == [(555, "probe body")]
+    assert adapter.deleted == [(555, 100)]
+    assert adapter.sent == []  # never used the visible send_text path
+
+
+async def test_transport_ephemeral_delete_failure_still_delivered() -> None:
+    """A cleanup miss is cosmetic — never flips an honest delivered into failed."""
+    dlv, _router, registry = _deliverer("delivered")
+    adapter = _EphemeralRecordingAdapter("telegram")
+    adapter.delete_raises = True
+    registry.register(adapter)
+
+    status = await dlv._transport(
+        "telegram", "probe body", chat_id=555, ephemeral=True
+    )
+
+    assert status == "delivered"
+    assert adapter.ephemeral_sent == [(555, "probe body")]
+    assert adapter.deleted == []  # delete raised, but swallowed
+
+
+async def test_transport_ephemeral_retries_once_then_succeeds() -> None:
+    dlv, _router, registry = _deliverer("delivered")
+    adapter = _EphemeralRecordingAdapter("telegram")
+    adapter.ephemeral_fail_times = 1
+    registry.register(adapter)
+
+    status = await dlv._transport(
+        "telegram", "probe body", chat_id=555, ephemeral=True
+    )
+
+    assert status == "delivered"
+    assert len(adapter.ephemeral_sent) == 1  # only the successful attempt recorded
+    assert adapter.deleted == [(555, 100)]
+
+
+async def test_transport_ephemeral_both_attempts_fail_never_deletes() -> None:
+    dlv, _router, registry = _deliverer("delivered")
+    adapter = _EphemeralRecordingAdapter("telegram")
+    adapter.ephemeral_fail_times = 99
+    registry.register(adapter)
+
+    status = await dlv._transport(
+        "telegram", "probe body", chat_id=555, ephemeral=True
+    )
+
+    assert status == "failed"
+    assert adapter.deleted == []
+
+
+async def test_transport_ephemeral_false_or_no_chat_id_falls_through() -> None:
+    """ephemeral=False, or no chat_id, uses the normal send_text path unchanged."""
+    dlv, _router, registry = _deliverer("delivered")
+    adapter = _EphemeralRecordingAdapter("telegram")
+    registry.register(adapter)
+
+    status = await dlv._transport("telegram", "normal body", ephemeral=True)
+
+    assert status == "delivered"
+    assert adapter.sent == ["normal body"]
+    assert adapter.ephemeral_sent == []

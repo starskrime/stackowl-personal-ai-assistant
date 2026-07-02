@@ -103,6 +103,7 @@ class ProactiveJobDeliverer:
         category: str,
         urgency: str = "normal",
         surface_undelivered: bool = True,
+        ephemeral: bool = False,
     ) -> ProactiveDeliveryOutcome:
         """Deliver ``message`` to every durable recipient of ``job``; never raises.
 
@@ -130,6 +131,7 @@ class ProactiveJobDeliverer:
                     "category": category,
                     "message_len": len(message),
                     "surface_undelivered": surface_undelivered,
+                    "ephemeral": ephemeral,
                 }
             },
         )
@@ -198,6 +200,7 @@ class ProactiveJobDeliverer:
                 channel_name=channel,
                 job_id=job.job_id,
                 target=target,
+                ephemeral=ephemeral,
             )
             status: DeliveryStatus = await self._deliverer.deliver(
                 notification, surface_undelivered=surface_undelivered

@@ -529,6 +529,35 @@ class TelegramChannelAdapter(ChannelAdapter):
             )
             return None
 
+    async def send_ephemeral(self, chat_id: str | int, text: str) -> int:
+        """Send a silent (muted), self-identifying probe message.
+
+        Unlike :meth:`send_status`, this MUST propagate any failure — a health
+        probe that silently eats its own failure defeats the point of probing.
+        Returns the sent message's id so the caller can immediately clean it up
+        via :meth:`delete_message` once delivery is confirmed.
+        """
+        log.telegram.debug(
+            "[telegram] adapter.send_ephemeral: entry",
+            extra={"_fields": {"chat_id": chat_id, "text_len": len(text)}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.send_ephemeral")
+        if self._bot_app is None:
+            log.telegram.error(
+                "[telegram] adapter.send_ephemeral: bot not initialised — failing loud",
+            )
+            raise DeliveryError("telegram", "no_channel")
+        log.telegram.debug("[telegram] adapter.send_ephemeral: decision silent_send")
+        msg = await self._bot_app.bot.send_message(
+            chat_id=chat_id, text=text, parse_mode=None, disable_notification=True
+        )
+        message_id = int(msg.message_id)
+        log.telegram.debug(
+            "[telegram] adapter.send_ephemeral: exit",
+            extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+        )
+        return message_id
+
     async def send_typing(self, chat_id: int) -> None:
         """Issue the Telegram 'typing' chat action (auto-clears after ~5s).
 
@@ -910,6 +939,38 @@ class TelegramChannelAdapter(ChannelAdapter):
             return False
         log.telegram.debug(
             "[telegram] adapter.edit_message: exit",
+            extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+        )
+        return True
+
+    async def delete_message(self, chat_id: str | int, message_id: int) -> bool:
+        """Best-effort delete of a previously-sent message (e.g. an ephemeral canary).
+
+        Never raises — a delete failure is cosmetic cleanup, not a delivery
+        failure. Returns ``True`` on success, ``False`` on any failure
+        (including no bot app).
+        """
+        log.telegram.debug(
+            "[telegram] adapter.delete_message: entry",
+            extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.delete_message")
+        if self._bot_app is None:
+            log.telegram.warning(
+                "[telegram] adapter.delete_message: bot not initialised — skipped"
+            )
+            return False
+        try:
+            await self._bot_app.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception as exc:  # noqa: BLE001 — cleanup is best-effort, never raises
+            log.telegram.error(
+                "[telegram] adapter.delete_message: delete failed — cosmetic, ignoring",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+            )
+            return False
+        log.telegram.debug(
+            "[telegram] adapter.delete_message: exit",
             extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
         )
         return True

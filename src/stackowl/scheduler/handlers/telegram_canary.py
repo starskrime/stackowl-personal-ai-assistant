@@ -15,6 +15,11 @@ stamps a distinct ``channel_liveness`` row (``"telegram_canary"``, separate from
 PB0b's ``"telegram"`` receive row — same channel-agnostic table, no migration)
 that the generalized ``ChannelLivenessContributor`` (``kind="send"``) reads to
 alert on absence via the existing ``HealthSweepHandler``/``AlertSink`` path.
+
+The send is silent (muted notification, no visible chat entry left behind for
+the user) and self-deletes once delivery is confirmed — it still proves the
+real send path end-to-end, it just no longer surfaces as a "🔎 canary —
+ignore" message the user has to notice and dismiss every 20 minutes.
 """
 
 from __future__ import annotations
@@ -99,6 +104,7 @@ class TelegramCanaryHandler(JobHandler):
             category=_CATEGORY,
             urgency=_URGENCY,
             surface_undelivered=False,
+            ephemeral=True,
         )
         duration_ms = (time.monotonic() - t0) * 1000
 

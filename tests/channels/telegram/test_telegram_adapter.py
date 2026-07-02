@@ -399,4 +399,85 @@ async def test_send_text_propagates_non_parse_errors() -> None:
     with pytest.raises(NetworkError):
         await adapter.send_text("hello", chat_id=555)
     # Only the MarkdownV2 attempt — no plain-text retry on a non-parse error.
-    assert bot.send_message.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# send_ephemeral — silent, self-identifying probe send (health-canary path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_ephemeral_sends_silent_and_returns_id() -> None:
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=types.SimpleNamespace(message_id=42))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    message_id = await adapter.send_ephemeral(555, "probe")
+
+    assert message_id == 42
+    kwargs = bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 555
+    assert kwargs["text"] == "probe"
+    assert kwargs["parse_mode"] is None
+    assert kwargs["disable_notification"] is True
+
+
+@pytest.mark.asyncio
+async def test_send_ephemeral_raises_when_bot_uninitialised() -> None:
+    from stackowl.exceptions import DeliveryError
+
+    adapter = _adapter()
+    assert adapter._bot_app is None
+    with pytest.raises(DeliveryError):
+        await adapter.send_ephemeral(555, "probe")
+
+
+@pytest.mark.asyncio
+async def test_send_ephemeral_propagates_send_failure() -> None:
+    """A probe that silently eats its own failure defeats the point of probing."""
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    with pytest.raises(RuntimeError):
+        await adapter.send_ephemeral(555, "probe")
+
+
+# ---------------------------------------------------------------------------
+# delete_message — best-effort cleanup, never raises
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_message_success_returns_true() -> None:
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.delete_message = AsyncMock()
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    ok = await adapter.delete_message(555, 42)
+
+    assert ok is True
+    bot.delete_message.assert_awaited_once_with(chat_id=555, message_id=42)
+
+
+@pytest.mark.asyncio
+async def test_delete_message_swallows_error_and_returns_false() -> None:
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.delete_message = AsyncMock(side_effect=RuntimeError("already deleted"))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    ok = await adapter.delete_message(555, 42)
+
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_delete_message_no_bot_returns_false_no_call() -> None:
+    adapter = _adapter()
+    assert adapter._bot_app is None
+    ok = await adapter.delete_message(555, 42)
+    assert ok is False

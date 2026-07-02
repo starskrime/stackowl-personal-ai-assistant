@@ -112,6 +112,17 @@ async def test_handler_name_and_trigger_kind() -> None:
     assert handler.trigger_kind == "seeded"
 
 
+async def test_canary_sends_ephemeral_not_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The canary send must be silent/self-deleting, not a visible plain send."""
+    disable_guard(monkeypatch)
+    deliverer = _FakeJobDeliverer("delivered")
+    handler = TelegramCanaryHandler(job_deliverer=deliverer, liveness_store=None)
+
+    await handler.execute(make_job(handler="telegram_canary"))
+
+    assert deliverer.calls[0]["ephemeral"] is True
+
+
 async def test_canary_opts_out_of_undelivered_outbox_surfacing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

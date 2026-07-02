@@ -62,6 +62,27 @@ class _TargetedFileSender(Protocol):
     ) -> None: ...
 
 
+class _EphemeralSender(Protocol):
+    """An adapter that can send a silent, self-cleaning probe message.
+
+    Only telegram implements this (the health-canary path). Narrowed via
+    Protocol the same way as :class:`_TargetedSender` so the typed call is
+    exact — at runtime this is only ever invoked for a telegram target.
+    """
+
+    async def send_ephemeral(self, chat_id: str | int, text: str) -> int: ...
+
+
+class _DeletableSender(Protocol):
+    """An adapter that can delete a previously-sent message by id.
+
+    Mirrors :class:`_EphemeralSender` — telegram-only cleanup capability used
+    to make a health-probe send invisible once delivery is confirmed.
+    """
+
+    async def delete_message(self, chat_id: str | int, message_id: int) -> bool: ...
+
+
 # Urgency an agent-originated notification is permitted to request. ``critical``
 # is reserved for user / job-config / system origin and is clamped down to
 # ``normal`` for agent callers (S2 heartbeat_respond, S3 send_message).
@@ -170,7 +191,10 @@ class ProactiveDeliverer:
             # a different chat). ``None`` keeps the back-compat ``_last_chat_id``
             # fallback for text-only / single-terminal channels.
             result = await self._transport(
-                channel, notification.message, chat_id=notification.target_chat_id
+                channel,
+                notification.message,
+                chat_id=notification.target_chat_id,
+                ephemeral=notification.ephemeral,
             )
         # ADR-2 — a FAILED transport is not surrendered until the RecoveryActuator's
         # reroute rung is exhausted: when an opt-in fallback channel is configured, the
@@ -260,7 +284,12 @@ class ProactiveDeliverer:
         return await self._transport(channel, message, chat_id=None)
 
     async def _transport(
-        self, channel: str, message: str, *, chat_id: str | int | None = None
+        self,
+        channel: str,
+        message: str,
+        *,
+        chat_id: str | int | None = None,
+        ephemeral: bool = False,
     ) -> DeliveryStatus:
         """Resolve the adapter and send ``message``; retry-once on send error.
 
@@ -274,6 +303,16 @@ class ProactiveDeliverer:
         text-only adapters (cli/slack/discord/whatsapp, whose ``send_text``
         takes no ``chat_id``) keep working and telegram falls back to its
         ``_last_chat_id`` (back-compat).
+
+        ``ephemeral`` (default ``False``, byte-identical for every existing
+        caller) is the health-canary path: when set AND a concrete ``chat_id``
+        is available, the message is sent via ``send_ephemeral`` (silent,
+        muted) instead of ``send_text``, then best-effort deleted once sent —
+        so the probe proves the real send path without leaving a visible
+        message behind. A delete failure never flips an honest "delivered"
+        into "failed" (cosmetic cleanup only). With ``ephemeral=False`` or no
+        resolved ``chat_id`` (non-telegram / unresolved), this falls through to
+        the normal send path unchanged.
 
         Returns ``"delivered"`` on success or ``"failed"`` (logged) on an
         unknown channel or a send that still fails after one retry. Never raises.
@@ -293,7 +332,12 @@ class ProactiveDeliverer:
                 # An explicit target is threaded as a kwarg; ``None`` omits the
                 # kwarg so text-only adapters (no ``chat_id`` param) still accept
                 # the call and telegram falls back to its ``_last_chat_id``.
-                if chat_id is not None:
+                if ephemeral and chat_id is not None:
+                    message_id = await cast("_EphemeralSender", adapter).send_ephemeral(
+                        chat_id, message
+                    )
+                    await self._best_effort_delete(adapter, chat_id, message_id)
+                elif chat_id is not None:
                     await cast("_TargetedSender", adapter).send_text(
                         message, chat_id=chat_id
                     )
@@ -306,6 +350,7 @@ class ProactiveDeliverer:
                             "channel": channel,
                             "attempt": attempt,
                             "explicit_target": chat_id is not None,
+                            "ephemeral": ephemeral,
                         }
                     },
                 )
@@ -325,6 +370,23 @@ class ProactiveDeliverer:
                 )
                 return "failed"
         return "failed"  # pragma: no cover — loop always returns
+
+    async def _best_effort_delete(
+        self, adapter: object, chat_id: str | int, message_id: int
+    ) -> None:
+        """Clean up a sent ephemeral probe; a delete failure is cosmetic only.
+
+        Swallows its OWN exception — a cleanup miss must never flip an honest
+        "delivered" transport result into "failed".
+        """
+        try:
+            await cast("_DeletableSender", adapter).delete_message(chat_id, message_id)
+        except Exception as exc:  # B5 — cleanup failure is cosmetic, never fails delivery
+            log.notifications.error(
+                "[notifications] deliverer._best_effort_delete: delete failed — cosmetic",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+            )
 
     async def _transport_file(
         self, channel: str, file_path: str, caption: str, *, chat_id: str | int | None = None
