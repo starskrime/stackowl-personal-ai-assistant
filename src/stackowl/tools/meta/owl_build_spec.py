@@ -2,14 +2,21 @@
 (origin/created_by/creation_ceiling/bounds) — the tool forces those server-side."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class OwlBuildSpec(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # extra="ignore" (not "forbid"): a stray field the weak model invented (e.g.
+    # 'prompt'/'priority' bled in from a different tool schema) should be silently
+    # dropped, not reject the whole otherwise-valid request. This does not widen
+    # what the agent can control — authority fields (origin/created_by/
+    # creation_ceiling/bounds) are still forced server-side regardless of what an
+    # extra field claims; they are simply absent from the validated spec either way.
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     action: Literal["create", "edit", "retire"]
     name: str
@@ -27,6 +34,23 @@ class OwlBuildSpec(BaseModel):
     schedule: str | None = None
     goal: str | None = None
     lifecycle: Literal["on_demand", "scheduled"] | None = None
+
+    @field_validator("explicit_tools", mode="before")
+    @classmethod
+    def _coerce_json_string_list(cls, v: object) -> object:
+        """qwen3.5-class models sometimes serialize a list arg as a JSON string
+        ('["memory", "owl_build"]') instead of a real list. Coerce it back before
+        strict list-typing rejects it. Anything else (already a list, None, a
+        non-JSON string) passes through unchanged — validation errors on it
+        normally, unchanged behavior."""
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                return v
+            if isinstance(parsed, list):
+                return parsed
+        return v
 
 
 @dataclass(frozen=True)
