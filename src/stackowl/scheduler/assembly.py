@@ -66,6 +66,13 @@ INSERT INTO jobs
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 _SELECT_EXISTING_SQL = "SELECT job_id FROM jobs WHERE handler_name = ?"
+# job_runs.job_id REFERENCES jobs(job_id) with no ON DELETE CASCADE (migration
+# 0009) — a retired job that ever ran leaves history rows that must go first,
+# or the jobs delete below trips a FOREIGN KEY constraint failure.
+_DELETE_RETIRED_JOB_RUNS_SQL = (
+    "DELETE FROM job_runs WHERE job_id IN "
+    "(SELECT job_id FROM jobs WHERE handler_name = ?)"
+)
 _DELETE_RETIRED_JOB_SQL = "DELETE FROM jobs WHERE handler_name = ?"
 
 
@@ -288,6 +295,10 @@ class SchedulerAssembly:
         # every-10m job). No handler claims it anymore, so it would otherwise
         # be claimed→released on every poll forever, logging a misleading
         # "handler not registered" warning. Idempotent: no-op once removed.
+        # job_runs history must go first (FK, no cascade) or the delete below
+        # trips a FOREIGN KEY constraint failure on any install where the
+        # every-10m job actually ran before being retired.
+        await db.execute(_DELETE_RETIRED_JOB_RUNS_SQL, ("critic_scorer",))
         await db.execute(_DELETE_RETIRED_JOB_SQL, ("critic_scorer",))
 
         # Learning Commit 3 sub-phase 3c — SkillSynthesizerHandler runs daily
