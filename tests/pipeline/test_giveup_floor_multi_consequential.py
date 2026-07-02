@@ -22,7 +22,7 @@ import pytest
 
 from stackowl.infra import recovery_context
 from stackowl.infra import tool_outcome_ledger as tol
-from stackowl.pipeline.giveup_floor import (
+from stackowl.pipeline.delivery_gate import (
     is_consequential_giveup_now,
     surface_consequential_giveup_floor,
 )

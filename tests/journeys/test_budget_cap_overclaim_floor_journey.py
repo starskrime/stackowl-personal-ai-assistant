@@ -32,7 +32,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.delivery_gate import surface_consequential_giveup_floor
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _run_with_tools
@@ -394,7 +394,7 @@ def test_non_cap_path_reads_full_success_tally_byte_identical() -> None:
                                (byte-identical to pre-change main).
       * budget_capped=True   → reads delivered_successes (cs=0)     → give-up (floored).
     """
-    from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
+    from stackowl.pipeline.delivery_gate import is_consequential_giveup_now
 
     base_kwargs: dict[str, Any] = dict(
         trace_id="t", session_id="s", input_text="x", channel="cli",

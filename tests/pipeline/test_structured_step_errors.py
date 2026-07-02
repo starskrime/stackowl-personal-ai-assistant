@@ -36,7 +36,7 @@ def test_format_and_parse_roundtrip() -> None:
 
 def test_critical_failure_reads_structured_step_error() -> None:
     """Even if the human string is reformatted, the structured record surfaces it."""
-    from stackowl.pipeline.critical_failure import detect_critical_failure
+    from stackowl.pipeline.delivery_gate import detect_critical_failure
 
     # A REFORMATTED error string the old parser would no longer recognize
     # (prefixed with a trace id) — but the structured record names the step.
@@ -52,7 +52,7 @@ def test_critical_failure_reads_structured_step_error() -> None:
 def test_critical_failure_string_fallback_still_works() -> None:
     """Back-compat: a turn with ONLY the legacy string (no structured record) still
     surfaces via the shared parser."""
-    from stackowl.pipeline.critical_failure import detect_critical_failure
+    from stackowl.pipeline.delivery_gate import detect_critical_failure
 
     state = PipelineState(
         trace_id="t", session_id="s", input_text="do it", channel="cli",
@@ -63,7 +63,7 @@ def test_critical_failure_string_fallback_still_works() -> None:
 
 
 def test_no_critical_failure_when_non_critical_step_errored() -> None:
-    from stackowl.pipeline.critical_failure import detect_critical_failure
+    from stackowl.pipeline.delivery_gate import detect_critical_failure
 
     state = PipelineState(
         trace_id="t", session_id="s", input_text="do it", channel="cli",
@@ -82,7 +82,7 @@ def test_no_critical_failure_when_non_critical_step_errored() -> None:
 async def test_giveup_floor_reads_state_snapshot_without_ledger_binding() -> None:
     """The floor fires from the STATE snapshot even with NO live ledger binding —
     proving the honesty decision no longer depends on the ContextVar lifetime."""
-    from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+    from stackowl.pipeline.delivery_gate import surface_consequential_giveup_floor
 
     # No tool_outcome_ledger.bind() here — the ContextVar is at its empty default.
     state = PipelineState(
@@ -101,7 +101,7 @@ async def test_giveup_floor_reads_state_snapshot_without_ledger_binding() -> Non
 @pytest.mark.asyncio
 async def test_giveup_floor_snapshot_respects_substitution_recovery() -> None:
     """A consequential failure bridged by a substitution is NOT a give-up."""
-    from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+    from stackowl.pipeline.delivery_gate import surface_consequential_giveup_floor
 
     state = PipelineState(
         trace_id="t", session_id="s", input_text="send the email", channel="cli",

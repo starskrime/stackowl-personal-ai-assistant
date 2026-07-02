@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from stackowl.pipeline.grounding_gate import _FLOOR_TEXT, surface_grounding_gate
+from stackowl.pipeline.delivery_gate import _FLOOR_TEXT, surface_grounding_gate
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 

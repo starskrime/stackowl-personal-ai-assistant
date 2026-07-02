@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.infra import tool_outcome_ledger
-from stackowl.pipeline.giveup_floor import (
+from stackowl.pipeline.delivery_gate import (
     _name_failed_capability,
     _unrecovered_consequential_failures,
     decide_delivery,

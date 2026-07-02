@@ -12,8 +12,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.infra import tool_outcome_ledger as tol
-from stackowl.pipeline.critical_failure import _has_usable_response
-from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.delivery_gate import _has_usable_response, surface_consequential_giveup_floor
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 
