@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-import stackowl.pipeline.backends.asyncio_backend as backend
+import stackowl.pipeline.backends.shared as backend
 from stackowl.objectives.model import ExpectedOutcome
 from stackowl.pipeline.acceptance import AcceptanceVerdict
 from stackowl.pipeline.services import StepServices

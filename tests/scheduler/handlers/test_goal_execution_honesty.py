@@ -192,6 +192,13 @@ async def test_one_shot_goal_stays_critical(
 # Wiring tripwire — the proactive path is only honest while BOTH real backends keep
 # the grounding gate in their deliver-surfacing band. If a refactor drops it from
 # either backend, the scheduled poke could fabricate again — fail loudly here.
+#
+# FR-11/FR-12 — both backends now route their post-execute surfacing through the
+# ONE shared pipeline.backends.shared.run_delivery_gate() seam instead of calling
+# the gates inline, so the tripwire has two halves: (a) each backend still routes
+# through that shared seam, (b) the seam itself still runs both gates. Either half
+# failing means the same "a refactor silently dropped a gate" scenario this test
+# exists to catch.
 async def test_both_backends_run_grounding_gate() -> None:
     backends_dir = (
         Path(__file__).resolve().parents[3]
@@ -199,5 +206,8 @@ async def test_both_backends_run_grounding_gate() -> None:
     )
     for name in ("asyncio_backend.py", "langgraph_backend.py"):
         src = (backends_dir / name).read_text(encoding="utf-8")
-        assert "surface_grounding_gate(" in src, f"{name} no longer runs grounding gate"
-        assert "surface_overclaim_gate(" in src, f"{name} no longer runs overclaim gate"
+        assert "run_delivery_gate(" in src, f"{name} no longer routes through the shared delivery gate"
+
+    shared_src = (backends_dir / "shared.py").read_text(encoding="utf-8")
+    assert "surface_grounding_gate(" in shared_src, "shared delivery gate no longer runs grounding gate"
+    assert "surface_overclaim_gate(" in shared_src, "shared delivery gate no longer runs overclaim gate"

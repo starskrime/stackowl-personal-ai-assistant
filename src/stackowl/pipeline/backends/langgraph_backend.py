@@ -25,62 +25,26 @@ from stackowl.infra import decision_ledger, recovery_context, tool_outcome_ledge
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline import lesson_context as lc
-from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
+from stackowl.pipeline.backends.shared import run_delivery_gate
 from stackowl.pipeline.budget import human_wait as human_wait_ctx
-from stackowl.pipeline.command_hint import surface_command_hint
-from stackowl.pipeline.critical_failure import surface_critical_failure
-from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
-from stackowl.pipeline.grounding_gate import surface_grounding_gate
-from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
-from stackowl.pipeline.persistence_handoff import surface_persistence_handoff
-from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
 from stackowl.pipeline.state import PipelineState, StepError
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
-from stackowl.pipeline.turn_persist import persist_turn
 
 
 async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
-    """Surface a critical-step failure (shared helper), append applied-lesson
-    explanation (pillar ④), then deliver.
+    """Run the FR-11/FR-12 shared gate cascade (parity with AsyncioBackend — same
+    seam, same call), then deliver.
 
     Services are read from the ambient pipeline-services context (set by ``run``),
-    matching how every other step resolves its dependencies. Both surfacing helpers
-    are self-healing and never raise, so deliver always runs afterwards.
+    matching how every other step resolves its dependencies. The shared seam is
+    self-healing and never raises, so deliver always runs afterwards.
     """
-    # Applied-lesson annotation BEFORE critical-failure surfacing (see asyncio_backend
-    # for the ordering rationale — prevents a learning claim on a failed turn).
-    surfaced = await surface_applied_lessons(state)
-    surfaced = await surface_recovery(surfaced)
-    # Judge-independent gate: if a consequential/write action failed with no
-    # success, REPLACE the (potentially dressed-up) draft with an honest floor
-    # naming the failed capability. Runs BEFORE surface_critical_failure so the
-    # critical-failure cascade sees an honest state (never hides behind a giveup).
-    # Never-give-up rung (PA4): hand a would-give-up turn to a better-fit owl and
-    # deliver its answer; a failed hand-off falls through to the honest floor below.
-    surfaced = await surface_persistence_handoff(surfaced, get_services())
-    surfaced = await surface_consequential_giveup_floor(surfaced)
-    # Overclaim delivery-gate (Task 6): structural gate that replaces a confident
-    # non-floor draft with the honest floor when nothing was delivered and a tool
-    # failed/bounced. Parity with AsyncioBackend. Never raises.
-    surfaced = await surface_overclaim_gate(surfaced)
-    # Grounding gate (ADR-T3 / TS5+TS6): strip fabricated citations (URLs the turn
-    # never retrieved) and floor an ungrounded external-info answer. Keyed on URLs +
-    # the retrieval ledger, never the prose. Parity with AsyncioBackend. Never raises.
-    surfaced = await surface_grounding_gate(surfaced)
-    surfaced = await surface_critical_failure(surfaced, get_services())
-    # WS-D issue 3 — additive NL→command hint (+ routing-correction notice) on a
-    # REAL answer. Gated by ui.command_hints (no-op when off); parity with
-    # AsyncioBackend. Never raises.
-    surfaced = await surface_command_hint(surfaced, get_services())
-    # F088 — persist AFTER the honest floor band (parity with AsyncioBackend),
-    # synchronously inside the ledger ContextVar binding established by run().
-    # Floored turns record the user utterance only — never the dressed-up draft.
-    await persist_turn(surfaced)
+    surfaced = await run_delivery_gate(state, get_services())
     return await deliver.run(surfaced)
 
 try:
@@ -142,6 +106,10 @@ class LangGraphBackend(OrchestratorBackend):
             },
         )
         t0 = time.monotonic()
+        # Wall-clock turn start — the acceptance freshness clock (a fresh artifact's
+        # mtime is compared against this). monotonic() is unsuitable (not epoch).
+        # Parity with AsyncioBackend (FR-13 gap fix).
+        wall_t0 = time.time()
         token = set_services(self._services)
         trace_token = TraceContext.start(
             state.session_id,
@@ -260,9 +228,14 @@ class LangGraphBackend(OrchestratorBackend):
         # NOTE: LangGraph backend doesn't populate state.step_durations the way
         # AsyncioBackend does (its step boundaries are inside the compiled graph),
         # so step_durations may be empty here. quality_score still works.
-        from stackowl.pipeline.backends.asyncio_backend import _capture_outcome
+        from stackowl.pipeline.backends.shared import _capture_outcome, _verify_turn_acceptance
 
-        await _capture_outcome(final, total_ms, self._services)
+        # FR-13 parity fix: previously LangGraphBackend never called
+        # _verify_turn_acceptance, so acceptance was always None here — a declared/
+        # derived expected_outcome on a LangGraph-run turn was never checked, unlike
+        # AsyncioBackend. Mirrors AsyncioBackend.run()'s tail exactly.
+        acceptance = await _verify_turn_acceptance(final, wall_t0, self._services)
+        await _capture_outcome(final, total_ms, self._services, acceptance=acceptance)
         return final
 
     async def shutdown(self) -> None:

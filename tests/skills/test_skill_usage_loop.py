@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.pipeline.backends.asyncio_backend import _update_skill_success_rates
+from stackowl.pipeline.backends.shared import _update_skill_success_rates
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.skills.loader import LoadedSkill
