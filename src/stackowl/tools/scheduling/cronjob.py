@@ -42,6 +42,7 @@ from stackowl.tools.scheduling.cron_helpers import (
     resolve_owl,
 )
 from stackowl.tools.scheduling.cron_security import scan_cron_prompt
+from stackowl.tools.validation_errors import format_validation_error
 
 _TOOLSET_GROUP = "scheduling"
 _DEFAULT_SOFT_CAP = 20
@@ -213,11 +214,16 @@ class CronjobTool(Tool):
         try:
             args = CronjobArgs(**kwargs)  # type: ignore[arg-type]
         except ValidationError as exc:
+            # Bounded, no raw ``input`` echo (a bad 'prompt' could be arbitrarily long).
+            field_errors = [
+                {"field": ".".join(str(p) for p in e["loc"]), "msg": e["msg"]}
+                for e in exc.errors()[:5]
+            ]
             log.tool.warning(
                 "cronjob.execute: invalid args",
-                extra={"_fields": {"errors": exc.error_count()}},
+                extra={"_fields": {"errors": field_errors}},
             )
-            return self._err(f"invalid arguments — 'action' must be one of {', '.join(_ACTIONS)}", t0)
+            return self._err(format_validation_error(exc, "cronjob"), t0)
         log.tool.info(
             "cronjob.execute: entry",
             extra={"_fields": {"action": args.action, "has_prompt": args.prompt is not None}},

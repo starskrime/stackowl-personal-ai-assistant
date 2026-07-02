@@ -257,6 +257,38 @@ async def test_malformed_schedule_structured_error_no_persist(migrated_db: DbPoo
     assert await JobScheduler(db=migrated_db).list_jobs() == []
 
 
+async def test_invalid_args_names_only_the_bad_field(migrated_db: DbPool) -> None:
+    # 'schedule' has the wrong type; 'action' is valid — error must name schedule,
+    # not the unrelated-but-fine action.
+    await _seed_session(migrated_db)
+    result = await _run(migrated_db, action="create", schedule=123)
+    assert result.success is False
+    assert result.side_effect_committed is False
+    assert result.error is not None
+    assert "'schedule'" in result.error
+    assert "'action'" not in result.error
+
+
+async def test_invalid_args_names_bad_action_not_valid_schedule(migrated_db: DbPool) -> None:
+    # 'action' is invalid; 'schedule' is a valid string — error must name action,
+    # not the unrelated-but-fine schedule.
+    await _seed_session(migrated_db)
+    result = await _run(migrated_db, action="bogus", schedule="daily@09:00")
+    assert result.success is False
+    assert result.error is not None
+    assert "'action'" in result.error
+    assert "'schedule'" not in result.error
+
+
+async def test_invalid_args_names_both_bad_fields(migrated_db: DbPool) -> None:
+    await _seed_session(migrated_db)
+    result = await _run(migrated_db, action="bogus", schedule=123)
+    assert result.success is False
+    assert result.error is not None
+    assert "'action'" in result.error
+    assert "'schedule'" in result.error
+
+
 async def test_soft_cap_nudge_past_cap(migrated_db: DbPool) -> None:
     await _seed_session(migrated_db)
     # Seed exactly cap=2 owned jobs, then attempt a third.
