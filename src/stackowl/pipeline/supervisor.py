@@ -50,7 +50,7 @@ def apply_structural_veto(
        action failed and NONE succeeded AND no substitution bridged the gap,
        regardless of how substantive the draft reads (catches the dressed-up case
        the zombie misses). Computed by the caller via
-       :func:`~stackowl.pipeline.giveup_floor.is_consequential_giveup_now`.
+       :func:`~stackowl.pipeline.delivery_gate.is_consequential_giveup_now`.
 
     Pure; never raises; defaults preserve the previous two-signal behavior.
     """
@@ -85,7 +85,7 @@ def decide_nudge(
     budget logic lives in ONE place.
 
     ``consequential_giveup`` must be pre-computed by the caller via
-    :func:`~stackowl.pipeline.giveup_floor.is_consequential_giveup_now`, which
+    :func:`~stackowl.pipeline.delivery_gate.is_consequential_giveup_now`, which
     reads the turn-scoped ledger + recovery context and accounts for substitution
     recovery (so a bridged capability gap does NOT look like a give-up).
 

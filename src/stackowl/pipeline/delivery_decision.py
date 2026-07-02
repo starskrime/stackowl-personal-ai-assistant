@@ -3,7 +3,7 @@
 "Did this turn give up on a consequential outcome?" was re-derived at several sites,
 each re-calling the predicates over the consequential snapshot, so they could drift.
 This frozen record bundles that verdict plus its supporting derived data behind ONE
-function — :func:`stackowl.pipeline.giveup_floor.decide_delivery` — so the give-up
+function — :func:`stackowl.pipeline.delivery_gate.decide_delivery` — so the give-up
 verdict has a single owner every site calls. The seam later stories (escalation
 ladder) hook into.
 
