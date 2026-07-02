@@ -578,8 +578,12 @@ class BriefSettings(BaseModel):
         description="Default delivery cadence for the morning brief job.",
         json_schema_extra={"hot_reload": False},
     )
+    # Default to telegram, the only channel with a durable proactive recipient
+    # resolver today — "cli" has no durable address, so the (always-seeded)
+    # morning brief, health-sweep alerts, gateway crash notices, and
+    # scheduled-owl output would all be silently undeliverable by default.
     channels: list[str] = Field(
-        default_factory=lambda: ["cli"],
+        default_factory=lambda: ["telegram"],
         description="Channel identifiers that should receive the rendered brief.",
         json_schema_extra={"hot_reload": True},
     )

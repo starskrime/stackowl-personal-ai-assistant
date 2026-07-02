@@ -71,7 +71,7 @@ def _settings() -> Settings:
 
     return Settings(
         notifications=NotificationSettings(),
-        brief=BriefSettings(channels=["telegram"]),
+        brief=BriefSettings(),
         system=SystemSettings(timezone="UTC"),
     )
 

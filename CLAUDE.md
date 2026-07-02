@@ -28,63 +28,56 @@ uv run python -m stackowl --version  # Smoke test
 
 ## Architecture Overview
 
-StackOwl is a personal AI assistant framework built around **owl personas** with evolving personalities, multi-model routing, and structured knowledge management.
+StackOwl is a personal AI assistant framework built around **owl personas** with evolving personalities, multi-model routing, and structured knowledge management. It is a pure-Python package rooted at `src/stackowl/` (see `project_v2_to_root_migration` — the prior Node/TypeScript v1 app is archived under `old/` and is not part of the live tree).
 
 ### Core Concepts
 
-- **Owls** — AI personas with DNA (personality traits like `challengeLevel`, `verbosity`, `learnedPreferences`, `expertiseGrowth`) that mutate over time based on interactions
-- **Parliament** — Multi-owl brainstorming: 3-round debate (initial positions → cross-examination → synthesis), outputs a Knowledge Pellet
-- **Pellets** — Structured knowledge artifacts stored as markdown with YAML frontmatter; searchable via cosine similarity on embeddings
-- **Instincts** — Reactive behavioral triggers that inject constraints into the system prompt when conditions match
-- **Perches** — Passive file system observers that feed context back into the engine (via chokidar)
-- **Heartbeat** — Proactive notification system; owls reach out to users on configurable schedules via Telegram
+- **Owls** — AI personas with DNA (personality traits, learned preferences, expertise growth) that mutate over time based on interactions (`src/stackowl/owls/`)
+- **Parliament** — Multi-owl brainstorming: multi-round debate (positions → cross-examination → synthesis), outputs a knowledge pellet (`src/stackowl/parliament/`)
+- **Instincts / Perches** — Reactive behavioral triggers and passive context observers that feed constraints back into the pipeline
+- **Heartbeat / Scheduler** — Proactive notification and job scheduling; owls reach out to users on configurable schedules via Telegram/Slack/Discord/WhatsApp (`src/stackowl/scheduler/`, `src/stackowl/notifications/`)
 
 ### Key Module Responsibilities
 
-| Module | Responsibility |
+| Package | Responsibility |
 |--------|---------------|
-| `src/engine/runtime.ts` | Core ReAct loop: Receive → Think → Act (tool calls) → Observe → Respond |
-| `src/engine/router.ts` | Dynamic model selection based on task complexity |
-| `src/parliament/orchestrator.ts` | Parallel/sequential multi-owl debate coordination |
-| `src/owls/evolution.ts` | LLM-driven DNA mutation after each conversation batch |
-| `src/instincts/engine.ts` | Evaluates user messages against instinct conditions |
-| `src/heartbeat/proactive.ts` | Scheduled proactive message generation |
-| `src/channels/telegram.ts` | Telegram bot (grammY); handles 4096-char chunking, sessions |
-| `src/pellets/generator.ts` | Converts conversation transcripts to structured pellets via LLM |
-| `src/pellets/store.ts` | Persist + semantic search pellets |
-| `src/config/loader.ts` | Loads `stackowl.config.json`, deep-merges with defaults |
-| `src/providers/` | AI backend implementations (Ollama, OpenAI, Anthropic, OpenAI-compatible) |
-| `src/tools/` | ShellTool, ReadFileTool, WriteFileTool, WebFetchTool for the ReAct loop |
+| `src/stackowl/pipeline/` | Core turn pipeline: receive → think → tool calls → observe → respond |
+| `src/stackowl/gateway/` | Durable gateway process (channel adapters, session dispatch, supervised restart) |
+| `src/stackowl/interaction/` | Turn-level orchestration between the gateway and the pipeline |
+| `src/stackowl/owls/` | Owl registry, DNA storage/mutation, routing, delegation |
+| `src/stackowl/parliament/` | Multi-owl debate orchestration + pellet generation |
+| `src/stackowl/scheduler/` | Job scheduler, handlers (morning_brief, check_in, health_sweep, evolution, etc.) |
+| `src/stackowl/notifications/` | `NotificationRouter` (decision) + `ProactiveDeliverer` (transport) + delivery ledger |
+| `src/stackowl/channels/` | Channel adapters — `telegram/`, `discord/`, `slack/`, `whatsapp/` — plus the `ChannelRegistry` |
+| `src/stackowl/memory/` | Memory bridge, embeddings, recall/search |
+| `src/stackowl/providers/` | AI backend implementations, model routing |
+| `src/stackowl/tools/` | Tool registry and built-in tools available to the pipeline |
+| `src/stackowl/config/` | `Settings` (pydantic-settings) — YAML file + `STACKOWL_*` env vars |
+| `src/stackowl/infra/observability.py` | JSONL logging, `TraceContext`, named loggers |
 
 ### Data Flow
 
-1. Channel (CLI/Telegram/Web) receives user input
-2. `InstinctEngine` checks for behavioral triggers → may inject prompt constraints
-3. `OwlEngine` runs ReAct loop with tool calling until response is ready
-4. `OwlEvolutionEngine` periodically mutates owl DNA based on interaction history
-5. Parliament sessions run multiple owls in parallel → `PelletGenerator` captures output
+1. A channel adapter (Telegram/Slack/Discord/WhatsApp/CLI/TUI) receives user input and mints a trace via `TraceContext.start(...)`
+2. The gateway hands the turn to `src/stackowl/interaction/` which drives the pipeline (`src/stackowl/pipeline/`)
+3. The pipeline runs its receive → think → act (tool calls) → observe → respond loop until a response is ready
+4. `src/stackowl/owls/evolution.py`-family jobs periodically mutate owl DNA based on interaction history (scheduled, not inline)
+5. Parliament sessions run multiple owls in debate → the pellet generator captures structured output
+6. Proactive/scheduled work (`src/stackowl/scheduler/`) is dispatched by the job scheduler, decided by `NotificationRouter`, and transported by `ProactiveDeliverer` through a registered channel adapter
 
 ### Configuration
 
-Config lives in `stackowl.config.json` (generated by `start.sh`). Key sections:
-- `providers` — AI backends with baseUrl, apiKey, defaultModel
-- `parliament` — maxRounds, maxOwls
-- `heartbeat` — intervalMinutes, quietHours
-- `owlDna` — evolutionBatchSize, decayRatePerWeek
-- `smartRouting` — enable model routing with availableModels roster
-- `telegram` — botToken
-
-API keys are stored directly in `stackowl.config.json` under each provider's `apiKey` field. This file is gitignored.
+Config lives in `stackowl.yaml` (path overridable via `STACKOWL_CONFIG_FILE`) and is loaded by the `Settings` class (`src/stackowl/config/settings.py`, `pydantic-settings`). Env vars (`STACKOWL_*`, `__`-nested) take priority over the YAML file. Key top-level sections include `providers`, `parliament`, `memory`, `scheduler`, `brief`, `check_in`, `telegram_channel`, `system`, `sandbox`. API keys/tokens live under their section (e.g. `telegram_channel.bot_token`) and are marked `sensitive` so logging redacts them.
 
 ### Tech Stack
 
-- **Runtime:** Node.js ≥22, TypeScript (ES2023, NodeNext modules, strict)
-- **CLI:** commander + chalk
-- **Telegram:** grammY
-- **Web:** Express.js
-- **Tests:** Vitest
-- **File watching:** chokidar
-- **Embeddings/search:** cosine-similarity
+- **Runtime:** Python ≥3.13
+- **CLI:** `typer`
+- **TUI:** `textual`
+- **Channels:** `python-telegram-bot`, `discord.py`, `slack-bolt`
+- **Config:** `pydantic` / `pydantic-settings`
+- **Tests:** `pytest` (+ `pytest-asyncio`)
+- **Lint/types:** `ruff`, `mypy` (strict)
+- **Package/env manager:** `uv`
 
 ---
 
@@ -92,36 +85,36 @@ API keys are stored directly in `stackowl.config.json` under each provider's `ap
 
 ### Structured Logging
 
-Every module has a named logger via `src/logger.ts`:
+Every module has a named logger via `src/stackowl/infra/observability.py`:
 
-```ts
-import { log } from "../logger.js";
-log.tool.debug("shell.execute: entry", { command, workdir });
-log.engine.error("runtime.execute: provider call failed", err, { model });
-log.gateway.warn("core.handle: instinct blocked", { instinct });
+```python
+from stackowl.infra.observability import log
+
+log.tool.debug("shell.execute: entry", extra={"_fields": {"command": command, "workdir": workdir}})
+log.gateway.error("core.handle: instinct blocked", extra={"_fields": {"instinct": instinct}})
 ```
 
-Available namespaces: `log.tool`, `log.engine`, `log.gateway`, `log.cli`, `log.parliament`, `log.cognition`, `log.heartbeat`.
+Available namespaces (see `_Loggers` in `observability.py`): `log.tool`, `log.gateway`, `log.engine`, `log.scheduler`, `log.notifications`, `log.memory`, `log.parliament`, `log.heartbeat`, `log.cli`, `log.tui`, `log.telegram`, `log.discord`, `log.slack`, `log.whatsapp`, `log.db`, `log.health`, `log.config`, `log.skills`, `log.mcp`, `log.plugins`, `log.security`, `log.tenancy`, `log.infra`, `log.setup`, `log.startup`, `log.integrations`, `log.webhook`, `log.tasks`.
 
-Logs are written to `logs/stackowl-YYYY-MM-DD.log` as JSONL (one JSON object per line). Records carry `traceId`, `spanId`, `parentSpanId`, `sessionId`, `durationMs`, `module`, `level`, `msg`, and a `fields` object.
+Logs are written to the single rolling file `~/.stackowl/logs/stackowl.jsonl` (JSONL, one JSON object per line), via a `TimedRotatingFileHandler` that rotates at midnight UTC with `backupCount` from `STACKOWL_LOG_RETAIN_DAYS` (default 30). Rotated backups are renamed `stackowl-YYYY-MM-DD.jsonl` — dated filenames only exist on old rotated files, never on the live one. Path is `StackowlHome.logs_dir()` (`src/stackowl/paths.py`), format is `JsonlFormatter` (`src/stackowl/infra/observability.py`). Records carry snake_case top-level keys: `ts`, `level`, `module`, `msg`, `trace_id`, `span_id`, `parent_span_id`, `session_id`, `duration_ms`, and a `fields` object (the call-site passes `extra={"_fields": {...}}`; the formatter nests it under `"fields"` in the JSONL record).
 
 ### Reading Logs
 
 ```bash
 # All tool calls in the last run
-cat logs/stackowl-$(date +%F).log | jq 'select(.fields.tool) | {ts, tool: .fields.tool, args: .fields.args, success: .fields.success, durationMs}'
+cat ~/.stackowl/logs/stackowl.jsonl | jq 'select(.fields.tool) | {ts, tool: .fields.tool, args: .fields.args, success: .fields.success, duration_ms}'
 
 # Errors only
-cat logs/stackowl-$(date +%F).log | jq 'select(.level == "error") | {ts, module, msg, err: .err}'
+cat ~/.stackowl/logs/stackowl.jsonl | jq 'select(.level == "ERROR") | {ts, module, msg, exc: .fields.exc}'
 
-# Full trace for a specific request (replace traceId value)
-cat logs/stackowl-$(date +%F).log | jq 'select(.traceId == "TRACE_ID_HERE")'
+# Full trace for a specific request (replace trace_id value)
+cat ~/.stackowl/logs/stackowl.jsonl | jq 'select(.trace_id == "TRACE_ID_HERE")'
 
 # Trace a specific tool (e.g., shell)
-cat logs/stackowl-$(date +%F).log | jq 'select(.msg | startswith("shell.execute"))'
+cat ~/.stackowl/logs/stackowl.jsonl | jq 'select(.msg | startswith("shell.execute"))'
 
 # Slowest tool calls
-cat logs/stackowl-$(date +%F).log | jq 'select(.fields.tool and .fields.durationMs) | {tool: .fields.tool, durationMs: .fields.durationMs}' | sort
+cat ~/.stackowl/logs/stackowl.jsonl | jq 'select(.fields.tool and .duration_ms) | {tool: .fields.tool, duration_ms: .duration_ms}' | sort
 ```
 
 The AI assistant can also query logs directly via the `read_logs` tool:
@@ -133,40 +126,40 @@ The AI assistant can also query logs directly via the `read_logs` tool:
 
 ### Trace Propagation
 
-Every user message mints a W3C-style `traceId` at the channel adapter (CLI/Telegram/Slack). This ID propagates through all async hops via `AsyncLocalStorage` — no signature changes required. Every log record written during that request automatically carries the same `traceId`.
+Every user message mints a UUIDv4 `trace_id` at the channel adapter via `TraceContext.start(...)` (`src/stackowl/infra/trace.py`). This ID propagates through all async hops via `contextvars` — no signature changes required. Every log record written during that request automatically carries the same `trace_id` (read back via `TraceContext.get()` in `JsonlFormatter.format`).
 
-Child spans are created with `withSpan("span.name", fn, fields)` from `src/infra/observability/context.ts`. The tool registry wraps every tool execute in `withSpan("tool.exec", ...)` automatically.
+Child spans are created with `async with TraceContext.span("span.name"):`. The tool registry wraps tool execution in a span automatically.
 
 ### Per-Tool 4-Point Logging Standard
 
-All 111 tools follow this pattern:
+All tools follow this pattern:
 
-```ts
-// 1. ENTRY — what came in
-log.tool.debug("toolname.execute: entry", { ...relevantArgs });
+```python
+# 1. ENTRY — what came in
+log.tool.debug("toolname.execute: entry", extra={"_fields": {**relevant_args}})
 
-// 2. DECISION — which path was chosen and why
-log.tool.debug("toolname.execute: using X strategy", { chosen, reason });
+# 2. DECISION — which path was chosen and why
+log.tool.debug("toolname.execute: using X strategy", extra={"_fields": {"chosen": chosen, "reason": reason}})
 
-// 3. STEP — significant I/O or subprocess
-log.tool.debug("toolname.execute: request sent", { status, responseLen });
+# 3. STEP — significant I/O or subprocess
+log.tool.debug("toolname.execute: request sent", extra={"_fields": {"status": status, "response_len": response_len}})
 
-// 4. EXIT — what was produced
-log.tool.debug("toolname.execute: exit", { success, resultLen, durationMs });
+# 4. EXIT — what was produced
+log.tool.debug("toolname.execute: exit", extra={"_fields": {"success": success, "result_len": result_len, "duration_ms": duration_ms}})
 
-// On any error
-log.tool.error("toolname.execute: step failed", err, { ...context });
+# On any error
+log.tool.error("toolname.execute: step failed", exc_info=err, extra={"_fields": {**context}})
 ```
 
 ### Rule: Always Add Logs When Missing
 
-If you encounter a bug or unexpected behavior and the relevant code has no logs, **add them before debugging**. Silent code is undebuggable code. Minimum required for any `execute()` method: entry (inputs) and exit (result/error). Never leave a `catch` block empty or silent — always log with `log.<module>.error("op failed", err, { context })`.
+If you encounter a bug or unexpected behavior and the relevant code has no logs, **add them before debugging**. Silent code is undebuggable code. Minimum required for any `execute()` method: entry (inputs) and exit (result/error). Never leave an `except` block empty or silent — always log with `log.<module>.error("op failed", exc_info=err, extra={"_fields": {...context}})`.
 
 ### Sensitive Data Rules
 
 - **Never log** raw passwords, generated secrets, or auth tokens
 - **Truncate** SQL queries to 200 chars in logs
-- **Log URL path only** (strip query strings that may carry API keys): `new URL(url).origin + new URL(url).pathname`
+- **Log URL path only** (strip query strings that may carry API keys): `urlparse(url)._replace(query="", fragment="").geturl()`
 - **Log key names only** for MCP tool args (not values)
 - **Log prompt length** for image generation (not prompt text)
 - The registry auto-redacts args where the key matches `apikey`, `token`, `password`, `secret`, `*_key`, `key_*`, `*token`, `*secret`

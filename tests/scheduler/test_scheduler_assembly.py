@@ -8,13 +8,17 @@ from typing import Any, Literal
 
 import pytest
 
-from stackowl.config.settings import MemorySettings, Settings
+from stackowl.channels.registry import ChannelRegistry
+from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.config.settings import BriefSettings, MemorySettings, Settings
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.memory.assembly import MemoryAssembly
+from stackowl.notifications.deliverer import ProactiveDeliverer
+from stackowl.notifications.router import NotificationRouter
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.registry import ProviderRegistry
-from stackowl.scheduler.assembly import SchedulerAssembly, SchedulerComponents
+from stackowl.scheduler.assembly import SchedulerAssembly, SchedulerComponents, _build_health_alert_sink
 from stackowl.scheduler.base import HandlerRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -44,8 +48,10 @@ class _StubProvider(ModelProvider):
 @pytest.fixture(autouse=True)
 def _reset_registry() -> Any:
     HandlerRegistry.reset()
+    ChannelRegistry.instance().reset()
     yield
     HandlerRegistry.reset()
+    ChannelRegistry.instance().reset()
 
 
 def _registry() -> ProviderRegistry:
@@ -286,3 +292,59 @@ async def test_supervisor_supervises_the_scheduler(tmp_db: DbPool) -> None:
     # We can't easily inspect Supervisor internals across versions; verify by
     # checking the scheduler's task_id matches what supervisor would dispatch.
     assert components.scheduler.task_id == "job_scheduler"
+
+
+class _FakeTelegramAdapter:
+    """Minimal telegram-like adapter — records every ``send_text`` call.
+
+    Unlike the fresh-process adapter in ``test_morning_brief_delivers.py``, the
+    health-alert path never threads an explicit ``chat_id`` (F-87's
+    ``_build_health_alert_sink`` builds a channel-only ``Notification``), so
+    this fake accepts a ``None`` chat_id rather than raising.
+    """
+
+    def __init__(self) -> None:
+        self.sends: list[str] = []
+
+    @property
+    def channel_name(self) -> str:
+        return "telegram"
+
+    async def send_text(self, text: str, *, chat_id: str | int | None = None) -> None:
+        self.sends.append(text)
+
+
+async def test_health_alert_sink_delivers_critical_alert_with_default_brief_settings(
+    tmp_db: DbPool,
+) -> None:
+    """FR-11/12 root-cause regression: the live incident this bug fix targets.
+
+    ``_build_health_alert_sink`` addresses its critical alert to
+    ``settings.brief.channels[0]``. With the OLD default (``["cli"]``) that
+    channel is never registered in :class:`ChannelRegistry`, so the alert
+    silently hit ``ChannelNotFoundError`` and went nowhere (today's real
+    ``telegram_canary_send`` degradation blip). With the fixed default
+    (``["telegram"]``) and a real telegram adapter registered, the alert must
+    actually reach the adapter's ``send_text``.
+    """
+    adapter = _FakeTelegramAdapter()
+    ChannelRegistry.instance().register(adapter)  # type: ignore[arg-type]
+
+    settings = Settings(
+        brief=BriefSettings(),  # DEFAULT — no channel override, the live config shape
+        telegram_channel=TelegramSettings(allowed_user_ids=frozenset({12345})),
+    )
+    router = NotificationRouter(db=tmp_db, settings=settings)
+    deliverer = ProactiveDeliverer(
+        router=router, registry=ChannelRegistry.instance(), settings=settings
+    )
+
+    alert = _build_health_alert_sink(deliverer, settings)
+    assert alert is not None
+
+    await alert("CRITICAL: db subsystem is down")
+
+    assert adapter.sends == ["CRITICAL: db subsystem is down"], (
+        "the default BriefSettings().channels must resolve to a registered, "
+        "deliverable channel — not the structurally-dead 'cli' default"
+    )

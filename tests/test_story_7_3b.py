@@ -116,7 +116,7 @@ async def test_execute_returns_job_result_with_section_count(
     handler = make_handler()
     result = await handler.execute(make_job())
     assert result.metadata.get("section_count") == 4
-    assert result.metadata.get("delivery_channels") == ["cli"]
+    assert result.metadata.get("delivery_channels") == ["telegram"]
     assert isinstance(result.metadata.get("rendered_len"), int)
 
 
@@ -146,7 +146,7 @@ async def test_brief_command_handle_invokes_handler_and_returns_output(
 def test_brief_settings_defaults() -> None:
     s = BriefSettings()
     assert s.schedule == "daily@08:00"
-    assert s.channels == ["cli"]
+    assert s.channels == ["telegram"]
     for key in (
         "date_and_priorities",
         "memory_highlights",
