@@ -1107,6 +1107,13 @@ class StartupOrchestrator:
             threshold_usd=self._settings.budget.per_turn_pause_usd,
         )
 
+        # FR-9 — the sticky-routing cache. ONE DI singleton, no dependencies;
+        # triage.py reads THIS instance off services to bypass the LLM
+        # SecretaryRouter call on short, same-session follow-ups.
+        from stackowl.owls.sticky_route_cache import StickyRouteCache
+
+        sticky_route_cache = StickyRouteCache()
+
         services = StepServices(
             a2a_queue=a2a_queue,
             provider_registry=provider_registry,
@@ -1142,6 +1149,7 @@ class StartupOrchestrator:
             turn_registry=turn_registry,
             settings=self._settings,
             identity_resolver=identity_resolver,
+            sticky_route_cache=sticky_route_cache,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto

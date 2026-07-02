@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from stackowl.owls.concurrency import ConcurrencyGovernor
     from stackowl.owls.registry import OwlRegistry
     from stackowl.owls.session_registry import SessionRegistry
+    from stackowl.owls.sticky_route_cache import StickyRouteCache
     from stackowl.pipeline.streaming import StreamRegistry
     from stackowl.process.registry import ProcessRegistry
     from stackowl.providers.cost_tracker import CostTracker
@@ -147,6 +148,12 @@ class StepServices:
     # turn (marked, never auto-run). None → no hint (feature off); built only
     # when ui.command_hints is enabled.
     command_hint_resolver: CommandResolver | None = field(default=None)
+    # FR-9 — the sticky-routing cache (session_id -> last-resolved owl +
+    # intent_class, 30-min TTL). triage.py reads THIS instance to bypass the
+    # LLM SecretaryRouter call on short, same-session follow-ups. None → the
+    # bypass never fires (byte-identical to pre-FR-9 behavior — always calls
+    # the router).
+    sticky_route_cache: StickyRouteCache | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")
