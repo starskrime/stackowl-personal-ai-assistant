@@ -94,6 +94,13 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+# FR-10 — a clean turn (no failed tool, non-empty draft, ≥1 tool tried OR a long
+# enough draft) skips the LLM give-up judge entirely. This is deliberately generous
+# toward RUNNING the judge on ambiguous short answers — the dangerous direction is
+# skipping a real give-up, not the extra judge call on a real short one-liner.
+_SHORT_DRAFT_CHARS = 150
+
+
 def build_persistence_check(
     state: PipelineState,
     services: StepServices,
@@ -135,6 +142,25 @@ def build_persistence_check(
 
     async def _persistence_check(draft: str, tools_tried: list[str]) -> str | None:
         nonlocal seen_giveup, pa2_nudged
+        # FR-10 — gate the judge (and its fallback tier) to only the turns that
+        # need it: a failed tool call this turn (ledger-recorded), an empty draft,
+        # or a refusal-shaped proxy (0 tools tried AND a suspiciously short draft —
+        # structural, not keyword-based). A clean turn returns None here exactly as
+        # a judge ruling "delivered" would — no LLM call, no preg/provider touch,
+        # no seen_giveup/pa2_nudged mutation.
+        has_failed_tool = any(not o.success for o in tool_outcome_ledger.get_outcomes())
+        empty_draft = not draft.strip()
+        refusal_shaped = not tools_tried and len(draft.strip()) < _SHORT_DRAFT_CHARS
+        if not (has_failed_tool or empty_draft or refusal_shaped):
+            log.engine.debug(
+                "[pipeline] execute: persistence judge skipped — clean turn, no LLM call",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "tools_tried_count": len(tools_tried),
+                    "draft_len": len(draft),
+                }},
+            )
+            return None
         preg = services.provider_registry
         # PRIMARY judge — resolve (injected or "fast" tier) and rule. judge_delivery
         # is itself fail-OPEN: on a provider/parse error it returns
