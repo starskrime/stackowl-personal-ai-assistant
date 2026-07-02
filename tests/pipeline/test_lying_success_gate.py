@@ -22,8 +22,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.infra import tool_outcome_ledger
-from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
-from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
+from stackowl.pipeline.delivery_gate import surface_consequential_giveup_floor, surface_overclaim_gate
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _snapshot_consequential
 from stackowl.pipeline.streaming import ResponseChunk

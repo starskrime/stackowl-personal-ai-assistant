@@ -47,8 +47,12 @@ import pytest
 from stackowl.db.pool import DbPool
 from stackowl.infra import tool_outcome_ledger
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.grounding_gate import _FLOOR_TEXT, surface_grounding_gate
-from stackowl.pipeline.overclaim_gate import _is_overclaim, surface_overclaim_gate
+from stackowl.pipeline.delivery_gate import (
+    _FLOOR_TEXT,
+    _is_overclaim,
+    surface_grounding_gate,
+    surface_overclaim_gate,
+)
 from stackowl.pipeline.services import reset_services, set_services
 from stackowl.pipeline.steps.execute import _snapshot_consequential
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler

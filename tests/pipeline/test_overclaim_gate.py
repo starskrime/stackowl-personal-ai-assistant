@@ -11,7 +11,7 @@ from typing import get_args
 
 import pytest
 
-from stackowl.pipeline.overclaim_gate import (
+from stackowl.pipeline.delivery_gate import (
     _is_overclaim,
     _should_classify_retrieval,
     surface_overclaim_gate,

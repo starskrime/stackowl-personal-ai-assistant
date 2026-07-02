@@ -327,7 +327,7 @@ async def test_apology_advances_tier_when_first_provider_complete_raises() -> No
     answers. The localized apology must come from the healthy provider — proving
     the helper advanced past the failing tier instead of giving up after one try.
     """
-    from stackowl.pipeline.critical_failure import _generate_localized_apology
+    from stackowl.pipeline.delivery_gate import _generate_localized_apology
 
     failing_fast = _FailingExecuteProvider()  # complete() raises
     healthy = _ApologyProvider(reply="Lo siento mucho.")

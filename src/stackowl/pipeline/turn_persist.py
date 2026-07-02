@@ -24,8 +24,7 @@ from __future__ import annotations
 
 from stackowl.infra.observability import log
 from stackowl.memory.trust import Trust
-from stackowl.pipeline.critical_failure import _critical_failure_classes
-from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
+from stackowl.pipeline.delivery_gate import _critical_failure_classes, is_consequential_giveup_now
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 

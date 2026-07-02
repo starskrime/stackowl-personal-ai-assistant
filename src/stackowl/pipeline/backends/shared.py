@@ -20,11 +20,13 @@ from stackowl.objectives.model import ExpectedOutcome
 from stackowl.pipeline.acceptance import AcceptanceChecker, AcceptanceVerdict
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
 from stackowl.pipeline.command_hint import surface_command_hint
-from stackowl.pipeline.critical_failure import surface_critical_failure
-from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
-from stackowl.pipeline.grounding_gate import surface_grounding_gate
-from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
-from stackowl.pipeline.persistence_handoff import surface_persistence_handoff
+from stackowl.pipeline.delivery_gate import (
+    surface_consequential_giveup_floor,
+    surface_critical_failure,
+    surface_grounding_gate,
+    surface_overclaim_gate,
+    surface_persistence_handoff,
+)
 from stackowl.pipeline.recovery_summary import surface_recovery
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState

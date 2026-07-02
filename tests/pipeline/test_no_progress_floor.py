@@ -10,7 +10,7 @@ returns False but is_no_progress_giveup returns True.
 
 from __future__ import annotations
 
-from stackowl.pipeline.giveup_floor import (
+from stackowl.pipeline.delivery_gate import (
     is_consequential_giveup_now,
     is_no_progress_giveup,
     surface_consequential_giveup_floor,
@@ -219,9 +219,9 @@ async def test_consequential_and_no_progress_both_true_takes_consequential_path(
 
     # Spy on synthesize_floor to capture which failed_capability was passed.
     # This proves which branch ran: consequential passes "send_file", no-progress passes "execute_code".
-    # Patch it at the point of import in giveup_floor (where it's actually called).
+    # Patch it at the point of import in delivery_gate (where it's actually called).
     captured = {}
-    from stackowl.pipeline import giveup_floor as gf_module
+    from stackowl.pipeline import delivery_gate as gf_module
     real_synthesize_floor = gf_module.synthesize_floor
 
     def spy_synthesize_floor(*args, **kwargs):

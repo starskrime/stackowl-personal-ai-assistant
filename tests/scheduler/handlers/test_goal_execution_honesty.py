@@ -33,8 +33,11 @@ from typing import Any
 
 import pytest
 
-from stackowl.pipeline.grounding_gate import _FLOOR_TEXT, surface_grounding_gate
-from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
+from stackowl.pipeline.delivery_gate import (
+    _FLOOR_TEXT,
+    surface_grounding_gate,
+    surface_overclaim_gate,
+)
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler

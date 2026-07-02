@@ -33,12 +33,12 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.giveup_floor import (
+from stackowl.pipeline.delivery_gate import (
     is_consequential_giveup_now,
     is_no_progress_giveup,
     surface_consequential_giveup_floor,
+    surface_overclaim_gate,
 )
-from stackowl.pipeline.overclaim_gate import surface_overclaim_gate
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _run_with_tools

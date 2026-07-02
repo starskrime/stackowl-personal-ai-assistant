@@ -14,7 +14,7 @@ from stackowl.infra import tool_outcome_ledger as tol
 from stackowl.owls.a2a_delegation import A2AResult
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.persistence_handoff import surface_persistence_handoff
+from stackowl.pipeline.delivery_gate import surface_persistence_handoff
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk

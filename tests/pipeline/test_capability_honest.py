@@ -25,7 +25,7 @@ from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.giveup_floor import surface_consequential_giveup_floor
+from stackowl.pipeline.delivery_gate import surface_consequential_giveup_floor
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _run_with_tools

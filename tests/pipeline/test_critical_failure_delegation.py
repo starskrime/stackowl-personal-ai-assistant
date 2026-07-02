@@ -24,7 +24,7 @@ import json
 
 import pytest
 
-from stackowl.pipeline.critical_failure import (
+from stackowl.pipeline.delivery_gate import (
     _delegation_failed_with_no_answer,
     detect_critical_failure,
 )
