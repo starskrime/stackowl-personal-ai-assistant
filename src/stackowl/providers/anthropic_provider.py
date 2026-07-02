@@ -13,7 +13,7 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError, TurnStopped
 from stackowl.infra.observability import log
-from stackowl.pipeline.giveup_floor import is_consequential_giveup_now
+from stackowl.pipeline.delivery_gate import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
