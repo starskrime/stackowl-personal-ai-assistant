@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.scheduler.job import Job
-from stackowl.scheduler.scheduler_helpers import parse_every, parse_in
+from stackowl.scheduler.scheduler_helpers import parse_at, parse_every, parse_in
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
@@ -42,6 +42,11 @@ def render_recurrence(schedule: str) -> str:
         # HONESTY (REMINDER-FIX) — a one-shot must never be echoed as "forever";
         # it fires once and the job self-deletes (goal_execution run_once).
         return f"once, in ~{_format_delay(delay)}"
+
+    at_hhmm = parse_at(text)
+    if at_hhmm is not None:
+        # HONESTY — a one-shot must never be echoed as recurring.
+        return f"once, at {at_hhmm[0]:02d}:{at_hhmm[1]:02d}"
 
     if lowered.startswith("every "):
         rest = lowered[len("every ") :].strip()
@@ -131,6 +136,10 @@ def is_valid_schedule(schedule: str) -> bool:
         # Single source of truth with ``compute_next_run`` — a one-shot
         # relative delay (REMINDER-FIX), never recurring.
         return parse_in(text) is not None
+    if lowered.startswith("at "):
+        # Single source of truth with ``compute_next_run`` — a one-shot
+        # absolute local time (REMINDER-FIX-2), never recurring.
+        return parse_at(text) is not None
     if lowered.startswith("daily@"):
         body = text[len("daily@") :]
         parts = body.split(":")

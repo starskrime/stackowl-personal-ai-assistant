@@ -31,7 +31,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.pipeline.services import get_services
 from stackowl.scheduler.scheduler import JobScheduler
-from stackowl.scheduler.scheduler_helpers import parse_in
+from stackowl.scheduler.scheduler_helpers import parse_at, parse_in
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.scheduling.cron_helpers import (
     CREATED_BY_TAG,
@@ -88,19 +88,25 @@ class CronjobTool(Tool):
             "SCHEDULE a natural-language goal to run automatically later — once or "
             "on a recurrence. Actions: create (needs 'prompt' + 'schedule') — use "
             "this for reminders too: a ONE-TIME reminder like 'remind me in 5 "
-            "minutes to go out' is schedule='in 5m' (fires once, then stops); "
+            "minutes to go out' is schedule='in 5m' (fires once, then stops); a "
+            "reminder for a SPECIFIC clock time like 'remind me at 5pm today' is "
+            "schedule='at 17:00' (fires once at the next occurrence of that local "
+            "time, then stops — do NOT use a cron expression for a one-time "
+            "reminder, it will recur forever); "
             "watch (needs 'schedule' + either 'watch_url' to poll a web page or "
             "'watch_path' to watch a filesystem path — ping you when it changes), "
             "list (your scheduled jobs), update (by 'job_id'; re-checks the "
             "prompt), pause, resume, remove, run (execute one job now) — the last "
             "four take 'job_id'. "
-            "'schedule' accepts 'in 5m'/'in 2h' (ONE-TIME, fires once), 5-field cron "
-            "('0 9 * * *'), 'every 30m'/'every 2h', or 'daily@09:00' (all three "
-            "recurring). A flagged prompt (injection/exfil) is BLOCKED with a "
-            "reason; relay it and do not retry verbatim. LANE: durable background "
-            "work — a one-time delayed reminder OR recurring work on a clock. "
-            "ANTI-LANE: do NOT use this to wait for a user reply mid-turn (use "
-            "clarify) or to run something synchronously right now (just do it)."
+            "'schedule' accepts 'in 5m'/'in 2h' (ONE-TIME, fires once, relative "
+            "delay), 'at 17:00' (ONE-TIME, fires once, next occurrence of that "
+            "local clock time), 5-field cron ('0 9 * * *'), 'every 30m'/'every "
+            "2h', or 'daily@09:00' (all three recurring). A flagged prompt "
+            "(injection/exfil) is BLOCKED with a reason; relay it and do not "
+            "retry verbatim. LANE: durable background work — a one-time delayed "
+            "reminder OR recurring work on a clock. ANTI-LANE: do NOT use this "
+            "to wait for a user reply mid-turn (use clarify) or to run "
+            "something synchronously right now (just do it)."
         )
 
     @property
@@ -113,9 +119,11 @@ class CronjobTool(Tool):
                 "schedule": {
                     "type": "string",
                     "description": (
-                        "'in 5m'/'in 2h' for a ONE-TIME reminder (fires once), or "
-                        "recurring: cron '0 9 * * *', 'every 30m'/'every 2h', "
-                        "'daily@09:00'."
+                        "'in 5m'/'in 2h' for a ONE-TIME relative reminder (fires "
+                        "once), 'at 17:00' for a ONE-TIME reminder at a specific "
+                        "clock time (fires once, next occurrence — NEVER use a "
+                        "cron expression for a one-time reminder), or recurring: "
+                        "cron '0 9 * * *', 'every 30m'/'every 2h', 'daily@09:00'."
                     ),
                 },
                 "job_id": {
@@ -293,8 +301,9 @@ class CronjobTool(Tool):
 
         if not is_valid_schedule(schedule):
             return self._err(
-                f"unparseable schedule {schedule!r} — use 'in Nm'/'in Nh' (once), "
-                "5-field cron, 'every Nm'/'every Nh', or 'daily@HH:MM'",
+                f"unparseable schedule {schedule!r} — use 'in Nm'/'in Nh' (once, "
+                "relative), 'at HH:MM' (once, next occurrence of that local "
+                "time), 5-field cron, 'every Nm'/'every Nh', or 'daily@HH:MM'",
                 t0,
             )
 
@@ -318,11 +327,12 @@ class CronjobTool(Tool):
         target_channels, target_addresses = self._resolve_durable_target(channel)
         unreachable = not target_channels
 
-        # REMINDER-FIX — a one-shot 'in <n><unit>' schedule arms the existing
-        # goal_execution run_once path: fire exactly once, deliver via the same
-        # proactive seam as any other cron goal, then self-delete. Reuses the
-        # engine's own primitive; no new tool/handler.
-        one_shot = parse_in(schedule) is not None
+        # REMINDER-FIX / REMINDER-FIX-2 — a one-shot 'in <n><unit>' OR 'at
+        # HH:MM' schedule arms the existing goal_execution run_once path: fire
+        # exactly once, deliver via the same proactive seam as any other cron
+        # goal, then self-delete. Reuses the engine's own primitive; no new
+        # tool/handler.
+        one_shot = parse_in(schedule) is not None or parse_at(schedule) is not None
         job = await scheduler.create_job(
             handler_name=_HANDLER,
             schedule=schedule,
@@ -400,8 +410,9 @@ class CronjobTool(Tool):
 
         if not is_valid_schedule(schedule):
             return self._err(
-                f"unparseable schedule {schedule!r} — use 'in Nm'/'in Nh' (once), "
-                "5-field cron, 'every Nm'/'every Nh', or 'daily@HH:MM'",
+                f"unparseable schedule {schedule!r} — use 'in Nm'/'in Nh' (once, "
+                "relative), 'at HH:MM' (once, next occurrence of that local "
+                "time), 5-field cron, 'every Nm'/'every Nh', or 'daily@HH:MM'",
                 t0,
             )
 

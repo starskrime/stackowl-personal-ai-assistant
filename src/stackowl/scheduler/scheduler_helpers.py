@@ -70,6 +70,32 @@ def parse_in(schedule: str) -> timedelta | None:
     return timedelta(seconds=count * _EVERY_UNIT_SECONDS[unit])
 
 
+# One-shot absolute-local-clock-time schedule DSL token: ``at HH:MM``. Unlike
+# ``daily@HH:MM`` (recurring), this fires ONCE at the next occurrence of that
+# local wall-clock time (today if still ahead, else tomorrow), then the job
+# self-deletes — mirrors ``in <n><unit>`` but for an absolute time instead of
+# a relative delay. An LLM asked to schedule "remind me at 5pm today" had no
+# correct token before this and fell back to misusing a recurring 5-field
+# cron (REMINDER-FIX-2: the resulting job never stopped recurring).
+_AT_RE = re.compile(r"^at\s+(\d{1,2}):(\d{2})$", re.IGNORECASE)
+
+
+def parse_at(schedule: str) -> tuple[int, int] | None:
+    """Parse an ``at HH:MM`` one-shot absolute-local-time token.
+
+    Returns ``(hour, minute)`` when ``schedule`` is a valid ``at HH:MM`` token
+    with in-range values, ``None`` otherwise (not an error) — mirrors
+    :func:`parse_in`/:func:`parse_every`.
+    """
+    match = _AT_RE.match(schedule.strip())
+    if match is None:
+        return None
+    hour, minute = int(match.group(1)), int(match.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return (hour, minute)
+
+
 _INSERT_JOB_SQL = (
     "INSERT INTO jobs "
     "(job_id, handler_name, schedule, idempotency_key, last_run_at, next_run_at, "
@@ -114,17 +140,44 @@ async def write_audit(
     )
 
 
+def _next_local_hhmm(
+    hour: int, minute: int, *, tz: str, now: datetime | None
+) -> str:
+    """Return the next ISO-8601 UTC instant at local ``HH:MM`` in ``tz``.
+
+    Shared by the ``daily@`` (recurring) and ``at`` (one-shot) schedule
+    branches of :func:`compute_next_run` — both need the identical
+    today-if-future-else-tomorrow local-time computation; only the caller's
+    ``run_once`` flag (set in ``cronjob.py``) decides whether the job recurs.
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except Exception as exc:  # B5 — fail open to UTC, never silent
+        log.scheduler.warning(
+            "[scheduler] compute_next_run: unknown tz — defaulting to UTC",
+            exc_info=exc,
+            extra={"_fields": {"tz": tz}},
+        )
+        zone = ZoneInfo("UTC")
+    local_now = (now or datetime.now(UTC)).astimezone(zone)
+    candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= local_now:
+        candidate += timedelta(days=1)
+    return candidate.astimezone(UTC).isoformat()
+
+
 def compute_next_run(
     schedule: str, *, tz: str = "UTC", now: datetime | None = None
 ) -> str:
     """Compute the next ISO-8601 UTC run time from a schedule expression.
 
-    For a ``daily@HH:MM`` schedule the candidate is built as a LOCAL wall-clock
-    time in ``tz`` (the user-facing IANA timezone, ``settings.system.timezone``)
-    and then stored in UTC — so "8am" stays 8am across DST transitions and the
-    scheduler shares the SAME tz the quiet-hours clock uses (F108). ``tz`` defaults
-    to ``"UTC"`` for back-compat with non-daily callers; a bad tz fails open to UTC
-    (logged), matching ``in_quiet_hours``. ``now`` is injectable for tests.
+    For ``daily@HH:MM`` (recurring) and ``at HH:MM`` (one-shot) the candidate
+    is built as a LOCAL wall-clock time in ``tz`` (the user-facing IANA
+    timezone, ``settings.system.timezone``) and then stored in UTC — so "8am"
+    stays 8am across DST transitions and the scheduler shares the SAME tz the
+    quiet-hours clock uses (F108). ``tz`` defaults to ``"UTC"`` for
+    back-compat with non-daily callers; a bad tz fails open to UTC (logged),
+    matching ``in_quiet_hours``. ``now`` is injectable for tests.
     """
     log.scheduler.debug(
         "[scheduler] compute_next_run: entry",
@@ -134,26 +187,11 @@ def compute_next_run(
         parts = schedule[len("daily@") :].split(":")
         hour = int(parts[0])
         minute = int(parts[1]) if len(parts) > 1 else 0
-        try:
-            zone = ZoneInfo(tz)
-        except Exception as exc:  # B5 — fail open to UTC, never silent
-            log.scheduler.warning(
-                "[scheduler] compute_next_run: unknown tz — defaulting to UTC",
-                exc_info=exc,
-                extra={"_fields": {"tz": tz}},
-            )
-            zone = ZoneInfo("UTC")
-        # Anchor in the configured tz so the wall-clock HH:MM is interpreted
-        # LOCALLY. A non-existent (spring-forward gap) or ambiguous (fall-back
-        # fold) local time is resolved deterministically by ZoneInfo/PEP-495 when
-        # the aware datetime is normalised to UTC — never a silently-wrong instant.
-        local_now = (now or datetime.now(UTC)).astimezone(zone)
-        candidate = local_now.replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
-        if candidate <= local_now:
-            candidate += timedelta(days=1)
-        return candidate.astimezone(UTC).isoformat()
+        return _next_local_hhmm(hour, minute, tz=tz, now=now)
+    at_hhmm = parse_at(schedule)
+    if at_hhmm is not None:
+        hour, minute = at_hhmm
+        return _next_local_hhmm(hour, minute, tz=tz, now=now)
     interval = parse_every(schedule)
     if interval is not None:
         next_iso = (datetime.now(UTC) + interval).isoformat()
