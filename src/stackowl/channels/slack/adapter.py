@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -852,6 +852,88 @@ class SlackChannelAdapter(ChannelAdapter):
             status="ok",
             message=f"connected — last ping {age_s:.0f}s ago",
             latency_ms=latency,
+        )
+
+    # ------------------------------------------------------------------ ADR-6 HealableResource protocol
+
+    @property
+    def available(self) -> bool:
+        """True if the Slack Bolt app is live and a recent ping was received.
+
+        ponytail: bare cached-state read, deliberately unlogged — matches every
+        other HealableResource implementer in this codebase (EmbeddingRegistry,
+        LanceDBAdapter, KuzuAdapter, DbPool, DiscordChannelAdapter: all bare
+        `available` properties with no I/O). Called on every health-sweep tick
+        and from `ensure_available()` itself; logging a hot-path property read
+        would be noise, not signal. The state-changing path (`ensure_available()`)
+        carries full 4-point logging.
+        """
+        if self._app is None:
+            return False
+        if self._last_ping_at is None:
+            return False
+        now = datetime.now(tz=UTC)
+        age_s = (now - self._last_ping_at).total_seconds()
+        return age_s <= _HEALTH_STALE_AFTER_S
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Return the degradation message if unhealthy, else None."""
+        # 1. ENTRY — implicit (property access)
+        if self.available:
+            return None
+        # 2. DECISION — derive reason (app is None or ping is stale)
+        if self._app is None:
+            reason = "no Slack Bolt app — channel not started"
+        elif self._last_ping_at is None:
+            reason = "no Slack ping recorded yet"
+        else:
+            now = datetime.now(tz=UTC)
+            age_s = (now - self._last_ping_at).total_seconds()
+            reason = f"last ping {age_s:.0f}s ago (stale beyond {_HEALTH_STALE_AFTER_S:.0f}s)"
+        log.slack.debug(
+            "[slack] adapter.unavailable_reason: exit",
+            extra={"_fields": {"reason": reason}},
+        )
+        # 3. STEP — return the message
+        return reason
+
+    async def ensure_available(self) -> None:
+        """Recover a degraded adapter by restarting the socket-mode client.
+
+        Restarts the Slack connection when _last_ping_at exceeds
+        _HEALTH_STALE_AFTER_S (reusing the exact threshold health_check()
+        already uses to report degraded). The restart is triggered via
+        calling start() to re-establish the Bolt app and socket-mode
+        handler.
+        """
+        # 1. ENTRY
+        log.slack.debug(
+            "[slack] adapter.ensure_available: entry",
+            extra={"_fields": {"available": self.available}},
+        )
+        # 2. DECISION — no-op if already healthy
+        if self.available:
+            log.slack.debug(
+                "[slack] adapter.ensure_available: already healthy — no-op"
+            )
+            return
+        # 3. STEP — call start() to reconnect
+        await self.start()
+        # 4. EXIT
+        log.slack.info(
+            "[slack] adapter.ensure_available: exit — socket-mode restart attempted"
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: the adapter's state is not cached downstream.
+
+        Every caller re-acquires the adapter via ChannelRegistry or dependency
+        injection, so there is no dead ref to clear on recycling. Matches the
+        pattern in EmbeddingRegistry, LanceDBAdapter, and DiscordChannelAdapter.
+        """
+        log.slack.debug(
+            "[slack] adapter.register_on_recycled: no-op (no downstream dependents)"
         )
 
     def register_with_registry(self, registry: ChannelRegistry | None = None) -> None:

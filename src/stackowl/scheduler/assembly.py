@@ -459,6 +459,49 @@ class SchedulerAssembly:
                     "no self-heal for discord",
                     exc_info=exc,
                 )
+        # ADR-6 Task 6 — Slack adapter self-heal (thin HealableResource wrapper).
+        # The adapter auto-registers itself with ChannelRegistry on start(); fetch it
+        # and wire it to the health loop if slack is configured. Gates on both
+        # slack being enabled AND the adapter being live (registered), so a
+        # missing/unconfigured adapter doesn't block the sweep.
+        if settings.slack_channel.bot_token:
+            from stackowl.channels.registry import ChannelRegistry
+
+            try:
+                # 1. ENTRY
+                log.scheduler.debug(
+                    "[scheduler] assembly: slack healer setup — entry",
+                    extra={"_fields": {"slack_configured": True}},
+                )
+                channel_registry = ChannelRegistry.instance()
+                slack_adapter = channel_registry.get("slack")
+                if slack_adapter is not None:
+                    # 2. DECISION — adapter is registered and ready
+                    # 3. STEP — add to healers and register contributor
+                    healers[slack_adapter.contributor_name] = slack_adapter
+                    health_aggregator.register(slack_adapter)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: slack healer wired",
+                        extra={
+                            "_fields": {
+                                "key": slack_adapter.contributor_name,
+                                "adapter": type(slack_adapter).__name__,
+                            }
+                        },
+                    )
+                else:
+                    # Adapter not yet started (will register itself later)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: slack adapter not yet registered — "
+                        "health detection via ChannelLivenessContributor only"
+                    )
+            except Exception as exc:
+                # 4. EXIT (error path) — log loudly but don't crash assembly
+                log.scheduler.warning(
+                    "[scheduler] assembly: slack healer setup failed — "
+                    "no self-heal for slack",
+                    exc_info=exc,
+                )
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
         # Adding a contributor changes the detect set, so gate it on the flag too —
         # OFF leaves the aggregator's contributor set unchanged (byte-identical).
