@@ -126,7 +126,22 @@ class TestEnsureAvailableGuardsDoubleHeal:
     async def test_ensure_available_guards_against_concurrent_heal(
         self, adapter: TelegramChannelAdapter
     ) -> None:
-        """When ensure_available() is called concurrently on unhealthy adapter, it fires only once."""
+        """Two concurrent ensure_available() calls on an unhealthy adapter must
+        invoke _self_heal_polling() AT MOST ONCE — regression test for the
+        _recovery_attempted TOCTOU race (Task 4 review, Critical finding).
+
+        Before the fix, ensure_available() re-entry was guarded only by the
+        `available` property (derived from `_last_update_at`), which a poll-loop
+        restart does not itself update. Two concurrent callers (e.g. this
+        adapter's own `_liveness_heartbeat` tick racing a health-sweep-triggered
+        `ensure_available()`) would both observe unhealthy and both call
+        `_self_heal_polling()` -> `RecoveryActuator().recover(attempt=self._restart_polling, ...)`,
+        which does a non-atomic stop/start on the polling updater and can double
+        -stop/double-start it (Telegram 409 "Conflict"). This test fails (call_count
+        == 2) against that old guard and passes (call_count == 1) once
+        ensure_available() shares the same atomic `_recovery_attempted`
+        check-and-set that `_beat_once()` already uses.
+        """
         # Start unhealthy
         assert adapter._last_update_at is None
         call_count = 0
@@ -134,17 +149,19 @@ class TestEnsureAvailableGuardsDoubleHeal:
         async def slow_heal() -> None:
             nonlocal call_count
             call_count += 1
-            await asyncio.sleep(0.1)  # Simulate slow recovery
+            await asyncio.sleep(0.1)  # Simulate slow recovery — forces interleaving
 
         with patch.object(adapter, "_self_heal_polling", side_effect=slow_heal):
-            # Call ensure_available concurrently
+            # Call ensure_available concurrently — this is the exact double-heal
+            # race the guard must prevent.
             await asyncio.gather(
                 adapter.ensure_available(),
                 adapter.ensure_available(),
             )
-            # Should only call _self_heal_polling once (implementation guards via available property)
-            # The second concurrent call sees available=False and calls, but that's okay — the
-            # guard is that _beat_once checks updater.running and no-ops if healthy midway
+            assert call_count == 1, (
+                "_self_heal_polling() must fire at most once across concurrent "
+                f"ensure_available() calls (guarded by _recovery_attempted); got {call_count}"
+            )
 
 
 class TestRegisterOnRecycledCallback:

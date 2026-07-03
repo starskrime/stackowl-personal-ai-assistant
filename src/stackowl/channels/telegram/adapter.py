@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -23,8 +23,6 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
-
-from collections.abc import Callable
 
 from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import TelegramMessageSplitter
@@ -1112,17 +1110,20 @@ class TelegramChannelAdapter(ChannelAdapter):
 
     @property
     def available(self) -> bool:
-        """True if the update stream is currently healthy (ok status)."""
-        # 1. ENTRY — implicit (property access)
-        # 2. DECISION — check current health status (reuse _last_update_at signal)
+        """True if the update stream is currently healthy (ok status).
+
+        ponytail: bare cached-state read, deliberately unlogged — matches every
+        other HealableResource implementer in this codebase (EmbeddingRegistry,
+        LanceDBAdapter, KuzuAdapter, DbPool: all bare `available` properties with
+        no I/O). Called on every health-sweep tick and from `ensure_available()`
+        itself; logging a hot-path property read would be noise, not signal. The
+        state-changing path (`ensure_available()`) carries full 4-point logging.
+        """
         now = time.monotonic()
-        is_healthy = (
+        return (
             self._last_update_at is not None
             and now - self._last_update_at <= _UPDATE_DEGRADED_AFTER_S
         )
-        # 3. STEP — implicit (no I/O)
-        # 4. EXIT — implicit (property return)
-        return is_healthy
 
     @property
     def unavailable_reason(self) -> str | None:
@@ -1149,26 +1150,44 @@ class TelegramChannelAdapter(ChannelAdapter):
     async def ensure_available(self) -> None:
         """Recover a degraded adapter by calling _self_heal_polling() once.
 
-        Checks current health state first to avoid a double-heal race with the
-        adapter's own _liveness_heartbeat timer, which calls _beat_once() every
-        30s. If already available, returns immediately (no-op). If unhealthy,
-        delegates recovery to the existing _self_heal_polling() method.
+        Guards re-entry with the SAME ``_recovery_attempted`` flag ``_beat_once()``
+        uses (the adapter's own ``_liveness_heartbeat`` timer ticks every
+        HEARTBEAT_INTERVAL_S and can race a health-sweep-triggered call to this
+        method). The check-and-set of ``_recovery_attempted`` below has no
+        ``await`` between the read and the write, so it is atomic across
+        concurrent coroutines on this single event loop — only one caller can
+        ever pass it per outage episode, exactly like ``_beat_once()``.
+
+        A no-op-because-healthy `available` check alone is NOT sufficient here:
+        `available` is derived from `_last_update_at` (a new inbound Telegram
+        message), which a poll-loop restart does not itself update — so a naive
+        "healthy?" guard would stay False and let every concurrent/repeated call
+        re-invoke `_self_heal_polling()`, worsening a live outage via overlapping
+        stop/start races on the polling updater (TOCTOU in `_restart_polling()`).
+        `_recovery_attempted` is reset back to False by `_beat_once()` once the
+        updater is observed running again, so this does not "never heal again
+        after first attempt" — a fresh episode re-arms the guard.
         """
         # 1. ENTRY
         log.telegram.debug(
             "[telegram] adapter.ensure_available: entry",
             extra={"_fields": {"available": self.available}},
         )
-        # 2. DECISION — check current health; no-op if already healthy
+        # 2. DECISION — no-op if already healthy
         if self.available:
             log.telegram.debug(
                 "[telegram] adapter.ensure_available: already healthy — no-op"
             )
             return
-        # 3. STEP — trigger the existing recovery mechanism once
-        log.telegram.debug(
-            "[telegram] adapter.ensure_available: triggering self-heal"
-        )
+        # 3. STEP — atomic check-and-set on the SAME flag _beat_once() uses, so a
+        # concurrent heartbeat tick and this call cannot both trigger recovery.
+        if self._recovery_attempted:
+            log.telegram.debug(
+                "[telegram] adapter.ensure_available: recovery already attempted "
+                "this outage episode — no-op (guarded by _recovery_attempted)"
+            )
+            return
+        self._recovery_attempted = True  # bound BEFORE attempting (no re-entry)
         await self._self_heal_polling()
         # 4. EXIT
         log.telegram.info(
