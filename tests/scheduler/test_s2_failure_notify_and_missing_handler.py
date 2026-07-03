@@ -187,7 +187,13 @@ async def test_terminal_one_shot_failure_routes_notification(tmp_db: DbPool) -> 
     assert rows[0]["status"] == "failed"
     assert deliverer.calls, "terminal failure must route an operator notification"
     assert deliverer.calls[-1]["job_id"] == job.job_id
-    assert deliverer.calls[-1]["urgency"] == "high"
+    # Task 2 fix: "high" was never a valid Notification.urgency literal
+    # (critical/normal/low only) — every real call crashed inside
+    # Notification.__init__ post-ledger-claim, silently stranding the alert.
+    # This fake recorder doesn't validate against the real pydantic model, so
+    # it never caught that; "critical" is the corrected value (see
+    # scheduler.py:_notify_failure).
+    assert deliverer.calls[-1]["urgency"] == "critical"
 
 
 async def test_recurring_rearm_routes_notification(tmp_db: DbPool) -> None:

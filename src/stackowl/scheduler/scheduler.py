@@ -552,7 +552,15 @@ class JobScheduler(SupervisedTask):
                 job,
                 message=message,
                 category="job_failed",
-                urgency="high",
+                # "high" is not a valid Notification.urgency literal (critical/
+                # normal/low only) — it raised inside Notification.__init__ AFTER
+                # the ledger had already claimed the occurrence's dispatch slot,
+                # permanently stranding every failure alert at "dispatched" and
+                # silently swallowing the exception (B5 catch below). "critical"
+                # matches the router's "always delivered, bypasses quiet hours"
+                # semantics an outage alert needs (same tier goal_execution uses
+                # for a user-queued run_once delivery).
+                urgency="critical",
             )
             log.heartbeat.info(
                 "[scheduler] %s: failure alert routed",
