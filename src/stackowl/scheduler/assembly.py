@@ -357,7 +357,7 @@ class SchedulerAssembly:
         # ONLY when ON — flag OFF stays byte-identical regardless of what's wired.
         healers: dict[str, HealableResource] = {
             "db": db,
-            "embeddings": memory_components.embedding_registry,
+            "embedding_registry": memory_components.embedding_registry,
             "lancedb": memory_components.lancedb,
         }
         for provider in provider_registry.all():

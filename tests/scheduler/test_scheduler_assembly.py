@@ -144,13 +144,15 @@ async def test_health_sweep_wires_embedding_registry_healer_and_contributor(
     tmp_db: DbPool,
 ) -> None:
     # Task 1 (ADR-6 self-heal) — the sweep must hold the live EmbeddingRegistry
-    # as a HealableResource (keyed "embeddings") AND detect it via its own
-    # health_check, registered unconditionally like DbContributor (no flag
-    # gate — the registry needs no live-runtime ref beyond what
-    # MemoryAssembly.build already constructed).
+    # as a HealableResource, keyed by its own contributor_name
+    # ("embedding_registry") so health_sweep's self._healers.get(s.name)
+    # lookup actually finds it, AND detect it via its own health_check,
+    # registered unconditionally like DbContributor (no flag gate — the
+    # registry needs no live-runtime ref beyond what MemoryAssembly.build
+    # already constructed).
     components = await _build(tmp_db)
     handler = components.health_sweep_handler
-    embeddings_healer = handler._healers["embeddings"]
+    embeddings_healer = handler._healers["embedding_registry"]
     # sanity: it's a real EmbeddingRegistry-shaped HealableResource, not a stub
     assert hasattr(embeddings_healer, "ensure_available")
     names = {c.contributor_name for c in handler._aggregator._contributors}
