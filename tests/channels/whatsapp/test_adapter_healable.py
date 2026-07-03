@@ -229,9 +229,11 @@ class TestEnsureAvailableRealBrowserRestart:
         old_driver = _stub_driver(adapter)
         poll = asyncio.ensure_future(asyncio.sleep(60))
         adapter._poll_task = poll
+        adapter._last_poll_ok_at = time.monotonic()  # poll-liveness fresh
         try:
             await adapter.handle_message("15551234567@s.whatsapp.net", "hi")
             assert adapter.available is True
+            assert adapter._poll_liveness_stale() is False
 
             await adapter.ensure_available()
 
@@ -241,29 +243,30 @@ class TestEnsureAvailableRealBrowserRestart:
         finally:
             poll.cancel()
 
-    async def test_stale_heartbeat_with_alive_poll_task_still_rebuilds(self) -> None:
-        """Regression test for the Critical review finding on 0aed6aa8.
+    async def test_stale_poll_liveness_with_alive_poll_task_still_rebuilds(self) -> None:
+        """Regression test for the Critical review finding on 0aed6aa8 —
+        rewritten in round 3 to drive the rebuild off POLL-LIVENESS
+        (``_last_poll_ok_at``), not ``self.available``.
 
         This is the realistic dead-browser failure mode Task 7 exists to fix:
         ``WhatsAppBrowserDriver.poll_messages()`` swallows its own exceptions
         and returns ``[]`` forever on a crashed/disconnected page, so the
         background poll TASK never dies (``done()`` never becomes True) even
-        though the browser itself is dead. The only signal that catches this
-        is the stale heartbeat (``_health_signal()`` / ``available``) — a
-        gate keyed on "is the poll task alive" instead of "is the resource
-        available" can never rebuild in this state. Confirmed RED against the
-        pre-fix `poll_task_dead` gate (asserts failed: no-rebuild), GREEN
-        after gating on ``not self.available`` (matching
-        ``CamoufoxRuntime.ensure_available``'s precedent).
+        though the browser itself is dead. Simulated here by setting
+        ``last_poll_ok = False`` on the stub driver and staling
+        ``_last_poll_ok_at`` directly (standing in for many consecutive real
+        poll-tick failures) — a gate keyed on "is the poll task alive" can
+        never rebuild in this state, only poll-liveness catches it.
         """
         adapter = _adapter()
         old_driver = _stub_driver(adapter)
+        old_driver.last_poll_ok = False  # every real poll tick has been failing
         poll = asyncio.ensure_future(asyncio.sleep(60))
         adapter._poll_task = poll
-        adapter._last_poll_at = time.monotonic() - 120.0  # stale heartbeat
+        adapter._last_poll_ok_at = time.monotonic() - 120.0  # stale poll-liveness
         try:
             assert not poll.done()  # the poll task is ALIVE — the crux of the bug
-            assert adapter.available is False  # but the resource is unhealthy
+            assert adapter._poll_liveness_stale() is True  # but the resource is unhealthy
 
             await adapter.ensure_available()
 
@@ -276,6 +279,65 @@ class TestEnsureAvailableRealBrowserRestart:
         finally:
             if adapter._poll_task is not None and not adapter._poll_task.done():
                 adapter._poll_task.cancel()
+
+    async def test_idle_chat_with_fresh_poll_liveness_does_not_rebuild(self) -> None:
+        """THE regression test for the restart-storm bug this round fixes.
+
+        A chat idle >60s is completely normal on a personal-use WhatsApp
+        channel: ``_last_poll_at`` goes stale and ``available`` correctly
+        flips to False (message-inactivity signal, informational only) — but
+        the poll loop itself keeps ticking successfully (browser responds,
+        just finds zero messages), so ``_last_poll_ok_at`` stays fresh. This
+        MUST NOT trigger a rebuild. Confirmed RED against the pre-round-3 gate
+        (``not self.available``, and ``_last_poll_ok_at`` didn't exist at
+        all): that code tore down a perfectly healthy browser here. GREEN
+        after gating on ``_poll_liveness_stale()``.
+        """
+        adapter = _adapter()
+        old_driver = _stub_driver(adapter)
+        poll = asyncio.ensure_future(asyncio.sleep(60))
+        adapter._poll_task = poll
+        adapter._last_poll_at = time.monotonic() - 120.0  # idle chat >60s
+        adapter._last_poll_ok_at = time.monotonic()  # poll ticks keep succeeding
+        try:
+            assert adapter.available is False  # message-inactivity signal (expected, harmless)
+            assert adapter._poll_liveness_stale() is False  # browser is genuinely healthy
+
+            await adapter.ensure_available()
+
+            # MUST NOT rebuild: same driver instance, same poll task.
+            assert adapter._browser is old_driver
+            assert adapter._poll_task is poll
+        finally:
+            if adapter._poll_task is not None and not adapter._poll_task.done():
+                adapter._poll_task.cancel()
+
+    async def test_poll_liveness_stale_true_when_never_polled(self) -> None:
+        """A freshly-constructed adapter (before start()) reports poll-liveness
+        stale — there is no successful poll tick yet to prove otherwise.
+        """
+        adapter = _adapter()
+        assert adapter._last_poll_ok_at is None
+        assert adapter._poll_liveness_stale() is True
+
+    async def test_start_sets_fresh_poll_liveness_avoiding_boot_race(self) -> None:
+        """A just-started adapter must not immediately report poll-liveness
+        stale, before the first poll tick has had a chance to run (boot-race).
+        """
+        adapter = _adapter()
+        from stackowl.channels.registry import ChannelRegistry
+
+        ChannelRegistry.instance().reset()
+        try:
+            await adapter.start()
+            assert adapter._last_poll_ok_at is not None
+            assert adapter._poll_liveness_stale() is False
+        finally:
+            if adapter._poll_task is not None and not adapter._poll_task.done():
+                adapter._poll_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await adapter._poll_task
+            ChannelRegistry.instance().reset()
 
 
 class TestRegisterOnRecycled:

@@ -80,6 +80,13 @@ class WhatsAppBrowserDriver:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        # Poll-liveness flag (Task 7 round 3) — set by poll_messages() on EVERY
+        # call: True when the browser genuinely responded to the JS eval (even
+        # with zero messages), False when the poll itself failed (no page / JS
+        # eval raised). Lets the adapter distinguish "quiet chat, healthy
+        # browser" from "browser actually died" without changing this method's
+        # existing `list[dict]` return contract.
+        self.last_poll_ok: bool = False
         log.whatsapp.debug(
             "[whatsapp] browser_driver.init: ready",
             extra={"_fields": {"headless": settings.headless}},
@@ -152,6 +159,7 @@ class WhatsAppBrowserDriver:
         log.whatsapp.debug("[whatsapp] browser_driver.poll_messages: entry")
         if self._page is None:
             log.whatsapp.warning("[whatsapp] browser_driver.poll_messages: no page — returning empty")
+            self.last_poll_ok = False
             return []
 
         log.whatsapp.debug("[whatsapp] browser_driver.poll_messages: decision js_eval")
@@ -166,8 +174,12 @@ class WhatsAppBrowserDriver:
                 "[whatsapp] browser_driver.poll_messages: js_eval failed",
                 exc_info=exc,
             )
+            self.last_poll_ok = False
             return []
 
+        # The browser genuinely responded — this is proof of liveness regardless
+        # of whether any messages were found (a quiet chat is healthy too).
+        self.last_poll_ok = True
         log.whatsapp.debug(
             "[whatsapp] browser_driver.poll_messages: exit",
             extra={"_fields": {"message_count": len(raw)}},

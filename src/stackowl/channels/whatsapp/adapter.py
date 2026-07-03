@@ -49,6 +49,14 @@ from stackowl.pipeline.streaming import ResponseChunk
 
 _POLL_INTERVAL_S = 2.0
 _HEARTBEAT_DEGRADED_AFTER_S = 60.0
+# Task 7 round 3 — SEPARATE from _HEARTBEAT_DEGRADED_AFTER_S above, which
+# tracks message-arrival inactivity (informational, feeds health_check()/
+# available). This one tracks poll-TICK liveness (did the browser respond to
+# the last N poll attempts) and is what ensure_available() rebuilds on. A poll
+# tick runs every _POLL_INTERVAL_S (2s); 45s is ~22 consecutive missed ticks —
+# comfortably past normal event-loop/JS-eval jitter, but well short of letting
+# a genuinely dead browser sit unrecovered for a full health-sweep interval.
+_POLL_UNHEALTHY_AFTER_S = 45.0
 _DEFAULT_SESSION_SUBDIR = "whatsapp"
 
 # Sentinel distinguishing "no target kwarg passed" (proactive/best-effort →
@@ -78,6 +86,11 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         self._splitter = WhatsAppMessageSplitter()
         self._poll_task: asyncio.Task[None] | None = None
         self._last_poll_at: float | None = None
+        # Poll-liveness heartbeat (Task 7 round 3) — updated on every poll tick
+        # where the browser actually responded (WhatsAppBrowserDriver.last_poll_ok),
+        # REGARDLESS of whether any messages were found. Independent of
+        # _last_poll_at (message-arrival-only, unchanged). See _poll_liveness_stale().
+        self._last_poll_ok_at: float | None = None
         # ADR-6 — guards ensure_available() against a double browser-rebuild
         # race (e.g. two overlapping health-sweep ticks), mirroring
         # CamoufoxRuntime's lock-guarded recycle.
@@ -130,6 +143,11 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         TestModeGuard.assert_not_test_mode("whatsapp.start")
 
         await self._browser.start()
+        # A freshly-started driver counts as "just proven ok" — set this here
+        # (not only inside _poll_loop()) so ensure_available() can't see a stale
+        # poll-liveness heartbeat and tear down a driver before the first poll
+        # tick has even run (boot-race).
+        self._last_poll_ok_at = time.monotonic()
         log.whatsapp.debug("[whatsapp] adapter.start: step browser_started")
 
         self._poll_task = asyncio.create_task(self._poll_loop())
@@ -147,6 +165,8 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         while True:
             try:
                 messages = await self._browser.poll_messages()
+                if self._browser.last_poll_ok:
+                    self._last_poll_ok_at = time.monotonic()
                 for msg_dict in messages:
                     jid = str(msg_dict.get("jid") or "")
                     text = str(msg_dict.get("text") or "")
@@ -420,6 +440,20 @@ class WhatsAppChannelAdapter(ChannelAdapter):
             return "degraded", "poll heartbeat stale", latency_ms
         return "ok", None, latency_ms
 
+    def _poll_liveness_stale(self) -> bool:
+        """True when the poll loop hasn't had a single successful (browser-
+        responded) poll tick in ``_POLL_UNHEALTHY_AFTER_S`` seconds.
+
+        DELIBERATELY separate from ``_health_signal()``/``available`` (which
+        track message-arrival inactivity, an unrelated and much noisier
+        signal on an idle personal-use chat). This is what
+        :meth:`ensure_available` acts on — see that method's docstring for
+        why the two must not be conflated.
+        """
+        if self._last_poll_ok_at is None:
+            return True
+        return (time.monotonic() - self._last_poll_ok_at) > _POLL_UNHEALTHY_AFTER_S
+
     async def health_check(self) -> HealthStatus:
         """Report ok/degraded based on transport LIVENESS + the last poll.
 
@@ -491,36 +525,61 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         falsely reported healthy) — this rebuilds the actual browser, not just the
         wrapper task around it.
 
-        No-op when already healthy (``self.available`` — the exact signal
-        ``health_check()`` also reports, so the two protocols can never
-        disagree about when to act). Rebuilds whenever unhealthy, matching
-        :meth:`CamoufoxRuntime.ensure_available`'s precedent: that method
-        rebuilds on ``not self.available`` alone, with no separate "is some
-        background task literally alive" gate, and the cadence risk of an
-        over-eager rebuild is bounded the same way here as there — by the
-        health-sweep job's own schedule interval, not by a liveness gate
-        reinvented in this method.
+        Rebuild gate — POLL-LIVENESS, NOT ``self.available`` (Task 7 round 3
+        fix): the rebuild fires when the poll loop hasn't had a single
+        successful (browser-responded) poll tick in
+        ``_POLL_UNHEALTHY_AFTER_S`` seconds (:meth:`_poll_liveness_stale`).
+        This is INDEPENDENT of message inactivity — a quiet chat with a
+        healthy browser keeps passing successful, empty-result poll ticks and
+        will NEVER trigger a rebuild; a genuinely dead browser fails every
+        poll tick (``WhatsAppBrowserDriver.poll_messages`` sets
+        ``last_poll_ok = False`` on both its failure branches) and WILL
+        trigger a rebuild within ``_POLL_UNHEALTHY_AFTER_S`` seconds.
 
-        This matters because :meth:`WhatsAppBrowserDriver.poll_messages`
-        deliberately swallows its own exceptions and returns ``[]`` on a
-        crashed/disconnected page (see its docstring) — the background poll
-        TASK therefore never dies from a dead browser; only the heartbeat
-        (``_last_poll_at``) goes stale. Gating the rebuild on "is the poll
-        task alive" instead of "is the resource available" would make a
-        genuinely dead browser session unrecoverable: the poll task runs
-        forever, `available` correctly flips to False, but nothing would ever
-        rebuild it.
+        A prior round of this fix gated on ``not self.available`` instead
+        (mirroring ``CamoufoxRuntime.ensure_available``'s precedent). That
+        was itself a regression: ``self.available`` is driven by
+        ``_last_poll_at``, which ``handle_message()`` only updates on a REAL
+        inbound message — never on a poll tick that completes cleanly and
+        finds nothing. Any chat idle past ``_HEARTBEAT_DEGRADED_AFTER_S``
+        (60s — completely normal for a personal-use channel) made
+        ``available`` go False, so every health-sweep tick tore down and
+        relaunched a perfectly healthy Chromium/WhatsApp-Web session — a
+        self-inflicted restart storm. Poll-liveness fixes this because it is
+        proven by the browser RESPONDING to a poll, not by a message
+        arriving.
+
+        DELIBERATE divergence from ``health_check()``/``available`` (out of
+        scope to change here): those keep their pre-existing
+        message-inactivity meaning for INFORMATIONAL reporting — this is the
+        correct DETECT-can-be-broader-than-HEAL pattern, not a bug. Making
+        ``health_check()`` itself track poll-liveness would be a larger,
+        separate change to behavior other things may depend on.
+
+        This still matters because :meth:`WhatsAppBrowserDriver.poll_messages`
+        used to swallow its own exceptions with no way for the caller to tell
+        a real failure from a healthy empty poll — the background poll TASK
+        therefore never dies from a dead browser. ``last_poll_ok`` closes that
+        gap: a genuinely dead browser now drives ``_last_poll_ok_at`` stale
+        even though the poll task itself stays alive.
         """
+        poll_stale = self._poll_liveness_stale()
         log.whatsapp.debug(
             "[whatsapp] adapter.ensure_available: entry",
-            extra={"_fields": {"available": self.available, "reason": self.unavailable_reason}},
+            extra={
+                "_fields": {
+                    "poll_liveness_stale": poll_stale,
+                    "available": self.available,
+                    "reason": self.unavailable_reason,
+                }
+            },
         )
-        if self.available:
+        if not poll_stale:
             log.whatsapp.debug("[whatsapp] adapter.ensure_available: already healthy — no-op")
             return
 
         async with self._heal_lock:
-            if self.available:
+            if not self._poll_liveness_stale():
                 log.whatsapp.debug(
                     "[whatsapp] adapter.ensure_available: already healthy after lock — no-op (raced)"
                 )
