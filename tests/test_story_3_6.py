@@ -132,6 +132,78 @@ async def test_sentence_transformer_is_local() -> None:
     assert SentenceTransformerProvider().is_local is True
 
 
+async def test_sentence_transformer_selfheals_via_download_on_cache_miss(
+    monkeypatch: object,
+) -> None:
+    """Cache-miss + no operator override → ONE retry with network allowed.
+
+    This is the self-heal path: `stackowl models pull` downloads via the same
+    `SentenceTransformer(...)` call, so a missing cache should self-heal the
+    same way instead of degrading straight to the hash fallback.
+    """
+    import os
+    from unittest.mock import MagicMock
+
+    from stackowl.embeddings.sentence_transformer_provider import (
+        SentenceTransformerProvider,
+    )
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)  # type: ignore[attr-defined]
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)  # type: ignore[attr-defined]
+
+    calls: list[dict[str, str | None]] = []
+
+    def fake_ctor(*args: object, **kwargs: object) -> object:
+        calls.append(
+            {
+                "HF_HUB_OFFLINE": os.environ.get("HF_HUB_OFFLINE"),
+                "TRANSFORMERS_OFFLINE": os.environ.get("TRANSFORMERS_OFFLINE"),
+            }
+        )
+        if len(calls) == 1:
+            raise OSError("model not found in local cache")
+        mock_model = MagicMock()
+        mock_model.get_embedding_dimension.return_value = 384
+        return mock_model
+
+    with patch("sentence_transformers.SentenceTransformer", side_effect=fake_ctor):
+        provider = await SentenceTransformerProvider.create("fake-model")
+
+    assert len(calls) == 2, "expected exactly one retry after the cache-miss failure"
+    assert calls[0]["HF_HUB_OFFLINE"] == "1"  # first attempt: our offline default
+    assert calls[1]["HF_HUB_OFFLINE"] is None  # retry: network allowed
+    assert calls[1]["TRANSFORMERS_OFFLINE"] is None
+    assert provider.dimension == 384
+
+
+async def test_sentence_transformer_respects_operator_forced_offline(
+    monkeypatch: object,
+) -> None:
+    """Operator-set HF_HUB_OFFLINE=1 must NOT trigger the self-heal retry."""
+    import pytest
+
+    from stackowl.embeddings.sentence_transformer_provider import (
+        SentenceTransformerProvider,
+    )
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")  # type: ignore[attr-defined]
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)  # type: ignore[attr-defined]
+
+    calls: list[int] = []
+
+    def fake_ctor(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        raise OSError("model not found in local cache")
+
+    with (
+        patch("sentence_transformers.SentenceTransformer", side_effect=fake_ctor),
+        pytest.raises(OSError),
+    ):
+        await SentenceTransformerProvider.create("fake-model")
+
+    assert len(calls) == 1, "operator-forced offline mode must not trigger a network retry"
+
+
 def test_b8_boundary_passes() -> None:
     """B8 finds no forbidden imports in embeddings/."""
     script = Path(__file__).resolve().parent.parent / "scripts" / "boundaries" / "b8.py"

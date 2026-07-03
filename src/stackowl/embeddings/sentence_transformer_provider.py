@@ -4,9 +4,14 @@ Loads the requested sentence-transformers model from the local cache on a
 background thread (so process startup is not blocked). ``embed`` runs the
 encode call in the default executor to avoid blocking the event loop.
 
-This module deliberately does NOT import any HTTP client. sentence-transformers
-will use its bundled cache; if the model is missing, ``stackowl models pull``
-downloads it explicitly via the same library.
+Loading prefers the local cache (offline, quiet) but self-heals on a cache
+miss: it retries once with network allowed, downloading the model via the
+same ``SentenceTransformer(...)`` call ``stackowl models pull`` uses. Only a
+genuine failure (no network, bad model name) falls through to the caller,
+which is what makes ``EmbeddingRegistry`` degrade to the cruder hash
+fallback. An operator who explicitly sets ``HF_HUB_OFFLINE`` themselves is
+respected — no surprise network call. ``stackowl models pull`` remains
+available for manually pre-warming the cache ahead of time.
 """
 
 from __future__ import annotations
@@ -63,12 +68,18 @@ class SentenceTransformerProvider(EmbeddingProvider):
         return instance
 
     def _load_model(self) -> None:
-        """Load the sentence-transformers model (executed inside the thread pool)."""
-        # Keep loading local and quiet. The model is pre-cached (via
-        # `stackowl models pull`), so never reach out to the HF Hub at load
-        # time, and suppress the weight-download progress bar. setdefault so an
-        # explicit operator override still wins. Set before the import so the
-        # libraries read them as they initialise.
+        """Load the sentence-transformers model (executed inside the thread pool).
+
+        SELF-HEAL, not self-mask: a cache miss triggers ONE bounded retry with
+        network allowed (same download path as `stackowl models pull`) before
+        giving up — the model gets fetched, not permanently replaced by the
+        cruder hash fallback in EmbeddingRegistry. An operator who explicitly
+        set HF_HUB_OFFLINE themselves is respected — no surprise network call.
+        """
+        # setdefault so an explicit operator override still wins; recorded
+        # BEFORE setdefault so we know whether OUR default or the operator's
+        # own setting is in effect (only OUR default gets the retry).
+        operator_forced_offline = "HF_HUB_OFFLINE" in os.environ
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -83,35 +94,64 @@ class SentenceTransformerProvider(EmbeddingProvider):
             raise
 
         cache_dir = os.environ.get("STACKOWL_MODEL_CACHE_DIR")
-        try:
+
+        def _attempt() -> SentenceTransformer:
             # Pin CPU: this host's GPU driver is too old for the bundled torch
             # build, so sentence-transformers would probe CUDA, warn, then fall
             # back to CPU anyway. device="cpu" skips that probe. Scoped to this
             # model only — image generation keeps its own CUDA path.
-            self._model = SentenceTransformer(self._model_name, cache_folder=cache_dir, device="cpu")
-            assert self._model is not None
-            # get_sentence_embedding_dimension() was renamed to
-            # get_embedding_dimension(); prefer the new name, fall back for
-            # older library versions.
-            get_dim = getattr(self._model, "get_embedding_dimension", None)
-            raw_dim: Any = (
-                get_dim() if callable(get_dim) else self._model.get_sentence_embedding_dimension()
+            return SentenceTransformer(  # type: ignore[no-any-return]
+                self._model_name, cache_folder=cache_dir, device="cpu"
             )
-            if raw_dim is None:
-                raise RuntimeError(f"Model {self._model_name} reported no embedding dimension")
-            dim: int = int(raw_dim)
-            self._dim = dim
-            log.engine.info(
-                "[embeddings] SentenceTransformerProvider: model loaded",
-                extra={"_fields": {"model": self._model_name, "dim": dim, "cache_dir": cache_dir}},
-            )
+
+        try:
+            self._model = _attempt()
         except Exception as exc:
-            log.engine.error(
-                "[embeddings] SentenceTransformerProvider: model load failed",
-                exc_info=exc,
+            if operator_forced_offline:
+                log.engine.error(
+                    "[embeddings] SentenceTransformerProvider: model not cached and "
+                    "HF_HUB_OFFLINE was explicitly set by the operator — not downloading",
+                    exc_info=exc,
+                    extra={"_fields": {"model": self._model_name, "cache_dir": cache_dir}},
+                )
+                raise
+            log.engine.warning(
+                "[embeddings] SentenceTransformerProvider: model not cached — "
+                "self-heal retry with network allowed (same path as `stackowl models pull`)",
                 extra={"_fields": {"model": self._model_name, "cache_dir": cache_dir}},
             )
-            raise
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            try:
+                self._model = _attempt()
+            except Exception as download_exc:
+                log.engine.error(
+                    "[embeddings] SentenceTransformerProvider: self-heal download failed "
+                    "— genuinely no network, falling back to hash embeddings",
+                    exc_info=download_exc,
+                    extra={"_fields": {"model": self._model_name, "cache_dir": cache_dir}},
+                )
+                raise
+            finally:
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+        assert self._model is not None
+        # get_sentence_embedding_dimension() was renamed to
+        # get_embedding_dimension(); prefer the new name, fall back for
+        # older library versions.
+        get_dim = getattr(self._model, "get_embedding_dimension", None)
+        raw_dim: Any = (
+            get_dim() if callable(get_dim) else self._model.get_sentence_embedding_dimension()
+        )
+        if raw_dim is None:
+            raise RuntimeError(f"Model {self._model_name} reported no embedding dimension")
+        dim: int = int(raw_dim)
+        self._dim = dim
+        log.engine.info(
+            "[embeddings] SentenceTransformerProvider: model loaded",
+            extra={"_fields": {"model": self._model_name, "dim": dim, "cache_dir": cache_dir}},
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         # 1. ENTRY
