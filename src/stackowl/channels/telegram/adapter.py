@@ -24,6 +24,8 @@ from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
+from collections.abc import Callable
+
 from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.channels.telegram._bot import (
@@ -1103,6 +1105,86 @@ class TelegramChannelAdapter(ChannelAdapter):
             extra={"_fields": {"status": status.status}},
         )
         return status
+
+    # ----- HealableResource protocol (ADR-6 F-87, Task 4) -----------------------
+    # Exposes the existing self-heal mechanism via HealableResource so the health
+    # sweep can recycle the adapter on detection of a degraded update stream.
+
+    @property
+    def available(self) -> bool:
+        """True if the update stream is currently healthy (ok status)."""
+        # 1. ENTRY — implicit (property access)
+        # 2. DECISION — check current health status (reuse _last_update_at signal)
+        now = time.monotonic()
+        is_healthy = (
+            self._last_update_at is not None
+            and now - self._last_update_at <= _UPDATE_DEGRADED_AFTER_S
+        )
+        # 3. STEP — implicit (no I/O)
+        # 4. EXIT — implicit (property return)
+        return is_healthy
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Return the degradation message if unhealthy, else None."""
+        # 1. ENTRY — implicit (property access)
+        if self.available:
+            return None
+        # 2. DECISION — derive reason from health_check state (matches available logic)
+        now = time.monotonic()
+        if self._last_update_at is None:
+            reason = "no update received yet"
+        elif now - self._last_update_at > _UPDATE_DEGRADED_AFTER_S:
+            reason = "update stream stale"
+        else:
+            # Should not reach here if available is False, but be defensive
+            reason = "unknown degradation"
+        log.telegram.debug(
+            "[telegram] adapter.unavailable_reason: exit",
+            extra={"_fields": {"reason": reason}},
+        )
+        # 4. EXIT
+        return reason
+
+    async def ensure_available(self) -> None:
+        """Recover a degraded adapter by calling _self_heal_polling() once.
+
+        Checks current health state first to avoid a double-heal race with the
+        adapter's own _liveness_heartbeat timer, which calls _beat_once() every
+        30s. If already available, returns immediately (no-op). If unhealthy,
+        delegates recovery to the existing _self_heal_polling() method.
+        """
+        # 1. ENTRY
+        log.telegram.debug(
+            "[telegram] adapter.ensure_available: entry",
+            extra={"_fields": {"available": self.available}},
+        )
+        # 2. DECISION — check current health; no-op if already healthy
+        if self.available:
+            log.telegram.debug(
+                "[telegram] adapter.ensure_available: already healthy — no-op"
+            )
+            return
+        # 3. STEP — trigger the existing recovery mechanism once
+        log.telegram.debug(
+            "[telegram] adapter.ensure_available: triggering self-heal"
+        )
+        await self._self_heal_polling()
+        # 4. EXIT
+        log.telegram.info(
+            "[telegram] adapter.ensure_available: exit — self-heal attempted"
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: the adapter's state is not cached downstream.
+
+        Every caller re-acquires the adapter via ChannelRegistry or dependency
+        injection, so there is no dead ref to clear on recycling. Matches the
+        pattern in EmbeddingRegistry and LanceDBAdapter.
+        """
+        log.telegram.debug(
+            "[telegram] adapter.register_on_recycled: no-op (no downstream dependents)"
+        )
 
     def register_with_registry(self) -> None:
         """Self-register with the singleton :class:`ChannelRegistry`."""

@@ -373,6 +373,49 @@ class SchedulerAssembly:
             )
         for provider in provider_registry.all():
             healers[f"provider:{provider.name}"] = provider
+        # ADR-6 Task 4 — Telegram adapter self-heal (thin HealableResource wrapper).
+        # The adapter auto-registers itself with ChannelRegistry on start(); fetch it
+        # and wire it to the health loop if telegram is configured. Gates on both
+        # telegram being enabled AND the adapter being live (registered), so a
+        # missing/unconfigured adapter doesn't block the sweep.
+        if settings.telegram_channel.bot_token:
+            from stackowl.channels.registry import ChannelRegistry
+
+            try:
+                # 1. ENTRY
+                log.scheduler.debug(
+                    "[scheduler] assembly: telegram healer setup — entry",
+                    extra={"_fields": {"telegram_configured": True}},
+                )
+                channel_registry = ChannelRegistry.instance()
+                telegram_adapter = channel_registry.get("telegram")
+                if telegram_adapter is not None:
+                    # 2. DECISION — adapter is registered and ready
+                    # 3. STEP — add to healers and register contributor
+                    healers[telegram_adapter.contributor_name] = telegram_adapter
+                    health_aggregator.register(telegram_adapter)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: telegram healer wired",
+                        extra={
+                            "_fields": {
+                                "key": telegram_adapter.contributor_name,
+                                "adapter": type(telegram_adapter).__name__,
+                            }
+                        },
+                    )
+                else:
+                    # Adapter not yet started (will register itself later)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: telegram adapter not yet registered — "
+                        "health detection via ChannelLivenessContributor only"
+                    )
+            except Exception as exc:
+                # 4. EXIT (error path) — log loudly but don't crash assembly
+                log.scheduler.warning(
+                    "[scheduler] assembly: telegram healer setup failed — "
+                    "health detection via ChannelLivenessContributor only",
+                    exc_info=exc,
+                )
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
         # Adding a contributor changes the detect set, so gate it on the flag too —
         # OFF leaves the aggregator's contributor set unchanged (byte-identical).
