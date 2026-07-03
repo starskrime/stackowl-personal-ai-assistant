@@ -491,14 +491,25 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         falsely reported healthy) — this rebuilds the actual browser, not just the
         wrapper task around it.
 
-        No-op when already healthy. When unhealthy but the poll task is still
-        alive (i.e. the ONLY reason ``available`` is False is "no message has
-        arrived yet" / "heartbeat stale" — WhatsApp's only liveness signal is an
-        inbound message, since the browser driver deliberately swallows its own
-        poll errors, see :meth:`WhatsAppBrowserDriver.poll_messages`), there is
-        nothing structurally broken to rebuild: tearing down a live, working
-        browser session on a quiet-chat signal would be destructive churn, not
-        healing, so this is a logged no-op instead of a rebuild.
+        No-op when already healthy (``self.available`` — the exact signal
+        ``health_check()`` also reports, so the two protocols can never
+        disagree about when to act). Rebuilds whenever unhealthy, matching
+        :meth:`CamoufoxRuntime.ensure_available`'s precedent: that method
+        rebuilds on ``not self.available`` alone, with no separate "is some
+        background task literally alive" gate, and the cadence risk of an
+        over-eager rebuild is bounded the same way here as there — by the
+        health-sweep job's own schedule interval, not by a liveness gate
+        reinvented in this method.
+
+        This matters because :meth:`WhatsAppBrowserDriver.poll_messages`
+        deliberately swallows its own exceptions and returns ``[]`` on a
+        crashed/disconnected page (see its docstring) — the background poll
+        TASK therefore never dies from a dead browser; only the heartbeat
+        (``_last_poll_at``) goes stale. Gating the rebuild on "is the poll
+        task alive" instead of "is the resource available" would make a
+        genuinely dead browser session unrecoverable: the poll task runs
+        forever, `available` correctly flips to False, but nothing would ever
+        rebuild it.
         """
         log.whatsapp.debug(
             "[whatsapp] adapter.ensure_available: entry",
@@ -515,17 +526,10 @@ class WhatsAppChannelAdapter(ChannelAdapter):
                 )
                 return
 
-            poll_task_dead = self._poll_task is None or self._poll_task.done()
-            if not poll_task_dead:
-                # 2. DECISION — poll loop is structurally alive; nothing to rebuild.
-                log.whatsapp.debug(
-                    "[whatsapp] adapter.ensure_available: poll loop alive, only heartbeat "
-                    "stale/absent — no destructive browser rebuild",
-                    extra={"_fields": {"reason": self.unavailable_reason}},
-                )
-                return
-
-            # 2. DECISION — poll loop is dead: the browser needs a real rebuild.
+            # 2. DECISION — unhealthy (per the same signal health_check() reports):
+            # the browser needs a real rebuild, whether the poll task is dead or
+            # merely alive-but-not-proving-liveness (crashed page, poll_messages()
+            # swallowing its own errors forever — see this method's docstring).
             log.whatsapp.warning(
                 "[whatsapp] adapter.ensure_available: unhealthy — restarting browser driver",
                 extra={"_fields": {"reason": self.unavailable_reason}},

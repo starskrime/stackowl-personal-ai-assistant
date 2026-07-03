@@ -241,25 +241,41 @@ class TestEnsureAvailableRealBrowserRestart:
         finally:
             poll.cancel()
 
-    async def test_noop_when_poll_alive_but_no_messages_yet(self) -> None:
-        """A quiet-but-structurally-alive poll loop is NOT torn down — only a
-        message-driven heartbeat is unavailable; that's not a broken browser.
+    async def test_stale_heartbeat_with_alive_poll_task_still_rebuilds(self) -> None:
+        """Regression test for the Critical review finding on 0aed6aa8.
+
+        This is the realistic dead-browser failure mode Task 7 exists to fix:
+        ``WhatsAppBrowserDriver.poll_messages()`` swallows its own exceptions
+        and returns ``[]`` forever on a crashed/disconnected page, so the
+        background poll TASK never dies (``done()`` never becomes True) even
+        though the browser itself is dead. The only signal that catches this
+        is the stale heartbeat (``_health_signal()`` / ``available``) — a
+        gate keyed on "is the poll task alive" instead of "is the resource
+        available" can never rebuild in this state. Confirmed RED against the
+        pre-fix `poll_task_dead` gate (asserts failed: no-rebuild), GREEN
+        after gating on ``not self.available`` (matching
+        ``CamoufoxRuntime.ensure_available``'s precedent).
         """
         adapter = _adapter()
         old_driver = _stub_driver(adapter)
         poll = asyncio.ensure_future(asyncio.sleep(60))
         adapter._poll_task = poll
+        adapter._last_poll_at = time.monotonic() - 120.0  # stale heartbeat
         try:
-            assert adapter._last_poll_at is None
-            assert adapter.available is False
+            assert not poll.done()  # the poll task is ALIVE — the crux of the bug
+            assert adapter.available is False  # but the resource is unhealthy
 
             await adapter.ensure_available()
 
-            # No destructive rebuild for a merely-quiet (not dead) poll loop.
-            assert adapter._browser is old_driver
-            assert adapter._poll_task is poll
+            # MUST rebuild: a live-but-not-proving-liveness poll task must not
+            # mask a dead browser forever.
+            assert adapter._browser is not old_driver
+            assert isinstance(adapter._browser, WhatsAppBrowserDriver)
+            assert adapter._poll_task is not None
+            assert not adapter._poll_task.done()
         finally:
-            poll.cancel()
+            if adapter._poll_task is not None and not adapter._poll_task.done():
+                adapter._poll_task.cancel()
 
 
 class TestRegisterOnRecycled:
