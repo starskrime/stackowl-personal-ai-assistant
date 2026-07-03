@@ -428,3 +428,78 @@ class TestPollLoopRegressionUnaffected:
                 adapter._poll_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await adapter._poll_task
+
+    async def test_poll_loop_does_not_advance_liveness_when_polls_fail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A real _poll_loop() tick driven by a driver whose poll_messages()
+        fails (last_poll_ok=False, [] returned — the actual browser.py failure
+        contract) must NOT advance _last_poll_ok_at. This is the real-chain
+        regression test for the round-3 fix: proves a genuinely failing poll
+        loop leaves the liveness heartbeat stale, so ensure_available() will
+        eventually rebuild it — not the synthetic direct-timestamp-staling
+        shortcut used elsewhere in this file.
+        """
+        adapter = _adapter()
+        driver = adapter._browser
+
+        async def _failing_poll() -> list[dict[str, object]]:
+            driver.last_poll_ok = False
+            return []
+
+        driver.poll_messages = _failing_poll  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "stackowl.channels.whatsapp.adapter._POLL_INTERVAL_S", 0.01
+        )
+
+        sentinel = time.monotonic() - 1000.0
+        adapter._last_poll_ok_at = sentinel
+
+        task = asyncio.ensure_future(adapter._poll_loop())
+        try:
+            await asyncio.sleep(0.05)
+            assert adapter._last_poll_ok_at == sentinel, (
+                "a failing poll tick must never advance the liveness heartbeat"
+            )
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def test_poll_loop_advances_liveness_when_polls_succeed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mirror case: a real _poll_loop() tick driven by a driver whose
+        poll_messages() succeeds (last_poll_ok=True, empty result — a quiet
+        but healthy chat) DOES advance _last_poll_ok_at. Together with the
+        failing-poll test above, this proves _poll_loop()'s wiring at
+        adapter.py (`if self._browser.last_poll_ok: self._last_poll_ok_at = ...`)
+        is exercised by a real running loop, not asserted only via directly-set
+        attributes.
+        """
+        adapter = _adapter()
+        driver = adapter._browser
+
+        async def _healthy_poll() -> list[dict[str, object]]:
+            driver.last_poll_ok = True
+            return []
+
+        driver.poll_messages = _healthy_poll  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "stackowl.channels.whatsapp.adapter._POLL_INTERVAL_S", 0.01
+        )
+
+        sentinel = time.monotonic() - 1000.0
+        adapter._last_poll_ok_at = sentinel
+
+        task = asyncio.ensure_future(adapter._poll_loop())
+        try:
+            await asyncio.sleep(0.05)
+            assert adapter._last_poll_ok_at is not None
+            assert adapter._last_poll_ok_at > sentinel, (
+                "a successful poll tick must advance the liveness heartbeat"
+            )
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
