@@ -558,7 +558,7 @@ class SchedulerAssembly:
         # from all configured servers. Unlike the other resources, MCP needs the
         # ServerConfig list (not just the client handle) to probe. Wire only when
         # MCP is configured and the client exists.
-        if mcp_client is not None and settings.mcp:
+        if mcp_client is not None and settings.mcp_client:
             from stackowl.health.contributors import McpHealthContributor
 
             try:
@@ -568,7 +568,7 @@ class SchedulerAssembly:
                     extra={"_fields": {"mcp_configured": True}},
                 )
                 # 2. DECISION — MCP client exists and servers are configured
-                mcp_configs = list(settings.mcp.servers)
+                mcp_configs = list(settings.mcp_client.servers)
                 if mcp_configs:
                     # 3. STEP — add to healers and register contributor
                     # Extract the probe from the mcp_client (it holds McpLivenessProbe internally)

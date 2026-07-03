@@ -87,6 +87,7 @@ _drain_tasks: set[asyncio.Task[object]] = set()
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.channels.telegram.voice_confirm import PendingTranscriptStore
     from stackowl.health.aggregator import HealthAggregator
+    from stackowl.mcp.client import McpClient
     from stackowl.pipeline.streaming import ResponseChunk
 
 
@@ -729,6 +730,9 @@ class StartupOrchestrator:
         # E1-S3 — MCP federation boot phase (after providers/skills, before traffic).
         # Fail-soft: a down/slow/misconfigured server never blocks boot. Federated
         # tools register namespaced (mcp.<server>.<tool>), non-clobbering.
+        # ADR-6 Task 8 — pre-initialize so the SchedulerAssembly.build() call below
+        # can reference it unconditionally, mirroring browser_runtime's pattern.
+        mcp_client: McpClient | None = None
         mcp_cfg = self._settings.mcp_client
         if mcp_cfg.auto_discover_on_startup and mcp_cfg.servers:
             try:
@@ -1194,8 +1198,9 @@ class StartupOrchestrator:
             # health loop can recycle + re-verify it (None in gateway role / when
             # the browser failed to start).
             browser_runtime=browser_runtime,
-            # ADR-6 Task 8 — MCP client for health aggregation (None if MCP failed to init).
-            mcp_client=mcp_client if "mcp_client" in locals() else None,
+            # ADR-6 Task 8 — MCP client for health aggregation (None if not configured
+            # or MCP failed to init — pre-initialized above, mirrors browser_runtime).
+            mcp_client=mcp_client,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).

@@ -66,6 +66,8 @@ async def _build(
     *,
     browser_runtime: Any = None,
     health_loop: bool = False,
+    mcp_client: Any = None,
+    settings_overrides: dict[str, Any] | None = None,
 ) -> SchedulerComponents:
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
@@ -76,7 +78,7 @@ async def _build(
     # NB: Settings has extra="ignore" — top-level kwargs are silently dropped, so
     # health_loop must be applied via model_copy, never the constructor.
     settings = Settings(memory=MemorySettings()).model_copy(
-        update={"health_loop": health_loop}
+        update={"health_loop": health_loop, **(settings_overrides or {})}
     )
     provider_registry = _registry()
     memory_components = await MemoryAssembly.build(
@@ -106,6 +108,7 @@ async def _build(
         backend=backend,
         skills_components=skills_components,
         browser_runtime=browser_runtime,
+        mcp_client=mcp_client,
     )
 
 
@@ -157,6 +160,41 @@ async def test_health_sweep_wires_embedding_registry_healer_and_contributor(
     assert hasattr(embeddings_healer, "ensure_available")
     names = {c.contributor_name for c in handler._aggregator._contributors}
     assert "embedding_registry" in names
+
+
+async def test_health_sweep_wires_mcp_healer_when_servers_configured(
+    tmp_db: DbPool,
+) -> None:
+    # Task 8 (ADR-6 self-heal) — a real SchedulerAssembly.build() call, exactly
+    # the production path, with a configured MCP client + non-empty server
+    # list. This is the EXACT scenario a prior version of this task crashed
+    # on at boot (settings.mcp — an attribute that doesn't exist — instead of
+    # settings.mcp_client), because no test in this arc drove the wiring
+    # block through the real build() call. Regression guard: this must not
+    # raise, and the healer/contributor must actually be wired.
+    from stackowl.config.settings import McpClientSettings
+    from stackowl.mcp.allowlist import McpServerAllowlist, McpServerConfig
+    from stackowl.mcp.cache import McpToolCache
+    from stackowl.mcp.client import McpClient
+    from stackowl.mcp.probe import McpLivenessProbe
+
+    server_cfg = McpServerConfig(
+        name="test_server", uri="stdio:///usr/bin/true", timeout_seconds=5.0
+    )
+    mcp_client = McpClient(
+        McpServerAllowlist(("stdio://",)), McpToolCache(), McpLivenessProbe()
+    )
+    components = await _build(
+        tmp_db,
+        mcp_client=mcp_client,
+        settings_overrides={
+            "mcp_client": McpClientSettings(servers=(server_cfg,))
+        },
+    )
+    handler = components.health_sweep_handler
+    assert handler._healers["mcp"] is mcp_client
+    names = {c.contributor_name for c in handler._aggregator._contributors}
+    assert "mcp" in names
 
 
 async def test_health_sweep_wires_browser_when_flag_on(tmp_db: DbPool) -> None:
