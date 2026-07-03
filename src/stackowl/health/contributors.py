@@ -402,6 +402,85 @@ class ProviderContributor:
         )
 
 
+class McpHealthContributor:
+    """Health contributor: MCP server liveness via parallel probes (ADR-6, Task 8).
+
+    MCP had ZERO aggregator presence before this contributor — an outage was
+    undetectable. McpClient itself is fully stateless per-call (fresh connection
+    every discover_tools/call_tool with bounded retry-once), so its HealableResource
+    implementation is a pure no-op. The real gap closed here is this contributor:
+    it wraps McpLivenessProbe.probe_all() and maps down/degraded servers into
+    a HealthStatus so the health sweep can alert + log on MCP failures.
+
+    ``contributor_name`` is ``"mcp"`` and MUST match the ``healers`` dict key
+    registered in ``scheduler/assembly.py`` — the health sweep looks up the
+    matching ``HealableResource`` via ``dict.get(status.name)``, a plain
+    exact-string match with no normalization.
+    """
+
+    def __init__(
+        self,
+        probe: object,  # McpLivenessProbe — TYPE_CHECKING import to avoid circular dep
+        configs: list[object],  # list[McpServerConfig]
+    ) -> None:
+        self._probe = probe
+        self._configs = configs
+
+    @property
+    def contributor_name(self) -> str:
+        return "mcp"
+
+    async def health_check(self) -> HealthStatus:
+        log.debug("[health] mcp_contributor: entry")
+        t0 = time.monotonic()
+
+        # Empty config = no MCP servers configured. Report ok early.
+        if not self._configs:
+            latency_ms = (time.monotonic() - t0) * 1000
+            log.debug("[health] mcp_contributor: exit — no servers configured")
+            return HealthStatus(
+                name="mcp",
+                status="ok",
+                message="no MCP servers configured",
+                latency_ms=latency_ms,
+            )
+
+        # Probe all servers in parallel.
+        results: dict[str, bool] = await self._probe.probe_all(self._configs)  # type: ignore[attr-defined]
+
+        # Aggregate results: down if any server is dead, degraded if all alive but we saw failures, ok otherwise.
+        down_servers = [name for name, is_alive in results.items() if not is_alive]
+        latency_ms = (time.monotonic() - t0) * 1000
+
+        if len(down_servers) == len(results):
+            # All servers down
+            log.debug("[health] mcp_contributor: exit — all servers down")
+            return HealthStatus(
+                name="mcp",
+                status="down",
+                message=f"all {len(results)} MCP server(s) down: {', '.join(down_servers)}",
+                latency_ms=latency_ms,
+            )
+        elif down_servers:
+            # Some servers down (but not all)
+            log.debug("[health] mcp_contributor: exit — degraded (%d down)", len(down_servers))
+            return HealthStatus(
+                name="mcp",
+                status="degraded",
+                message=f"{len(down_servers)} of {len(results)} MCP server(s) down: {', '.join(down_servers)}",
+                latency_ms=latency_ms,
+            )
+        else:
+            # All servers alive
+            log.debug("[health] mcp_contributor: exit — ok")
+            return HealthStatus(
+                name="mcp",
+                status="ok",
+                message=f"all {len(results)} MCP server(s) alive",
+                latency_ms=latency_ms,
+            )
+
+
 class ResilienceContributor:
     """Health contributor: per-subsystem recycle counts for HealableResources.
 

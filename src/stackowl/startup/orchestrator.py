@@ -1194,6 +1194,8 @@ class StartupOrchestrator:
             # health loop can recycle + re-verify it (None in gateway role / when
             # the browser failed to start).
             browser_runtime=browser_runtime,
+            # ADR-6 Task 8 — MCP client for health aggregation (None if MCP failed to init).
+            mcp_client=mcp_client if "mcp_client" in locals() else None,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).

@@ -114,6 +114,7 @@ class SchedulerAssembly:
         delegation_governor: ConcurrencyGovernor | None = None,
         turn_registry: object | None = None,
         browser_runtime: HealableResource | None = None,
+        mcp_client: object | None = None,  # McpClient — TYPE_CHECKING import would be circular
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -549,6 +550,56 @@ class SchedulerAssembly:
                 log.scheduler.warning(
                     "[scheduler] assembly: whatsapp healer setup failed — "
                     "no self-heal for whatsapp",
+                    exc_info=exc,
+                )
+        # ADR-6 Task 8 — MCP servers liveness detection. McpClient itself is a pure
+        # no-op HealableResource (fully stateless per-call with bounded retry), so
+        # the real value is the McpHealthContributor which aggregates probe results
+        # from all configured servers. Unlike the other resources, MCP needs the
+        # ServerConfig list (not just the client handle) to probe. Wire only when
+        # MCP is configured and the client exists.
+        if mcp_client is not None and settings.mcp:
+            from stackowl.health.contributors import McpHealthContributor
+
+            try:
+                # 1. ENTRY
+                log.scheduler.debug(
+                    "[scheduler] assembly: mcp healer setup — entry",
+                    extra={"_fields": {"mcp_configured": True}},
+                )
+                # 2. DECISION — MCP client exists and servers are configured
+                mcp_configs = list(settings.mcp.servers)
+                if mcp_configs:
+                    # 3. STEP — add to healers and register contributor
+                    # Extract the probe from the mcp_client (it holds McpLivenessProbe internally)
+                    mcp_probe = getattr(mcp_client, "_probe", None)
+                    if mcp_probe is None:
+                        raise RuntimeError("McpClient has no _probe attribute")
+                    mcp_health = McpHealthContributor(
+                        probe=mcp_probe,
+                        configs=mcp_configs,
+                    )
+                    healers[mcp_health.contributor_name] = mcp_client  # type: ignore[index]
+                    health_aggregator.register(mcp_health)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: mcp healer wired",
+                        extra={
+                            "_fields": {
+                                "key": mcp_health.contributor_name,
+                                "servers": len(mcp_configs),
+                            }
+                        },
+                    )
+                else:
+                    log.scheduler.debug(
+                        "[scheduler] assembly: mcp configured but no servers — "
+                        "skipping health detection"
+                    )
+            except Exception as exc:
+                # 4. EXIT (error path) — log loudly but don't crash assembly
+                log.scheduler.warning(
+                    "[scheduler] assembly: mcp healer setup failed — "
+                    "no health detection for mcp",
                     exc_info=exc,
                 )
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).

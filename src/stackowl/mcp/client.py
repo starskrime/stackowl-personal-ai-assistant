@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from stackowl.config.test_mode import TestModeGuard
@@ -57,6 +58,32 @@ class McpClient:
         self._cache = cache
         self._probe = probe
         log.debug("mcp.client.__init__: exit")
+
+    # HealableResource protocol implementation (ADR-6, Task 8)
+    # McpClient is fully stateless per-call (fresh connection every discover_tools/call_tool)
+    # so the no-op implementation mirrors ModelProvider's pattern exactly.
+
+    @property
+    def available(self) -> bool:
+        """Always True — MCP client is stateless per-call, no persistent handle."""
+        return True
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Always None — no persistent state to report."""
+        return None
+
+    async def ensure_available(self) -> None:
+        """No-op: MCP is stateless per-call. Recovery happens via bounded retry."""
+        log.debug(
+            "[mcp] ensure_available: no-op (MCP is stateless per-call)",
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: MCP client doesn't recycle (no long-lived handle)."""
+        log.debug(
+            "[mcp] register_on_recycled: no-op (stateless client)",
+        )
 
     async def discover_tools(self, config: McpServerConfig) -> list[McpToolDefinition]:
         """Discover tools from an MCP server, using cache when fresh."""
