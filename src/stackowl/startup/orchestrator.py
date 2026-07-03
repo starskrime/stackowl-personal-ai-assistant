@@ -835,7 +835,7 @@ class StartupOrchestrator:
                     )
 
                     watch_job_deliverer = ProactiveJobDeliverer(
-                        proactive_deliverer, DeliveryLedger(db=db_pool)
+                        proactive_deliverer, DeliveryLedger(db=db_pool), settings=self._settings
                     )
                 register_website_watch_handler(
                     browser_runtime, watch_state_dir, watch_job_deliverer

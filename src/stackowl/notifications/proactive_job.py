@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
-from stackowl.notifications.recipient import DeliverySpec
+from stackowl.notifications.recipient import DeliverySpec, resolve_owner_addresses
 from stackowl.notifications.router import Notification
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
@@ -43,6 +43,10 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.notifications.delivery_ledger import DeliveryLedger, LedgerState
     from stackowl.notifications.router import DeliveryStatus
     from stackowl.scheduler.job import Job
+
+# NOTE: Settings is a REAL (not TYPE_CHECKING-only) import — the fallback below
+# needs it at runtime, not just for typing.
+from stackowl.config.settings import Settings
 
 
 def occurrence_key(job: Job) -> str:
@@ -91,9 +95,49 @@ class ProactiveJobDeliverer:
         self,
         deliverer: ProactiveDeliverer,
         ledger: DeliveryLedger,
+        settings: Settings | None = None,
     ) -> None:
         self._deliverer = deliverer
         self._ledger = ledger
+        # Optional — enables the primary_channel fallback below for jobs created
+        # before durable target_channels/target_addresses capture existed. None
+        # (default) preserves today's exact behavior at any call site that can't
+        # supply it.
+        self._settings = settings
+
+    def _resolve_spec(self, job: Job) -> DeliverySpec:
+        """``DeliverySpec.from_job`` plus a durable fallback for pre-capture jobs.
+
+        A job created before durable ``target_channels``/``target_addresses``
+        capture existed can have ``primary_channel`` set with both columns NULL
+        — ``DeliverySpec.from_job`` then resolves (and reports) NOTHING, a
+        structurally silent undeliverable. Here, and only here (before that
+        resolver runs), retroactively apply the SAME durable/config-based
+        resolution (:func:`resolve_owner_addresses`) already used to seed new
+        jobs at creation time — not a request-context fallback, so the C1
+        invariant (`DeliverySpec.from_job` resolves ONLY from the job's own
+        columns) is unchanged.
+        """
+        if not job.target_channels and job.primary_channel and self._settings is not None:
+            fallback = resolve_owner_addresses(self._settings, [job.primary_channel])
+            if fallback:
+                log.notifications.warning(
+                    "[notifications] recipient.from_job: falling back to "
+                    "primary_channel resolution — job created before durable "
+                    "target capture",
+                    extra={
+                        "_fields": {
+                            "job_id": job.job_id,
+                            "primary_channel": job.primary_channel,
+                        }
+                    },
+                )
+                return DeliverySpec(
+                    job_id=job.job_id,
+                    _resolved=tuple(fallback.items()),
+                    _unresolved=(),
+                )
+        return DeliverySpec.from_job(job)
 
     async def deliver_for_job(
         self,
@@ -135,7 +179,7 @@ class ProactiveJobDeliverer:
                 }
             },
         )
-        spec = DeliverySpec.from_job(job)
+        spec = self._resolve_spec(job)
         occ_key = occurrence_key(job)
 
         per_channel: dict[str, str] = {}

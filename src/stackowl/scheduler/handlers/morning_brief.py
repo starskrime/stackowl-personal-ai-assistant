@@ -98,7 +98,7 @@ class MorningBriefHandler(JobHandler):
         from stackowl.notifications.proactive_job import ProactiveJobDeliverer
 
         self._job_deliverer = (
-            ProactiveJobDeliverer(proactive_deliverer, delivery_ledger)
+            ProactiveJobDeliverer(proactive_deliverer, delivery_ledger, settings=settings)
             if proactive_deliverer is not None and delivery_ledger is not None
             else None
         )

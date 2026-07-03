@@ -193,7 +193,7 @@ class SchedulerAssembly:
             from stackowl.notifications.proactive_job import ProactiveJobDeliverer
 
             goal_job_deliverer = ProactiveJobDeliverer(
-                proactive_deliverer, delivery_ledger
+                proactive_deliverer, delivery_ledger, settings=settings
             )
 
         # PB-CANARY — ONE ChannelLivenessStore instance shared by PB0b's receive

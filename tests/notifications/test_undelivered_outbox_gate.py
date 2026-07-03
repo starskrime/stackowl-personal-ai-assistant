@@ -430,6 +430,175 @@ async def test_undeliverable_channel_alongside_resolvable_no_double_write(
     assert reasons == {("transport_failed", "cli"), ("undeliverable", "telegram")}
 
 
+# --- primary_channel fallback — jobs created before durable target capture ---
+
+
+class _AlwaysSucceedAdapter:
+    """A channel adapter whose send_text always succeeds.
+
+    Accepts ``chat_id`` like the real telegram adapter — the deliverer passes
+    it through explicitly when a concrete target is resolved (see
+    ``_TargetedSender`` in deliverer.py).
+    """
+
+    def __init__(self, name: str = "telegram") -> None:
+        self._name = name
+
+    @property
+    def channel_name(self) -> str:
+        return self._name
+
+    async def send_text(self, text: str, *, chat_id: str | int | None = None) -> None:
+        return None
+
+
+def _legacy_job(job_id: str, primary_channel: str | None) -> Job:
+    """A job predating durable target capture: target_channels/addresses empty."""
+    return Job(
+        job_id=job_id,
+        handler_name="goal_execution",
+        schedule="every 5m",
+        idempotency_key=f"key-{job_id}",
+        last_run_at=None,
+        next_run_at="2026-06-30T08:00:00Z",
+        status="pending",
+        primary_channel=primary_channel,
+    )
+
+
+def _settings_with_telegram_owner(allowed: list[int]) -> Settings:
+    from stackowl.channels.telegram.settings import TelegramSettings
+
+    settings = Settings()
+    return settings.model_copy(
+        update={"telegram_channel": TelegramSettings(allowed_user_ids=frozenset(allowed))}
+    )
+
+
+async def test_primary_channel_fallback_resolves_and_delivers(tmp_db: DbPool) -> None:
+    """The exact reported bug: target_channels/addresses NULL, primary_channel
+    set. Without the fallback this was structurally silent (rollup=
+    'undeliverable', per_channel={}, no unresolved entry either). With settings
+    wired, resolve_owner_addresses resolves the single allowed telegram owner
+    and the job actually delivers."""
+    TestModeGuard.deactivate()
+    ChannelRegistry.instance().register(_AlwaysSucceedAdapter("telegram"))
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(
+        deliverer, DeliveryLedger(tmp_db), settings=_settings_with_telegram_owner([42])
+    )
+    job = _legacy_job("legacy-1", primary_channel="telegram")
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="status update", category="goal_execution", urgency="critical"
+    )
+
+    assert outcome.rollup == "delivered"
+    assert outcome.per_channel == {"telegram": "delivered"}
+    assert outcome.undeliverable == ()
+
+
+async def test_no_primary_channel_no_target_unchanged(tmp_db: DbPool) -> None:
+    """A job with NEITHER target_channels NOR primary_channel never had any
+    channel info — the fallback must not be attempted, behavior unchanged
+    (undeliverable, no crash)."""
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(
+        deliverer, DeliveryLedger(tmp_db), settings=_settings_with_telegram_owner([42])
+    )
+    job = _legacy_job("legacy-2", primary_channel=None)
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="status update", category="goal_execution"
+    )
+
+    assert outcome.rollup == "undeliverable"
+    assert outcome.per_channel == {}
+    assert outcome.undeliverable == ()
+
+
+async def test_populated_target_channels_bypasses_fallback(tmp_db: DbPool) -> None:
+    """A job with target_channels ALREADY populated (even alongside a
+    primary_channel) must behave byte-identically to before — the fallback
+    only applies when target_channels is empty."""
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(
+        deliverer, DeliveryLedger(tmp_db), settings=_settings_with_telegram_owner([42])
+    )
+    job = Job(
+        job_id="legacy-3",
+        handler_name="goal_execution",
+        schedule="every 5m",
+        idempotency_key="key-legacy-3",
+        last_run_at=None,
+        next_run_at="2026-06-30T08:00:00Z",
+        status="pending",
+        primary_channel="telegram",
+        target_channels=["telegram"],
+        target_addresses={},
+    )
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="status update", category="goal_execution"
+    )
+
+    assert outcome.rollup == "undeliverable"
+    assert outcome.undeliverable == ("telegram",)
+
+
+async def test_ambiguous_owner_falls_through_cleanly(tmp_db: DbPool) -> None:
+    """primary_channel set but resolve_owner_addresses yields nothing (multiple
+    allowed_user_ids => no single unambiguous owner) — falls through to the
+    existing undeliverable path, no crash."""
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(
+        deliverer, DeliveryLedger(tmp_db), settings=_settings_with_telegram_owner([42, 43])
+    )
+    job = _legacy_job("legacy-4", primary_channel="telegram")
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="status update", category="goal_execution"
+    )
+
+    assert outcome.rollup == "undeliverable"
+    assert outcome.per_channel == {}
+
+
 async def test_undeliverable_reason_ratchet() -> None:
     """The vocabulary must land before the write — the ratchet asserts it's there."""
     assert "undeliverable" in ALLOWED_REASONS
