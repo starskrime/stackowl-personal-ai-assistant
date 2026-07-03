@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from stackowl.channels.slack.adapter import SlackChannelAdapter, _HEALTH_STALE_AFTER_S
+from stackowl.channels.slack.adapter import _HEALTH_STALE_AFTER_S, SlackChannelAdapter
 from stackowl.channels.slack.settings import SlackSettings
 
 
@@ -90,25 +89,53 @@ class TestEnsureAvailable:
         assert slack_adapter._app is original_app
 
     @pytest.mark.asyncio
-    async def test_ensure_available_restarts_when_ping_stale(
+    async def test_ensure_available_invokes_reconnector_when_stale(
         self, slack_adapter: SlackChannelAdapter
     ) -> None:
         """
-        ensure_available() should restart the socket-mode client when
-        _last_ping_at exceeds _HEALTH_STALE_AFTER_S.
+        ensure_available() must invoke the injected reconnector callback
+        exactly once when _last_ping_at exceeds _HEALTH_STALE_AFTER_S — this
+        IS the real recovery action (start() performs no network I/O by
+        design; see its docstring). Regression test for the bug where
+        ensure_available() called start() and did nothing observable.
         """
-        # Simulate a live app that is now stale
         slack_adapter._app = object()
         now = datetime.now(tz=UTC)
         stale_time = now - timedelta(seconds=_HEALTH_STALE_AFTER_S + 10)
         slack_adapter._last_ping_at = stale_time
 
-        # Call ensure_available — it should detect staleness and attempt restart
+        calls = 0
+
+        async def fake_reconnector() -> None:
+            nonlocal calls
+            calls += 1
+
+        slack_adapter.set_reconnector(fake_reconnector)
         await slack_adapter.ensure_available()
 
-        # After restart attempt via start(). Since start() is a no-op in this
-        # context, the app will still be stale. The key is that ensure_available()
-        # did not early-return (did not no-op) because it detected staleness.
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_ensure_available_does_not_invoke_reconnector_when_healthy(
+        self, slack_adapter: SlackChannelAdapter
+    ) -> None:
+        """ensure_available() must NOT call the reconnector when already
+        healthy — the double-heal guard (`if self.available: return`)."""
+        slack_adapter._app = object()
+        now = datetime.now(tz=UTC)
+        recent_time = now - timedelta(seconds=_HEALTH_STALE_AFTER_S / 2)
+        slack_adapter._last_ping_at = recent_time
+
+        calls = 0
+
+        async def fake_reconnector() -> None:
+            nonlocal calls
+            calls += 1
+
+        slack_adapter.set_reconnector(fake_reconnector)
+        await slack_adapter.ensure_available()
+
+        assert calls == 0
 
     @pytest.mark.asyncio
     async def test_ensure_available_noop_when_ping_recent(
@@ -123,6 +150,20 @@ class TestEnsureAvailable:
         original_app = slack_adapter._app
         await slack_adapter.ensure_available()
         assert slack_adapter._app is original_app
+
+    @pytest.mark.asyncio
+    async def test_ensure_available_stale_without_reconnector_does_not_crash(
+        self, slack_adapter: SlackChannelAdapter
+    ) -> None:
+        """No reconnector injected (adapter used outside the full orchestrator
+        boot path, e.g. isolated tests) → logged no-op, never a crash."""
+        slack_adapter._app = object()
+        now = datetime.now(tz=UTC)
+        stale_time = now - timedelta(seconds=_HEALTH_STALE_AFTER_S + 10)
+        slack_adapter._last_ping_at = stale_time
+
+        # Must not raise.
+        await slack_adapter.ensure_available()
 
 
 class TestAvailableMirrorsHealthCheck:

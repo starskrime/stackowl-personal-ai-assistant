@@ -2644,6 +2644,50 @@ class StartupOrchestrator:
                     slack_socket_handler.start_async()  # type: ignore[no-untyped-call]
                 )
 
+                # ADR-6 Task 6 fix — the real reconnect capability for
+                # `SlackChannelAdapter.ensure_available()`. Tears down the
+                # CURRENT socket-mode handler/task and builds a fresh one,
+                # reusing `app` (every `@app.event`/`@app.action`/`@app.command`
+                # handler registered above stays wired — only the socket
+                # connection itself is rebuilt, never re-registered). `nonlocal`
+                # rebinds the SAME `slack_socket_handler`/`slack_socket_task`
+                # locals the shutdown block (below) reads, so a reconnect
+                # mid-run leaves no stale reference for shutdown to miss.
+                async def _slack_reconnect() -> None:
+                    nonlocal slack_socket_handler, slack_socket_task
+                    # 1. ENTRY
+                    log.info(
+                        "[startup] gateway: slack reconnect: entry",
+                        extra={"_fields": {"had_handler": slack_socket_handler is not None}},
+                    )
+                    old_handler = slack_socket_handler
+                    old_task = slack_socket_task
+                    # 2. DECISION / 3. STEP — best-effort close the OLD handler +
+                    # cancel its task BEFORE building the replacement, so a stale
+                    # connection is never left running alongside a new one.
+                    if old_handler is not None:
+                        try:
+                            await old_handler.close_async()  # type: ignore[no-untyped-call]
+                        except Exception as exc:  # noqa: BLE001 — best-effort teardown
+                            log.warning(
+                                "[startup] gateway: slack reconnect: old handler close failed",
+                                exc_info=exc,
+                            )
+                    if old_task is not None:
+                        old_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await old_task
+                    slack_socket_handler = AsyncSocketModeHandler(app, resolved_app_token)
+                    slack_socket_task = asyncio.create_task(
+                        slack_socket_handler.start_async()  # type: ignore[no-untyped-call]
+                    )
+                    # 4. EXIT
+                    log.info(
+                        "[startup] gateway: slack reconnect: exit — fresh socket task spawned"
+                    )
+
+                slack_adapter.set_reconnector(_slack_reconnect)
+
                 async def _slack_loop() -> None:
                     log.info("[startup] gateway: slack loop started")
                     try:

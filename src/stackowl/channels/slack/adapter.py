@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +142,12 @@ class SlackChannelAdapter(ChannelAdapter):
         # untyped reference so the adapter remains importable without
         # slack_bolt being on the path at import time.
         self._app: object | None = None
+        # ADR-6 — the real reconnect callback, injected by the production
+        # runner via `set_reconnector()` (mirrors `set_bolt_app`). The runner
+        # owns the live `AsyncSocketModeHandler`; the adapter never imports
+        # slack_bolt itself. None until injected (e.g. an adapter constructed
+        # outside the full boot path, such as in isolated unit tests).
+        self._reconnector: Callable[[], Awaitable[None]] | None = None
         log.slack.info(
             "[slack] adapter.init: exit",
             extra={"_fields": {"channel": self.channel_name}},
@@ -710,6 +716,23 @@ class SlackChannelAdapter(ChannelAdapter):
         )
         self._app = app
 
+    def set_reconnector(self, reconnector: Callable[[], Awaitable[None]]) -> None:
+        """Attach the real reconnect callback (ADR-6, injected by the production runner).
+
+        Mirrors :meth:`set_bolt_app`: the adapter never imports ``slack_bolt``
+        itself. The runner (``orchestrator.py``) owns the live
+        ``AsyncSocketModeHandler``/task pair and hands the adapter a zero-arg
+        async callable that tears down the current socket-mode connection and
+        rebuilds a fresh one (reusing the existing ``AsyncApp`` and all its
+        registered event/action/command handlers). :meth:`ensure_available`
+        invokes this callback to perform an actual reconnect.
+        """
+        log.slack.debug(
+            "[slack] adapter.set_reconnector: entry",
+            extra={"_fields": {"has_reconnector": reconnector is not None}},
+        )
+        self._reconnector = reconnector
+
     def mark_ping(self) -> None:
         """Called by the connection heartbeat — keeps health_check honest."""
         self._last_ping_at = datetime.now(tz=UTC)
@@ -899,18 +922,25 @@ class SlackChannelAdapter(ChannelAdapter):
         return reason
 
     async def ensure_available(self) -> None:
-        """Recover a degraded adapter by restarting the socket-mode client.
+        """Recover a degraded adapter by rebuilding the socket-mode connection.
 
-        Restarts the Slack connection when _last_ping_at exceeds
+        Triggers a real reconnect when _last_ping_at exceeds
         _HEALTH_STALE_AFTER_S (reusing the exact threshold health_check()
-        already uses to report degraded). The restart is triggered via
-        calling start() to re-establish the Bolt app and socket-mode
-        handler.
+        already uses to report degraded). The reconnect itself is delegated to
+        the callback injected via :meth:`set_reconnector` — the production
+        runner owns the live ``AsyncSocketModeHandler`` and rebuilds it there;
+        this adapter has no direct ``slack_bolt`` dependency. ``start()`` does
+        NOT perform this reconnect (it does no network I/O by design — see its
+        docstring), so it is deliberately not called here.
+
+        No reconnector attached (e.g. an adapter constructed outside the full
+        orchestrator boot path, such as in isolated unit tests) → a logged
+        no-op, never a crash.
         """
         # 1. ENTRY
         log.slack.debug(
             "[slack] adapter.ensure_available: entry",
-            extra={"_fields": {"available": self.available}},
+            extra={"_fields": {"available": self.available, "has_reconnector": self._reconnector is not None}},
         )
         # 2. DECISION — no-op if already healthy
         if self.available:
@@ -918,11 +948,16 @@ class SlackChannelAdapter(ChannelAdapter):
                 "[slack] adapter.ensure_available: already healthy — no-op"
             )
             return
-        # 3. STEP — call start() to reconnect
-        await self.start()
+        if self._reconnector is None:
+            log.slack.warning(
+                "[slack] adapter.ensure_available: no reconnector attached — cannot heal"
+            )
+            return
+        # 3. STEP — invoke the injected reconnect callback (rebuilds the live socket)
+        await self._reconnector()
         # 4. EXIT
         log.slack.info(
-            "[slack] adapter.ensure_available: exit — socket-mode restart attempted"
+            "[slack] adapter.ensure_available: exit — reconnect callback invoked"
         )
 
     def register_on_recycled(self, cb: Callable[[], None]) -> None:
