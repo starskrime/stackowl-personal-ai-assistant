@@ -38,6 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.infra.resilience import HealableResource
     from stackowl.memory.assembly import MemoryComponents
+    from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.objectives.driver import ObjectiveDriverHandler
@@ -341,7 +342,10 @@ class SchedulerAssembly:
         # the CLI uses, minus Browser/Resilience which need live-runtime refs) and
         # register a handler that collects on a cadence and alerts on down/degraded.
         health_aggregator = _build_health_aggregator(
-            settings, liveness_store, memory_components.embedding_registry
+            settings,
+            liveness_store,
+            memory_components.embedding_registry,
+            memory_components.lancedb,
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
@@ -354,6 +358,7 @@ class SchedulerAssembly:
         healers: dict[str, HealableResource] = {
             "db": db,
             "embeddings": memory_components.embedding_registry,
+            "lancedb": memory_components.lancedb,
         }
         for provider in provider_registry.all():
             healers[f"provider:{provider.name}"] = provider
@@ -588,6 +593,7 @@ def _build_health_aggregator(
     settings: Settings,
     liveness_store: ChannelLivenessStore | None = None,
     embedding_registry: EmbeddingRegistry | None = None,
+    lancedb_adapter: LanceDBAdapter | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -610,6 +616,13 @@ def _build_health_aggregator(
     unconditionally here exactly like ``DbContributor``. ``None`` (a caller
     that hasn't threaded it through) skips registration, same pattern as
     ``liveness_store``.
+
+    ``lancedb_adapter`` (Task 2, ADR-6 self-heal) is the live, in-process
+    :class:`LanceDBAdapter` — same "no extra live-runtime handle needed"
+    situation as ``embedding_registry``, but unlike it LanceDBAdapter's
+    existing ``health()`` returns a ``HealthReport`` (a different shape), so
+    it's wrapped in :class:`LanceDBHealthContributor` rather than registered
+    directly. ``None`` skips registration, same pattern as the others.
     """
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
@@ -618,6 +631,7 @@ def _build_health_aggregator(
         DbContributor,
         FilesystemContributor,
         GraphContributor,
+        LanceDBHealthContributor,
         ProviderContributor,
     )
     from stackowl.infra.clock import WallClock
@@ -629,6 +643,8 @@ def _build_health_aggregator(
     agg.register(GraphContributor.probe())
     if embedding_registry is not None:
         agg.register(embedding_registry)
+    if lancedb_adapter is not None:
+        agg.register(LanceDBHealthContributor(lancedb_adapter))
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))

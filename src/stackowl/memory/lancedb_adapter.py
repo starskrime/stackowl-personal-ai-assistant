@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -71,6 +72,10 @@ class LanceDBAdapter:
         # corpus identity against the live active model (F062). None in unit
         # tests that don't exercise the model-drift health surface.
         self._embedding_registry = embedding_registry
+        # ADR-6 F-87 self-heal (Task 2) — cached connect-failure reason, mirrors
+        # DbPool's `_unavailable_reason`. Set by `_connect()` on failure, cleared
+        # on success; read by `available`/`unavailable_reason` (no fresh probe).
+        self._unavailable_reason: str | None = None
         # 4. EXIT
         log.memory.debug(
             "[memory] lancedb.init: exit",
@@ -309,12 +314,82 @@ class LanceDBAdapter:
         )
         return report
 
+    # ----- HealableResource protocol (ADR-6 F-87, Task 2) -----------------------
+    # `available`/`unavailable_reason` are cached reads of connection state (set
+    # by `_connect()`), not a fresh probe per access — mirrors DbPool. A caller
+    # that wants a truthful up-to-date verdict should go through `health()`,
+    # which always re-probes.
+
+    @property
+    def available(self) -> bool:
+        return self._connection is not None
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return self._unavailable_reason
+
+    async def ensure_available(self) -> None:
+        """Drop the cached handle and reconnect; raises if it cannot be recovered.
+
+        Unconditionally replaces `self._connection` rather than no-op'ing when
+        one is already set — callers (`retry_once_on_dead_handle`, the health
+        sweep's RecoveryActuator) only invoke this after a dead-handle/down
+        signal, so a possibly-wedged handle is never trusted. `_connect()`
+        records the failure reason and logs before re-raising; this method does
+        not catch, so the caller owns the retry/backoff decision.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] lancedb.ensure_available: entry",
+            extra={"_fields": {"had_connection": self._connection is not None}},
+        )
+        self._connection = None
+        self._connect()
+        # 4. EXIT
+        log.memory.info(
+            "[memory] lancedb.ensure_available: exit — reconnected",
+            extra={"_fields": {"data_dir": str(self._data_dir)}},
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: callers always fetch the live connection via `_connect()`.
+
+        No downstream code caches `self._connection` directly (mirrors
+        EmbeddingRegistry.register_on_recycled) — a reconnect is transparent to
+        every caller since each op calls `self._connect()` fresh.
+        """
+        log.memory.debug(
+            "[memory] lancedb.register_on_recycled: no-op (no downstream dependents)"
+        )
+
     # ----- private -------------------------------------------------------------
 
     def _connect(self) -> lancedb.DBConnection:
-        if self._connection is None:
-            self._data_dir.mkdir(parents=True, exist_ok=True)
-            import lancedb as _lance
+        if self._connection is not None:
+            return self._connection
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] lancedb._connect: entry — connecting",
+            extra={"_fields": {"data_dir": str(self._data_dir)}},
+        )
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        import lancedb as _lance
 
+        try:
+            # 3. STEP
             self._connection = _lance.connect(str(self._data_dir))
+        except Exception as exc:
+            self._unavailable_reason = f"{type(exc).__name__}: {exc}"
+            log.memory.error(
+                "[memory] lancedb._connect: connect failed",
+                exc_info=exc,
+                extra={"_fields": {"data_dir": str(self._data_dir)}},
+            )
+            raise
+        self._unavailable_reason = None
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] lancedb._connect: exit — connected",
+            extra={"_fields": {"data_dir": str(self._data_dir)}},
+        )
         return self._connection

@@ -14,6 +14,7 @@ from stackowl.health.status import HealthStatus
 if TYPE_CHECKING:
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.infra.clock import Clock
+    from stackowl.memory.lancedb_adapter import LanceDBAdapter
 
 log = logging.getLogger("stackowl.health")
 
@@ -115,6 +116,44 @@ class DbContributor:
             latency_ms = (time.monotonic() - t0) * 1000
             log.warning("[health] db_contributor: ping failed: %s", exc)
             return HealthStatus(name="db", status="down", message=str(exc), latency_ms=latency_ms)
+
+
+class LanceDBHealthContributor:
+    """Health contributor for the LanceDB ANN vector store (ADR-6 self-heal, Task 2).
+
+    Wraps a live ``LanceDBAdapter`` and shims its existing ``health()`` probe
+    (returns a ``HealthReport``, a DIFFERENT shape used by the memory bridge)
+    into the ``HealthStatus`` the aggregator/health-sweep expect. This is a
+    pure pass-through translation — it must never upgrade a down/degraded
+    ``HealthReport`` into an "ok" ``HealthStatus``. That silent-upgrade is the
+    exact mistake flagged for Kuzu's ``GraphContributor`` in the design doc;
+    ``tests/memory/test_lancedb_adapter_healable.py`` guards against repeating
+    it here.
+
+    ``contributor_name`` is ``"lancedb"`` and MUST match the ``healers`` dict
+    key registered in ``scheduler/assembly.py`` — the health sweep looks up
+    the matching ``HealableResource`` via ``dict.get(status.name)``, a plain
+    exact-string match with no normalization.
+    """
+
+    def __init__(self, adapter: LanceDBAdapter) -> None:
+        self._adapter = adapter
+
+    @property
+    def contributor_name(self) -> str:
+        return "lancedb"
+
+    async def health_check(self) -> HealthStatus:
+        log.debug("[health] lancedb_contributor: entry")
+        report = await self._adapter.health()
+        message = None if report.status == "ok" else str(report.details)
+        log.debug("[health] lancedb_contributor: exit — status=%s", report.status)
+        return HealthStatus(
+            name=self.contributor_name,
+            status=report.status,
+            message=message,
+            latency_ms=report.latency_ms,
+        )
 
 
 class FilesystemContributor:
