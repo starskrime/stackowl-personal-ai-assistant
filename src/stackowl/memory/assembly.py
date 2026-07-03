@@ -182,7 +182,11 @@ class MemoryAssembly:
         else:
             try:
                 kuzu_adapter = KuzuAdapter(data_dir=kuzu_dir)
-                graph_health = GraphContributor(available=True)
+                # ADR-6 Task 3 — thread the live adapter through so graph_health
+                # probes the REAL connection (via health()), not just import
+                # success. See GraphContributor's docstring for the anti-mistake
+                # this closes.
+                graph_health = GraphContributor(available=True, adapter=kuzu_adapter)
                 log.memory.info(
                     "[memory] assembly: kuzu adapter ready",
                     extra={"_fields": {"data_dir": str(kuzu_dir)}},

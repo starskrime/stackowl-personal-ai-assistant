@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -88,12 +89,19 @@ class KuzuAdapter:
         import kuzu as _kuzu
 
         self._kuzu_mod = _kuzu
+        # ADR-6 F-87 (Task 3, self-heal) — cached construct-failure reason, mirrors
+        # LanceDBAdapter/DbPool. Set by `_construct_db_and_conn`'s caller on
+        # failure, cleared on success; read by `available`/`unavailable_reason`.
+        self._unavailable_reason: str | None = None
         # Create the Database + Connection ON the worker thread (Kuzu may pin a
         # Connection to its creating thread) and bootstrap the schema there too,
-        # so the very first access is already on the confined thread.
-        self._db: kuzu.Database = _kuzu.Database(str(self._db_path))
-        self._conn: kuzu.Connection = self._executor.submit(
-            self._make_conn_and_schema
+        # so the very first access is already on the confined thread. Shared with
+        # `ensure_available()` via `_construct_db_and_conn` so both paths build
+        # the handles identically (DRY).
+        self._db: kuzu.Database
+        self._conn: kuzu.Connection
+        self._db, self._conn = self._executor.submit(
+            self._construct_db_and_conn
         ).result()
         # 4. EXIT
         log.memory.debug(
@@ -101,20 +109,26 @@ class KuzuAdapter:
             extra={"_fields": {"data_dir": str(self._data_dir)}},
         )
 
-    def _make_conn_and_schema(self) -> kuzu.Connection:
-        """Create the Connection + bootstrap schema — runs on the worker thread."""
-        conn = self._kuzu_mod.Connection(self._db)
+    def _construct_db_and_conn(self) -> tuple[kuzu.Database, kuzu.Connection]:
+        """Build a fresh Database + bootstrapped Connection.
+
+        MUST run on the confined F067 worker thread — callers submit this to
+        ``self._executor``, never call it directly. Shared by ``__init__`` and
+        ``ensure_available()`` so both construction paths are identical (DRY).
+        """
+        db = self._kuzu_mod.Database(str(self._db_path))
+        conn = self._kuzu_mod.Connection(db)
         try:
             sync_create_schema(conn)
         except Exception as exc:
             # B5 — a failed bootstrap must surface (hard-fail per assembly policy).
             log.memory.error(
-                "[memory] kuzu.init: schema bootstrap failed",
+                "[memory] kuzu._construct_db_and_conn: schema bootstrap failed",
                 exc_info=exc,
                 extra={"_fields": {"data_dir": str(self._data_dir)}},
             )
             raise
-        return conn
+        return db, conn
 
     # ----- public async API ----------------------------------------------------
 
@@ -315,6 +329,98 @@ class KuzuAdapter:
             extra={"_fields": dict(report.details, latency_ms=latency_ms)},
         )
         return report
+
+    # ----- HealableResource protocol (ADR-6 F-87, Task 3) -----------------------
+    # `available`/`unavailable_reason` are cached reads of construct state (set by
+    # `ensure_available()`/`__init__`), not a fresh probe per access — mirrors
+    # LanceDBAdapter/DbPool. A caller that wants a truthful up-to-date verdict
+    # should go through `health()`, which always re-probes.
+
+    @property
+    def available(self) -> bool:
+        return self._conn is not None and self._db is not None
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return self._unavailable_reason
+
+    async def ensure_available(self) -> None:
+        """Tear down and reconstruct the Database/Connection; raises if unrecoverable.
+
+        F067 — the ENTIRE teardown-and-reconstruct runs on the confined single
+        Kuzu worker thread via ``run_in_executor(self._executor, ...)``, never on
+        whatever thread/task calls this method, so the non-thread-safe Connection
+        is never touched from two threads. Unconditionally replaces the handles
+        rather than no-op'ing when they look set — callers
+        (``retry_once_on_dead_handle``, the health sweep's RecoveryActuator) only
+        invoke this after a dead-handle/down signal, so a possibly-wedged handle
+        is never trusted. Lets failure propagate — caller owns retry/backoff.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.ensure_available: entry",
+            extra={"_fields": {"had_conn": self._conn is not None}},
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            # 3. STEP — teardown + reconstruct, confined to the single kuzu thread
+            self._db, self._conn = await loop.run_in_executor(
+                self._executor, self._teardown_and_reconstruct
+            )
+        except Exception as exc:
+            # The old handles were closed by `_teardown_and_reconstruct` before the
+            # failure (or never survived it) — never leave a stale/closed handle
+            # behind for `available` to mistake as live.
+            self._conn = None  # type: ignore[assignment]
+            self._db = None  # type: ignore[assignment]
+            self._unavailable_reason = f"{type(exc).__name__}: {exc}"
+            log.memory.error(
+                "[memory] kuzu.ensure_available: reconstruct failed",
+                exc_info=exc,
+                extra={"_fields": {"data_dir": str(self._data_dir)}},
+            )
+            raise
+        self._unavailable_reason = None
+        # 4. EXIT
+        log.memory.info(
+            "[memory] kuzu.ensure_available: exit — reconstructed",
+            extra={"_fields": {"data_dir": str(self._data_dir)}},
+        )
+
+    def _teardown_and_reconstruct(self) -> tuple[kuzu.Database, kuzu.Connection]:
+        """Close the old handles (best-effort) and build fresh ones.
+
+        MUST run on the confined F067 worker thread — only called via
+        ``run_in_executor(self._executor, ...)`` from ``ensure_available()``.
+        """
+        try:
+            self._conn.close()
+        except Exception as exc:
+            # B5 — a dead connection may already be unclosable; never block
+            # reconstruction on a failed teardown of the handle we're discarding.
+            log.memory.warning(
+                "[memory] kuzu._teardown_and_reconstruct: conn.close() failed",
+                exc_info=exc,
+            )
+        try:
+            self._db.close()
+        except Exception as exc:
+            log.memory.warning(
+                "[memory] kuzu._teardown_and_reconstruct: db.close() failed",
+                exc_info=exc,
+            )
+        return self._construct_db_and_conn()
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: callers always fetch the live conn/db via ``self._conn``/``self._db``.
+
+        No downstream code caches those handles directly — every op reads them
+        fresh at call time — so a reconnect is transparent to every caller.
+        Mirrors ``LanceDBAdapter.register_on_recycled``.
+        """
+        log.memory.debug(
+            "[memory] kuzu.register_on_recycled: no-op (no downstream dependents)"
+        )
 
     async def aclose(self) -> None:
         """Shut down the dedicated Kuzu worker thread (no leaked thread).

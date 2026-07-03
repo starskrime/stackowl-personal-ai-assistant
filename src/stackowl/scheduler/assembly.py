@@ -36,6 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.health.aggregator import HealthAggregator
+    from stackowl.health.contributors import GraphContributor
     from stackowl.infra.resilience import HealableResource
     from stackowl.memory.assembly import MemoryComponents
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
@@ -346,6 +347,7 @@ class SchedulerAssembly:
             liveness_store,
             memory_components.embedding_registry,
             memory_components.lancedb,
+            memory_components.graph_health,
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
@@ -360,6 +362,15 @@ class SchedulerAssembly:
             "embedding_registry": memory_components.embedding_registry,
             "lancedb": memory_components.lancedb,
         }
+        # ADR-6 Task 3 — Kuzu may be degraded to None (gateway role / init
+        # failure per DUR-5); only wire a healer when there's a live adapter to
+        # recycle. Keyed by the REAL contributor_name (not a literal) so this can
+        # never drift from what `_build_health_aggregator` registers below — the
+        # exact class of mismatch the Task-1 embeddings healer key had.
+        if memory_components.kuzu_adapter is not None:
+            healers[memory_components.graph_health.contributor_name] = (
+                memory_components.kuzu_adapter
+            )
         for provider in provider_registry.all():
             healers[f"provider:{provider.name}"] = provider
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
@@ -594,6 +605,7 @@ def _build_health_aggregator(
     liveness_store: ChannelLivenessStore | None = None,
     embedding_registry: EmbeddingRegistry | None = None,
     lancedb_adapter: LanceDBAdapter | None = None,
+    graph_contributor: GraphContributor | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -623,6 +635,17 @@ def _build_health_aggregator(
     existing ``health()`` returns a ``HealthReport`` (a different shape), so
     it's wrapped in :class:`LanceDBHealthContributor` rather than registered
     directly. ``None`` skips registration, same pattern as the others.
+
+    ``graph_contributor`` (Task 3, ADR-6 self-heal) is
+    ``MemoryComponents.graph_health`` — a :class:`GraphContributor` already
+    built by ``MemoryAssembly.build`` with the live Kuzu adapter wired in (or a
+    degrade-at-boot cached snapshot when Kuzu is None). Registering that SAME
+    object here — rather than building a fresh one — means the aggregator's
+    live-probing verdict and the ``healers`` dict entry above are guaranteed to
+    agree, since both read `.contributor_name` off the identical instance.
+    ``None`` falls back to the old import-only ``GraphContributor.probe()`` (no
+    caller passes ``None`` today, but this keeps the function's own default
+    behaviour self-contained).
     """
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
@@ -640,7 +663,7 @@ def _build_health_aggregator(
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
-    agg.register(GraphContributor.probe())
+    agg.register(graph_contributor if graph_contributor is not None else GraphContributor.probe())
     if embedding_registry is not None:
         agg.register(embedding_registry)
     if lancedb_adapter is not None:

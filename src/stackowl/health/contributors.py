@@ -14,6 +14,7 @@ from stackowl.health.status import HealthStatus
 if TYPE_CHECKING:
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.infra.clock import Clock
+    from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
 
 log = logging.getLogger("stackowl.health")
@@ -22,16 +23,37 @@ log = logging.getLogger("stackowl.health")
 class GraphContributor:
     """Health contributor for the Kuzu knowledge-graph layer (DUR-5 / F069).
 
-    Reports ``ok`` when the graph adapter initialised, or ``down`` (with the
-    init-failure reason) when Kuzu degraded to a None adapter at assembly. This
-    makes the memory subsystem's degrade-don't-crash policy operator-visible —
-    the asymmetry where Kuzu silently hard-failed startup is replaced by a
-    truthful health signal.
+    With a live ``adapter`` wired (ADR-6 self-heal, Task 3), ``health_check()``
+    probes it via its existing ``health()`` (shim'd from ``HealthReport`` to
+    ``HealthStatus``, same pattern as ``LanceDBHealthContributor``) so the
+    verdict reflects the REAL live connection — not just whether the process
+    imported ``kuzu`` at assembly time. Previously this contributor only
+    checked import success and would report ``ok`` even with a dead live
+    connection; ``tests/memory/test_kuzu_adapter_healable.py`` guards against
+    repeating that mistake.
+
+    Without an adapter (``probe()`` / a degrade-at-boot snapshot), falls back
+    to the cached ``available``/``reason`` — used by the out-of-process
+    ``health`` CLI command, which must NOT open the live graph DB (the serve
+    process holds it), and by ``MemoryAssembly.build``'s degrade branches where
+    there is no live adapter to probe at all.
+
+    ``contributor_name`` is ``"graph"`` and MUST match the ``healers`` dict key
+    registered in ``scheduler/assembly.py`` — the health sweep looks up the
+    matching ``HealableResource`` via ``dict.get(status.name)``, a plain
+    exact-string match with no normalization.
     """
 
-    def __init__(self, *, available: bool, reason: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        available: bool,
+        reason: str | None = None,
+        adapter: KuzuAdapter | None = None,
+    ) -> None:
         self._available = available
         self._reason = reason
+        self._adapter = adapter
 
     @classmethod
     def probe(cls) -> GraphContributor:
@@ -41,7 +63,8 @@ class GraphContributor:
         the live graph DB (the serve process holds it). Importing the ``kuzu``
         native module reproduces the exact ARM-wheel-missing failure mode that
         DUR-5 degrades on, so an import failure is reported as ``down`` without
-        touching the on-disk database.
+        touching the on-disk database. No live adapter — deliberately stays on
+        the cached-verdict path in ``health_check()``.
         """
         try:
             import kuzu  # noqa: F401
@@ -63,7 +86,24 @@ class GraphContributor:
 
     async def health_check(self) -> HealthStatus:
         t0 = time.monotonic()
-        log.debug("[health] graph_contributor: entry available=%s", self._available)
+        log.debug(
+            "[health] graph_contributor: entry available=%s has_adapter=%s",
+            self._available, self._adapter is not None,
+        )
+        if self._adapter is not None:
+            # ADR-6 Task 3 — probe the LIVE adapter instead of trusting the
+            # cached import-time snapshot; a successful `import kuzu` says
+            # nothing about whether the live connection still works.
+            report = await self._adapter.health()
+            latency_ms = (time.monotonic() - t0) * 1000
+            message = None if report.status == "ok" else str(report.details)
+            log.debug("[health] graph_contributor: exit — live status=%s", report.status)
+            return HealthStatus(
+                name=self.contributor_name,
+                status=report.status,
+                message=message,
+                latency_ms=latency_ms,
+            )
         latency_ms = (time.monotonic() - t0) * 1000
         if self._available:
             return HealthStatus(
