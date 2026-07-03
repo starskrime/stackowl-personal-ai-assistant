@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -633,6 +633,73 @@ class DiscordChannelAdapter(ChannelAdapter):
             extra={"_fields": {"status": status.status, "latency_ms": status.latency_ms}},
         )
         return status
+
+    # ------------------------------------------------------------------ ADR-6 HealableResource protocol
+
+    @property
+    def available(self) -> bool:
+        """True if the Discord client is live and ready to send.
+
+        ponytail: bare cached-state read, deliberately unlogged — matches every
+        other HealableResource implementer in this codebase (EmbeddingRegistry,
+        LanceDBAdapter, KuzuAdapter, DbPool: all bare `available` properties with
+        no I/O). Called on every health-sweep tick and from `ensure_available()`
+        itself; logging a hot-path property read would be noise, not signal. The
+        state-changing path (`ensure_available()`) carries full 4-point logging.
+        """
+        return self._client is not None
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Return the degradation message if unhealthy, else None."""
+        # 1. ENTRY — implicit (property access)
+        if self.available:
+            return None
+        # 2. DECISION — derive reason (client is None means never-started)
+        log.discord.debug(
+            "[discord] adapter.unavailable_reason: exit",
+            extra={"_fields": {"reason": "no live client"}},
+        )
+        # 3. STEP — return the message
+        return "no live client — channel not started"
+
+    async def ensure_available(self) -> None:
+        """Recover a degraded adapter by calling start() once when needed.
+
+        For Discord, this is simple: discord.py's own reconnect=True already
+        handles a dropped websocket. We only need to restart the client when
+        it was never constructed in the first place (self._client is None),
+        which happens when the adapter hasn't been started yet or crashed
+        before assignment.
+        """
+        # 1. ENTRY
+        log.discord.debug(
+            "[discord] adapter.ensure_available: entry",
+            extra={"_fields": {"available": self.available}},
+        )
+        # 2. DECISION — no-op if already healthy
+        if self.available:
+            log.discord.debug(
+                "[discord] adapter.ensure_available: already healthy — no-op"
+            )
+            return
+        # 3. STEP — call start() to construct and connect the client
+        await self.start()
+        # 4. EXIT
+        log.discord.info(
+            "[discord] adapter.ensure_available: exit — client restart attempted"
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: the adapter's state is not cached downstream.
+
+        Every caller re-acquires the adapter via ChannelRegistry or dependency
+        injection, so there is no dead ref to clear on recycling. Matches the
+        pattern in EmbeddingRegistry and LanceDBAdapter.
+        """
+        log.discord.debug(
+            "[discord] adapter.register_on_recycled: no-op (no downstream dependents)"
+        )
 
     def register_with_registry(self) -> None:
         """Self-register with the singleton :class:`ChannelRegistry`."""

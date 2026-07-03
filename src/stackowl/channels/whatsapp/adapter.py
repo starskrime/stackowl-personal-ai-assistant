@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -99,6 +99,11 @@ class WhatsAppChannelAdapter(ChannelAdapter):
 
     @property
     def channel_name(self) -> str:
+        return "whatsapp"
+
+    @property
+    def contributor_name(self) -> str:
+        """Health-loop contributor name (for healers dict registration)."""
         return "whatsapp"
 
     def resolve_target(self, session_id: str) -> str | int | None:
@@ -439,6 +444,70 @@ class WhatsAppChannelAdapter(ChannelAdapter):
             extra={"_fields": {"status": status.status}},
         )
         return status
+
+    # ------------------------------------------------------------------ ADR-6 HealableResource protocol
+
+    @property
+    def available(self) -> bool:
+        """True if the poll loop is live and ready to send (ADR-6 HealableResource).
+
+        ponytail: bare cached-state read, deliberately unlogged — matches every
+        other HealableResource implementer in this codebase (EmbeddingRegistry,
+        LanceDBAdapter, KuzuAdapter, DbPool: all bare `available` properties with
+        no I/O). Called on every health-sweep tick and from `ensure_available()`
+        itself; logging a hot-path property read would be noise, not signal. The
+        state-changing path (`ensure_available()`) carries full 4-point logging.
+        """
+        return self._poll_task is not None and not self._poll_task.done()
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Return the degradation message if unhealthy, else None."""
+        # 1. ENTRY — implicit (property access)
+        if self.available:
+            return None
+        # 2. DECISION — derive reason (poll task is None or done)
+        log.whatsapp.debug(
+            "[whatsapp] adapter.unavailable_reason: exit",
+            extra={"_fields": {"reason": "poll loop not running"}},
+        )
+        # 3. STEP — return the message
+        return "poll loop not running — channel not started"
+
+    async def ensure_available(self) -> None:
+        """Recover a degraded adapter by restarting the poll loop if needed.
+
+        For WhatsApp, this restarts the poll loop when it has crashed or died.
+        """
+        # 1. ENTRY
+        log.whatsapp.debug(
+            "[whatsapp] adapter.ensure_available: entry",
+            extra={"_fields": {"available": self.available}},
+        )
+        # 2. DECISION — no-op if already healthy
+        if self.available:
+            log.whatsapp.debug(
+                "[whatsapp] adapter.ensure_available: already healthy — no-op"
+            )
+            return
+        # 3. STEP — restart the poll loop
+        log.whatsapp.debug("[whatsapp] adapter.ensure_available: restarting poll loop")
+        self._poll_task = asyncio.create_task(self._poll_loop())
+        # 4. EXIT
+        log.whatsapp.info(
+            "[whatsapp] adapter.ensure_available: exit — poll loop restart attempted"
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: the adapter's state is not cached downstream.
+
+        Every caller re-acquires the adapter via ChannelRegistry or dependency
+        injection, so there is no dead ref to clear on recycling. Matches the
+        pattern in EmbeddingRegistry and LanceDBAdapter.
+        """
+        log.whatsapp.debug(
+            "[whatsapp] adapter.register_on_recycled: no-op (no downstream dependents)"
+        )
 
     def register_with_registry(self) -> None:
         """Self-register with the singleton ChannelRegistry."""

@@ -8,7 +8,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from collections.abc import Callable
+
 from stackowl.gateway.scanner import IngressMessage
+from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
 from stackowl.pipeline.streaming import ResponseChunk
 
@@ -34,6 +37,12 @@ class ChannelAdapter(ABC):
     @property
     @abstractmethod
     def channel_name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def contributor_name(self) -> str:
+        """Health-loop contributor name (for healers dict registration)."""
+        ...
 
     @abstractmethod
     async def receive(self) -> IngressMessage:
@@ -68,6 +77,39 @@ class ChannelAdapter(ABC):
         bug): the honest behaviour is loud-failure on-turn, visible-status
         best-effort.
         """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> HealthStatus:
+        """Report the channel's current health status (ADR-6 HealthContributor).
+
+        Used by the health loop to detect degradation and trigger self-healing.
+        Every channel must report its liveness and readiness to deliver messages.
+        """
+        ...
+
+    # ------------------------------------------------------------------ ADR-6 HealableResource protocol
+
+    @property
+    @abstractmethod
+    def available(self) -> bool:
+        """True if the channel is live and ready to send (ADR-6 HealableResource)."""
+        ...
+
+    @property
+    @abstractmethod
+    def unavailable_reason(self) -> str | None:
+        """Return the degradation message if unavailable, else None."""
+        ...
+
+    @abstractmethod
+    async def ensure_available(self) -> None:
+        """Recover a degraded channel by restarting its connection if needed."""
+        ...
+
+    @abstractmethod
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """Register a callback to fire when the channel is recycled."""
         ...
 
     def resolve_target(self, session_id: str) -> str | int | None:

@@ -416,6 +416,49 @@ class SchedulerAssembly:
                     "health detection via ChannelLivenessContributor only",
                     exc_info=exc,
                 )
+        # ADR-6 Task 5 — Discord adapter self-heal (thin HealableResource wrapper).
+        # The adapter auto-registers itself with ChannelRegistry on start(); fetch it
+        # and wire it to the health loop if discord is configured. Gates on both
+        # discord being enabled AND the adapter being live (registered), so a
+        # missing/unconfigured adapter doesn't block the sweep.
+        if settings.discord_channel.bot_token:
+            from stackowl.channels.registry import ChannelRegistry
+
+            try:
+                # 1. ENTRY
+                log.scheduler.debug(
+                    "[scheduler] assembly: discord healer setup — entry",
+                    extra={"_fields": {"discord_configured": True}},
+                )
+                channel_registry = ChannelRegistry.instance()
+                discord_adapter = channel_registry.get("discord")
+                if discord_adapter is not None:
+                    # 2. DECISION — adapter is registered and ready
+                    # 3. STEP — add to healers and register contributor
+                    healers[discord_adapter.contributor_name] = discord_adapter
+                    health_aggregator.register(discord_adapter)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: discord healer wired",
+                        extra={
+                            "_fields": {
+                                "key": discord_adapter.contributor_name,
+                                "adapter": type(discord_adapter).__name__,
+                            }
+                        },
+                    )
+                else:
+                    # Adapter not yet started (will register itself later)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: discord adapter not yet registered — "
+                        "no self-heal until adapter starts"
+                    )
+            except Exception as exc:
+                # 4. EXIT (error path) — log loudly but don't crash assembly
+                log.scheduler.warning(
+                    "[scheduler] assembly: discord healer setup failed — "
+                    "no self-heal for discord",
+                    exc_info=exc,
+                )
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
         # Adding a contributor changes the detect set, so gate it on the flag too —
         # OFF leaves the aggregator's contributor set unchanged (byte-identical).
