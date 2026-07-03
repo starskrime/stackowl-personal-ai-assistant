@@ -140,6 +140,23 @@ async def test_health_sweep_wired_with_live_db_and_provider_healers(
     assert "browser" not in healers  # flag OFF → browser not wired
 
 
+async def test_health_sweep_wires_embedding_registry_healer_and_contributor(
+    tmp_db: DbPool,
+) -> None:
+    # Task 1 (ADR-6 self-heal) — the sweep must hold the live EmbeddingRegistry
+    # as a HealableResource (keyed "embeddings") AND detect it via its own
+    # health_check, registered unconditionally like DbContributor (no flag
+    # gate — the registry needs no live-runtime ref beyond what
+    # MemoryAssembly.build already constructed).
+    components = await _build(tmp_db)
+    handler = components.health_sweep_handler
+    embeddings_healer = handler._healers["embeddings"]
+    # sanity: it's a real EmbeddingRegistry-shaped HealableResource, not a stub
+    assert hasattr(embeddings_healer, "ensure_available")
+    names = {c.contributor_name for c in handler._aggregator._contributors}
+    assert "embedding_registry" in names
+
+
 async def test_health_sweep_wires_browser_when_flag_on(tmp_db: DbPool) -> None:
     runtime = _FakeBrowserRuntime()
     components = await _build(tmp_db, browser_runtime=runtime, health_loop=True)

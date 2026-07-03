@@ -33,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
+    from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.infra.resilience import HealableResource
@@ -339,7 +340,9 @@ class SchedulerAssembly:
         # contributors (db / filesystem / graph / enabled providers — the same set
         # the CLI uses, minus Browser/Resilience which need live-runtime refs) and
         # register a handler that collects on a cadence and alerts on down/degraded.
-        health_aggregator = _build_health_aggregator(settings, liveness_store)
+        health_aggregator = _build_health_aggregator(
+            settings, liveness_store, memory_components.embedding_registry
+        )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
@@ -348,7 +351,10 @@ class SchedulerAssembly:
         # a down subsystem is RECYCLED + re-verified, not just alerted. Heal is
         # flag-gated in the handler (settings.health_loop), so this map is consulted
         # ONLY when ON — flag OFF stays byte-identical regardless of what's wired.
-        healers: dict[str, HealableResource] = {"db": db}
+        healers: dict[str, HealableResource] = {
+            "db": db,
+            "embeddings": memory_components.embedding_registry,
+        }
         for provider in provider_registry.all():
             healers[f"provider:{provider.name}"] = provider
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
@@ -579,7 +585,9 @@ class SchedulerAssembly:
 
 
 def _build_health_aggregator(
-    settings: Settings, liveness_store: ChannelLivenessStore | None = None
+    settings: Settings,
+    liveness_store: ChannelLivenessStore | None = None,
+    embedding_registry: EmbeddingRegistry | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -593,6 +601,15 @@ def _build_health_aggregator(
     built by the caller (gated on ``telegram_channel.bot_token`` — no telegram
     configured means no signal to produce or consume). ``None`` skips both
     registrations below, exactly as before this PB-CANARY generalization.
+
+    ``embedding_registry`` (Task 1, ADR-6 self-heal) is the live, in-process
+    :class:`EmbeddingRegistry` — unlike Browser/Resilience it needs no
+    live-runtime handle beyond what ``MemoryAssembly.build`` already
+    constructed, and it already implements the contributor shape
+    (``contributor_name`` + ``health_check``) directly, so it's registered
+    unconditionally here exactly like ``DbContributor``. ``None`` (a caller
+    that hasn't threaded it through) skips registration, same pattern as
+    ``liveness_store``.
     """
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
@@ -610,6 +627,8 @@ def _build_health_aggregator(
     agg.register(DbContributor(default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
     agg.register(GraphContributor.probe())
+    if embedding_registry is not None:
+        agg.register(embedding_registry)
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))

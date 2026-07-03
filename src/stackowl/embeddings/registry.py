@@ -9,6 +9,8 @@ The degraded state is surfaced via ``health_check``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from stackowl.embeddings.base import EmbeddingProvider
 from stackowl.health.status import HealthStatus
 from stackowl.infra.observability import log
@@ -118,4 +120,82 @@ class EmbeddingRegistry:
             status=status,  # type: ignore[arg-type]
             message=msg,
             latency_ms=0.0,
+        )
+
+    # ---- HealableResource protocol (ADR-6 F-87) ---------------------------
+    # Mirrors ModelProvider's shape (providers/base.py): a boot-time failure
+    # here is not a dead handle to recycle, it's a degrade-to-hash decision
+    # that the periodic health sweep can retry via ensure_available().
+
+    @property
+    def available(self) -> bool:
+        return self._is_semantic
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        if self._is_semantic:
+            return None
+        return "hash fallback active — semantic model unavailable"
+
+    async def ensure_available(self) -> None:
+        """Retry the semantic provider load; raise if it cannot be recovered.
+
+        No-op when already semantic. Otherwise attempts
+        ``SentenceTransformerProvider.create(self._model_name)`` again (that
+        classmethod already has its own bounded network-retry, commit
+        0ba23e52); on success swaps ``self._provider``/``self._is_semantic``
+        to the semantic provider so the registry self-heals instead of
+        staying on the cruder hash fallback forever. On failure the registry
+        stays on hash and the exception propagates — the sweep's
+        RecoveryActuator owns backoff, not this method.
+        """
+        # 1. ENTRY
+        log.engine.debug(
+            "[embeddings] registry.ensure_available: entry",
+            extra={"_fields": {"semantic": self._is_semantic, "model": self._model_name}},
+        )
+        if self._is_semantic:
+            # 2. DECISION — already healthy, nothing to retry
+            log.engine.debug(
+                "[embeddings] registry.ensure_available: already semantic — no-op",
+                extra={"_fields": {"model": self._model_name}},
+            )
+            return
+
+        # 2. DECISION — degraded; retry the semantic load
+        from stackowl.embeddings.sentence_transformer_provider import (
+            SentenceTransformerProvider,
+        )
+
+        try:
+            # 3. STEP — self-heal attempt
+            provider = await SentenceTransformerProvider.create(self._model_name)
+        except Exception as exc:
+            log.engine.warning(
+                "[embeddings] registry.ensure_available: self-heal retry failed — "
+                "staying on hash fallback",
+                exc_info=exc,
+                extra={"_fields": {"model": self._model_name}},
+            )
+            raise
+
+        self._provider = provider
+        self._is_semantic = True
+        # 4. EXIT
+        log.engine.info(
+            "[embeddings] self-heal: semantic embeddings restored",
+            extra={"_fields": {"model": self._model_name, "dim": provider.dimension}},
+        )
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: this resource has no downstream dependents to notify today.
+
+        Mirrors ModelProvider.register_on_recycled (providers/base.py) — a
+        registry swap happens in-place (``get()`` always returns the current
+        ``self._provider``), so callers never hold a stale reference that
+        needs invalidating.
+        """
+        log.engine.debug(
+            "[embeddings] registry.register_on_recycled: no-op (no downstream dependents)",
+            extra={"_fields": {"model": self._model_name}},
         )
