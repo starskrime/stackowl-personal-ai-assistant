@@ -502,6 +502,55 @@ class SchedulerAssembly:
                     "no self-heal for slack",
                     exc_info=exc,
                 )
+        # ADR-6 Task 7 — WhatsApp adapter self-heal. Unlike Telegram/Discord/Slack
+        # (thin reconnector wrappers), WhatsApp owns its Playwright browser driver
+        # directly, so its ensure_available() performs a REAL browser-driver
+        # restart (stop the dead WhatsAppBrowserDriver, construct+start a fresh
+        # one) rather than delegating to an injected callback. The adapter
+        # auto-registers itself with ChannelRegistry on start(); fetch it and wire
+        # it to the health loop if whatsapp is enabled. Gates on both whatsapp
+        # being enabled AND the adapter being live (registered), so a
+        # missing/unconfigured adapter doesn't block the sweep. WhatsApp Web has
+        # no bot token (QR-auth) — ``enabled`` is its gate, mirroring the
+        # orchestrator's own startup gate for this channel.
+        if settings.whatsapp_channel.enabled:
+            from stackowl.channels.registry import ChannelRegistry
+
+            try:
+                # 1. ENTRY
+                log.scheduler.debug(
+                    "[scheduler] assembly: whatsapp healer setup — entry",
+                    extra={"_fields": {"whatsapp_configured": True}},
+                )
+                channel_registry = ChannelRegistry.instance()
+                whatsapp_adapter = channel_registry.get("whatsapp")
+                if whatsapp_adapter is not None:
+                    # 2. DECISION — adapter is registered and ready
+                    # 3. STEP — add to healers and register contributor
+                    healers[whatsapp_adapter.contributor_name] = whatsapp_adapter
+                    health_aggregator.register(whatsapp_adapter)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: whatsapp healer wired",
+                        extra={
+                            "_fields": {
+                                "key": whatsapp_adapter.contributor_name,
+                                "adapter": type(whatsapp_adapter).__name__,
+                            }
+                        },
+                    )
+                else:
+                    # Adapter not yet started (will register itself later)
+                    log.scheduler.debug(
+                        "[scheduler] assembly: whatsapp adapter not yet registered — "
+                        "health detection via ChannelLivenessContributor only"
+                    )
+            except Exception as exc:
+                # 4. EXIT (error path) — log loudly but don't crash assembly
+                log.scheduler.warning(
+                    "[scheduler] assembly: whatsapp healer setup failed — "
+                    "no self-heal for whatsapp",
+                    exc_info=exc,
+                )
         # Browser needs both DETECT (live BrowserContributor) and HEAL (the runtime).
         # Adding a contributor changes the detect set, so gate it on the flag too —
         # OFF leaves the aggregator's contributor set unchanged (byte-identical).

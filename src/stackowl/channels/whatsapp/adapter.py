@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from typing import Any, Literal
 from uuid import uuid4
 
 from stackowl.channels.base import ChannelAdapter
@@ -78,6 +78,10 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         self._splitter = WhatsAppMessageSplitter()
         self._poll_task: asyncio.Task[None] | None = None
         self._last_poll_at: float | None = None
+        # ADR-6 — guards ensure_available() against a double browser-rebuild
+        # race (e.g. two overlapping health-sweep ticks), mirroring
+        # CamoufoxRuntime's lock-guarded recycle.
+        self._heal_lock = asyncio.Lock()
         # Session→target map (MANDATORY — the session_id is a lossy hash of the
         # JID, so it is NOT itself a send target). Maps session_id ->
         # the raw JID this session's replies route to. ``_last_target`` is the
@@ -387,58 +391,198 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         await self._browser.stop()
         log.whatsapp.debug("[whatsapp] adapter.stop: exit")
 
-    async def health_check(self) -> HealthStatus:
-        """Report ok/degraded based on transport LIVENESS + the last poll.
+    def _health_signal(self) -> tuple[Literal["ok", "degraded"], str | None, float]:
+        """Single source of truth for liveness: shared by ``health_check()`` (async,
+        ``HealthStatus``) and the sync ``available``/``unavailable_reason``
+        HealableResource properties (ADR-6), so the two protocols can never drift
+        out of agreement — reused rather than reinvented per-caller.
 
         Liveness gate (F004-part1): ``ok`` requires the background poll loop to be
         actually running (``_poll_task`` started and not done) — a poll timestamp
         alone does not prove the browser/poll loop is live. Without it, report
-        ``degraded``/``unavailable`` so health never lies about deliverability
-        before the channel is started.
+        ``degraded`` so health never lies about deliverability before the channel
+        is started.
+
+        Returns:
+            ``(status, message, latency_ms)`` — ``status`` is ``"ok"``/``"degraded"``.
         """
-        log.whatsapp.debug("[whatsapp] adapter.health_check: entry")
         now = time.monotonic()
 
         if self._poll_task is None or self._poll_task.done():
-            status = HealthStatus(
-                name=self.channel_name,
-                status="degraded",
-                message="poll loop not running — channel not started",
-                latency_ms=0.0,
-            )
-            log.whatsapp.debug(
-                "[whatsapp] adapter.health_check: exit",
-                extra={"_fields": {"status": status.status, "reason": "no_poll_loop"}},
-            )
-            return status
+            return "degraded", "poll loop not running — channel not started", 0.0
 
         if self._last_poll_at is None:
-            status = HealthStatus(
-                name=self.channel_name,
-                status="degraded",
-                message="no messages polled yet",
-                latency_ms=0.0,
-            )
-        elif now - self._last_poll_at > _HEARTBEAT_DEGRADED_AFTER_S:
-            status = HealthStatus(
-                name=self.channel_name,
-                status="degraded",
-                message="poll heartbeat stale",
-                latency_ms=(now - self._last_poll_at) * 1000.0,
-            )
-        else:
-            status = HealthStatus(
-                name=self.channel_name,
-                status="ok",
-                message=None,
-                latency_ms=(now - self._last_poll_at) * 1000.0,
-            )
+            return "degraded", "no messages polled yet", 0.0
 
+        age_s = now - self._last_poll_at
+        latency_ms = age_s * 1000.0
+        if age_s > _HEARTBEAT_DEGRADED_AFTER_S:
+            return "degraded", "poll heartbeat stale", latency_ms
+        return "ok", None, latency_ms
+
+    async def health_check(self) -> HealthStatus:
+        """Report ok/degraded based on transport LIVENESS + the last poll.
+
+        Built on :meth:`_health_signal` — see that method's docstring for the
+        exact liveness gate.
+        """
+        log.whatsapp.debug("[whatsapp] adapter.health_check: entry")
+        status_str, message, latency_ms = self._health_signal()
+        status = HealthStatus(
+            name=self.channel_name,
+            status=status_str,
+            message=message,
+            latency_ms=latency_ms,
+        )
         log.whatsapp.debug(
             "[whatsapp] adapter.health_check: exit",
             extra={"_fields": {"status": status.status}},
         )
         return status
+
+    # ------------------------------------------------------------------ ADR-6 HealableResource protocol
+
+    @property
+    def contributor_name(self) -> str:
+        """Name this adapter registers under in the health loop's ``healers`` dict.
+
+        Kept identical to :attr:`channel_name` (mirrors Discord/Telegram/Slack) so
+        ``assembly.py`` can key ``healers[...]`` off this attribute directly rather
+        than a hardcoded literal — the exact class of drift that silently broke
+        Task 1's embeddings healer.
+        """
+        return "whatsapp"
+
+    @property
+    def available(self) -> bool:
+        """True when the poll loop is alive and the last-poll heartbeat is fresh.
+
+        ponytail: bare cached-state read, deliberately unlogged — matches every
+        other HealableResource implementer in this codebase (Discord, Slack,
+        Telegram, EmbeddingRegistry, LanceDBAdapter, KuzuAdapter, DbPool: all bare
+        `available` properties with no I/O). Called on every health-sweep tick and
+        from `ensure_available()` itself; logging a hot-path property read would be
+        noise, not signal. The state-changing path (`ensure_available()`) carries
+        full 4-point logging.
+        """
+        status_str, _message, _latency_ms = self._health_signal()
+        return status_str == "ok"
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Return the degradation message if unhealthy, else None (mirrors health_check())."""
+        _status_str, message, _latency_ms = self._health_signal()
+        return message
+
+    async def ensure_available(self) -> None:
+        """Recover a dead WhatsApp session with a REAL browser-driver restart.
+
+        Unlike Discord (its own client library reconnects) and Slack (delegates to
+        a reconnect callback the orchestrator owns), WhatsApp owns its Playwright
+        browser directly — there is no external process to hand off to, so this
+        method performs the actual recovery itself: cancel the current poll task,
+        ``stop()`` the OLD :class:`WhatsAppBrowserDriver` (closes the dead
+        Chromium process), construct a BRAND-NEW ``WhatsAppBrowserDriver``,
+        ``start()`` it (relaunches Chromium and re-attaches the persisted
+        WhatsApp Web session via :class:`WhatsAppSessionManager`), swap the
+        adapter's ``_browser`` reference to it, then restart the poll loop against
+        the new driver. A prior task in this arc shipped a placeholder that
+        restarted only the poll TASK around a still-dead browser (``available``
+        falsely reported healthy) — this rebuilds the actual browser, not just the
+        wrapper task around it.
+
+        No-op when already healthy. When unhealthy but the poll task is still
+        alive (i.e. the ONLY reason ``available`` is False is "no message has
+        arrived yet" / "heartbeat stale" — WhatsApp's only liveness signal is an
+        inbound message, since the browser driver deliberately swallows its own
+        poll errors, see :meth:`WhatsAppBrowserDriver.poll_messages`), there is
+        nothing structurally broken to rebuild: tearing down a live, working
+        browser session on a quiet-chat signal would be destructive churn, not
+        healing, so this is a logged no-op instead of a rebuild.
+        """
+        log.whatsapp.debug(
+            "[whatsapp] adapter.ensure_available: entry",
+            extra={"_fields": {"available": self.available, "reason": self.unavailable_reason}},
+        )
+        if self.available:
+            log.whatsapp.debug("[whatsapp] adapter.ensure_available: already healthy — no-op")
+            return
+
+        async with self._heal_lock:
+            if self.available:
+                log.whatsapp.debug(
+                    "[whatsapp] adapter.ensure_available: already healthy after lock — no-op (raced)"
+                )
+                return
+
+            poll_task_dead = self._poll_task is None or self._poll_task.done()
+            if not poll_task_dead:
+                # 2. DECISION — poll loop is structurally alive; nothing to rebuild.
+                log.whatsapp.debug(
+                    "[whatsapp] adapter.ensure_available: poll loop alive, only heartbeat "
+                    "stale/absent — no destructive browser rebuild",
+                    extra={"_fields": {"reason": self.unavailable_reason}},
+                )
+                return
+
+            # 2. DECISION — poll loop is dead: the browser needs a real rebuild.
+            log.whatsapp.warning(
+                "[whatsapp] adapter.ensure_available: unhealthy — restarting browser driver",
+                extra={"_fields": {"reason": self.unavailable_reason}},
+            )
+
+            # 3. STEP — stop the poll task first so nothing calls the dying driver
+            # mid-swap (it may already be done, but cancel() on a done task is safe).
+            if self._poll_task is not None and not self._poll_task.done():
+                self._poll_task.cancel()
+                try:
+                    await self._poll_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    log.whatsapp.error(
+                        "[whatsapp] adapter.ensure_available: poll_task raised on cancel",
+                        exc_info=exc,
+                    )
+
+            old_browser = self._browser
+            try:
+                await old_browser.stop()
+                log.whatsapp.debug("[whatsapp] adapter.ensure_available: step old_driver_stopped")
+            except Exception as exc:
+                log.whatsapp.error(
+                    "[whatsapp] adapter.ensure_available: old driver stop failed — "
+                    "continuing to fresh start",
+                    exc_info=exc,
+                )
+
+            new_browser = WhatsAppBrowserDriver(self._settings, self._session_manager)
+            try:
+                await new_browser.start()
+            except Exception as exc:
+                log.whatsapp.error(
+                    "[whatsapp] adapter.ensure_available: fresh driver start failed",
+                    exc_info=exc,
+                )
+                raise
+
+            # 3. STEP — swap the reference and restart the poll loop against it.
+            self._browser = new_browser
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+        # 4. EXIT
+        log.whatsapp.info("[whatsapp] adapter.ensure_available: exit — browser driver restarted")
+
+    def register_on_recycled(self, cb: Callable[[], None]) -> None:
+        """No-op: the adapter's state is not cached downstream.
+
+        Every caller re-acquires the adapter via ChannelRegistry or dependency
+        injection, so there is no dead ref to clear on recycling. Matches the
+        pattern in Discord/Slack/Telegram adapters.
+        """
+        log.whatsapp.debug(
+            "[whatsapp] adapter.register_on_recycled: no-op (no downstream dependents)"
+        )
 
     def register_with_registry(self) -> None:
         """Self-register with the singleton ChannelRegistry."""
