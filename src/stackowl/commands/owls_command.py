@@ -29,6 +29,7 @@ from stackowl.exceptions import (
     OwlNotFoundError,
 )
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 from stackowl.owls.registry import _SECRETARY_NAME
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
@@ -61,6 +62,22 @@ _OWLS_META = CommandMeta(
                 Example(
                     invocation="/owls add Sage --role researcher --tier fast",
                     note="Register a research owl",
+                ),
+            ),
+        ),
+        SubCommand(
+            name="create",
+            summary="Create an owl from a free-text description",
+            description=(
+                "You describe the owl in plain language; any missing details "
+                "(name, capability, specialty, schedule) are elicited "
+                "interactively, the same way owl creation works in chat."
+            ),
+            args=(Arg(name="text", summary="free-text description of the owl"),),
+            examples=(
+                Example(
+                    invocation="/owls create a research assistant that reads arxiv daily",
+                    note="Free-text owl creation, elicits any missing fields",
                 ),
             ),
         ),
@@ -180,6 +197,8 @@ class OwlsCommand(SlashCommand):
                 result = self._list()
             elif sub == "add":
                 result = await self._add(rest)
+            elif sub == "create":
+                result = await self._create_freetext(rest, state)
             elif sub == "edit":
                 result = await self._edit(rest)
             elif sub == "remove":
@@ -262,6 +281,47 @@ class OwlsCommand(SlashCommand):
         )
         suffix = "" if self._db is not None else " (DNA not persisted — no DB)"
         return f"✓ owl '{manifest.name}' registered (role={manifest.role}, tier={manifest.model_tier}){suffix}"
+
+    # ------------------------------------------------------------ create (free text)
+    async def _create_freetext(self, rest: str, state: PipelineState) -> str:
+        """Mint an owl from a free-text description via the real OwlBuildTool.
+
+        A natural-language slash path onto the SAME create code chat already
+        reaches (S6/UniOwl) — no owl-creation logic lives here. Reuses
+        owl_build's elicitation, consent gating, DNA baseline capture, YAML
+        persistence, and scheduler reconciliation completely unchanged. Sits
+        alongside ``add``'s structured ``--role/--tier`` grammar; neither
+        subcommand touches the other.
+        """
+        log.gateway.debug(
+            "[commands] owls.create_freetext: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        text = rest.strip()
+        if not text:
+            raise CommandParseError("owls create", "missing free-text description")
+
+        # Lazy import — owl_build.py imports OwlsCommand at module top level, so a
+        # top-level import here would be circular. Also keeps this call easily
+        # monkeypatchable at its origin (stackowl.tools.meta.owl_build.OwlBuildTool).
+        from stackowl.tools.meta.owl_build import OwlBuildTool
+
+        token = TraceContext.start(
+            session_id=state.session_id,
+            trace_id=state.trace_id,
+            interactive=True,
+            channel=state.channel,
+            reply_target=state.reply_target,
+        )
+        try:
+            result = await OwlBuildTool().execute(action="create", specialty=text)
+        finally:
+            TraceContext.reset(token)
+        log.gateway.info(
+            "[commands] owls.create_freetext: exit",
+            extra={"_fields": {"success": result.success}},
+        )
+        return result.output if result.success else f"✗ /owls create: {result.error}"
 
     # ------------------------------------------------------------------ edit
     async def _edit(self, rest: str) -> str:
