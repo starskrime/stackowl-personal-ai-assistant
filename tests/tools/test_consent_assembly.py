@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from stackowl.tools.consent import RoutingPrompter
+from stackowl.tools.consent import RoutingPrompter, TrustTier
 from stackowl.tools.consent_assembly import ConsentAssembly, ConsentComponents
 from stackowl.tools.registry import ConsequentialActionGate
 
@@ -32,3 +32,20 @@ def test_cli_prompter_registered_and_others_can_register_later() -> None:
     later = MagicMock()
     routing.register("telegram", later)
     assert "telegram" in routing._by_channel  # noqa: SLF001
+
+
+def test_scheduled_skill_synthesizer_identity_is_auto_trusted() -> None:
+    """Task 4 Finding 2 (user decision): the daily SkillSynthesizer job is
+    unattended (no human ever present to approve a prompt), so its DEDICATED
+    scheduled identity is seeded with TrustTier.AUTO here — while the LIVE
+    identity (used when a human IS present) is deliberately absent, so it
+    stays on normal ALWAYS_ASK consent."""
+    from stackowl.skills.synthesizer import (
+        _CONSENT_TOOL_NAME_LIVE,
+        _CONSENT_TOOL_NAME_SCHEDULED,
+    )
+
+    components = ConsentAssembly.build(MagicMock())
+    tiers = components.consent_gate.policy.tiers
+    assert tiers.get(_CONSENT_TOOL_NAME_SCHEDULED) is TrustTier.AUTO
+    assert _CONSENT_TOOL_NAME_LIVE not in tiers

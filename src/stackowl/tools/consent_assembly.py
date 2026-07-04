@@ -42,7 +42,12 @@ class ConsentAssembly:
         log.infra.info("[consent] assembly.build: entry")
 
         # Deferred imports — keep this module cheap when consent isn't used.
-        from stackowl.tools.consent import ConsentPolicy, RoutingPrompter, TtyConsentPrompter
+        from stackowl.tools.consent import (
+            ConsentPolicy,
+            RoutingPrompter,
+            TrustTier,
+            TtyConsentPrompter,
+        )
         from stackowl.tools.registry import ConsequentialActionGate
         from stackowl.tui.i18n_strings import install_default_translations
 
@@ -52,8 +57,19 @@ class ConsentAssembly:
 
         routing_prompter = RoutingPrompter()
         routing_prompter.register("cli", TtyConsentPrompter())
+
+        # Task 4 Finding 2 (user decision) — the daily SkillSynthesizer job is
+        # genuinely unattended (no human ever present to approve a prompt), so
+        # its DEDICATED scheduled identity is auto-trusted here. security_scan_gate
+        # still runs unconditionally first (stackowl.skills.authoring); AUTO only
+        # skips the human PROMPT. The LIVE identity (used when a human IS present,
+        # e.g. the synthesize_skills tool mid-turn) is deliberately NOT in this
+        # dict — it stays on normal ALWAYS_ASK consent.
+        from stackowl.skills.synthesizer import _CONSENT_TOOL_NAME_SCHEDULED
+
+        tiers = {_CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO}
         consent_gate = ConsequentialActionGate(
-            ConsentPolicy(prompter=routing_prompter, audit_logger=audit_logger)
+            ConsentPolicy(prompter=routing_prompter, audit_logger=audit_logger, tiers=tiers)
         )
 
         log.infra.info("[consent] assembly.build: exit — gate + routing prompter ready")

@@ -115,7 +115,10 @@ class SynthesizeSkillsTool(Tool):
                 # approved live (this call is itself already dispatched through
                 # ConsequentialActionGate.check() for action_severity=
                 # "consequential", but the inner write is a SEPARATE
-                # consent-policy identity — see live_or_scheduled_identity()).
+                # consent-policy identity — see resolve_consent_identity()).
+                # When called mid-turn (interactive TraceContext), the inner
+                # write uses the LIVE identity/channel/session (normal
+                # ALWAYS_ASK consent) — NOT the scheduled job's AUTO tier.
                 consent_gate=services.consent_gate,
             )
             job = self._synthetic_job()

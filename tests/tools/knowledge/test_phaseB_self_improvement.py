@@ -37,6 +37,7 @@ import pytest
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.embeddings.registry import EmbeddingRegistry
+from stackowl.infra.trace import TraceContext
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.owls.registry import OwlRegistry
 from stackowl.paths import StackowlHome
@@ -44,7 +45,7 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.skills.assembly import SkillsAssembly
-from stackowl.skills.synthesizer import _CONSENT_TOOL_NAME
+from stackowl.skills.synthesizer import _CONSENT_TOOL_NAME_LIVE, _CONSENT_TOOL_NAME_SCHEDULED
 from stackowl.tools.consent import ConsentPolicy, TrustTier
 from stackowl.tools.knowledge.reflect_now import ReflectNowTool
 from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
@@ -241,7 +242,7 @@ async def synth_services(
     # gate configured to ALLOW the synthesizer's identity, the write fails
     # closed (by design) and this fixture's callers would see created:0.
     consent_gate = ConsequentialActionGate(
-        ConsentPolicy(tiers={_CONSENT_TOOL_NAME: TrustTier.AUTO})
+        ConsentPolicy(tiers={_CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO})
     )
     services = StepServices(
         db_pool=tmp_db,
@@ -272,6 +273,49 @@ async def test_synthesize_skills_runs_real_handler_and_authors_skill(
     written = skills_root / "learned" / "scrape-and-process" / "SKILL.md"
     assert written.exists()
     assert "name: scrape-and-process" in written.read_text(encoding="utf-8")
+
+
+async def test_synthesize_skills_denied_consent_reports_created_zero(
+    tmp_db: DbPool, synth_services,  # noqa: ANN001
+) -> None:
+    """Reviewer Finding 1b: invoked mid-turn (an interactive TraceContext — the
+    live path), a DENIED consent must make the on-demand tool report
+    created:0, never a stale/incorrect success. Also proves (Finding 1a,
+    end-to-end) the inner gate call used the LIVE identity/channel/session_id
+    — not the scheduled fallback — by recording the request kwargs."""
+    services, skills_root = synth_services
+    await _seed_success_cluster(tmp_db, sequence=("web_fetch", "shell"), n=3)
+
+    calls: list[dict[str, object]] = []
+
+    class _DenyingLiveGate:
+        @property
+        def policy(self) -> _DenyingLiveGate:
+            return self
+
+        async def request(self, **kwargs: object) -> bool:
+            calls.append(kwargs)
+            return kwargs.get("tool_name") != _CONSENT_TOOL_NAME_LIVE
+
+    services.consent_gate = _DenyingLiveGate()  # type: ignore[assignment]
+
+    trace_token = TraceContext.start("live-session-2", interactive=True, channel="telegram")
+    services_token = set_services(services)
+    try:
+        res = await SynthesizeSkillsTool().execute()
+    finally:
+        reset_services(services_token)
+        TraceContext.reset(trace_token)
+
+    assert res.success, res.error
+    assert "created:0" in res.output
+    assert not (skills_root / "learned" / "scrape-and-process").exists()
+    # The gate WAS consulted, with the LIVE identity — proves the live branch
+    # of resolve_consent_identity() actually fired end-to-end for this caller.
+    assert len(calls) == 1
+    assert calls[0]["tool_name"] == _CONSENT_TOOL_NAME_LIVE
+    assert calls[0]["channel"] == "telegram"
+    assert calls[0]["session_id"] == "live-session-2"
 
 
 async def test_synthesize_skills_missing_service_degrades_structurally(

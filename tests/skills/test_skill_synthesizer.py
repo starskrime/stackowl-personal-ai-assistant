@@ -17,7 +17,7 @@ from stackowl.skills.assembly import SkillsAssembly
 from stackowl.skills.loader import LoadedSkill
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.synthesizer import (
-    _CONSENT_TOOL_NAME,
+    _CONSENT_TOOL_NAME_SCHEDULED,
     _DEFAULT_VERIFICATION_SECTION,
     _VERIFICATION_HEADING,
     SkillSynthesizer,
@@ -40,7 +40,9 @@ def _allow_gate() -> ConsequentialActionGate:
     without one, consent_gate defaults to None and fails closed (writes
     nothing), by design.
     """
-    return ConsequentialActionGate(ConsentPolicy(tiers={_CONSENT_TOOL_NAME: TrustTier.AUTO}))
+    return ConsequentialActionGate(
+        ConsentPolicy(tiers={_CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO})
+    )
 
 
 @dataclass
@@ -478,6 +480,73 @@ async def test_run_all_aggregates_counts(synth_env) -> None:
 
 # ---------- Task 4: shared skill-authoring gate (bypass fix) ---------------
 
+def test_resolve_consent_identity_uses_scheduled_identity_without_trace_context() -> None:
+    """Reviewer Finding 1a: outside an interactive TraceContext (the genuinely
+    unattended scheduled job's situation), resolve_consent_identity must
+    return the SCHEDULED identity + the background-job fallback channel/session
+    — never the live one."""
+    from stackowl.skills.authoring import resolve_consent_identity
+
+    tool_name, channel, session_id = resolve_consent_identity(
+        live_tool_name="live-x", scheduled_tool_name="scheduled-y",
+    )
+    assert tool_name == "scheduled-y"
+    assert channel == "scheduler"
+    assert session_id == "scheduler"
+
+
+def test_resolve_consent_identity_uses_live_identity_inside_interactive_trace() -> None:
+    """Reviewer Finding 1a: inside an interactive TraceContext (a live human
+    turn), resolve_consent_identity must read the REAL channel/session_id off
+    TraceContext.get() and return the LIVE identity — the specific branch that
+    fixes the SynthesizeSkillsTool regression, previously untested."""
+    from stackowl.infra.trace import TraceContext
+    from stackowl.skills.authoring import resolve_consent_identity
+
+    token = TraceContext.start("live-session-1", interactive=True, channel="telegram")
+    try:
+        tool_name, channel, session_id = resolve_consent_identity(
+            live_tool_name="live-x", scheduled_tool_name="scheduled-y",
+        )
+    finally:
+        TraceContext.reset(token)
+    assert tool_name == "live-x"
+    assert channel == "telegram"
+    assert session_id == "live-session-1"
+
+
+async def test_scheduled_write_auto_trusted_via_real_consent_assembly(synth_env) -> None:
+    """Reviewer Finding 2 (user decision): the scheduled identity is seeded
+    with TrustTier.AUTO by the REAL ConsentAssembly.build — the daily job must
+    still actually write with NO human prompt ever consulted, while
+    security_scan_gate (not mocked here) still runs for real."""
+    from unittest.mock import MagicMock
+
+    from stackowl.tools.consent_assembly import ConsentAssembly
+
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "auto-trusted-skill", "description": "d", "when_to_use": "w",
+        "body": "# Steps\n1. go",
+    })])
+
+    components = ConsentAssembly.build(MagicMock())
+
+    async def _boom(_req: object) -> None:
+        raise AssertionError("prompter must NOT be consulted for an AUTO-tiered identity")
+
+    components.routing_prompter.prompt = _boom  # type: ignore[method-assign]
+
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=provider, skills_root=root, consent_gate=components.consent_gate,
+    )
+    n = await synth.discover_new_skills()
+    assert n == 1
+    assert (root / "learned" / "auto-trusted-skill" / "SKILL.md").exists()
+
+
 async def test_synthesize_one_calls_scan_and_consent_before_write(synth_env) -> None:
     """The gate order must hold: security_scan_gate runs, THEN consent, and
     BOTH run before the real skill directory is ever created on disk."""
@@ -523,7 +592,7 @@ async def test_synthesize_one_calls_scan_and_consent_before_write(synth_env) -> 
     assert n == 1
     assert call_order == ["scan", "consent"], call_order
     assert len(gate.calls) == 1
-    assert gate.calls[0]["tool_name"] == _CONSENT_TOOL_NAME
+    assert gate.calls[0]["tool_name"] == _CONSENT_TOOL_NAME_SCHEDULED
     assert (target / "SKILL.md").exists()
 
 

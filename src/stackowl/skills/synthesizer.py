@@ -42,7 +42,7 @@ from stackowl.providers.base import Message, ModelProvider
 from stackowl.skills.authoring import (
     SkillWriteRequest,
     gated_skill_write,
-    live_or_scheduled_identity,
+    resolve_consent_identity,
 )
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.store import Skill, SkillIndexStore
@@ -54,10 +54,16 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.skills.loader import LoadedSkill
     from stackowl.tools.registry import ConsequentialActionGate
 
-# Consent-policy identity presented for every gated write this module makes
-# (Task 4 / bypass fix) — distinct from human-facing "skill_manage" so an
-# operator can configure a trust tier for unattended synthesis independently.
-_CONSENT_TOOL_NAME = "skill_synthesizer"
+# Consent-policy identities for every gated write this module makes (Task 4 /
+# bypass fix; split per reviewer Finding 2). LIVE is used when an interactive
+# turn is in flight (e.g. the synthesize_skills tool — a human is present and
+# already passed the OUTER consequential check for that tool call) and stays
+# on normal ALWAYS_ASK consent. SCHEDULED is used for the genuinely unattended
+# daily job (no human to ask, ever) and is seeded with TrustTier.AUTO in
+# ConsentAssembly.build — security_scan_gate still runs either way; AUTO only
+# skips the human PROMPT. See resolve_consent_identity().
+_CONSENT_TOOL_NAME_LIVE = "skill_synthesizer"
+_CONSENT_TOOL_NAME_SCHEDULED = "skill_synthesizer_scheduled"
 
 # ---------- clustering ------------------------------------------------------
 
@@ -497,7 +503,10 @@ class SkillSynthesizer:
         # via the shared gate (fixes the direct-write bypass). A blocked scan
         # or a denied consent leaves NOTHING on disk and NOTHING indexed.
         skill_md = _emit_skill_md(manifest, parsed["body"])
-        channel, session_id = live_or_scheduled_identity()
+        tool_name, channel, session_id = resolve_consent_identity(
+            live_tool_name=_CONSENT_TOOL_NAME_LIVE,
+            scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
+        )
         request = SkillWriteRequest(
             target_dir=target_dir, manifest=manifest, body=parsed["body"],
             skill_md_text=skill_md,
@@ -506,7 +515,7 @@ class SkillSynthesizer:
                 f"{cluster.size}-outcome success cluster "
                 f"(tools: {', '.join(cluster.sequence)})"
             ),
-            tool_name=_CONSENT_TOOL_NAME, channel=channel, session_id=session_id,
+            tool_name=tool_name, channel=channel, session_id=session_id,
         )
         result = await gated_skill_write(
             request, store=self._skills, consent_gate=self._consent_gate,
@@ -687,7 +696,10 @@ class SkillSynthesizer:
         # Task 4 — security_scan_gate -> consent -> write -> store.upsert, all
         # via the shared gate (fixes the direct-write bypass). A blocked scan
         # or a denied consent leaves the existing SKILL.md untouched.
-        channel, session_id = live_or_scheduled_identity()
+        tool_name, channel, session_id = resolve_consent_identity(
+            live_tool_name=_CONSENT_TOOL_NAME_LIVE,
+            scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
+        )
         request = SkillWriteRequest(
             target_dir=skill_dir, manifest=manifest, body=new_body,
             skill_md_text=new_text,
@@ -696,7 +708,7 @@ class SkillSynthesizer:
                 f"(success_rate={skill.success_rate:.2f}, "
                 f"n_executions={skill.n_executions})"
             ),
-            tool_name=_CONSENT_TOOL_NAME, channel=channel, session_id=session_id,
+            tool_name=tool_name, channel=channel, session_id=session_id,
         )
         result = await gated_skill_write(
             request, store=self._skills, consent_gate=self._consent_gate,

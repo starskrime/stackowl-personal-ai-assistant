@@ -31,17 +31,17 @@ consent gate EXPLICITLY — mirroring ``tool_build.py``'s own
 ``_consent_or_refuse`` self-authorization pattern — rather than relying on
 being invoked through that dispatch wrapper.
 
-NOTE ON SCHEDULED-JOB CONSENT IDENTITY (flagged, deliberately NOT resolved
-here): a background job has no live user to approve a prompt. With today's
-default ``ConsentPolicy`` (empty trust tiers, off-TTY/unregistered-channel
-prompters deny), gating the synthesizer this way means its writes are denied
-by default until an operator explicitly configures a trust tier (e.g.
-``TrustTier.AUTO``) for the ``tool_name`` a caller passes in. That is a
-deliberate security-over-availability trade-off, not a bug — closing the
-silent-write bypass matters more than preserving "always writes" for an
-unattended job. Deciding HOW unattended skill-authoring should eventually get
-approved (a digest-and-approve flow, a scoped trust tier, etc.) is a
-product/security decision for a later task, not this one.
+NOTE ON SCHEDULED-JOB CONSENT IDENTITY (raised during review, decided by the
+user): a background job has no live user to approve a prompt. Rather than
+leave the daily job permanently denied, the SCHEDULED identity
+(``stackowl.skills.synthesizer._CONSENT_TOOL_NAME_SCHEDULED``, e.g.
+``"skill_synthesizer_scheduled"``) is seeded with ``TrustTier.AUTO`` in
+:meth:`ConsentAssembly.build` — auto-allowed with NO human prompt, since none
+is available — while ``security_scan_gate`` still runs unconditionally first.
+The LIVE identity (``_CONSENT_TOOL_NAME_LIVE``, e.g. ``"skill_synthesizer"``,
+used only when an interactive turn is in flight — see
+:func:`resolve_consent_identity`) is deliberately NOT given that tier: a human
+IS present for that path, so it stays on normal ALWAYS_ASK consent.
 """
 
 from __future__ import annotations
@@ -65,10 +65,14 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 _SKILL_MD = "SKILL.md"
 
 
-def live_or_scheduled_identity(
-    *, fallback_channel: str = "scheduler", fallback_session: str = "scheduler",
-) -> tuple[str, str]:
-    """Consent-policy channel/session identity for a gated write.
+def resolve_consent_identity(
+    *,
+    live_tool_name: str,
+    scheduled_tool_name: str,
+    fallback_channel: str = "scheduler",
+    fallback_session: str = "scheduler",
+) -> tuple[str, str, str]:
+    """(tool_name, channel, session_id) for a gated write.
 
     Skill-authoring can be reached two ways: an unattended scheduled job (the
     daily ``SkillSynthesizer`` pass — no live turn, no ``TraceContext``) OR a
@@ -77,20 +81,26 @@ def live_or_scheduled_identity(
     manifest declares ``action_severity="consequential"`` — so a human already
     approved "run synthesis now" before ``execute()`` ran at all).
 
-    When a live, interactive turn IS in flight, use ITS channel/session_id so
-    the SAME per-channel prompter (Telegram/Slack/CLI) that could gate the
-    outer tool call can also gate this inner write — a real human can approve
-    it live, rather than an identity ("scheduler") no prompter is ever
-    registered for. Absent that (the genuinely unattended scheduled job), fall
-    back to a stable background-job identity that fails closed by design
-    until an operator configures a trust tier for it.
+    When a live, interactive turn IS in flight, return ``live_tool_name`` with
+    ITS real channel/session_id, so the SAME per-channel prompter
+    (Telegram/Slack/CLI) that could gate the outer tool call can also gate
+    this inner write — a real human can approve it live, subject to normal
+    consent (no special trust tier).
+
+    Absent that (the genuinely unattended scheduled job), return
+    ``scheduled_tool_name`` with a stable background-job identity. There is no
+    human to prompt, so an operator configures a DEDICATED trust tier (e.g.
+    ``TrustTier.AUTO``) for ``scheduled_tool_name`` — see
+    ``ConsentAssembly.build`` — without touching the live tool_name's tier.
+    ``security_scan_gate`` still runs regardless of which identity is used;
+    AUTO only skips the human PROMPT, never the scan.
     """
     ctx = TraceContext.get()
     channel = ctx.get("channel")
     session_id = ctx.get("session_id")
     if ctx.get("interactive") and channel and session_id:
-        return str(channel), str(session_id)
-    return fallback_channel, fallback_session
+        return live_tool_name, str(channel), str(session_id)
+    return scheduled_tool_name, fallback_channel, fallback_session
 
 
 @dataclass(frozen=True)
