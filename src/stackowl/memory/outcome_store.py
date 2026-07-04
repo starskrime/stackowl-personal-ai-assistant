@@ -240,6 +240,48 @@ class TaskOutcomeStore(OwnedRepository):
         )
         return results
 
+    async def list_failed_global(
+        self, *, since_epoch: float = 0.0, limit: int = 2000,
+    ) -> list[TaskOutcome]:
+        """Return ALL failed outcomes (``failure_class IS NOT NULL``) across
+        all owls since ``since_epoch`` — regardless of ``quality_score``.
+
+        Used by :class:`~stackowl.learning.failure_outcome_miner.FailureOutcomeMiner`
+        (Task 5) to cluster failures. Deliberately does NOT gate on
+        ``quality_score IS NOT NULL`` the way :meth:`list_scored_for_owl_global`
+        does: POSITIVE-ONLY LEARNING means the critic ONLY scores successes
+        (see :meth:`list_pending_critic`'s ``success = 1 AND failure_class IS
+        NULL`` predicate) — a failed outcome NEVER gets a ``quality_score``,
+        so a query that required one would never see a single failure, no
+        matter how many piled up. This reads ``failure_class`` directly.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] list_failed_global: entry",
+            extra={"_fields": {"since_epoch": since_epoch, "limit": limit}},
+        )
+        # 3. STEP
+        rows = await self._db.fetch_all(
+            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+                      success, latency_ms, tool_call_count, failure_class,
+                      quality_score, step_durations, input_text, response_text,
+                      captured_at, scored_at, tool_sequence, dna_snapshot
+               FROM task_outcomes
+               WHERE owner_id = ?
+                 AND failure_class IS NOT NULL
+                 AND captured_at >= ?
+               ORDER BY captured_at DESC
+               LIMIT ?""",
+            (self._owner_id, since_epoch, limit),
+        )
+        results = [_row_to_outcome(r) for r in rows]
+        # 4. EXIT
+        log.memory.debug(
+            "[outcomes] list_failed_global: exit",
+            extra={"_fields": {"n": len(results)}},
+        )
+        return results
+
     async def list_scored_for_owl(
         self, owl_name: str, *, since_epoch: float = 0.0, limit: int = 500,
     ) -> list[TaskOutcome]:

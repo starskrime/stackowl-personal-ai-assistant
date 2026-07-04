@@ -11,33 +11,59 @@ specifically to look at the rows that positive-only mining discards, so a
 recurring incident can eventually become a reusable fix skill instead of
 silently repeating forever.
 
-Naming note (verified against the real schema, not assumed): the plan brief
-describes bucketing by ``(capability_class, error_signature)``.
-``TaskOutcome`` (:mod:`stackowl.memory.outcome_store`) has neither field name.
-The closest existing analogues are:
+Data source — reads failures directly, not via the critic's scored queue
+--------------------------------------------------------------------------
+The critic (``CriticScorerHandler``) only ever scores SUCCESSFUL outcomes —
+its work queue is ``TaskOutcomeStore.list_pending_critic()``, hard-restricted
+to ``success = 1 AND failure_class IS NULL`` (POSITIVE-ONLY LEARNING, see the
+F-51 note on that method). A failed outcome therefore NEVER gets
+``quality_score`` set. This miner uses
+:meth:`~stackowl.memory.outcome_store.TaskOutcomeStore.list_failed_global`,
+which selects on ``failure_class IS NOT NULL`` directly — it does NOT require
+``quality_score IS NOT NULL`` the way the success miner's
+``list_scored_for_owl_global`` does. Reusing that method here would make
+every failure permanently invisible to this miner, no matter how many piled
+up.
 
-* ``capability_class`` -> per-tool name, extracted from ``tool_sequence`` —
-  exactly what :class:`~stackowl.learning.tool_outcome_miner.ToolOutcomeMiner`
-  already buckets by for its ``tool_name`` key.
-* ``error_signature``  -> ``failure_class`` (the exception class name derived
-  by ``classify_failure`` in ``outcome_store.py``).
+Clustering grain — capability_tag, not raw tool_name
+--------------------------------------------------------------------------
+The plan brief describes bucketing by ``(capability_class, error_signature)``.
+``TaskOutcome`` (:mod:`stackowl.memory.outcome_store`) carries neither field
+by that name, but the platform already HAS a "capability class" concept:
+``stackowl.pipeline.capability_substitution`` groups sibling tools (e.g.
+``web_fetch`` and ``browser_browse``, both ``capability_tag="web_knowledge"``)
+so the self-heal substitution layer treats them as interchangeable. Clustering
+on raw ``tool_name`` would silently miss a 4-evidence incident split as 2
+``web_fetch`` timeouts + 2 ``browser_browse`` timeouts. So this module groups
+by each tool's ``capability_tag`` — resolved via an injected
+``capability_tag_lookup(tool_name) -> tag | None`` callable (e.g. built from a
+live ``ToolRegistry`` as ``lambda n: getattr(getattr(registry.get(n),
+"manifest", None), "capability_tag", None)``, the same accessor
+``capability_substitution.find_substitute`` uses) — rather than importing
+``ToolRegistry`` directly, keeping this module runnable/testable standalone.
 
-No new fields are invented on ``TaskOutcome`` — this module reuses the two
-fields that already carry that meaning.
+Fallback (documented, not silent): when no lookup is supplied, or a tool has
+no registered ``capability_tag``, the raw ``tool_name`` is used as its own
+capability key — a tool with no declared siblings is simply a "capability
+class of one," which is the correct behavior, not a degraded one.
+``error_signature`` -> ``failure_class`` (the exception class name derived by
+``classify_failure`` in ``outcome_store.py``) needed no such lookup; it's used
+directly.
 
 RCA integration point (for Task 6: incident trigger + staged RCA, and Task 7:
 consume RCA result): clustering + threshold logic lives here, standalone of
 any RCA machinery. A cluster only becomes a SKILL.md when the caller supplies
 a matching, ``verified=True`` :class:`RcaVerdict` for its
-``(tool_name, failure_class)`` key. Task 6/7 will eventually produce these
-from a completed RCA session; for THIS task they are hand-built (see tests).
+``(capability_class, failure_class)`` key. Task 6/7 will eventually produce
+these from a completed RCA session; for THIS task they are hand-built (see
+tests).
 """
 
 from __future__ import annotations
 
 import time
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -69,6 +95,8 @@ _MIN_EVIDENCE = 3  # mirrors ToolOutcomeMiner._MIN_EVIDENCE
 _CONSENT_TOOL_NAME_LIVE = "failure_outcome_miner"
 _CONSENT_TOOL_NAME_SCHEDULED = "failure_outcome_miner_scheduled"
 
+CapabilityTagLookup = Callable[[str], "str | None"]
+
 
 @dataclass(frozen=True)
 class RcaVerdict:
@@ -83,9 +111,11 @@ class RcaVerdict:
     fields.
 
     Attributes:
-        tool_name: identifies the cluster this verdict resolves — must match
-            a :class:`FailureCluster`'s ``tool_name`` (the "capability" half
-            of the clustering key).
+        capability_class: identifies the cluster this verdict resolves — must
+            match a :class:`FailureCluster`'s ``capability_class`` (a tool's
+            ``capability_tag``, e.g. ``"web_knowledge"``, or the raw
+            ``tool_name`` when no tag is registered for it — see module
+            docstring's fallback note).
         failure_class: the other half of the clustering key — must match the
             cluster's ``failure_class`` (``TaskOutcome.failure_class``).
         skill_name: proposed slug for the SKILL.md directory
@@ -108,7 +138,7 @@ class RcaVerdict:
             When empty, the miner falls back to the cluster's own outcomes.
     """
 
-    tool_name: str
+    capability_class: str
     failure_class: str
     skill_name: str
     description: str
@@ -121,14 +151,14 @@ class RcaVerdict:
 
     @property
     def key(self) -> tuple[str, str]:
-        return (self.tool_name, self.failure_class)
+        return (self.capability_class, self.failure_class)
 
 
 @dataclass(frozen=True)
 class FailureCluster:
-    """One ``(tool_name, failure_class)`` bucket of failed outcomes."""
+    """One ``(capability_class, failure_class)`` bucket of failed outcomes."""
 
-    tool_name: str
+    capability_class: str
     failure_class: str
     outcomes: tuple[TaskOutcome, ...]
 
@@ -138,29 +168,45 @@ class FailureCluster:
 
     @property
     def key(self) -> tuple[str, str]:
-        return (self.tool_name, self.failure_class)
+        return (self.capability_class, self.failure_class)
+
+
+def _capability_class_for(tool: str, tag_lookup: CapabilityTagLookup | None) -> str:
+    """Resolve *tool*'s clustering key: its registered ``capability_tag``, or
+    the raw tool name when none is registered (documented fallback — a tool
+    with no declared siblings is a capability class of one)."""
+    if tag_lookup is None:
+        return tool
+    tag = tag_lookup(tool)
+    return tag if tag else tool
 
 
 def cluster_failures_by_capability_and_signature(
     outcomes: list[TaskOutcome], *, min_size: int = _MIN_EVIDENCE,
+    capability_tag_lookup: CapabilityTagLookup | None = None,
 ) -> list[FailureCluster]:
-    """Bucket FAILED outcomes by ``(tool_name, failure_class)``.
+    """Bucket FAILED outcomes by ``(capability_class, failure_class)``.
 
-    Mirrors :class:`~stackowl.learning.tool_outcome_miner.ToolOutcomeMiner`'s
-    per-tool bucketing shape (one credit per tool named in
-    ``tool_sequence``), but for the failure side: only outcomes with a
-    non-``None`` ``failure_class`` are considered at all, and a bucket only
-    survives if it has ``>= min_size`` members — the same evidence-count gate
-    the success miner uses (``_MIN_EVIDENCE``), applied to the opposite data.
+    ``capability_class`` is each tool's ``capability_tag`` (resolved via
+    *capability_tag_lookup*, e.g. from a live ``ToolRegistry`` — see module
+    docstring), falling back to the raw tool name when no tag is registered.
+    This mirrors :class:`~stackowl.learning.tool_outcome_miner.ToolOutcomeMiner`'s
+    per-tool bucketing shape (one credit per tool named in ``tool_sequence``)
+    but for the failure side, on the capability grain the self-heal
+    substitution layer already uses: only outcomes with a non-``None``
+    ``failure_class`` are considered at all, and a bucket only survives if it
+    has ``>= min_size`` members — the same evidence-count gate the success
+    miner uses (``_MIN_EVIDENCE``), applied to the opposite data.
     """
     buckets: dict[tuple[str, str], list[TaskOutcome]] = defaultdict(list)
     for o in outcomes:
         if not o.failure_class or not o.tool_sequence:
             continue
         for tool in o.tool_sequence:
-            buckets[(tool, o.failure_class)].append(o)
+            capability = _capability_class_for(tool, capability_tag_lookup)
+            buckets[(capability, o.failure_class)].append(o)
     return [
-        FailureCluster(tool_name=key[0], failure_class=key[1], outcomes=tuple(members))
+        FailureCluster(capability_class=key[0], failure_class=key[1], outcomes=tuple(members))
         for key, members in buckets.items()
         if len(members) >= min_size
     ]
@@ -188,6 +234,7 @@ class FailureOutcomeMiner:
         consent_gate: ConsequentialActionGate | None = None,
         lookback_days: int = _LOOKBACK_DAYS_DEFAULT,
         min_evidence: int = _MIN_EVIDENCE,
+        capability_tag_lookup: CapabilityTagLookup | None = None,
     ) -> None:
         self._outcomes = outcome_store
         self._skills = skill_store
@@ -195,11 +242,13 @@ class FailureOutcomeMiner:
         self._consent_gate = consent_gate
         self._lookback_days = lookback_days
         self._min_evidence = min_evidence
+        self._capability_tag_lookup = capability_tag_lookup
         log.memory.debug(
             "[incident] miner.init: ready",
             extra={"_fields": {
                 "lookback_days": lookback_days,
                 "min_evidence": min_evidence,
+                "has_capability_lookup": capability_tag_lookup is not None,
             }},
         )
 
@@ -210,11 +259,11 @@ class FailureOutcomeMiner:
         SKILL.md (via the shared gate) for every cluster that both meets the
         evidence threshold AND has a matching ``verified=True`` verdict.
 
-        ``verdicts`` is keyed by ``(tool_name, failure_class)`` — the same
-        tuple :class:`FailureCluster.key`/:class:`RcaVerdict.key` expose.
-        Today this map is hand-built by the caller (Task 6/7 don't exist
-        yet); once they do, they populate this same map from a completed RCA
-        session before calling ``mine``.
+        ``verdicts`` is keyed by ``(capability_class, failure_class)`` — the
+        same tuple :class:`FailureCluster.key`/:class:`RcaVerdict.key`
+        expose. Today this map is hand-built by the caller (Task 6/7 don't
+        exist yet); once they do, they populate this same map from a
+        completed RCA session before calling ``mine``.
         """
         # 1. ENTRY
         log.memory.info(
@@ -223,15 +272,16 @@ class FailureOutcomeMiner:
         )
         since = time.time() - self._lookback_days * _SECONDS_PER_DAY
         try:
-            outcomes = await self._outcomes.list_scored_for_owl_global(since_epoch=since)
+            outcomes = await self._outcomes.list_failed_global(since_epoch=since)
         except AttributeError:
             log.memory.warning(
-                "[incident] miner.mine: outcome_store has no global helper — skip",
+                "[incident] miner.mine: outcome_store has no list_failed_global helper — skip",
             )
             return MiningReport(0, 0, 0)
         # 2. DECISION — cluster, then only act on buckets with a verified verdict.
         clusters = cluster_failures_by_capability_and_signature(
             outcomes, min_size=self._min_evidence,
+            capability_tag_lookup=self._capability_tag_lookup,
         )
         log.memory.debug(
             "[incident] miner.mine: clustered",
@@ -244,7 +294,7 @@ class FailureOutcomeMiner:
                 log.memory.debug(
                     "[incident] miner.mine: cluster has no verified verdict — skip",
                     extra={"_fields": {
-                        "tool_name": cluster.tool_name,
+                        "capability_class": cluster.capability_class,
                         "failure_class": cluster.failure_class,
                         "size": cluster.size,
                     }},
@@ -272,7 +322,16 @@ class FailureOutcomeMiner:
         """One gated write: build the manifest/body from *verdict*, then run
         it through the SAME ``security_scan_gate`` -> consent -> write ->
         index chokepoint Task 4 wired for the success-clustering path. Never
-        writes directly to disk itself."""
+        writes directly to disk itself.
+
+        The entire authoring PREP (manifest, body/SKILL.md rendering, consent
+        identity, request construction) is one try/except so a bad cluster
+        (e.g. a verdict whose text trips a rendering edge case) is logged and
+        skipped WITHOUT aborting the rest of the mining pass — mirrors the
+        manifest-validation catch this always had, just widened to cover the
+        other prep steps too. ``gated_skill_write`` itself never raises (see
+        its own docstring), so nothing after this block needs its own catch.
+        """
         log.skills.debug(
             "[incident] miner.author_one: entry",
             extra={"_fields": {"skill_name": verdict.skill_name, "cluster_size": cluster.size}},
@@ -290,30 +349,31 @@ class FailureOutcomeMiner:
                     verdict.parent_trace_ids or [o.trace_id for o in cluster.outcomes[:10]]
                 ),
             )
+            body = _render_incident_body(verdict)
+            skill_md_text = _render_skill_md(manifest, body)
+            tool_name, channel, session_id = resolve_consent_identity(
+                live_tool_name=_CONSENT_TOOL_NAME_LIVE,
+                scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
+            )
+            request = SkillWriteRequest(
+                target_dir=target_dir, manifest=manifest, body=body,
+                skill_md_text=skill_md_text,
+                consent_summary=(
+                    f"Auto-author incident-fix skill '{verdict.skill_name}' from a "
+                    f"{cluster.size}-failure cluster "
+                    f"(capability={cluster.capability_class}, "
+                    f"failure_class={cluster.failure_class})"
+                ),
+                tool_name=tool_name, channel=channel, session_id=session_id,
+                category="incident",
+            )
         except Exception as exc:  # B5 — never raise out of a mining pass
             log.skills.warning(
-                "[incident] miner.author_one: SkillManifest validation failed — skipping",
+                "[incident] miner.author_one: authoring prep failed — skipping",
                 exc_info=exc, extra={"_fields": {"skill_name": verdict.skill_name}},
             )
             return False
 
-        body = _render_incident_body(verdict)
-        skill_md_text = _render_skill_md(manifest, body)
-        tool_name, channel, session_id = resolve_consent_identity(
-            live_tool_name=_CONSENT_TOOL_NAME_LIVE,
-            scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
-        )
-        request = SkillWriteRequest(
-            target_dir=target_dir, manifest=manifest, body=body,
-            skill_md_text=skill_md_text,
-            consent_summary=(
-                f"Auto-author incident-fix skill '{verdict.skill_name}' from a "
-                f"{cluster.size}-failure cluster "
-                f"(tool={cluster.tool_name}, failure_class={cluster.failure_class})"
-            ),
-            tool_name=tool_name, channel=channel, session_id=session_id,
-            category="incident",
-        )
         result = await gated_skill_write(
             request, store=self._skills, consent_gate=self._consent_gate,
         )

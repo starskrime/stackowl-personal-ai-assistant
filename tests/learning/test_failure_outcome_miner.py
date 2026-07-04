@@ -5,6 +5,17 @@ the INVERSE of the positive-only success miner: it clusters FAILED
 TaskOutcome rows and, given a verified RcaVerdict for a cluster (Task 6/7's
 future output — hand-built here), authors a learned SKILL.md through the
 SAME gated_skill_write chokepoint Task 4 introduced for the success path.
+
+Post-review fixes (round 2):
+* Data source: failures are read via TaskOutcomeStore.list_failed_global,
+  which does NOT require quality_score IS NOT NULL — the critic never scores
+  a failure (positive-only learning), so a query gated on quality_score would
+  never see one. _seed_failures below deliberately does NOT call
+  set_quality_score, matching what the real pipeline actually produces.
+* Clustering grain: (capability_class, failure_class), not (tool_name,
+  failure_class) — capability_class resolves via an injected
+  capability_tag_lookup so sibling tools sharing a capability_tag (per
+  stackowl.pipeline.capability_substitution) combine into one cluster.
 """
 
 from __future__ import annotations
@@ -28,14 +39,18 @@ from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 
 def _outcome(
-    trace_id: str, tool: str, failure_class: str | None, *, quality: float = 0.2,
+    trace_id: str, tool: str, failure_class: str | None, *,
+    quality: float | None = None,
 ) -> TaskOutcome:
+    """Build a TaskOutcome. Failures default to quality_score=None/scored_at=None
+    — matching reality: the critic (positive-only) never scores a failure."""
     return TaskOutcome(
         outcome_id=0, trace_id=trace_id, session_id="s", owl_name="o",
         channel="cli", success=failure_class is None, latency_ms=100.0,
         tool_call_count=1, tool_sequence=(tool,), failure_class=failure_class,
         quality_score=quality, step_durations={}, input_text="in",
-        response_text="out", captured_at=time.time(), scored_at=time.time(),
+        response_text="out", captured_at=time.time(),
+        scored_at=time.time() if quality is not None else None,
     )
 
 
@@ -51,7 +66,7 @@ def test_cluster_groups_by_tool_and_failure_class() -> None:
     ]
     clusters = cluster_failures_by_capability_and_signature(outs, min_size=3)
     assert len(clusters) == 1
-    assert clusters[0].tool_name == "web_fetch"
+    assert clusters[0].capability_class == "web_fetch"  # no lookup -> tool_name fallback
     assert clusters[0].failure_class == "ToolTimeoutError"
     assert clusters[0].size == 3
     assert clusters[0].key == ("web_fetch", "ToolTimeoutError")
@@ -97,19 +112,94 @@ def test_cluster_ignores_empty_tool_sequence() -> None:
     empty_seq = TaskOutcome(
         outcome_id=0, trace_id="e", session_id="s", owl_name="o", channel="cli",
         success=False, latency_ms=1.0, tool_call_count=0, tool_sequence=(),
-        failure_class="X", quality_score=0.1, step_durations={},
-        input_text="i", response_text="o", captured_at=time.time(), scored_at=time.time(),
+        failure_class="X", quality_score=None, step_durations={},
+        input_text="i", response_text="o", captured_at=time.time(), scored_at=None,
     )
     assert cluster_failures_by_capability_and_signature([empty_seq], min_size=1) == []
 
 
 def test_failure_cluster_is_plain_dataclass() -> None:
     fc = FailureCluster(
-        tool_name="web_fetch", failure_class="ToolTimeoutError",
+        capability_class="web_fetch", failure_class="ToolTimeoutError",
         outcomes=(_outcome("1", "web_fetch", "ToolTimeoutError"),),
     )
     assert fc.size == 1
     assert fc.key == ("web_fetch", "ToolTimeoutError")
+
+
+# ---------- clustering grain: capability_tag, not raw tool_name -------------
+
+
+def test_cluster_combines_sibling_tools_sharing_capability_tag() -> None:
+    """web_fetch and browser_browse share capability_tag='web_knowledge' (per
+    stackowl.pipeline.capability_substitution). 2 web_fetch timeouts + 2
+    browser_browse timeouts must combine into ONE 4-evidence cluster —
+    raw tool_name clustering would split this into two below-threshold-3
+    buckets and silently drop the incident."""
+    tag_lookup = {"web_fetch": "web_knowledge", "browser_browse": "web_knowledge"}.get
+    outs = [
+        _outcome("1", "web_fetch", "ToolTimeoutError"),
+        _outcome("2", "web_fetch", "ToolTimeoutError"),
+        _outcome("3", "browser_browse", "ToolTimeoutError"),
+        _outcome("4", "browser_browse", "ToolTimeoutError"),
+    ]
+    # Without the lookup: two below-threshold buckets of 2, both dropped.
+    assert cluster_failures_by_capability_and_signature(outs, min_size=3) == []
+    # With the lookup: one combined cluster of 4, crosses the threshold.
+    clusters = cluster_failures_by_capability_and_signature(
+        outs, min_size=3, capability_tag_lookup=tag_lookup,
+    )
+    assert len(clusters) == 1
+    assert clusters[0].capability_class == "web_knowledge"
+    assert clusters[0].failure_class == "ToolTimeoutError"
+    assert clusters[0].size == 4
+
+
+def test_cluster_falls_back_to_tool_name_when_tag_unregistered() -> None:
+    """A lookup is supplied but doesn't cover this tool -> falls back to the
+    raw tool_name as its own capability class (documented, not silent)."""
+    tag_lookup = {"web_fetch": "web_knowledge"}.get  # "shell" not covered
+    outs = [
+        _outcome("1", "shell", "PermissionError"),
+        _outcome("2", "shell", "PermissionError"),
+        _outcome("3", "shell", "PermissionError"),
+    ]
+    clusters = cluster_failures_by_capability_and_signature(
+        outs, min_size=3, capability_tag_lookup=tag_lookup,
+    )
+    assert len(clusters) == 1
+    assert clusters[0].capability_class == "shell"
+
+
+# ---------- data source: list_failed_global (no quality_score required) ----
+
+
+async def test_list_failed_global_returns_failures_without_quality_score(
+    tmp_db: DbPool,
+) -> None:
+    """Regression for the Critical finding: a failed outcome NEVER gets a
+    quality_score (the critic only scores successes), so the miner's data
+    source must NOT require quality_score IS NOT NULL."""
+    store = TaskOutcomeStore(tmp_db)
+    await store.record(
+        trace_id="fail-1", session_id="s", owl_name="scout", channel="cli",
+        success=False, latency_ms=5000.0, tool_call_count=1,
+        failure_class="ToolTimeoutError", step_durations={},
+        input_text="task", response_text="(error)", tool_sequence=("web_fetch",),
+    )
+    out = await store.get_by_trace_id("fail-1")
+    assert out is not None
+    assert out.quality_score is None  # never scored — exactly like production
+
+    # The OLD (wrong) data source would find nothing:
+    scored = await store.list_scored_for_owl_global(since_epoch=0.0)
+    assert scored == []
+
+    # The NEW direct-failure query finds it anyway:
+    failed = await store.list_failed_global(since_epoch=0.0)
+    assert len(failed) == 1
+    assert failed[0].trace_id == "fail-1"
+    assert failed[0].quality_score is None
 
 
 # ---------- end-to-end miner (db + gated skill write) -----------------------
@@ -125,6 +215,11 @@ async def _seed_failures(
     db: DbPool, *, n: int = 3, tool: str = "web_fetch",
     failure_class: str = "ToolTimeoutError",
 ) -> None:
+    """Seed n failed outcomes WITHOUT setting quality_score — real failures
+    never get one (the critic only scores successes; see F-51 in
+    outcome_store.py). Previously this helper called set_quality_score(),
+    which masked the fact that the miner's original query would never see a
+    real-world failure."""
     store = TaskOutcomeStore(db)
     for i in range(n):
         tid = f"fail-{tool}-{i}"
@@ -135,17 +230,15 @@ async def _seed_failures(
             input_text=f"task {i}", response_text="(error)",
             tool_sequence=(tool,),
         )
-        o = await store.get_by_trace_id(tid)
-        assert o is not None
-        await store.set_quality_score(o.outcome_id, 0.2)
 
 
 def _verdict(
-    *, tool_name: str = "web_fetch", failure_class: str = "ToolTimeoutError",
+    *, capability_class: str = "web_fetch", failure_class: str = "ToolTimeoutError",
     skill_name: str = "web-fetch-timeout-fix", verified: bool = True,
 ) -> RcaVerdict:
     return RcaVerdict(
-        tool_name=tool_name, failure_class=failure_class, skill_name=skill_name,
+        capability_class=capability_class, failure_class=failure_class,
+        skill_name=skill_name,
         description="Avoid web_fetch timeouts on slow hosts",
         when_to_use="web_fetch keeps timing out against this host",
         root_cause="The host's DNS resolves to an IPv6-only record the sandbox can't route to.",
@@ -168,7 +261,7 @@ async def miner_env(tmp_db: DbPool, tmp_path):
 
 async def test_mine_authors_skill_for_verified_verdict(miner_env) -> None:
     db, root, store = miner_env
-    await _seed_failures(db, n=3)
+    await _seed_failures(db, n=3)  # note: quality_score never set (see helper docstring)
     miner = FailureOutcomeMiner(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
         skills_root=root, consent_gate=_allow_gate("failure_outcome_miner_scheduled"),
@@ -186,6 +279,27 @@ async def test_mine_authors_skill_for_verified_verdict(miner_env) -> None:
     assert "Force IPv4" in text
     sk = await store.get("learned", "web-fetch-timeout-fix")
     assert sk is not None
+
+
+async def test_mine_combines_sibling_capability_via_lookup(miner_env) -> None:
+    """End-to-end proof of the Important fix: 2 web_fetch + 2 browser_browse
+    timeouts, sharing capability_tag='web_knowledge', combine into ONE
+    4-evidence cluster (crossing min_evidence=3) and get authored — neither
+    tool alone would reach the threshold."""
+    db, root, store = miner_env
+    await _seed_failures(db, n=2, tool="web_fetch")
+    await _seed_failures(db, n=2, tool="browser_browse")
+    tag_lookup = {"web_fetch": "web_knowledge", "browser_browse": "web_knowledge"}.get
+    miner = FailureOutcomeMiner(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        skills_root=root, consent_gate=_allow_gate("failure_outcome_miner_scheduled"),
+        min_evidence=3, capability_tag_lookup=tag_lookup,
+    )
+    verdict = _verdict(capability_class="web_knowledge", skill_name="web-knowledge-timeout-fix")
+    report = await miner.mine({verdict.key: verdict})
+    assert report.n_clusters_found == 1
+    assert report.n_skills_written == 1
+    assert (root / "learned" / "web-knowledge-timeout-fix" / "SKILL.md").exists()
 
 
 async def test_mine_skips_cluster_without_verdict(miner_env) -> None:
