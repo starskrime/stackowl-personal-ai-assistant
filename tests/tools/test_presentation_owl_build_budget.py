@@ -7,40 +7,7 @@ under realistic budget constraints should see owl_build in the schema.
 
 from __future__ import annotations
 
-from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
-
-
-class _RT(Tool):
-    """Minimal real Tool subclass for ToolRegistry tests."""
-
-    def __init__(self, name: str, *, group: str | None = None) -> None:
-        self._name, self._group = name, group
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str:
-        return f"{self._name} does things"
-
-    @property
-    def parameters(self) -> dict[str, object]:
-        return {"type": "object", "properties": {}}
-
-    @property
-    def manifest(self) -> ToolManifest:
-        return ToolManifest(
-            name=self._name,
-            description=self.description,
-            parameters=self.parameters,
-            action_severity="read",
-            toolset_group=self._group,  # type: ignore[arg-type]
-        )
-
-    async def execute(self, **kwargs: object) -> ToolResult:
-        return ToolResult(success=True, output="ok", duration_ms=1.0)
 
 
 def test_owl_build_in_provider_schema_under_realistic_budget() -> None:
