@@ -36,7 +36,6 @@ from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP, RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
-from stackowl.pipeline.progress.emitter import emit_start as emit_progress_start
 from stackowl.pipeline.progress.emitter import make_progress_callback
 from stackowl.pipeline.provider_select import (
     ToolProviderChoice,
@@ -1769,9 +1768,11 @@ async def _run_with_tools(
         )
         return result
 
-    # Surface "Working on it…" the instant the loop begins so the user sees life
-    # within ~1s (best-effort; no-op when progress is gated).
-    await emit_progress_start(_progress_cb)
+    # Task 2 — the one-shot "Working on it…" ack now fires earlier, from
+    # asyncio_backend.py before the pipeline-steps loop begins (before triage's
+    # router call), rather than here after the tool loop is already entered. Do
+    # NOT re-emit it here — `_progress_cb` is still composed into the iteration
+    # callback list below for per-iteration ("Searching the web…" etc) updates.
 
     try:
         if state.task_id is None:

@@ -11,6 +11,8 @@ from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.shared import _capture_outcome, _verify_turn_acceptance, run_delivery_gate
 from stackowl.pipeline.budget import human_wait as human_wait_ctx
+from stackowl.pipeline.progress.emitter import emit_start as emit_progress_start
+from stackowl.pipeline.progress.emitter import make_progress_callback
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState, StepError
@@ -73,6 +75,14 @@ class AsyncioBackend(OrchestratorBackend):
         human_wait_token = human_wait_ctx.bind()
         current = state
         step_durations: list[tuple[str, float]] = []
+        # Task 2 — surface "Working on it…" the instant the turn begins, BEFORE
+        # triage's LLM-based router call (and the embedding/memory/graph reads in
+        # classify.py/assemble.py) rather than after — moved from execute.py's tool
+        # loop, which fired only once the turn had already reached the tool-call
+        # path, well after those unacked calls. Same is_eligible() gating (settings
+        # state is already fully populated by the gateway at this point); a
+        # gated/ineligible turn still composes no callback ⇒ no-op, byte-identical.
+        await emit_progress_start(make_progress_callback(current, self._services))
         try:
             for step_name, step_fn in PIPELINE_STEPS:
                 current = current.evolve(pipeline_step=step_name)
