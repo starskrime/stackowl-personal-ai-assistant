@@ -172,6 +172,10 @@ class DiscordChannelAdapter(ChannelAdapter):
         # channel adapter). Log loudly and narrow to None if one ever does.
         target: int | None = None
         async for chunk in chunks:
+            # Skip progress chunks — they are for live status UI only, never delivered
+            # as answer text. Only "answer" kind chunks are concatenated into the buffer.
+            if getattr(chunk, "kind", "answer") == "progress":
+                continue
             buffer += chunk.content
             raw = chunk.target
             if isinstance(raw, str):

@@ -804,3 +804,51 @@ async def test_health_check_with_recent_ping() -> None:
     adapter.mark_ping()
     status = await adapter.health_check()
     assert status.status == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# Progress-chunk filtering
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_send_filters_progress_chunks() -> None:
+    """Progress chunks should never be added to the delivered answer buffer."""
+    adapter = _make_adapter(allowed=["U_allowed"])
+    await adapter.handle_event(
+        {"type": "message", "channel": "C123"},
+        user_id="U_allowed",
+        text="hi",
+    )
+    msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
+    app = _attach_live(adapter)
+    TestModeGuard.deactivate()
+
+    # Mix of progress and answer chunks
+    progress_chunk = ResponseChunk(
+        content="[thinking...]",
+        is_final=False,
+        chunk_index=0,
+        trace_id="t-test",
+        owl_name="owl",
+        target=msg.chat_id,
+        kind="progress",  # Live status, should NOT appear in delivered message
+    )
+    answer_chunk = ResponseChunk(
+        content="final answer",
+        is_final=True,
+        chunk_index=1,
+        trace_id="t-test",
+        owl_name="owl",
+        target=msg.chat_id,
+        kind="answer",  # Real answer, should appear in delivered message
+    )
+
+    await adapter.send(_drain(progress_chunk, answer_chunk))
+
+    # Only one message should be posted (the answer)
+    assert len(app.client.calls) == 1
+    call = app.client.calls[0]
+    # The delivered text must contain ONLY the answer, not the progress
+    assert call["text"] == "final answer"
+    assert "[thinking...]" not in call["text"]

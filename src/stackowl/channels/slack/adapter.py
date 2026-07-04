@@ -242,6 +242,10 @@ class SlackChannelAdapter(ChannelAdapter):
         # newer concurrent event may have overwritten.
         turn_trace: str | None = None
         async for chunk in chunks:
+            # Skip progress chunks — they are for live status UI only, never delivered
+            # as answer text. Only "answer" kind chunks are concatenated into the buffer.
+            if getattr(chunk, "kind", "answer") == "progress":
+                continue
             buffer += chunk.content
             if chunk.trace_id:
                 turn_trace = chunk.trace_id

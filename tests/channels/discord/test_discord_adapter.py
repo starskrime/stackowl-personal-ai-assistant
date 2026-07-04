@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import types
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
@@ -173,3 +174,64 @@ async def test_health_check_stale_heartbeat_is_degraded() -> None:
     status = await adapter.health_check()
     assert status.status == "degraded"
     assert status.message == "heartbeat stale"
+
+
+# --------------------------------------------------------------------------- #
+# Progress-chunk filtering
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_send_filters_progress_chunks() -> None:
+    """Progress chunks should never be added to the delivered answer buffer."""
+    from collections.abc import AsyncIterator
+
+    from stackowl.config.test_mode import TestModeGuard
+    from stackowl.pipeline.streaming import ResponseChunk
+
+    adapter = _adapter(allowed=[42])
+    TestModeGuard.deactivate()
+
+    async def _drain(*chunks: ResponseChunk) -> AsyncIterator[ResponseChunk]:
+        for c in chunks:
+            yield c
+
+    # Mix of progress and answer chunks
+    progress_chunk = ResponseChunk(
+        content="[thinking...]",
+        is_final=False,
+        chunk_index=0,
+        trace_id="t-test",
+        owl_name="owl",
+        target=42,
+        kind="progress",  # Live status, should NOT appear in delivered message
+    )
+    answer_chunk = ResponseChunk(
+        content="final answer",
+        is_final=True,
+        chunk_index=1,
+        trace_id="t-test",
+        owl_name="owl",
+        target=42,
+        kind="answer",  # Real answer, should appear in delivered message
+    )
+
+    # Mock a channel that captures what's sent
+    send_mock = AsyncMock()
+    channel_mock = types.SimpleNamespace(id=42, send=send_mock)
+
+    # Inject the mock client
+    adapter._client = types.SimpleNamespace(
+        get_channel=lambda cid: channel_mock if cid == 42 else None
+    )
+
+    try:
+        await adapter.send(_drain(progress_chunk, answer_chunk))
+        send_mock.assert_awaited_once()
+        # Extract the sent text
+        sent_text = str(send_mock.await_args_list[0].args[0])
+        # The delivered text must contain ONLY the answer, not the progress
+        assert "final answer" in sent_text
+        assert "[thinking...]" not in sent_text
+    finally:
+        TestModeGuard.deactivate()

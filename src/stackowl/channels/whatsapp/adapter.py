@@ -264,6 +264,10 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         # cannot reach this adapter by construction. Log loudly + narrow to None.
         target: str | None = None
         async for chunk in chunks:
+            # Skip progress chunks — they are for live status UI only, never delivered
+            # as answer text. Only "answer" kind chunks are concatenated into the buffer.
+            if getattr(chunk, "kind", "answer") == "progress":
+                continue
             buffer += chunk.content
             raw = chunk.target
             if isinstance(raw, str):

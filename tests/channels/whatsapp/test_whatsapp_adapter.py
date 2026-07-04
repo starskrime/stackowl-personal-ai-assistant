@@ -275,3 +275,59 @@ async def test_session_id_does_not_contain_raw_phone() -> None:
     msg = await adapter._queue.get()
     assert "15551234567" not in msg.session_id
     assert msg.session_id.startswith("whatsapp:")
+
+
+# --------------------------------------------------------------------------- #
+# Progress-chunk filtering
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_send_filters_progress_chunks() -> None:
+    """Progress chunks should never be added to the delivered answer buffer."""
+    from collections.abc import AsyncIterator
+
+    from stackowl.pipeline.streaming import ResponseChunk
+
+    adapter = _adapter(allowed=frozenset(["15551234567"]))
+    adapter._browser.send_message = AsyncMock()  # type: ignore[method-assign]
+    TestModeGuard.deactivate()
+
+    async def _drain(*chunks: ResponseChunk) -> AsyncIterator[ResponseChunk]:
+        for c in chunks:
+            yield c
+
+    # Mix of progress and answer chunks
+    progress_chunk = ResponseChunk(
+        content="[thinking...]",
+        is_final=False,
+        chunk_index=0,
+        trace_id="t-test",
+        owl_name="owl",
+        target="15551234567@s.whatsapp.net",
+        kind="progress",  # Live status, should NOT appear in delivered message
+    )
+    answer_chunk = ResponseChunk(
+        content="final answer",
+        is_final=True,
+        chunk_index=1,
+        trace_id="t-test",
+        owl_name="owl",
+        target="15551234567@s.whatsapp.net",
+        kind="answer",  # Real answer, should appear in delivered message
+    )
+
+    try:
+        await adapter.send(_drain(progress_chunk, answer_chunk))
+        # Verify send_message was called
+        adapter._browser.send_message.assert_awaited()  # type: ignore[union-attr]
+        # Extract what was sent
+        sent_args = adapter._browser.send_message.await_args_list  # type: ignore[union-attr]
+        assert len(sent_args) >= 1
+        # The first positional argument is the JID, the second is the text
+        sent_text = str(sent_args[0].args[1]) if len(sent_args[0].args) > 1 else ""
+        # The delivered text must contain ONLY the answer, not the progress
+        assert "final answer" in sent_text
+        assert "[thinking...]" not in sent_text
+    finally:
+        TestModeGuard.deactivate()
