@@ -220,6 +220,14 @@ class PipelineState(BaseModel, frozen=True):
     consequential_failures: tuple[str, ...] = ()
     consequential_successes: tuple[str, ...] = ()
     recovered_consequential: tuple[str, ...] = ()
+    # ADR-6 Task 6 fix — the FAILED tool names bridged SPECIFICALLY by a
+    # substitution (never "retry") this turn, stamped by the SAME snapshot while
+    # recovery_context is still bound. Deliberately narrower than
+    # ``recovered_consequential`` (which also includes "retry"-kind bridges,
+    # not a masking pattern) — outcome capture reads THIS field, never the
+    # ContextVar directly, since by the time _capture_outcome runs the backend's
+    # finally has already reset() it (get_recovery() would silently return ()).
+    recovered_via_substitution: tuple[str, ...] = ()
     # True once execute has stamped the snapshot above. Set explicitly so a CLEAN
     # turn (execute recorded zero consequential activity → all three tuples empty)
     # is still trusted as a snapshot rather than falling back to the live ledger.

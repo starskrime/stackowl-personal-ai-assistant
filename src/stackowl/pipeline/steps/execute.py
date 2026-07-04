@@ -766,6 +766,15 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             e.failed for e in recovery_context.get_recovery()
             if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
         )
+        # ADR-6 Task 6 fix — narrower than ``recovered`` above: SUBSTITUTION only
+        # (never "retry" — a transient retry succeeding is normal self-heal, not
+        # the masked-permanent-fallback pattern). Stamped here (recovery_context
+        # is still bound) so outcome capture can read it off immutable state
+        # long after the backend's finally has reset() the ContextVar.
+        recovered_via_substitution = tuple(
+            e.failed for e in recovery_context.get_recovery()
+            if e.kind == "substitution" and e.recovered_via
+        )
         # ADR-T2 / TS3 — names of tools that declared a durable EFFECT (effect_class
         # set: creates_persistent_entity / sends_message / schedules) whose result was
         # NOT MEASURED verified==True. DEFAULT-DENY: verified∈{False, None(unknown)} or
@@ -783,6 +792,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             consequential_successes=successes,
             delivered_successes=delivered,
             recovered_consequential=recovered,
+            recovered_via_substitution=recovered_via_substitution,
             unverified_effects=unverified_effects,
             consequential_snapshot_taken=True,
         )

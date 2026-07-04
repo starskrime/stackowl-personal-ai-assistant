@@ -14,7 +14,6 @@ physical merge into one file — untouched here, only their call site moved.
 
 from __future__ import annotations
 
-from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.objectives.model import ExpectedOutcome
@@ -273,11 +272,15 @@ async def _capture_outcome(
         # list_failed_global, so this is the only durable signal for a capability
         # recovering via substitution over and over — the "permanent fallback
         # with zero retry" masked-chronic-outage shape self-heal must catch.
-        # ponytail: "substitution" duplicates delivery_gate._BRIDGING_RECOVERY_KINDS
-        # (a private name) rather than importing it across the module boundary.
-        recovered_via_tool = next(
-            (e.failed for e in recovery_context.get_recovery() if e.kind == "substitution"),
-            None,
+        # CRITICAL: reads ``state.recovered_via_substitution`` (stamped by
+        # execute._snapshot_consequential while recovery_context was still
+        # bound), NEVER recovery_context.get_recovery() directly — by the time
+        # this outcome-capture step runs, both backends' ``finally`` has ALREADY
+        # called recovery_context.reset(), so a direct ContextVar read here would
+        # silently and always return () (a prior version of this fix had exactly
+        # that bug — see task-6-report.md).
+        recovered_via_tool = (
+            state.recovered_via_substitution[0] if state.recovered_via_substitution else None
         )
         # Snapshot DNA from the owl registry so attribution-based evolution
         # (Learning Commit 4) can correlate trait values with outcome quality.
