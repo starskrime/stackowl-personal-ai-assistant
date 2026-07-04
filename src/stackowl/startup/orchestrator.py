@@ -1205,6 +1205,22 @@ class StartupOrchestrator:
             # gated skill-authoring writes can actually be approved via a configured
             # trust tier, instead of always failing closed on a None gate.
             consent_gate=consent_gate,
+            # Task 7 — so IncidentEscalationHandler's "alternative" verdict
+            # consumer can consult capability_substitution.find_substitute.
+            tool_registry=tool_registry,
+        )
+        # Task 7 — thread the background-incident RCA verdicts onto the SAME
+        # mutable ``services`` instance the live pipeline already reads (mirrors
+        # the ``services.a2a_delegator = ...`` post-construction wiring above:
+        # SchedulerAssembly.build() must run first to produce the handler).
+        # surface_critical_failure reads this to enrich its apology/neutral-
+        # fallback text with a one-line incident summary when a verified verdict
+        # exists for the SAME failure_class this turn's critical step just hit —
+        # reusing the EXISTING delivery_gate cascade, never a new one.
+        _incident_handler = scheduler_components.incident_escalation_handler
+        services.incident_verdict_lookup = lambda fc: next(
+            (v for v in _incident_handler.verdicts.values() if v.verified and v.failure_class == fc),
+            None,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).

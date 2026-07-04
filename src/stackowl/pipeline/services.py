@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from stackowl.interaction.cost_pause import CostPauseGuard
     from stackowl.interaction.feedback_classifier import FeedbackClassifier
     from stackowl.interaction.retrieval_intent_classifier import RetrievalIntentClassifier
+    from stackowl.learning.failure_outcome_miner import RcaVerdict
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
     from stackowl.memory.bridge import MemoryBridge
@@ -154,6 +156,14 @@ class StepServices:
     # bypass never fires (byte-identical to pre-FR-9 behavior — always calls
     # the router).
     sticky_route_cache: StickyRouteCache | None = field(default=None)
+    # ADR-6 Task 7 — background-incident RCA lookup, keyed by the SAME
+    # ``failure_class`` string ``surface_critical_failure`` already derives via
+    # ``_critical_failure_classes`` (an exception class name). ``surface_critical_failure``
+    # reads THIS off services to enrich its apology/neutral-fallback text with a
+    # one-line incident summary when a verified verdict exists for the SAME
+    # failure class this turn just hit — reusing the EXISTING cascade/parameter,
+    # never a new gate. None → byte-identical (no enrichment, today's text only).
+    incident_verdict_lookup: Callable[[str], RcaVerdict | None] | None = field(default=None)
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

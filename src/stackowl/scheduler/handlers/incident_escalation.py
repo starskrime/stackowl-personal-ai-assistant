@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -75,9 +76,21 @@ from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
-    from stackowl.learning.failure_outcome_miner import CapabilityTagLookup
+    from stackowl.learning.failure_outcome_miner import (
+        CapabilityTagLookup,
+        FailureOutcomeMiner,
+    )
     from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
     from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
+
+# Task 7 consumption hooks — optional, None-default (byte-identical no-op when
+# unwired, matching every other optional-service field in this codebase).
+# ``VerdictRouter`` dispatches a NEW verdict to the real tool_build /
+# capability_substitution consumers (see rca_verdict_router.py); ``AlertSink``
+# mirrors HealthSweepHandler's own alert-sink type so an incident verdict rides
+# the SAME operator-alert channel, not a new one.
+VerdictRouter = Callable[[RcaVerdict, Literal["fix", "alternative"]], Awaitable[None]]
+AlertSink = Callable[[str], Awaitable[None]]
 
 _LOOKBACK_DAYS_DEFAULT = 7
 _SECONDS_PER_DAY = 86_400
@@ -186,6 +199,11 @@ class IncidentEscalationHandler(JobHandler):
         clock: Clock | None = None,
         recurrence_threshold: int = _MIN_RECURRENCE,
         lookback_days: int = _LOOKBACK_DAYS_DEFAULT,
+        # Task 7 — thin consumption hooks. All None-default: an unwired
+        # handler behaves byte-identically to Task 6 (stops at self.verdicts).
+        verdict_router: VerdictRouter | None = None,
+        miner: FailureOutcomeMiner | None = None,
+        alert: AlertSink | None = None,
     ) -> None:
         self._health = health_sweep
         self._outcomes = outcome_store
@@ -194,6 +212,9 @@ class IncidentEscalationHandler(JobHandler):
         self._clock = clock or WallClock()
         self._recurrence_threshold = recurrence_threshold
         self._lookback_days = lookback_days
+        self._verdict_router = verdict_router
+        self._miner = miner
+        self._alert = alert
         # Dedupe: signature -> minted incident_id. A signature already here is an
         # OPEN incident (its RCA already ran); later ticks skip it. Cleared when
         # the signature is no longer active so it can re-open later.
@@ -263,6 +284,13 @@ class IncidentEscalationHandler(JobHandler):
             if verdict is not None:
                 self._open_incidents[inc.signature] = incident_id
                 self.verdicts[inc.key] = verdict
+                # Task 7 hook — a short-circuited fallback_verdict (ran_rca=False,
+                # the non-retryable/deterministic-domain-failure path) is always an
+                # "alternative-needed" verdict; a verdict that came out of the full
+                # 3-stage RCA (ran_rca=True) is a proposed "fix". This is the exact
+                # signal _resolve_incident already computes — no new classification.
+                kind: Literal["fix", "alternative"] = "fix" if ran_rca else "alternative"
+                await self._consume_verdict(inc, verdict, kind)
             else:
                 log.scheduler.warning(
                     "[scheduler] incident_escalation: RCA produced no verdict — "
@@ -418,6 +446,56 @@ class IncidentEscalationHandler(JobHandler):
             )
         return incidents
 
+    async def _consume_verdict(
+        self, inc: _Incident, verdict: RcaVerdict, kind: Literal["fix", "alternative"],
+    ) -> None:
+        """Task 7 hook — route a NEW verdict to the real fix/alternative
+        consumer, alert the operator WITH the verdict (not a bare status
+        flap), and let Task 5's miner consider authoring a learned skill.
+
+        Every step is independently best-effort (B5): a consumer failure
+        never blocks dedup or the next tick's detection — this handler still
+        STOPS at "here is a verdict"; consumption failures are logged, not
+        propagated.
+        """
+        log.scheduler.debug(
+            "[scheduler] incident_escalation._consume_verdict: entry",
+            extra={"_fields": {
+                "signature": inc.signature, "kind": kind, "verified": verdict.verified,
+            }},
+        )
+        if self._verdict_router is not None:
+            try:
+                await self._verdict_router(verdict, kind)
+            except Exception as exc:  # B5 — a router failure must not wedge the tick
+                log.scheduler.error(
+                    "[scheduler] incident_escalation: verdict router failed",
+                    exc_info=exc, extra={"_fields": {"signature": inc.signature}},
+                )
+        if self._alert is not None:
+            try:
+                await self._alert(_compose_verdict_alert(inc, verdict, kind))
+            except Exception as exc:  # alert failure must not fail the sweep itself
+                log.scheduler.error(
+                    "[scheduler] incident_escalation: alert sink raised",
+                    exc_info=exc, extra={"_fields": {"signature": inc.signature}},
+                )
+        if self._miner is not None:
+            try:
+                report = await self._miner.mine(self.verdicts)
+                log.scheduler.info(
+                    "[scheduler] incident_escalation: miner pass",
+                    extra={"_fields": {
+                        "n_clusters": report.n_clusters_found,
+                        "n_written": report.n_skills_written,
+                    }},
+                )
+            except Exception as exc:  # B5 — a mining failure must not wedge the tick
+                log.scheduler.error(
+                    "[scheduler] incident_escalation: miner.mine failed",
+                    exc_info=exc, extra={"_fields": {"signature": inc.signature}},
+                )
+
     async def _resolve_incident(
         self, inc: _Incident, incident_id: str,
     ) -> tuple[RcaVerdict | None, bool]:
@@ -476,3 +554,22 @@ class IncidentEscalationHandler(JobHandler):
                 exc_info=exc,
             )
             return time.time()
+
+
+def _compose_verdict_alert(
+    inc: _Incident, verdict: RcaVerdict, kind: Literal["fix", "alternative"],
+) -> str:
+    """Human-readable operator alert carrying the RCA verdict — Task 7's
+    guaranteed-delivery requirement for the background/async incident path
+    (the common case: incidents are detected from a scheduler tick, no live
+    turn). Mirrors ``health_sweep._compose_alert``'s plain-text shape but
+    names the ROOT CAUSE + FIX instead of a bare 'down'/'degraded' flap."""
+    header = "🔎 Incident RCA verdict" + (" (verified)" if verdict.verified else " (unverified)")
+    lines = [
+        header,
+        f"  capability: {inc.capability_class}  failure: {inc.failure_class}",
+        f"  kind: {kind}",
+        f"  root cause: {verdict.root_cause.strip()}",
+        f"  fix/alternative: {verdict.fix_pattern.strip()}",
+    ]
+    return "\n".join(lines)

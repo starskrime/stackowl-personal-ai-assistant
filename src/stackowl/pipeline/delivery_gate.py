@@ -981,6 +981,39 @@ def _neutral_fallback(state: PipelineState) -> str:
     return f"{_NEUTRAL_PREFIX}{prose} [{marker}]"
 
 
+def _incident_note(state: PipelineState, services: StepServices) -> str | None:
+    """ADR-6 Task 7 — one-line note when this turn's critical failure matches
+    an OPEN, VERIFIED background-incident RCA verdict.
+
+    Reuses ``services`` — the SAME metadata parameter ``surface_critical_failure``
+    already reads (``services.provider_registry`` etc.) — as the channel for the
+    incident summary, per the task brief: no new gate, no new cascade member,
+    just enriching the text this EXISTING surfacer already produces. Keyed on
+    the same ``failure_class`` string both ``_critical_failure_classes`` (this
+    module) and ``RcaVerdict.failure_class`` (an exception class name derived
+    the same way, via ``classify_failure``) use. Never raises; ``None`` when
+    unwired or nothing matches — byte-identical to today.
+    """
+    lookup = services.incident_verdict_lookup
+    if lookup is None:
+        return None
+    try:
+        for fc in _critical_failure_classes(state):
+            verdict = lookup(fc)
+            if verdict is not None and verdict.verified:
+                return (
+                    "(This looks like a known, already-investigated issue — "
+                    f"{verdict.root_cause.strip()[:200]})"
+                )
+    except Exception as exc:  # B5 — an enrichment failure must never break surfacing
+        log.engine.warning(
+            "[critical_failure] incident_note: lookup failed — omitting",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+    return None
+
+
 async def surface_critical_failure(
     state: PipelineState, services: StepServices,
 ) -> PipelineState:
@@ -1020,6 +1053,9 @@ async def surface_critical_failure(
                 "[critical_failure] surfacing: using neutral last-resort (no i18n)",
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
+        note = _incident_note(state, services)
+        if note:
+            text = f"{text} {note}"
         chunk = ResponseChunk(
             content=text,
             is_final=False,

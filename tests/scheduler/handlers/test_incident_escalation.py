@@ -306,3 +306,147 @@ async def test_hard_failed_rca_retries_on_next_tick() -> None:
     assert ("cache", "degraded") in handler.verdicts  # attempt 2 succeeded and is stored
 
     assert len(rca.calls) == 2, "a hard-failed RCA must be retried, not permanently suppressed"
+
+
+# --------------------------------------------------------------------------- #
+# Task 7 — the minimal consumption hook: a NEW verdict is routed, alerted, and
+# handed to the miner. All three are best-effort (B5): a hook failure must
+# never block dedup or the next tick's detection.
+# --------------------------------------------------------------------------- #
+
+class _RecordingMiner:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def mine(self, verdicts: dict) -> object:
+        self.calls.append(dict(verdicts))
+
+        class _Report:
+            n_clusters_found = 0
+            n_skills_written = 0
+
+        return _Report()
+
+
+class _BoomingMiner:
+    async def mine(self, verdicts: dict) -> object:
+        raise RuntimeError("miner exploded")
+
+
+@pytest.mark.asyncio
+async def test_new_verdict_routed_with_kind_derived_from_ran_rca() -> None:
+    """A short-circuited (non-retryable) verdict is "alternative"; a fully
+    analyzed verdict is "fix" — exactly the ran_rca signal _resolve_incident
+    already computes, no new classification invented."""
+    routed: list[tuple[RcaVerdict, str]] = []
+
+    async def _router(verdict: RcaVerdict, kind: str) -> None:
+        routed.append((verdict, kind))
+
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ManifestValidationError", "some_tool"),
+        _outcome("t2", "ManifestValidationError", "some_tool"),
+        _outcome("t3", "ManifestValidationError", "some_tool"),
+        _outcome("t4", "ToolExecutionError", "web_fetch"),
+        _outcome("t5", "ToolExecutionError", "web_fetch"),
+        _outcome("t6", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        verdict_router=_router,
+    )
+
+    await handler.execute(_job())
+
+    kinds = {(v.capability_class, v.failure_class): k for v, k in routed}
+    assert kinds[("some_tool", "ManifestValidationError")] == "alternative"
+    assert kinds[("web_fetch", "ToolExecutionError")] == "fix"
+
+
+@pytest.mark.asyncio
+async def test_new_verdict_alerts_with_rca_summary_not_bare_flap() -> None:
+    alerts: list[str] = []
+
+    async def _alert(message: str) -> None:
+        alerts.append(message)
+
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        alert=_alert,
+    )
+
+    await handler.execute(_job())
+
+    assert len(alerts) == 1
+    # The RECORDING RCA's verdict carries root_cause="rc" / fix_pattern="fx" —
+    # the alert must carry those, not a bare "down"/"degraded" status flap.
+    assert "rc" in alerts[0]
+    assert "fx" in alerts[0]
+
+
+@pytest.mark.asyncio
+async def test_new_verdict_feeds_the_miner() -> None:
+    miner = _RecordingMiner()
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        miner=miner,  # type: ignore[arg-type]
+    )
+
+    await handler.execute(_job())
+
+    assert len(miner.calls) == 1
+    # mine() was called with the handler's OWN accumulated verdicts map — the
+    # exact interface Task 5 defined (Mapping[(capability_class, failure_class), RcaVerdict]).
+    assert ("web_fetch", "ToolExecutionError") in miner.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_consumption_hook_failures_never_block_dedup_or_next_tick() -> None:
+    """A router/alert/miner that all explode must not stop the incident from
+    being marked handled, and must not raise into the scheduler tick."""
+    async def _boom_router(verdict: RcaVerdict, kind: str) -> None:
+        raise RuntimeError("router exploded")
+
+    async def _boom_alert(message: str) -> None:
+        raise RuntimeError("alert exploded")
+
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        verdict_router=_boom_router,
+        miner=_BoomingMiner(),  # type: ignore[arg-type]
+        alert=_boom_alert,
+    )
+
+    result = await handler.execute(_job())  # must not raise
+
+    assert result.success is True
+    assert ("web_fetch", "ToolExecutionError") in handler.verdicts
+    # Dedup still closed the incident despite every hook exploding.
+    assert len(handler._open_incidents) == 1

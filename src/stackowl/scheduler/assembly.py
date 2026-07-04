@@ -50,6 +50,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.scheduler.handlers.check_in import CheckInHandler
     from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
     from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
+    from stackowl.scheduler.handlers.incident_escalation import (
+        IncidentEscalationHandler,
+    )
     from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
     from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
     from stackowl.scheduler.handlers.tool_outcome_miner_handler import (
@@ -60,7 +63,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.skills.assembly import SkillsComponents
     from stackowl.skills.synthesizer_handler import SkillSynthesizerHandler
     from stackowl.supervisor.supervisor import Supervisor
-    from stackowl.tools.registry import ConsequentialActionGate
+    from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 
 _INSERT_JOB_SQL = """
@@ -96,6 +99,7 @@ class SchedulerComponents:
     skill_synthesizer_handler: SkillSynthesizerHandler
     tool_outcome_miner_handler: ToolOutcomeMinerHandler
     health_sweep_handler: HealthSweepHandler
+    incident_escalation_handler: IncidentEscalationHandler
 
 
 class SchedulerAssembly:
@@ -120,6 +124,12 @@ class SchedulerAssembly:
         # writes have a real ConsequentialActionGate to consult instead of always
         # failing closed on a None gate. None here reproduces that fail-closed default.
         consent_gate: ConsequentialActionGate | None = None,
+        # Task 7 — the live ToolRegistry, so IncidentEscalationHandler's
+        # "alternative" verdict consumer can consult
+        # capability_substitution.find_substitute (a PURE, read-only decision
+        # function — no execution) to confirm a live sibling capability exists.
+        # None → that consult honestly reports "no registry wired" (logged).
+        tool_registry: ToolRegistry | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -645,16 +655,43 @@ class SchedulerAssembly:
         # still-unhealthy subsystems and Task 5's failure clustering for the durable
         # footprint of a recurring in-turn self-heal. Stops at a verified/fallback
         # RcaVerdict (Task 7 consumes it). Flag-gated on the same health_loop switch.
+        from functools import partial
+
+        from stackowl.learning.failure_outcome_miner import FailureOutcomeMiner
         from stackowl.memory.outcome_store import TaskOutcomeStore
         from stackowl.parliament.staged_rca import StagedRcaSession
+        from stackowl.paths import StackowlHome
         from stackowl.scheduler.handlers.incident_escalation import (
             IncidentEscalationHandler,
+        )
+        from stackowl.scheduler.handlers.rca_verdict_router import route_rca_verdict
+
+        # Task 7 — the SAME FailureOutcomeMiner shape SkillSynthesizerHandler uses
+        # (skill_store/skills_root/consent_gate), pointed at the incident-mining
+        # side of task_outcomes instead of the success-clustering side. Wired as
+        # IncidentEscalationHandler's consumer of a CONCLUDED RCA verdict — it
+        # authors a learned SKILL.md via the SAME gated_skill_write chokepoint
+        # (Task 4) whenever a cluster both meets the evidence threshold AND has a
+        # matching verified verdict; otherwise it is a no-op, never partial.
+        incident_miner = FailureOutcomeMiner(
+            outcome_store=TaskOutcomeStore(db),
+            skill_store=skills_components.store,
+            skills_root=StackowlHome.skills_dir(),
+            consent_gate=consent_gate,
         )
 
         incident_escalation_handler = IncidentEscalationHandler(
             health_sweep=health_sweep_handler,
             outcome_store=TaskOutcomeStore(db),
             rca_session=StagedRcaSession(backend),
+            # Task 7 consumption hooks — see rca_verdict_router.py docstring for
+            # why delegate_task's ladder is NOT wired here (a live-turn-only
+            # mechanism; wiring it from a scheduler tick would fake a user turn).
+            verdict_router=partial(route_rca_verdict, tool_registry=tool_registry),
+            miner=incident_miner,
+            # SAME alert sink health_sweep already uses — an incident verdict
+            # rides the existing operator-alert channel, not a new one.
+            alert=health_alert,
         )
         HandlerRegistry.instance().register(incident_escalation_handler)
 
@@ -881,6 +918,7 @@ class SchedulerAssembly:
             skill_synthesizer_handler=skill_synthesizer_handler,
             tool_outcome_miner_handler=tool_outcome_miner_handler,
             health_sweep_handler=health_sweep_handler,
+            incident_escalation_handler=incident_escalation_handler,
         )
 
 
