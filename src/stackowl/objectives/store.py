@@ -203,50 +203,88 @@ class ObjectiveStore(OwnedRepository):
             )
         return created
 
-    async def insert_subgoals_at(
+    async def replace_subgoal_with_children(
         self,
         objective_id: str,
-        start_position: int,
-        items: Sequence[SubgoalSpec],
+        subgoal: Subgoal,
+        children: Sequence[SubgoalSpec],
         *,
         depth: int,
     ) -> list[Subgoal]:
-        """Insert ordered sub-goals starting at ``start_position``, shifting every
-        existing sub-goal at or after that position later by ``len(items)``.
+        """Atomically replace ``subgoal`` with its decomposed ``children`` at its
+        own run-order slot (Task 3 adaptive decomposition): shift every sub-goal
+        at/after its position later by ``len(children)``, insert the children
+        into the freed slot, and delete the now-superseded parent row — all in
+        ONE committed transaction (mirrors the base+FTS atomicity pattern in
+        :meth:`stackowl.memory.sqlite_bridge.SqliteMemoryBridge.delete`).
 
-        Task 3 (adaptive decomposition): when a sub-goal is split one level
-        deeper, its children take over its run-order slot rather than being
-        appended at the end of the plan — so they run next, in the parent's
-        place, instead of after every other already-pending step. ``depth``
-        stamps ``decomposition_depth`` on every inserted child (parent depth + 1)
-        so the driver's recursion cap survives a crash/restart. A no-op on an
-        empty ``items`` (nothing to shift for, nothing to insert)."""
-        if not items:
+        This MUST be atomic: if the shift+inserts committed but the parent
+        delete did not (a crash between two separately-committing statements),
+        the original parent would survive at a shifted position, unchanged —
+        and on restart the driver would run its already-inserted children AND
+        then re-split/re-run the surviving parent, executing the same
+        real-world action twice. Either all ``children`` land and ``subgoal``
+        is gone, or none of this happened. A no-op on empty ``children``."""
+        if not children:
             return []
         log.engine.debug(
-            "[objectives] store.insert_subgoals_at: entry",
+            "[objectives] store.replace_subgoal_with_children: entry",
             extra={"_fields": {
-                "objective_id": objective_id, "start_position": start_position,
-                "count": len(items), "depth": depth,
+                "objective_id": objective_id, "subgoal_id": subgoal.subgoal_id,
+                "count": len(children), "depth": depth,
             }},
-        )
-        await self._update_owned(
-            _SUBGOALS,
-            set_sql="position = position + ?",
-            set_params=(len(items),),
-            where_sql="objective_id = ? AND position >= ?",
-            where_params=(objective_id, start_position),
         )
         now = _now()
         created: list[Subgoal] = []
-        for offset, spec in enumerate(items):
-            position = start_position + offset
-            created.append(
-                await self._create_subgoal_row(objective_id, position, spec, depth, now)
+        async with self._db.transaction() as tx:
+            await tx.execute(
+                f"UPDATE {_SUBGOALS} SET position = position + ? "  # noqa: S608 — constant table name
+                "WHERE owner_id = ? AND objective_id = ? AND position >= ?",
+                (len(children), self._owner_id, objective_id, subgoal.position),
+            )
+            for offset, spec in enumerate(children):
+                subgoal_id = f"sub-{uuid.uuid4().hex[:12]}"
+                position = subgoal.position + offset
+                await tx.execute(
+                    f"INSERT INTO {_SUBGOALS} ("  # noqa: S608 — constant table name
+                    "subgoal_id, owner_id, objective_id, position, description, "
+                    "status, result, acceptance_criteria, attempts, verified, "
+                    "task_id, estimated_complexity, decomposition_depth, "
+                    "created_at, updated_at"
+                    ") VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, 0, NULL, NULL, "
+                    "?, ?, ?, ?)",
+                    (
+                        subgoal_id, self._owner_id, objective_id, position,
+                        spec.description, _dumps_outcome(spec.acceptance_criteria),
+                        spec.estimated_complexity, depth,
+                        now.isoformat(), now.isoformat(),
+                    ),
+                )
+                created.append(
+                    Subgoal(
+                        subgoal_id=subgoal_id,
+                        owner_id=self._owner_id,
+                        objective_id=objective_id,
+                        position=position,
+                        description=spec.description,
+                        status="pending",
+                        acceptance_criteria=spec.acceptance_criteria,
+                        estimated_complexity=spec.estimated_complexity,
+                        decomposition_depth=depth,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await tx.execute(
+                f"DELETE FROM {_SUBGOALS} WHERE owner_id = ? AND subgoal_id = ?",  # noqa: S608
+                (self._owner_id, subgoal.subgoal_id),
             )
         log.engine.info(
-            "[objectives] store.insert_subgoals_at: exit",
-            extra={"_fields": {"objective_id": objective_id, "inserted": len(created)}},
+            "[objectives] store.replace_subgoal_with_children: exit",
+            extra={"_fields": {
+                "objective_id": objective_id, "subgoal_id": subgoal.subgoal_id,
+                "inserted": len(created),
+            }},
         )
         return created
 
@@ -291,14 +329,6 @@ class ObjectiveStore(OwnedRepository):
             decomposition_depth=depth,
             created_at=now,
             updated_at=now,
-        )
-
-    async def delete_subgoal(self, subgoal_id: str) -> None:
-        """DELETE one sub-goal row (Task 3: a parent removed after being split into
-        children). The objective's activity-event log is the durable audit trail
-        for the decomposition, not this row."""
-        await self._delete_owned(
-            _SUBGOALS, where_sql="subgoal_id = ?", where_params=(subgoal_id,)
         )
 
     async def list_subgoals(self, objective_id: str) -> list[Subgoal]:

@@ -8,6 +8,7 @@ all owner-scoped via :class:`OwnedRepository`.
 
 from __future__ import annotations
 
+import uuid as uuid_module
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import pytest
 
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
-from stackowl.objectives.model import Objective
+from stackowl.objectives.model import Objective, SubgoalSpec
 from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 
 
@@ -123,3 +124,85 @@ async def test_owner_scoping_isolates_objectives(pool: DbPool) -> None:
     assert await other.list_objectives() == []
     with pytest.raises(ObjectiveNotFoundError):
         await other.get("obj-1")
+
+
+# ------------------------- Task 3: replace_subgoal_with_children (atomicity) -
+
+
+async def test_replace_subgoal_with_children_uses_one_transaction() -> None:
+    """Source-scan guard (mirrors test_fts_base_atomic.py's precedent): the
+    shift+insert+delete sequence must be routed through DbPool.transaction(),
+    never separate auto-committing statements."""
+    import inspect
+
+    src = inspect.getsource(ObjectiveStore.replace_subgoal_with_children)
+    assert "transaction(" in src
+
+
+async def test_replace_subgoal_with_children_inserts_and_deletes_together(
+    pool: DbPool,
+) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    await store.create(_objective())
+    subs = await store.add_subgoals("obj-1", ["step a", "step b"])
+    parent = subs[0]
+
+    children = await store.replace_subgoal_with_children(
+        "obj-1", parent,
+        [SubgoalSpec(description="child 1"), SubgoalSpec(description="child 2")],
+        depth=1,
+    )
+
+    assert [c.description for c in children] == ["child 1", "child 2"]
+    all_subs = await store.list_subgoals("obj-1")
+    # Parent gone, children took its run-order slot (in ascending position order),
+    # later sub-goal shifted back after them — positions need not stay contiguous,
+    # only correctly ORDERED (next_pending_subgoal sorts by position).
+    assert [s.description for s in all_subs] == ["child 1", "child 2", "step b"]
+    positions = [s.position for s in all_subs]
+    assert positions == sorted(positions) and len(set(positions)) == 3
+    assert all(s.decomposition_depth == 1 for s in all_subs[:2])
+    assert all(s.subgoal_id != parent.subgoal_id for s in all_subs)
+
+
+async def test_replace_subgoal_with_children_rolls_back_atomically_on_failure(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure partway through the shift+insert+delete sequence must roll back
+    EVERYTHING — the parent must survive intact (not deleted, not left at a
+    shifted position with an orphan child already committed). Otherwise a crash
+    mid-sequence would leave the original sub-goal alive alongside its own
+    already-inserted children, and the driver would re-split/re-run it a
+    second time on restart (the exact double-execution bug this method fixes).
+
+    Forces a genuine SQL failure (a PRIMARY KEY collision on the second child's
+    INSERT) rather than mocking away the transaction primitive — the same style
+    tests/memory/test_fts_base_atomic.py uses for the base+FTS atomicity guard.
+    """
+    import sqlite3
+
+    from stackowl.objectives import store as store_mod
+
+    store = ObjectiveStore(pool, "principal-default")
+    await store.create(_objective())
+    subs = await store.add_subgoals("obj-1", ["only step"])
+    parent = subs[0]
+
+    collision_id = uuid_module.uuid4()
+    monkeypatch.setattr(store_mod.uuid, "uuid4", lambda: collision_id)
+
+    # A genuine SQL constraint failure (PRIMARY KEY collision on the 2nd child's
+    # INSERT) — NOT a stand-in for "method missing"/AttributeError, so this only
+    # passes when the transaction genuinely rolled back a real mid-sequence error.
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.replace_subgoal_with_children(
+            "obj-1", parent,
+            [SubgoalSpec(description="child 1"), SubgoalSpec(description="child 2")],
+            depth=1,
+        )
+
+    all_subs = await store.list_subgoals("obj-1")
+    # Nothing committed: the parent survives, unmoved, and no orphan child exists.
+    assert [s.subgoal_id for s in all_subs] == [parent.subgoal_id]
+    assert all_subs[0].position == parent.position
+    assert all_subs[0].description == "only step"

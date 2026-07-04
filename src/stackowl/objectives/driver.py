@@ -595,12 +595,17 @@ class ObjectiveDriverHandler(JobHandler):
         time on just this sub-goal's description — no bespoke recursive planner.
         The children are inserted at the sub-goal's own run-order slot (later
         sub-goals shift back) at ``decomposition_depth + 1``, and the now
-        superseded parent row is deleted; ``add_subgoals``' cap-and-stop
-        (``_MAX_SUBGOALS``) already bounds the child count, and the caller
-        already checked the depth cap. Fail-safe: no provider registry wired, or
-        a decomposition that resolves to a single child (nothing gained — the
-        decomposer's own fail-safe fallback for an unparseable/failed reply),
-        leaves the sub-goal untouched so it runs as-is THIS tick.
+        superseded parent row is deleted, ATOMICALLY (one committed transaction
+        via :meth:`ObjectiveStore.replace_subgoal_with_children` — a crash
+        between a separate insert and delete would otherwise leave the parent
+        alive alongside its own already-inserted children, letting the driver
+        re-split/re-run it a second time on restart). ``add_subgoals``'
+        cap-and-stop (``_MAX_SUBGOALS``) already bounds the child count, and the
+        caller already checked the depth cap. Fail-safe: no provider registry
+        wired, or a decomposition that resolves to a single child (nothing
+        gained — the decomposer's own fail-safe fallback for an
+        unparseable/failed reply), leaves the sub-goal untouched so it runs
+        as-is THIS tick.
         """
         log.scheduler.debug(
             "[scheduler] objective_driver._maybe_decompose_further: entry",
@@ -626,10 +631,9 @@ class ObjectiveDriverHandler(JobHandler):
             )
             return False
         child_depth = subgoal.decomposition_depth + 1
-        await store.insert_subgoals_at(
-            objective.objective_id, subgoal.position, children, depth=child_depth,
+        await store.replace_subgoal_with_children(
+            objective.objective_id, subgoal, children, depth=child_depth,
         )
-        await store.delete_subgoal(subgoal.subgoal_id)
         await store.append_event(
             objective.objective_id, "subgoal_decomposed",
             f"{subgoal.description[:80]} -> {len(children)} step(s) at depth {child_depth}",
@@ -661,11 +665,27 @@ class ObjectiveDriverHandler(JobHandler):
         a legacy-shaped fallback so a synthesis miss can never swallow a
         completed objective's report.
         """
+        log.scheduler.debug(
+            "[scheduler] objective_driver._synthesize_completion: entry",
+            extra={"_fields": {
+                "objective_id": objective.objective_id, "subgoal_count": len(subgoals),
+            }},
+        )
         fallback = f"Objective complete: {objective.intent}"
         done = [sg for sg in subgoals if sg.status == "done"]
         if not done:
+            log.scheduler.debug(
+                "[scheduler] objective_driver._synthesize_completion: no done "
+                "sub-goals — plain fallback",
+                extra={"_fields": {"objective_id": objective.objective_id}},
+            )
             return fallback
         if len(done) == 1:
+            log.scheduler.debug(
+                "[scheduler] objective_driver._synthesize_completion: single "
+                "sub-goal — skipping the synthesis call, surfacing its result",
+                extra={"_fields": {"objective_id": objective.objective_id}},
+            )
             return done[0].result or fallback
         if self._provider_registry is None:
             log.scheduler.debug(
@@ -675,12 +695,6 @@ class ObjectiveDriverHandler(JobHandler):
             )
             return "\n".join(f"- {sg.description}: {sg.result}" for sg in done)
 
-        log.scheduler.debug(
-            "[scheduler] objective_driver._synthesize_completion: entry",
-            extra={"_fields": {
-                "objective_id": objective.objective_id, "subgoal_count": len(done),
-            }},
-        )
         lines = [f"Objective: {objective.intent}", ""]
         for sg in done:
             lines.append(f"Step: {sg.description}\nResult: {sg.result or '(no output)'}\n")
@@ -689,9 +703,23 @@ class ObjectiveDriverHandler(JobHandler):
             Message(role="user", content="\n".join(lines)),
         ]
         try:
-            provider, _degraded_from = self._provider_registry.resolve_capable_or_degrade(
+            # F125 — most-capable available substitute (not config-order first),
+            # and SURFACE the degrade (mirrors ParliamentSynthesizer.synthesize)
+            # so a weak-model recombination is never presented as a clean
+            # powerful-tier one.
+            provider, degraded_from = self._provider_registry.resolve_capable_or_degrade(
                 _RECOMBINATION_TIER
             )
+            if degraded_from is not None:
+                log.scheduler.warning(
+                    "[scheduler] objective_driver._synthesize_completion: no "
+                    "'powerful' provider — synthesizing on a less-capable "
+                    "substitute (DEGRADED)",
+                    extra={"_fields": {
+                        "objective_id": objective.objective_id,
+                        "provider_name": provider.name, "degraded_from": degraded_from,
+                    }},
+                )
             result = await provider.complete(
                 messages,
                 model="",
@@ -707,10 +735,16 @@ class ObjectiveDriverHandler(JobHandler):
             )
             return fallback
         text = (result.content or "").strip()
+        if text and degraded_from is not None:
+            text = (
+                "_(Note: no powerful synthesis model was available — this was "
+                "synthesized by a less-capable substitute.)_\n\n" + text
+            )
         log.scheduler.info(
             "[scheduler] objective_driver._synthesize_completion: exit",
             extra={"_fields": {
                 "objective_id": objective.objective_id, "synthesized": bool(text),
+                "degraded": degraded_from is not None,
             }},
         )
         return text or fallback

@@ -538,6 +538,28 @@ async def test_low_complexity_subgoal_does_not_recurse(pool: DbPool) -> None:
     assert backend.runs == 1
 
 
+async def test_high_complexity_subgoal_runs_as_is_without_provider_registry(
+    pool: DbPool,
+) -> None:
+    """No provider registry wired ⇒ _maybe_decompose_further has no decomposer
+    to call at all — a high-complexity sub-goal must still run as-is (fail-safe)
+    rather than getting stuck forever waiting on a split that can never happen."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _seed_objective_with_spec(
+        store,
+        SubgoalSpec(description="a big thing", estimated_complexity=1.0),
+    )
+    backend = _FakeBackend(text="ran anyway")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend)  # no provider_registry
+
+    await handler.execute(_driver_job())
+
+    subs = await store.list_subgoals("obj-1")
+    assert len(subs) == 1  # never split — no decomposer available
+    assert subs[0].status == "done" and subs[0].result == "ran anyway"
+    assert backend.runs == 1
+
+
 async def test_high_complexity_subgoal_recurses_exactly_once(pool: DbPool) -> None:
     """A sub-goal AT/ABOVE the threshold is split one level deeper before it
     runs; its (low-complexity) children then run normally with no further
@@ -642,6 +664,38 @@ async def test_completion_synthesizes_combined_answer_not_echoed_intent(
     # Not the old bare echo — the synthesized content is present alongside it.
     legacy_echo = f"✓ Objective complete: {obj.intent}"
     assert message != legacy_echo
+
+
+async def test_completion_surfaces_degraded_synthesis_provider(
+    pool: DbPool, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When no 'powerful' provider is registered, resolve_capable_or_degrade
+    substitutes the most-capable available tier and reports degraded_from — the
+    driver must SURFACE that (mirrors ParliamentSynthesizer.synthesize, F125),
+    never present a degraded-tier synthesis identically to a genuine one."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["gather prices", "compare options"])
+    backend = _FakeBackend(text="step result")
+    deliverer = _FakeDeliverer()
+    # Only a 'standard'-tier mock is registered — no 'powerful' provider exists,
+    # so resolving 'powerful' must degrade to it.
+    registry = _standard_tier_registry("Plan B wins on price.")
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, job_deliverer=deliverer, provider_registry=registry,
+    )
+
+    with caplog.at_level("WARNING", logger="stackowl.scheduler"):
+        await handler.execute(_driver_job())  # step 1
+        await handler.execute(_driver_job())  # step 2
+        await handler.execute(_driver_job())  # completion tick
+
+    _job, message, _category = deliverer.calls[-1]
+    assert "Plan B wins on price." in message
+    assert "less-capable substitute" in message  # visible degrade note
+    assert any(
+        "DEGRADED" in r.message or "degraded" in r.message.lower()
+        for r in caplog.records
+    )
 
 
 async def test_completion_falls_back_when_no_provider_registry(pool: DbPool) -> None:
