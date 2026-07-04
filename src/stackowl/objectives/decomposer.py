@@ -40,6 +40,14 @@ _PRODUCES_FILE_RE = re.compile(
     r"<<\s*produces-file\s*(?::\s*(?P<dir>[^>]*?))?\s*>>", re.IGNORECASE
 )
 
+#: Task 3 (adaptive decomposition) — a trailing ``<<complexity: N>>`` marker
+#: carrying the model's own 0.0-1.0 estimate of how complex that ONE step is.
+#: Parsed deterministically into ``SubgoalSpec.estimated_complexity``; absent or
+#: unparseable ⇒ 0.0 (see :data:`~stackowl.objectives.model.SubgoalSpec`).
+_COMPLEXITY_RE = re.compile(
+    r"<<\s*complexity\s*:\s*(?P<val>[0-9]*\.?[0-9]+)\s*>>", re.IGNORECASE
+)
+
 
 class ObjectiveDecomposer:
     """Decompose an objective's natural-language intent into ordered sub-goals."""
@@ -61,7 +69,13 @@ class ObjectiveDecomposer:
             "disk, append the exact marker `<<produces-file>>` at the end of that "
             "step's line (or `<<produces-file: relative/dir>>` to name the target "
             "directory). Do NOT add the marker to steps that only fetch, read, "
-            "search, summarize, compute, or notify without saving a file.\n\n"
+            "search, summarize, compute, or notify without saving a file.\n"
+            "After that (if present), ALWAYS also append `<<complexity: N>>` at "
+            "the end of the line, where N is a number from 0.0 to 1.0 estimating "
+            "how complex that ONE step is to carry out in a single turn: 0.0 = "
+            "trivial (one simple fetch/read/notify), 1.0 = the step actually "
+            "bundles several distinct actions and would benefit from being broken "
+            "down further. Use the full range, not just the extremes.\n\n"
             f"Objective: {intent}"
         )
 
@@ -71,9 +85,11 @@ class ObjectiveDecomposer:
 
         Strips any leading numbering/bullet marker, extracts a trailing
         ``<<produces-file[: dir]>>`` marker into an artifact acceptance criterion
-        (and removes it from the description), drops blank lines, and caps at
-        :data:`_MAX_SUBGOALS`. Language-neutral — no keyword/stopword lists; the
-        marker convention is the model's structured signal, parsed deterministically.
+        and a trailing ``<<complexity: N>>`` marker into
+        :attr:`SubgoalSpec.estimated_complexity` (Task 3; removing both from the
+        description), drops blank lines, and caps at :data:`_MAX_SUBGOALS`.
+        Language-neutral — no keyword/stopword lists; the marker convention is the
+        model's structured signal, parsed deterministically.
         """
         specs: list[SubgoalSpec] = []
         for line in (raw or "").splitlines():
@@ -86,10 +102,23 @@ class ObjectiveDecomposer:
                     kind="artifact", artifact_dir=raw_dir or None
                 )
                 stripped = _PRODUCES_FILE_RE.sub("", stripped)
+            complexity = 0.0
+            cmatch = _COMPLEXITY_RE.search(stripped)
+            if cmatch is not None:
+                try:
+                    complexity = float(cmatch.group("val"))
+                except ValueError:
+                    complexity = 0.0
+                complexity = max(0.0, min(1.0, complexity))
+                stripped = _COMPLEXITY_RE.sub("", stripped)
             cleaned = stripped.strip()
             if cleaned:
                 specs.append(
-                    SubgoalSpec(description=cleaned, acceptance_criteria=criterion)
+                    SubgoalSpec(
+                        description=cleaned,
+                        acceptance_criteria=criterion,
+                        estimated_complexity=complexity,
+                    )
                 )
             if len(specs) >= _MAX_SUBGOALS:
                 break

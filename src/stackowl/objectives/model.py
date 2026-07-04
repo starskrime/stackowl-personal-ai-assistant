@@ -68,6 +68,14 @@ class SubgoalSpec(BaseModel, frozen=True):
 
     description: str = Field(..., min_length=1)
     acceptance_criteria: ExpectedOutcome | None = None
+    #: The decomposer's own complexity estimate for this ONE step (Task 3 adaptive
+    #: decomposition), on a 0.0 (trivial, one concrete action) to 1.0 (bundles
+    #: multiple actions — worth splitting further) scale. Populated by the SAME
+    #: decomposition LLM call that produces ``description`` (no extra round-trip):
+    #: parsed from an optional trailing ``<<complexity: N>>`` marker. Default 0.0
+    #: ("no signal") is the conservative choice — an unparsed reply, or the
+    #: fail-safe single-spec fallback, never triggers recursive decomposition.
+    estimated_complexity: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class Objective(BaseModel):
@@ -121,6 +129,16 @@ class Subgoal(BaseModel):
     verified: bool | None = None
     #: The durable task id that ran this sub-goal (for crash-resume legibility).
     task_id: str | None = None
+    #: The decomposer's complexity estimate carried over from the originating
+    #: :class:`SubgoalSpec` (Task 3 adaptive decomposition). 0.0 default for every
+    #: pre-existing row and every legacy caller that never set it.
+    estimated_complexity: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: How many recursive decompositions produced this sub-goal (Task 3); 0 =
+    #: top-level (the objective's initial decomposition). The driver refuses to
+    #: split a sub-goal further once this reaches ``_MAX_DECOMPOSITION_DEPTH``
+    #: (``objectives/driver.py``), so a persistently "complex" reply can never
+    #: recurse without bound.
+    decomposition_depth: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

@@ -139,3 +139,67 @@ def test_prompt_documents_the_artifact_marker() -> None:
     d = _decomposer("x")
     p = d._build_prompt("download something")
     assert "<<produces-file>>" in p
+
+
+# ----------------------------------------------- complexity markers (Task 3)
+
+
+def test_prompt_documents_the_complexity_marker() -> None:
+    """The decomposition prompt must teach the model to estimate per-step
+    complexity so adaptive decomposition has a signal to act on."""
+    d = _decomposer("x")
+    p = d._build_prompt("do something").lower()
+    assert "<<complexity" in p
+
+
+@pytest.mark.asyncio
+async def test_decompose_specs_parses_complexity_marker() -> None:
+    """A step's <<complexity: N>> marker becomes estimated_complexity and is
+    stripped from the description; a step without the marker defaults to 0.0
+    (no signal — conservative, never triggers recursion on its own)."""
+    d = _decomposer(
+        "fetch the page <<complexity: 0.1>>\n"
+        "rebuild and redeploy the whole service <<complexity: 0.9>>\n"
+        "notify the owner"
+    )
+    specs = await d.decompose_specs("do a big thing")
+    assert [s.description for s in specs] == [
+        "fetch the page",
+        "rebuild and redeploy the whole service",
+        "notify the owner",
+    ]
+    assert specs[0].estimated_complexity == pytest.approx(0.1)
+    assert specs[1].estimated_complexity == pytest.approx(0.9)
+    assert specs[2].estimated_complexity == 0.0
+
+
+@pytest.mark.asyncio
+async def test_decompose_specs_complexity_marker_clamped_to_unit_range() -> None:
+    """An out-of-range or garbled value is clamped/defaulted rather than
+    propagated raw — the threshold comparison downstream must stay meaningful."""
+    d = _decomposer("do a huge amount of work <<complexity: 5>>")
+    specs = await d.decompose_specs("x")
+    assert specs[0].estimated_complexity == 1.0
+
+
+@pytest.mark.asyncio
+async def test_decompose_specs_combines_produces_file_and_complexity_markers() -> None:
+    """Both markers may appear on the same line, in either order, and both are
+    parsed and stripped correctly."""
+    d = _decomposer("download the archive <<produces-file: downloads>> <<complexity: 0.8>>")
+    specs = await d.decompose_specs("x")
+    assert specs[0].description == "download the archive"
+    assert specs[0].estimated_complexity == pytest.approx(0.8)
+    assert specs[0].acceptance_criteria is not None
+    assert specs[0].acceptance_criteria.artifact_dir == "downloads"
+
+
+@pytest.mark.asyncio
+async def test_decompose_fallback_specs_have_zero_complexity() -> None:
+    """The fail-safe single-spec fallback (empty/garbled reply, or provider
+    unavailable) never carries a complexity signal — it must never trigger
+    recursive decomposition of the whole objective."""
+    d = _decomposer("   ")
+    specs = await d.decompose_specs("do the thing")
+    assert len(specs) == 1
+    assert specs[0].estimated_complexity == 0.0

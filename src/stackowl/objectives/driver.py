@@ -33,11 +33,13 @@ from stackowl.interaction.reversibility_resolver import (
     ReversibilityResolver,
     reversibility_resolver_enabled,
 )
-from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal
+from stackowl.objectives.decomposer import ObjectiveDecomposer
+from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal, SubgoalSpec
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.acceptance import AcceptanceChecker
 from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
 from stackowl.pipeline.state import PipelineState
+from stackowl.providers.base import Message
 from stackowl.scheduler.base import JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
@@ -67,6 +69,36 @@ _MAX_SUBGOAL_ATTEMPTS = 3
 # (genuinely irreversible / verified-false) is NEVER auto-requeued — it waits for a
 # human. The clock is the objective's ``updated_at`` (stamped when it blocked).
 _BLOCKED_RETRY_COOLDOWN_S = 600.0
+
+# Task 3 (adaptive decomposition): a sub-goal the decomposer flagged as
+# sufficiently complex is split one level deeper BEFORE it runs, instead of
+# being forced into a single (likely too-coarse) turn. Threshold is on the
+# decomposer's own 0.0-1.0 ``estimated_complexity`` scale (see
+# ObjectiveDecomposer._build_prompt) — 0.7 picked so recursion fires only for a
+# step that clearly bundles multiple actions, not every merely-nontrivial one.
+_ADAPTIVE_DECOMPOSITION_THRESHOLD = 0.7
+
+# Mirrors _MAX_SUBGOALS' cap-and-stop idiom, one level up: bounds how many
+# times a sub-goal tree may be split so a persistently "complex" decomposer
+# reply can never recurse without limit. A sub-goal's OWN
+# ``decomposition_depth`` must be strictly less than this for it to be eligible
+# for one more split (depth 0 = top-level, from the initial decomposition).
+_MAX_DECOMPOSITION_DEPTH = 2
+
+# Task 3 (recombination): borrows the SHAPE (system prompt + single user
+# message → one LLM call → raw text), not the machinery, of
+# ``parliament/synthesizer.py``'s synthesis prompt.
+_RECOMBINATION_SYSTEM_PROMPT = (
+    "You are a synthesis engine for a multi-step assistant objective that has "
+    "just finished every one of its steps. Combine their individual results "
+    "into ONE coherent, directly useful answer for the person who asked for the "
+    "objective. Do not merely restate or concatenate the steps in order — "
+    "actually synthesize them into a single combined answer. Reply in the same "
+    "language the objective was stated in."
+)
+_RECOMBINATION_TIER = "powerful"
+_RECOMBINATION_MAX_TOKENS = 512
+_RECOMBINATION_TEMPERATURE = 0.2
 
 
 class ObjectiveDriverHandler(JobHandler):
@@ -174,14 +206,33 @@ class ObjectiveDriverHandler(JobHandler):
         """Advance one objective by its next pending sub-goal. Returns did-work."""
         nxt = await store.next_pending_subgoal(objective.objective_id)
         if nxt is None:
-            # All sub-goals finished — the objective is complete.
+            # All sub-goals finished — the objective is complete. Recombine
+            # (Task 3): synthesize a real combined answer from what the
+            # sub-goals actually produced instead of echoing the original
+            # intent text back verbatim.
+            subgoals = await store.list_subgoals(objective.objective_id)
+            summary = await self._synthesize_completion(objective, subgoals)
             await store.update_status(objective.objective_id, "done")
             await store.append_event(objective.objective_id, "completed", objective.intent)
-            await self._notify(objective, f"✓ Objective complete: {objective.intent}")
+            await self._notify(
+                objective, f"✓ Objective complete: {objective.intent}\n\n{summary}"
+            )
             log.scheduler.info(
                 "[scheduler] objective_driver: objective complete",
                 extra={"_fields": {"objective_id": objective.objective_id}},
             )
+            return True
+
+        # Task 3 (adaptive decomposition): a sufficiently complex sub-goal is
+        # split one level deeper, in its own run-order slot, BEFORE it runs —
+        # bounded by _MAX_DECOMPOSITION_DEPTH so this can never recurse without
+        # limit. A successful split is a planning-only tick (did work, nothing
+        # executed yet); the first child is picked up on the next tick.
+        if (
+            nxt.estimated_complexity >= _ADAPTIVE_DECOMPOSITION_THRESHOLD
+            and nxt.decomposition_depth < _MAX_DECOMPOSITION_DEPTH
+            and await self._maybe_decompose_further(store, objective, nxt)
+        ):
             return True
 
         await store.update_subgoal(nxt.subgoal_id, "running")
@@ -534,6 +585,135 @@ class ObjectiveDriverHandler(JobHandler):
         deriver = LlmAcceptanceDeriver(self._provider_registry, tier)
         intent_for_draft = description or intent
         return await deriver.derive(intent=intent_for_draft, draft=draft)
+
+    async def _maybe_decompose_further(
+        self, store: ObjectiveStore, objective: Objective, subgoal: Subgoal
+    ) -> bool:
+        """Split ``subgoal`` one level deeper (Task 3 adaptive decomposition).
+
+        Reuses the SAME :class:`ObjectiveDecomposer` used at objective-creation
+        time on just this sub-goal's description — no bespoke recursive planner.
+        The children are inserted at the sub-goal's own run-order slot (later
+        sub-goals shift back) at ``decomposition_depth + 1``, and the now
+        superseded parent row is deleted; ``add_subgoals``' cap-and-stop
+        (``_MAX_SUBGOALS``) already bounds the child count, and the caller
+        already checked the depth cap. Fail-safe: no provider registry wired, or
+        a decomposition that resolves to a single child (nothing gained — the
+        decomposer's own fail-safe fallback for an unparseable/failed reply),
+        leaves the sub-goal untouched so it runs as-is THIS tick.
+        """
+        log.scheduler.debug(
+            "[scheduler] objective_driver._maybe_decompose_further: entry",
+            extra={"_fields": {
+                "objective_id": objective.objective_id, "subgoal_id": subgoal.subgoal_id,
+                "complexity": subgoal.estimated_complexity, "depth": subgoal.decomposition_depth,
+            }},
+        )
+        if self._provider_registry is None:
+            log.scheduler.debug(
+                "[scheduler] objective_driver._maybe_decompose_further: no provider "
+                "registry wired — running as-is",
+                extra={"_fields": {"subgoal_id": subgoal.subgoal_id}},
+            )
+            return False
+        decomposer = ObjectiveDecomposer(self._provider_registry)
+        children: list[SubgoalSpec] = await decomposer.decompose_specs(subgoal.description)
+        if len(children) < 2:
+            log.scheduler.info(
+                "[scheduler] objective_driver._maybe_decompose_further: no further "
+                "split available — running as-is",
+                extra={"_fields": {"subgoal_id": subgoal.subgoal_id}},
+            )
+            return False
+        child_depth = subgoal.decomposition_depth + 1
+        await store.insert_subgoals_at(
+            objective.objective_id, subgoal.position, children, depth=child_depth,
+        )
+        await store.delete_subgoal(subgoal.subgoal_id)
+        await store.append_event(
+            objective.objective_id, "subgoal_decomposed",
+            f"{subgoal.description[:80]} -> {len(children)} step(s) at depth {child_depth}",
+        )
+        log.scheduler.info(
+            "[scheduler] objective_driver._maybe_decompose_further: exit",
+            extra={"_fields": {
+                "objective_id": objective.objective_id, "subgoal_id": subgoal.subgoal_id,
+                "child_count": len(children), "depth": child_depth,
+            }},
+        )
+        return True
+
+    async def _synthesize_completion(
+        self, objective: Objective, subgoals: list[Subgoal]
+    ) -> str:
+        """Combine every completed sub-goal's result into one coherent answer
+        (Task 3 recombination), instead of echoing the original intent text back
+        verbatim.
+
+        Reuses the SAME single-call system-prompt/user-message SHAPE as
+        :class:`stackowl.parliament.synthesizer.ParliamentSynthesizer` (not its
+        multi-round/multi-owl machinery): one ``powerful``-tier call over the
+        objective's intent plus each finished step's result. A trivial
+        single-sub-goal objective skips the extra LLM round-trip entirely and
+        surfaces that one result directly — a synthesis call would just restate
+        it, at real latency/cost, for no benefit. Fail-safe throughout: no
+        provider registry, a provider failure, or an empty reply all degrade to
+        a legacy-shaped fallback so a synthesis miss can never swallow a
+        completed objective's report.
+        """
+        fallback = f"Objective complete: {objective.intent}"
+        done = [sg for sg in subgoals if sg.status == "done"]
+        if not done:
+            return fallback
+        if len(done) == 1:
+            return done[0].result or fallback
+        if self._provider_registry is None:
+            log.scheduler.debug(
+                "[scheduler] objective_driver._synthesize_completion: no provider "
+                "registry wired — concatenating step results",
+                extra={"_fields": {"objective_id": objective.objective_id}},
+            )
+            return "\n".join(f"- {sg.description}: {sg.result}" for sg in done)
+
+        log.scheduler.debug(
+            "[scheduler] objective_driver._synthesize_completion: entry",
+            extra={"_fields": {
+                "objective_id": objective.objective_id, "subgoal_count": len(done),
+            }},
+        )
+        lines = [f"Objective: {objective.intent}", ""]
+        for sg in done:
+            lines.append(f"Step: {sg.description}\nResult: {sg.result or '(no output)'}\n")
+        messages = [
+            Message(role="system", content=_RECOMBINATION_SYSTEM_PROMPT),
+            Message(role="user", content="\n".join(lines)),
+        ]
+        try:
+            provider, _degraded_from = self._provider_registry.resolve_capable_or_degrade(
+                _RECOMBINATION_TIER
+            )
+            result = await provider.complete(
+                messages,
+                model="",
+                max_tokens=_RECOMBINATION_MAX_TOKENS,
+                temperature=_RECOMBINATION_TEMPERATURE,
+            )
+        except Exception as exc:  # noqa: BLE001 — a completed objective's report must still land
+            log.scheduler.error(
+                "[scheduler] objective_driver._synthesize_completion: provider call "
+                "failed — falling back to the plain completion message",
+                exc_info=exc,
+                extra={"_fields": {"objective_id": objective.objective_id}},
+            )
+            return fallback
+        text = (result.content or "").strip()
+        log.scheduler.info(
+            "[scheduler] objective_driver._synthesize_completion: exit",
+            extra={"_fields": {
+                "objective_id": objective.objective_id, "synthesized": bool(text),
+            }},
+        )
+        return text or fallback
 
     def _durable_enabled(self) -> bool:
         """True iff durable sub-goal routing is on AND a DbPool is wired."""

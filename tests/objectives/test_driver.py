@@ -18,11 +18,17 @@ import pytest
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
-from stackowl.objectives.driver import ObjectiveDriverHandler
-from stackowl.objectives.model import Objective
+from stackowl.objectives.driver import (
+    _ADAPTIVE_DECOMPOSITION_THRESHOLD,
+    _MAX_DECOMPOSITION_DEPTH,
+    ObjectiveDriverHandler,
+)
+from stackowl.objectives.model import Objective, SubgoalSpec
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.providers.mock_provider import MockProvider
+from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
 
 
@@ -476,3 +482,181 @@ async def test_retry_decision_inline_when_unify_off(pool: DbPool) -> None:
     assert spy.calls == []  # inline path — authority not consulted
     subs = await store.list_subgoals("obj-1")
     assert subs[0].status == "pending" and subs[0].attempts == 1
+
+
+# --------------------------------------- Task 3: adaptive decomposition ------
+
+
+def _standard_tier_registry(canned_text: str) -> ProviderRegistry:
+    """A ProviderRegistry with a mock decomposer provider on the 'standard' tier
+    (the tier ObjectiveDecomposer always uses)."""
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "mock-standard", MockProvider(name="mock-standard", canned_text=canned_text),
+        tier="standard",
+    )
+    return registry
+
+
+async def _seed_objective_with_spec(
+    store: ObjectiveStore, spec: SubgoalSpec, *, objective_id: str = "obj-1",
+) -> Objective:
+    """Like _make_objective but for a single sub-goal carrying a specific
+    estimated_complexity (Task 3 tests need to control this directly)."""
+    obj = Objective(
+        objective_id=objective_id, owner_id="principal-default",
+        intent="a complex objective", channel="telegram",
+        target_channels=["telegram"], target_addresses={"telegram": 999},
+    )
+    await store.create(obj)
+    await store.add_subgoals(objective_id, [spec])
+    await store.append_event(objective_id, "created", "objective created")
+    return obj
+
+
+async def test_low_complexity_subgoal_does_not_recurse(pool: DbPool) -> None:
+    """A sub-goal below the adaptive-decomposition threshold runs as a single
+    step, exactly as before Task 3 — even with a decomposer-capable provider
+    registry wired."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _seed_objective_with_spec(
+        store,
+        SubgoalSpec(
+            description="a simple step",
+            estimated_complexity=_ADAPTIVE_DECOMPOSITION_THRESHOLD - 0.1,
+        ),
+    )
+    registry = _standard_tier_registry("child a\nchild b")
+    backend = _FakeBackend(text="did it")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, provider_registry=registry)
+
+    await handler.execute(_driver_job())
+
+    subs = await store.list_subgoals("obj-1")
+    assert len(subs) == 1  # never split
+    assert subs[0].status == "done" and subs[0].result == "did it"
+    assert backend.runs == 1
+
+
+async def test_high_complexity_subgoal_recurses_exactly_once(pool: DbPool) -> None:
+    """A sub-goal AT/ABOVE the threshold is split one level deeper before it
+    runs; its (low-complexity) children then run normally with no further
+    recursion, and the split happened exactly once."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _seed_objective_with_spec(
+        store,
+        SubgoalSpec(
+            description="do a big multi-part thing",
+            estimated_complexity=_ADAPTIVE_DECOMPOSITION_THRESHOLD + 0.1,
+        ),
+    )
+    # Children carry NO complexity marker → default 0.0 → never recurse further.
+    registry = _standard_tier_registry("first half\nsecond half")
+    backend = _FakeBackend(text="done")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, provider_registry=registry)
+
+    await handler.execute(_driver_job())  # tick 1: planning-only — splits, runs nothing
+
+    assert backend.runs == 0
+    subs = await store.list_subgoals("obj-1")
+    assert [s.description for s in subs] == ["first half", "second half"]
+    assert all(s.decomposition_depth == 1 for s in subs)
+    assert all(s.status == "pending" for s in subs)
+
+    await handler.execute(_driver_job())  # tick 2: run first child
+    await handler.execute(_driver_job())  # tick 3: run second child
+    assert backend.runs == 2
+
+    kinds = [e.kind for e in await store.list_events("obj-1")]
+    assert kinds.count("subgoal_decomposed") == 1  # split exactly once
+
+
+async def test_recursion_never_exceeds_depth_cap(pool: DbPool) -> None:
+    """Even when every generated child is ALSO reported as highly complex, the
+    driver never splits past _MAX_DECOMPOSITION_DEPTH — it eventually runs a
+    sub-goal at the cap instead of decomposing it again, so the objective always
+    makes forward progress."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _seed_objective_with_spec(
+        store,
+        SubgoalSpec(
+            description="perpetually complex step",
+            estimated_complexity=1.0,
+        ),
+    )
+    # Every decomposition call (regardless of input) returns 2 equally "complex"
+    # children — the decomposer would keep wanting to split forever if the depth
+    # cap did not intervene.
+    registry = _standard_tier_registry(
+        "part one <<complexity: 1.0>>\npart two <<complexity: 1.0>>"
+    )
+    backend = _FakeBackend(text="ran")
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, provider_registry=registry)
+
+    for _ in range(12):  # generous bound — must terminate long before this
+        await handler.execute(_driver_job())
+
+    subs = await store.list_subgoals("obj-1")
+    assert all(s.decomposition_depth <= _MAX_DECOMPOSITION_DEPTH for s in subs)
+    # At least one sub-goal actually ran (the cap forced execution, not endless
+    # splitting) — real forward progress, not a stuck loop.
+    assert backend.runs > 0
+    assert any(s.status == "done" for s in subs)
+
+
+# ------------------------------------------------ Task 3: recombination -----
+
+
+def _powerful_tier_registry(canned_text: str) -> ProviderRegistry:
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "mock-powerful", MockProvider(name="mock-powerful", canned_text=canned_text),
+        tier="powerful",
+    )
+    return registry
+
+
+async def test_completion_synthesizes_combined_answer_not_echoed_intent(
+    pool: DbPool,
+) -> None:
+    """On completion of a multi-step objective, the notified message contains a
+    real synthesis over the sub-goals' results — not just the bare, verbatim
+    original-intent string the legacy behavior sent."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["gather prices", "compare options"])
+    backend = _FakeBackend(text="step result")
+    deliverer = _FakeDeliverer()
+    registry = _powerful_tier_registry("The cheapest option overall is Plan B.")
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, job_deliverer=deliverer, provider_registry=registry,
+    )
+
+    await handler.execute(_driver_job())  # step 1
+    await handler.execute(_driver_job())  # step 2
+    await handler.execute(_driver_job())  # completion tick
+
+    obj = await store.get("obj-1")
+    assert obj.status == "done"
+    _job, message, _category = deliverer.calls[-1]
+    assert "The cheapest option overall is Plan B." in message
+    # Not the old bare echo — the synthesized content is present alongside it.
+    legacy_echo = f"✓ Objective complete: {obj.intent}"
+    assert message != legacy_echo
+
+
+async def test_completion_falls_back_when_no_provider_registry(pool: DbPool) -> None:
+    """No provider registry wired (legacy/unit surface) ⇒ degrade to a
+    concatenation of step results rather than raising or reintroducing the bare
+    echoed-intent-only message."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["step a", "step b"])
+    backend = _FakeBackend(text="the real output")
+    deliverer = _FakeDeliverer()
+    handler = ObjectiveDriverHandler(db=pool, backend=backend, job_deliverer=deliverer)
+
+    await handler.execute(_driver_job())
+    await handler.execute(_driver_job())
+    await handler.execute(_driver_job())
+
+    _job, message, _category = deliverer.calls[-1]
+    assert "the real output" in message  # a real sub-goal result, not just the intent
