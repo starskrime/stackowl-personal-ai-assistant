@@ -11,8 +11,10 @@ from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.shared import _capture_outcome, _verify_turn_acceptance, run_delivery_gate
 from stackowl.pipeline.budget import human_wait as human_wait_ctx
+from stackowl.pipeline.progress.emitter import bind_turn_callback as bind_progress_callback
 from stackowl.pipeline.progress.emitter import emit_start as emit_progress_start
 from stackowl.pipeline.progress.emitter import make_progress_callback
+from stackowl.pipeline.progress.emitter import reset_turn_callback as reset_progress_callback
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState, StepError
@@ -82,7 +84,15 @@ class AsyncioBackend(OrchestratorBackend):
         # path, well after those unacked calls. Same is_eligible() gating (settings
         # state is already fully populated by the gateway at this point); a
         # gated/ineligible turn still composes no callback ⇒ no-op, byte-identical.
-        await emit_progress_start(make_progress_callback(current, self._services))
+        # bind_progress_callback stashes THIS SAME callback/emitter (turn-scoped
+        # ContextVar, reset in `finally` below) so execute.py's tool loop reuses it
+        # for per-iteration updates instead of building a second emitter — keeping
+        # ONE continuous step_index counter (PipelineStrip renders it as a glyph
+        # "train"; two independent emitters made it stall for one step at the
+        # ack→first-iteration boundary).
+        _progress_cb = make_progress_callback(current, self._services)
+        progress_token = bind_progress_callback(_progress_cb)
+        await emit_progress_start(_progress_cb)
         try:
             for step_name, step_fn in PIPELINE_STEPS:
                 current = current.evolve(pipeline_step=step_name)
@@ -147,6 +157,7 @@ class AsyncioBackend(OrchestratorBackend):
                                  StepError(step="deliver", exc_type=type(exc).__name__, message=str(exc))),
                 )
         finally:
+            reset_progress_callback(progress_token)
             _rec_events = recovery_context.get_recovery()
             if _rec_events:
                 log.engine.info(

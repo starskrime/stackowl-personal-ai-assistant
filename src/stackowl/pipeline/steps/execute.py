@@ -36,7 +36,7 @@ from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP, RESPONSE_RESERVE_TOKENS
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
-from stackowl.pipeline.progress.emitter import make_progress_callback
+from stackowl.pipeline.progress.emitter import get_turn_callback, make_progress_callback
 from stackowl.pipeline.provider_select import (
     ToolProviderChoice,
     select_tool_provider_plan,
@@ -1563,7 +1563,20 @@ async def _run_with_tools(
     # friendly "what I'm doing now" status per ReAct iteration. None when this
     # turn is gated (non-interactive / delegated child / deferred / flag off) →
     # composed list and provider call stay byte-identical to the baseline.
-    _progress_cb = make_progress_callback(state, _services)
+    #
+    # Task 2 follow-up — reuse the SAME callback/emitter asyncio_backend.py built
+    # for the pre-loop "Working on it…" ack (bound via get_turn_callback()) rather
+    # than building a second, independent one here. Two independent emitters each
+    # start their own step_index at 0, which made the PipelineStrip's glyph
+    # "train" (tui/widgets/pipeline_strip.py renders `i < step_index`) stall for
+    # one step right after the ack instead of advancing continuously. Falling back
+    # to a fresh callback keeps this function correct standalone for any caller
+    # that doesn't route through asyncio_backend's pre-loop bind (e.g. a future
+    # backend, or direct unit tests of `_run_with_tools`) — just without the
+    # shared counter.
+    _progress_cb = get_turn_callback()
+    if _progress_cb is None:
+        _progress_cb = make_progress_callback(state, _services)
 
     def _compose_iter_cbs(
         cbs: list[IterationCallback],

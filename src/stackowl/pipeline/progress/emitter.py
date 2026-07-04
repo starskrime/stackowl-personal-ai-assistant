@@ -13,6 +13,7 @@ logged and swallowed — progress must never break a turn).
 
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
@@ -188,3 +189,30 @@ async def emit_start(callback: IterationCallback | None) -> None:
     emitter = getattr(callback, "_emitter", None)
     if emitter is not None:
         await emitter.emit_start()
+
+
+# Turn-scoped carrier for THIS turn's progress callback (Task 2). Mirrors the
+# TraceContext/lesson_context ContextVar idiom: asyncio_backend.py binds the
+# callback it built for the pre-loop ack, and execute.py's tool loop reuses
+# THAT SAME callback/emitter (same step_index counter) instead of building a
+# second, independent one — which previously made the PipelineStrip's glyph
+# "train" (see tui/widgets/pipeline_strip.py) stall for one step right after
+# the ack. bind()/reset() in a try/finally keeps it from leaking across turns
+# or across concurrent turns (each turn runs in its own asyncio Task).
+_turn_callback: ContextVar[IterationCallback | None] = ContextVar(
+    "progress_turn_callback", default=None,
+)
+
+
+def bind_turn_callback(callback: IterationCallback | None) -> Token[IterationCallback | None]:
+    """Bind THIS turn's progress callback (may be None when the turn is gated)."""
+    return _turn_callback.set(callback)
+
+
+def reset_turn_callback(token: Token[IterationCallback | None]) -> None:
+    _turn_callback.reset(token)
+
+
+def get_turn_callback() -> IterationCallback | None:
+    """The callback bound by ``bind_turn_callback`` for the CURRENT turn, if any."""
+    return _turn_callback.get()
