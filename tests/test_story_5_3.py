@@ -13,12 +13,12 @@ import pytest
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
+from stackowl.memory.models import StagedFact
 from stackowl.parliament.convergence import ConvergenceDetector
 from stackowl.parliament.models import ParliamentRound, ParliamentSession
 from stackowl.parliament.orchestrator import ParliamentOrchestrator
 from stackowl.parliament.pellet_generator import (
     KnowledgePelletGenerator,
-    MemoryBridge,
     NullMemoryBridge,
 )
 from stackowl.parliament.session_store import SessionStore
@@ -385,29 +385,19 @@ class TestSynthesizerTestMode:
 # ---------------------------------------------------------------------------
 
 
-class _CapturingBridge(MemoryBridge):
+class _CapturingBridge:
     def __init__(self) -> None:
-        self.staged: list[tuple[str, str, str]] = []
+        self.staged: list[StagedFact] = []
 
-    async def stage(
-        self,
-        fact_content: str,
-        source_type: str,
-        source_ref: str,
-    ) -> None:
-        self.staged.append((fact_content, source_type, source_ref))
+    async def stage(self, fact: StagedFact) -> None:
+        self.staged.append(fact)
 
 
-class _FailingBridge(MemoryBridge):
+class _FailingBridge:
     def __init__(self) -> None:
         self.attempts = 0
 
-    async def stage(
-        self,
-        fact_content: str,
-        source_type: str,
-        source_ref: str,
-    ) -> None:
+    async def stage(self, fact: StagedFact) -> None:  # noqa: ARG002
         self.attempts += 1
         raise RuntimeError("memory subsystem offline")
 
@@ -421,7 +411,16 @@ class TestPelletGenerator:
 
         logging.getLogger("stackowl").setLevel(logging.DEBUG)
         bridge = NullMemoryBridge()
-        await bridge.stage("a fact", "parliament", "session-1")
+        fact = StagedFact(
+            fact_id="f1",
+            content="a fact",
+            source_type="parliament",
+            source_ref="session-1",
+            confidence=0.7,
+            reinforcement_count=0,
+            trust="self",
+        )
+        await bridge.stage(fact)
         infos = [
             r
             for r in capture_logs
@@ -446,14 +445,14 @@ class TestPelletGenerator:
         await gen.from_parliament(session, synthesis)
         # consensus + 2 disagreement claims = 3 staged
         assert len(bridge.staged) == 3
-        contents = [s[0] for s in bridge.staged]
+        contents = [s.content for s in bridge.staged]
         assert "we agree X" in contents
         assert "scope dispute" in contents
         assert "deadline" in contents
         # All carry source_type=parliament and the session id
-        for _content, source_type, source_ref in bridge.staged:
-            assert source_type == "parliament"
-            assert source_ref == session.session_id
+        for fact in bridge.staged:
+            assert fact.source_type == "parliament"
+            assert fact.source_ref == f"parliament:{session.session_id}"
 
     async def test_bridge_failure_continues(
         self,

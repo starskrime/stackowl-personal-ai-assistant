@@ -5,26 +5,18 @@ unresolved disagreement point are staged through a memory bridge so the
 platform's memory subsystem (Epic 6) can persist them as long-lived
 knowledge pellets.
 
-Two bridge shapes are supported:
-
-* The Epic-5 minimal :class:`MemoryBridge` ABC defined in this module,
-  whose ``stage(content, source_type, source_ref)`` signature predates
-  the structured :class:`~stackowl.memory.models.StagedFact`.
-* The Epic-6 :class:`stackowl.memory.bridge.MemoryBridge`, whose
-  ``stage(fact: StagedFact)`` signature is now the canonical contract.
-
-Detection is by ``isinstance`` against the Epic-6 ABC — Epic-5 tests
-that subclass the local stub continue to work unchanged.
+The only supported bridge contract is the Epic-6
+:class:`stackowl.memory.bridge.MemoryBridge`'s ``stage(fact: StagedFact)``
+shape (the legacy Epic-5 ``stage(content, source_type, source_ref)`` stub
+has been removed — nothing outside this module's own tests depended on it).
 """
 
 from __future__ import annotations
 
 import uuid
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
-from stackowl.memory.bridge import MemoryBridge as RealMemoryBridge
 from stackowl.memory.models import StagedFact
 
 if TYPE_CHECKING:
@@ -38,44 +30,24 @@ if TYPE_CHECKING:
 _MIN_PELLET_CONFIDENCE = 0.5
 
 
-class MemoryBridge(ABC):
-    """Minimal staging interface for facts produced outside the memory subsystem.
-
-    Concrete implementation lands in Epic 6 (``SqliteMemoryBridge``).
-    """
-
-    @abstractmethod
-    async def stage(
-        self,
-        fact_content: str,
-        source_type: str,
-        source_ref: str,
-    ) -> None:
-        """Stage a single fact for later consolidation by the memory subsystem."""
-        ...
-
-
-class NullMemoryBridge(MemoryBridge):
+class NullMemoryBridge:
     """No-op bridge that logs each staged fact.
 
-    Used until Epic 6 wires the real ``SqliteMemoryBridge``. Keeps the
-    orchestrator path exercised end-to-end without requiring memory infra.
+    Default when no bridge is wired (e.g. ``ParliamentOrchestrator`` built
+    without a ``memory_bridge``). Duck-types the Epic-6
+    ``stage(fact: StagedFact)`` contract — no ABC needed since
+    :class:`KnowledgePelletGenerator` no longer branches on bridge type.
     """
 
-    async def stage(
-        self,
-        fact_content: str,
-        source_type: str,
-        source_ref: str,
-    ) -> None:
+    async def stage(self, fact: StagedFact) -> None:
         log.engine.info(
             "[parliament] pellet_generator: null bridge — fact not persisted "
-            "(Epic 6 pending)",
+            "(no memory_bridge wired)",
             extra={
                 "_fields": {
-                    "source_type": source_type,
-                    "source_ref": source_ref,
-                    "content_len": len(fact_content),
+                    "source_type": fact.source_type,
+                    "source_ref": fact.source_ref,
+                    "content_len": len(fact.content),
                 }
             },
         )
@@ -85,9 +57,9 @@ class KnowledgePelletGenerator:
     """Converts a synthesised Parliament session into staged knowledge facts."""
 
     def __init__(self, memory_bridge: Any | None = None) -> None:
-        # Accepts either the Epic-5 minimal :class:`MemoryBridge` stub or the
-        # Epic-6 :class:`stackowl.memory.bridge.MemoryBridge`. Defaults to the
-        # local NullMemoryBridge stub when nothing is provided.
+        # Any object exposing `stage(fact: StagedFact) -> None` (typically the
+        # Epic-6 `stackowl.memory.bridge.MemoryBridge`). Defaults to the local
+        # NullMemoryBridge stub when nothing is provided.
         self._bridge: Any = memory_bridge or NullMemoryBridge()
 
     async def from_parliament(
@@ -149,35 +121,18 @@ class KnowledgePelletGenerator:
         )
 
         staged = 0
-        uses_real_bridge = isinstance(self._bridge, RealMemoryBridge)
-        log.engine.debug(
-            "[parliament] pellet_generator.from_parliament: bridge dispatch",
-            extra={
-                "_fields": {
-                    "session_id": session.session_id,
-                    "uses_real_bridge": uses_real_bridge,
-                }
-            },
-        )
         for claim in claims:
             try:
-                if uses_real_bridge:
-                    fact = StagedFact(
-                        fact_id=str(uuid.uuid4()),
-                        content=claim,
-                        source_type="parliament",
-                        source_ref=f"parliament:{session.session_id}",
-                        confidence=0.7,
-                        reinforcement_count=0,
-                        trust="self",
-                    )
-                    await self._bridge.stage(fact)
-                else:
-                    await self._bridge.stage(
-                        claim,
-                        "parliament",
-                        session.session_id,
-                    )
+                fact = StagedFact(
+                    fact_id=str(uuid.uuid4()),
+                    content=claim,
+                    source_type="parliament",
+                    source_ref=f"parliament:{session.session_id}",
+                    confidence=0.7,
+                    reinforcement_count=0,
+                    trust="self",
+                )
+                await self._bridge.stage(fact)
                 staged += 1
             except Exception as exc:
                 log.engine.warning(
