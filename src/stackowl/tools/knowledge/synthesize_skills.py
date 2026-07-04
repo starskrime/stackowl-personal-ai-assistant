@@ -110,6 +110,13 @@ class SynthesizeSkillsTool(Tool):
                 skills_root=StackowlHome.skills_dir(),
                 embedding_registry=services.embedding_registry,
                 owl_registry=services.owl_registry,
+                # Task 4 — thread the REAL consent gate through so a per-skill
+                # gated write (stackowl.skills.authoring) can actually be
+                # approved live (this call is itself already dispatched through
+                # ConsequentialActionGate.check() for action_severity=
+                # "consequential", but the inner write is a SEPARATE
+                # consent-policy identity — see live_or_scheduled_identity()).
+                consent_gate=services.consent_gate,
             )
             job = self._synthetic_job()
             result = await handler.execute(job)

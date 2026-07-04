@@ -1201,6 +1201,10 @@ class StartupOrchestrator:
             # ADR-6 Task 8 — MCP client for health aggregation (None if not configured
             # or MCP failed to init — pre-initialized above, mirrors browser_runtime).
             mcp_client=mcp_client,
+            # Task 4 — the real ConsequentialActionGate so SkillSynthesizerHandler's
+            # gated skill-authoring writes can actually be approved via a configured
+            # trust tier, instead of always failing closed on a None gate.
+            consent_gate=consent_gate,
         )
 
         # Single registration point for ALL slash commands (Epic A spine).

@@ -28,7 +28,7 @@ import re
 import shutil
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,6 +39,11 @@ from stackowl.infra.observability import log
 from stackowl.memory.json_parser import parse_json_response
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
 from stackowl.providers.base import Message, ModelProvider
+from stackowl.skills.authoring import (
+    SkillWriteRequest,
+    gated_skill_write,
+    live_or_scheduled_identity,
+)
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.store import Skill, SkillIndexStore
 
@@ -47,6 +52,12 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.owls.registry import OwlRegistry
     from stackowl.skills.loader import LoadedSkill
+    from stackowl.tools.registry import ConsequentialActionGate
+
+# Consent-policy identity presented for every gated write this module makes
+# (Task 4 / bypass fix) — distinct from human-facing "skill_manage" so an
+# operator can configure a trust tier for unattended synthesis independently.
+_CONSENT_TOOL_NAME = "skill_synthesizer"
 
 # ---------- clustering ------------------------------------------------------
 
@@ -326,6 +337,7 @@ class SkillSynthesizer:
         embedding_registry: EmbeddingRegistry | None = None,
         owl_registry: OwlRegistry | None = None,
         db: DbPool | None = None,
+        consent_gate: ConsequentialActionGate | None = None,
         lookback_days: int = _LOOKBACK_DAYS_DEFAULT,
         min_cluster_size: int = _MIN_CLUSTER_SIZE_DEFAULT,
         min_mean_quality: float = _MIN_MEAN_QUALITY_DEFAULT,
@@ -347,6 +359,10 @@ class SkillSynthesizer:
         self._embedding_registry = embedding_registry
         self._owl_registry = owl_registry
         self._db = db
+        # Task 4 — every SKILL.md write routes through gated_skill_write(), which
+        # fails closed (refuses) when consent_gate is None. No gate wired is
+        # therefore "discover/refine writes nothing", never "write unguarded".
+        self._consent_gate = consent_gate
         self._lookback_days = lookback_days
         self._min_cluster_size = min_cluster_size
         self._min_mean_quality = min_mean_quality
@@ -436,7 +452,7 @@ class SkillSynthesizer:
         )
         messages = self._prompts.build_for_new(cluster)
         try:
-            result = await self._provider.complete(messages, model="")
+            completion = await self._provider.complete(messages, model="")
         except Exception as exc:  # B5
             log.skills.warning(
                 "[synth] synthesize_one: provider call failed",
@@ -444,21 +460,22 @@ class SkillSynthesizer:
                 extra={"_fields": {"sequence": list(cluster.sequence)}},
             )
             return False
-        parsed = parse_new_skill_response(result.content)
+        parsed = parse_new_skill_response(completion.content)
         if parsed is None:
             log.skills.warning(
                 "[synth] synthesize_one: response unparseable — skipping",
-                extra={"_fields": {"preview": result.content[:200]}},
+                extra={"_fields": {"preview": completion.content[:200]}},
             )
             return False
-        # Build SKILL.md text + the manifest record
+        # Pick a not-yet-taken directory name. Just a path decision (no I/O
+        # writes) — the real mkdir/write only happens inside gated_skill_write()
+        # once BOTH the security scan and consent have passed.
         proposed_name = parsed["name"]
         target_dir = self._root / "learned" / proposed_name
         i = 1
         while target_dir.exists():
             target_dir = self._root / "learned" / f"{proposed_name}-{i}"
             i += 1
-        target_dir.mkdir(parents=True, exist_ok=True)
         final_name = target_dir.name
         try:
             manifest = SkillManifest(
@@ -474,24 +491,45 @@ class SkillSynthesizer:
                 "[synth] synthesize_one: SkillManifest validation failed — skipping",
                 exc_info=exc, extra={"_fields": {"name": final_name}},
             )
-            shutil.rmtree(target_dir, ignore_errors=True)
             return False
+
+        # Task 4 — security_scan_gate -> consent -> write -> store.upsert, all
+        # via the shared gate (fixes the direct-write bypass). A blocked scan
+        # or a denied consent leaves NOTHING on disk and NOTHING indexed.
         skill_md = _emit_skill_md(manifest, parsed["body"])
-        (target_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        channel, session_id = live_or_scheduled_identity()
+        request = SkillWriteRequest(
+            target_dir=target_dir, manifest=manifest, body=parsed["body"],
+            skill_md_text=skill_md,
+            consent_summary=(
+                f"Auto-author new skill '{final_name}' from a "
+                f"{cluster.size}-outcome success cluster "
+                f"(tools: {', '.join(cluster.sequence)})"
+            ),
+            tool_name=_CONSENT_TOOL_NAME, channel=channel, session_id=session_id,
+        )
+        result = await gated_skill_write(
+            request, store=self._skills, consent_gate=self._consent_gate,
+        )
+        if not result.ok:
+            log.skills.warning(
+                "[synth] synthesize_one: gated write refused — skipping",
+                extra={"_fields": {"name": final_name, "reason": result.reason}},
+            )
+            return False
+        loaded = result.loaded
+        assert loaded is not None  # gated_skill_write guarantees this on ok=True
         after_hash = hash_dir(target_dir)
         # PA4b — attach the learned skill to its OWNING owl (the owl that ran the
         # clustered tasks) so it becomes reachable on the injection/capability
         # path AND survives restart. Best-effort: a failed attach logs and leaves
         # the skill on disk unowned (no worse than before PA4b) — never aborts.
+        # Runs AFTER the gated write (not before) so a denied/blocked write never
+        # leaves a dangling ownership record for a skill that doesn't exist.
         owl_attached = await self._attach_to_owner(cluster, final_name)
-        # Index + audit
-        from stackowl.skills.loader import LoadedSkill
-
-        loaded = LoadedSkill(
-            manifest=manifest, path=target_dir, body=parsed["body"],
-            tools_registered=0, owls_registered=1 if owl_attached else 0,
-        )
-        await self._skills.upsert(loaded)
+        if owl_attached:
+            loaded = replace(loaded, owls_registered=1)
+            await self._skills.upsert(loaded)
         await self._embed_one_if_wired(loaded)
         await self._skills.audit_write(
             skill_name=final_name, source="learned", op="create",
@@ -619,18 +657,18 @@ class SkillSynthesizer:
                 recent.append(out)
         messages = self._prompts.build_for_refine(skill, recent)
         try:
-            result = await self._provider.complete(messages, model="")
+            completion = await self._provider.complete(messages, model="")
         except Exception as exc:  # B5
             log.skills.warning(
                 "[synth] refine_one: provider call failed",
                 exc_info=exc, extra={"_fields": {"name": skill.name}},
             )
             return False
-        new_body = parse_refined_body(result.content)
+        new_body = parse_refined_body(completion.content)
         if new_body is None:
             log.skills.warning(
                 "[synth] refine_one: response unparseable — skipping",
-                extra={"_fields": {"name": skill.name, "preview": result.content[:200]}},
+                extra={"_fields": {"name": skill.name, "preview": completion.content[:200]}},
             )
             return False
         skill_dir = Path(skill.path)
@@ -645,16 +683,33 @@ class SkillSynthesizer:
             )
             return False
         new_text = _emit_skill_md(manifest, new_body)
-        (skill_dir / "SKILL.md").write_text(new_text, encoding="utf-8")
-        after = hash_dir(skill_dir)
-        # Re-index the updated body via direct upsert (don't need full loader rescan).
-        from stackowl.skills.loader import LoadedSkill
 
-        loaded = LoadedSkill(
-            manifest=manifest, path=skill_dir, body=new_body,
-            tools_registered=0, owls_registered=0,
+        # Task 4 — security_scan_gate -> consent -> write -> store.upsert, all
+        # via the shared gate (fixes the direct-write bypass). A blocked scan
+        # or a denied consent leaves the existing SKILL.md untouched.
+        channel, session_id = live_or_scheduled_identity()
+        request = SkillWriteRequest(
+            target_dir=skill_dir, manifest=manifest, body=new_body,
+            skill_md_text=new_text,
+            consent_summary=(
+                f"Auto-refine skill '{skill.name}' body "
+                f"(success_rate={skill.success_rate:.2f}, "
+                f"n_executions={skill.n_executions})"
+            ),
+            tool_name=_CONSENT_TOOL_NAME, channel=channel, session_id=session_id,
         )
-        await self._skills.upsert(loaded)
+        result = await gated_skill_write(
+            request, store=self._skills, consent_gate=self._consent_gate,
+        )
+        if not result.ok:
+            log.skills.warning(
+                "[synth] refine_one: gated write refused — skipping",
+                extra={"_fields": {"name": skill.name, "reason": result.reason}},
+            )
+            return False
+        loaded = result.loaded
+        assert loaded is not None  # gated_skill_write guarantees this on ok=True
+        after = hash_dir(skill_dir)
         await self._embed_one_if_wired(loaded)
         await self._skills.audit_write(
             skill_name=skill.name, source="learned", op="update",

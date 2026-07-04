@@ -44,9 +44,11 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.skills.assembly import SkillsAssembly
+from stackowl.skills.synthesizer import _CONSENT_TOOL_NAME
+from stackowl.tools.consent import ConsentPolicy, TrustTier
 from stackowl.tools.knowledge.reflect_now import ReflectNowTool
 from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
-from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterator
@@ -234,11 +236,19 @@ async def synth_services(
         "when_to_use": "User wants a scraped page run through a script",
         "body": "# Steps\n1. Fetch the page.\n2. Shell-process the content.",
     })])
+    # Task 4 — synthesize_skills' handler now routes every skill write through
+    # the shared gated helper (stackowl.skills.authoring); without a consent
+    # gate configured to ALLOW the synthesizer's identity, the write fails
+    # closed (by design) and this fixture's callers would see created:0.
+    consent_gate = ConsequentialActionGate(
+        ConsentPolicy(tiers={_CONSENT_TOOL_NAME: TrustTier.AUTO})
+    )
     services = StepServices(
         db_pool=tmp_db,
         provider_registry=_registry_with_fast(provider),
         skill_store=components.store,
         embedding_registry=EmbeddingRegistry(),
+        consent_gate=consent_gate,
     )
     yield services, skills_root
 

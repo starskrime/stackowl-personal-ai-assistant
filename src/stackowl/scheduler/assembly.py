@@ -60,6 +60,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.skills.assembly import SkillsComponents
     from stackowl.skills.synthesizer_handler import SkillSynthesizerHandler
     from stackowl.supervisor.supervisor import Supervisor
+    from stackowl.tools.registry import ConsequentialActionGate
 
 
 _INSERT_JOB_SQL = """
@@ -115,6 +116,10 @@ class SchedulerAssembly:
         turn_registry: object | None = None,
         browser_runtime: HealableResource | None = None,
         mcp_client: object | None = None,  # McpClient — TYPE_CHECKING import would be circular
+        # Task 4 — threaded into SkillSynthesizerHandler so its gated skill-authoring
+        # writes have a real ConsequentialActionGate to consult instead of always
+        # failing closed on a None gate. None here reproduces that fail-closed default.
+        consent_gate: ConsequentialActionGate | None = None,
     ) -> SchedulerComponents:
         log.scheduler.info("[scheduler] assembly.build: entry")
 
@@ -320,6 +325,7 @@ class SchedulerAssembly:
             skills_root=StackowlHome.skills_dir(),
             embedding_registry=memory_components.embedding_registry,
             owl_registry=owl_registry,
+            consent_gate=consent_gate,
         )
         HandlerRegistry.instance().register(skill_synthesizer_handler)
 

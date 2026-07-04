@@ -17,6 +17,7 @@ from stackowl.skills.assembly import SkillsAssembly
 from stackowl.skills.loader import LoadedSkill
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.synthesizer import (
+    _CONSENT_TOOL_NAME,
     _DEFAULT_VERIFICATION_SECTION,
     _VERIFICATION_HEADING,
     SkillSynthesizer,
@@ -26,7 +27,42 @@ from stackowl.skills.synthesizer import (
     parse_new_skill_response,
     parse_refined_body,
 )
-from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.consent import ConsentPolicy, TrustTier
+from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
+
+
+def _allow_gate() -> ConsequentialActionGate:
+    """A REAL consent gate configured to auto-allow the synthesizer's identity.
+
+    Regression fixture for Task 4: SkillSynthesizer's writes now route through
+    security_scan_gate + consent (see stackowl.skills.authoring), so every
+    pre-existing "the skill got written" test needs an explicit ALLOW grant —
+    without one, consent_gate defaults to None and fails closed (writes
+    nothing), by design.
+    """
+    return ConsequentialActionGate(ConsentPolicy(tiers={_CONSENT_TOOL_NAME: TrustTier.AUTO}))
+
+
+@dataclass
+class _RecordingConsentGate:
+    """Test double exposing the exact ``gate.policy.request(...)`` shape the
+    shared authoring helper calls, recording every request for assertions."""
+
+    allow: bool
+    calls: list[dict[str, object]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.calls is None:
+            self.calls = []
+
+    @property
+    def policy(self) -> _RecordingConsentGate:
+        return self
+
+    async def request(self, **kwargs: object) -> bool:
+        assert self.calls is not None
+        self.calls.append(kwargs)
+        return self.allow
 
 
 @dataclass
@@ -224,7 +260,7 @@ async def test_discover_writes_skill_md_and_audits(synth_env) -> None:
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
-        provider=provider, skills_root=root,
+        provider=provider, skills_root=root, consent_gate=_allow_gate(),
         lookback_days=30, min_cluster_size=3, min_mean_quality=0.75,
     )
     n = await synth.discover_new_skills()
@@ -256,7 +292,7 @@ async def test_discover_skips_cluster_already_covered(synth_env) -> None:
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
-        provider=provider, skills_root=root,
+        provider=provider, skills_root=root, consent_gate=_allow_gate(),
     )
     assert await synth.discover_new_skills() == 1
     # Second run — provider must NOT be called again.
@@ -336,7 +372,7 @@ async def test_refine_rewrites_body_for_midtier(synth_env) -> None:
     })])
     synth = SkillSynthesizer(
         outcome_store=out_store, skill_store=store,
-        provider=provider, skills_root=root,
+        provider=provider, skills_root=root, consent_gate=_allow_gate(),
     )
     n = await synth.refine_midtier_skills()
     assert n == 1
@@ -413,7 +449,7 @@ async def test_synth_attaches_skill_to_owning_owl(tmp_db: DbPool, tmp_path: Path
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(tmp_db), skill_store=store,
         provider=provider, skills_root=skills_root,
-        owl_registry=registry, db=tmp_db,
+        owl_registry=registry, db=tmp_db, consent_gate=_allow_gate(),
         lookback_days=30, min_cluster_size=3, min_mean_quality=0.75,
     )
     assert await synth.discover_new_skills() == 1
@@ -432,12 +468,182 @@ async def test_run_all_aggregates_counts(synth_env) -> None:
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
-        provider=provider, skills_root=root,
+        provider=provider, skills_root=root, consent_gate=_allow_gate(),
     )
     report = await synth.run_all()
     assert report.created == 1
     assert report.refined == 0
     assert report.deprecated == 0
+
+
+# ---------- Task 4: shared skill-authoring gate (bypass fix) ---------------
+
+async def test_synthesize_one_calls_scan_and_consent_before_write(synth_env) -> None:
+    """The gate order must hold: security_scan_gate runs, THEN consent, and
+    BOTH run before the real skill directory is ever created on disk."""
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "gate-order-skill", "description": "d", "when_to_use": "w",
+        "body": "# Steps\n1. go",
+    })])
+    target = root / "learned" / "gate-order-skill"
+
+    import stackowl.skills.authoring as authoring_mod
+    real_scan = authoring_mod.security_scan_gate
+    call_order: list[str] = []
+
+    def _spy_scan(path):  # type: ignore[no-untyped-def]
+        call_order.append("scan")
+        assert not target.exists(), "security_scan_gate must run BEFORE the skill dir exists"
+        return real_scan(path)
+
+    monkeypatch_scan = authoring_mod.security_scan_gate
+    authoring_mod.security_scan_gate = _spy_scan  # type: ignore[assignment]
+    try:
+        gate = _RecordingConsentGate(allow=True)
+        real_request = gate.request
+
+        async def _spy_request(**kwargs: object) -> bool:
+            call_order.append("consent")
+            assert call_order[0] == "scan", "consent must be consulted AFTER the scan"
+            assert not target.exists(), "consent must be consulted BEFORE the write"
+            return await real_request(**kwargs)
+
+        gate.request = _spy_request  # type: ignore[method-assign]
+
+        synth = SkillSynthesizer(
+            outcome_store=TaskOutcomeStore(db), skill_store=store,
+            provider=provider, skills_root=root, consent_gate=gate,
+        )
+        n = await synth.discover_new_skills()
+    finally:
+        authoring_mod.security_scan_gate = monkeypatch_scan  # type: ignore[assignment]
+
+    assert n == 1
+    assert call_order == ["scan", "consent"], call_order
+    assert len(gate.calls) == 1
+    assert gate.calls[0]["tool_name"] == _CONSENT_TOOL_NAME
+    assert (target / "SKILL.md").exists()
+
+
+async def test_synthesize_one_denied_consent_writes_nothing(synth_env) -> None:
+    """A DENIED consent must leave NO file on disk and NEVER call store.upsert."""
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "denied-skill", "description": "d", "when_to_use": "w",
+        "body": "# Steps\n1. go",
+    })])
+    gate = _RecordingConsentGate(allow=False)
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=provider, skills_root=root, consent_gate=gate,
+    )
+    n = await synth.discover_new_skills()
+    assert n == 0
+    # Consent WAS consulted (the bug this task fixes is that it never was)...
+    assert len(gate.calls) == 1
+    # ...but nothing was written or indexed as a result of the denial.
+    assert not (root / "learned" / "denied-skill").exists()
+    assert await store.get("learned", "denied-skill") is None
+    audit = await store.recent_audit_for_skill("denied-skill")
+    assert audit == []
+
+
+async def test_synthesize_one_no_gate_wired_fails_closed(synth_env) -> None:
+    """consent_gate=None (the default) must ALSO refuse — never silently allow."""
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "no-gate-skill", "description": "d", "when_to_use": "w", "body": "z",
+    })])
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=provider, skills_root=root,  # consent_gate defaults to None
+    )
+    n = await synth.discover_new_skills()
+    assert n == 0
+    assert not (root / "learned" / "no-gate-skill").exists()
+    assert await store.get("learned", "no-gate-skill") is None
+
+
+async def test_synthesize_one_security_scan_blocks_before_consent(synth_env) -> None:
+    """A blocked security scan must short-circuit BEFORE consent is even asked,
+    and (like a denied consent) must leave nothing written or indexed."""
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "scan-blocked-skill", "description": "d", "when_to_use": "w",
+        "body": "# Steps\n1. go",
+    })])
+
+    import stackowl.skills.authoring as authoring_mod
+    original_scan = authoring_mod.security_scan_gate
+    authoring_mod.security_scan_gate = lambda _path: (False, "simulated dangerous verdict")  # type: ignore[assignment]
+    try:
+        gate = _RecordingConsentGate(allow=True)
+        synth = SkillSynthesizer(
+            outcome_store=TaskOutcomeStore(db), skill_store=store,
+            provider=provider, skills_root=root, consent_gate=gate,
+        )
+        n = await synth.discover_new_skills()
+    finally:
+        authoring_mod.security_scan_gate = original_scan  # type: ignore[assignment]
+
+    assert n == 0
+    assert gate.calls == [], "consent must never be consulted once the scan blocks"
+    assert not (root / "learned" / "scan-blocked-skill").exists()
+    assert await store.get("learned", "scan-blocked-skill") is None
+
+
+async def test_refine_one_denied_consent_leaves_existing_skill_untouched(synth_env) -> None:
+    """Refine's gated write must ALSO deny-by-default: the pre-existing body
+    must be left byte-for-byte unchanged and no update audit row appended."""
+    db, root, store = synth_env
+    learned_dir = root / "learned" / "midtier-skill"
+    learned_dir.mkdir(parents=True)
+    body_original = "# Original\nDo the thing badly."
+    manifest = SkillManifest(
+        name="midtier-skill", description="d", when_to_use="w",
+        source="learned", parent_traces=["t-mid-1"],
+    )
+    original_text = (
+        f"---\nname: midtier-skill\ndescription: d\nwhen_to_use: w\nsource: learned\n"
+        f"parent_traces: [t-mid-1]\n---\n\n{body_original}\n"
+    )
+    (learned_dir / "SKILL.md").write_text(original_text, encoding="utf-8")
+    await store.upsert(LoadedSkill(
+        manifest=manifest, path=learned_dir, body=body_original,
+        tools_registered=0, owls_registered=0,
+    ))
+    sk = await store.get("learned", "midtier-skill")
+    assert sk is not None
+    await store.set_success_rate(sk.skill_id, 0.6)
+    for _ in range(5):
+        await store.increment_n_executions(sk.skill_id)
+    out_store = TaskOutcomeStore(db)
+    await out_store.record(
+        trace_id="t-mid-1", session_id="s", owl_name="scout", channel="cli",
+        success=True, latency_ms=100.0, tool_call_count=1,
+        failure_class=None, step_durations={}, input_text="midtier task",
+        response_text="midtier response",
+    )
+
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "body": "# Improved Body\nDo the thing well now.",
+    })])
+    gate = _RecordingConsentGate(allow=False)
+    synth = SkillSynthesizer(
+        outcome_store=out_store, skill_store=store,
+        provider=provider, skills_root=root, consent_gate=gate,
+    )
+    n = await synth.refine_midtier_skills()
+    assert n == 0
+    assert len(gate.calls) == 1
+    assert (learned_dir / "SKILL.md").read_text(encoding="utf-8") == original_text
+    audit = await store.recent_audit_for_skill("midtier-skill")
+    assert audit == []
 
 
 # ---------- Task-4: Verification section guarantee -------------------------
