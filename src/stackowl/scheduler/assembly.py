@@ -637,6 +637,27 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(health_sweep_handler)
 
+        # ADR-6 Task 6 — INCIDENT ESCALATION. The sweep above is the detect+recycle
+        # half of the self-heal loop; this is the escalate half. When recycle/retry/
+        # substitution has ALREADY run and a subsystem/capability is STILL broken on
+        # a later tick, it drives a fixed-stage (NOT open-debate) root-cause analysis.
+        # It REUSES the sweep's alert-state map (no second health tracker) for
+        # still-unhealthy subsystems and Task 5's failure clustering for the durable
+        # footprint of a recurring in-turn self-heal. Stops at a verified/fallback
+        # RcaVerdict (Task 7 consumes it). Flag-gated on the same health_loop switch.
+        from stackowl.memory.outcome_store import TaskOutcomeStore
+        from stackowl.parliament.staged_rca import StagedRcaSession
+        from stackowl.scheduler.handlers.incident_escalation import (
+            IncidentEscalationHandler,
+        )
+
+        incident_escalation_handler = IncidentEscalationHandler(
+            health_sweep=health_sweep_handler,
+            outcome_store=TaskOutcomeStore(db),
+            rca_session=StagedRcaSession(backend),
+        )
+        HandlerRegistry.instance().register(incident_escalation_handler)
+
         # Report the ACTUAL registered set (self-maintaining — a hardcoded count
         # had drifted, omitting reflection_writer/skill_synthesizer/
         # tool_outcome_miner). Honest wiring logs are the whole point of this arc.
@@ -753,6 +774,13 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="health_sweep", schedule="every 5m",
             interval_minutes=5,
+        )
+        # ADR-6 Task 6 — incident escalation every 10m (heavier than the sweep: it
+        # runs a 3-stage RCA on a NEW incident). Its dedupe ensures a subsystem that
+        # stays broken across ticks yields ONE RCA session, not one per tick.
+        await _seed_minutes_schedule(
+            db, handler_name="incident_escalation", schedule="every 10m",
+            interval_minutes=10,
         )
         # Task 9 — task liveness watchdog. Interval is a FRACTION of
         # DEFAULT_STALE_AFTER_S (10m), mirroring the codebase's existing
