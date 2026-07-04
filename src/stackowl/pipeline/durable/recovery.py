@@ -180,26 +180,12 @@ class DurableTaskRecoverer:
         # are unreachable by transitive resolution). Fail-open (logged).
         await self._reap_zombie_children()
         # 2. DECISION — FAST pass: claim + reconstruct each orphan (DB-only,
-        #    awaited), then LAUNCH its drive in the background. Fail-open per task.
+        #    awaited), then LAUNCH its drive in the background. Fail-open per task
+        #    (delegated to the shared :meth:`reclaim_one` unit — see its docstring).
         launched = 0
         for task in orphans:
-            try:
-                claimed = await self._claim_and_reconstruct(task)
-            except Exception as exc:  # noqa: BLE001 — fail-open per task (logged)
-                # A bad task (undecodable checkpoint, backend error during claim)
-                # must NOT block recovery of the others or crash startup.
-                log.tasks.error(
-                    "[tasks] recovery.recover: claim/reconstruct failed — continuing",
-                    exc_info=exc,
-                    extra={"_fields": {
-                        "task_id": task.task_id, "owner_id": self._owner_id,
-                    }},
-                )
-                continue
-            if claimed is None:
-                continue  # CAS lost (another worker / already terminal) — skip.
-            self._launch_drive(*claimed)
-            launched += 1
+            if await self.reclaim_one(task):
+                launched += 1
         self._launched = launched
         # 4. EXIT
         log.tasks.info(
@@ -263,6 +249,46 @@ class DurableTaskRecoverer:
                     exc_info=exc,
                     extra={"_fields": {"task_id": z.task_id}},
                 )
+
+    async def reclaim_one(self, task: DurableTask) -> bool:
+        """Claim, reconstruct, and launch ONE task row — the shared per-task
+        reclaim unit (Task 9).
+
+        Extracted out of :meth:`recover`'s loop so BOTH the boot-time sweep
+        (which scans every orphan) and the periodic
+        ``TaskLivenessSweepHandler`` (which scans only stale ``running`` rows
+        found while the server is live) drive a task through the IDENTICAL
+        claim(CAS)->reconstruct->launch sequence — never two divergent copies
+        of crash-recovery logic. Parameterized on ``task`` alone (this
+        recoverer already carries the store/backend/owner_id/drives-set), so
+        it makes no assumption about "called only at boot".
+
+        Fail-open: a bad task (undecodable checkpoint, backend error during
+        claim) is LOGGED and this returns ``False`` so the caller continues to
+        the next task. The CAS losing (another worker already claimed it, or
+        it's no longer claimable) also returns ``False`` — not an error,
+        already logged inside :meth:`_claim_and_reconstruct`.
+
+        Returns ``True`` iff THIS call won the claim AND launched a
+        background drive.
+        """
+        try:
+            claimed = await self._claim_and_reconstruct(task)
+        except Exception as exc:  # noqa: BLE001 — fail-open per task (logged)
+            # A bad task (undecodable checkpoint, backend error during claim)
+            # must NOT block recovery of the others or crash startup/the sweep.
+            log.tasks.error(
+                "[tasks] recovery.reclaim_one: claim/reconstruct failed — continuing",
+                exc_info=exc,
+                extra={"_fields": {
+                    "task_id": task.task_id, "owner_id": self._owner_id,
+                }},
+            )
+            return False
+        if claimed is None:
+            return False  # CAS lost (another worker / already terminal) — skip.
+        self._launch_drive(*claimed)
+        return True
 
     async def _claim_and_reconstruct(
         self, task: DurableTask

@@ -363,6 +363,19 @@ class SchedulerAssembly:
             "embedding_registry": memory_components.embedding_registry,
             "lancedb": memory_components.lancedb,
         }
+        # Task 9 — durable-task liveness watchdog. B4 crash-recovery only reaps
+        # orphaned tasks at BOOT; a task whose background drive died mid-execution
+        # while the server kept running stayed stuck 'running' until the next
+        # restart. TaskLivenessSweepHandler is BOTH a recurring JobHandler (seeded
+        # below) AND, like the channel adapters above, the SAME object doubles as
+        # the HealableResource/HealthContributor pair — keyed by its own
+        # contributor_name so health_sweep can trigger an immediate reclaim.
+        from stackowl.scheduler.handlers.task_liveness_sweep import TaskLivenessSweepHandler
+
+        task_liveness_handler = TaskLivenessSweepHandler(db=db, backend=backend)
+        healers[task_liveness_handler.contributor_name] = task_liveness_handler
+        health_aggregator.register(task_liveness_handler)
+        HandlerRegistry.instance().register(task_liveness_handler)
         # ADR-6 Task 3 — Kuzu may be degraded to None (gateway role / init
         # failure per DUR-5); only wire a healer when there's a live adapter to
         # recycle. Keyed by the REAL contributor_name (not a literal) so this can
@@ -734,6 +747,14 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="health_sweep", schedule="every 5m",
             interval_minutes=5,
+        )
+        # Task 9 — task liveness watchdog. Interval is a FRACTION of
+        # DEFAULT_STALE_AFTER_S (10m), mirroring the codebase's existing
+        # TTL-sweep convention (clarify_sweep/session_sweep run at TTL/3) so a
+        # stuck task is never left ~2x the staleness threshold before reclaim.
+        await _seed_minutes_schedule(
+            db, handler_name="task_liveness_sweep", schedule="every 3m",
+            interval_minutes=3,
         )
         # FR-4 — reflection_writer now scores (composed CriticScorerHandler)
         # THEN reflects in one run; the separate critic_scorer job/seed row is
