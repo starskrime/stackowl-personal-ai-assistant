@@ -76,14 +76,36 @@ from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.learning.failure_outcome_miner import CapabilityTagLookup
-    from stackowl.memory.outcome_store import TaskOutcomeStore
+    from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
     from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
 _LOOKBACK_DAYS_DEFAULT = 7
 _SECONDS_PER_DAY = 86_400
 _MIN_RECURRENCE = 3  # mirrors FailureOutcomeMiner._MIN_EVIDENCE
 
+# Synthetic failure_class for a SOURCE-3 (masked-recurring-substitution) incident:
+# there is no real exception (the turn succeeded), so this is not a
+# stackowl.exceptions name. classify_incident_retryability resolves it to
+# "analyze" via its unknown-name fallback (never skip a diagnosis on
+# uncertainty) — exactly right: WHY the underlying capability keeps failing is
+# precisely what is unknown here.
+_MASKED_SUBSTITUTION_FAILURE_CLASS = "RecurringSubstitutionMask"
+
 Retryability = Literal["non_retryable", "analyze"]
+
+
+def _capability_class_for(tool: str, tag_lookup: CapabilityTagLookup | None) -> str:
+    """Resolve *tool*'s capability grain: its registered ``capability_tag``, or
+    the raw tool name when none is registered.
+
+    ponytail: duplicates ``failure_outcome_miner._capability_class_for`` (a
+    private name) rather than importing it across the module boundary — Task 5's
+    module is read-only for this task. Same one-line body, same fallback.
+    """
+    if tag_lookup is None:
+        return tool
+    tag = tag_lookup(tool)
+    return tag if tag else tool
 
 
 def _incident_escalation_enabled() -> bool:
@@ -227,10 +249,26 @@ class IncidentEscalationHandler(JobHandler):
         short_circuited = 0
         for inc in new_incidents:
             incident_id = f"incident-{uuid.uuid4().hex[:12]}"
-            self._open_incidents[inc.signature] = incident_id  # dedupe BEFORE running
             verdict, ran_rca = await self._resolve_incident(inc, incident_id)
+            # Only mark the signature "handled" (dedupe closed) when a verdict was
+            # ACTUALLY produced (verified OR explicitly rejected — both are a real
+            # RcaVerdict object; see staged_rca._build_verdict). A hard RCA failure
+            # (a stage backend error/timeout, an empty stage, an unparseable
+            # response) returns verdict=None — do NOT register the signature then,
+            # so the NEXT tick retries the RCA for this same persistent incident
+            # instead of silently giving up on it forever after one failed attempt
+            # (the exact "silent fail, no retry" antipattern this arc exists to
+            # kill — a provider outage during the incident is precisely when the
+            # RCA call itself is most likely to also fail).
             if verdict is not None:
+                self._open_incidents[inc.signature] = incident_id
                 self.verdicts[inc.key] = verdict
+            else:
+                log.scheduler.warning(
+                    "[scheduler] incident_escalation: RCA produced no verdict — "
+                    "NOT marking handled, will retry next tick",
+                    extra={"_fields": {"incident_id": incident_id, "signature": inc.signature}},
+                )
             if ran_rca:
                 analyzed += 1
             else:
@@ -267,6 +305,12 @@ class IncidentEscalationHandler(JobHandler):
 
         # SOURCE 1 — subsystems the sweep already recycled + re-verified STILL
         # unhealthy (its alert-state map is the single health-truth store).
+        # Minor known gap: a subsystem with NO registered HealableResource never
+        # gets a recycle attempt at all (health_sweep._heal_and_verify no-ops for
+        # it), so this can fire on its FIRST unhealthy tick rather than strictly
+        # "after a recycle already failed". Low impact — dedupe still holds (one
+        # incident, not one per tick) and an un-healered subsystem stuck unhealthy
+        # is arguably a legitimate incident regardless.
         alert_state: dict[str, tuple[str, float]] = getattr(
             self._health, "_alert_state", {},
         )
@@ -320,6 +364,55 @@ class IncidentEscalationHandler(JobHandler):
                     f"'{cluster.failure_class}' within the last "
                     f"{self._lookback_days}d — recurring past the in-turn "
                     f"self-heal (retry/substitution/floor) that already ran.\n"
+                    + "\n".join(samples)
+                ),
+            )
+
+        # SOURCE 3 — recurring BRIDGED substitution (migration 0077,
+        # ``recovered_via_tool``). A bridged turn is a trustworthy SUCCESS
+        # (failure_class=NULL) and is INVISIBLE to SOURCE 2/list_failed_global —
+        # this is the masked-chronic-outage shape: the same capability recovering
+        # via substitution turn after turn, with zero real fix ever attempted
+        # ("permanent fallback with zero retry"). Clustered separately since these
+        # rows carry no failure_class of their own.
+        try:
+            recovered = await self._outcomes.list_recovered_global(since_epoch=since)
+        except AttributeError:
+            log.scheduler.warning(
+                "[scheduler] incident_escalation: outcome_store has no "
+                "list_recovered_global — skipping masked-substitution incidents",
+            )
+            recovered = []
+        by_capability: dict[str, list[TaskOutcome]] = {}
+        for o in recovered:
+            if not o.recovered_via_tool:
+                continue
+            capability = _capability_class_for(o.recovered_via_tool, self._capability_tag_lookup)
+            by_capability.setdefault(capability, []).append(o)
+        for capability, members in by_capability.items():
+            if len(members) < self._recurrence_threshold:
+                continue
+            sig = f"substitution:{capability}"
+            if sig in incidents:
+                continue
+            samples = tuple(
+                f"- trace={o.trace_id} recovered_via_tool={o.recovered_via_tool} "
+                f"input={(o.input_text or '')[:120]!r}"
+                for o in members[:5]
+            )
+            incidents[sig] = _Incident(
+                signature=sig,
+                capability_class=capability,
+                failure_class=_MASKED_SUBSTITUTION_FAILURE_CLASS,
+                kind="outcome",
+                parent_trace_ids=tuple(o.trace_id for o in members[:10]),
+                brief=(
+                    f"{len(members)} turns in the last {self._lookback_days}d had "
+                    f"'{capability}' fail and get silently BRIDGED by a capability "
+                    f"substitution — every turn 'worked' (no failed outcome row "
+                    f"exists for any of these), but the underlying capability is "
+                    f"chronically broken and has never actually been fixed or "
+                    f"retried. This is a permanent fallback masking an outage.\n"
                     + "\n".join(samples)
                 ),
             )
@@ -377,5 +470,9 @@ class IncidentEscalationHandler(JobHandler):
         tz-aware datetime; fall back to ``time.time()`` if unavailable."""
         try:
             return self._clock.now().timestamp()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # never a silent except
+            log.scheduler.debug(
+                "[scheduler] incident_escalation: clock.now() failed — using time.time()",
+                exc_info=exc,
+            )
             return time.time()

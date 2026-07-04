@@ -14,6 +14,7 @@ physical merge into one file — untouched here, only their call site moved.
 
 from __future__ import annotations
 
+from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.objectives.model import ExpectedOutcome
@@ -266,6 +267,18 @@ async def _capture_outcome(
         trustworthy_success = (
             len(state.errors) == 0 and not unrecovered_effects and not acceptance_refuted
         )
+        # ADR-6 Task 6 fix — the FAILED tool a substitution recovery bridged THIS
+        # turn (first one, if several). Stamped even on a trustworthy-SUCCESS row:
+        # a bridged turn has failure_class=None and is invisible to
+        # list_failed_global, so this is the only durable signal for a capability
+        # recovering via substitution over and over — the "permanent fallback
+        # with zero retry" masked-chronic-outage shape self-heal must catch.
+        # ponytail: "substitution" duplicates delivery_gate._BRIDGING_RECOVERY_KINDS
+        # (a private name) rather than importing it across the module boundary.
+        recovered_via_tool = next(
+            (e.failed for e in recovery_context.get_recovery() if e.kind == "substitution"),
+            None,
+        )
         # Snapshot DNA from the owl registry so attribution-based evolution
         # (Learning Commit 4) can correlate trait values with outcome quality.
         # Best-effort — owl may not be registered (system commands, parliament).
@@ -304,6 +317,7 @@ async def _capture_outcome(
             tool_sequence=tuple(tc.tool_name for tc in state.tool_calls),
             dna_snapshot=dna_snapshot,
             overclaim_blocked=state.overclaim_blocked,
+            recovered_via_tool=recovered_via_tool,
         )
         # LS7 — close the skill-usage loop: nudge applied skills' success_rate
         # from this turn's MEASURED outcome. Internally fail-open.

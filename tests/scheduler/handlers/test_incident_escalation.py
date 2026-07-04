@@ -37,11 +37,17 @@ class _FakeAggregator:
 
 
 class _FakeOutcomeStore:
-    def __init__(self, outcomes: list[TaskOutcome]) -> None:
+    def __init__(
+        self, outcomes: list[TaskOutcome], recovered: list[TaskOutcome] | None = None,
+    ) -> None:
         self._outcomes = outcomes
+        self._recovered = recovered or []
 
     async def list_failed_global(self, *, since_epoch: float = 0.0, limit: int = 2000):
         return list(self._outcomes)
+
+    async def list_recovered_global(self, *, since_epoch: float = 0.0, limit: int = 2000):
+        return list(self._recovered)
 
 
 class _RecordingRca:
@@ -61,6 +67,26 @@ class _RecordingRca:
         )
 
 
+class _FlakyRca:
+    """Fake StagedRcaSession — hard-fails (returns None) N times, then succeeds."""
+
+    def __init__(self, fail_times: int) -> None:
+        self._fail_times = fail_times
+        self.calls: list[RcaEvidence] = []
+
+    async def analyze(self, evidence: RcaEvidence) -> RcaVerdict | None:
+        self.calls.append(evidence)
+        if len(self.calls) <= self._fail_times:
+            return None  # hard failure — e.g. a stage backend/provider error
+        return RcaVerdict(
+            capability_class=evidence.capability_class,
+            failure_class=evidence.failure_class,
+            skill_name="learned_fix",
+            description="d", when_to_use="w",
+            root_cause="rc", fix_pattern="fx", verified=True,
+        )
+
+
 def _outcome(trace: str, failure_class: str, tool: str) -> TaskOutcome:
     return TaskOutcome(
         outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
@@ -68,6 +94,19 @@ def _outcome(trace: str, failure_class: str, tool: str) -> TaskOutcome:
         failure_class=failure_class, quality_score=None, step_durations={},
         input_text="do the thing", response_text="", captured_at=0.0,
         scored_at=None, tool_sequence=(tool,),
+    )
+
+
+def _recovered_outcome(trace: str, recovered_via_tool: str) -> TaskOutcome:
+    """A turn a substitution BRIDGED — trustworthy SUCCESS, failure_class=NULL,
+    invisible to list_failed_global. This is the masked-chronic-outage shape."""
+    return TaskOutcome(
+        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        channel="cli", success=True, latency_ms=1.0, tool_call_count=1,
+        failure_class=None, quality_score=None, step_durations={},
+        input_text="do the thing", response_text="ok", captured_at=0.0,
+        scored_at=None, tool_sequence=(recovered_via_tool,),
+        recovered_via_tool=recovered_via_tool,
     )
 
 
@@ -194,3 +233,76 @@ async def test_transient_failure_class_runs_rca() -> None:
     assert rca.calls[0].capability_class == "web_fetch"
     assert result.metadata["analyzed"] == 1
     assert result.metadata["short_circuited"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Review Finding 1 — masked-recurring-substitution (the arc's central antipattern:
+# a permanent fallback with zero retry) must be DETECTED even though every turn
+# "worked" and NO failed TaskOutcome row exists for any of them.
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_masked_recurring_substitution_detected_with_no_failed_rows() -> None:
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    # Every one of these turns SUCCEEDED (bridged by substitution) — zero failed
+    # rows exist. Only list_recovered_global (migration 0077) can see this.
+    recovered = [
+        _recovered_outcome("r1", "flaky_api"),
+        _recovered_outcome("r2", "flaky_api"),
+        _recovered_outcome("r3", "flaky_api"),
+    ]
+    rca = _RecordingRca()
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore([], recovered=recovered),  # type: ignore[arg-type]
+        rca_session=rca,  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(_job())
+
+    # An incident WAS detected and analyzed purely from the recovered-outcome
+    # signal — no failed TaskOutcome row was ever needed.
+    assert len(rca.calls) == 1
+    evidence = rca.calls[0]
+    assert evidence.capability_class == "flaky_api"
+    assert "bridged" in evidence.brief.lower() or "substitut" in evidence.brief.lower()
+    assert result.metadata["analyzed"] == 1
+    assert ("flaky_api", mod._MASKED_SUBSTITUTION_FAILURE_CLASS) in handler.verdicts
+
+
+# --------------------------------------------------------------------------- #
+# Review Finding 2 — a hard-failed RCA (verdict=None) must NOT permanently
+# suppress future re-analysis of the same persistent incident (zero-retry bug).
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_hard_failed_rca_retries_on_next_tick() -> None:
+    class _NoopHealer:
+        async def ensure_available(self) -> None:
+            return None
+
+    degraded = [HealthStatus("cache", "degraded", "slow", 5.0)]
+    sweep = HealthSweepHandler(
+        _FakeAggregator(degraded),  # type: ignore[arg-type]
+        healers={"cache": _NoopHealer()},  # type: ignore[dict-item]
+    )
+    # First RCA attempt hard-fails (e.g. a stage backend/provider outage);
+    # second attempt succeeds.
+    rca = _FlakyRca(fail_times=1)
+    handler = IncidentEscalationHandler(
+        health_sweep=sweep,
+        outcome_store=_FakeOutcomeStore([]),  # type: ignore[arg-type]
+        rca_session=rca,  # type: ignore[arg-type]
+    )
+
+    await sweep.execute(_job())
+    result1 = await handler.execute(_job())   # RCA attempt 1 — hard fails
+    assert result1.metadata["analyzed"] == 1  # attempted (ran_rca=True) even though it failed
+    assert ("cache", "degraded") not in handler.verdicts  # attempt 1 produced nothing
+
+    await sweep.execute(_job())
+    result2 = await handler.execute(_job())   # RCA attempt 2 — must RETRY, not skip
+    assert result2.metadata["analyzed"] == 1
+    assert ("cache", "degraded") in handler.verdicts  # attempt 2 succeeded and is stored
+
+    assert len(rca.calls) == 2, "a hard-failed RCA must be retried, not permanently suppressed"

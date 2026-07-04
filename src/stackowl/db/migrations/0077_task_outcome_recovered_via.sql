@@ -1,0 +1,12 @@
+-- Migration 0077: add recovered_via_tool to task_outcomes
+-- ADR-6 Task 6 fix (masked-chronic-outage detection) — a turn whose consequential
+-- failure was BRIDGED by a successful capability substitution records success=1,
+-- failure_class=NULL (the substitution worked, the turn delivered) — so it never
+-- appears in list_failed_global. That is the exact "permanent fallback with zero
+-- retry" shape self-heal must catch: the same capability recovering via
+-- substitution over and over, with no failed row ever landing to cluster on.
+-- Nullable, default NULL: only stamped (with the FAILED tool's name — the same
+-- grain tool_sequence entries use, resolved to a capability_tag the same way
+-- cluster_failures_by_capability_and_signature already does) when a substitution
+-- recovery actually fired this turn. Existing rows stay valid with no backfill.
+ALTER TABLE task_outcomes ADD COLUMN recovered_via_tool TEXT

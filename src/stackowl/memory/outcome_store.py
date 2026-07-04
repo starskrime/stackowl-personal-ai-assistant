@@ -45,6 +45,13 @@ class TaskOutcome:
     scored_at: float | None
     tool_sequence: tuple[str, ...] = ()
     dna_snapshot: dict[str, float] = field(default_factory=dict)
+    # ADR-6 Task 6 fix (migration 0077) — the FAILED tool a substitution recovery
+    # bridged THIS turn (None when no substitution fired). Stamped even on a
+    # trustworthy SUCCESS row: a bridged turn has failure_class=NULL and never
+    # appears in list_failed_global, so this is the only durable signal that
+    # catches a capability recovering via substitution over and over — the
+    # "permanent fallback with zero retry" masked-chronic-outage shape.
+    recovered_via_tool: str | None = None
 
 
 def classify_failure(errors: tuple[str, ...]) -> str | None:
@@ -98,6 +105,7 @@ class TaskOutcomeStore(OwnedRepository):
         tool_sequence: tuple[str, ...] = (),
         dna_snapshot: dict[str, float] | None = None,
         overclaim_blocked: bool = False,
+        recovered_via_tool: str | None = None,
     ) -> None:
         """Insert a new outcome row. quality_score / scored_at start NULL.
 
@@ -111,6 +119,7 @@ class TaskOutcomeStore(OwnedRepository):
                 "success": success,
                 "latency_ms": int(latency_ms),
                 "tool_call_count": tool_call_count,
+                "recovered_via_tool": recovered_via_tool,
             }},
         )
         await self._db.execute(
@@ -118,8 +127,9 @@ class TaskOutcomeStore(OwnedRepository):
                    trace_id, session_id, owl_name, channel, success,
                    latency_ms, tool_call_count, failure_class,
                    step_durations, input_text, response_text, captured_at,
-                   tool_sequence, dna_snapshot, owner_id, overclaim_blocked
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
+                   recovered_via_tool
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_id, owl_name, channel, int(success),
@@ -130,6 +140,7 @@ class TaskOutcomeStore(OwnedRepository):
                 json.dumps(dna_snapshot or {}, separators=(",", ":")),
                 self._owner_id,
                 int(overclaim_blocked),
+                recovered_via_tool,
             ),
         )
         log.memory.info(
@@ -278,6 +289,48 @@ class TaskOutcomeStore(OwnedRepository):
         # 4. EXIT
         log.memory.debug(
             "[outcomes] list_failed_global: exit",
+            extra={"_fields": {"n": len(results)}},
+        )
+        return results
+
+    async def list_recovered_global(
+        self, *, since_epoch: float = 0.0, limit: int = 2000,
+    ) -> list[TaskOutcome]:
+        """Return outcomes a substitution BRIDGED this turn (``recovered_via_tool
+        IS NOT NULL``), across all owls since ``since_epoch``.
+
+        ADR-6 Task 6 fix: these rows are otherwise INVISIBLE to
+        :meth:`list_failed_global` — a bridged turn is a trustworthy SUCCESS
+        (``failure_class IS NULL``). A capability recovering via substitution
+        over and over with no failed row ever landing is the "permanent
+        fallback with zero retry" masked-chronic-outage shape; this is the
+        durable, queryable signal :class:`IncidentEscalationHandler` clusters
+        on for that trigger.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] list_recovered_global: entry",
+            extra={"_fields": {"since_epoch": since_epoch, "limit": limit}},
+        )
+        # 3. STEP
+        rows = await self._db.fetch_all(
+            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+                      success, latency_ms, tool_call_count, failure_class,
+                      quality_score, step_durations, input_text, response_text,
+                      captured_at, scored_at, tool_sequence, dna_snapshot,
+                      recovered_via_tool
+               FROM task_outcomes
+               WHERE owner_id = ?
+                 AND recovered_via_tool IS NOT NULL
+                 AND captured_at >= ?
+               ORDER BY captured_at DESC
+               LIMIT ?""",
+            (self._owner_id, since_epoch, limit),
+        )
+        results = [_row_to_outcome(r) for r in rows]
+        # 4. EXIT
+        log.memory.debug(
+            "[outcomes] list_recovered_global: exit",
             extra={"_fields": {"n": len(results)}},
         )
         return results
@@ -526,4 +579,7 @@ def _row_to_outcome(row: dict[str, object]) -> TaskOutcome:
         captured_at=float(str(row["captured_at"])),
         scored_at=float(str(scored_raw)) if scored_raw is not None else None,
         dna_snapshot=dna_snapshot,
+        recovered_via_tool=(
+            str(row["recovered_via_tool"]) if row.get("recovered_via_tool") else None
+        ),
     )
