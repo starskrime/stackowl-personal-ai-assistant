@@ -407,8 +407,18 @@ class OwlBuildTool(Tool):
 
     # ------------------------------------------------------------------ consent
 
-    async def _consent_or_refuse(self, summary: str, name: str) -> str | None:
-        """Consequential consent, fail-closed off-TTY. Returns a refusal or None."""
+    async def _consent_or_refuse(
+        self, summary: str, name: str, *, reversible: bool = False
+    ) -> str | None:
+        """Consequential consent, fail-closed off-TTY. Returns a refusal or None.
+
+        ``reversible`` (Task 8) marks the gated action as one with a genuine undo so
+        the ONE ConsequentialActionGate auto-proceeds WITH-UNDO instead of prompting
+        every time. Only ``create`` passes it: a created owl's HONEST undo is
+        ``action='retire'`` (deregister → unreachable/can't act, remove durable yaml,
+        reconcile deletes its owned scheduler job row). ``edit`` keeps the default
+        (fail-closed) — a tool-WIDENING edit has no clean per-edit undo, so it is
+        never auto-relaxed. Always-ask tools/categories are never relaxed either."""
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
@@ -438,6 +448,7 @@ class OwlBuildTool(Tool):
                 session_id=session_id,
                 category=_CONSENT_CATEGORY,
                 summary=summary,
+                reversible=reversible,
             )
         except Exception as exc:  # no-hidden-errors — fail closed
             log.tool.error(
@@ -674,7 +685,10 @@ class OwlBuildTool(Tool):
             roster=tuple(m.name for m in registry.all() if m.origin == "agent"),
             why=spec.specialty or "",
         )
-        refusal = await self._consent_or_refuse(summary, manifest.name)
+        # Reversible=True: a created owl's honest undo is action='retire' (see
+        # _consent_or_refuse) — so creation auto-proceeds WITH-UNDO for a normal
+        # (non-always-ask) owl instead of prompting every time.
+        refusal = await self._consent_or_refuse(summary, manifest.name, reversible=True)
         if refusal is not None:
             return self._err(refusal, t0)
 

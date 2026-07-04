@@ -381,6 +381,12 @@ class ToolBuildTool(Tool):
                 session_id=session_id,
                 category=_CONSENT_CATEGORY,
                 summary=f"Register new tool {name}",
+                # Graded self-authorization (Task 8): a learned tool has a genuine
+                # undo — action='delete' removes the spec + unregisters it — so
+                # CREATION is reversible and auto-proceeds WITH-UNDO instead of
+                # prompting every time. Still fails closed for always-ask tools/
+                # categories (the policy never relaxes those).
+                reversible=True,
             )
         except Exception as exc:  # no-hidden-errors — fail closed
             log.tool.error(
