@@ -1147,23 +1147,36 @@ class TelegramChannelAdapter(ChannelAdapter):
         # 4. EXIT
         return reason
 
+    def _updater_running(self) -> bool:
+        """Real transport liveness — the SAME check ``_beat_once()`` uses.
+
+        Distinct from `available` (message-recency): a quiet-but-connected
+        channel has `available=False` after ``_UPDATE_DEGRADED_AFTER_S`` with
+        no inbound message, even though the long-poll updater is perfectly
+        alive. Whole-branch review of the platform-wide self-heal arc caught
+        this: gating `ensure_available()` on `available` alone made every
+        idle-channel health-sweep tick call `_self_heal_polling()` and
+        restart a healthy updater — the exact "heal-on-idle" restart-storm
+        class this arc's WhatsApp task (round 2) already fought and fixed.
+        """
+        app = self._bot_app
+        updater = getattr(app, "updater", None) if app is not None else None
+        return updater is not None and getattr(updater, "running", False)
+
     async def ensure_available(self) -> None:
         """Recover a degraded adapter by calling _self_heal_polling() once.
 
-        Guards re-entry with the SAME ``_recovery_attempted`` flag ``_beat_once()``
-        uses (the adapter's own ``_liveness_heartbeat`` timer ticks every
+        Gates on TRANSPORT liveness (`_updater_running()`), not `available`
+        (message-recency) — a quiet-but-connected channel must never trigger
+        a restart; only a genuinely down updater should. Guards re-entry with
+        the SAME ``_recovery_attempted`` flag ``_beat_once()`` uses (the
+        adapter's own ``_liveness_heartbeat`` timer ticks every
         HEARTBEAT_INTERVAL_S and can race a health-sweep-triggered call to this
         method). The check-and-set of ``_recovery_attempted`` below has no
         ``await`` between the read and the write, so it is atomic across
         concurrent coroutines on this single event loop — only one caller can
         ever pass it per outage episode, exactly like ``_beat_once()``.
 
-        A no-op-because-healthy `available` check alone is NOT sufficient here:
-        `available` is derived from `_last_update_at` (a new inbound Telegram
-        message), which a poll-loop restart does not itself update — so a naive
-        "healthy?" guard would stay False and let every concurrent/repeated call
-        re-invoke `_self_heal_polling()`, worsening a live outage via overlapping
-        stop/start races on the polling updater (TOCTOU in `_restart_polling()`).
         `_recovery_attempted` is reset back to False by `_beat_once()` once the
         updater is observed running again, so this does not "never heal again
         after first attempt" — a fresh episode re-arms the guard.
@@ -1173,10 +1186,14 @@ class TelegramChannelAdapter(ChannelAdapter):
             "[telegram] adapter.ensure_available: entry",
             extra={"_fields": {"available": self.available}},
         )
-        # 2. DECISION — no-op if already healthy
-        if self.available:
+        # 2. DECISION — no-op if the transport is actually alive. Message
+        # idleness alone (`available=False`) is NOT a heal trigger — it would
+        # restart a perfectly healthy long-poll connection on every quiet
+        # sweep tick.
+        if self._updater_running():
             log.telegram.debug(
-                "[telegram] adapter.ensure_available: already healthy — no-op"
+                "[telegram] adapter.ensure_available: updater running — no-op "
+                "(transport alive; message idleness alone never triggers a heal)"
             )
             return
         # 3. STEP — atomic check-and-set on the SAME flag _beat_once() uses, so a

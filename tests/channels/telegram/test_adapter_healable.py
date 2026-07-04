@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
-from stackowl.health.status import HealthStatus
 
 
 @pytest.fixture
@@ -82,17 +82,32 @@ class TestHealableResourceAvailable:
 
 
 class TestEnsureAvailableNoOpWhenHealthy:
-    """Test that ensure_available() is a no-op when already healthy."""
+    """Test that ensure_available() is a no-op when the TRANSPORT is alive.
 
-    async def test_ensure_available_noop_when_already_healthy(
+    ensure_available() must gate on `_updater_running()` (transport liveness),
+    not `available` (message-recency) -- whole-branch review of the
+    platform-wide self-heal arc caught that gating on `available` alone made
+    a quiet-but-connected channel restart on every idle health-sweep tick
+    (~every 5min), the same heal-on-idle regression WhatsApp's Task 7 already
+    fought and fixed.
+    """
+
+    async def test_ensure_available_noop_when_updater_running_even_if_idle(
         self, adapter: TelegramChannelAdapter
     ) -> None:
-        """When adapter is healthy, ensure_available() does not call _self_heal_polling()."""
-        adapter._last_update_at = time.monotonic()
+        """Regression test for the heal-on-idle bug: a connected-but-quiet
+        channel (`available=False` from no recent message, `updater.running`
+        True) must NOT trigger a restart. Fails (calls _self_heal_polling)
+        against the old `available`-gated code; passes once ensure_available()
+        gates on `_updater_running()` instead.
+        """
+        adapter._last_update_at = None  # no message ever -> available=False
+        adapter._bot_app = SimpleNamespace(updater=SimpleNamespace(running=True))
+        assert adapter.available is False
+        assert adapter._updater_running() is True
 
         with patch.object(adapter, "_self_heal_polling", new_callable=AsyncMock) as mock_heal:
             await adapter.ensure_available()
-            # Should NOT call _self_heal_polling when already healthy
             mock_heal.assert_not_called()
 
     async def test_ensure_available_calls_self_heal_when_unhealthy(
