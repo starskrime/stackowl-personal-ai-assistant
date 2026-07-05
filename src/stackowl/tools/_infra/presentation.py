@@ -48,7 +48,10 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # P2 adds owl_build (self-extension for owls, sibling to tool_build) to the base set
 # so EVERY owl can author a new owl to overcome a capability gap; the cap is bumped
 # by 1 in lockstep so base growth does NOT shrink discretionary per-turn headroom.
-_DEFAULT_CAP = 34
+# owls_list adds the read-only survey seam owl_build lacks (create/edit/retire
+# only, no query action) — a "check what owls exist" request had nowhere to go
+# except a failing owl_build call missing required fields. Cap bumped by 1.
+_DEFAULT_CAP = 35
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
@@ -76,6 +79,10 @@ _DEFAULT_BASE = frozenset({
     # sibling. Consequential → still consent-gated at dispatch; surfacing ≠ bypass.
     # Fixes the "create an agent named Brain" incident (owl_build was evictable).
     "owl_build",
+    # owls_list — read-only survey of already-configured owls, mirrors
+    # skills_list. owl_build has no query action; without this, "check what
+    # owls exist" had nowhere to go except a failing owl_build call.
+    "owls_list",
 })
 _DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
 

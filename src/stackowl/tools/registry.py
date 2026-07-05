@@ -534,6 +534,7 @@ class ToolRegistry:
         from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
         from stackowl.tools.meta.note_applied_lesson import NoteAppliedLessonTool
         from stackowl.tools.meta.owl_build import OwlBuildTool
+        from stackowl.tools.meta.owls_list import OwlsListTool
         from stackowl.tools.meta.tool_build import ToolBuildTool
         from stackowl.tools.meta.tool_describe import ToolDescribeTool
         from stackowl.tools.meta.tool_search import ToolSearchTool
@@ -642,6 +643,10 @@ class ToolRegistry:
         # owl_build — self-extending owl-builder (Phase-2 A): create/edit/retire a
         # specialist owl (consent-gated, depth-0 only, child-excluded at dispatch).
         registry.register(OwlBuildTool())
+        # owls_list — read-only survey of already-configured owls (mirrors
+        # skills_list), so a "check what owls exist" request never has to
+        # misuse owl_build's create/edit/retire-only surface just to look.
+        registry.register(OwlsListTool())
         # owl_schedule — the user's off-ramp (TS11): pause/snooze/resume a scheduled
         # owl's proactive pokes (recoverable; never deletes the owl). write-severity
         # (instant, no consent); toggles the owl's projected job row via the scheduler.
