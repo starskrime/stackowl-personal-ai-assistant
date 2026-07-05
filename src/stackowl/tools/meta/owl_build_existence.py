@@ -16,29 +16,45 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 
 _SIMILARITY_THRESHOLD = 0.85
 
+# Task review flagged (plan-mandated finding): a single shared token is a hard
+# CREATE-time refusal (owl_build.py's create path returns an error before the
+# forge step, not a soft redirect), so a generic word shared by two otherwise
+# UNRELATED owls (e.g. "weather_bot" vs "news_bot" both containing "bot")
+# would incorrectly block a legitimate create. Excluding generic role/product
+# words from the match keeps the fix's actual target intact — "research_brain"
+# / "Researcher Brain" still match "Brain" on "brain", which is never generic —
+# while "bot"/"agent"/"assistant"/etc alone no longer trip a false collision.
+_GENERIC_NAME_TOKENS = frozenset({
+    "bot", "agent", "assistant", "helper", "owl", "ai", "bridge", "manager",
+})
+
 
 def _normalize_name_tokens(name: str) -> set[str]:
-    """Lowercase, split on non-alphanumeric, drop empty tokens.
+    """Lowercase, split on non-alphanumeric, drop empty and generic tokens.
 
     'research_brain' -> {'research', 'brain'}; 'Researcher Brain' -> {'researcher', 'brain'};
-    'Brain' -> {'brain'}. Used for a cheap, deterministic near-duplicate check that
-    works even with no semantic embedder wired (today's fail-open path has ZERO
-    duplicate protection beyond exact name-equality in that mode)."""
+    'Brain' -> {'brain'}; 'weather_bot' -> {'weather'} ('bot' is generic, excluded).
+    Used for a cheap, deterministic near-duplicate check that works even with no
+    semantic embedder wired (today's fail-open path has ZERO duplicate protection
+    beyond exact name-equality in that mode)."""
     import re
-    return {t for t in re.split(r"[^a-z0-9]+", name.lower()) if t}
+    return {
+        t for t in re.split(r"[^a-z0-9]+", name.lower())
+        if t and t not in _GENERIC_NAME_TOKENS
+    }
 
 
 def _name_token_overlap_match(spec_name: str, others: list[OwlAgentManifest]) -> str | None:
-    """Return an existing owl's name if it shares a token with ``spec_name``, else None.
+    """Return an existing owl's name if it shares a non-generic token with ``spec_name``, else None.
 
     Deliberately cheap and deterministic (no embedding call) — catches the exact
     incident shape confirmed live: 'research_brain' / 'Researcher Brain' both
     share the 'brain' token with an existing 'Brain' owl, even though their
     GENERATED SPECIALTY TEXT doesn't score high enough cosine similarity to trip
-    the semantic check below. A single shared token is deliberately a LOW bar —
-    this is a create-time refusal, not a silent auto-merge; a false positive just
-    means the model gets redirected to delegate_task/edit and can still proceed
-    under a genuinely different name if it disagrees."""
+    the semantic check below. Generic role/product words (see
+    ``_GENERIC_NAME_TOKENS``) never count toward a match on their own — this is a
+    create-time HARD refusal (not a soft redirect), so a single common word
+    shared by two genuinely unrelated owls must not trip it."""
     spec_tokens = _normalize_name_tokens(spec_name)
     if not spec_tokens:
         return None

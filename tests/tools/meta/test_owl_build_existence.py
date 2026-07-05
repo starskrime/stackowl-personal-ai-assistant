@@ -46,3 +46,13 @@ async def test_name_token_overlap_does_not_false_positive_on_unrelated_name() ->
     spec = OwlBuildSpec(action="create", name="weather_bot")
     services = StepServices()  # no embedder wired
     assert await existing_near_match(spec, registry, services) is None
+
+
+async def test_name_token_overlap_ignores_shared_generic_word() -> None:
+    # Task-review finding: a single shared token is a HARD create-time refusal
+    # (not a soft redirect), so two genuinely unrelated owls sharing only a
+    # generic word (e.g. "bot") must not collide.
+    registry = _reg("news_bot")
+    spec = OwlBuildSpec(action="create", name="weather_bot")
+    services = StepServices()  # no embedder wired
+    assert await existing_near_match(spec, registry, services) is None
