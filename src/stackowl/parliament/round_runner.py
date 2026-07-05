@@ -178,6 +178,11 @@ class RoundRunner:
             # Internal owl-to-owl debate round — no user is answering mid-round,
             # so a clarify call must default-deny rather than park the debate.
             interactive=False,
+            # No user stream / reply_target for an internal debate round — the
+            # caller reads the answer off final_state.responses directly. Without
+            # this the deliver step's stream-miss fallback fires every round
+            # (mirrors the same gap fixed in staged_rca.py's _run_stage).
+            defer_delivery=True,
         )
         t0 = time.monotonic()
         try:

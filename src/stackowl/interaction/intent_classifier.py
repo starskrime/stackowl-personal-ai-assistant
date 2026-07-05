@@ -138,12 +138,13 @@ class ClarifyIntentClassifier:
 
     ``is_answer`` is awaited inline on the single channel receive loop, so a hung
     fast-tier provider would head-of-line block ALL sessions. The provider call is
-    therefore bounded by ``timeout_s`` (default 3s — a one-token classification must
-    be fast; if it isn't, fail safe rather than stall the loop).
+    therefore bounded by ``timeout_s`` (default 10s — matches the empirically
+    validated fast-tier latency headroom from feedback_classifier's 45s->10s fix;
+    3s consistently under-shot real response time and made every call fail-safe).
     """
 
     def __init__(
-        self, provider_registry: ProviderRegistry, *, timeout_s: float = 3.0,
+        self, provider_registry: ProviderRegistry, *, timeout_s: float = 10.0,
     ) -> None:
         self._registry = provider_registry
         self._timeout_s = timeout_s

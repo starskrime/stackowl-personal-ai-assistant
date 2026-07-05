@@ -256,6 +256,12 @@ class StagedRcaSession:
             owl_name=owl_name,
             pipeline_step="rca_stage",
             interactive=False,
+            # This stage has no user stream and no reply_target — the text is read
+            # straight off final.responses below, not delivered. Without this the
+            # deliver step's stream-miss fallback fires on every stage (no target),
+            # logging a loud "answer not delivered" warning for output that was
+            # never meant to be delivered in the first place.
+            defer_delivery=True,
         )
         t0 = time.monotonic()
         final = await asyncio.wait_for(

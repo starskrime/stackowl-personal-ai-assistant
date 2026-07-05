@@ -18,7 +18,7 @@ makes the semantic call; we only parse the MODEL's own one-word verdict
 
 **Fast tier, one-token verdict.** Mirrors :class:`ClarifyIntentClassifier`'s
 shape exactly: lazy ``get_by_tier("fast")`` resolution, ``asyncio.wait_for``
-bounded by ``timeout_s`` (default 3.0s — this runs on the pre-deliver hot
+bounded by ``timeout_s`` (default 10.0s — this runs on the pre-deliver hot
 path), small ``max_tokens``.
 
 **Fail-safe -> ``False`` (KNOWN) on every degraded path.** Flooring replaces
@@ -84,7 +84,7 @@ class RetrievalIntentClassifier:
     receive loop — but still timeout-bounded defensively.
     """
 
-    def __init__(self, provider_registry: ProviderRegistry, *, timeout_s: float = 3.0) -> None:
+    def __init__(self, provider_registry: ProviderRegistry, *, timeout_s: float = 10.0) -> None:
         self._registry = provider_registry
         self._timeout_s = timeout_s
 
