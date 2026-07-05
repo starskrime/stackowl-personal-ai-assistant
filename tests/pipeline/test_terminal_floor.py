@@ -41,3 +41,19 @@ def test_floor_never_raises_on_garbage():
 def test_synthesize_from_calls_empty_calls_still_non_empty():
     out = synthesize_from_calls(goal="g", all_calls=[], partial="")
     assert out  # no tool records -> still non-empty honest message
+
+
+def test_synthesize_from_calls_last_outcome_overrides_earlier_retry_failure():
+    # Real incident shape: owl_build(create, name=Brain) failed twice, then
+    # owl_build(edit, name=Brain) succeeded. The floor text must NOT claim
+    # owl_build failed -- the capability ultimately succeeded.
+    calls = [
+        {"name": "owl_build", "args": {"action": "create", "name": "Brain"},
+         "failed": True, "result": "already exists"},
+        {"name": "owl_build", "args": {"action": "create", "name": "Brain"},
+         "failed": True, "result": "already exists"},
+        {"name": "owl_build", "args": {"action": "edit", "name": "Brain"},
+         "failed": False, "result": "ok"},
+    ]
+    out = synthesize_from_calls(goal="Hi", all_calls=calls, partial="")
+    assert "The capability that failed: owl_build." not in out

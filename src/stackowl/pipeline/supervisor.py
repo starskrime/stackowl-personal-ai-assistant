@@ -249,9 +249,13 @@ def synthesize_from_calls(
 ) -> str:
     """Floor entry point for the provider empty-wrap-up path (has ``all_calls``).
 
-    Derives the precise ``failed_capability`` (FIRST call whose ``failed`` bool
-    is truthy), the ``attempts`` list and the failing ``error`` from the tool
-    records, then delegates to :func:`synthesize_floor`. Pure; never raises.
+    Derives the precise ``failed_capability`` from the LAST recorded outcome
+    per (tool name, target arg) pair -- so a retried call that eventually
+    succeeds (e.g. ``owl_build`` create->create->edit, edit succeeding) is
+    never reported as failed just because an earlier attempt on the same
+    capability was. The ``attempts`` list and failing ``error`` are derived
+    the same way, then delegated to :func:`synthesize_floor`. Pure; never
+    raises.
     """
     log.engine.debug(
         "supervisor.synthesize_from_calls: entry",
@@ -259,9 +263,19 @@ def synthesize_from_calls(
     )
     try:
         calls = list(all_calls) if all_calls else []
+        # Key on (tool name, target arg) -- dict insertion keeps first-seen
+        # order, but each re-assignment overwrites the value, so the value
+        # left per key after the loop is that key's LAST call in the turn.
+        last_by_key: dict[tuple[str, str], dict[str, object]] = {}
+        for c in calls:
+            name = str(c.get("name") or "")
+            args = c.get("args")
+            target = str(args.get("name") or "") if isinstance(args, dict) else ""
+            last_by_key[(name, target)] = c
+
         failed_capability = ""
         error = ""
-        for c in calls:
+        for c in last_by_key.values():
             if bool(c.get("failed")):
                 failed_capability = str(c.get("name") or "")
                 error = str(c.get("result") or "")[:_ERROR_MAX_LEN]
