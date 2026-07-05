@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.scheduler.scheduler_helpers import parse_every
+from stackowl.tools.scheduling.cron_helpers import parse_daily_hhmm
 
 if TYPE_CHECKING:  # pragma: no cover — typing only (registry imports manifest; avoid cycle)
     from stackowl.owls.registry import OwlRegistry
@@ -49,7 +50,7 @@ def schedule_interval_seconds(schedule: str) -> float | None:
     """
     text = schedule.strip()
     if text.lower().startswith("daily@"):
-        return 86400.0
+        return 86400.0 if parse_daily_hhmm(text) is not None else None
     every = parse_every(text)
     if every is not None:
         return every.total_seconds()

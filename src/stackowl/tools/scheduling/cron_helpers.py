@@ -120,6 +120,32 @@ def _per_day_from_cron(expr: str) -> float | None:
         return None
 
 
+def parse_daily_hhmm(schedule: str) -> tuple[int, int] | None:
+    """Parse a strict ``daily@HH:MM`` body, or None if malformed/out-of-range.
+
+    Single source of truth for the ``daily@`` format — reused by
+    ``is_valid_schedule`` (this file) and by
+    ``owl_schedule_guards.schedule_interval_seconds`` so a malformed schedule
+    (e.g. a stray suffix like "daily@09:30 CDT") is rejected identically at
+    every gate instead of silently accepted by one and crashing another.
+    """
+    text = schedule.strip()
+    if not text.lower().startswith("daily@"):
+        return None
+    body = text[len("daily@") :]
+    parts = body.split(":")
+    if len(parts) > 2:
+        return None
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+    except (ValueError, IndexError):
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
 def is_valid_schedule(schedule: str) -> bool:
     """Return True if ``schedule`` is parseable by the scheduler's validator.
 
@@ -141,14 +167,7 @@ def is_valid_schedule(schedule: str) -> bool:
         # absolute local time (REMINDER-FIX-2), never recurring.
         return parse_at(text) is not None
     if lowered.startswith("daily@"):
-        body = text[len("daily@") :]
-        parts = body.split(":")
-        try:
-            hour = int(parts[0])
-            minute = int(parts[1]) if len(parts) > 1 else 0
-        except (ValueError, IndexError):
-            return False
-        return 0 <= hour <= 23 and 0 <= minute <= 59
+        return parse_daily_hhmm(text) is not None
     if lowered.startswith("every "):
         # Single source of truth with ``compute_next_run`` (s/m/h/d) so the tool
         # never advertises a cadence the scheduler then mis-arms to +1d.
