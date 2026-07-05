@@ -46,7 +46,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, get_args
 
-from stackowl.infra.observability import log
+from stackowl.infra.observability import log, traced_span
 from stackowl.memory.json_parser import parse_json_response
 from stackowl.providers.base import Message, ModelProvider
 
@@ -208,18 +208,19 @@ class FeedbackClassifier:
             )
             # 3. STEP — bound the call so a hung provider cannot stall the caller.
             # CancelledError (not an Exception subclass) still propagates.
-            result = await asyncio.wait_for(
-                provider.complete(
-                    [
-                        Message(role="system", content=_SYSTEM_PROMPT),
-                        Message(role="user", content=user_text),
-                    ],
-                    model="",
-                    max_tokens=_MAX_TOKENS,
-                    temperature=0.0,
-                ),
-                timeout=self._timeout_s,
-            )
+            async with traced_span(log.gateway, "feedback_classifier.classify.provider_call"):
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        [
+                            Message(role="system", content=_SYSTEM_PROMPT),
+                            Message(role="user", content=user_text),
+                        ],
+                        model="",
+                        max_tokens=_MAX_TOKENS,
+                        temperature=0.0,
+                    ),
+                    timeout=self._timeout_s,
+                )
             raw = result.content or ""
         except TimeoutError:
             log.gateway.warning(

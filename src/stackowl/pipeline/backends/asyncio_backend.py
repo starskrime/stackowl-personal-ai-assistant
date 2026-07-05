@@ -98,7 +98,8 @@ class AsyncioBackend(OrchestratorBackend):
                 current = current.evolve(pipeline_step=step_name)
                 step_t0 = time.monotonic()
                 try:
-                    current = await step_fn(current)
+                    async with TraceContext.span(f"step.{step_name}"):
+                        current = await step_fn(current)
                     duration_ms = (time.monotonic() - step_t0) * 1000
                     step_durations.append((step_name, duration_ms))
                     log.engine.info(

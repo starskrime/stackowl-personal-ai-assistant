@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.infra.resilience import looks_like_dead_handle
+from stackowl.infra.trace import TraceContext
 from stackowl.tools.verification import is_trustworthy_success
 
 
@@ -237,27 +238,28 @@ class Tool(ABC):
             )
             return ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
 
-        try:
-            result = await self.execute(**kwargs)
-        except Exception as exc:
-            # BOUNDED RETRY-ONCE (F-24) — re-run execute() exactly once, but ONLY for a
-            # classifiably-transient exception (dead-handle/connection, via the project's
-            # one transient oracle) AND ONLY for a READ-severity tool, where re-executing
-            # is provably side-effect-free. Write/consequential tools are NEVER retried
-            # here (double-execution of a side effect); their recovery is owned by the
-            # substitution/retry actuator in pipeline/steps/execute.py.
-            if looks_like_dead_handle(exc) and self._is_retry_safe_severity():
-                log.tool.warning(
-                    "tool.__call__: transient (dead-handle) error on read-only tool — retrying once",
-                    exc_info=exc,
-                    extra={"_fields": {"tool": self.name}},
-                )
-                try:
-                    result = await self.execute(**kwargs)
-                except Exception as exc2:
-                    result = _wrap_failure(exc2)
-            else:
-                result = _wrap_failure(exc)
+        async with TraceContext.span(f"tool.{self.name}"):
+            try:
+                result = await self.execute(**kwargs)
+            except Exception as exc:
+                # BOUNDED RETRY-ONCE (F-24) — re-run execute() exactly once, but ONLY for a
+                # classifiably-transient exception (dead-handle/connection, via the project's
+                # one transient oracle) AND ONLY for a READ-severity tool, where re-executing
+                # is provably side-effect-free. Write/consequential tools are NEVER retried
+                # here (double-execution of a side effect); their recovery is owned by the
+                # substitution/retry actuator in pipeline/steps/execute.py.
+                if looks_like_dead_handle(exc) and self._is_retry_safe_severity():
+                    log.tool.warning(
+                        "tool.__call__: transient (dead-handle) error on read-only tool — retrying once",
+                        exc_info=exc,
+                        extra={"_fields": {"tool": self.name}},
+                    )
+                    try:
+                        result = await self.execute(**kwargs)
+                    except Exception as exc2:
+                        result = _wrap_failure(exc2)
+                else:
+                    result = _wrap_failure(exc)
         # VERIFICATION seam — only after a success the tool ASSERTED. A tool-supplied
         # verified=True is a CLAIM, never proof: the seam still runs and its verdict
         # takes precedence (B1/F-25 — a self-asserted verification must never be trusted
@@ -354,11 +356,18 @@ class Tool(ABC):
                     "verified": result.verified, "next_step": "recover",
                 }},
             )
+        # Latency map — duration_ms here is the WRAPPER-measured elapsed time
+        # (t0-based), not the tool's self-reported result.duration_ms, so every
+        # tool is comparable in the trace regardless of whether its own execute()
+        # bothers to set duration_ms accurately. reported_duration_ms is kept
+        # alongside for spotting a tool whose self-report diverges from reality.
         log.tool.debug(
             "tool.__call__: exit",
             extra={"_fields": {
                 "tool": self.name, "success": result.success,
-                "verified": result.verified, "duration_ms": result.duration_ms,
+                "verified": result.verified,
+                "duration_ms": (time.monotonic() - t0) * 1000,
+                "reported_duration_ms": result.duration_ms,
             }},
         )
         return result

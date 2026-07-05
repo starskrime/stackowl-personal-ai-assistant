@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.infra import decision_ledger
-from stackowl.infra.observability import log
+from stackowl.infra.observability import log, traced_span
 from stackowl.providers.base import Message, ModelProvider
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -242,17 +242,18 @@ class ClarifyIntentClassifier:
             # Bound the inline call: a hung fast provider must not HOL-block the
             # single receive loop. asyncio.CancelledError propagates (it is not an
             # Exception subclass) so a cancelled receive task still tears down cleanly.
-            result = await asyncio.wait_for(
-                provider.complete(
-                    [
-                        Message(role="system", content=_SYSTEM_PROMPT),
-                        Message(role="user", content=user_text),
-                    ],
-                    model="",
-                    max_tokens=4,
-                ),
-                timeout=self._timeout_s,
-            )
+            async with traced_span(log.gateway, "intent_classifier.is_answer.provider_call"):
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        [
+                            Message(role="system", content=_SYSTEM_PROMPT),
+                            Message(role="user", content=user_text),
+                        ],
+                        model="",
+                        max_tokens=4,
+                    ),
+                    timeout=self._timeout_s,
+                )
             verdict = (result.content or "").strip()
         except TimeoutError:  # hung provider — fail-safe rather than stall
             log.gateway.warning(
@@ -358,17 +359,18 @@ class ClarifyIntentClassifier:
             # Bound the inline call: a hung fast provider must not HOL-block the
             # single receive loop. CancelledError (not an Exception subclass)
             # still propagates so a cancelled receive task tears down cleanly.
-            result = await asyncio.wait_for(
-                provider.complete(
-                    [
-                        Message(role="system", content=_STEER_SYSTEM_PROMPT),
-                        Message(role="user", content=user_text),
-                    ],
-                    model="",
-                    max_tokens=4,
-                ),
-                timeout=self._timeout_s,
-            )
+            async with traced_span(log.gateway, "intent_classifier.is_steer.provider_call"):
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        [
+                            Message(role="system", content=_STEER_SYSTEM_PROMPT),
+                            Message(role="user", content=user_text),
+                        ],
+                        model="",
+                        max_tokens=4,
+                    ),
+                    timeout=self._timeout_s,
+                )
             verdict = (result.content or "").strip()
         except TimeoutError:  # hung provider — fail-safe to NEW rather than stall
             log.gateway.warning(
@@ -452,17 +454,18 @@ class ClarifyIntentClassifier:
             # Bound the inline call: a hung fast provider must not HOL-block the
             # single receive loop. CancelledError (not an Exception subclass)
             # still propagates so a cancelled receive task tears down cleanly.
-            result = await asyncio.wait_for(
-                provider.complete(
-                    [
-                        Message(role="system", content=_COHERENCE_SYSTEM_PROMPT),
-                        Message(role="user", content=user_text),
-                    ],
-                    model="",
-                    max_tokens=4,
-                ),
-                timeout=self._timeout_s,
-            )
+            async with traced_span(log.gateway, "intent_classifier.is_steer_incoherent.provider_call"):
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        [
+                            Message(role="system", content=_COHERENCE_SYSTEM_PROMPT),
+                            Message(role="user", content=user_text),
+                        ],
+                        model="",
+                        max_tokens=4,
+                    ),
+                    timeout=self._timeout_s,
+                )
             verdict = (result.content or "").strip()
         except TimeoutError:  # hung provider — fail-safe to VETO rather than stall
             log.gateway.warning(

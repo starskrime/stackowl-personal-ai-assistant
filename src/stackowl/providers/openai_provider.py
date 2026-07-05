@@ -19,6 +19,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ProviderError, TurnStopped
 from stackowl.infra.net.host_locality import is_local_url
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.delivery_gate import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
@@ -393,22 +394,35 @@ class OpenAIProvider(ModelProvider):
                     **self._ollama_extra_body(resolved_model),
                 )
 
-            try:
-                # F115 — per-round breaker/limiter site (NOT a wrap of the whole loop,
-                # which floors and would feed the breaker a false success).
-                response = await self._resilient_round(_round)
-            except openai.APIError as exc:
-                log.engine.error(
-                    "[openai] complete_with_tools: API error",
-                    exc_info=exc,
-                    extra={"_fields": {"provider": self._name}},
+            async with TraceContext.span("provider.round"):
+                try:
+                    # F115 — per-round breaker/limiter site (NOT a wrap of the whole loop,
+                    # which floors and would feed the breaker a false success).
+                    response = await self._resilient_round(_round)
+                except openai.APIError as exc:
+                    log.engine.error(
+                        "[openai] complete_with_tools: API error",
+                        exc_info=exc,
+                        extra={"_fields": {
+                            "provider": self._name,
+                            "duration_ms": (time.monotonic() - _t_call) * 1000,
+                        }},
+                    )
+                    raise ProviderError(self._name, exc) from exc
+
+                round_duration_ms = (time.monotonic() - _t_call) * 1000
+                log.engine.debug(
+                    "[openai] complete_with_tools: round ok",
+                    extra={"_fields": {
+                        "provider": self._name, "iteration": _iter_idx,
+                        "duration_ms": round_duration_ms,
+                    }},
                 )
-                raise ProviderError(self._name, exc) from exc
 
             # E8-S0cost — record EACH internal tool-loop API round's spend (B5:
             # usage extraction is itself fail-open — a response shape without usage
             # must never break the loop).
-            await self._record_usage_safe(response, (time.monotonic() - _t_call) * 1000)
+            await self._record_usage_safe(response, round_duration_ms)
 
             if not response.choices:
                 raise ProviderError(self._name, ValueError("empty choices"))

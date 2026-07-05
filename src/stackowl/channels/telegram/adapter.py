@@ -41,7 +41,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.health.status import HealthStatus
-from stackowl.infra.observability import log
+from stackowl.infra.observability import log, traced_span
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:
@@ -307,10 +307,14 @@ class TelegramChannelAdapter(ChannelAdapter):
     async def receive(self) -> IngressMessage:
         """Yield the next IngressMessage enqueued by ``_handle_update``."""
         log.telegram.info("[telegram] adapter.receive: entry")
+        t0 = time.monotonic()
         msg = await self._queue.get()
         log.telegram.info(
             "[telegram] adapter.receive: exit",
-            extra={"_fields": {"trace_id": msg.trace_id, "text_len": len(msg.text)}},
+            extra={"_fields": {
+                "trace_id": msg.trace_id, "text_len": len(msg.text),
+                "duration_ms": (time.monotonic() - t0) * 1000,
+            }},
         )
         return msg
 
@@ -488,23 +492,24 @@ class TelegramChannelAdapter(ChannelAdapter):
         delivery failure and propagates unchanged.
         """
         assert self._bot_app is not None  # caller guarantees a resolved app+target
-        try:
-            await self._bot_app.bot.send_message(
-                chat_id=target,
-                text=part,
-                parse_mode="MarkdownV2",
-            )
-        except BadRequest as exc:
-            log.telegram.error(
-                "[telegram] adapter.send_text: MarkdownV2 rejected — retrying as plain text",
-                exc_info=exc,
-                extra={"_fields": {"idx": idx, "len": len(part)}},
-            )
-            await self._bot_app.bot.send_message(
-                chat_id=target,
-                text=part,
-                parse_mode=None,
-            )
+        async with traced_span(log.telegram, "telegram.send_message", idx=idx, len=len(part)):
+            try:
+                await self._bot_app.bot.send_message(
+                    chat_id=target,
+                    text=part,
+                    parse_mode="MarkdownV2",
+                )
+            except BadRequest as exc:
+                log.telegram.error(
+                    "[telegram] adapter.send_text: MarkdownV2 rejected — retrying as plain text",
+                    exc_info=exc,
+                    extra={"_fields": {"idx": idx, "len": len(part)}},
+                )
+                await self._bot_app.bot.send_message(
+                    chat_id=target,
+                    text=part,
+                    parse_mode=None,
+                )
 
     async def send_status(self, chat_id: int, text: str) -> int | None:
         """Send a plain live-status message and return its message_id (None on miss).

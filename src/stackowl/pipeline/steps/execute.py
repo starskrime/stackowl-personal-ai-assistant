@@ -22,6 +22,7 @@ from stackowl.exceptions import (
 )
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.interaction.reversibility_resolver import (
     Decision,
     Reversibility,
@@ -1315,16 +1316,21 @@ async def _run_with_tools(
             caller renders the timeout marker). Shared by the initial dispatch and
             the B4a unverified-effect retry so both record IDENTICALLY — the retry is
             a real second attempt with its own ledger outcome, not a silent re-run."""
+            _dispatch_t0 = time.monotonic()
             try:
-                r = await asyncio.wait_for(
-                    ledger_guard(name, d_args, t.manifest.action_severity, lambda: t(**d_args)),
-                    timeout=_TOOL_DEADLINE_S,
-                )
+                async with TraceContext.span(f"dispatch.{name}"):
+                    r = await asyncio.wait_for(
+                        ledger_guard(name, d_args, t.manifest.action_severity, lambda: t(**d_args)),
+                        timeout=_TOOL_DEADLINE_S,
+                    )
             except TimeoutError:
                 log.engine.warning(
                     "[pipeline] execute: tool exceeded per-tool deadline — cancelled",
-                    extra={"_fields": {"tool": name, "trace_id": state.trace_id,
-                                       "deadline_s": _TOOL_DEADLINE_S}},
+                    extra={"_fields": {
+                        "tool": name, "trace_id": state.trace_id,
+                        "deadline_s": _TOOL_DEADLINE_S,
+                        "duration_ms": (time.monotonic() - _dispatch_t0) * 1000,
+                    }},
                 )
                 tool_outcome_ledger.record_tool_outcome(
                     name=name, action_severity=t.manifest.action_severity, success=False,
@@ -1334,6 +1340,13 @@ async def _run_with_tools(
                 # keeps timing out gets bounced rather than spiralling the budget.
                 progress.record_no_progress(name)
                 return None
+            log.engine.debug(
+                "[pipeline] execute: tool dispatch ok",
+                extra={"_fields": {
+                    "tool": name, "trace_id": state.trace_id,
+                    "duration_ms": (time.monotonic() - _dispatch_t0) * 1000,
+                }},
+            )
             tool_outcome_ledger.record_tool_outcome(
                 name=name, action_severity=t.manifest.action_severity, success=r.success,
                 # L1 — a tool that pre-execution-refuses (bad args, unavailable store)

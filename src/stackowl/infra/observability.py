@@ -7,6 +7,9 @@ import json
 import logging
 import logging.handlers
 import os
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -72,6 +75,40 @@ class JsonlFormatter(logging.Formatter):
             "fields": fields,
         }
         return json.dumps(entry, default=str, ensure_ascii=False)
+
+
+@asynccontextmanager
+async def traced_span(
+    logger: logging.Logger, name: str, **fields: Any
+) -> AsyncIterator[None]:
+    """Open a TraceContext child span AND log entry/exit with duration_ms.
+
+    Latency-map instrumentation: every call site that wraps its work in this
+    (instead of a bare ``TraceContext.span``) gets a span_id/parent_span_id
+    edge in the JSONL trace tree AND a `duration_ms` on the exit line, so a
+    trace_id's full request path can be reconstructed as a waterfall — see
+    ``stackowl trace <trace_id>``. Exceptions are logged (with duration_ms)
+    then re-raised — never swallowed.
+    """
+    async with TraceContext.span(name):
+        t0 = time.monotonic()
+        logger.debug(f"{name}: entry", extra={"_fields": dict(fields)})
+        try:
+            yield
+        except Exception as exc:
+            duration_ms = (time.monotonic() - t0) * 1000
+            logger.error(
+                f"{name}: failed",
+                exc_info=exc,
+                extra={"_fields": {**fields, "duration_ms": duration_ms}},
+            )
+            raise
+        else:
+            duration_ms = (time.monotonic() - t0) * 1000
+            logger.debug(
+                f"{name}: exit",
+                extra={"_fields": {**fields, "duration_ms": duration_ms}},
+            )
 
 
 def _log_dir() -> Path:

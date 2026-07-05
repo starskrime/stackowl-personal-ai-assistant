@@ -26,6 +26,7 @@ integrations_app = typer.Typer(help="External integration management.")
 from stackowl.cli.identity_cli import identity_app  # noqa: E402
 from stackowl.cli.models import models_app  # noqa: E402
 from stackowl.cli.providers_cli import providers_app  # noqa: E402
+from stackowl.cli.trace_cli import trace_app  # noqa: E402
 
 app.add_typer(serve_app, name="serve")
 app.add_typer(health_app, name="health")
@@ -36,6 +37,7 @@ app.add_typer(mcp_app, name="mcp")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(integrations_app, name="integrations")
 app.add_typer(identity_app, name="identity")
+app.add_typer(trace_app, name="trace")
 
 
 def _version_callback(value: bool) -> None:

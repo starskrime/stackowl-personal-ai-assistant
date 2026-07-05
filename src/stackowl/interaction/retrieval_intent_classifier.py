@@ -38,7 +38,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from stackowl.infra.observability import log
+from stackowl.infra.observability import log, traced_span
 from stackowl.providers.base import Message, ModelProvider
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -122,17 +122,18 @@ class RetrievalIntentClassifier:
             user_text = self._build_user_text(request)
             # Bounded call: a hung fast provider must never stall the pre-deliver
             # gate. CancelledError (not an Exception subclass) still propagates.
-            result = await asyncio.wait_for(
-                provider.complete(
-                    [
-                        Message(role="system", content=_SYSTEM_PROMPT),
-                        Message(role="user", content=user_text),
-                    ],
-                    model="",
-                    max_tokens=_MAX_TOKENS,
-                ),
-                timeout=self._timeout_s,
-            )
+            async with traced_span(log.engine, "retrieval_intent_classifier.requires_lookup.provider_call"):
+                result = await asyncio.wait_for(
+                    provider.complete(
+                        [
+                            Message(role="system", content=_SYSTEM_PROMPT),
+                            Message(role="user", content=user_text),
+                        ],
+                        model="",
+                        max_tokens=_MAX_TOKENS,
+                    ),
+                    timeout=self._timeout_s,
+                )
             verdict = (result.content or "").strip()
         except TimeoutError:  # hung provider — fail-safe rather than stall delivery
             log.engine.warning(
