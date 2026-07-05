@@ -22,6 +22,10 @@ stackowl.yaml
 *.mov
 *.mkv
 *.webm
-.claude/
+/.claude/
+!/.claude/skills/
+!/.claude/skills/**
 _bmad/
 logs/
+.bmad-loop/runs/
+.bmad-loop/cache/
