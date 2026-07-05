@@ -1,9 +1,9 @@
 ---
-name: platform-guardian
+name: tonyStyle
 description: Use whenever touching StackOwl code in this repo — any bugfix, feature, refactor, review, or code read incidental to another task. Proactively scans the whole codebase (not just the current diff) for real defects (silent failures, disabled/stubbed features, architecture violations, missing logging, dead code masking bugs) and fixes them in the same turn with minimal root-cause diffs, gated on tests+lint+type-check staying green and no capability being removed. Composes with systematic-debugging, verification-before-completion, and code-review rather than replacing them — this skill decides *when* those apply even to code nobody named in the request; it delegates the actual debugging/verification mechanics to them.
 ---
 
-# Platform Guardian
+# tonyStyle
 
 ## Why this exists
 
@@ -38,6 +38,7 @@ If a fix can't clear this gate — tests won't go green without breaking somethi
 
 ## Error handling
 
+- **Blast radius ceiling:** only fix confirmed defects inside `src/`, `tests/`, or config files. Never destructive git operations (no force-push, no `reset --hard`, no discarding uncommitted work), never unrelated refactors, never touch files outside the repo's own source tree. "Whole codebase, always" describes how far the *scan* reaches, not a license to restructure anything you find along the way.
 - **Gate failure:** don't force it green by weakening the check or the fix. Surface the defect as found-but-unresolved, same as any other honest-failure surface in this codebase (`feedback_no_hidden_errors` — never catch-and-hide, that applies to this skill's own failures too).
 - **Ambiguous defect vs. deliberate design:** if you can't tell whether something is a bug or an intentional choice, don't guess and fix. Leave it and flag it as a question in the report. This is not "silently punting" (which `feedback_no_deferrals` forbids) — it's surfacing the ambiguity instead of hiding it.
 

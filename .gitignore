@@ -24,5 +24,7 @@ stackowl.yaml
 *.webm
 .claude/*
 !.claude/skills/
+.claude/skills/*
+!.claude/skills/tonyStyle/
 _bmad/
 logs/
