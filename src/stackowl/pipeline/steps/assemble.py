@@ -99,6 +99,29 @@ async def run(state: PipelineState) -> PipelineState:
             "[pipeline] assemble: no owl_registry wired — memory-only prompt",
             extra={"_fields": {"owl": state.owl_name}},
         )
+    # Ground-truth owl visibility — without this the model has NO way to know
+    # which owls already exist except stale conversation history, so it keeps
+    # guess-and-retrying owl_build with name variants after a collision
+    # (confirmed live incident: "Brain" -> "Researcher Brain" -> "research_brain",
+    # each a fresh attempt at the same already-existing persona). Cheap: name +
+    # one-line role only, never full personas — this is NOT a second persona
+    # injection, just a deterministic existence fact.
+    owls_block = ""
+    if registry is not None:
+        try:
+            others = [m for m in registry.list() if m.name != state.owl_name]
+            if others:
+                lines = [f"- {m.name}: {m.role}" for m in others]
+                owls_block = (
+                    "Owls that ALREADY EXIST — do not call owl_build with "
+                    "action='create' for any of these; use action='edit' or "
+                    "delegate_task to reach one instead:\n" + "\n".join(lines)
+                )
+        except Exception as exc:  # no-hidden-errors: never crash the turn
+            log.engine.error(
+                "[pipeline] assemble: existing-owls block FAILED — skipped",
+                exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+            )
     # Inject owned-skill playbooks — fail-open (never crash the turn).
     # Conversational turns are lean: classify already skips marketplace skills for
     # them, and assemble must match: no skills block so a conversational turn does
@@ -217,7 +240,7 @@ async def run(state: PipelineState) -> PipelineState:
             banner = ""
 
     parts = [
-        p for p in (base, capabilities, banner, persona, skills_block, state.memory_context) if p
+        p for p in (base, capabilities, banner, persona, owls_block, skills_block, state.memory_context) if p
     ]
     system_prompt = "\n\n".join(parts) or None
     log.engine.debug(
@@ -227,6 +250,7 @@ async def run(state: PipelineState) -> PipelineState:
             "base_len": len(base),
             "persona_len": len(persona),
             "banner_len": len(banner),
+            "owls_len": len(owls_block),
             "system_len": len(system_prompt or ""),
         }},
     )

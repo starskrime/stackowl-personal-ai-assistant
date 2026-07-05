@@ -179,6 +179,38 @@ async def test_global_catalog_skipped_when_settings_absent():
 
 
 @pytest.mark.asyncio
+async def test_owls_block_lists_other_owls_excludes_self():
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(OwlAgentManifest(name="Brain", role="research", system_prompt="P",
+                                  model_tier="fast"))
+    set_services(StepServices(owl_registry=reg, skill_store=_FakeStore([])))
+    from stackowl.pipeline.steps import assemble
+    out = await assemble.run(_state(owl_name="secretary"))
+    sp = out.system_prompt or ""
+    assert "Brain" in sp
+    # The acting owl's own name must not appear via the owls_block (its persona
+    # is injected separately, not as a "this owl exists" fact).
+    owls_block_line = next(line for line in sp.splitlines() if "Brain" in line)
+    assert "secretary" not in owls_block_line
+
+
+@pytest.mark.asyncio
+async def test_owls_block_fails_open_when_registry_list_raises():
+    class _RaisingRegistry:
+        def get(self, name):
+            raise Exception("not found")
+
+        def list(self):
+            raise Exception("boom")
+
+    set_services(StepServices(owl_registry=_RaisingRegistry(), skill_store=_FakeStore([])))
+    from stackowl.pipeline.steps import assemble
+    # Must not raise — registry.list() blowing up should degrade to no owls_block.
+    out = await assemble.run(_state(owl_name="secretary"))
+    assert "boom" not in (out.system_prompt or "")
+
+
+@pytest.mark.asyncio
 async def test_conversational_turn_gets_no_skills_block():
     """A conversational intent_class turn must NOT carry skill-block tokens even when
     the owl owns skills.  assemble gates the skills block on intent_class != 'conversational'
