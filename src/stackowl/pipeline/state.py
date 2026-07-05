@@ -220,6 +220,11 @@ class PipelineState(BaseModel, frozen=True):
     consequential_failures: tuple[str, ...] = ()
     consequential_successes: tuple[str, ...] = ()
     recovered_consequential: tuple[str, ...] = ()
+    # Parallel to consequential_failures (same filter, same order) — each failed
+    # tool's own ToolResult.error text (None when absent). Lets the honest floor
+    # cite the REAL technical detail instead of a blank slot. Empty = byte-
+    # identical to before this field existed.
+    consequential_failure_errors: tuple[str | None, ...] = ()
     # ADR-6 Task 6 fix — the FAILED tool names bridged SPECIFICALLY by a
     # substitution (never "retry") this turn, stamped by the SAME snapshot while
     # recovery_context is still bound. Deliberately narrower than

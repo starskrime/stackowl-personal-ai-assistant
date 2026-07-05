@@ -742,6 +742,14 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
                 o.action_severity, o.success, o.side_effect_committed, o.verified,
             )
         )
+        # Same filter, same order as `failures` — each entry's real ToolResult.error
+        # text (None when absent), so the honest floor can cite it verbatim.
+        failure_errors = tuple(
+            o.error for o in outcomes
+            if tool_outcome_ledger.is_effectful_failure(
+                o.action_severity, o.success, o.side_effect_committed, o.verified,
+            )
+        )
         # B2 — a verified=False effect is NOT a success (it was claimed, never observed),
         # so it neither counts here nor disarms the floor below.
         successes = tuple(
@@ -790,6 +798,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         )
         return state.evolve(
             consequential_failures=failures,
+            consequential_failure_errors=failure_errors,
             consequential_successes=successes,
             delivered_successes=delivered,
             recovered_consequential=recovered,
@@ -1359,6 +1368,7 @@ async def _run_with_tools(
                 # byte-identical.
                 verified=r.verified,
                 effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
+                error=r.error,
             )
             # TurnProgressTracker — update from this REAL completed dispatch. A
             # TRUSTWORTHY success resets the streak; ANY non-trustworthy result (a

@@ -28,6 +28,48 @@ async def test_replaces_dressed_up_draft_with_honest_floor():
 
 
 @pytest.mark.asyncio
+async def test_honest_floor_cites_real_error_text():
+    """The floor's 'Technical detail:' must carry the tool's ACTUAL error string
+    (e.g. a manifest validation failure), not a blank slot — the live incident
+    this guards: owl_build failed with a real pydantic error but the floor
+    rendered 'Technical detail:' with nothing after it."""
+    token = tol.bind()
+    try:
+        tol.record_tool_outcome(
+            name="owl_build", action_severity="consequential", success=False,
+            error="Owl manifest validation failed [name]: exceeds 16 characters",
+        )
+        s = _state("Done — created the owl.")
+        out = await surface_consequential_giveup_floor(s)
+        delivered = "".join(c.content for c in out.responses)
+        assert "Owl manifest validation failed [name]: exceeds 16 characters" in delivered
+    finally:
+        tol.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_honest_floor_cites_real_error_text_from_snapshot():
+    """Same guard as test_honest_floor_cites_real_error_text but via the
+    REACT-7/F099 state snapshot path (what a real turn actually uses in
+    production — execute._snapshot_consequential stamps this onto state
+    instead of leaving the honesty decision on the live ledger)."""
+    s = PipelineState(
+        trace_id="t", session_id="s", input_text="create the owl", channel="cli",
+        owl_name="secretary", pipeline_step="deliver",
+        responses=(ResponseChunk(content="Done — created the owl.", is_final=False,
+                                  chunk_index=0, trace_id="t", owl_name="secretary"),),
+        consequential_failures=("owl_build",),
+        consequential_failure_errors=(
+            "Owl manifest validation failed [name]: exceeds 16 characters",
+        ),
+        consequential_snapshot_taken=True,
+    )
+    out = await surface_consequential_giveup_floor(s)
+    delivered = "".join(c.content for c in out.responses)
+    assert "Owl manifest validation failed [name]: exceeds 16 characters" in delivered
+
+
+@pytest.mark.asyncio
 async def test_no_replace_when_consequential_succeeded():
     token = tol.bind()
     try:

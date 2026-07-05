@@ -188,6 +188,35 @@ async def test_failed_consequential_recorded(
 
 
 @pytest.mark.asyncio
+async def test_failed_consequential_error_text_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real ToolResult.error string must reach the ledger outcome, not be
+    dropped — the honest give-up floor cites it as the technical detail."""
+    failing_consequential = _CapabilityTool(
+        "dangerous_write",
+        severity="consequential",
+        capability_tag=None,
+        output="",
+        succeed=False,
+        params={"type": "object", "properties": {"payload": {"type": "string"}}},
+    )
+    reg = _FakeRegistry([failing_consequential])
+
+    token = tol.bind()
+    try:
+        dispatch = await _build_real_dispatch(monkeypatch, reg)
+        await dispatch("dangerous_write", {"payload": "test"})
+        outs = tol.get_outcomes()
+    finally:
+        tol.reset(token)
+
+    assert any(o.error == "tool failed" for o in outs), (
+        f"Expected an outcome with error='tool failed', got {[o.error for o in outs]}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_successful_consequential_recorded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

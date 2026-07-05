@@ -39,6 +39,10 @@ class ToolOutcome:
     # success of an effect-classed tool may stand — an effect-classed outcome whose
     # verified is NOT True (False OR unknown) is an unproven effect (default-deny).
     effect_class: str | None = None
+    # The tool's own ToolResult.error text (mirrors ToolResult.error). None when
+    # the tool succeeded or reported no error string. Lets the honest give-up
+    # floor cite the REAL technical detail instead of a blank slot.
+    error: str | None = None
 
 
 def is_effectful_failure(
@@ -79,7 +83,7 @@ def reset(token: Token[tuple[ToolOutcome, ...] | None]) -> None:
 
 def record_tool_outcome(
     *, name: str, action_severity: str, success: bool, side_effect_committed: bool = True,
-    verified: bool | None = None, effect_class: str | None = None,
+    verified: bool | None = None, effect_class: str | None = None, error: str | None = None,
 ) -> None:
     """Record one dispatched tool's outcome. No-op (logged) when unbound; never raises.
 
@@ -89,7 +93,9 @@ def record_tool_outcome(
     mirrors ToolResult.verified (None ⇒ not checked, byte-identical; False ⇒ claimed
     but unobserved → an effectful failure). ``effect_class`` mirrors
     ToolManifest.effect_class (None ⇒ read-only) so the overclaim veto can default-deny
-    an effect-classed tool whose effect was not MEASURED verified==True.
+    an effect-classed tool whose effect was not MEASURED verified==True. ``error``
+    mirrors ToolResult.error (None ⇒ success or no error string) so the honest
+    give-up floor can cite the real technical detail instead of a blank slot.
     """
     current = _outcomes.get()
     if current is None:
@@ -103,7 +109,7 @@ def record_tool_outcome(
         ToolOutcome(
             name=name, action_severity=action_severity, success=success,
             side_effect_committed=side_effect_committed, verified=verified,
-            effect_class=effect_class,
+            effect_class=effect_class, error=error,
         ),
     ))
 

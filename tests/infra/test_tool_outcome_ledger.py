@@ -46,3 +46,25 @@ def test_reset_clears():
     tol.reset(token)
     assert tol.consequential_tally() == (0, 0)
     assert tol.get_outcomes() == ()
+
+
+def test_error_text_is_captured_on_failure():
+    token = tol.bind()
+    try:
+        tol.record_tool_outcome(
+            name="owl_build", action_severity="consequential", success=False,
+            error="Owl manifest validation failed [name]: exceeds 16 characters",
+        )
+        outs = tol.get_outcomes()
+        assert outs[0].error == "Owl manifest validation failed [name]: exceeds 16 characters"
+    finally:
+        tol.reset(token)
+
+
+def test_error_defaults_to_none():
+    token = tol.bind()
+    try:
+        tol.record_tool_outcome(name="send_email", action_severity="consequential", success=True)
+        assert tol.get_outcomes()[0].error is None
+    finally:
+        tol.reset(token)

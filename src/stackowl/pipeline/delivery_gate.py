@@ -213,6 +213,60 @@ def decide_delivery(state: PipelineState) -> DeliveryDecision:
     return decision
 
 
+def _error_for_failed_capability(state: PipelineState, failed_name: str | None) -> str | None:
+    """The real ``ToolResult.error`` text for ``failed_name``, or ``None`` if
+    unavailable — so the honest floor cites the ACTUAL technical detail instead
+    of a blank slot. Snapshot path reads the parallel
+    ``consequential_failure_errors`` tuple; live fallback reads the ledger.
+    Never raises."""
+    if failed_name is None:
+        return None
+    try:
+        if state.has_consequential_snapshot:
+            for name, err in zip(
+                state.consequential_failures, state.consequential_failure_errors, strict=False,
+            ):
+                if name == failed_name and err:
+                    return err
+            return None
+        for o in tool_outcome_ledger.get_outcomes():
+            if o.name == failed_name and o.error:
+                return o.error
+    except Exception as exc:  # noqa: BLE001 — floor enrichment must never break the turn
+        log.engine.warning(
+            "[giveup_floor] _error_for_failed_capability: lookup failed — omitting",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+    return None
+
+
+def _attempts_for_state(state: PipelineState) -> list[str]:
+    """Names of tools this turn touched, for the floor's "What I tried" slot.
+    Excludes any name BRIDGED by a substitution recovery — a recovered failure was
+    not a give-up and must not be named, matching the same invariant
+    ``_unrecovered_consequential_failures`` enforces for the failed-capability name.
+    Snapshot path unions failed+succeeded names (order not significant — the
+    template joins them); live fallback lists the ledger in call order. Never
+    raises."""
+    try:
+        if state.has_consequential_snapshot:
+            recovered = set(state.recovered_consequential)
+            names: tuple[str, ...] = state.consequential_failures + state.consequential_successes
+        else:
+            recovered = {
+                e.failed for e in recovery_context.get_recovery()
+                if e.kind in _BRIDGING_RECOVERY_KINDS and e.recovered_via
+            }
+            names = tuple(o.name for o in tool_outcome_ledger.get_outcomes())
+        return list(dict.fromkeys(n for n in names if n not in recovered))
+    except Exception as exc:  # noqa: BLE001 — floor enrichment must never break the turn
+        log.engine.warning(
+            "[giveup_floor] _attempts_for_state: lookup failed — omitting",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return []
+
+
 def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk:
     """Build an is_floor=True honest-floor ResponseChunk naming ``failed_name``.
 
@@ -230,8 +284,8 @@ def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk
     )
     floor_text = synthesize_floor(
         goal=state.input_text,
-        error=None,
-        attempts=None,
+        error=_error_for_failed_capability(state, failed_name),
+        attempts=_attempts_for_state(state) or None,
         partial=None,
         failed_capability=failed_name,
         lang=state.language,  # F089/F098 — localize the provider-down floor
