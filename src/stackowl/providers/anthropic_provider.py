@@ -66,6 +66,14 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
     return int(str(val))
 
 
+# F027 extension — the in-loop tool round had NO app-level timeout (only the
+# terminal wrap-up did), so a hung SDK call could stall a turn for however long
+# the anthropic SDK's own default takes (minutes). Bounded by the SAME residual
+# budget threaded in as wrapup_deadline_s when the caller (execute.py's
+# BudgetGovernor) supplies one; this fallback covers a non-budgeted caller.
+_ROUND_DEADLINE_FALLBACK_S = 120.0
+
+
 class AnthropicProvider(ModelProvider):
     """Anthropic Messages API provider (claude-* family)."""
 
@@ -334,10 +342,28 @@ class AnthropicProvider(ModelProvider):
                 try:
                     # F115 — per-round breaker/limiter site (NOT a wrap of the whole loop,
                     # which floors and would feed the breaker a false success).
-                    response = await self._resilient_round(_round)
+                    # F027 extension — bound the round itself; a hung SDK call must
+                    # never stall the turn past the residual budget (or the fallback
+                    # when no budget was threaded in).
+                    response = await asyncio.wait_for(
+                        self._resilient_round(_round),
+                        timeout=wrapup_deadline_s
+                        if wrapup_deadline_s is not None
+                        else _ROUND_DEADLINE_FALLBACK_S,
+                    )
                 except anthropic.APIError as exc:
                     log.engine.error(
                         "[anthropic] complete_with_tools: API error",
+                        exc_info=exc,
+                        extra={"_fields": {
+                            "provider": self._name,
+                            "duration_ms": (time.monotonic() - _t_call) * 1000,
+                        }},
+                    )
+                    raise ProviderError(self._name, exc) from exc
+                except TimeoutError as exc:
+                    log.engine.error(
+                        "[anthropic] complete_with_tools: round exceeded deadline — hung provider call",
                         exc_info=exc,
                         extra={"_fields": {
                             "provider": self._name,
