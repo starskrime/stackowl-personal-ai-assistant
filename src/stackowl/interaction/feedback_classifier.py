@@ -157,7 +157,7 @@ class FeedbackClassifier:
         self,
         provider_registry: ProviderRegistry,
         *,
-        timeout_s: float = 45.0,
+        timeout_s: float = 10.0,
         abstain_threshold: float = 0.5,
     ) -> None:
         self._registry = provider_registry
