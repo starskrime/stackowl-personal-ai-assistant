@@ -184,10 +184,18 @@ def compute_next_run(
         extra={"_fields": {"schedule": schedule, "tz": tz}},
     )
     if schedule.startswith("daily@"):
-        parts = schedule[len("daily@") :].split(":")
-        hour = int(parts[0])
-        minute = int(parts[1]) if len(parts) > 1 else 0
-        return _next_local_hhmm(hour, minute, tz=tz, now=now)
+        from stackowl.tools.scheduling.cron_helpers import parse_daily_hhmm
+
+        parsed = parse_daily_hhmm(schedule)
+        if parsed is not None:
+            hour, minute = parsed
+            return _next_local_hhmm(hour, minute, tz=tz, now=now)
+        log.scheduler.warning(
+            "[scheduler] compute_next_run: malformed daily@ body — falling through",
+            extra={"_fields": {"schedule": schedule}},
+        )
+        # Falls through to the cron/other-form attempts below; if none match,
+        # the existing try/except cron branch's own fallback applies.
     at_hhmm = parse_at(schedule)
     if at_hhmm is not None:
         hour, minute = at_hhmm
