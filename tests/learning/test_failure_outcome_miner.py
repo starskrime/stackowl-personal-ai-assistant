@@ -373,3 +373,66 @@ async def test_mine_no_gate_wired_fails_closed(miner_env) -> None:
     report = await miner.mine({verdict.key: verdict})
     assert report.n_skills_written == 0
     assert not (root / "learned" / verdict.skill_name).exists()
+
+
+# ---------- round 3: real ConsentAssembly wiring + collision avoidance -----
+
+
+async def test_mine_writes_via_real_consent_assembly_no_prompt(miner_env) -> None:
+    """Whole-branch review Critical fix: with the AUTO tier seeded for this
+    miner's scheduled identity by the REAL ConsentAssembly.build, the miner
+    must actually write with NO human prompt ever consulted, while
+    security_scan_gate (not mocked here) still runs for real. Mirrors Task 4's
+    test_scheduled_write_auto_trusted_via_real_consent_assembly for the
+    sibling SkillSynthesizer."""
+    from unittest.mock import MagicMock
+
+    from stackowl.tools.consent_assembly import ConsentAssembly
+
+    db, root, store = miner_env
+    await _seed_failures(db, n=3)
+
+    components = ConsentAssembly.build(MagicMock())
+
+    async def _boom(_req: object) -> None:
+        raise AssertionError("prompter must NOT be consulted for an AUTO-tiered identity")
+
+    components.routing_prompter.prompt = _boom  # type: ignore[method-assign]
+
+    miner = FailureOutcomeMiner(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        skills_root=root, consent_gate=components.consent_gate, min_evidence=3,
+    )
+    verdict = _verdict()
+    report = await miner.mine({verdict.key: verdict})
+    assert report.n_skills_written == 1
+    assert (root / "learned" / "web-fetch-timeout-fix" / "SKILL.md").exists()
+
+
+async def test_author_one_collision_does_not_overwrite_existing_skill(miner_env) -> None:
+    """Whole-branch review Important fix: verdict.skill_name colliding with an
+    existing (unrelated) learned skill must NOT overwrite it — mirrors
+    SkillSynthesizer._synthesize_one's `<name>`/`<name>-1`/... pattern."""
+    db, root, store = miner_env
+    existing_dir = root / "learned" / "web-fetch-timeout-fix"
+    existing_dir.mkdir(parents=True)
+    sentinel = "---\nname: web-fetch-timeout-fix\ndescription: pre-existing, unrelated\n---\n\nDO NOT OVERWRITE\n"
+    (existing_dir / "SKILL.md").write_text(sentinel, encoding="utf-8")
+
+    await _seed_failures(db, n=3)
+    miner = FailureOutcomeMiner(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        skills_root=root, consent_gate=_allow_gate("failure_outcome_miner_scheduled"),
+        min_evidence=3,
+    )
+    verdict = _verdict()  # skill_name="web-fetch-timeout-fix" — collides
+    report = await miner.mine({verdict.key: verdict})
+    assert report.n_skills_written == 1
+
+    # The pre-existing file is untouched.
+    assert (existing_dir / "SKILL.md").read_text(encoding="utf-8") == sentinel
+    # The new skill landed at the next free slug instead.
+    new_dir = root / "learned" / "web-fetch-timeout-fix-1"
+    assert new_dir.exists()
+    assert "name: web-fetch-timeout-fix-1" in (new_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert await store.get("learned", "web-fetch-timeout-fix-1") is not None

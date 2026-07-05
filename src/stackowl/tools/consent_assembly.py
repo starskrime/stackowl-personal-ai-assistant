@@ -65,9 +65,22 @@ class ConsentAssembly:
         # skips the human PROMPT. The LIVE identity (used when a human IS present,
         # e.g. the synthesize_skills tool mid-turn) is deliberately NOT in this
         # dict — it stays on normal ALWAYS_ASK consent.
+        # Task 5 review (whole-branch pass, same user decision as Task 4) —
+        # FailureOutcomeMiner is ALSO genuinely unattended: it is only ever
+        # invoked from a scheduler tick (IncidentEscalationHandler._consume_verdict),
+        # never a live turn, so its scheduled identity gets the SAME auto-trust.
+        # Without this it was silently DENIED every time (ALWAYS_ASK -> no
+        # "scheduler" prompter registered -> fail closed) even though
+        # security_scan_gate still runs unconditionally regardless of tier.
+        from stackowl.learning.failure_outcome_miner import (
+            _CONSENT_TOOL_NAME_SCHEDULED as _FAILURE_MINER_CONSENT_TOOL_NAME_SCHEDULED,
+        )
         from stackowl.skills.synthesizer import _CONSENT_TOOL_NAME_SCHEDULED
 
-        tiers = {_CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO}
+        tiers = {
+            _CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO,
+            _FAILURE_MINER_CONSENT_TOOL_NAME_SCHEDULED: TrustTier.AUTO,
+        }
         consent_gate = ConsequentialActionGate(
             ConsentPolicy(prompter=routing_prompter, audit_logger=audit_logger, tiers=tiers)
         )

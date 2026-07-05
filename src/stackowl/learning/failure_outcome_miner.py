@@ -336,10 +336,22 @@ class FailureOutcomeMiner:
             "[incident] miner.author_one: entry",
             extra={"_fields": {"skill_name": verdict.skill_name, "cluster_size": cluster.size}},
         )
+        # Collision avoidance — mirrors SkillSynthesizer._synthesize_one's exact
+        # pattern (skills/synthesizer.py): verdict.skill_name is caller-proposed
+        # (an LLM/RCA-session slug in production) and may already name an
+        # existing, possibly unrelated, learned skill. Pick the first free
+        # `<name>`/`<name>-1`/`<name>-2`/... directory rather than letting
+        # gated_skill_write's mkdir(exist_ok=True) + write_text silently
+        # overwrite it (real data loss).
         target_dir = self._root / "learned" / verdict.skill_name
+        i = 1
+        while target_dir.exists():
+            target_dir = self._root / "learned" / f"{verdict.skill_name}-{i}"
+            i += 1
+        final_name = target_dir.name
         try:
             manifest = SkillManifest(
-                name=verdict.skill_name,
+                name=final_name,
                 description=verdict.description[:300],
                 when_to_use=verdict.when_to_use[:300],
                 version="0.1.0",
@@ -359,7 +371,7 @@ class FailureOutcomeMiner:
                 target_dir=target_dir, manifest=manifest, body=body,
                 skill_md_text=skill_md_text,
                 consent_summary=(
-                    f"Auto-author incident-fix skill '{verdict.skill_name}' from a "
+                    f"Auto-author incident-fix skill '{final_name}' from a "
                     f"{cluster.size}-failure cluster "
                     f"(capability={cluster.capability_class}, "
                     f"failure_class={cluster.failure_class})"
@@ -370,7 +382,7 @@ class FailureOutcomeMiner:
         except Exception as exc:  # B5 — never raise out of a mining pass
             log.skills.warning(
                 "[incident] miner.author_one: authoring prep failed — skipping",
-                exc_info=exc, extra={"_fields": {"skill_name": verdict.skill_name}},
+                exc_info=exc, extra={"_fields": {"skill_name": final_name}},
             )
             return False
 
@@ -380,12 +392,12 @@ class FailureOutcomeMiner:
         if not result.ok:
             log.skills.warning(
                 "[incident] miner.author_one: gated write refused — skipping",
-                extra={"_fields": {"skill_name": verdict.skill_name, "reason": result.reason}},
+                extra={"_fields": {"skill_name": final_name, "reason": result.reason}},
             )
             return False
         log.skills.info(
             "[incident] miner.author_one: exit — written + indexed",
-            extra={"_fields": {"skill_name": verdict.skill_name}},
+            extra={"_fields": {"skill_name": final_name}},
         )
         return True
 

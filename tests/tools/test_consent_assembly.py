@@ -49,3 +49,22 @@ def test_scheduled_skill_synthesizer_identity_is_auto_trusted() -> None:
     tiers = components.consent_gate.policy.tiers
     assert tiers.get(_CONSENT_TOOL_NAME_SCHEDULED) is TrustTier.AUTO
     assert _CONSENT_TOOL_NAME_LIVE not in tiers
+
+
+def test_scheduled_failure_outcome_miner_identity_is_auto_trusted() -> None:
+    """Whole-branch review finding (same user decision as Task 4): the
+    FailureOutcomeMiner is ALSO genuinely unattended (only ever invoked from
+    a scheduler tick, never a live turn), so its DEDICATED scheduled identity
+    must be seeded with TrustTier.AUTO here too — symmetrically with the
+    SkillSynthesizer's. Before this fix the identity was absent from `tiers`,
+    so every incident-skill write was silently DENIED (ALWAYS_ASK -> no
+    "scheduler" prompter registered -> fail closed)."""
+    from stackowl.learning.failure_outcome_miner import (
+        _CONSENT_TOOL_NAME_LIVE,
+        _CONSENT_TOOL_NAME_SCHEDULED,
+    )
+
+    components = ConsentAssembly.build(MagicMock())
+    tiers = components.consent_gate.policy.tiers
+    assert tiers.get(_CONSENT_TOOL_NAME_SCHEDULED) is TrustTier.AUTO
+    assert _CONSENT_TOOL_NAME_LIVE not in tiers
