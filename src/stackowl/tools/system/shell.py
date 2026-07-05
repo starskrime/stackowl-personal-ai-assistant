@@ -449,6 +449,7 @@ async def run_argv(
     workdir: str | None = None,
     timeout_sec: float = _TIMEOUT_SEC,
     shell_command: str | None = None,
+    intent: str = "write",
 ) -> ToolResult:
     """Run a command through the shared subprocess boundary.
 
@@ -457,6 +458,16 @@ async def run_argv(
     consent path, then the spawn, timeout, and OSError handling, with 4-point
     logging. Honors the workspace-CWD default (no ``workdir`` → workspace). Never
     raises — every failure becomes a structured failed :class:`ToolResult`.
+
+    ``intent`` is the CALLER's per-invocation declaration of what the command does:
+    ``"read"`` for a read-only probe/query (``curl -sI``, ``test -f``, ``grep``),
+    ``"write"`` (default — conservative, byte-identical to the historical behavior)
+    for anything that installs/writes/sends/mutates. It sets the returned
+    ``side_effect_committed`` so a FAILED read-only probe is not miscounted as a
+    failed mutation by the honest give-up floor. The declaration is NOT trusted
+    over reality: a command that redirects stdout to a named file is an OBSERVABLE
+    write and is treated as a write regardless of ``intent`` (anti-gaming, mirroring
+    the base :class:`Tool` demoting a self-asserted ``verified=True``).
 
     Two execution modes:
 
@@ -479,8 +490,24 @@ async def run_argv(
     rendered = " ".join(argv)
     log.tool.debug(
         "shell.execute: entry",
-        extra={"_fields": {"command": rendered[:200], "timeout_sec": timeout_sec}},
+        extra={"_fields": {"command": rendered[:200], "timeout_sec": timeout_sec, "intent": intent}},
     )
+
+    # PER-INVOCATION side-effect boundary (DECISION). A caller-declared read that
+    # names no output file crosses no side-effect boundary → committed=False, so a
+    # FAILED read-only probe is not miscounted as a failed mutation by the honest
+    # give-up floor. Anti-gaming: a stdout redirect to a named file is an OBSERVABLE
+    # write that REFUTES a 'read' declaration — reality wins over the self-report.
+    # (Redirects are inert under exec mode, so the refutation only applies to a real
+    # shell command, mirroring the F-31 artifact_path logic below.)
+    has_named_write = shell_command is not None and _redirect_target(argv) is not None
+    read_only = intent == "read" and not has_named_write
+    committed = not read_only
+    if intent == "read":
+        log.tool.debug(
+            "shell.execute: read-only intent declared",
+            extra={"_fields": {"honored": read_only, "named_write": has_named_write}},
+        )
 
     # CATASTROPHIC gate — every command runs silently EXCEPT a narrow set of
     # system-destroying shapes, which require the user's explicit approval.
@@ -517,12 +544,16 @@ async def run_argv(
             extra={"_fields": {"command": rendered[:100], "timeout_sec": timeout_sec, "duration_ms": duration_ms}},
         )
         return ToolResult(
-            success=False, output="", error=f"Command timed out after {timeout_sec}s", duration_ms=duration_ms
+            success=False, output="", error=f"Command timed out after {timeout_sec}s",
+            duration_ms=duration_ms, side_effect_committed=committed,
         )
     except OSError as exc:
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.error("shell.execute: OS error", exc_info=exc, extra={"_fields": {"command": rendered[:100]}})
-        return ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
+        return ToolResult(
+            success=False, output="", error=str(exc),
+            duration_ms=duration_ms, side_effect_committed=committed,
+        )
 
     duration_ms = (time.monotonic() - t0) * 1000
     success = proc.returncode == 0
@@ -556,6 +587,7 @@ async def run_argv(
     return ToolResult(
         success=success, output=output, error=error,
         duration_ms=duration_ms, artifact_path=artifact_path,
+        side_effect_committed=committed,
     )
 
 
@@ -628,6 +660,21 @@ class ShellTool(Tool):
                         "Raise it for longer installs/downloads/builds."
                     ),
                 },
+                "intent": {
+                    "type": "string",
+                    "enum": ["read", "write"],
+                    "description": (
+                        "What the command DOES (optional; default 'write'). Set "
+                        "'read' for a read-only probe or query that only inspects "
+                        "state — e.g. curl -sI, test -f, ls, cat, grep, git status. "
+                        "Set 'write' (or omit) for anything that installs, downloads, "
+                        "writes/deletes files, sends, or otherwise mutates. This only "
+                        "affects how a FAILED command is judged: a failed 'read' probe "
+                        "is treated as a normal empty/negative answer, not a failed "
+                        "action. Declaring 'read' for a command that redirects output "
+                        "to a file has no effect — that is still a write."
+                    ),
+                },
             },
             "required": ["command"],
         }
@@ -654,6 +701,11 @@ class ShellTool(Tool):
         # expect it. An explicit non-empty workdir still wins.
         workdir = str(kwargs.get("workdir", "")) or None
         timeout_sec = _resolve_timeout(kwargs.get("timeout"))
+        # Per-call intent (caller-declared). Unknown/absent → 'write' (conservative,
+        # byte-identical to the historical static severity). See run_argv.
+        intent = str(kwargs.get("intent", "write")).strip().lower()
+        if intent not in ("read", "write"):
+            intent = "write"
         try:
             args = shlex.split(command)
         except ValueError as exc:
@@ -672,4 +724,5 @@ class ShellTool(Tool):
             workdir=workdir,
             timeout_sec=timeout_sec,
             shell_command=command,
+            intent=intent,
         )
