@@ -858,6 +858,8 @@ def _delegation_failed_with_no_answer(state: PipelineState) -> bool:
             parsed = json.loads(tc.result)
         except (json.JSONDecodeError, ValueError):
             continue
+        if not isinstance(parsed, dict):
+            continue  # unexpected shape (e.g. a bare JSON array) — skip, never raise
         record = parsed.get("record")
         if not isinstance(record, dict):
             continue

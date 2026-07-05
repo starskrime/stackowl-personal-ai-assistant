@@ -22,15 +22,12 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from stackowl.pipeline.delivery_gate import (
     _delegation_failed_with_no_answer,
     detect_critical_failure,
 )
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
-
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -152,6 +149,25 @@ def test_none_result_does_not_crash() -> None:
         tool_name="delegate_task",
         args={},
         result=None,
+        error=None,
+        duration_ms=0.0,
+    )
+    state = PipelineState(
+        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        owl_name="secretary", pipeline_step="execute",
+        tool_calls=(tc,),
+    )
+    assert _delegation_failed_with_no_answer(state) is False
+
+
+def test_bare_json_array_result_does_not_crash() -> None:
+    """A tool result that parses to a JSON array (not an object) must be
+    skipped, not crash on .get() — live incident: AttributeError('list' object
+    has no attribute 'get') at the record = parsed.get("record") line."""
+    tc = ToolCall(
+        tool_name="skill_manage",
+        args={"action": "list"},
+        result=json.dumps(["skill_a", "skill_b"]),
         error=None,
         duration_ms=0.0,
     )
