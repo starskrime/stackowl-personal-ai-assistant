@@ -92,6 +92,25 @@ class SocketChannelAdapter(ChannelAdapter):
             )
         )
 
+    async def send_ephemeral(self, chat_id: str | int, text: str) -> int:
+        """Emit ``text`` as a normal SendTextFrame — the health-canary path.
+
+        ponytail: the real telegram adapter's ``send_ephemeral`` sends silent
+        (muted) and returns a real message_id so the caller can delete it
+        after confirming the send path works. The existing SendTextFrame
+        protocol is fire-and-forget (no reply frame — same tradeoff already
+        accepted for ``send_text``/``send_file`` in this class), so a message
+        sent cross-process cannot be silenced or deleted from here. The
+        caller's cleanup (``ProactiveDeliverer._best_effort_delete``) already
+        tolerates a delete failure as cosmetic-only, so returning a sentinel
+        id is safe — it just means the canary's probe message stays visible
+        instead of self-deleting. Upgrade path: a correlated ack/reply frame
+        carrying the gateway's real message_id, same as the send-outcome
+        upgrade noted in ``register_socket_channel_proxies``.
+        """
+        await self.send_text(text, chat_id=chat_id)
+        return -1
+
     async def send_clarify(
         self,
         session_id: str,

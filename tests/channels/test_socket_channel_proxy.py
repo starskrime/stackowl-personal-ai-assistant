@@ -97,6 +97,28 @@ async def test_proxy_resolves_and_emits_frame_across_socket() -> None:
 
 
 @pytest.mark.asyncio
+async def test_proxy_send_ephemeral_does_not_crash_the_canary() -> None:
+    """telegram_canary's health-canary send calls send_ephemeral(chat_id, text)
+    on whatever adapter it resolves — a proxy missing this method crashed the
+    canary every 20m in production (AttributeError). The proxy can't silence
+    or self-delete cross-process (no ack frame back), but it MUST still send
+    the text and return an int id rather than raising."""
+    registry = ChannelRegistry()
+    conn = _FakeConn()
+    register_socket_channel_proxies(registry, cast(FrameConnection, conn), _settings(telegram="tok"))
+    adapter = registry.get("telegram")
+
+    message_id = await adapter.send_ephemeral(99, "canary probe")
+
+    assert isinstance(message_id, int)
+    assert len(conn.sent) == 1
+    frame = conn.sent[0]
+    assert isinstance(frame, SendTextFrame)
+    assert frame.text == "canary probe"
+    assert frame.target == 99
+
+
+@pytest.mark.asyncio
 async def test_registration_is_idempotent() -> None:
     registry = ChannelRegistry()
     conn = _FakeConn()
