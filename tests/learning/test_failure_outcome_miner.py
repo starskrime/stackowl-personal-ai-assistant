@@ -29,6 +29,7 @@ from stackowl.learning.failure_outcome_miner import (
     FailureCluster,
     FailureOutcomeMiner,
     RcaVerdict,
+    _canonical_incident_slug,
     cluster_failures_by_capability_and_signature,
 )
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
@@ -51,6 +52,24 @@ def _outcome(
         quality_score=quality, step_durations={}, input_text="in",
         response_text="out", captured_at=time.time(),
         scored_at=time.time() if quality is not None else None,
+    )
+
+
+def _outcome_with_sequence(
+    trace_id: str, tool_sequence: tuple[str, ...], failure_class: str | None,
+    *, failed_capability: str | None = None,
+) -> TaskOutcome:
+    """Like :func:`_outcome` but with an explicit multi-tool ``tool_sequence``
+    (one task, several tool calls). ``failed_capability`` (default None) names
+    the ONE tool/capability that actually failed this turn; historical rows
+    have it None and fall back to co-occurrence crediting."""
+    return TaskOutcome(
+        outcome_id=0, trace_id=trace_id, session_id="s", owl_name="o",
+        channel="cli", success=failure_class is None, latency_ms=100.0,
+        tool_call_count=len(tool_sequence), tool_sequence=tool_sequence,
+        failure_class=failure_class, quality_score=None, step_durations={},
+        input_text="in", response_text="out", captured_at=time.time(),
+        scored_at=None, failed_capability=failed_capability,
     )
 
 
@@ -106,6 +125,84 @@ def test_cluster_below_threshold_is_dropped() -> None:
         _outcome("2", "web_fetch", "ToolTimeoutError"),
     ]
     assert cluster_failures_by_capability_and_signature(outs, min_size=3) == []
+
+
+def test_cluster_counts_one_outcome_once_even_with_repeated_tool_in_sequence() -> None:
+    """A single task can call the same tool many times in one turn (retries,
+    a multi-step plan) while the task's overall failure_class stays one
+    verdict. Bucketing must credit that ONE outcome once per (capability,
+    failure_class) — not once per occurrence of the tool name in its
+    tool_sequence — or a single mostly-successful turn (one real read_file
+    miss self-healed by five later read_file calls that all succeeded)
+    manufactures a fake multi-incident recurrence signal, and the top-N
+    evidence sample fed to the RCA ends up being N copies of the identical
+    trace/tool_sequence/input instead of N distinct incidents."""
+    repeats = _outcome_with_sequence(
+        "1", ("read_file", "shell", "read_file", "read_file"), "unachieved_effect",
+    )
+    others = [_outcome(str(i), "read_file", "unachieved_effect") for i in (2, 3)]
+    clusters = cluster_failures_by_capability_and_signature(
+        [repeats, *others], min_size=3,
+    )
+    assert len(clusters) == 1
+    assert clusters[0].size == 3  # 1 (deduped) + 2, never 5 (1x3 + 2x1)
+
+
+def test_cluster_uses_failed_capability_when_present_not_every_tool() -> None:
+    """Root-cause fix: a turn-level ``unachieved_effect`` verdict must be
+    credited ONLY to the capability that actually failed (``failed_capability``),
+    never fanned out to every innocent tool that merely co-occurred in the
+    turn's ``tool_sequence``. Here skill_manage is the real failure; tool_search
+    and tool_describe just ran in the same failed turn and must get NO cluster."""
+    outs = [
+        _outcome_with_sequence(
+            str(i), ("tool_search", "skill_manage", "tool_describe"),
+            "unachieved_effect", failed_capability="skill_manage",
+        )
+        for i in range(3)
+    ]
+    clusters = cluster_failures_by_capability_and_signature(outs, min_size=3)
+    assert {c.key for c in clusters} == {("skill_manage", "unachieved_effect")}
+    assert clusters[0].size == 3
+    # the innocent co-occurring tools were never credited
+    assert all(c.capability_class == "skill_manage" for c in clusters)
+
+
+def test_cluster_failed_capability_resolves_via_tag_lookup() -> None:
+    """``failed_capability`` is a bare tool name; it still resolves through the
+    capability_tag lookup so sibling tools combine on the capability grain."""
+    tag_lookup = {"web_fetch": "web_knowledge", "browser_browse": "web_knowledge"}.get
+    outs = [
+        _outcome_with_sequence(
+            "1", ("shell", "web_fetch"), "ToolTimeoutError", failed_capability="web_fetch",
+        ),
+        _outcome_with_sequence(
+            "2", ("shell", "browser_browse"), "ToolTimeoutError",
+            failed_capability="browser_browse",
+        ),
+        _outcome_with_sequence(
+            "3", ("web_fetch",), "ToolTimeoutError", failed_capability="web_fetch",
+        ),
+    ]
+    clusters = cluster_failures_by_capability_and_signature(
+        outs, min_size=3, capability_tag_lookup=tag_lookup,
+    )
+    assert {c.key for c in clusters} == {("web_knowledge", "ToolTimeoutError")}
+    assert clusters[0].size == 3  # shell never credited despite co-occurring
+
+
+def test_cluster_falls_back_to_cooccurrence_when_no_failed_capability() -> None:
+    """Historical rows (``failed_capability`` None) keep the old credit-all
+    co-occurrence behavior — old data keeps signal, just less precise. Each
+    outcome is credited at most once per capability (no double-count on a
+    repeated tool)."""
+    outs = [
+        _outcome_with_sequence(str(i), ("a", "b", "a"), "X", failed_capability=None)
+        for i in range(3)
+    ]
+    clusters = cluster_failures_by_capability_and_signature(outs, min_size=3)
+    assert {c.key for c in clusters} == {("a", "X"), ("b", "X")}
+    assert all(c.size == 3 for c in clusters)  # 3 distinct outcomes, not 6
 
 
 def test_cluster_ignores_empty_tool_sequence() -> None:
@@ -271,13 +368,14 @@ async def test_mine_authors_skill_for_verified_verdict(miner_env) -> None:
     report = await miner.mine({verdict.key: verdict})
     assert report.n_clusters_found == 1
     assert report.n_skills_written == 1
-    written = root / "learned" / "web-fetch-timeout-fix" / "SKILL.md"
+    slug = _canonical_incident_slug(verdict.capability_class, verdict.failure_class)
+    written = root / "learned" / slug / "SKILL.md"
     assert written.exists()
     text = written.read_text(encoding="utf-8")
-    assert "name: web-fetch-timeout-fix" in text
+    assert f"name: {slug}" in text
     assert "IPv6-only" in text
     assert "Force IPv4" in text
-    sk = await store.get("learned", "web-fetch-timeout-fix")
+    sk = await store.get("learned", slug)
     assert sk is not None
 
 
@@ -299,7 +397,8 @@ async def test_mine_combines_sibling_capability_via_lookup(miner_env) -> None:
     report = await miner.mine({verdict.key: verdict})
     assert report.n_clusters_found == 1
     assert report.n_skills_written == 1
-    assert (root / "learned" / "web-knowledge-timeout-fix" / "SKILL.md").exists()
+    slug = _canonical_incident_slug(verdict.capability_class, verdict.failure_class)
+    assert (root / "learned" / slug / "SKILL.md").exists()
 
 
 async def test_mine_skips_cluster_without_verdict(miner_env) -> None:
@@ -406,17 +505,27 @@ async def test_mine_writes_via_real_consent_assembly_no_prompt(miner_env) -> Non
     verdict = _verdict()
     report = await miner.mine({verdict.key: verdict})
     assert report.n_skills_written == 1
-    assert (root / "learned" / "web-fetch-timeout-fix" / "SKILL.md").exists()
+    slug = _canonical_incident_slug(verdict.capability_class, verdict.failure_class)
+    assert (root / "learned" / slug / "SKILL.md").exists()
 
 
-async def test_author_one_collision_does_not_overwrite_existing_skill(miner_env) -> None:
-    """Whole-branch review Important fix: verdict.skill_name colliding with an
-    existing (unrelated) learned skill must NOT overwrite it — mirrors
-    SkillSynthesizer._synthesize_one's `<name>`/`<name>-1`/... pattern."""
+async def test_author_one_skips_when_incident_already_has_a_skill(miner_env) -> None:
+    """A still-open incident re-triggers a mining pass on every scheduler tick
+    until IncidentEscalationHandler's (in-memory-only) dedup closes it — and
+    that dedup resets on every process restart. Identity is keyed on the
+    incident's OWN (capability_class, failure_class), never on
+    verdict.skill_name (an RCA verifier's free-text proposal, not guaranteed
+    identical across separate runs for the same incident) — so a second
+    mining pass for the SAME incident must skip authoring entirely rather
+    than suffix-bump to a duplicate `<name>-1`/`<name>-2`/... (the bug that
+    produced 20 near-identical `*_loop_breaker*` skills in production)."""
     db, root, store = miner_env
-    existing_dir = root / "learned" / "web-fetch-timeout-fix"
+    verdict = _verdict(skill_name="a-completely-different-proposed-name")
+    existing_dir = root / "learned" / _canonical_incident_slug(
+        verdict.capability_class, verdict.failure_class,
+    )
     existing_dir.mkdir(parents=True)
-    sentinel = "---\nname: web-fetch-timeout-fix\ndescription: pre-existing, unrelated\n---\n\nDO NOT OVERWRITE\n"
+    sentinel = f"---\nname: {existing_dir.name}\ndescription: already learned\n---\n\nDO NOT OVERWRITE\n"
     (existing_dir / "SKILL.md").write_text(sentinel, encoding="utf-8")
 
     await _seed_failures(db, n=3)
@@ -425,14 +534,9 @@ async def test_author_one_collision_does_not_overwrite_existing_skill(miner_env)
         skills_root=root, consent_gate=_allow_gate("failure_outcome_miner_scheduled"),
         min_evidence=3,
     )
-    verdict = _verdict()  # skill_name="web-fetch-timeout-fix" — collides
     report = await miner.mine({verdict.key: verdict})
-    assert report.n_skills_written == 1
+    assert report.n_skills_written == 0
 
-    # The pre-existing file is untouched.
+    # The pre-existing skill is untouched — no overwrite, no duplicate.
     assert (existing_dir / "SKILL.md").read_text(encoding="utf-8") == sentinel
-    # The new skill landed at the next free slug instead.
-    new_dir = root / "learned" / "web-fetch-timeout-fix-1"
-    assert new_dir.exists()
-    assert "name: web-fetch-timeout-fix-1" in (new_dir / "SKILL.md").read_text(encoding="utf-8")
-    assert await store.get("learned", "web-fetch-timeout-fix-1") is not None
+    assert not (root / "learned" / "a-completely-different-proposed-name").exists()

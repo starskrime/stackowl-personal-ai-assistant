@@ -1,0 +1,12 @@
+-- Migration 0078: add failed_capability to task_outcomes
+-- Root cause: cluster_failures_by_capability_and_signature (failure_outcome_miner.py)
+-- previously credited a turn-level failure_class to EVERY tool named in
+-- tool_sequence, not just the one that actually failed -- innocent co-occurring
+-- tools (e.g. tool_search, tool_describe) got blamed alongside the real
+-- offender (e.g. skill_manage). The actually-failed capability is already
+-- derived at delivery time (supervisor.py's honest give-up floor) but was never
+-- persisted. Nullable, default NULL: only stamped when the failed capability is
+-- known this turn; historical rows stay NULL and the miner falls back to its
+-- old co-occurrence-credit-all behavior for them (no regression, just less
+-- precise signal on old data).
+ALTER TABLE task_outcomes ADD COLUMN failed_capability TEXT

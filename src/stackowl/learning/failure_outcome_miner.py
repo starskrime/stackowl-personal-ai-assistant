@@ -61,6 +61,7 @@ tests).
 
 from __future__ import annotations
 
+import re
 import time
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -171,6 +172,30 @@ class FailureCluster:
         return (self.capability_class, self.failure_class)
 
 
+_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
+_LEADING_NON_ALPHA_RE = re.compile(r"^[^a-z]+")
+
+
+def _canonical_incident_slug(capability_class: str, failure_class: str) -> str:
+    """Deterministic per-incident identity slug — same formula as
+    ``staged_rca._slugify``'s fallback (ponytail: duplicated, not imported —
+    that module's private helper is a cross-module boundary this task
+    doesn't own; same one-line formula, kept in sync by inspection).
+
+    Used as the skill's on-disk directory name so a still-open incident gets
+    exactly ONE authored skill no matter how many mining passes fire for it
+    (across scheduler ticks, or across a process restart — see
+    ``_author_one``): identity is keyed on the incident's
+    ``(capability_class, failure_class)``, never on the LLM's freely-proposed
+    ``verdict.skill_name`` — an RCA verifier prompted twice for the same
+    incident is not guaranteed to propose the same name text twice.
+    """
+    raw = f"incident_{capability_class}_{failure_class}"
+    slug = _SLUG_RE.sub("_", raw.strip().lower())
+    slug = _LEADING_NON_ALPHA_RE.sub("", slug).strip("_-")
+    return slug or "incident_fix"
+
+
 def _capability_class_for(tool: str, tag_lookup: CapabilityTagLookup | None) -> str:
     """Resolve *tool*'s clustering key: its registered ``capability_tag``, or
     the raw tool name when none is registered (documented fallback — a tool
@@ -187,23 +212,35 @@ def cluster_failures_by_capability_and_signature(
 ) -> list[FailureCluster]:
     """Bucket FAILED outcomes by ``(capability_class, failure_class)``.
 
-    ``capability_class`` is each tool's ``capability_tag`` (resolved via
-    *capability_tag_lookup*, e.g. from a live ``ToolRegistry`` — see module
-    docstring), falling back to the raw tool name when no tag is registered.
-    This mirrors :class:`~stackowl.learning.tool_outcome_miner.ToolOutcomeMiner`'s
-    per-tool bucketing shape (one credit per tool named in ``tool_sequence``)
-    but for the failure side, on the capability grain the self-heal
-    substitution layer already uses: only outcomes with a non-``None``
-    ``failure_class`` are considered at all, and a bucket only survives if it
-    has ``>= min_size`` members — the same evidence-count gate the success
-    miner uses (``_MIN_EVIDENCE``), applied to the opposite data.
+    ``capability_class`` resolves via *capability_tag_lookup* (falling back to
+    the raw tool name when no tag is registered — see module docstring).
+
+    Root-cause fix (migration 0078): ``failure_class`` is a property of the
+    whole TASK, not of each tool call — crediting it to every tool named in
+    ``tool_sequence`` blames innocent tools that merely co-occurred with the
+    real offender in the same failed turn. When ``o.failed_capability`` is
+    known, the outcome is credited ONLY to that single capability. When it is
+    ``None`` (historical rows captured before this field existed, or any turn
+    where it genuinely couldn't be determined), this falls back to the OLD
+    co-occurrence behavior — crediting every distinct capability named in
+    ``tool_sequence`` — so old data keeps its (less precise) signal instead of
+    dropping to zero. Either way, one outcome contributes at most once per
+    ``(capability, failure_class)`` bucket, no matter how many times that
+    capability's tool appears in ``tool_sequence``. A bucket only survives if
+    it has ``>= min_size`` DISTINCT outcomes — the same evidence-count gate
+    the success miner uses (``_MIN_EVIDENCE``), applied to the opposite data.
     """
     buckets: dict[tuple[str, str], list[TaskOutcome]] = defaultdict(list)
     for o in outcomes:
         if not o.failure_class or not o.tool_sequence:
             continue
-        for tool in o.tool_sequence:
-            capability = _capability_class_for(tool, capability_tag_lookup)
+        if o.failed_capability:
+            capabilities = {_capability_class_for(o.failed_capability, capability_tag_lookup)}
+        else:
+            capabilities = {
+                _capability_class_for(tool, capability_tag_lookup) for tool in o.tool_sequence
+            }
+        for capability in capabilities:
             buckets[(capability, o.failure_class)].append(o)
     return [
         FailureCluster(capability_class=key[0], failure_class=key[1], outcomes=tuple(members))
@@ -336,18 +373,33 @@ class FailureOutcomeMiner:
             "[incident] miner.author_one: entry",
             extra={"_fields": {"skill_name": verdict.skill_name, "cluster_size": cluster.size}},
         )
-        # Collision avoidance — mirrors SkillSynthesizer._synthesize_one's exact
-        # pattern (skills/synthesizer.py): verdict.skill_name is caller-proposed
-        # (an LLM/RCA-session slug in production) and may already name an
-        # existing, possibly unrelated, learned skill. Pick the first free
-        # `<name>`/`<name>-1`/`<name>-2`/... directory rather than letting
-        # gated_skill_write's mkdir(exist_ok=True) + write_text silently
-        # overwrite it (real data loss).
-        target_dir = self._root / "learned" / verdict.skill_name
-        i = 1
-        while target_dir.exists():
-            target_dir = self._root / "learned" / f"{verdict.skill_name}-{i}"
-            i += 1
+        # Identity-scoped dedup — a still-open incident (the SAME
+        # (capability_class, failure_class)) re-triggers a mining pass on every
+        # scheduler tick until IncidentEscalationHandler's dedup closes it, AND
+        # that dedup state is in-memory only (reset on every process restart).
+        # Without this check, each re-trigger authored ANOTHER near-identical
+        # skill because ``verdict.skill_name`` is LLM-proposed free text (not
+        # guaranteed identical across RCA runs for the same incident) and the
+        # old collision-avoidance loop treated any name clash as "unrelated,
+        # pick the next free suffix" — producing e.g. shell_retry_loop_breaker
+        # through -13 for ONE recurring incident. Keying the directory name on
+        # the incident's OWN (capability_class, failure_class) instead of the
+        # proposed name makes a second mining pass for the same incident a
+        # real, detectable collision: skip authoring, don't suffix-bump.
+        target_dir = self._root / "learned" / _canonical_incident_slug(
+            cluster.capability_class, cluster.failure_class,
+        )
+        if target_dir.exists():
+            log.skills.info(
+                "[incident] miner.author_one: skill already exists for this "
+                "incident — skip (no duplicate authored)",
+                extra={"_fields": {
+                    "capability_class": cluster.capability_class,
+                    "failure_class": cluster.failure_class,
+                    "existing_dir": target_dir.name,
+                }},
+            )
+            return False
         final_name = target_dir.name
         try:
             manifest = SkillManifest(

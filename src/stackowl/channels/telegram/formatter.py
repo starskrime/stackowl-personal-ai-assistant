@@ -72,9 +72,17 @@ def escape_md(text: str) -> str:
 _GFM_FENCE_RE = re.compile(r"```.*?```", re.DOTALL | re.UNICODE)
 _GFM_INLINE_CODE_RE = re.compile(r"`[^`]*`", re.UNICODE)
 _GFM_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
-_GFM_BOLD_UNDER_RE = re.compile(r"__(.+?)__", re.DOTALL | re.UNICODE)
+
+# CommonMark: underscore emphasis never fires INTRAWORD (unlike asterisk,
+# which does) — "read_file" and "unachieved_effect" are snake_case
+# identifiers, not markup. Without the (?<!\w)/(?!\w) flanking guard, two
+# such identifiers on one line pair their underscores into a spurious
+# italic span, and Telegram silently eats the underscores on render (a
+# capability name displaying as "readfile"). Star-based markers keep the
+# looser un-guarded match (bold/italic-by-asterisk IS allowed intraword).
+_GFM_BOLD_UNDER_RE = re.compile(r"(?<!\w)__(.+?)__(?!\w)", re.DOTALL | re.UNICODE)
 _GFM_ITALIC_STAR_RE = re.compile(r"\*(.+?)\*", re.UNICODE)
-_GFM_ITALIC_UNDER_RE = re.compile(r"_(.+?)_", re.UNICODE)
+_GFM_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(.+?)_(?!\w)", re.UNICODE)
 _GFM_STRIKE_RE = re.compile(r"~~(.+?)~~", re.UNICODE)
 _GFM_LINK_RE = re.compile(r"\[([^\]]+)\]\((\S+?)\)", re.UNICODE)
 _GFM_HEADER_RE = re.compile(

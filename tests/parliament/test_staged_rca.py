@@ -47,7 +47,7 @@ def _evidence() -> RcaEvidence:
 @pytest.mark.asyncio
 async def test_verified_hypothesis_produces_verified_verdict() -> None:
     backend = _ScriptedBackend({
-        "evidence_gatherer": "BRIEF_MARKER: 4 timeouts on web_fetch.",
+        "rca_gatherer": "BRIEF_MARKER: 4 timeouts on web_fetch.",
         "hypothesis": (
             "SKILL_NAME: web_fetch_timeout_fix\n"
             "DESCRIPTION: Handle recurring web_fetch timeouts.\n"
@@ -80,7 +80,7 @@ async def test_verified_hypothesis_produces_verified_verdict() -> None:
 async def test_verifier_rejection_gates_the_verdict() -> None:
     """The centerpiece: an unverifiable hypothesis must NOT be rubber-stamped."""
     backend = _ScriptedBackend({
-        "evidence_gatherer": "BRIEF_MARKER: 4 timeouts on web_fetch.",
+        "rca_gatherer": "BRIEF_MARKER: 4 timeouts on web_fetch.",
         "hypothesis": (
             "SKILL_NAME: wild_guess\n"
             "DESCRIPTION: guess.\n"
@@ -108,7 +108,7 @@ async def test_stages_are_sequential_and_thread_evidence() -> None:
     """Order MUST be gatherer → hypothesis → verifier, and each later stage's
     prompt must embed the earlier output (staged, not parallel debate)."""
     backend = _ScriptedBackend({
-        "evidence_gatherer": "BRIEF_MARKER: distilled evidence here.",
+        "rca_gatherer": "BRIEF_MARKER: distilled evidence here.",
         "hypothesis": (
             "SKILL_NAME: x\nDESCRIPTION: d\nWHEN_TO_USE: w\n"
             "ROOT_CAUSE: HYPO_MARKER root cause.\nFIX: HYPO_MARKER fix."
@@ -120,11 +120,11 @@ async def test_stages_are_sequential_and_thread_evidence() -> None:
     await session.analyze(_evidence())
 
     owl_order = [c[0] for c in backend.calls]
-    assert owl_order == ["evidence_gatherer", "hypothesis", "verifier"]
+    assert owl_order == ["rca_gatherer", "hypothesis", "verifier"]
 
     prompts = {c[0]: c[1] for c in backend.calls}
     # Stage 1 sees the raw evidence marker.
-    assert "EVIDENCE_MARKER" in prompts["evidence_gatherer"]
+    assert "EVIDENCE_MARKER" in prompts["rca_gatherer"]
     # Stage 2 sees stage-1's distilled brief.
     assert "BRIEF_MARKER" in prompts["hypothesis"]
     # Stage 3 (verifier) sees BOTH the brief AND the hypothesis — it judges
@@ -135,6 +135,6 @@ async def test_stages_are_sequential_and_thread_evidence() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_evidence_stage_yields_no_verdict() -> None:
-    backend = _ScriptedBackend({"evidence_gatherer": "   "})
+    backend = _ScriptedBackend({"rca_gatherer": "   "})
     session = StagedRcaSession(backend)
     assert await session.analyze(_evidence()) is None

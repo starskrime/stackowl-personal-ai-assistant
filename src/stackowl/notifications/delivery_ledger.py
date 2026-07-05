@@ -32,11 +32,19 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only import
 
 LedgerState = Literal["dispatched", "delivered", "failed"]
 
+# A FAILED prior attempt for the same occurrence+channel is RE-CLAIMABLE (migration
+# 0055's documented intent: "A 'failed' row permits an honest retry next run"). The
+# conflict target re-arms a 'failed' row back to 'dispatched' (rowcount 1 = won), but
+# leaves a 'delivered' (exactly-once lock) or in-flight 'dispatched' row untouched
+# (WHERE false -> rowcount 0 = lost -> the caller suppresses the re-send). Without
+# this, a single transient send failure permanently burned the occurrence.
 _CLAIM_SQL = (
     "INSERT INTO delivery_attempts "
     "(job_id, occurrence_key, channel, state, created_at, updated_at) "
     "VALUES (?, ?, ?, 'dispatched', ?, ?) "
-    "ON CONFLICT(job_id, occurrence_key, channel) DO NOTHING"
+    "ON CONFLICT(job_id, occurrence_key, channel) DO UPDATE "
+    "SET state = 'dispatched', updated_at = excluded.updated_at "
+    "WHERE delivery_attempts.state = 'failed'"
 )
 _MARK_SQL = (
     "UPDATE delivery_attempts SET state = ?, updated_at = ? "
@@ -55,11 +63,14 @@ class DeliveryLedger:
     ) -> bool:
         """Atomically pre-record a ``dispatched`` row; True iff THIS caller won.
 
-        A return of ``False`` means a row for this exact occurrence+channel already
-        exists (a prior dispatch or a replay), so the caller MUST suppress the
-        re-send. Reuses the single-serialized-connection CAS primitive
-        (``execute_returning_rowcount``) — rowcount 1 = inserted (won), 0 = the
-        ``ON CONFLICT`` no-op (already dispatched, lost).
+        A return of ``False`` means a ``delivered`` (exactly-once lock) or in-flight
+        ``dispatched`` row already exists for this exact occurrence+channel, so the
+        caller MUST suppress the re-send. A prior ``failed`` attempt is instead
+        RE-CLAIMED (re-armed to ``dispatched``, returns ``True``) so a transient send
+        failure can honestly retry on a later run instead of permanently burning the
+        occurrence. Reuses the single-serialized-connection CAS primitive
+        (``execute_returning_rowcount``) — rowcount 1 = inserted-or-reclaimed (won),
+        0 = the ``ON CONFLICT`` no-op (already delivered / in-flight, lost).
         """
         # 1. ENTRY
         log.notifications.debug(

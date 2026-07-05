@@ -22,7 +22,11 @@ import pytest
 from stackowl.db.pool import DbPool
 from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.job import Job, JobResult
-from stackowl.startup.wiring_audit import WiringReport, audit_scheduler_wiring
+from stackowl.startup.wiring_audit import (
+    WiringReport,
+    audit_owl_wiring,
+    audit_scheduler_wiring,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -211,3 +215,50 @@ async def test_real_registry_has_no_unexpected_dangling_handlers(
         "Either seed the handler in SchedulerAssembly or override trigger_kind "
         "to 'on_demand'/'event'."
     )
+
+
+# --------------------------------------------------------------------------- audit_owl_wiring
+
+
+def test_audit_owl_wiring_self_heals_missing_internal_owl() -> None:
+    """The owl-side sibling of the scheduler audit: an internal module can
+    dispatch to a fixed owl name (e.g. staged_rca.RcaOwls' "verifier") without
+    it ever being registered — triage.py silently reroutes to secretary on
+    OwlNotFoundError, invisible for weeks. Missing required names must be
+    auto-registered from their fallback factory, not merely flagged."""
+    from stackowl.owls.manifest import OwlAgentManifest
+    from stackowl.owls.registry import OwlRegistry
+
+    registry = OwlRegistry.with_default_secretary()
+
+    def _make_verifier() -> OwlAgentManifest:
+        return OwlAgentManifest(
+            name="verifier", role="rca-verifier", system_prompt="skeptical check",
+            model_tier="powerful", tools=[],
+        )
+
+    report = audit_owl_wiring(registry, {"verifier": _make_verifier})
+    assert report.healed == ["verifier"]
+    assert registry.get("verifier").role == "rca-verifier"
+
+
+def test_audit_owl_wiring_skips_already_registered() -> None:
+    """An already-registered internal owl is left untouched — no re-heal,
+    no duplicate registration attempt."""
+    from stackowl.owls.manifest import OwlAgentManifest
+    from stackowl.owls.registry import OwlRegistry
+
+    registry = OwlRegistry.with_default_secretary()
+    registry.register(
+        OwlAgentManifest(
+            name="verifier", role="already-here", system_prompt="x",
+            model_tier="fast", tools=[],
+        )
+    )
+
+    def _boom() -> OwlAgentManifest:
+        raise AssertionError("must not be called — verifier is already registered")
+
+    report = audit_owl_wiring(registry, {"verifier": _boom})
+    assert report.healed == []
+    assert registry.get("verifier").role == "already-here"

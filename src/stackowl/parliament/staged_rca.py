@@ -58,7 +58,7 @@ from stackowl.pipeline.state import PipelineState
 
 # The three fixed stages. Order is load-bearing — evidence THEN hypothesis THEN
 # verify — and each owl name doubles as the ``owl_name`` the backend routes on.
-_GATHERER = "evidence_gatherer"
+_GATHERER = "rca_gatherer"  # OwlAgentManifest.name caps at 16 chars
 _HYPOTHESIS = "hypothesis"
 _VERIFIER = "verifier"
 

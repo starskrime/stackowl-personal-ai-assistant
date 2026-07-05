@@ -395,6 +395,52 @@ async def test_new_verdict_alerts_with_rca_summary_not_bare_flap() -> None:
     assert "fx" in alerts[0]
 
 
+class _RecordingUnverifiedRca:
+    """Fake StagedRcaSession that returns a verdict the verifier stage REJECTED
+    (verified=False) — the "(unverified)" alert shape operators asked to stop
+    seeing in chat."""
+
+    async def analyze(self, evidence: RcaEvidence) -> RcaVerdict:
+        return RcaVerdict(
+            capability_class=evidence.capability_class,
+            failure_class=evidence.failure_class,
+            skill_name="learned_fix",
+            description="d", when_to_use="w",
+            root_cause="rc", fix_pattern="fx", verified=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_unverified_verdict_never_alerts_chat() -> None:
+    """A verdict the verifier stage could not confirm must never reach the
+    operator chat — only a verified=True verdict (or the always-verified
+    fallback_verdict short-circuit) does. Logged, not chat-alerted."""
+    alerts: list[str] = []
+
+    async def _alert(message: str) -> None:
+        alerts.append(message)
+
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingUnverifiedRca(),  # type: ignore[arg-type]
+        alert=_alert,
+    )
+
+    await handler.execute(_job())
+
+    assert alerts == []
+    # Still marked handled (dedup closed) — an unverified verdict is a real,
+    # already-produced RcaVerdict, not a hard RCA failure to retry.
+    assert len(handler._open_incidents) == 1
+
+
 @pytest.mark.asyncio
 async def test_new_verdict_feeds_the_miner() -> None:
     miner = _RecordingMiner()

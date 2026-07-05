@@ -282,6 +282,20 @@ async def _capture_outcome(
         recovered_via_tool = (
             state.recovered_via_substitution[0] if state.recovered_via_substitution else None
         )
+        # Migration 0078 — the ONE capability that actually failed this turn,
+        # persisted so the failure-clustering miner no longer has to blame
+        # every tool named in tool_sequence for a turn-level verdict (see
+        # cluster_failures_by_capability_and_signature's docstring for the
+        # incident this fixes). Prefer the first UNRECOVERED consequential
+        # failure (order preserved from consequential_failures, filtered to
+        # unrecovered_effects); fall back to the first tool_call that
+        # actually raised an error (covers the classify_failure/state.errors
+        # path, which unrecovered_effects doesn't cover). None when neither
+        # signal is present (e.g. an acceptance-refuted turn with no failed
+        # tool call) — the miner falls back to co-occurrence for those rows.
+        failed_capability = next(
+            (t for t in state.consequential_failures if t in unrecovered_effects), None,
+        ) or next((tc.tool_name for tc in state.tool_calls if tc.error), None)
         # Snapshot DNA from the owl registry so attribution-based evolution
         # (Learning Commit 4) can correlate trait values with outcome quality.
         # Best-effort — owl may not be registered (system commands, parliament).
@@ -321,6 +335,7 @@ async def _capture_outcome(
             dna_snapshot=dna_snapshot,
             overclaim_blocked=state.overclaim_blocked,
             recovered_via_tool=recovered_via_tool,
+            failed_capability=failed_capability,
         )
         # LS7 — close the skill-usage loop: nudge applied skills' success_rate
         # from this turn's MEASURED outcome. Internally fail-open.

@@ -28,13 +28,15 @@ catches a producer that will never fire at all, before any output exists.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
+    from stackowl.owls.manifest import OwlAgentManifest
+    from stackowl.owls.registry import OwlRegistry
     from stackowl.scheduler.base import HandlerRegistry
 
 _JOBS_HANDLER_NAMES_SQL = "SELECT DISTINCT handler_name FROM jobs"
@@ -162,6 +164,82 @@ async def audit_scheduler_wiring(
             "event": report.event,
             "dangling_handlers": report.dangling_handlers,
             "dangling_events": report.dangling_events,
+        }},
+    )
+    return report
+
+
+@dataclass
+class OwlWiringReport:
+    """Result of an owl-wiring self-heal pass — which internal owl names were
+    missing and got auto-registered."""
+
+    healed: list[str] = field(default_factory=list)
+    total_required: int = 0
+
+
+def audit_owl_wiring(
+    registry: OwlRegistry,
+    required: Mapping[str, Callable[[], OwlAgentManifest]],
+) -> OwlWiringReport:
+    """Self-heal dangling internal-owl references — the owl-side sibling of
+    :func:`audit_scheduler_wiring`.
+
+    An internal module (e.g. ``stackowl.parliament.staged_rca.RcaOwls``) can
+    declare a fixed owl NAME it dispatches to (``evidence_gatherer``,
+    ``hypothesis``, ``verifier``) without that name ever being registered as a
+    real persona — the exact "dangling half-edge" class the scheduler audit
+    catches for handlers/events, just on the owl-registry side. Left
+    unaudited, the gap is invisible: ``triage.py`` catches ``OwlNotFoundError``
+    and silently reroutes to ``secretary``, so the module runs for weeks under
+    the wrong persona/tools/tier before anyone notices (see the
+    evidence_gatherer/hypothesis/verifier incident this closes).
+
+    Unlike the scheduler audit (advisory-only, warn and move on), this one
+    actually SELF-HEALS: any *required* name not yet in the registry gets its
+    fallback factory registered immediately, so the platform never silently
+    runs an internal analysis stage under the wrong persona again — not just
+    for today's 3 RCA owls, but for any FUTURE module that adds an entry to
+    *required*. Never raises; a bad factory is logged and skipped so one
+    broken entry can't block boot or the rest of the audit.
+    """
+    log.startup.debug(
+        "[startup] wiring_audit.audit_owl_wiring: entry",
+        extra={"_fields": {"required": len(required)}},
+    )
+    existing = {m.name for m in registry.all()}
+    report = OwlWiringReport(total_required=len(required))
+    for name, factory in required.items():
+        if name in existing:
+            continue
+        try:
+            registry.register(factory())
+        except Exception as exc:  # never block boot on one bad factory
+            log.startup.error(
+                "[startup] wiring_audit.audit_owl_wiring: self-heal failed for "
+                "%r — an internal module references this owl but it could not "
+                "be auto-registered; that module will silently reroute to "
+                "secretary until this is fixed",
+                name,
+                exc_info=exc,
+                extra={"_fields": {"owl": name}},
+            )
+            continue
+        report.healed.append(name)
+        log.startup.warning(
+            "[startup] wiring_audit.audit_owl_wiring: DANGLING internal owl "
+            "%r — referenced by an internal module but was NEVER registered "
+            "(would have silently rerouted to secretary); auto-registered the "
+            "fallback persona now",
+            name,
+            extra={"_fields": {"owl": name}},
+        )
+    log.startup.info(
+        "[startup] owl wiring audit: %d required — %d healed",
+        report.total_required,
+        len(report.healed),
+        extra={"_fields": {
+            "total_required": report.total_required, "healed": report.healed,
         }},
     )
     return report

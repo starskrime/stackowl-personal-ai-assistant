@@ -28,6 +28,22 @@ def test_italic_underscore_renders() -> None:
     assert r"\_emphasis\_" not in out
 
 
+def test_italic_underscore_ignores_snake_case_identifiers() -> None:
+    # CommonMark: underscore emphasis never fires INTRAWORD (unlike asterisk).
+    # "read_file" and "unachieved_effect" are snake_case identifiers, not
+    # markup — two of them on one line must not pair into a spurious italic
+    # span. A correctly-escaped literal underscore renders as "\_" (backslash
+    # preserved through to Telegram, displays as a literal "_"); a wrongly-
+    # matched markup delimiter stays bare "_" in the MarkdownV2 output, which
+    # Telegram then consumes on render — the operator-alert bug where a
+    # capability name silently displays as "readfile".
+    out = to_telegram_markdownv2(
+        "  capability: read_file  failure: unachieved_effect"
+    )
+    assert r"read\_file" in out
+    assert r"unachieved\_effect" in out
+
+
 def test_link_renders_as_markdownv2_link() -> None:
     out = to_telegram_markdownv2("see [the docs](https://example.com/p)")
     # MarkdownV2 link keeps [text](url); the url's reserved chars are NOT escaped

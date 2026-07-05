@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from stackowl.exceptions import ManifestValidationError, OwlNotFoundError
@@ -89,11 +90,90 @@ def _make_default_archivist() -> OwlAgentManifest:
     )
 
 
+def _make_default_rca_gatherer() -> OwlAgentManifest:
+    """RCA stage 1 (see ``stackowl.parliament.staged_rca``) — organizes
+    already-gathered raw evidence into a structured brief. Analysis-only:
+    NO tools, so it can only structure the evidence it's handed, never fetch
+    new/unverified data (the module's "does not invent evidence" guarantee)."""
+    return OwlAgentManifest(
+        name="rca_gatherer",
+        role="rca-evidence-gatherer",
+        system_prompt=(
+            "You are the evidence-gatherer in a fixed-stage incident root-cause "
+            "analysis. You organize raw evidence you are given into a clear, "
+            "factual brief. You never speculate about causes and never fetch or "
+            "invent evidence beyond what is provided in the prompt."
+        ),
+        model_tier="standard",
+        tools=[],
+    )
+
+
+def _make_default_hypothesis_owl() -> OwlAgentManifest:
+    """RCA stage 2 — proposes a root cause + fix, citing stage 1's brief only.
+    Analysis-only: no tools, reasons solely over the provided evidence brief."""
+    return OwlAgentManifest(
+        name="hypothesis",
+        role="rca-hypothesis",
+        system_prompt=(
+            "You are the hypothesis owl in a fixed-stage incident root-cause "
+            "analysis. Using ONLY the evidence brief you are given, propose the "
+            "single most likely root cause and a reusable fix, citing the "
+            "specific evidence for each claim. You never fetch new evidence."
+        ),
+        model_tier="powerful",
+        tools=[],
+    )
+
+
+def _make_default_verifier() -> OwlAgentManifest:
+    """RCA stage 3 — the skeptical check: verifies (or rejects) the
+    hypothesis strictly against stage 1's evidence brief, never against how
+    confident the hypothesis sounds. Analysis-only: no tools."""
+    return OwlAgentManifest(
+        name="verifier",
+        role="rca-verifier",
+        system_prompt=(
+            "You are the verifier owl in a fixed-stage incident root-cause "
+            "analysis. Your only job is to check whether a hypothesis is "
+            "concretely supported by the evidence brief you are given — never "
+            "by confidence or agreement. Reject any claim the evidence does not "
+            "concretely support. You never fetch new evidence."
+        ),
+        model_tier="powerful",
+        tools=[],
+    )
+
+
 _BUILTIN_PERSONA_FACTORIES = (
     _make_default_scout,
     _make_default_librarian,
     _make_default_archivist,
+    _make_default_rca_gatherer,
+    _make_default_hypothesis_owl,
+    _make_default_verifier,
 )
+
+
+def internal_owl_requirements() -> dict[str, Callable[[], OwlAgentManifest]]:
+    """Name -> fallback-factory for every owl an INTERNAL module dispatches to
+    by fixed name (not user-configurable), fed to
+    :func:`stackowl.startup.wiring_audit.audit_owl_wiring` at boot.
+
+    Registering a persona in ``_BUILTIN_PERSONA_FACTORIES`` above already
+    covers the common case (a visible, user-facing builtin). This dict is the
+    generic safety net: any FUTURE internal module that references a fixed owl
+    name (mirroring ``stackowl.parliament.staged_rca.RcaOwls``) adds its
+    name/factory pair here, and the boot-time audit self-heals it if it's ever
+    missing — instead of silently rerouting to secretary for weeks before
+    anyone notices (the evidence_gatherer/hypothesis/verifier incident this
+    closes).
+    """
+    return {
+        "rca_gatherer": _make_default_rca_gatherer,
+        "hypothesis": _make_default_hypothesis_owl,
+        "verifier": _make_default_verifier,
+    }
 
 
 class OwlRegistry:

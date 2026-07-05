@@ -19,14 +19,22 @@ acks route home; the per-turn answer stream routes by ``trace_id`` regardless.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from stackowl.channels.base import ChannelAdapter
+from stackowl.exceptions import ChannelAlreadyRegisteredError, ChannelNotFoundError
 from stackowl.gateway.scanner import IngressMessage
+from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import ClarifyAskFrame, SendFileFrame, SendTextFrame
 from stackowl.ipc.stream_bridge import chunk_to_frame
 from stackowl.pipeline.streaming import ResponseChunk
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only imports
+    from stackowl.channels.registry import ChannelRegistry
+    from stackowl.config.settings import Settings
 
 
 class SocketChannelAdapter(ChannelAdapter):
@@ -107,3 +115,84 @@ class SocketChannelAdapter(ChannelAdapter):
                 choices=tuple(choices),
             )
         )
+
+
+def configured_gateway_channels(settings: Settings) -> list[str]:
+    """Names of the remote channels the GATEWAY process is configured to run.
+
+    Mirrors the orchestrator's per-channel start gates (the ``self._role != 'core'
+    and <cfg>`` conditions for telegram/slack/discord/whatsapp). The core process
+    never constructs these real adapters, but it must know their names to
+    pre-register socket proxies so a proactive/scheduled send can resolve the
+    channel and route its frame to the gateway's real adapter instead of raising
+    ``ChannelNotFoundError``.
+
+    ponytail: duplicates the 4 orchestrator gate conditions — keep in sync. A
+    single source of truth would need the gateway to advertise its live channels
+    to the core over IPC (larger change; not warranted for 4 static gates).
+    """
+    channels: list[str] = []
+    tg = settings.telegram_channel
+    if getattr(tg, "bot_token", None):
+        channels.append("telegram")
+    slack = settings.slack_channel
+    if getattr(slack, "bot_token", None) and getattr(slack, "app_token", None):
+        channels.append("slack")
+    discord = settings.discord_channel
+    if getattr(discord, "enabled", False) and getattr(discord, "bot_token", None):
+        channels.append("discord")
+    whatsapp = settings.whatsapp_channel
+    if getattr(whatsapp, "enabled", False):
+        channels.append("whatsapp")
+    return channels
+
+
+def register_socket_channel_proxies(
+    registry: ChannelRegistry, conn: FrameConnection, settings: Settings
+) -> list[str]:
+    """Pre-register a :class:`SocketChannelAdapter` proxy per configured gateway channel.
+
+    ROOT-CAUSE FIX: in split mode the core registers a socket proxy only reactively
+    — when an inbound message for that channel first arrives (``_core_frame_loop``).
+    Proactive/scheduled sends (``telegram_canary``, ``morning_brief``, ``check_in``,
+    ``notification_digest``, goal-execution delivery) fire from the scheduler with NO
+    prior inbound message, so ``registry.get('telegram')`` raised
+    ``ChannelNotFoundError`` and every proactive send failed. Pre-registering a proxy
+    for each channel the gateway is configured to run makes those sends resolve and
+    route a ``SendTextFrame`` / ``SendFileFrame`` across the socket to the gateway's
+    real adapter.
+
+    Idempotent: a channel already present in the registry (the reactive path won the
+    race) is skipped. Returns the channel names newly registered.
+
+    ponytail: fire-and-forget — a gateway-side send failure AFTER the frame is queued
+    is not propagated back into the core's ``ProactiveDeliveryOutcome`` (matches the
+    existing split out-of-band semantics for SendTextFrame/inbound acks). Upgrade path
+    if honest end-to-end delivery status is needed: a correlated
+    ``ProactiveSendFrame``/``ProactiveResultFrame`` ack round-trip.
+    """
+    # 1. ENTRY
+    configured = configured_gateway_channels(settings)
+    log.gateway.debug(
+        "[ipc] socket proxy registration: entry",
+        extra={"_fields": {"configured": configured}},
+    )
+    registered: list[str] = []
+    for channel in configured:
+        # 2. DECISION — skip a channel the reactive inbound path already registered.
+        try:
+            registry.get(channel)
+        except ChannelNotFoundError:
+            pass
+        else:
+            continue
+        # 3. STEP — register a socket proxy so proactive sends resolve this channel.
+        with contextlib.suppress(ChannelAlreadyRegisteredError):
+            registry.register(SocketChannelAdapter(conn, channel_name=channel))
+            registered.append(channel)
+    # 4. EXIT
+    log.gateway.info(
+        "[ipc] socket proxy registration: exit",
+        extra={"_fields": {"registered": registered}},
+    )
+    return registered

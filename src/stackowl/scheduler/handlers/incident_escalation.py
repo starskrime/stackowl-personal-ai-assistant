@@ -472,7 +472,7 @@ class IncidentEscalationHandler(JobHandler):
                     "[scheduler] incident_escalation: verdict router failed",
                     exc_info=exc, extra={"_fields": {"signature": inc.signature}},
                 )
-        if self._alert is not None:
+        if self._alert is not None and verdict.verified:
             try:
                 await self._alert(_compose_verdict_alert(inc, verdict, kind))
             except Exception as exc:  # alert failure must not fail the sweep itself
@@ -480,6 +480,16 @@ class IncidentEscalationHandler(JobHandler):
                     "[scheduler] incident_escalation: alert sink raised",
                     exc_info=exc, extra={"_fields": {"signature": inc.signature}},
                 )
+        elif self._alert is not None:
+            # An unverified verdict (the verifier stage rejected or couldn't
+            # confirm the hypothesis) is exactly the kind of noise operators
+            # asked to stop seeing — log it for anyone reading the JSONL trace,
+            # but do not push it to the operator chat as if it were confirmed.
+            log.scheduler.info(
+                "[scheduler] incident_escalation: verdict UNVERIFIED — suppressing "
+                "chat alert (logged only)",
+                extra={"_fields": {"signature": inc.signature}},
+            )
         if self._miner is not None:
             try:
                 report = await self._miner.mine(self.verdicts)

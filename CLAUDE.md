@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Mandatory skill
+
+**`tonyStyle` (`.claude/skills/tonyStyle/SKILL.md`) is a main skill for this repo — invoke it on every task that touches StackOwl code**, not only when its description happens to match. It scans the wider codebase (not just the current diff) for real defects — silent catches, disabled/stubbed features, architecture violations, missing 4-point logging, dead code masking bugs — and fixes them in the same turn with minimal root-cause diffs, gated on tests+lint+type-check staying green. It composes with (doesn't replace) `systematic-debugging`, `verification-before-completion`, and `code-review`.
+
 ## Commands (Python — run from the repo root)
 
 ```bash

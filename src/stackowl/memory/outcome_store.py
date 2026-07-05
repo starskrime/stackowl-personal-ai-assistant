@@ -52,6 +52,13 @@ class TaskOutcome:
     # catches a capability recovering via substitution over and over — the
     # "permanent fallback with zero retry" masked-chronic-outage shape.
     recovered_via_tool: str | None = None
+    # Migration 0078 — the ONE capability that actually failed this turn (bare
+    # tool name, resolved through capability_tag_lookup by the clusterer the
+    # same way tool_sequence entries are). None for historical rows (pre-
+    # migration) or any turn where it genuinely couldn't be determined —
+    # cluster_failures_by_capability_and_signature falls back to its old
+    # credit-every-tool-in-tool_sequence behavior for those.
+    failed_capability: str | None = None
 
 
 def classify_failure(errors: tuple[str, ...]) -> str | None:
@@ -106,6 +113,7 @@ class TaskOutcomeStore(OwnedRepository):
         dna_snapshot: dict[str, float] | None = None,
         overclaim_blocked: bool = False,
         recovered_via_tool: str | None = None,
+        failed_capability: str | None = None,
     ) -> None:
         """Insert a new outcome row. quality_score / scored_at start NULL.
 
@@ -120,6 +128,7 @@ class TaskOutcomeStore(OwnedRepository):
                 "latency_ms": int(latency_ms),
                 "tool_call_count": tool_call_count,
                 "recovered_via_tool": recovered_via_tool,
+                "failed_capability": failed_capability,
             }},
         )
         await self._db.execute(
@@ -128,8 +137,8 @@ class TaskOutcomeStore(OwnedRepository):
                    latency_ms, tool_call_count, failure_class,
                    step_durations, input_text, response_text, captured_at,
                    tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
-                   recovered_via_tool
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   recovered_via_tool, failed_capability
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_id, owl_name, channel, int(success),
@@ -141,6 +150,7 @@ class TaskOutcomeStore(OwnedRepository):
                 self._owner_id,
                 int(overclaim_blocked),
                 recovered_via_tool,
+                failed_capability,
             ),
         )
         log.memory.info(
@@ -276,7 +286,8 @@ class TaskOutcomeStore(OwnedRepository):
             """SELECT outcome_id, trace_id, session_id, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
-                      captured_at, scored_at, tool_sequence, dna_snapshot
+                      captured_at, scored_at, tool_sequence, dna_snapshot,
+                      failed_capability
                FROM task_outcomes
                WHERE owner_id = ?
                  AND failure_class IS NOT NULL
@@ -515,7 +526,8 @@ class TaskOutcomeStore(OwnedRepository):
             """SELECT outcome_id, trace_id, session_id, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
-                      captured_at, scored_at, tool_sequence, dna_snapshot
+                      captured_at, scored_at, tool_sequence, dna_snapshot,
+                      recovered_via_tool, failed_capability
                FROM task_outcomes WHERE owner_id = ? AND trace_id = ?""",
             (self._owner_id, trace_id),
         )
@@ -581,5 +593,8 @@ def _row_to_outcome(row: dict[str, object]) -> TaskOutcome:
         dna_snapshot=dna_snapshot,
         recovered_via_tool=(
             str(row["recovered_via_tool"]) if row.get("recovered_via_tool") else None
+        ),
+        failed_capability=(
+            str(row["failed_capability"]) if row.get("failed_capability") else None
         ),
     )

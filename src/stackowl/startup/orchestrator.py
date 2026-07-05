@@ -639,6 +639,21 @@ class StartupOrchestrator:
         turn_registry = TurnRegistry()
         owl_registry = OwlRegistry.from_settings(self._settings)
         owl_registry.register_builtin_personas()
+        # Owl-wiring self-heal (sibling of the WS-E scheduler wiring audit below):
+        # an internal module (e.g. staged_rca.RcaOwls) can dispatch to a fixed
+        # owl name without it ever being registered — triage.py silently reroutes
+        # to secretary on OwlNotFoundError, so the gap is invisible for weeks.
+        # Auto-registers any missing internal owl from the declared fallback set.
+        try:
+            from stackowl.owls.registry import internal_owl_requirements
+            from stackowl.startup.wiring_audit import audit_owl_wiring
+
+            audit_owl_wiring(owl_registry, internal_owl_requirements())
+        except Exception as exc:
+            log.error(
+                "[startup] gateway: owl wiring audit failed — starting anyway",
+                exc_info=exc,
+            )
         db_pool = DbPool(default_db_path())
         await db_pool.open()
 
@@ -1392,6 +1407,20 @@ class StartupOrchestrator:
         if self._role == "core":
             assert core_conn is not None
             adapter = SocketChannelAdapter(core_conn, channel_name="cli")
+            # ROOT-CAUSE FIX: proactive/scheduled sends (canary, morning_brief,
+            # check_in, digest, goal-execution delivery) fire from the scheduler with
+            # NO prior inbound message, so the reactive per-channel proxy registration
+            # in _core_frame_loop hasn't run — the deliverer's registry.get('telegram')
+            # raised ChannelNotFoundError and every proactive send failed. Pre-register
+            # a socket proxy for each gateway-configured channel so proactive delivery
+            # resolves and routes its frame across the socket to the gateway's real
+            # adapter. Idempotent with the reactive path.
+            from stackowl.channels.registry import ChannelRegistry
+            from stackowl.channels.socket_adapter import register_socket_channel_proxies
+
+            register_socket_channel_proxies(
+                ChannelRegistry.instance(), core_conn, self._settings
+            )
         else:
             # Voice dictation (opt-in): build the mic recorder + shared STT selector
             # so the compose ctrl+r push-to-talk works. Disabled → both None and the
