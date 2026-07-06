@@ -57,7 +57,7 @@ _SOURCE_NAME = "agent_owls"
 _AUDIT_SOURCE: SkillSource = "learned"
 _ACTOR = "agent_self:owl_build"
 
-_VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire", "rename")
+_VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire", "rename", "pause", "resume")
 
 # One natural-language question per recoverable create field (ADR-A: the validator
 # decides WHICH field is missing; this only PHRASES the ask). User-facing prose,
@@ -186,7 +186,7 @@ class OwlBuildTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": list(_VALID_ACTIONS),
-                    "description": "create | edit | retire | rename",
+                    "description": "create | edit | retire | rename | pause | resume",
                 },
                 "name": {
                     "type": "string",
@@ -339,6 +339,10 @@ class OwlBuildTool(Tool):
                 return await self._edit(spec, t0)
             if spec.action == "rename":
                 return await self._rename(spec, t0)
+            if spec.action == "pause":
+                return await self._pause(spec, t0)
+            if spec.action == "resume":
+                return await self._resume(spec, t0)
             return await self._retire(spec, t0)
         except NotImplementedError:
             return self._err(f"action '{spec.action}' is not yet implemented.", t0)
@@ -1131,6 +1135,71 @@ class OwlBuildTool(Tool):
             f"Renamed owl '{rebuilt.name}' to '{new_display}'.", t0,
             extra={"owl": rebuilt.name, "op": "rename"},
         )
+
+    async def _pause(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Pause a scheduled owl's cadence (design decision 2) — suspends the pokes
+        without touching persona/DNA/history. Reuses JobScheduler.pause on the owl's
+        deterministic owned job row. Refuses (loud, no silent no-op) when the owl
+        has no schedule to pause."""
+        return await self._toggle_schedule(spec, t0, resume=False)
+
+    async def _resume(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Resume a paused scheduled owl's cadence — the mirror of _pause; the
+        schedule continues from wherever it naturally lands."""
+        return await self._toggle_schedule(spec, t0, resume=True)
+
+    async def _toggle_schedule(self, spec: OwlBuildSpec, t0: float, *, resume: bool) -> ToolResult:
+        op = "resume" if resume else "pause"
+        # 1. ENTRY
+        log.tool.info(
+            "owl_build.execute: toggle schedule",
+            extra={"_fields": {"op": op, "name": spec.name}},
+        )
+        svc = get_services()
+        registry = svc.owl_registry
+        db = svc.db_pool
+        if registry is None or db is None:
+            log.tool.error(
+                "owl_build.execute: no registry/db wired — cannot toggle schedule",
+                exc_info=None,
+                extra={"_fields": {"op": op, "name": spec.name}},
+            )
+            return self._err(f"owl scheduling unavailable — cannot {op} an owl.", t0)
+        # 2. DECISION — the owl must exist AND be scheduled (manifest = truth; a
+        #    scheduled owl owns exactly one projected job row keyed on _job_id_for).
+        try:
+            current = registry.get(spec.name)
+        except Exception:  # OwlNotFoundError — the not-found path is expected
+            return self._err(f"no owl named '{spec.name}' to {op}.", t0)
+        if getattr(current, "lifecycle", "on_demand") != "scheduled":
+            log.tool.info(
+                "owl_build.execute: refusing schedule toggle on on-demand owl",
+                extra={"_fields": {"op": op, "name": spec.name}},
+            )
+            return self._err(f"'{spec.name}' has no schedule to {op}.", t0)
+        # 3. STEP — reuse the existing scheduler primitive on the owned job row.
+        from stackowl.scheduler.owl_lifecycle import _job_id_for
+        from stackowl.scheduler.scheduler import JobScheduler
+
+        settings = svc.settings
+        tz = settings.system.timezone if settings is not None else "UTC"
+        scheduler = JobScheduler(db=db, tz=tz or "UTC")
+        job_id = _job_id_for(spec.name)
+        if resume:
+            await scheduler.resume(job_id)
+        else:
+            await scheduler.pause(job_id)
+        creator = str(TraceContext.get().get("owl_name") or _SECRETARY_NAME)
+        await self._audit(op, spec.name, creator)
+        # 4. EXIT
+        display = getattr(current, "display", None) or spec.name
+        tail = (
+            "it will reach you on its schedule again"
+            if resume
+            else "it won't run again until you resume it"
+        )
+        return self._ok(f"{'Resumed' if resume else 'Paused'} {display} — {tail}.",
+                        t0, extra={"owl": spec.name, "op": op})
 
     async def _retire(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
         """Retire an agent-minted owl YOU created: no-edit-your-betters → deregister +

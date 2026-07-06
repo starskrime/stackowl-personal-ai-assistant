@@ -124,3 +124,15 @@ def test_live_trace_payload_2_json_string_explicit_tools_now_succeeds():
         "explicit_tools": '["memory", "owl_build"]',
     })
     assert s.explicit_tools == ["memory", "owl_build"]
+
+
+def test_pause_needs_only_name() -> None:
+    assert validate_owl_build_spec(OwlBuildSpec(action="pause", name="scout")) is None
+
+
+def test_resume_needs_only_name() -> None:
+    assert validate_owl_build_spec(OwlBuildSpec(action="resume", name="scout")) is None
+
+
+def test_pause_empty_name_rejected() -> None:
+    assert validate_owl_build_spec(OwlBuildSpec(action="pause", name="  ")) is not None

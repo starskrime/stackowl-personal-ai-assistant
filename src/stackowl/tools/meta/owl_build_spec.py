@@ -18,7 +18,7 @@ class OwlBuildSpec(BaseModel):
     # extra field claims; they are simply absent from the validated spec either way.
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    action: Literal["create", "edit", "retire", "rename"]
+    action: Literal["create", "edit", "retire", "rename", "pause", "resume"]
     # name defaults to "" (not required): a free-text `/owl create <sentence>`
     # constructs a spec with no name so the validator reports it as a recoverable
     # MissingField and the tool ASKS for it (elicitation). Every action's own
@@ -94,7 +94,9 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
     For ``create`` the irreducible required set is: a ``name``, a capability
     (``preset`` OR ``explicit_tools``), and a ``specialty``.
     """
-    if spec.action == "retire":
+    if spec.action in ("retire", "pause", "resume"):
+        # Cadence-only or removal actions need nothing but a name (design
+        # decision 2: pause/resume touch no tools/authority/persona).
         if not spec.name or not spec.name.strip():
             return "owl name is required."
         return None
