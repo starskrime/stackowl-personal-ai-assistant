@@ -57,7 +57,7 @@ _SOURCE_NAME = "agent_owls"
 _AUDIT_SOURCE: SkillSource = "learned"
 _ACTOR = "agent_self:owl_build"
 
-_VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire")
+_VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire", "rename")
 
 # One natural-language question per recoverable create field (ADR-A: the validator
 # decides WHICH field is missing; this only PHRASES the ask). User-facing prose,
@@ -98,6 +98,22 @@ def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None
     return None
 
 
+def can_rename(manifest: object, *, caller: str, target_name: str) -> str | None:
+    """Rename is COSMETIC ONLY — it sets ``display_name`` (the label shown/spoken to
+    the user), never ``name`` (the internal routing key every identity/authz check,
+    including the secretary lock in :func:`can_modify`, actually compares against —
+    see ``OwlAgentManifest.spoken_name``). It therefore does NOT go through
+    ``can_modify``'s no-edit-your-betters gate: the secretary and every builtin
+    persona MAY be renamed (they have no ``created_by`` to launder), since doing so
+    changes no tool, no authority, and no schedule. The one boundary that still
+    applies: an agent-minted owl you did not create may not be relabeled by you
+    either — a rename is still an edit of someone else's owl, just a smaller one."""
+    origin = getattr(manifest, "origin", None)
+    if origin == "agent" and getattr(manifest, "created_by", None) != caller:
+        return f"'{target_name}' was created by another owl — you may only rename owls you created."
+    return None
+
+
 class OwlBuildTool(Tool):
     """Create / edit / retire a specialist owl (consent-gated, depth-0 only)."""
 
@@ -120,7 +136,10 @@ class OwlBuildTool(Tool):
             "bot that ...' (e.g. an agent that pokes me every 2 hours with AI news). "
             "action='create' mints a new agent — pass a 'schedule' cadence (e.g. "
             "'every 2h', 'daily@09:00') to make it recurring and proactive; 'edit' "
-            "adjusts one; 'retire' removes one. RARE: for a one-off task just do the "
+            "adjusts one; 'retire' removes one; 'rename' changes the display name "
+            "the owl is shown/spoken as (pass 'display_name') — this works even on "
+            "the secretary or a builtin persona, since it only relabels, it never "
+            "touches tools/authority/schedule. RARE: for a one-off task just do the "
             "task, or delegate_task to an EXISTING owl — only mint an agent for a "
             "standing role the human will reuse. Consequential: requires human approval "
             "and fails closed with no interactive user present."
@@ -134,11 +153,18 @@ class OwlBuildTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": list(_VALID_ACTIONS),
-                    "description": "create | edit | retire",
+                    "description": "create | edit | retire | rename",
                 },
                 "name": {
                     "type": "string",
                     "description": "The owl's name. Required for every action.",
+                },
+                "display_name": {
+                    "type": "string",
+                    "description": (
+                        "The new display name/label for action='rename' — what the "
+                        "owl is shown/spoken as. Does not change its internal name."
+                    ),
                 },
                 "preset": {
                     "type": "string",
@@ -261,6 +287,8 @@ class OwlBuildTool(Tool):
                 return await self._create(spec, t0)
             if spec.action == "edit":
                 return await self._edit(spec, t0)
+            if spec.action == "rename":
+                return await self._rename(spec, t0)
             return await self._retire(spec, t0)
         except NotImplementedError:
             return self._err(f"action '{spec.action}' is not yet implemented.", t0)
@@ -1002,6 +1030,57 @@ class OwlBuildTool(Tool):
         if dropped:
             msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
         return self._ok(msg, t0, extra={"owl": rebuilt.name, "op": "edit"})
+
+    async def _rename(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Change an owl's display_name — cosmetic only, see :func:`can_rename`.
+        Works on the secretary and builtin personas (they have no created_by to
+        launder); still refuses to relabel another owl's agent-minted persona."""
+        svc = get_services()
+        registry = svc.owl_registry
+        if registry is None:
+            log.tool.error(
+                "owl_build.execute: no owl registry wired — cannot rename",
+                exc_info=None,
+                extra={"_fields": {"name": spec.name}},
+            )
+            return self._err("owl registry unavailable — cannot rename an owl.", t0)
+
+        ctx = TraceContext.get()
+        creator = str(ctx.get("owl_name") or _SECRETARY_NAME)
+
+        try:
+            current = registry.get(spec.name)
+        except Exception:  # OwlNotFoundError — the not-found path is expected
+            return self._err(f"no owl named '{spec.name}' to rename.", t0)
+
+        guard = can_rename(current, caller=creator, target_name=spec.name)
+        if guard is not None:
+            return self._err(guard, t0)
+
+        new_display = (spec.display_name or "").strip()
+        rebuilt = current.model_copy(update={"display_name": new_display})
+
+        snapshot = self._yaml_snapshot()
+        try:
+            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            registry.replace(rebuilt)
+        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
+            log.tool.error(
+                "owl_build.execute: rename persist/register failed — rolling back yaml",
+                exc_info=exc,
+                extra={"_fields": {"owl": rebuilt.name}},
+            )
+            self._yaml_restore(snapshot)
+            return self._err(
+                f"failed to rename owl '{rebuilt.name}' ({exc}) — rolled back.", t0
+            )
+
+        await self._audit("rename", rebuilt.name, creator)
+
+        return self._ok(
+            f"Renamed owl '{rebuilt.name}' to '{new_display}'.", t0,
+            extra={"owl": rebuilt.name, "op": "rename"},
+        )
 
     async def _retire(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
         """Retire an agent-minted owl YOU created: no-edit-your-betters → deregister +

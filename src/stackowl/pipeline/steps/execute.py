@@ -840,16 +840,22 @@ def _approach_signature(name: str, args: dict[str, object]) -> str:
     return f"{name}\x00{canon}"
 
 
-def _repeated_approach_refusal(name: str) -> str:
+def _repeated_approach_refusal(name: str, reason: str) -> str:
     """ADR-5 MOVE 3 — stable, model-readable steer for an EXACT approach (this tool with
     these same inputs) that already failed earlier THIS turn. Like the circuit-breaker
     bounce this is CONTAINMENT, not a tool failure: it carries NO TOOL_FAILED_MARKER (so
     the give-up judge never reads it as a failed consequential action) and records
-    NOTHING in the outcome ledger. Steers the model to change the approach."""
+    NOTHING in the outcome ledger. Steers the model to change the approach.
+
+    Carries the ORIGINAL failure's reason (the first attempt's ``r.error``) so the model
+    reports the real cause instead of inventing one — a bare "already tried" bounce with
+    no reason attached is what let a model discard a real refusal (e.g. "the secretary
+    owl cannot be modified or retired") and fabricate an unrelated explanation instead."""
     return (
         f"You already tried '{name}' with these exact inputs earlier this turn and it "
-        f"failed. Do not repeat the same approach — change the inputs or use a different "
-        f"tool, or stop and tell the user what you could not do."
+        f"failed: {reason} Do not repeat the same approach — change the inputs or use a "
+        f"different tool, or stop and tell the user what you could not do (using the "
+        f"reason above, not a guess)."
     )
 
 
@@ -1040,7 +1046,7 @@ async def _run_with_tools(
     # within-turn awareness, gone at turn end). Distinct from the by-name circuit breaker
     # (finer: exact args; fires on the FIRST repeat, not after a threshold). Flag-gated:
     # ``trustworthy_learning`` OFF ⇒ the set is never consulted/filled ⇒ byte-identical.
-    failed_approaches: set[str] = set()
+    failed_approaches: dict[str, str] = {}
     _trustworthy_learning = False
     try:
         from stackowl.config.settings import Settings
@@ -1116,7 +1122,7 @@ async def _run_with_tools(
                 "[pipeline] execute: within-turn approach already failed — steering to change",
                 extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
             )
-            return _repeated_approach_refusal(name)
+            return _repeated_approach_refusal(name, failed_approaches[_approach_sig])
         # E8-S0 — EXECUTION-layer fork-bomb cap (not just presentation). A delegated
         # child (delegation_depth>0) is refused these tools even if it names one the
         # presented schema omitted: presentation gating is not authorization, so the
@@ -1383,7 +1389,7 @@ async def _run_with_tools(
                 # blind re-issue is steered away (consulted at the top of ``_dispatch``).
                 # Ephemeral, never persisted; ``_approach_sig`` is "" when the flag is OFF.
                 if _approach_sig:
-                    failed_approaches.add(_approach_sig)
+                    failed_approaches[_approach_sig] = r.error or "no reason recorded"
                 opened = progress.record_no_progress(name)
                 if opened:
                     log.engine.warning(

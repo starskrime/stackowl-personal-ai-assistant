@@ -18,12 +18,18 @@ class OwlBuildSpec(BaseModel):
     # extra field claims; they are simply absent from the validated spec either way.
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    action: Literal["create", "edit", "retire"]
+    action: Literal["create", "edit", "retire", "rename"]
     name: str
     preset: str | None = None
     explicit_tools: list[str] | None = None
     specialty: str | None = None
     model_tier: str | None = None
+    # Cosmetic-only (owl rename) — the human-facing label shown/spoken instead of the
+    # internal routing name. Separate from every other field: renaming never touches
+    # tools/authority/schedule, so it is exempt from the no-edit-your-betters gate that
+    # blocks edit/retire on the secretary/builtin personas (see OwlAgentManifest.spoken_name
+    # / can_rename in owl_build.py).
+    display_name: str | None = None
     # UniOwl schedule slot (ADR-T4 / TS8): a recurring cadence makes this owl a
     # SCHEDULED persona woken by a CronTrigger. ``schedule`` is the platform cadence
     # ("every 2h" / "every 30m" / "daily@09:00" / 5-field cron); ``goal`` is the
@@ -87,6 +93,12 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
             return "owl name is required."
         if spec.preset and spec.explicit_tools:
             return "provide either 'preset' or 'explicit_tools', not both."
+        return None
+    if spec.action == "rename":
+        if not spec.name or not spec.name.strip():
+            return "owl name is required."
+        if not spec.display_name or not spec.display_name.strip():
+            return "display_name is required to rename an owl."
         return None
     # create — preset XOR explicit_tools is an INVALID value (hard error); the
     # remaining gaps are RECOVERABLE missing required fields (ask the user).
