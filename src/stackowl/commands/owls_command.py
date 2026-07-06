@@ -9,6 +9,7 @@ layer can decide whether to give it a real :class:`OwlRegistry`, a real
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from stackowl.commands.base import SlashCommand
@@ -21,6 +22,7 @@ from stackowl.commands.owls_helpers import (
     manifest_to_yaml_entry,
     parse_add_args,
     parse_edit_args,
+    parse_owl_build_flags,
 )
 from stackowl.commands.registry import CommandRegistry
 from stackowl.exceptions import (
@@ -671,15 +673,166 @@ class OwlsCommand(SlashCommand):
         return cmd
 
 
-class OwlCommand(OwlsCommand):
-    """``/owl`` — singular alias of ``/owls`` (S6 entry point).
+_OWL_META = CommandMeta(
+    grammar="verb",
+    group="Owls",
+    subcommands=(
+        SubCommand(
+            name="create",
+            summary="Create an owl (free text or flags) — elicits anything missing",
+            description=(
+                "Describe the owl in plain language, or pass flags "
+                "(--name --preset|--explicit_tools --specialty --schedule --goal "
+                "--lifecycle --boundaries --evolution_strategy). Missing required "
+                "fields are asked for interactively, the same way chat creation works."
+            ),
+            args=(Arg(name="text_or_flags", summary="free-text description, or --flags"),),
+            examples=(
+                Example(invocation="/owl create a research assistant that reads arxiv daily"),
+                Example(invocation='/owl create --name Sage --preset researcher --schedule "every 2h"'),
+            ),
+        ),
+        SubCommand(
+            name="edit",
+            summary="Update fields on an owl you created",
+            args=(Arg(name="name", summary="owl name"),),
+            examples=(Example(invocation='/owl edit Sage --preset writer'),),
+        ),
+        SubCommand(
+            name="rename",
+            summary="Change an owl's display name (cosmetic)",
+            args=(Arg(name="name", summary="owl name"), Arg(name="display_name", summary="new label")),
+            examples=(Example(invocation='/owl rename Sage "Sage the Scholar"'),),
+        ),
+        SubCommand(name="pause", summary="Suspend a scheduled owl's cadence",
+                   args=(Arg(name="name", summary="owl name"),)),
+        SubCommand(name="resume", summary="Resume a paused owl's cadence",
+                   args=(Arg(name="name", summary="owl name"),)),
+        SubCommand(name="retire", summary="Remove an owl you created",
+                   args=(Arg(name="name", summary="owl name"),)),
+        SubCommand(name="list", summary="Show your assistants"),
+        SubCommand(name="dna", summary="Show DNA traits, current versus authored",
+                   args=(Arg(name="name", summary="owl name"),)),
+    ),
+)
 
-    The slash entry to the owl system, so a non-technical user reaches owls
-    whether they type the singular or plural. Inherits the full surface
-    (``list``/``add``/``edit``/``remove``/``health``/``dna``/objectives); only the
-    command token differs. Registered unconditionally through the assembly spine.
-    """
+_OWL_BUILD_ACTIONS: frozenset[str] = frozenset(
+    {"create", "edit", "rename", "pause", "resume", "retire"}
+)
+
+
+class OwlCommand(OwlsCommand):
+    """``/owl`` — the ONE owl surface. Every mutation (create/edit/rename/pause/
+    resume/retire) funnels through the single owl_build engine so there is exactly
+    one path from user intent to persisted owl (killing the /owls add-vs-create
+    divergence). Inspection (list/dna/reset-dna/health/objectives) reuses the
+    inherited registry-backed handlers unchanged."""
 
     @property
     def command(self) -> str:
         return "owl"
+
+    @property
+    def description(self) -> str:
+        return "Manage your owls: create, edit, rename, pause, resume, retire, list, dna."
+
+    @property
+    def meta(self) -> CommandMeta:
+        return _OWL_META
+
+    async def handle(self, args: str, state: PipelineState) -> str:
+        log.gateway.debug(
+            "[commands] owl.handle: entry",
+            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+        )
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else "list"
+        rest = parts[1] if len(parts) > 1 else ""
+        try:
+            if sub == "create":
+                return await self._build("create", parse_owl_build_flags(rest), state)
+            if sub == "edit":
+                name, flag_rest = _split_name(rest)
+                return await self._build("edit", {"name": name, **parse_owl_build_flags(flag_rest)}, state)
+            if sub == "rename":
+                name, display = _two_positional(rest)
+                return await self._build("rename", {"name": name, "display_name": display}, state)
+            if sub in ("pause", "resume", "retire", "remove"):
+                name, _ = _split_name(rest)
+                action = "retire" if sub in ("retire", "remove") else sub
+                return await self._build(action, {"name": name}, state)
+            if sub == "list":
+                return self._list()
+            if sub == "dna":
+                return await self._dna(rest)
+            if sub == "reset-dna":
+                return await self._reset_dna(rest)
+            if sub == "health":
+                return await self._health()
+            if sub == "objectives":
+                return await self._objectives()
+            if sub == "objective":
+                return await self._objective(rest)
+            if sub == "objective-cancel":
+                return await self._objective_cancel(rest)
+            log.gateway.debug("[commands] owl.handle: unknown subcommand",
+                              extra={"_fields": {"sub": sub}})
+            return render_usage("owl", _OWL_META)
+        except CommandParseError as exc:
+            log.gateway.warning("[commands] owl.handle: parse error",
+                                extra={"_fields": {"sub": sub, "error": str(exc)}})
+            return f"✗ {exc}\n\n{render_usage('owl', _OWL_META)}"
+        except (ManifestValidationError, OwlNotFoundError) as exc:
+            log.gateway.warning("[commands] owl.handle: domain error",
+                                extra={"_fields": {"sub": sub, "error": str(exc)}})
+            return f"✗ /owl {sub}: {exc}"
+        except Exception as exc:
+            log.gateway.error("[commands] owl.handle: subcommand crashed",
+                              exc_info=exc, extra={"_fields": {"sub": sub}})
+            return f"✗ /owl {sub}: {exc}"
+
+    async def _build(self, action: str, kwargs: dict[str, Any], state: PipelineState) -> str:
+        """Route one /owl mutation through owl_build — the ONE mutation engine.
+
+        Wraps the call in an interactive TraceContext (as /owls create already
+        does) so owl_build's consent gate + elicitation can reach the user."""
+        log.gateway.debug("[commands] owl._build: entry",
+                          extra={"_fields": {"action": action, "keys": sorted(kwargs)}})
+        # Lazy import — owl_build imports OwlsCommand at module top, so a top-level
+        # import here is circular; also keeps OwlBuildTool monkeypatchable at origin.
+        from stackowl.tools.meta.owl_build import OwlBuildTool
+
+        token = TraceContext.start(
+            session_id=state.session_id,
+            trace_id=state.trace_id,
+            interactive=True,
+            channel=state.channel,
+            reply_target=state.reply_target,
+        )
+        try:
+            result = await OwlBuildTool().execute(action=action, **kwargs)
+        finally:
+            TraceContext.reset(token)
+        log.gateway.info("[commands] owl._build: exit",
+                        extra={"_fields": {"action": action, "success": result.success}})
+        return result.output if result.success else f"✗ /owl {action}: {result.error}"
+
+
+def _split_name(rest: str) -> tuple[str, str]:
+    """Split ``<name> <remainder>`` — name is the first whitespace token."""
+    stripped = rest.strip()
+    if not stripped:
+        raise CommandParseError("owl", "missing owl name")
+    parts = stripped.split(maxsplit=1)
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
+def _two_positional(rest: str) -> tuple[str, str]:
+    """Parse ``<name> <display_name>`` (display_name may be quoted)."""
+    try:
+        tokens = shlex.split(rest)
+    except ValueError as exc:
+        raise CommandParseError("owl", f"could not tokenise arguments: {exc}") from exc
+    if len(tokens) < 2:
+        raise CommandParseError("owl", "usage: /owl rename <name> <display_name>")
+    return tokens[0], " ".join(tokens[1:])

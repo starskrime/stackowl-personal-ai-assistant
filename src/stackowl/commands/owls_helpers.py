@@ -321,6 +321,53 @@ def parse_edit_args(rest: str) -> dict[str, Any]:
     return changes
 
 
+# /owl create|edit flag grammar → owl_build.execute kwargs. Free text with no
+# --flags is treated as a specialty sentence (the free-text create path).
+_OWL_BUILD_FLAGS: dict[str, str] = {
+    "--name": "name",
+    "--preset": "preset",
+    "--specialty": "specialty",
+    "--schedule": "schedule",
+    "--goal": "goal",
+    "--lifecycle": "lifecycle",
+    "--boundaries": "boundaries",
+    "--evolution_strategy": "evolution_strategy",
+    "--tier": "model_tier",
+    "--model_tier": "model_tier",
+}
+
+
+def parse_owl_build_flags(rest: str) -> dict[str, Any]:
+    """Parse a `/owl create|edit` payload into owl_build.execute kwargs.
+
+    ``--explicit_tools`` takes a comma list; every other flag takes one value.
+    A payload with no ``--flags`` is a free-text specialty sentence → the
+    free-text create path (elicits any missing fields). Raises CommandParseError
+    on a malformed flag pairing or an unknown flag."""
+    try:
+        tokens = shlex.split(rest)
+    except ValueError as exc:
+        raise CommandParseError("owl", f"could not tokenise arguments: {exc}") from exc
+    if not tokens:
+        return {}
+    if not any(t.startswith("--") for t in tokens):
+        return {"specialty": rest.strip()}
+    if len(tokens) % 2 != 0:
+        raise CommandParseError("owl", "every --flag requires a value")
+    kwargs: dict[str, Any] = {}
+    i = 0
+    while i < len(tokens):
+        key, value = tokens[i], tokens[i + 1]
+        if key == "--explicit_tools":
+            kwargs["explicit_tools"] = [t.strip() for t in value.split(",") if t.strip()]
+        elif key in _OWL_BUILD_FLAGS:
+            kwargs[_OWL_BUILD_FLAGS[key]] = value
+        else:
+            raise CommandParseError("owl", f"unknown flag: {key}")
+        i += 2
+    return kwargs
+
+
 def build_owl_manifest(
     params: dict[str, Any], *, valid_tools: frozenset[str] | None = None
 ) -> OwlAgentManifest:

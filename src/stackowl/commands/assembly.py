@@ -225,8 +225,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         tool_registry=deps.tool_registry,
     ))
 
-    # /owl — singular alias to the owl system (same surface as /owls), so a
-    # non-technical user reaches owls whether they type the singular or plural.
+    # /owl — the unified dispatcher: create/edit/rename/pause/resume/retire all
+    # funnel through owl_build via ONE OwlBuildSpec (Task 4), whether the caller
+    # used flags or free text. Inspection (list/dna/health/objectives) reuses
+    # OwlsCommand's inherited registry-backed handlers unchanged. Runs alongside
+    # /owls and /agent (both untouched) until Task 7 retires them.
     from stackowl.commands.owls_command import OwlCommand
     _safe_register(registry, "owl", lambda: OwlCommand(
         owl_registry=deps.owl_registry,
