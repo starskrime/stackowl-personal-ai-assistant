@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from stackowl.commands.owls_command import OwlCommand, OwlsCommand
+from stackowl.commands.owls_helpers import parse_owl_build_flags
 from stackowl.exceptions import CommandParseError
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
 
@@ -92,8 +93,10 @@ async def test_owl_create_freetext_reaches_owl_build_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`/owl create <free text>` reaches OwlBuildTool.execute(action="create", ...)
-    with the free-text argument passed through UNPARSED — no shlex tokenisation, no
-    --flag stripping — proving the grammar-bypass regression this fixes."""
+    with an ordinary free-text sentence (no `--` tokens) passed through VERBATIM —
+    no shlex tokenisation, no word dropped or reordered. (Free text that itself
+    contains a `--`-prefixed token is a different, already-accepted contract —
+    see test_owl_create_freetext_with_dashdash_raises below.)"""
     calls: list[dict] = []
 
     class _StubOwlBuildTool:
@@ -112,6 +115,22 @@ async def test_owl_create_freetext_reaches_owl_build_tool(
     assert calls[0]["action"] == "create"
     assert calls[0]["specialty"] == sentence
     assert "✓ stubbed" in result
+
+
+def test_owl_create_freetext_with_dashdash_raises() -> None:
+    """Pins the Task 4 mode-switch contract: `parse_owl_build_flags` (the parser
+    behind `/owl create`) treats ANY `--`-prefixed token anywhere in the payload
+    as a signal to switch out of free-text mode into flag-pair parsing of the
+    WHOLE payload — it does not fall back to free text just because most of the
+    tokens aren't flags. A description sentence that happens to contain a literal
+    `--role`-style substring therefore no longer passes through verbatim (unlike
+    the old /owls create); it raises CommandParseError, here because the leading
+    words get consumed as an odd number of flag/value pairs before `--role` is
+    even reached. This is an already-accepted design tradeoff (see task-6-report.md),
+    not new source behaviour — this test only documents it so it can't regress
+    silently."""
+    with pytest.raises(CommandParseError):
+        parse_owl_build_flags("a researcher that reads arxiv --role fake")
 
 
 async def test_owls_create_freetext_empty_raises_parse_error() -> None:
