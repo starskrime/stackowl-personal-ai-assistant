@@ -1,9 +1,10 @@
-"""S6 — entry points: /agent and /owl both reach the owl/agent system, and the
-first-contact discovery nudge is a usable one-liner.
+"""S6 — entry points: /owl is the ONE owl surface (legacy /owls + /agent are
+retired — see Task 7), and the first-contact discovery nudge is a usable
+one-liner.
 
 Registration is asserted through the SAME single spine the product boots with
 (register_all_commands(CommandDeps())), so a future dep-guarded regression that
-drops either command turns this RED.
+drops /owl, or resurrects /owls or /agent, turns this RED.
 """
 
 from __future__ import annotations
@@ -24,25 +25,24 @@ def _isolate_registry():  # type: ignore[no-untyped-def]
         CommandRegistry.instance().register(cmd)
 
 
-def test_c_agent_and_owl_entry_points_registered() -> None:
-    """Both /agent and /owl register unconditionally via the assembly spine."""
+def test_owl_entry_point_registered() -> None:
+    """/owl registers unconditionally via the assembly spine and is the ONE owl
+    surface (legacy /owls + /agent are gone — see Task 7)."""
     CommandRegistry.reset()
     register_all_commands(CommandDeps())
     live = {c.command for c in CommandRegistry.instance().list()}
-    assert "agent" in live, "the /agent entry point must be reachable"
     assert "owl" in live, "the /owl entry point must be reachable"
-    assert "owls" in live, "the /owls entry point must remain reachable"
+    assert "owls" not in live, "legacy /owls must be removed"
+    assert "agent" not in live, "legacy /agent must be removed"
 
 
-def test_c_owl_alias_reaches_owl_surface() -> None:
-    """/owl inherits the full owl surface (it IS an OwlsCommand)."""
-    from stackowl.commands.owls_command import OwlCommand, OwlsCommand
+def test_owl_exposes_unified_surface() -> None:
+    from stackowl.commands.owls_command import OwlCommand
 
     cmd = OwlCommand()
     assert cmd.command == "owl"
-    assert isinstance(cmd, OwlsCommand)
-    # the meta (subcommands) is inherited — same owl surface
-    assert any(s.name == "add" for s in cmd.meta.subcommands)
+    names = {s.name for s in cmd.meta.subcommands}
+    assert {"create", "pause", "resume", "retire"} <= names
 
 
 def test_discovery_nudge_is_a_usable_one_liner() -> None:
