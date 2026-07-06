@@ -13,10 +13,17 @@ from typing import Any
 
 import pytest
 
-from stackowl.commands.owls_command import OwlCommand, OwlsCommand
+from stackowl.commands.assembly import CommandDeps, register_all_commands
+from stackowl.commands.owls_command import OwlsCommand
 from stackowl.commands.owls_helpers import parse_owl_build_flags
+from stackowl.commands.registry import CommandRegistry
 from stackowl.exceptions import CommandParseError
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _reset_registry() -> None:
+    CommandRegistry.reset()
 
 
 class _MinimalOwlRegistry:
@@ -66,7 +73,10 @@ async def test_owl_create_with_flags_routes_to_owl_build(monkeypatch: pytest.Mon
             return _StubResult()
 
     monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _StubOwlBuildTool)
-    result = await OwlCommand().handle("create --name testowl --tier standard", make_state())
+    register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
+    result = await CommandRegistry.instance().dispatch(
+        "owl", "create --name testowl --tier standard", make_state()
+    )
 
     assert seen == {"action": "create", "name": "testowl", "model_tier": "standard"}
     assert "✓ stubbed" in result
@@ -83,7 +93,10 @@ async def test_owl_edit_routes_to_owl_build(monkeypatch: pytest.MonkeyPatch) -> 
             return _StubResult()
 
     monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _StubOwlBuildTool)
-    result = await OwlCommand().handle("edit editowl --tier powerful", make_state())
+    register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
+    result = await CommandRegistry.instance().dispatch(
+        "owl", "edit editowl --tier powerful", make_state()
+    )
 
     assert seen == {"action": "edit", "name": "editowl", "model_tier": "powerful"}
     assert "✓ stubbed" in result
@@ -108,8 +121,9 @@ async def test_owl_create_freetext_reaches_owl_build_tool(
     # inside the method, so a fresh `from ... import OwlBuildTool` at call time
     # resolves via stackowl.tools.meta.owl_build's current attribute.
     monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _StubOwlBuildTool)
+    register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
     sentence = "a researcher that reads arxiv daily and summarizes transformer papers"
-    result = await OwlCommand().handle(f"create {sentence}", make_state())
+    result = await CommandRegistry.instance().dispatch("owl", f"create {sentence}", make_state())
 
     assert len(calls) == 1
     assert calls[0]["action"] == "create"

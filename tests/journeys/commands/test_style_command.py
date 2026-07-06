@@ -18,7 +18,6 @@ from stackowl.channels._format import OUTPUT_STYLE_KEY
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.manifest import SHIPPED_COMMANDS
 from stackowl.commands.registry import CommandRegistry
-from stackowl.commands.style_command import StyleCommand
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.preferences import PreferenceStore
@@ -51,7 +50,8 @@ async def test_style_with_stored_style_lists_active_rules(store: PreferenceStore
     """(a) A stored style renders the active rules in plain language."""
     await store.set("user1", OUTPUT_STYLE_KEY,
                     json.dumps({"markdown": "minimal", "links": "titles"}))
-    out = await StyleCommand(preference_store=store).handle("", _state())
+    register_all_commands(CommandDeps(preference_store=store), registry=CommandRegistry.instance())
+    out = await CommandRegistry.instance().dispatch("style", "", _state())
     assert "no asterisks" in out
     assert "links shown as titles" in out
     assert "Telegram" in out  # channel surfaced
@@ -60,14 +60,16 @@ async def test_style_with_stored_style_lists_active_rules(store: PreferenceStore
 
 async def test_style_with_no_style_is_honest(store: PreferenceStore) -> None:
     """(b) No style set → an honest 'none set' message, not a fabricated rule."""
-    out = await StyleCommand(preference_store=store).handle("", _state())
+    register_all_commands(CommandDeps(preference_store=store), registry=CommandRegistry.instance())
+    out = await CommandRegistry.instance().dispatch("style", "", _state())
     assert "no custom output style" in out.lower()
     assert "(active)" not in out  # never claims an active rule when none is set
 
 
 async def test_style_unconfigured_store_is_honest() -> None:
     """A missing store degrades to an honest 'not configured' message."""
-    out = await StyleCommand(preference_store=None).handle("", _state())
+    register_all_commands(CommandDeps(preference_store=None), registry=CommandRegistry.instance())
+    out = await CommandRegistry.instance().dispatch("style", "", _state())
     assert "not configured" in out.lower()
 
 

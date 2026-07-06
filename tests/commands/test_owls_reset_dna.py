@@ -81,13 +81,13 @@ async def test_reset_dna_no_authored_baseline(tmp_db):
 async def test_reset_dna_clears_latch(tmp_db):
     cmd, reg = _cmd(tmp_db)
     await capture_one_authored(tmp_db, "scout", OwlDNA(challenge_level=0.5))
-    # Ensure clean state first, then seed latch ON (0.72 >= HIGH_ENTER 0.70 → True)
+    # Ensure clean state first, then seed latch ON (0.72 >= HIGH_ENTER 0.62 → True)
     DIRECTIVE_LATCH.reset_owl("scout")
     DIRECTIVE_LATCH.high_state("scout", "challenge_level", 0.72)
     await cmd.handle("reset-dna scout YES", _state())
     # After reset_owl the latch is cleared; next call cold-seeds from the given value.
-    # 0.66 < HIGH_ENTER (0.70) → seeds as False
-    assert DIRECTIVE_LATCH.high_state("scout", "challenge_level", 0.66) is False
+    # 0.50 < HIGH_ENTER (0.62) → seeds as False
+    assert DIRECTIVE_LATCH.high_state("scout", "challenge_level", 0.50) is False
 
 
 @pytest.mark.asyncio

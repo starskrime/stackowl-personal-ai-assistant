@@ -24,7 +24,7 @@ def test_directive_latches_through_deadband() -> None:
     m = _m("o1")
     on = inj.inject(m, OwlDNA(challenge_level=0.72))    # enter HIGH
     hold = inj.inject(m, OwlDNA(challenge_level=0.66))  # deadband → STILL on
-    off = inj.inject(m, OwlDNA(challenge_level=0.58))   # exit
+    off = inj.inject(m, OwlDNA(challenge_level=0.50))   # below HIGH_EXIT (0.55) → exit
     assert on != "BASE" and hold != "BASE" and off == "BASE"
 
 
