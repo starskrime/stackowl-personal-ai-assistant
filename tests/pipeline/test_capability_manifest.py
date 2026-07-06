@@ -29,11 +29,26 @@ _TOOL_NAMES = [
     "heartbeat",
     "telegram",
     "scheduler",
+    "shell",
 ]
 
 
+class _FakeToolRegistry:
+    """Minimal stand-in — probe() only calls `.get(name)`."""
+
+    def __init__(self, *, has_shell: bool) -> None:
+        self._has_shell = has_shell
+
+    def get(self, name: str) -> object | None:
+        return object() if (name == "shell" and self._has_shell) else None
+
+
 def _services(
-    *, proactive: bool, web: bool, reg: OwlRegistry | None = None
+    *,
+    proactive: bool,
+    web: bool,
+    reg: OwlRegistry | None = None,
+    has_shell: bool = False,
 ) -> StepServices:
     # Any non-None object is a reachable wiring signal — probe() checks `is not None`.
     sentinel = object()
@@ -41,6 +56,7 @@ def _services(
         proactive_deliverer=sentinel if proactive else None,  # type: ignore[arg-type]
         web_search_registry=sentinel if web else None,  # type: ignore[arg-type]
         owl_registry=reg,
+        tool_registry=_FakeToolRegistry(has_shell=has_shell),  # type: ignore[arg-type]
     )
 
 
@@ -68,9 +84,41 @@ def test_manifest_empty_when_nothing_reachable() -> None:
 
 def test_manifest_has_no_tool_names() -> None:
     """(c) the manifest is capabilities-only — no tool names."""
-    block = CapabilityManifest.probe(_services(proactive=True, web=True)).render().lower()
+    block = CapabilityManifest.probe(
+        _services(proactive=True, web=True, has_shell=True)
+    ).render().lower()
     for name in _TOOL_NAMES:
         assert name not in block, f"manifest must not name tool {name!r}"
+
+
+def test_manifest_includes_system_exec_line_when_shell_present_and_tools_on() -> None:
+    """Local incident (2026-07-06): the model, told nothing about local execution,
+    fabricated "I run on a Vultr cloud server". Assert the fix: shell registered
+    + tools on this turn → a factual local-device-access line, never the tool name."""
+    block = CapabilityManifest.probe(
+        _services(proactive=False, web=False, has_shell=True), tools_enabled=True
+    ).render()
+    low = block.lower()
+    assert "device" in low
+    assert "not" in low and "cloud" in low
+    assert "shell" not in low
+
+
+def test_system_exec_line_omitted_when_tools_off_this_turn() -> None:
+    """Even with shell registered, a tool-free turn (conversational/clarify) must
+    NOT claim system-exec access — the tool schema is not on the wire this turn,
+    so asserting it would itself be a false claim."""
+    block = CapabilityManifest.probe(
+        _services(proactive=False, web=False, has_shell=True), tools_enabled=False
+    ).render()
+    assert block == ""
+
+
+def test_system_exec_line_omitted_when_shell_not_registered() -> None:
+    block = CapabilityManifest.probe(
+        _services(proactive=False, web=False, has_shell=False), tools_enabled=True
+    ).render()
+    assert block == ""
 
 
 def test_charter_carries_honesty_split() -> None:

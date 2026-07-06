@@ -26,6 +26,15 @@ from dataclasses import dataclass
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import StepServices
 
+# TS4-follow-up (2026-07-06): the manifest previously covered only proactive +
+# web reachability. A live incident showed the model, given no stated fact
+# about local execution, fabricating a specific wrong one instead ("I run on a
+# Vultr cloud server") — the same self-denial reflex, now confabulating
+# infrastructure details rather than just refusing. ``shell`` sits in
+# tools/_infra/presentation.py's ``_DEFAULT_BASE``, so it is presented to every
+# owl whenever tools are on at all — no per-owl profile check is needed, only
+# whether tools are enabled THIS turn (see ``tools_enabled`` below).
+
 # Lead-in for the injected block. Frames capabilities as MEASURED facts the agent
 # must not deny — the antidote to the self-invented "can't".
 _HEADER = (
@@ -46,9 +55,10 @@ class CapabilityManifest:
 
     proactive_reachable: bool
     web_reachable: bool
+    system_exec_reachable: bool
 
     @classmethod
-    def probe(cls, services: StepServices) -> CapabilityManifest:
+    def probe(cls, services: StepServices, *, tools_enabled: bool = True) -> CapabilityManifest:
         """Derive the manifest from live runtime wiring (reachability, not registry).
 
         - proactive: ``services.proactive_deliverer`` — the durable seam every
@@ -57,14 +67,24 @@ class CapabilityManifest:
           for "can reach the user unprompted", so it is what the manifest gates on.
         - web: ``services.web_search_registry`` — ``web_search`` degrades to
           "registry not configured — unavailable" when it is ``None``.
+        - system_exec: ``services.tool_registry`` has the ``shell`` tool registered
+          AND ``tools_enabled`` (this turn's ``intent_class`` is not tool-free —
+          see ``pipeline.state.TOOL_FREE_CLASSES``). ``shell`` sits in every owl's
+          presented base set, so no per-owl profile check is needed — only
+          whether tools are on at all THIS turn (a tool-free turn gets no line,
+          since asserting the capability without the schema present would itself
+          be a false claim).
         """
         proactive = services.proactive_deliverer is not None
         web = services.web_search_registry is not None
+        system_exec = tools_enabled and (
+            services.tool_registry is not None and services.tool_registry.get("shell") is not None
+        )
         log.engine.debug(
             "[capability] probe: entry",
-            extra={"_fields": {"proactive": proactive, "web": web}},
+            extra={"_fields": {"proactive": proactive, "web": web, "system_exec": system_exec}},
         )
-        return cls(proactive_reachable=proactive, web_reachable=web)
+        return cls(proactive_reachable=proactive, web_reachable=web, system_exec_reachable=system_exec)
 
     def render(self) -> str:
         """Plain-language manifest, or ``""`` when nothing is reachable.
@@ -82,6 +102,13 @@ class CapabilityManifest:
             lines.append(
                 "- You can search the web and read current pages to ground answers "
                 "in up-to-date information."
+            )
+        if self.system_exec_reachable:
+            lines.append(
+                "- You run WITH direct access to this device — you can execute real "
+                "commands on it and reach its local network/hardware. You are NOT a "
+                "remote-only cloud model cut off from the user's machine; never "
+                "claim otherwise or invent a hosting location."
             )
         if not lines:
             log.engine.debug("[capability] render: no capabilities reachable — empty")

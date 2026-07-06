@@ -197,7 +197,9 @@ async def run(state: PipelineState) -> PipelineState:
     # measured fact. Fail-open + byte-absent when nothing is reachable.
     capabilities = ""
     try:
-        capabilities = CapabilityManifest.probe(services).render()
+        capabilities = CapabilityManifest.probe(
+            services, tools_enabled=state.intent_class not in TOOL_FREE_CLASSES
+        ).render()
     except Exception as exc:  # no-hidden-errors: never crash the turn over a manifest
         log.engine.error(
             "[pipeline] assemble: capability manifest FAILED — skipped",
