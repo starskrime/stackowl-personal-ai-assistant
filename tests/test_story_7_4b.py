@@ -27,21 +27,22 @@ from tests._story_7_4_helpers import (
     open_db,
 )
 
-
 # ---------------------------------------------------------------------------
 # 11-14. FocusCommand
 # ---------------------------------------------------------------------------
 
 
-async def test_focus_command_default_sets_soft(tmp_path: Path) -> None:
+async def test_focus_command_bare_shows_current_mode_without_mutating(tmp_path: Path) -> None:
+    """Bare /focus must NOT change the mode — it only reports the current one."""
     disable_guard()
     db = await open_db(tmp_path)
     try:
         router = NotificationRouter(db=db, settings=make_settings())
+        router.set_focus_mode("hard")  # pre-set to something other than the default
         cmd = FocusCommand(router=router, event_bus=EventBus())
         out = await cmd.handle("", make_state())
-        assert out == "focus_mode:soft"
-        assert router.get_focus_mode() == "soft"
+        assert "hard" in out.lower()
+        assert router.get_focus_mode() == "hard"  # unchanged — bare call must not mutate
     finally:
         await db.close()
 
