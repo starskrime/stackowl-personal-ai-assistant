@@ -19,7 +19,11 @@ class OwlBuildSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     action: Literal["create", "edit", "retire", "rename"]
-    name: str
+    # name defaults to "" (not required): a free-text `/owl create <sentence>`
+    # constructs a spec with no name so the validator reports it as a recoverable
+    # MissingField and the tool ASKS for it (elicitation). Every action's own
+    # hard-error branch in validate_owl_build_spec still rejects an empty name.
+    name: str = ""
     preset: str | None = None
     explicit_tools: list[str] | None = None
     specialty: str | None = None
@@ -40,6 +44,12 @@ class OwlBuildSpec(BaseModel):
     schedule: str | None = None
     goal: str | None = None
     lifecycle: Literal["on_demand", "scheduled"] | None = None
+    # Free-text behavioural guardrail (design decision 4) — distinct from tool
+    # grants; forwarded to the manifest and folded into the system prompt.
+    boundaries: str | None = None
+    # Preset evolution aggressiveness (design decision 3). All optional +
+    # default-safe: an on-demand create omitting both is byte-identical.
+    evolution_strategy: Literal["conservative", "adaptive", "experimental"] | None = None
 
     @field_validator("explicit_tools", mode="before")
     @classmethod

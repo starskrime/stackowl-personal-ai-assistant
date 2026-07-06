@@ -78,3 +78,16 @@ def test_build_with_explicit_shell_drops_it_under_unbounded_creator() -> None:
     )
     assert "shell" not in (manifest.bounds.tools or frozenset())  # dropped by safe-default ceiling
     assert "shell" in dropped
+
+
+def test_build_agent_manifest_carries_boundaries_and_strategy() -> None:
+    reg = _reg_with("secretary", None)
+    spec = OwlBuildSpec(
+        action="create", name="scout", preset="researcher", specialty="recon",
+        boundaries="never share raw urls", evolution_strategy="experimental",
+    )
+    manifest, _ = build_agent_manifest(
+        spec, creator="secretary", parent_ceiling=None, registry=reg
+    )
+    assert manifest.boundaries == "never share raw urls"
+    assert manifest.evolution_strategy == "experimental"

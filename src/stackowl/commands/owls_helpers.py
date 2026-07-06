@@ -369,6 +369,12 @@ def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:
     # so existing on-demand owls keep byte-identical yaml entries.
     if manifest.display_name:
         entry["display_name"] = manifest.display_name
+    # Additive: written only when non-default so existing owls keep byte-identical
+    # yaml entries (mirrors the display_name/lifecycle conditional-write pattern).
+    if manifest.boundaries:
+        entry["boundaries"] = manifest.boundaries
+    if manifest.evolution_strategy != "adaptive":
+        entry["evolution_strategy"] = manifest.evolution_strategy
     if manifest.lifecycle != "on_demand":
         entry["lifecycle"] = manifest.lifecycle
     if manifest.trigger is not None:

@@ -89,6 +89,14 @@ class OwlAgentManifest(BaseModel):
     origin: Literal["human", "builtin", "agent"] = "human"
     created_by: str | None = None  # the owl that minted this owl (agent origin only)
     creation_ceiling: BoundsSpec | None = None  # creator's effective bounds at mint
+    # Free-text behavioural guardrail folded into the rendered system prompt
+    # (e.g. "has web_fetch but never share raw URLs with the user"). Additive +
+    # defaulted → every existing owl loads byte-identical. See DNAPromptInjector.
+    boundaries: str = ""
+    # Per-owl evolution aggressiveness (design decision 3). Scales the mutation
+    # deltas the EvolutionCoordinator applies. Defaulted to "adaptive" (1× — the
+    # current behaviour) so existing owls evolve exactly as before.
+    evolution_strategy: Literal["conservative", "adaptive", "experimental"] = "adaptive"
 
     @property
     def display(self) -> str:

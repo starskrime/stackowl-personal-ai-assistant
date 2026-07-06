@@ -247,6 +247,23 @@ class OwlBuildTool(Tool):
                         "without a 'schedule', you will be asked for the cadence."
                     ),
                 },
+                "boundaries": {
+                    "type": "string",
+                    "description": (
+                        "Optional behavioural guardrail folded into the owl's "
+                        "system prompt (e.g. 'has web_fetch but never shares raw "
+                        "URLs with the user'). Distinct from tool grants."
+                    ),
+                },
+                "evolution_strategy": {
+                    "type": "string",
+                    "enum": ["conservative", "adaptive", "experimental"],
+                    "description": (
+                        "Optional. How aggressively this owl's DNA evolves over "
+                        "time: conservative (slow), adaptive (default), or "
+                        "experimental (fast)."
+                    ),
+                },
             },
             "required": ["action", "name"],
         }

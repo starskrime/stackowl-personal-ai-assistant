@@ -135,6 +135,13 @@ def build_agent_manifest(
             "[owl_build] authz.build: scheduled trigger attached",
             extra={"_fields": {"name": spec.name, "schedule": schedule}},
         )
+    # Design decisions 3 & 4 — carry the guardrail + evolution preset onto the
+    # manifest (single path: both chat and /owl create reach this one forge).
+    boundaries = (spec.boundaries or "").strip()
+    if boundaries:
+        update["boundaries"] = boundaries
+    if spec.evolution_strategy is not None:
+        update["evolution_strategy"] = spec.evolution_strategy
     manifest = built.model_copy(update=update)
     log.engine.debug(
         "[owl_build] authz.build: exit",
