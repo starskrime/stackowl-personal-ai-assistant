@@ -492,7 +492,14 @@ class IncidentEscalationHandler(JobHandler):
             )
         if self._miner is not None:
             try:
-                report = await self._miner.mine(self.verdicts)
+                # Mine only THIS verdict, not the full accumulated self.verdicts
+                # history — every prior verdict's cluster was already mined (and
+                # is idempotently skipped if re-mined) in the tick it was first
+                # added, so re-passing the whole map on every new incident just
+                # re-scans/re-checks every OLD signature again for no benefit
+                # (visible as a "skill already exists — skip" line per old
+                # signature, every single tick, forever).
+                report = await self._miner.mine({inc.key: verdict})
                 log.scheduler.info(
                     "[scheduler] incident_escalation: miner pass",
                     extra={"_fields": {

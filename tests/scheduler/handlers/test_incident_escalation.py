@@ -460,9 +460,51 @@ async def test_new_verdict_feeds_the_miner() -> None:
     await handler.execute(_job())
 
     assert len(miner.calls) == 1
-    # mine() was called with the handler's OWN accumulated verdicts map — the
-    # exact interface Task 5 defined (Mapping[(capability_class, failure_class), RcaVerdict]).
+    # mine() was called with this incident's own verdict — the exact interface
+    # Task 5 defined (Mapping[(capability_class, failure_class), RcaVerdict]).
     assert ("web_fetch", "ToolExecutionError") in miner.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_second_new_incident_mines_only_its_own_verdict() -> None:
+    """mine() must be called with ONLY the newly-consumed verdict, not the full
+    accumulated self.verdicts history. Before this fix, every new incident
+    re-passed the whole map, so a tick with N previously-resolved signatures
+    already open re-mined all N of them again — wasted work every tick,
+    visible as a "skill already exists — skip" line per old signature,
+    forever, on every recurring scheduler run.
+    """
+    miner = _RecordingMiner()
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore([
+            _outcome("t1", "ToolExecutionError", "web_fetch"),
+            _outcome("t2", "ToolExecutionError", "web_fetch"),
+            _outcome("t3", "ToolExecutionError", "web_fetch"),
+        ]),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        miner=miner,  # type: ignore[arg-type]
+    )
+    await handler.execute(_job())  # tick 1: opens web_fetch/ToolExecutionError
+    assert len(miner.calls) == 1
+
+    # tick 2: a SECOND, distinct signature appears. If the old signature is
+    # still active, its incident stays open (dedup) and its verdict must NOT
+    # be re-passed to mine() this tick.
+    handler._outcomes = _FakeOutcomeStore([  # type: ignore[attr-defined]
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+        _outcome("t4", "ManifestValidationError", "shell"),
+        _outcome("t5", "ManifestValidationError", "shell"),
+        _outcome("t6", "ManifestValidationError", "shell"),
+    ])
+    await handler.execute(_job())
+
+    assert len(miner.calls) == 2
+    assert ("shell", "ManifestValidationError") in miner.calls[1]
+    assert ("web_fetch", "ToolExecutionError") not in miner.calls[1]
 
 
 @pytest.mark.asyncio
