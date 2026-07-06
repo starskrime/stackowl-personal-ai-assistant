@@ -10,8 +10,6 @@ from stackowl.commands.owls_command import OwlCommand
 from stackowl.commands.owls_helpers import parse_owl_build_flags
 from stackowl.tools.base import ToolResult
 
-pytestmark = pytest.mark.asyncio
-
 
 class _State:
     session_id = "s1"
@@ -44,6 +42,7 @@ def test_parse_flags_explicit_tools_comma_list() -> None:
     assert kwargs["explicit_tools"] == ["read_file", "memory"]
 
 
+@pytest.mark.asyncio
 async def test_owl_create_freetext_routes_to_owl_build(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
@@ -58,6 +57,7 @@ async def test_owl_create_freetext_routes_to_owl_build(monkeypatch: pytest.Monke
     assert seen == {"action": "create", "specialty": "a research owl that reads arxiv"}
 
 
+@pytest.mark.asyncio
 async def test_owl_pause_routes_to_owl_build(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
@@ -72,6 +72,7 @@ async def test_owl_pause_routes_to_owl_build(monkeypatch: pytest.MonkeyPatch) ->
     assert seen == {"action": "pause", "name": "Sage"}
 
 
+@pytest.mark.asyncio
 async def test_owl_rename_routes_positional_args(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
@@ -85,6 +86,7 @@ async def test_owl_rename_routes_positional_args(monkeypatch: pytest.MonkeyPatch
     assert seen == {"action": "rename", "name": "Sage", "display_name": "Sage the Scholar"}
 
 
+@pytest.mark.asyncio
 async def test_owl_list_uses_inherited_registry_surface() -> None:
     # No registry wired → the inherited _list returns the honest no-registry note.
     out = await OwlCommand().handle("list", _State())
