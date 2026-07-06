@@ -1114,23 +1114,183 @@ git commit -m "feat(owl): /owl unified dispatcher routes all mutations through o
 
 ---
 
-### Task 5: Regression — the 3 old `/agent` use cases as scheduled owls
+### Task 5: `ReportTrigger` (real handler pinning) + regression — the 3 old `/agent` use cases as scheduled owls
+
+**REVISED 2026-07-06** — the original version of this task assumed a `cron`-triggered
+scheduled owl already reproduces `morning_brief`/`check_in` behavior. Task-review
+caught this was FALSE: `owl_lifecycle._KIND_TO_HANDLER` maps `cron` only to
+`goal_execution` (a freeform LLM pipeline on a `goal` string) — `morning_brief`/
+`check_in` are structurally different (deterministic assembler pipelines —
+`DateAndPrioritiesAssembler`/`MemoryHighlightsAssembler`/etc. — through a dedicated
+renderer and their own delivery/honesty category, no `goal` text at all). There was
+no way to route a scheduled owl into those two handlers. User-confirmed fix
+(2026-07-06): add real handler pinning via a new `ReportTrigger` trigger kind,
+rather than accept the capability narrowing.
+
+**Key finding that makes this SMALL, not a rewrite:** `reconcile_owl_schedules`
+already resolves `target_channels`/`target_addresses` GENERICALLY for every
+scheduled owl regardless of trigger kind (`owl_lifecycle.py:149`,
+`target_channels, target_addresses = _resolve_target(settings)`, called ONCE before
+the per-owl loop, then threaded into `_upsert` for every owl). This is the exact
+delivery-target machinery `morning_brief`/`check_in` need — it already exists and
+is already generic. The ONLY gap is `_desired()`'s handler-kind mapping, which is
+hardcoded to `_KIND_TO_HANDLER["cron"] = "goal_execution"` with no way to name a
+different handler. Confirmed via the existing global seed
+(`scheduler/assembly.py:707-724`, `settings.brief.channels`/`settings.check_in.channels`
++ `_resolve_owner_addresses`) that `morning_brief`/`check_in` need only a schedule +
+a delivery target — no goal/prompt — matching `ReportTrigger`'s minimal shape below.
 
 **Files:**
-- Test: `tests/journeys/commands/test_agent_usecases_as_owls.py` (new)
+- Modify: `src/stackowl/owls/trigger.py` (new `ReportTrigger` class, add to `TriggerSpec` union)
+- Modify: `src/stackowl/scheduler/owl_lifecycle.py:76-92` (`_desired`, add a `report` branch — do NOT touch `_KIND_TO_HANDLER`'s existing 3 entries)
+- Modify: `src/stackowl/tools/meta/owl_build_spec.py` (add `report: Literal["morning_brief", "check_in"] | None = None`; `validate_owl_build_spec` — when `report` is set, `goal` is NOT required)
+- Modify: `src/stackowl/tools/meta/owl_build_authz.py` (`build_agent_manifest` — when `spec.report` is set, build a `ReportTrigger` instead of `CronTrigger`)
+- Test: `tests/owls/test_report_trigger.py` (new — unit-level: trigger validation + `_desired` mapping), `tests/journeys/commands/test_agent_usecases_as_owls.py` (new — the corrected regression, all 3 cases with REAL handler names)
 
 **Interfaces:**
-- Consumes: `build_agent_manifest(...)`, `reconcile_owl_schedules(registry, db)`, `_job_id_for(name)`, `OwlBuildSpec`, `OwlRegistry`, the `db` fixture pattern from `tests/scheduler/test_owl_lifecycle_reconcile.py`.
+- Consumes: `_resolve_target(settings)` (existing, unchanged), `reconcile_owl_schedules(registry, db)`, `_job_id_for(name)`, `build_agent_manifest(...)`, the `db` fixture pattern from `tests/scheduler/test_owl_lifecycle_reconcile.py`.
+- Produces: `ReportTrigger(kind="report", report: Literal["morning_brief","check_in"], schedule: str)`; `TriggerSpec = CronTrigger | WatchTrigger | ThresholdTrigger | ReportTrigger`; `OwlBuildSpec.report`.
 
-Rationale: the old `/agent` allowlist was `goal_execution` / `morning_brief` / `check_in`. Under the unified model a recurring reminder becomes a `lifecycle="scheduled"` owl whose `cron` trigger projects (per `owl_lifecycle._KIND_TO_HANDLER`) to the `goal_execution` handler running its `goal` each tick. This test proves each of the three cadences re-expressed as a scheduled owl produces the same end-user-visible behaviour: exactly one owned job row, future next-run, carrying the goal — i.e. a proactive message arrives on schedule.
+- [ ] **Step 1: Write the failing tests**
 
-- [ ] **Step 1: Write the failing test**
-
-`tests/journeys/commands/test_agent_usecases_as_owls.py` (new):
+`tests/owls/test_report_trigger.py` (new):
 ```python
-"""Migration regression — the 3 legacy /agent use cases (a recurring goal, a
-morning brief, a check-in) expressed as scheduled owls all project exactly one
-owned scheduler row that fires on schedule with the intended goal."""
+"""ReportTrigger pins a scheduled owl to a REAL existing handler (morning_brief/
+check_in) instead of the generic goal_execution cron path — these two handlers
+take no goal/prompt, they self-assemble from deterministic sources."""
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.trigger import ReportTrigger
+
+
+def test_report_trigger_accepts_morning_brief() -> None:
+    trig = ReportTrigger(report="morning_brief", schedule="daily@08:00")
+    assert trig.kind == "report"
+    assert trig.report == "morning_brief"
+
+
+def test_report_trigger_accepts_check_in() -> None:
+    trig = ReportTrigger(report="check_in", schedule="daily@18:00")
+    assert trig.report == "check_in"
+
+
+def test_report_trigger_rejects_unknown_report_name() -> None:
+    with pytest.raises(ValidationError):
+        ReportTrigger(report="goal_execution", schedule="daily@08:00")  # not a report kind
+
+
+def test_manifest_accepts_report_trigger() -> None:
+    m = OwlAgentManifest(
+        name="briefowl", role="r", system_prompt="p", model_tier="fast",
+        lifecycle="scheduled",
+        trigger=ReportTrigger(report="morning_brief", schedule="daily@08:00"),
+    )
+    assert m.trigger is not None and m.trigger.kind == "report"
+```
+
+Append to `tests/scheduler/test_owl_lifecycle_reconcile.py` (or a new focused file if that one doesn't fit — check its existing fixture pattern first and follow it):
+```python
+async def test_report_trigger_projects_the_named_handler(db: DbPool) -> None:
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="briefowl", role="r", system_prompt="p", model_tier="fast",
+            lifecycle="scheduled",
+            trigger=ReportTrigger(report="morning_brief", schedule="daily@08:00"),
+        ),
+        source_name="t",
+    )
+    result = await reconcile_owl_schedules(reg, db)
+    assert result.created == 1
+    rows = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (_job_id_for("briefowl"),))
+    assert rows[0]["handler_name"] == "morning_brief"  # NOT goal_execution
+```
+(Adjust imports/fixture names to match whatever `tests/scheduler/test_owl_lifecycle_reconcile.py` already uses — read that file first, this snippet shows the required assertion, not a rigid template.)
+
+- [ ] **Step 2: Run tests to verify they fail**
+Run: `uv run pytest tests/owls/test_report_trigger.py -v`
+Expected: FAIL — `ReportTrigger` does not exist (`ImportError`).
+
+- [ ] **Step 3: Write minimal implementation**
+
+`src/stackowl/owls/trigger.py` — add after `ThresholdTrigger`:
+```python
+class ReportTrigger(_TriggerBase):
+    """Run a STRUCTURED report handler (morning_brief/check_in) on a recurring
+    schedule. Unlike CronTrigger, this pins a SPECIFIC existing handler by name —
+    no NL goal/prompt: the handler self-assembles from deterministic sources
+    (date/priorities, memory highlights, pending facts, agent status) through its
+    own renderer and delivers via its own honesty/delivery category. Delivery
+    target (channel/address) is resolved generically by reconcile_owl_schedules
+    for every scheduled owl (_resolve_target), same as any other trigger kind."""
+
+    kind: Literal["report"] = "report"
+    report: Literal["morning_brief", "check_in"]
+    schedule: str
+```
+Update the union:
+```python
+TriggerSpec = Annotated[
+    CronTrigger | WatchTrigger | ThresholdTrigger | ReportTrigger,
+    Field(discriminator="kind"),
+]
+```
+
+`src/stackowl/scheduler/owl_lifecycle.py` — in `_desired()`, add a branch BEFORE the existing `if trig.kind == "cron":` check (or after — order doesn't matter, they're mutually exclusive on `kind`):
+```python
+    if trig.kind == "report":
+        # No goal/prompt — the named handler self-assembles. "owl" is the only
+        # content param, same provenance tag every other kind carries.
+        return trig.report, trig.schedule, {"owl": owl.name}
+```
+
+`src/stackowl/tools/meta/owl_build_spec.py` — add field:
+```python
+    # Pin a scheduled owl to a REAL existing report handler (morning_brief/
+    # check_in) instead of the generic goal_execution cron path. Mutually
+    # exclusive with `goal` in intent (both may be present on the wire; `report`
+    # wins in build_agent_manifest — see its docstring).
+    report: Literal["morning_brief", "check_in"] | None = None
+```
+In `validate_owl_build_spec`, in the `create` branch's missing-fields check, change the schedule/goal requirement so `report` alone (with `schedule`) satisfies it without requiring `goal`:
+```python
+    if spec.lifecycle == "scheduled" and not sched:
+        missing.append("schedule")
+    # report-pinned scheduled owls need no `goal` — the handler self-assembles.
+```
+(Read the current file's exact missing-fields logic before editing — this task's Step 1 tests don't exercise `validate_owl_build_spec` directly, so match the existing branch structure exactly rather than guessing a diff.)
+
+`src/stackowl/tools/meta/owl_build_authz.py` — in `build_agent_manifest`, find where `CronTrigger(schedule=..., prompt=...)` is constructed for a scheduled create/edit, and branch:
+```python
+    if spec.report is not None:
+        trigger = ReportTrigger(report=spec.report, schedule=sched)
+    else:
+        trigger = CronTrigger(schedule=sched, prompt=spec.goal or spec.specialty or "")
+```
+(Read the current function first — this shows the branch to add, not the full surrounding function; preserve everything else unchanged.)
+
+- [ ] **Step 4: Run tests to verify they pass**
+Run: `uv run pytest tests/owls/test_report_trigger.py tests/scheduler/test_owl_lifecycle_reconcile.py -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+```bash
+git add src/stackowl/owls/trigger.py src/stackowl/scheduler/owl_lifecycle.py src/stackowl/tools/meta/owl_build_spec.py src/stackowl/tools/meta/owl_build_authz.py tests/owls/test_report_trigger.py tests/scheduler/test_owl_lifecycle_reconcile.py
+git commit -m "feat(owl): ReportTrigger pins scheduled owls to real morning_brief/check_in handlers"
+```
+
+- [ ] **Step 6: Write the corrected regression test**
+
+Replace the flawed premise entirely. `tests/journeys/commands/test_agent_usecases_as_owls.py` (new):
+```python
+"""Migration regression — the 3 legacy /agent use cases, corrected: goal_execution
+IS a freeform cron goal (CronTrigger); morning_brief/check_in are NOT — they pin
+their real handler via ReportTrigger (no goal text), proven by asserting the
+ACTUAL handler_name projected, not just that SOME row exists."""
 from __future__ import annotations
 
 import json
@@ -1141,10 +1301,10 @@ import pytest
 
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
+from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.owls.trigger import CronTrigger, ReportTrigger
 from stackowl.scheduler.owl_lifecycle import _job_id_for, reconcile_owl_schedules
-from stackowl.tools.meta.owl_build_authz import build_agent_manifest
-from stackowl.tools.meta.owl_build_spec import OwlBuildSpec
 
 pytestmark = pytest.mark.asyncio
 
@@ -1161,33 +1321,6 @@ async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
         await pool.close()
 
 
-def _scheduled(name: str, goal: str, schedule: str) -> object:
-    reg = OwlRegistry()
-    reg.register(
-        OwlAgentManifestFrom(name, goal, schedule), source_name="usecase"
-    )
-    return reg
-
-
-def OwlAgentManifestFrom(name: str, goal: str, schedule: str):  # noqa: N802
-    spec = OwlBuildSpec(
-        action="create", name=name, preset="researcher",
-        specialty=goal, schedule=schedule, goal=goal,
-    )
-    reg0 = OwlRegistry()  # unbounded secretary creator → SAFE_DEFAULT_CEILING
-    from stackowl.owls.manifest import OwlAgentManifest
-    reg0.register(
-        OwlAgentManifest(name="secretary", role="s", system_prompt="p", model_tier="fast"),
-        source_name="t",
-    )
-    manifest, _ = build_agent_manifest(
-        spec, creator="secretary", parent_ceiling=None, registry=reg0
-    )
-    assert manifest.lifecycle == "scheduled"
-    assert manifest.trigger is not None and manifest.trigger.prompt == goal
-    return manifest
-
-
 async def _owned_row(db: DbPool, name: str) -> dict:
     rows = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (_job_id_for(name),))
     assert rows, f"no projected row for {name}"
@@ -1196,44 +1329,60 @@ async def _owned_row(db: DbPool, name: str) -> dict:
     return row
 
 
+async def test_goal_execution_usecase_is_a_freeform_cron_goal(db: DbPool) -> None:
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="newsowl", role="r", system_prompt="p", model_tier="fast",
+            lifecycle="scheduled",
+            trigger=CronTrigger(schedule="every 2h", prompt="poke me with the latest AI news"),
+        ),
+        source_name="t",
+    )
+    result = await reconcile_owl_schedules(reg, db)
+    assert result.created == 1
+    row = await _owned_row(db, "newsowl")
+    assert row["handler_name"] == "goal_execution"
+    assert row["params"]["goal"] == "poke me with the latest AI news"
+
+
 @pytest.mark.parametrize(
-    ("name", "goal", "schedule"),
+    ("name", "report", "schedule"),
     [
-        ("newsowl", "poke me with the latest AI news", "every 2h"),     # goal_execution
-        ("briefowl", "give me my morning brief", "daily@09:00"),        # morning_brief
-        ("checkowl", "check in on my open tasks", "daily@17:00"),       # check_in
+        ("briefowl", "morning_brief", "daily@08:00"),
+        ("checkowl", "check_in", "daily@18:00"),
     ],
 )
-async def test_agent_usecase_projects_one_firing_row(
-    db: DbPool, name: str, goal: str, schedule: str
+async def test_report_usecase_projects_the_real_handler(
+    db: DbPool, name: str, report: str, schedule: str
 ) -> None:
-    reg = _scheduled(name, goal, schedule)
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name=name, role="r", system_prompt="p", model_tier="fast",
+            lifecycle="scheduled",
+            trigger=ReportTrigger(report=report, schedule=schedule),
+        ),
+        source_name="t",
+    )
     result = await reconcile_owl_schedules(reg, db)
     assert result.created == 1
     row = await _owned_row(db, name)
-    assert row["handler_name"] == "goal_execution"
-    assert row["params"]["goal"] == goal
+    assert row["handler_name"] == report  # the REAL handler, not goal_execution
     assert row["next_run_at"] and row["status"] == "pending"
-    # Idempotent — a second reconcile creates no duplicate (same end behaviour).
+    # Idempotent — a second reconcile creates no duplicate.
     again = await reconcile_owl_schedules(reg, db)
     assert again.created == 0
 ```
 
-- [ ] **Step 2: Run test to verify it fails, then confirm the migration claim**
+- [ ] **Step 7: Run test to verify it passes**
 Run: `uv run pytest tests/journeys/commands/test_agent_usecases_as_owls.py -v`
-Expected: initially this is a NEW test exercising already-shipped reconcile behaviour on top of Task 1's forge fields — it may PASS immediately. If it fails, read the failure: a `KeyError`/schema mismatch on `jobs` columns means the `db` fixture drifted from `tests/scheduler/test_owl_lifecycle_reconcile.py` — re-sync the fixture with that file. The test's PURPOSE is the migration guarantee, so treat a green run as the acceptance evidence for design decision 1.
+Expected: PASS — all 3 cases, with `briefowl`/`checkowl` asserting their REAL handler name (`morning_brief`/`check_in`), not `goal_execution`. This is the corrected acceptance evidence for design decision 1 — the previous version of this test asserted a false equivalence and would have let Task 7 delete `/agent`'s real morning_brief/check_in capability with no replacement.
 
-- [ ] **Step 3: Minimal implementation**
-No source change — this task is pure regression coverage proving the scheduled-owl path subsumes the 3 `/agent` handlers. (If Step 2 reveals a genuine gap, STOP and surface it rather than papering it; per repo policy the AI must not silently patch a failing migration-integration test.)
-
-- [ ] **Step 4: Run test to verify it passes**
-Run: `uv run pytest tests/journeys/commands/test_agent_usecases_as_owls.py -v`
-Expected: PASS (all 3 parametrizations).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 ```bash
 git add tests/journeys/commands/test_agent_usecases_as_owls.py
-git commit -m "test(owl): regression — 3 legacy /agent use cases as scheduled owls"
+git commit -m "test(owl): corrected regression — morning_brief/check_in project their REAL handler, not goal_execution"
 ```
 
 ---
