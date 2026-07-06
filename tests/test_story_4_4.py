@@ -1,4 +1,4 @@
-"""Story 4.4 — Owl management slash commands (/owls, /settings)."""
+"""Story 4.4 — Owl management slash commands (/owls)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from stackowl.commands.owls_helpers import (
     format_dna_display,
     format_owl_table,
 )
-from stackowl.commands.settings_command import SettingsCommand
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.exceptions import (
@@ -292,54 +291,6 @@ class TestOwlsRemove:
         reg = OwlRegistry.with_default_secretary()
         cmd = OwlsCommand(owl_registry=reg)
         out = await cmd.handle("remove", _state())
-        assert "Usage:" in out
-
-
-# ---------------------------------------------------------------------------
-# SettingsCommand
-# ---------------------------------------------------------------------------
-
-
-class TestSettings:
-    async def test_settings_autonomy_low(self, tmp_yaml: Path) -> None:
-        cmd = SettingsCommand()
-        out = await cmd.handle("autonomy low", _state())
-        assert "✓" in out
-        assert "low" in out
-        data = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
-        assert data["autonomy_level"] == "low"
-
-    async def test_settings_autonomy_high(self, tmp_yaml: Path) -> None:
-        cmd = SettingsCommand()
-        out = await cmd.handle("autonomy high", _state())
-        data = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
-        assert data["autonomy_level"] == "high"
-        assert "✓" in out
-
-    async def test_settings_autonomy_invalid(self, tmp_yaml: Path) -> None:
-        cmd = SettingsCommand()
-        out = await cmd.handle("autonomy ultra", _state())
-        assert "✗" in out
-        assert "ultra" in out
-
-    async def test_settings_autonomy_emits_event(self, tmp_yaml: Path) -> None:
-        bus = EventBus()
-        captured: list[Any] = []
-        bus.subscribe("settings_changed", lambda payload: captured.append(payload))
-        cmd = SettingsCommand(event_bus=bus)
-        await cmd.handle("autonomy medium", _state())
-        assert captured
-        assert captured[0]["key"] == "autonomy_level"
-        assert captured[0]["value"] == "medium"
-
-    async def test_settings_no_subcommand_returns_usage(self) -> None:
-        cmd = SettingsCommand()
-        out = await cmd.handle("", _state())
-        assert "Usage:" in out
-
-    async def test_settings_unknown_subcommand_returns_usage(self) -> None:
-        cmd = SettingsCommand()
-        out = await cmd.handle("frobnicate", _state())
         assert "Usage:" in out
 
 

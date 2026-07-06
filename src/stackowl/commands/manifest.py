@@ -23,7 +23,6 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "help",
     "find",
     "config",
-    "settings",
     "cost",
     "tools",
     "provider",

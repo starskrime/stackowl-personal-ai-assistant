@@ -339,10 +339,6 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.config_command import ConfigCommand
     _safe_register(registry, "config", lambda: ConfigCommand(event_bus=deps.event_bus))
 
-    # /settings — moved from Pattern-A to DI so the live event_bus is wired (C1)
-    from stackowl.commands.settings_command import SettingsCommand
-    _safe_register(registry, "settings", lambda: SettingsCommand(event_bus=deps.event_bus))
-
     # /provider — moved from Pattern-A to DI so the live event_bus is wired (C1)
     from stackowl.commands.provider_command import ProviderCommand
     _safe_register(registry, "provider", lambda: ProviderCommand(event_bus=deps.event_bus))

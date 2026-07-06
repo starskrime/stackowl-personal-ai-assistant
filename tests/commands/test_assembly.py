@@ -1,7 +1,7 @@
 """Tests for commands/assembly.py — register_all_commands behavior.
 
 Asserts that calling register_all_commands on a fresh registry with fake/None
-deps yields exactly the 15 currently-live command names.
+deps yields exactly the 14 currently-live command names.
 """
 
 from __future__ import annotations
@@ -82,36 +82,36 @@ def test_safe_register_isolates_a_failing_construction() -> None:
     names = {c.command for c in reg.list()}
     assert "skill" not in names, "the failing command must be skipped"
     # The rest of the core set still registered despite the failure.
-    assert (_CORE_15 - {"skill"}) <= names
+    assert (_CORE_14 - {"skill"}) <= names
     assert real_skill is not None  # sanity: symbol exists
 
 
-# The 15 commands that were live before the Epic B wiring campaign began.
+# The 14 commands that were live before the Epic B wiring campaign began.
 # Registration is dep-INDEPENDENT, so these must register even with empty deps.
 # (The EXACT full-set contract — all 29 — is owned by the reachability guard in
 # tests/journeys/commands/; this test only locks the core invariant that the
-# original 15 never regress as Epic B adds more.)
-_CORE_15 = {
-    "help", "config", "settings", "cost", "tools", "provider", "tier", "browser",
+# original 14 never regress as Epic B adds more.)
+_CORE_14 = {
+    "help", "config", "cost", "tools", "provider", "tier", "browser",
     "skill", "memory", "owl", "focus", "urgent", "quiet", "notifications",
 }
 
 
-def test_register_all_commands_core_15_register_with_none_deps() -> None:
-    """Dep-INDEPENDENT registration: with all-None deps, the original 15 live
+def test_register_all_commands_core_14_register_with_none_deps() -> None:
+    """Dep-INDEPENDENT registration: with all-None deps, the original 14 live
     commands still register (8 Pattern-A + 7 DI). "shipped ⟺ registered" must not
     depend on runtime wiring, so the reachability guard (empty deps) is a true
     proxy for production reachability."""
     reg = _fresh_registry()
     register_all_commands(CommandDeps(), registry=reg)
     names = {c.command for c in reg.list()}
-    assert names >= _CORE_15, f"missing core commands: {_CORE_15 - names}"
+    assert names >= _CORE_14, f"missing core commands: {_CORE_14 - names}"
 
 
-def test_register_all_commands_with_full_deps_includes_core_15(
+def test_register_all_commands_with_full_deps_includes_core_14(
     tmp_path: Any,
 ) -> None:
-    """Providing real deps registers (at least) the core 15 with no duplicates."""
+    """Providing real deps registers (at least) the core 14 with no duplicates."""
     from unittest.mock import AsyncMock, MagicMock
 
     # Build minimal fake deps
@@ -146,7 +146,7 @@ def test_register_all_commands_with_full_deps_includes_core_15(
     all_cmds = [c.command for c in reg.list()]
     names = set(all_cmds)
 
-    assert names >= _CORE_15, f"missing core commands: {_CORE_15 - names}"
+    assert names >= _CORE_14, f"missing core commands: {_CORE_14 - names}"
     assert len(all_cmds) == len(names), "duplicate command registrations detected"
 
 
