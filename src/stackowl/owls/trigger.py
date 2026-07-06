@@ -54,7 +54,21 @@ class ThresholdTrigger(_TriggerBase):
     prompt: str = ""  # optional NL instruction applied when the predicate fires
 
 
+class ReportTrigger(_TriggerBase):
+    """Run a STRUCTURED report handler (morning_brief/check_in) on a recurring
+    schedule. Unlike CronTrigger, this pins a SPECIFIC existing handler by name —
+    no NL goal/prompt: the handler self-assembles from deterministic sources
+    (date/priorities, memory highlights, pending facts, agent status) through its
+    own renderer and delivers via its own honesty/delivery category. Delivery
+    target (channel/address) is resolved generically by reconcile_owl_schedules
+    for every scheduled owl (_resolve_target), same as any other trigger kind."""
+
+    kind: Literal["report"] = "report"
+    report: Literal["morning_brief", "check_in"]
+    schedule: str
+
+
 TriggerSpec = Annotated[
-    CronTrigger | WatchTrigger | ThresholdTrigger,
+    CronTrigger | WatchTrigger | ThresholdTrigger | ReportTrigger,
     Field(discriminator="kind"),
 ]

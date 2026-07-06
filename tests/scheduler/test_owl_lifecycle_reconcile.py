@@ -21,8 +21,8 @@ from stackowl.owls.owl_schedule_guards import (
     interval_floor_error,
 )
 from stackowl.owls.registry import OwlRegistry
-from stackowl.owls.trigger import CronTrigger, ThresholdTrigger, WatchTrigger
-from stackowl.scheduler.owl_lifecycle import reconcile_owl_schedules
+from stackowl.owls.trigger import CronTrigger, ReportTrigger, ThresholdTrigger, WatchTrigger
+from stackowl.scheduler.owl_lifecycle import _job_id_for, reconcile_owl_schedules
 from stackowl.scheduler.scheduler import JobScheduler
 
 pytestmark = pytest.mark.asyncio
@@ -215,6 +215,21 @@ async def test_quota_caps_scheduled_projection_at_five(db: DbPool) -> None:
     assert len(rows) == 5  # cap enforced defensively at the projection
     assert result.created == 5
     assert result.skipped == 1
+
+
+async def test_report_trigger_projects_the_named_handler(db: DbPool) -> None:
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="briefowl", role="r", system_prompt="p", model_tier="fast",
+            lifecycle="scheduled",
+            trigger=ReportTrigger(report="morning_brief", schedule="daily@08:00"),
+        ),
+    )
+    result = await reconcile_owl_schedules(reg, db)
+    assert result.created == 1
+    rows = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (_job_id_for("briefowl"),))
+    assert rows[0]["handler_name"] == "morning_brief"  # NOT goal_execution
 
 
 async def test_interval_floor_rejects_sub_five_minutes() -> None:

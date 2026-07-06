@@ -17,7 +17,10 @@ snapshotted beyond the trigger fields it needs.
 
 Trigger → handler: ``cron`` → ``goal_execution`` (runs ``params['goal']``),
 ``watch`` → ``website_watch`` (polls ``params['url']``), ``threshold`` →
-``threshold_watch`` (polls ``params['source']``, fires on a predicate edge).
+``threshold_watch`` (polls ``params['source']``, fires on a predicate edge),
+``report`` → the trigger's own ``report`` name (``morning_brief``/``check_in`` —
+no goal/params, the handler self-assembles from Settings + deterministic
+sources).
 """
 
 from __future__ import annotations
@@ -83,6 +86,10 @@ def _desired(owl: OwlAgentManifest) -> tuple[str, str, dict[str, object]] | None
     trig = owl.trigger
     if trig is None:
         return None
+    if trig.kind == "report":
+        # No goal/prompt — the named handler self-assembles. "owl" is the only
+        # content param, same provenance tag every other kind carries.
+        return trig.report, trig.schedule, {"owl": owl.name}
     handler = _KIND_TO_HANDLER.get(trig.kind)
     if handler is None:
         log.scheduler.info(

@@ -50,6 +50,11 @@ class OwlBuildSpec(BaseModel):
     # Preset evolution aggressiveness (design decision 3). All optional +
     # default-safe: an on-demand create omitting both is byte-identical.
     evolution_strategy: Literal["conservative", "adaptive", "experimental"] | None = None
+    # Pin a scheduled owl to a REAL existing report handler (morning_brief/
+    # check_in) instead of the generic goal_execution cron path. Mutually
+    # exclusive with `goal` in intent (both may be present on the wire; `report`
+    # wins in build_agent_manifest — see its docstring).
+    report: Literal["morning_brief", "check_in"] | None = None
 
     @field_validator("explicit_tools", mode="before")
     @classmethod
@@ -138,6 +143,7 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
     # model's job (it sets lifecycle), never a keyword scan here.
     if spec.lifecycle == "scheduled" and not sched:
         missing.append("schedule")
+    # report-pinned scheduled owls need no `goal` — the handler self-assembles.
     if missing:
         return MissingFields(fields=tuple(missing), partial=spec)
     return None

@@ -126,11 +126,14 @@ def build_agent_manifest(
     # standing specialty. No cadence ⇒ no trigger ⇒ on_demand (byte-identical default).
     schedule = (spec.schedule or "").strip()
     if schedule:
-        from stackowl.owls.trigger import CronTrigger
+        from stackowl.owls.trigger import CronTrigger, ReportTrigger
 
-        goal = (spec.goal or "").strip() or specialty
         update["lifecycle"] = "scheduled"
-        update["trigger"] = CronTrigger(schedule=schedule, prompt=goal)
+        if spec.report is not None:
+            update["trigger"] = ReportTrigger(report=spec.report, schedule=schedule)
+        else:
+            goal = (spec.goal or "").strip() or specialty
+            update["trigger"] = CronTrigger(schedule=schedule, prompt=goal)
         log.engine.debug(
             "[owl_build] authz.build: scheduled trigger attached",
             extra={"_fields": {"name": spec.name, "schedule": schedule}},
