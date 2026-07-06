@@ -616,6 +616,23 @@ class OwlsCommand(SlashCommand):
             extra={"_fields": {"path": str(path), "name": name}},
         )
 
+    def _add_retired_builtin(self, name: str) -> None:
+        """Tombstone a retired builtin persona's name in ``retired_builtin_owls:`` so
+        ``OwlRegistry.register_builtin_personas`` does not re-add it next boot."""
+        path = config_path()
+        data = load_yaml(path)
+        retired = data.get("retired_builtin_owls")
+        if not isinstance(retired, list):
+            retired = []
+        if name not in retired:
+            retired.append(name)
+        data["retired_builtin_owls"] = retired
+        save_yaml(path, data)
+        log.gateway.debug(
+            "[commands] owls._add_retired_builtin: written",
+            extra={"_fields": {"path": str(path), "name": name}},
+        )
+
     async def _delete_dna_rows(self, name: str) -> None:
         """Best-effort cleanup of ``owl_dna`` and ``dna_checkpoints`` for the owl."""
         if self._db is None:

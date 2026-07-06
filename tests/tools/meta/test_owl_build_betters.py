@@ -4,7 +4,7 @@
 stand-in is sufficient — no full manifest construction needed.
 """
 
-from stackowl.tools.meta.owl_build import can_modify, can_rename
+from stackowl.tools.meta.owl_build import can_modify, can_rename, can_retire
 
 
 class _Owl:
@@ -50,3 +50,25 @@ def test_cannot_rename_another_agents_owl():
 
 def test_can_rename_own_agent_owl():
     assert can_rename(_Owl("agent", "secretary", "scout"), caller="secretary", target_name="scout") is None
+
+
+def test_can_retire_general_builtin():
+    """Unlike can_modify, retire allows removing a general-purpose builtin
+    (scout/librarian/archivist) — the user explicitly asked for this."""
+    assert can_retire(_Owl("builtin", None, "scout"), caller="secretary", target_name="scout") is None
+
+
+def test_cannot_retire_secretary():
+    assert can_retire(_Owl("builtin", None, "secretary"), caller="secretary", target_name="secretary") is not None
+
+
+def test_cannot_retire_internal_rca_owl():
+    assert can_retire(_Owl("builtin", None, "rca_gatherer"), caller="secretary", target_name="rca_gatherer") is not None
+
+
+def test_cannot_retire_another_agents_owl():
+    assert can_retire(_Owl("agent", "other_owl", "scout"), caller="secretary", target_name="scout") is not None
+
+
+def test_can_retire_own_agent_owl():
+    assert can_retire(_Owl("agent", "secretary", "scout"), caller="secretary", target_name="scout") is None

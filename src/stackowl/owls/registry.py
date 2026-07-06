@@ -186,6 +186,9 @@ class OwlRegistry:
         self._owls: dict[str, OwlAgentManifest] = {}
         self._sources: list[OwlSource] = []
         self._source_map: dict[str, list[str]] = {}
+        # Names of builtin personas explicitly retired via owl_build — consulted by
+        # register_builtin_personas() so a retired one doesn't respawn next boot.
+        self._retired_builtin_names: frozenset[str] = frozenset()
 
     def register(self, manifest: OwlAgentManifest, source_name: str | None = None) -> None:
         if manifest.name in self._owls:
@@ -372,7 +375,7 @@ class OwlRegistry:
         added = 0
         for factory in _BUILTIN_PERSONA_FACTORIES:
             manifest = factory()
-            if manifest.name in self._owls:
+            if manifest.name in self._owls or manifest.name in self._retired_builtin_names:
                 continue
             manifest = manifest.model_copy(update={"origin": "builtin"})
             self.register(manifest)
@@ -391,6 +394,7 @@ class OwlRegistry:
             extra={"_fields": {"owls_in_settings": len(settings.owls)}},
         )
         registry = cls()
+        registry._retired_builtin_names = frozenset(settings.retired_builtin_owls)
         owl_names = {owl.name for owl in settings.owls}
         if _SECRETARY_NAME not in owl_names:
             log.startup.debug(

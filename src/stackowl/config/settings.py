@@ -904,6 +904,12 @@ class Settings(BaseSettings):
     mcp_server: McpServerSettings = Field(default_factory=McpServerSettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     owls: list[OwlAgentManifest] = Field(default_factory=list)
+    # Names of builtin personas (scout/librarian/archivist/...) explicitly retired via
+    # owl_build. register_builtin_personas() skips these so a retired builtin does not
+    # silently respawn on the next boot (it otherwise re-adds any factory-defined
+    # persona absent from the loaded registry). Never touches the internal-RCA trio
+    # (rca_gatherer/hypothesis/verifier) — those are refused at retire time.
+    retired_builtin_owls: list[str] = Field(default_factory=list)
     autonomy_level: Literal["low", "medium", "high"] = Field(
         default="medium",
         description="Tool autonomy level for owls.",

@@ -24,7 +24,7 @@ from stackowl.commands.owls_helpers import manifest_to_yaml_entry
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.clarify_gateway import CLARIFY_TTL_SECONDS, OUTCOME_ANSWERED
-from stackowl.owls.registry import _SECRETARY_NAME
+from stackowl.owls.registry import _SECRETARY_NAME, internal_owl_requirements
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.meta.owl_build_authz import build_agent_manifest, clamp_bounds
@@ -95,6 +95,39 @@ def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None
         return f"'{target_name}' is a {origin} owl and cannot be modified by owl_build."
     if getattr(manifest, "created_by", None) != caller:
         return f"'{target_name}' was created by another owl — you may only modify owls you created."
+    return None
+
+
+def can_retire(manifest: object, *, caller: str, target_name: str) -> str | None:
+    """Retire's own gate — deliberately looser than ``can_modify`` for ``origin=
+    'builtin'``. Unlike editing a builtin's tools/behavior, REMOVING a general-purpose
+    builtin persona (scout/librarian/archivist) is something the human explicitly
+    asking (via the root/secretary caller) may legitimately want, and it does not
+    launder any authority. Still refuses:
+      * the secretary (registry-level mandatory invariant, mirrored here for a clear
+        message instead of a raw ``ManifestValidationError``),
+      * any owl in :func:`~stackowl.owls.registry.internal_owl_requirements` — these
+        are hardwired dependencies of internal modules (e.g. the incident-RCA staged
+        session) that the boot-time wiring audit RECREATES if missing, so "retiring"
+        one would silently undo itself at the next restart while being honestly
+        reported as done now — exactly the claim-vs-reality gap this codebase does
+        not tolerate,
+      * an agent-minted owl you did not create (unchanged from ``can_modify``)."""
+    if target_name.lower() == _SECRETARY_NAME:
+        return "the secretary owl cannot be retired."
+    if target_name.lower() in internal_owl_requirements():
+        return (
+            f"'{target_name}' is a required internal dependency (self-heal RCA) and "
+            "would be automatically recreated at the next restart — retiring it would "
+            "have no lasting effect."
+        )
+    origin = getattr(manifest, "origin", None)
+    if origin == "builtin":
+        return None
+    if origin != "agent":
+        return f"'{target_name}' is a {origin} owl and cannot be retired by owl_build."
+    if getattr(manifest, "created_by", None) != caller:
+        return f"'{target_name}' was created by another owl — you may only retire owls you created."
     return None
 
 
@@ -1104,8 +1137,9 @@ class OwlBuildTool(Tool):
         except Exception:  # OwlNotFoundError — the not-found path is expected
             return self._err(f"no owl named '{spec.name}' to retire.", t0)
 
-        # 2. no-edit-your-betters — only an agent owl YOU minted.
-        guard = can_modify(current, caller=creator, target_name=spec.name)
+        # 2. Retire's own gate (looser than edit's for origin='builtin' — see
+        #    can_retire's docstring).
+        guard = can_retire(current, caller=creator, target_name=spec.name)
         if guard is not None:
             return self._err(guard, t0)
 
@@ -1117,6 +1151,11 @@ class OwlBuildTool(Tool):
         snapshot = self._yaml_snapshot()
         try:
             OwlsCommand()._remove_from_yaml(spec.name)  # noqa: SLF001  # durable first
+            if current.origin == "builtin":
+                # Tombstone it — register_builtin_personas() re-adds any factory
+                # persona absent from the registry, so without this a retired
+                # builtin would silently respawn at the next boot.
+                OwlsCommand()._add_retired_builtin(spec.name)  # noqa: SLF001
             registry.deregister(spec.name)
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
             log.tool.error(
