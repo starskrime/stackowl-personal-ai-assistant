@@ -4,7 +4,7 @@
 stand-in is sufficient — no full manifest construction needed.
 """
 
-from stackowl.tools.meta.owl_build import can_modify, can_rename, can_retire
+from stackowl.tools.meta.owl_build import can_edit, can_modify, can_rename, can_retire
 
 
 class _Owl:
@@ -72,3 +72,21 @@ def test_cannot_retire_another_agents_owl():
 
 def test_can_retire_own_agent_owl():
     assert can_retire(_Owl("agent", "secretary", "scout"), caller="secretary", target_name="scout") is None
+
+
+def test_can_edit_secretary():
+    """Edit's own gate is looser than can_modify for builtin/human — preserves
+    /owls edit's historical ability to change the Secretary's tier."""
+    assert can_edit(_Owl("builtin", None, "secretary"), caller="secretary", target_name="secretary") is None
+
+
+def test_can_edit_human_owl():
+    assert can_edit(_Owl("human", None, "planner"), caller="secretary", target_name="planner") is None
+
+
+def test_cannot_edit_another_agents_owl_via_can_edit():
+    assert can_edit(_Owl("agent", "other_owl", "scout"), caller="secretary", target_name="scout") is not None
+
+
+def test_can_edit_own_agent_owl_via_can_edit():
+    assert can_edit(_Owl("agent", "secretary", "scout"), caller="secretary", target_name="scout") is None

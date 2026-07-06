@@ -43,6 +43,8 @@ from stackowl.tools.meta.owl_build_spec import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.owls.manifest import OwlAgentManifest
+    from stackowl.owls.registry import OwlRegistry
     from stackowl.skills.manifest import SkillSource
 
 # Isolated toolset group so a read-only / non-admin owl never gets owl-administration
@@ -144,6 +146,25 @@ def can_rename(manifest: object, *, caller: str, target_name: str) -> str | None
     origin = getattr(manifest, "origin", None)
     if origin == "agent" and getattr(manifest, "created_by", None) != caller:
         return f"'{target_name}' was created by another owl — you may only rename owls you created."
+    return None
+
+
+def can_edit(manifest: object, *, caller: str, target_name: str) -> str | None:
+    """Edit's own gate — looser than can_modify for origin in {'builtin','human'}.
+    Those owls were never creator/ceiling-bound (operator-configured, not
+    agent-minted), so the authority-ratchet machinery in _edit (re-forge/clamp
+    against creation_ceiling) doesn't apply to them and must not run for them —
+    it would incorrectly refuse them for having no ceiling to ratchet against.
+    Preserves /owls edit's historical scope (e.g. changing the Secretary's tier)
+    so retiring /owls loses no capability. Still refuses an agent-minted owl you
+    did not create — unchanged from can_modify."""
+    origin = getattr(manifest, "origin", None)
+    if origin in ("builtin", "human"):
+        return None
+    if origin != "agent":
+        return f"'{target_name}' is a {origin} owl and cannot be edited by owl_build."
+    if getattr(manifest, "created_by", None) != caller:
+        return f"'{target_name}' was created by another owl — you may only modify owls you created."
     return None
 
 
@@ -974,11 +995,44 @@ class OwlBuildTool(Tool):
                 extra={"_fields": {"owl": name, "op": op}},
             )
 
+    async def _edit_unbound(
+        self, spec: OwlBuildSpec, current: OwlAgentManifest, registry: OwlRegistry, t0: float, creator: str,
+    ) -> ToolResult:
+        """Edit path for builtin/human owls (can_edit already cleared it) — no
+        creator/ceiling to ratchet against, so apply the given fields directly,
+        the same scope /owls edit historically had (tier/specialty), without
+        owl_build's agent-authority machinery (re-forge/clamp/consent-on-
+        widening), which does not apply to an owl that was never
+        authority-bounded."""
+        updates: dict[str, object] = {}
+        if spec.model_tier is not None:
+            updates["model_tier"] = spec.model_tier
+        if spec.specialty is not None:
+            updates["system_prompt"] = spec.specialty
+        rebuilt = current.model_copy(update=updates) if updates else current
+        snapshot = self._yaml_snapshot()
+        try:
+            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            registry.replace(rebuilt)
+        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
+            log.tool.error(
+                "owl_build.execute: builtin/human edit persist failed — rolling back yaml",
+                exc_info=exc, extra={"_fields": {"owl": rebuilt.name}},
+            )
+            self._yaml_restore(snapshot)
+            return self._err(f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0)
+        await self._audit("edit", rebuilt.name, creator)
+        return self._ok(
+            f"Updated owl '{rebuilt.name}'.", t0, extra={"owl": rebuilt.name, "op": "edit"}
+        )
+
     async def _edit(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
         """Edit an agent-minted owl YOU created. Security order: no-edit-your-betters
         → re-forge (clamps to CURRENT floor) → MONOTONE re-clamp against the owl's
         ORIGINAL creation_ceiling (an edit cannot widen past the mint clamp) →
-        re-consent only when the edit ADDS a tool → persist+register with rollback."""
+        re-consent only when the edit ADDS a tool → persist+register with rollback.
+        A builtin/human origin owl (never creator/ceiling-bound) instead takes
+        ``_edit_unbound`` — see :func:`can_edit`."""
         svc = get_services()
         registry = svc.owl_registry
         if registry is None:
@@ -998,10 +1052,13 @@ class OwlBuildTool(Tool):
         except Exception:  # OwlNotFoundError — the not-found path is expected
             return self._err(f"no owl named '{spec.name}' to edit.", t0)
 
-        # 2. no-edit-your-betters — only an agent owl YOU minted.
-        guard = can_modify(current, caller=creator, target_name=spec.name)
+        # 2. Edit's own gate (looser than can_modify for builtin/human).
+        guard = can_edit(current, caller=creator, target_name=spec.name)
         if guard is not None:
             return self._err(guard, t0)
+
+        if current.origin in ("builtin", "human"):
+            return await self._edit_unbound(spec, current, registry, t0, creator)
 
         # 3. Re-forge — clamps to the creator's CURRENT floor (authority forced server-side).
         rebuilt, dropped = build_agent_manifest(
