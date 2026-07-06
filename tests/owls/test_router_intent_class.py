@@ -181,6 +181,18 @@ def test_prompt_biases_act_first_on_reversible_ambiguity() -> None:
     assert "state your assumption" in low
 
 
+def test_prompt_forbids_self_denial_classification() -> None:
+    # A network/hardware/device request must not fall into 'conversational' just
+    # because the router LLM reflexively reasons "I'm a cloud chatbot with no
+    # local access" — the assistant may have live local tools this turn. The
+    # prompt must explicitly forbid that self-denial reflex and route such
+    # requests to 'standard'.
+    p = _r()._build_prompt([("secretary", "general")], "scan my local network")
+    low = p.lower()
+    assert "self-deny" in low or "assuming a generic cloud chatbot" in low
+    assert "scan" in low and "device" in low and "network" in low
+
+
 def test_prompt_attempts_resolution_before_clarify() -> None:
     # F-56: 'clarify' is a last resort. Before choosing it, the router must be
     # instructed to first try to resolve the ambiguity itself — recall what it
