@@ -1,11 +1,13 @@
 """FocusCommand — ``/focus`` slash command (Story 7.4).
 
 Sets the in-memory focus mode on the active :class:`NotificationRouter` and
-emits a ``focus_mode_changed`` event for downstream subscribers.
+emits a ``focus_mode_changed`` event for downstream subscribers. Bare ``/focus``
+reads and displays the current mode without mutation.
 
 Modes:
 
-* ``/focus``         → ``soft`` (batch normal+low)
+* ``/focus``         → reads current mode (no change)
+* ``/focus soft``    → ``soft`` (batch normal+low)
 * ``/focus --hard``  → ``hard`` (batch normal, suppress low)
 * ``/focus off``     → ``off``  (deliver everything)
 """
@@ -35,7 +37,7 @@ _FOCUS_META = CommandMeta(
             "mode",
             required=False,
             choices=("soft", "hard", "off"),
-            summary="focus mode",
+            summary="Mode to set. Omit to just show the current mode (no change).",
         ),
     ),
 )
@@ -72,12 +74,19 @@ class FocusCommand(SlashCommand):
         if self._router is None or self._event_bus is None:
             return "✗ /focus: not configured"
         stripped = args.strip()
+        if stripped == "":
+            current = self._router.get_focus_mode()
+            log.notifications.debug(
+                "[notifications] focus.handle: exit — status read, no mutation",
+                extra={"_fields": {"mode": current}},
+            )
+            return f"focus_mode:{current} (read-only — pass soft|hard|off to change it)"
         mode: FocusMode
         if stripped in ("--hard", "hard"):
             mode = "hard"
         elif stripped == "off":
             mode = "off"
-        elif stripped in ("", "soft"):
+        elif stripped == "soft":
             mode = "soft"
         else:
             log.notifications.debug(

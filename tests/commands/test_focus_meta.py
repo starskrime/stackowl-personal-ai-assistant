@@ -11,10 +11,13 @@ from stackowl.pipeline.state import PipelineState
 
 class _StubRouter:
     def __init__(self) -> None:
-        self.mode: str | None = None
+        self.mode: str = "off"
 
     def set_focus_mode(self, mode: str) -> None:
         self.mode = mode
+
+    def get_focus_mode(self) -> str:
+        return self.mode
 
 
 class _StubBus:
@@ -56,12 +59,14 @@ def test_group() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_args_defaults_to_soft() -> None:
+async def test_focus_bare_shows_status_without_mutating() -> None:
+    """Bare /focus must NOT change the mode — it only reports the current one."""
     router = _StubRouter()
+    router.set_focus_mode("hard")  # pre-set to something other than the default
     cmd = FocusCommand(router=router, event_bus=_StubBus())  # type: ignore[arg-type]
     result = await cmd.handle("", _state())
-    assert result == "focus_mode:soft"
-    assert router.mode == "soft"
+    assert "hard" in result.lower()
+    assert router.get_focus_mode() == "hard"  # unchanged — bare call must not mutate
 
 
 @pytest.mark.asyncio
