@@ -10,7 +10,8 @@ or echoed. It is persisted via the shared :func:`store_secret` writer (OS
 keyring → mode-0600 file fallback); only the resulting SecretResolver *ref*
 (``keychain:…`` / ``file:…``) is stored in the YAML ``api_key`` field.
 
-NOTE: changes are applied immediately via an in-process settings_reloaded emit — see stackowl/startup/provider_reload.py for the consumer.
+NOTE: changes are applied immediately via an in-process settings_reloaded
+emit — see stackowl/startup/provider_reload.py for the consumer.
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ _PROVIDER_META = CommandMeta(
             description=(
                 "You add a provider entry. A raw token is stored as a secret "
                 "reference (keyring or mode-0600 file) — never in plaintext. "
-                "The change applies on the next reload or restart."
+                "The change applies immediately."
             ),
             args=(
                 Arg(name="name", summary="unique provider name"),
@@ -93,7 +94,7 @@ _PROVIDER_META = CommandMeta(
             summary="Delete a configured provider",
             description=(
                 "You remove the named provider. Any stored secret is left in "
-                "place. The change applies on the next reload or restart."
+                "place. The change applies immediately."
             ),
             args=(Arg(name="name", summary="provider to remove"),),
             examples=(Example(invocation="/provider remove openai"),),
@@ -103,7 +104,7 @@ _PROVIDER_META = CommandMeta(
             summary="Change a provider's routing tier",
             description=(
                 "You re-tier an existing provider so the model router selects it "
-                "differently. The change applies on the next reload or restart."
+                "differently. The change applies immediately."
             ),
             args=(
                 Arg(name="name", summary="provider to re-tier"),
