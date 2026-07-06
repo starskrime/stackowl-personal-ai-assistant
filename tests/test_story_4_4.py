@@ -12,16 +12,13 @@ import yaml
 
 from stackowl.commands.owls_command import OwlsCommand
 from stackowl.commands.owls_helpers import (
-    build_owl_manifest,
     format_dna_display,
     format_owl_table,
-    parse_add_args,
 )
 from stackowl.commands.settings_command import SettingsCommand
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.exceptions import (
-    CommandParseError,
     ManifestValidationError,
     OwlNotFoundError,
 )
@@ -133,46 +130,6 @@ class TestOwlsHelpers:
         assert "0.72" in out
         assert "2026-05-23" in out
 
-    def test_parse_add_args_minimal(self) -> None:
-        params = parse_add_args("alice --role analyst --tier fast")
-        assert params["name"] == "alice"
-        assert params["role"] == "analyst"
-        assert params["tier"] == "fast"
-        assert params["tools"] == []
-
-    def test_parse_add_args_missing_role(self) -> None:
-        with pytest.raises(CommandParseError):
-            parse_add_args("alice --tier fast")
-
-    def test_parse_add_args_missing_tier(self) -> None:
-        with pytest.raises(CommandParseError):
-            parse_add_args("alice --role analyst")
-
-    def test_parse_add_args_invalid_tier(self) -> None:
-        with pytest.raises(CommandParseError):
-            parse_add_args("alice --role analyst --tier ultra")
-
-    def test_parse_add_args_tools_split(self) -> None:
-        params = parse_add_args("alice --role analyst --tier fast --tools shell,read_file")
-        assert params["tools"] == ["shell", "read_file"]
-
-    def test_parse_add_args_temperature_float(self) -> None:
-        params = parse_add_args("alice --role analyst --tier fast --temperature 0.3")
-        assert params["temperature"] == pytest.approx(0.3)
-
-    def test_parse_add_args_bad_temperature(self) -> None:
-        with pytest.raises(CommandParseError):
-            parse_add_args("alice --role analyst --tier fast --temperature warm")
-
-    def test_build_owl_manifest_defaults_system_prompt(self) -> None:
-        manifest = build_owl_manifest(
-            {"name": "alice", "role": "analyst", "tier": "fast", "tools": []}
-        )
-        assert manifest.name == "alice"
-        assert manifest.role == "analyst"
-        assert manifest.model_tier == "fast"
-        assert "alice" in manifest.system_prompt
-
 
 # ---------------------------------------------------------------------------
 # OwlsCommand — subcommands
@@ -267,61 +224,6 @@ class TestOwlsHealth:
         out = await cmd.handle("health", _state())
         assert "down" in out
         assert "Secretary" in out
-
-
-class TestOwlsAdd:
-    async def test_owls_add_registers_in_registry(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("add alice --role analyst --tier fast", _state())
-        assert "✓" in out
-        assert reg.get("alice").role == "analyst"
-
-    async def test_owls_add_writes_yaml(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        cmd = OwlsCommand(owl_registry=reg)
-        await cmd.handle("add alice --role analyst --tier fast", _state())
-        data = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
-        names = [entry["name"] for entry in data["owls"]]
-        assert "alice" in names
-
-    async def test_owls_add_duplicate_name(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        reg.register(_manifest("alice"))
-        cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("add alice --role analyst --tier fast", _state())
-        assert "✗" in out
-        assert "alice" in out
-
-    async def test_owls_add_missing_role(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("add alice --tier fast", _state())
-        assert "✗" in out
-        assert "--role" in out
-
-    async def test_owls_add_missing_tier(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("add alice --role analyst", _state())
-        assert "✗" in out
-        assert "--tier" in out
-
-    async def test_owls_add_invalid_tier(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("add alice --role analyst --tier ultra", _state())
-        assert "✗" in out
-        assert "ultra" in out
-
-    async def test_owls_add_emits_event(self, tmp_yaml: Path) -> None:
-        reg = OwlRegistry.with_default_secretary()
-        bus = EventBus()
-        captured: list[Any] = []
-        bus.subscribe("owl_added", lambda payload: captured.append(payload))
-        cmd = OwlsCommand(owl_registry=reg, event_bus=bus)
-        await cmd.handle("add alice --role analyst --tier fast", _state())
-        assert captured and captured[0]["name"] == "alice"
 
 
 class TestOwlsRemove:

@@ -93,7 +93,7 @@ def test_safe_register_isolates_a_failing_construction() -> None:
 # original 15 never regress as Epic B adds more.)
 _CORE_15 = {
     "help", "config", "settings", "cost", "tools", "provider", "tier", "browser",
-    "skill", "memory", "owls", "focus", "urgent", "quiet", "notifications",
+    "skill", "memory", "owl", "focus", "urgent", "quiet", "notifications",
 }
 
 
@@ -160,12 +160,12 @@ def test_register_all_commands_idempotent_on_second_call() -> None:
     assert count_1 == count_2
 
 
-def test_owls_command_registers_with_none_deps() -> None:
-    """/owls always registers even when owl_registry/db/event_bus are None."""
+def test_owl_command_registers_with_none_deps() -> None:
+    """/owl always registers even when owl_registry/db/event_bus are None."""
     reg = _fresh_registry()
     register_all_commands(CommandDeps(), registry=reg)
     names = {c.command for c in reg.list()}
-    assert "owls" in names
+    assert "owl" in names
 
 
 def test_di_commands_register_unconditionally_even_with_none_deps() -> None:
@@ -208,7 +208,7 @@ def test_registered_commands_are_correct_types(
     from stackowl.commands.focus_command import FocusCommand
     from stackowl.commands.memory_command import MemoryCommand
     from stackowl.commands.notifications_command import NotificationsMissedCommand
-    from stackowl.commands.owls_command import OwlsCommand
+    from stackowl.commands.owls_command import OwlCommand
     from stackowl.commands.quiet_command import QuietHoursCommand
     from stackowl.commands.skill_command import SkillCommand
     from stackowl.commands.urgent_command import UrgentCommand
@@ -250,5 +250,5 @@ def test_registered_commands_are_correct_types(
         "notifications slot holds wrong type"
     )
     assert isinstance(by_name["memory"], MemoryCommand), "memory slot holds wrong type"
-    assert isinstance(by_name["owls"], OwlsCommand), "owls slot holds wrong type"
+    assert isinstance(by_name["owl"], OwlCommand), "owl slot holds wrong type"
     assert isinstance(by_name["skill"], SkillCommand), "skill slot holds wrong type"

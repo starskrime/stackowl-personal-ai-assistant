@@ -1,4 +1,8 @@
-"""Story 7.1 (split B) — /agents command + JobScheduler lifecycle methods."""
+"""Story 7.1 (split B) — JobScheduler lifecycle methods.
+
+The command-surface tests (formerly ``/agents``/``AgentCommand``) were
+retired in Task 7 along with the command they covered.
+"""
 
 from __future__ import annotations
 
@@ -8,25 +12,12 @@ from typing import Any
 
 import pytest
 
-from stackowl.commands.agent_create_command import AgentCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.db.pool import DbPool
-from stackowl.pipeline.state import PipelineState
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.scheduler.scheduler_helpers import insert_job
-
-
-def _state() -> PipelineState:
-    return PipelineState(
-        trace_id="t-1",
-        session_id="s-1",
-        input_text="",
-        channel="cli",
-        owl_name="secretary",
-        pipeline_step="",
-    )
 
 
 def _job(handler: str = "check_in", **overrides: Any) -> Job:
@@ -50,65 +41,6 @@ def _reset_singletons() -> Any:
     yield
     HandlerRegistry.reset()
     CommandRegistry.reset()
-
-
-# ---------------------------------------------------------------------------
-# /agents command
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestAgentCommand:
-    async def test_command_name(self) -> None:
-        cmd = AgentCommand()
-        assert cmd.command == "agent"
-
-    async def test_help_when_no_subcommand(self) -> None:
-        cmd = AgentCommand()
-        result = await cmd.handle("", _state())
-        assert "Usage:" in result
-
-    async def test_acknowledge_resets_failure_state(self, tmp_db: DbPool) -> None:
-        job = _job(
-            handler="check_in",
-            status="failed",
-            failure_count=4,
-            last_error="boom",
-            enabled=False,
-        )
-        await insert_job(tmp_db, job)
-        cmd = AgentCommand(db=tmp_db)
-        result = await cmd.handle(f"acknowledge {job.job_id}", _state())
-        assert "acknowledged" in result
-        rows = await tmp_db.fetch_all(
-            "SELECT status, failure_count, last_error, enabled FROM jobs WHERE job_id = ?",
-            (job.job_id,),
-        )
-        assert rows[0]["status"] == "pending"
-        assert rows[0]["failure_count"] == 0
-        assert rows[0]["last_error"] is None
-        assert int(rows[0]["enabled"]) == 1
-
-    async def test_acknowledge_writes_audit_row(self, tmp_db: DbPool) -> None:
-        job = _job(status="failed", failure_count=2)
-        await insert_job(tmp_db, job)
-        cmd = AgentCommand(db=tmp_db)
-        await cmd.handle(f"acknowledge {job.job_id}", _state())
-        audit_rows = await tmp_db.fetch_all(
-            "SELECT event_type, target FROM audit_log WHERE target = ?",
-            (job.job_id,),
-        )
-        assert any(r["event_type"] == "job_resumed" for r in audit_rows)
-
-    async def test_acknowledge_unknown_job_reports_error(self, tmp_db: DbPool) -> None:
-        cmd = AgentCommand(db=tmp_db)
-        result = await cmd.handle("acknowledge no-such-job", _state())
-        assert "no job" in result.lower() or "✗" in result
-
-    async def test_create_and_register_adds_to_registry(self) -> None:
-        CommandRegistry.reset()
-        cmd = AgentCommand.create_and_register()
-        assert CommandRegistry.instance().list() == [cmd]
 
 
 # ---------------------------------------------------------------------------

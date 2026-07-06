@@ -12,7 +12,6 @@ from typing import Any, get_args
 
 from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
-from stackowl.owls.builder import OwlSpec, SpecialistOwlBuilder
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 from stackowl.owls.manifest import ModelTier, OwlAgentManifest
@@ -190,86 +189,6 @@ def format_dna_display(
     return "\n".join(lines)
 
 
-def parse_add_args(rest: str) -> dict[str, Any]:
-    """Tokenise the ``/owls add`` payload via :func:`shlex.split`.
-
-    Required: ``<name> --role <r> --tier <t>``.
-    Optional flags: ``--provider <p>``, ``--temperature <f>``, ``--tools <a,b>``.
-    Raises :class:`CommandParseError` on any malformed input.
-    """
-    log.gateway.debug(
-        "[commands] owls.parse_add_args: entry",
-        extra={"_fields": {"rest_len": len(rest)}},
-    )
-    try:
-        tokens = shlex.split(rest)
-    except ValueError as exc:
-        log.gateway.warning(
-            "[commands] owls.parse_add_args: shlex failed",
-            extra={"_fields": {"error": str(exc)}},
-        )
-        raise CommandParseError("owls add", f"could not tokenise arguments: {exc}") from exc
-    if not tokens:
-        raise CommandParseError("owls add", "missing owl name")
-    name = tokens[0]
-    flags = tokens[1:]
-    if len(flags) % 2 != 0:
-        raise CommandParseError("owls add", "every --flag requires a value")
-    params: dict[str, Any] = {
-        "name": name,
-        "role": None,
-        "tier": None,
-        "provider": None,
-        "temperature": None,
-        "tools": [],
-        "preset": None,
-        "skills": [],
-        "capability_profile": [],
-        "system_prompt": None,
-    }
-    i = 0
-    while i < len(flags):
-        key, value = flags[i], flags[i + 1]
-        if key == "--role":
-            params["role"] = value
-        elif key == "--tier":
-            params["tier"] = value
-        elif key == "--provider":
-            params["provider"] = value
-        elif key == "--temperature":
-            try:
-                params["temperature"] = float(value)
-            except ValueError as exc:
-                raise CommandParseError("owls add", f"--temperature must be float, got {value!r}") from exc
-        elif key == "--tools":
-            params["tools"] = [tool.strip() for tool in value.split(",") if tool.strip()]
-        elif key == "--preset":
-            params["preset"] = value
-        elif key == "--skills":
-            params["skills"] = [s.strip() for s in value.split(",") if s.strip()]
-        elif key == "--capability-profile":
-            params["capability_profile"] = [s.strip() for s in value.split(",") if s.strip()]
-        elif key == "--system-prompt":
-            params["system_prompt"] = value
-        else:
-            raise CommandParseError("owls add", f"unknown flag: {key}")
-        i += 2
-    if not params["role"]:
-        raise CommandParseError("owls add", "missing required flag --role")
-    if not params["tier"]:
-        raise CommandParseError("owls add", "missing required flag --tier")
-    if params["tier"] not in _VALID_TIERS:
-        raise CommandParseError(
-            "owls add",
-            f"--tier must be one of {sorted(_VALID_TIERS)}, got {params['tier']!r}",
-        )
-    log.gateway.debug(
-        "[commands] owls.parse_add_args: exit",
-        extra={"_fields": {"name": params["name"], "tier": params["tier"]}},
-    )
-    return params
-
-
 def parse_edit_args(rest: str) -> dict[str, Any]:
     """Parse ``/owls edit <name> [--flag value ...]`` — every flag optional.
 
@@ -366,41 +285,6 @@ def parse_owl_build_flags(rest: str) -> dict[str, Any]:
             raise CommandParseError("owl", f"unknown flag: {key}")
         i += 2
     return kwargs
-
-
-def build_owl_manifest(
-    params: dict[str, Any], *, valid_tools: frozenset[str] | None = None
-) -> OwlAgentManifest:
-    """Adapter: parsed CLI params -> OwlSpec -> the single SpecialistOwlBuilder.
-
-    No manifest is constructed here — the builder is the one constructor (DRY)."""
-    log.gateway.debug(
-        "[commands] owls.build_owl_manifest: entry",
-        extra={"_fields": {"name": params.get("name"), "preset": params.get("preset")}},
-    )
-    temperature_raw = params.get("temperature")
-    spec = OwlSpec(
-        name=params["name"],
-        role=params["role"],
-        model_tier=params["tier"],
-        preset=params.get("preset"),
-        explicit_tools=tuple(params.get("tools") or ()),
-        skills=tuple(params.get("skills") or ()),
-        capability_profile=tuple(params.get("capability_profile") or ()),
-        provider_name=params.get("provider"),
-        temperature=float(temperature_raw) if temperature_raw is not None else 0.7,
-        system_prompt=params.get("system_prompt"),
-        valid_tools=valid_tools,
-    )
-    try:
-        manifest = SpecialistOwlBuilder().build(spec)
-    except ValueError as exc:
-        raise CommandParseError("owls add", str(exc)) from exc
-    log.gateway.debug(
-        "[commands] owls.build_owl_manifest: exit",
-        extra={"_fields": {"name": manifest.name}},
-    )
-    return manifest
 
 
 def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:

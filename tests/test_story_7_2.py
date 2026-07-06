@@ -1,26 +1,18 @@
-"""Story 7.2 — GoalExecutionHandler full implementation + helper unit tests.
+"""Story 7.2 — GoalExecutionHandler full implementation.
 
-The command-surface tests (AgentCommand, AgentCommand subcommands)
-live in :mod:`tests.test_story_7_2b` so neither file crosses the B2
-300-line cap.
+The command-surface tests (AgentCommand + its helpers) were retired in
+Task 7 along with the ``/agent`` command they covered — the scheduler
+handler below is the surviving, reused piece.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
-from stackowl.commands.agent_create_helpers import (
-    format_proposal,
-    parse_intent_response,
-    strip_code_fences,
-)
-from stackowl.commands.agents_helpers import format_jobs_table, format_results_table
 from stackowl.commands.registry import CommandRegistry
-from stackowl.exceptions import CommandParseError
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
 from tests._story_7_2_helpers import (
@@ -142,7 +134,7 @@ class TestGoalExecutionHandler:
 
 
 # ---------------------------------------------------------------------------
-# D. Prompt template + helper unit tests
+# D. Prompt template
 # ---------------------------------------------------------------------------
 
 
@@ -158,67 +150,8 @@ class TestPromptTemplate:
         assert "handler_name" in text
 
 
-class TestAgentCreateHelpers:
-    def test_parse_intent_response_strips_code_fences(self) -> None:
-        payload = (
-            "```json\n"
-            '{"handler_name": "goal_execution", "schedule": "daily@09:00", '
-            '"params": {"goal": "do x"}, "primary_channel": null}\n'
-            "```"
-        )
-        parsed = parse_intent_response(payload)
-        assert parsed["handler_name"] == "goal_execution"
-        assert parsed["schedule"] == "daily@09:00"
-
-    def test_parse_intent_response_rejects_unknown_handler(self) -> None:
-        payload = json.dumps(
-            {"handler_name": "explode", "schedule": "daily@09:00", "params": {}}
-        )
-        with pytest.raises(CommandParseError):
-            parse_intent_response(payload)
-
-    def test_parse_intent_response_rejects_missing_schedule(self) -> None:
-        payload = json.dumps(
-            {"handler_name": "goal_execution", "schedule": "", "params": {}}
-        )
-        with pytest.raises(CommandParseError):
-            parse_intent_response(payload)
-
-    def test_format_proposal_includes_all_fields(self) -> None:
-        proposal = {
-            "handler_name": "goal_execution",
-            "schedule": "daily@09:00",
-            "params": {"goal": "make me coffee"},
-            "primary_channel": None,
-        }
-        rendered = format_proposal(proposal)
-        assert "goal_execution" in rendered
-        assert "daily@09:00" in rendered
-        assert "make me coffee" in rendered
-
-    def test_strip_code_fences_handles_plain_text(self) -> None:
-        assert strip_code_fences("no fences") == "no fences"
-
-
-class TestAgentsHelpers:
-    def test_format_jobs_table_empty(self) -> None:
-        out = format_jobs_table([])
-        assert "(no background agents" in out
-
-    def test_format_jobs_table_with_rows(self) -> None:
-        jobs = [make_job("goal_execution"), make_job("morning_brief")]
-        out = format_jobs_table(jobs)
-        assert "goal_execution" in out
-        assert "morning_brief" in out
-
-    def test_format_results_table_empty(self) -> None:
-        out = format_results_table("foo", [])
-        assert "No runs recorded" in out
-        assert "foo" in out
-
-
 # ---------------------------------------------------------------------------
-# Teardown — reset shared singletons (mirrored in test_story_7_2b).
+# Teardown — reset shared singletons.
 # ---------------------------------------------------------------------------
 
 

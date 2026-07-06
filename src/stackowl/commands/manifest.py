@@ -14,8 +14,9 @@ to-be-deleted / folded).
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Shipped commands — all ~29 that the product intends to expose.
-# 15 are live today (Epic A); the remaining 14 are wired in Epic B.
+# Shipped commands — the product's full slash-command surface (Epic B complete).
+# ``owls`` and ``agent`` were retired in Task 7 — folded into the unified
+# ``owl`` command (see stackowl/commands/owls_command.py:OwlCommand).
 # ---------------------------------------------------------------------------
 SHIPPED_COMMANDS: frozenset[str] = frozenset({
     # ── Dependency-free module-level commands (Pattern A) ──────────────────
@@ -32,7 +33,6 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     # ── DI commands currently live (Pattern B, Epic A wired) ───────────────
     "skill",
     "memory",
-    "owls",
     "owl",
     "focus",
     "style",
@@ -41,8 +41,6 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "quiet",
     "notifications",
     # ── DI commands to be wired in Epic B ──────────────────────────────────
-    # NOTE: the former /agents (manage) is merged into /agent (create + manage).
-    "agent",
     "bye",
     "reset",
     "permissions",
@@ -62,4 +60,9 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
 # Exempt — SlashCommand subclasses that exist in stackowl.commands but are
 # intentionally NOT shipped (transitional / folded into another command).
 # ---------------------------------------------------------------------------
-EXEMPT_COMMANDS: frozenset[str] = frozenset()
+EXEMPT_COMMANDS: frozenset[str] = frozenset({
+    # OwlsCommand.command == "owls" — the class survives, unregistered, as the
+    # base class OwlCommand ("owl") inherits its registry-backed handlers from.
+    # Not a live command; retired in Task 7.
+    "owls",
+})

@@ -41,7 +41,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
     from stackowl.owls.registry import OwlRegistry
     from stackowl.parliament.orchestrator import ParliamentOrchestrator
     from stackowl.plugins.registry import PluginRegistry
-    from stackowl.scheduler.scheduler import JobScheduler
     from stackowl.skills.loader import SkillLoader
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.registry import ToolRegistry
@@ -216,20 +215,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         embedding_registry=deps.embedding_registry,
     ))
 
-    # /owls
-    from stackowl.commands.owls_command import OwlsCommand
-    _safe_register(registry, "owls", lambda: OwlsCommand(
-        owl_registry=deps.owl_registry,
-        db=deps.db,
-        event_bus=deps.event_bus,
-        tool_registry=deps.tool_registry,
-    ))
-
     # /owl — the unified dispatcher: create/edit/rename/pause/resume/retire all
     # funnel through owl_build via ONE OwlBuildSpec (Task 4), whether the caller
     # used flags or free text. Inspection (list/dna/health/objectives) reuses
-    # OwlsCommand's inherited registry-backed handlers unchanged. Runs alongside
-    # /owls and /agent (both untouched) until Task 7 retires them.
+    # OwlsCommand's inherited registry-backed handlers unchanged. The ONE owl
+    # surface — legacy /owls and /agent were removed in Task 7.
     from stackowl.commands.owls_command import OwlCommand
     _safe_register(registry, "owl", lambda: OwlCommand(
         owl_registry=deps.owl_registry,
@@ -312,18 +302,6 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         settings=deps.settings,
         integration_registry=deps.integration_registry,
         plugin_registry=deps.plugin_registry,
-    ))
-
-    # /agent — unified create (create/confirm/cancel) + manage
-    # (list/log/pause/resume/stop/acknowledge). Replaces the old split
-    # /agent + /agents surfaces.
-    from stackowl.commands.agent_create_command import AgentCommand
-    from stackowl.providers.registry import ProviderRegistry
-    _safe_register(registry, "agent", lambda: AgentCommand(
-        scheduler=cast("JobScheduler | None", deps.scheduler),
-        provider_registry=cast("ProviderRegistry | None", deps.provider_registry),
-        db=deps.db,
-        event_bus=deps.event_bus,
     ))
 
     # /parliament

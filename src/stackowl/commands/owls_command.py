@@ -1,6 +1,8 @@
-"""OwlsCommand — /owls slash command for owl persona management.
+"""OwlsCommand — base class for owl persona management, inherited by the
+live ``/owl`` command (:class:`OwlCommand`, below).
 
-Subcommands: ``list``, ``add``, ``remove``, ``health``, ``dna``.
+Subcommands: ``list``, ``create``, ``edit``, ``remove``, ``health``, ``dna``.
+(``add`` was retired in Task 7 — folded into ``create``/``owl_build``.)
 
 The command takes its dependencies via constructor injection so the wiring
 layer can decide whether to give it a real :class:`OwlRegistry`, a real
@@ -16,11 +18,9 @@ from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.owls_helpers import (
-    build_owl_manifest,
     format_dna_display,
     format_owl_roster,
     manifest_to_yaml_entry,
-    parse_add_args,
     parse_edit_args,
     parse_owl_build_flags,
 )
@@ -50,22 +50,6 @@ _OWLS_META = CommandMeta(
         SubCommand(
             name="list",
             summary="Show registered owls",
-        ),
-        SubCommand(
-            name="add",
-            summary="Register a new owl",
-            description="You create a new owl persona and persist it to config.",
-            args=(
-                Arg(name="name", summary="owl name"),
-                Arg(name="--role", summary="owl role"),
-                Arg(name="--tier", summary="model tier"),
-            ),
-            examples=(
-                Example(
-                    invocation="/owls add Sage --role researcher --tier fast",
-                    note="Register a research owl",
-                ),
-            ),
         ),
         SubCommand(
             name="create",
@@ -180,7 +164,7 @@ class OwlsCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Manage owl personas: list, add, remove, health, dna."
+        return "Manage owl personas: list, create, remove, health, dna."
 
     @property
     def meta(self) -> CommandMeta:
@@ -197,8 +181,6 @@ class OwlsCommand(SlashCommand):
         try:
             if sub == "list":
                 result = self._list()
-            elif sub == "add":
-                result = await self._add(rest)
             elif sub == "create":
                 result = await self._create_freetext(rest, state)
             elif sub == "edit":
@@ -253,36 +235,6 @@ class OwlsCommand(SlashCommand):
         result = format_owl_roster(self._registry.list())
         log.gateway.debug("[commands] owls.list: exit")
         return result
-
-    # ------------------------------------------------------------------- add
-    async def _add(self, rest: str) -> str:
-        log.gateway.debug(
-            "[commands] owls.add: entry",
-            extra={"_fields": {"rest_len": len(rest)}},
-        )
-        if self._registry is None:
-            return _NO_REGISTRY
-        params = parse_add_args(rest)
-        valid = (
-            frozenset(t.name for t in self._tool_registry.all())
-            if self._tool_registry is not None else None
-        )
-        manifest = build_owl_manifest(params, valid_tools=valid)
-        manifest = manifest.model_copy(update={"origin": "human"})
-        self._registry.register(manifest)  # may raise ManifestValidationError
-        if self._db is not None:
-            from stackowl.owls.dna_authored import capture_one_authored
-
-            await capture_one_authored(self._db, manifest.name, manifest.dna)
-        self._upsert_to_yaml(manifest_to_yaml_entry(manifest))
-        if self._bus is not None:
-            self._bus.emit("owl_added", {"name": manifest.name, "role": manifest.role})
-        log.gateway.info(
-            "[commands] owls.add: exit",
-            extra={"_fields": {"name": manifest.name, "role": manifest.role}},
-        )
-        suffix = "" if self._db is not None else " (DNA not persisted — no DB)"
-        return f"✓ owl '{manifest.name}' registered (role={manifest.role}, tier={manifest.model_tier}){suffix}"
 
     # ------------------------------------------------------------ create (free text)
     async def _create_freetext(self, rest: str, state: PipelineState) -> str:

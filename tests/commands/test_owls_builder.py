@@ -1,4 +1,9 @@
-"""Integration test: /owls add persistence via _upsert_to_yaml + catalog wiring."""
+"""Integration test: /owls edit persistence via _upsert_to_yaml + catalog wiring.
+
+(``add`` was retired in Task 7 — owls are seeded directly through
+:class:`SpecialistOwlBuilder`, the same one constructor ``add`` used to
+delegate to, instead of going through the deleted subcommand.)
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,8 @@ import pytest
 import yaml
 
 from stackowl.commands.owls_command import OwlsCommand
+from stackowl.commands.owls_helpers import manifest_to_yaml_entry
+from stackowl.owls.builder import OwlSpec, SpecialistOwlBuilder
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.state import PipelineState
 
@@ -40,61 +47,14 @@ def _load(cfg: Path) -> dict[str, Any]:
     return yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_add_preset_persists_bounds_to_yaml(tmp_yaml: Path):
-    """add with --preset researcher writes bounds into stackowl.yaml."""
-    reg = OwlRegistry()
-    cmd = OwlsCommand(owl_registry=reg)
-    out = await cmd.handle(
-        "add rsr --role research --tier fast --preset researcher", _state()
+def _seed_bounded(reg: OwlRegistry, name: str = "rsr", tier: str = "fast") -> None:
+    """Register+persist a preset-bounded owl directly through the one builder,
+    the same construction path the deleted ``/owls add`` used to delegate to."""
+    manifest = SpecialistOwlBuilder().build(
+        OwlSpec(name=name, role="research", model_tier=tier, preset="researcher")
     )
-    assert "✓" in out
-    owls = _load(tmp_yaml)["owls"]
-    entry = next(e for e in owls if e["name"] == "rsr")
-    assert "shell" not in entry["bounds"]["tools"]
-    assert "delegate_task" in entry["bounds"]["tools"]
-    assert reg.get("rsr").bounds is not None
-
-
-@pytest.mark.asyncio
-async def test_upsert_replaces_existing_entry(tmp_yaml: Path):
-    """Running add twice on the same name replaces the YAML entry (no duplicates)."""
-    reg = OwlRegistry()
-    cmd = OwlsCommand(owl_registry=reg)
-
-    # First add
-    await cmd.handle(
-        "add rsr --role research --tier fast --preset researcher", _state()
-    )
-    # Manually mutate the registry so the second add doesn't raise duplicate error
-    reg.deregister("rsr")
-    # Second add with different tier
-    await cmd.handle(
-        "add rsr --role research --tier standard --preset researcher", _state("sess-2")
-    )
-
-    owls = _load(tmp_yaml)["owls"]
-    rsr_entries = [e for e in owls if e["name"] == "rsr"]
-    assert len(rsr_entries) == 1, "upsert must not create duplicates"
-    assert rsr_entries[0]["model_tier"] == "standard"
-
-
-@pytest.mark.asyncio
-async def test_add_without_tool_registry_still_works(tmp_yaml: Path):
-    """OwlsCommand with tool_registry=None (default) does not break add."""
-    reg = OwlRegistry()
-    cmd = OwlsCommand(owl_registry=reg, tool_registry=None)
-    out = await cmd.handle(
-        "add scout --role helper --tier fast --preset researcher", _state()
-    )
-    assert "✓" in out
-    owls = _load(tmp_yaml)["owls"]
-    assert any(e["name"] == "scout" for e in owls)
+    reg.register(manifest)
+    OwlsCommand(owl_registry=reg)._upsert_to_yaml(manifest_to_yaml_entry(manifest))
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +66,7 @@ async def test_add_without_tool_registry_still_works(tmp_yaml: Path):
 async def test_edit_changes_field_and_repersists(tmp_yaml: Path):
     reg = OwlRegistry()
     cmd = OwlsCommand(owl_registry=reg)
-    await cmd.handle("add rsr --role research --tier fast --preset researcher", _state())
+    _seed_bounded(reg)
     out = await cmd.handle("edit rsr --tier powerful", _state())
     assert "✓" in out
     assert reg.get("rsr").model_tier == "powerful"
@@ -134,6 +94,6 @@ async def test_edit_unknown_owl_errors(tmp_yaml: Path):
 async def test_edit_with_no_fields_is_rejected(tmp_yaml: Path):
     reg = OwlRegistry()
     cmd = OwlsCommand(owl_registry=reg)
-    await cmd.handle("add rsr --role research --tier fast --preset researcher", _state())
+    _seed_bounded(reg)
     out = await cmd.handle("edit rsr", _state())
     assert "✗" in out  # no silent no-op success / needless yaml rewrite
