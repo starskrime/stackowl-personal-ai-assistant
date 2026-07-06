@@ -114,8 +114,25 @@ class TestProviderList:
 
 
 class TestProviderAdd:
+    def test_provider_add_emits_real_settings_not_dict(self, tmp_yaml: Path) -> None:
+        """After a verified /provider add write, settings_reloaded must carry a real
+        Settings object (so the existing type-guarded subscribers actually apply it),
+        not the old {"provider": name} dict which every subscriber ignores."""
+        from stackowl.config.settings import Settings
+
+        bus = _SpyBus()
+        cmd = _make_cmd(bus)
+        result = cmd._add("acme openai gpt-4o powerful")
+
+        assert "✓" in result
+        reload_events = [payload for event, payload in bus.events if event == "settings_reloaded"]
+        assert len(reload_events) == 1
+        assert isinstance(reload_events[0], Settings)
+
     @pytest.mark.asyncio
     async def test_add_valid_no_token(self, tmp_yaml: Path) -> None:
+        from stackowl.config.settings import Settings
+
         bus = _SpyBus()
         out = await _make_cmd(bus).handle("add acme openai gpt-x fast", _state())
         assert "✓" in out or "added" in out.lower()
@@ -127,9 +144,8 @@ class TestProviderAdd:
         assert entry["default_model"] == "gpt-x"
         assert entry["tier"] == "fast"
         assert entry.get("api_key") in (None, "")
-        assert ("settings_reloaded", {"provider": "acme"}) in [
-            (e, p if isinstance(p, dict) else p) for e, p in bus.events
-        ] or any(e == "settings_reloaded" for e, _ in bus.events)
+        reload_events = [p for e, p in bus.events if e == "settings_reloaded"]
+        assert any(isinstance(p, Settings) for p in reload_events)
 
     @pytest.mark.asyncio
     async def test_add_with_token_stores_ref_not_raw(

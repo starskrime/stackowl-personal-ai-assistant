@@ -75,6 +75,8 @@ async def test_provider_add_emits_on_production_bus(tmp_yaml: Path) -> None:
     Regression gate: with Pattern-A the command was self-registered with
     event_bus=None, so _emit_reloaded was always a no-op.
     """
+    from stackowl.config.settings import Settings
+
     spy = MagicMock()
 
     deps = CommandDeps(event_bus=spy)
@@ -88,11 +90,10 @@ async def test_provider_add_emits_on_production_bus(tmp_yaml: Path) -> None:
     spy.emit.assert_called_once()
     emitted_event, emitted_payload = spy.emit.call_args[0]
     assert emitted_event == "settings_reloaded"
-    assert isinstance(emitted_payload, dict)
-    assert emitted_payload.get("provider") == "acme"
+    assert isinstance(emitted_payload, Settings)
     # NOTE: gates the dead-bus regression (emit now reaches the production bus).
-    # The live provider reload is driven by the ConfigWatcher (real Settings
-    # payload), NOT this dict — so this asserts the emit fires, not a reload.
+    # The live provider reload is driven by a real Settings object payload,
+    # enabling type-guarded subscribers to apply it immediately.
 
 
 async def test_provider_remove_emits_on_production_bus(tmp_yaml: Path) -> None:
@@ -128,15 +129,15 @@ async def test_provider_no_bus_does_not_crash(tmp_yaml: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Honesty — /provider messages must say "next reload/restart" (as before)
+# Honesty — /provider messages must say "applied immediately"
 # ---------------------------------------------------------------------------
 
 
 async def test_provider_add_message_is_honest_about_timing(tmp_yaml: Path) -> None:
-    """/provider add must say 'next reload/restart', not 'live now'."""
+    """/provider add must say 'applied immediately' since emit now carries a real Settings."""
     deps = CommandDeps(event_bus=MagicMock())
     register_all_commands(deps, registry=CommandRegistry.instance())
     result = await CommandRegistry.instance().dispatch(
         "provider", "add acme openai gpt-x fast", make_state()
     )
-    assert "reload" in result.lower() or "restart" in result.lower()
+    assert "immediately" in result.lower()

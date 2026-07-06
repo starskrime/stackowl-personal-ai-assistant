@@ -10,8 +10,7 @@ or echoed. It is persisted via the shared :func:`store_secret` writer (OS
 keyring → mode-0600 file fallback); only the resulting SecretResolver *ref*
 (``keychain:…`` / ``file:…``) is stored in the YAML ``api_key`` field.
 
-NOTE: changes take effect on the next reload/restart — this command does NOT
-hot-reload the live provider registry (that is a separate change).
+NOTE: changes are applied immediately via an in-process settings_reloaded emit — see stackowl/startup/provider_reload.py for the consumer.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_writer import store_secret
+from stackowl.config.settings import Settings
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
@@ -177,8 +177,19 @@ class ProviderCommand(SlashCommand):
         return raw
 
     def _emit_reloaded(self, name: str) -> None:
-        if self._bus is not None:
-            self._bus.emit("settings_reloaded", {"provider": name})
+        if self._bus is None:
+            return
+        try:
+            new_settings = Settings()
+        except Exception as exc:
+            log.config.error(
+                "[commands] provider._emit_reloaded: immediate reload failed — "
+                "falling back to background ConfigWatcher poll",
+                exc_info=exc,
+                extra={"_fields": {"name": name}},
+            )
+            return
+        self._bus.emit("settings_reloaded", new_settings)
 
     def _persisted(self, path: Any, name: str) -> bool:
         """Re-read the YAML and confirm provider *name* is present + parses.
@@ -314,7 +325,7 @@ class ProviderCommand(SlashCommand):
         )
         key_note = f" (api_key ref: {api_key_ref})" if api_key_ref else ""
         return (
-            f"✓ Provider '{name}' added{key_note} — applies on the next reload/restart"
+            f"✓ Provider '{name}' added{key_note} — applied immediately"
         )
 
     # -- remove ----------------------------------------------------------------
@@ -344,7 +355,7 @@ class ProviderCommand(SlashCommand):
             extra={"_fields": {"name": name}},
         )
         return (
-            f"✓ Provider '{name}' removed — applies on the next reload/restart. "
+            f"✓ Provider '{name}' removed — applied immediately. "
             "Its stored secret (if any) was left in place."
         )
 
@@ -381,7 +392,7 @@ class ProviderCommand(SlashCommand):
             "[commands] provider.set_tier: exit — updated",
             extra={"_fields": {"name": name, "tier": tier}},
         )
-        return f"✓ Provider '{name}' tier set to {tier} — applies on the next reload/restart"
+        return f"✓ Provider '{name}' tier set to {tier} — applied immediately"
 
 
 # Pattern-A self-registration removed (Epic C1): ProviderCommand is now a DI
