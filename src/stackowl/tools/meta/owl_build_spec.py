@@ -97,7 +97,9 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
     * ``None`` — the spec is complete and valid.
 
     For ``create`` the irreducible required set is: a ``name``, a capability
-    (``preset`` OR ``explicit_tools``), and a ``specialty``.
+    (``preset`` OR ``explicit_tools``), and a ``specialty`` — UNLESS ``report``
+    is set, in which case capability/specialty are not required (a
+    report-pinned owl self-assembles) but a ``schedule`` is.
     """
     if spec.action in ("retire", "pause", "resume"):
         # Cadence-only or removal actions need nothing but a name (design
@@ -133,17 +135,25 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
     missing: list[str] = []
     if not spec.name or not spec.name.strip():
         missing.append("name")
-    if not spec.preset and not spec.explicit_tools:
-        missing.append("capability")
-    if not spec.specialty or not spec.specialty.strip():
-        missing.append("specialty")
+    # report-pinned owls self-assemble (morning_brief/check_in) — they need no
+    # capability (preset/explicit_tools) or specialty of their own; those are
+    # only meaningful for a standing, agent-authored persona.
+    if spec.report is None:
+        if not spec.preset and not spec.explicit_tools:
+            missing.append("capability")
+        if not spec.specialty or not spec.specialty.strip():
+            missing.append("specialty")
     # A recurring owl needs a cadence: ``lifecycle='scheduled'`` with no schedule is
     # a RECOVERABLE gap → ASK for it via the resumable clarify path (reuses
     # _elicit_missing — no parallel flow). Detecting "recurring intent" is the
     # model's job (it sets lifecycle), never a keyword scan here.
     if spec.lifecycle == "scheduled" and not sched:
         missing.append("schedule")
-    # report-pinned scheduled owls need no `goal` — the handler self-assembles.
+    # A report-pinned owl is inherently scheduled — a schedule is required even
+    # if the caller never set lifecycle='scheduled' explicitly (e.g. the flag
+    # path only passes --report/--schedule).
+    if spec.report is not None and not sched and "schedule" not in missing:
+        missing.append("schedule")
     if missing:
         return MissingFields(fields=tuple(missing), partial=spec)
     return None

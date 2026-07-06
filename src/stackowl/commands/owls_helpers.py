@@ -251,6 +251,7 @@ _OWL_BUILD_FLAGS: dict[str, str] = {
     "--lifecycle": "lifecycle",
     "--boundaries": "boundaries",
     "--evolution_strategy": "evolution_strategy",
+    "--report": "report",
     "--tier": "model_tier",
     "--model_tier": "model_tier",
 }

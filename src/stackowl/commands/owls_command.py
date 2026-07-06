@@ -665,11 +665,35 @@ _OWL_META = CommandMeta(
         SubCommand(name="list", summary="Show your assistants"),
         SubCommand(name="dna", summary="Show DNA traits, current versus authored",
                    args=(Arg(name="name", summary="owl name"),)),
+        SubCommand(
+            name="reset-dna",
+            summary="Revert evolved DNA to the authored baseline",
+            description="You discard accumulated evolution and restore the owl's authored DNA. Confirmed with YES.",
+            args=(Arg(name="name", summary="owl name"),),
+            examples=(
+                Example(invocation="/owl reset-dna Sage YES", note="Confirm reset"),
+            ),
+        ),
+        SubCommand(name="health", summary="Report owl registry health"),
+        SubCommand(name="objectives", summary="List standing objectives and their progress"),
+        SubCommand(
+            name="objective",
+            summary="Show one objective's steps and activity log",
+            args=(Arg(name="objective_id", summary="objective id"),),
+            examples=(
+                Example(invocation="/owl objective obj-1a2b3c4d"),
+            ),
+        ),
+        SubCommand(
+            name="objective-cancel",
+            summary="Abandon a standing objective",
+            description="You stop the assistant from pursuing an objective. Confirmed with YES.",
+            args=(Arg(name="objective_id", summary="objective id"),),
+            examples=(
+                Example(invocation="/owl objective-cancel obj-1a2b3c4d YES", note="Confirm"),
+            ),
+        ),
     ),
-)
-
-_OWL_BUILD_ACTIONS: frozenset[str] = frozenset(
-    {"create", "edit", "rename", "pause", "resume", "retire"}
 )
 
 

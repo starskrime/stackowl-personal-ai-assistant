@@ -285,6 +285,17 @@ class OwlBuildTool(Tool):
                         "experimental (fast)."
                     ),
                 },
+                "report": {
+                    "type": "string",
+                    "enum": ["morning_brief", "check_in"],
+                    "description": (
+                        "Optional (create). Pin a scheduled owl to a REAL existing "
+                        "report handler instead of a generic goal prompt — the owl "
+                        "self-assembles its own content each tick. Needs no "
+                        "'preset'/'explicit_tools'/'specialty'; still needs a "
+                        "'schedule'."
+                    ),
+                },
             },
             "required": ["action", "name"],
         }
@@ -1004,6 +1015,11 @@ class OwlBuildTool(Tool):
         owl_build's agent-authority machinery (re-forge/clamp/consent-on-
         widening), which does not apply to an owl that was never
         authority-bounded."""
+        # 1. ENTRY
+        log.tool.info(
+            "owl_build.execute: edit unbound owl",
+            extra={"_fields": {"name": spec.name}},
+        )
         updates: dict[str, object] = {}
         if spec.model_tier is not None:
             updates["model_tier"] = spec.model_tier
@@ -1022,6 +1038,11 @@ class OwlBuildTool(Tool):
             self._yaml_restore(snapshot)
             return self._err(f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0)
         await self._audit("edit", rebuilt.name, creator)
+        # 4. EXIT
+        log.tool.info(
+            "owl_build.execute: edit unbound owl exit",
+            extra={"_fields": {"name": rebuilt.name, "fields_changed": sorted(updates)}},
+        )
         return self._ok(
             f"Updated owl '{rebuilt.name}'.", t0, extra={"owl": rebuilt.name, "op": "edit"}
         )
