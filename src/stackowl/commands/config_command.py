@@ -229,7 +229,15 @@ class ConfigCommand(SlashCommand):
                 "change (check file permissions/disk)."
             )
         if self._bus is not None:
-            self._bus.emit("settings_reloaded", {"key": key})
+            try:
+                self._bus.emit("settings_reloaded", Settings())
+            except Exception as exc:
+                log.config.error(
+                    "[commands] config.set: immediate reload failed — falling "
+                    "back to background ConfigWatcher poll",
+                    exc_info=exc,
+                    extra={"_fields": {"key": key}},
+                )
         hot = extra.get("hot_reload", True)
         suffix = "" if hot else " — restart required"
         log.config.info(
@@ -265,7 +273,15 @@ class ConfigCommand(SlashCommand):
                 "override (check file permissions/disk)."
             )
         if self._bus is not None:
-            self._bus.emit("settings_reloaded", {"key": key, "reset": True})
+            try:
+                self._bus.emit("settings_reloaded", Settings())
+            except Exception as exc:
+                log.config.error(
+                    "[commands] config.reset: immediate reload failed — falling "
+                    "back to background ConfigWatcher poll",
+                    exc_info=exc,
+                    extra={"_fields": {"key": key}},
+                )
         log.config.info("[commands] config.reset: exit", extra={"_fields": {"key": key}})
         return f"✓ {key} reverted to default"
 

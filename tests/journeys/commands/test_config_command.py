@@ -22,7 +22,20 @@ import yaml
 
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandNotFoundError, CommandRegistry
+from stackowl.events.bus import EventBus
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
+
+
+class _SpyBus(EventBus):
+    """EventBus that records every emit for assertion."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[tuple[str, Any]] = []
+
+    def emit(self, event: str, payload: Any = None) -> None:
+        self.events.append((event, payload))
+        super().emit(event, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +114,28 @@ async def test_config_set_emits_on_production_bus(tmp_yaml: Path) -> None:
     # so this asserts the emit fires, not that a reload occurred.
 
 
+async def test_config_set_emits_real_settings(tmp_yaml: Path) -> None:
+    """After /config set, settings_reloaded must carry a real Settings object.
+
+    This ensures type-guarded subscribers actually apply the reloaded settings,
+    not a dict which they ignore.
+    """
+    from stackowl.config.settings import Settings
+
+    bus = _SpyBus()
+    deps = CommandDeps(event_bus=bus)
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch(
+        "config", "set autonomy_level high", make_state()
+    )
+
+    assert "✓" in result
+    reload_events = [p for e, p in bus.events if e == "settings_reloaded"]
+    assert len(reload_events) == 1
+    assert isinstance(reload_events[0], Settings)
+
+
 async def test_config_set_no_bus_does_not_crash(tmp_yaml: Path) -> None:
     """bus=None (no bus dep) must not raise — if-guard inside the command holds."""
     deps = CommandDeps(event_bus=None)
@@ -109,6 +144,33 @@ async def test_config_set_no_bus_does_not_crash(tmp_yaml: Path) -> None:
         "config", "set autonomy_level low", make_state()
     )
     assert "✓" in result
+
+
+async def test_config_reset_emits_real_settings(tmp_yaml: Path) -> None:
+    """After /config reset, settings_reloaded must carry a real Settings object."""
+    from stackowl.config.settings import Settings
+
+    # First set a value to reset
+    deps = CommandDeps()
+    register_all_commands(deps, registry=CommandRegistry.instance())
+    await CommandRegistry.instance().dispatch(
+        "config", "set autonomy_level high", make_state()
+    )
+
+    # Now reset with a spy bus
+    CommandRegistry.reset()
+    bus = _SpyBus()
+    deps = CommandDeps(event_bus=bus)
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch(
+        "config", "reset autonomy_level", make_state()
+    )
+
+    assert "✓" in result
+    reload_events = [p for e, p in bus.events if e == "settings_reloaded"]
+    assert len(reload_events) == 1
+    assert isinstance(reload_events[0], Settings)
 
 
 # ---------------------------------------------------------------------------
