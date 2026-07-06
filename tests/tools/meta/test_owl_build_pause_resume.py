@@ -76,3 +76,35 @@ async def test_pause_refuses_on_demand_owl(db: DbPool) -> None:
         assert "no schedule to pause" in result.error
     finally:
         reset_services(token)
+
+
+async def test_pause_refuses_scheduled_owl_with_no_owned_job_row(db: DbPool) -> None:
+    """Manifest says lifecycle='scheduled' but the owned jobs row was never
+    projected (reconcile_owl_schedules deliberately NOT called here) — this must
+    refuse loudly, not report a false "Paused" success (scheduler.pause() has no
+    rowcount check and would silently no-op on a missing job_id)."""
+    reg = OwlRegistry()
+    reg.register(_scheduled_owl("ghost"), source_name="t")
+    token = set_services(StepServices(owl_registry=reg, db_pool=db))
+    try:
+        result = await OwlBuildTool().execute(action="pause", name="ghost")
+        assert not result.success
+        assert "no schedule to pause" in result.error
+        rows = await db.fetch_all("SELECT 1 FROM jobs WHERE job_id = ?", (_job_id_for("ghost"),))
+        assert not rows  # still no row — confirms nothing was silently created either
+    finally:
+        reset_services(token)
+
+
+async def test_resume_refuses_scheduled_owl_with_no_owned_job_row(db: DbPool) -> None:
+    """Mirror of the pause case for resume — scheduler.resume() logs a warning and
+    returns on a missing row today, which the caller must not read as success."""
+    reg = OwlRegistry()
+    reg.register(_scheduled_owl("ghost2"), source_name="t")
+    token = set_services(StepServices(owl_registry=reg, db_pool=db))
+    try:
+        result = await OwlBuildTool().execute(action="resume", name="ghost2")
+        assert not result.success
+        assert "no schedule to resume" in result.error
+    finally:
+        reset_services(token)

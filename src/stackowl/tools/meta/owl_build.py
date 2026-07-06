@@ -1185,6 +1185,22 @@ class OwlBuildTool(Tool):
         tz = settings.system.timezone if settings is not None else "UTC"
         scheduler = JobScheduler(db=db, tz=tz or "UTC")
         job_id = _job_id_for(spec.name)
+        # 3b. VERIFY the owned row actually exists before trusting either scheduler
+        #     call's silence — pause() has no rowcount check (a non-matching job_id
+        #     "succeeds" with zero effect) and resume() only logs+returns on a miss.
+        #     manifest says scheduled but the projected row is missing (e.g. reconcile
+        #     never ran) reads the SAME to the caller as "not scheduled at all": there
+        #     is nothing to pause/resume, so reuse that exact refusal message.
+        row_exists = await db.fetch_all(
+            "SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)
+        )
+        if not row_exists:
+            log.tool.error(
+                "owl_build.execute: scheduled owl has no projected job row — refusing toggle",
+                exc_info=None,
+                extra={"_fields": {"op": op, "name": spec.name, "job_id": job_id}},
+            )
+            return self._err(f"'{spec.name}' has no schedule to {op}.", t0)
         if resume:
             await scheduler.resume(job_id)
         else:
