@@ -111,6 +111,21 @@ class SocketChannelAdapter(ChannelAdapter):
         await self.send_text(text, chat_id=chat_id)
         return -1
 
+    async def delete_message(self, chat_id: str | int, message_id: int) -> bool:
+        """No-op cleanup for a cross-process ephemeral send.
+
+        ponytail: mirrors ``send_ephemeral`` above — this proxy has no ack
+        frame carrying a real message_id (``send_ephemeral`` always returns
+        the ``-1`` sentinel), so there is nothing on the gateway side this
+        call could identify to delete. ``_best_effort_delete`` already
+        treats a delete failure as cosmetic-only; returning ``False`` here
+        (instead of raising ``AttributeError``) avoids logging a per-tick
+        ERROR for an outcome that is not actually a failure. Same upgrade
+        path as ``send_ephemeral``: a correlated ack frame would let this
+        delete for real.
+        """
+        return False
+
     async def send_clarify(
         self,
         session_id: str,

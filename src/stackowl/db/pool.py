@@ -27,7 +27,15 @@ log = logging.getLogger("stackowl.db")
 _PRAGMAS = [
     "PRAGMA journal_mode=WAL",
     "PRAGMA foreign_keys=ON",
-    "PRAGMA busy_timeout=5000",
+    # SQLITE_BUSY ("database is locked") IS already classified as a retriable
+    # dead-handle condition below (_DEAD_PRIMARY_CODES) and execute()/fetch_all()
+    # already retry once via retry_once_on_dead_handle — but each attempt only
+    # waits up to busy_timeout before SQLite itself gives up, so 2 attempts x
+    # 5000ms (10s total) was still shorter than a real observed writer-contention
+    # burst (SkillsAssembly's ~24-40s skill-catalog scan writing ~300 rows from
+    # the OTHER process), and a confirmed-live liveness-heartbeat write failed
+    # both attempts. 15000ms per attempt gives real headroom over that burst.
+    "PRAGMA busy_timeout=15000",
 ]
 
 # Primary SQLite error codes that indicate a transient connection-level failure

@@ -12,6 +12,7 @@ propagate. The agent NEVER writes to ``builtin/`` (security boundary).
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -115,7 +116,7 @@ class SkillsAssembly:
         # ANN call alongside reflections + tool heuristics + pellets.
         if lessons_index is not None and loaded:
             try:
-                await _publish_to_lessons(loaded, lessons_index)
+                await _publish_to_lessons(loaded, lessons_index, store)
             except Exception as exc:  # B5 — lessons is enhancement
                 log.skills.warning(
                     "[skills] assembly.build: lessons publish failed — search via LessonsIndex limited",
@@ -197,36 +198,58 @@ async def _embed_missing(
     )
 
 
-async def _publish_to_lessons(
-    loaded: list[LoadedSkill], lessons_index: LessonsIndex,
-) -> int:
-    """Push every loaded skill's manifest+body into the LessonsIndex.
+def _lessons_content(ls: LoadedSkill) -> str:
+    """The exact text published (and hashed) for one skill's lesson draft."""
+    m = ls.manifest
+    content_parts = [f"Skill {m.name}: {m.description}"]
+    if m.when_to_use:
+        content_parts.append(f"When to use: {m.when_to_use}")
+    if ls.body:
+        content_parts.append(ls.body[:1500])
+    return "\n\n".join(content_parts)
 
-    Idempotent — the LanceDB upsert keys on ``lesson_id`` which is
-    ``skill:<source>/<name>``, so re-publishing on next boot just overwrites.
+
+async def _publish_to_lessons(
+    loaded: list[LoadedSkill], lessons_index: LessonsIndex, store: SkillIndexStore,
+) -> int:
+    """Push changed skills' manifest+body into the LessonsIndex.
+
+    Skips any skill whose lesson content hash matches ``lessons_published_hash``
+    (mirrors ``_summarize_missing``'s ``summary_body_hash`` gate) — without
+    this, every boot re-embeds all ~300 skills locally even though the LanceDB
+    upsert on unchanged content is a pure no-op (idempotent on ``lesson_id``).
     """
     from stackowl.learning.lessons_index import LessonDraft
 
-    drafts = []
+    to_publish: list[tuple[int, str, LessonDraft]] = []
     for ls in loaded:
         m = ls.manifest
-        content_parts = [f"Skill {m.name}: {m.description}"]
-        if m.when_to_use:
-            content_parts.append(f"When to use: {m.when_to_use}")
-        if ls.body:
-            content_parts.append(ls.body[:1500])
-        drafts.append(LessonDraft(
+        content = _lessons_content(ls)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        existing = await store.get(m.source, m.name)
+        if existing is not None and existing.lessons_published_hash == content_hash:
+            continue
+        draft = LessonDraft(
             source_type="skill",
             source_ref=f"{m.source}/{m.name}",
-            content="\n\n".join(content_parts),
+            content=content,
             metadata={
                 "name": m.name,
                 "source": m.source,
                 "version": m.version,
                 "tags": ",".join(m.tags),
             },
-        ))
-    return await lessons_index.publish_many(drafts)
+        )
+        skill_id = existing.skill_id if existing is not None else -1
+        to_publish.append((skill_id, content_hash, draft))
+    if not to_publish:
+        log.skills.debug("[skills] _publish_to_lessons: exit — all up-to-date")
+        return 0
+    written = await lessons_index.publish_many([d for _, _, d in to_publish])
+    for skill_id, content_hash, _ in to_publish:
+        if skill_id != -1:
+            await store.set_lessons_hash(skill_id, content_hash)
+    return written
 
 
 _SUMMARY_BODY_CAP = 4000

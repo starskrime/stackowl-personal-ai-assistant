@@ -51,6 +51,7 @@ class Skill:
     manifest_json: dict[str, object]
     loaded_at: float
     updated_at: float
+    lessons_published_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,7 @@ _SELECT_FIELDS = """
     skill_id, name, source, path, description, when_to_use, version, enabled,
     success_rate, n_executions, parent_traces, embedding, embedding_model,
     manifest_json, body_text, loaded_at, updated_at,
-    summary, summary_source, summary_body_hash, tool_names
+    summary, summary_source, summary_body_hash, tool_names, lessons_published_hash
 """
 
 
@@ -287,6 +288,29 @@ class SkillIndexStore(OwnedRepository):
         # 4. EXIT
         log.skills.debug(
             "[skills] store.set_summary: exit",
+            extra={"_fields": {"skill_id": skill_id}},
+        )
+
+    async def set_lessons_hash(self, skill_id: int, content_hash: str) -> None:
+        """Record the content hash last published into the LessonsIndex.
+
+        Mirrors ``set_summary``'s ``summary_body_hash`` gate: lets
+        ``_publish_to_lessons`` skip the (locally-computed, uncached-by-default)
+        re-embed for a skill whose content hasn't changed since the last boot.
+        """
+        # 1. ENTRY
+        log.skills.debug(
+            "[skills] store.set_lessons_hash: entry",
+            extra={"_fields": {"skill_id": skill_id}},
+        )
+        await self._db.execute(
+            "UPDATE skills SET lessons_published_hash = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (content_hash, time.time(), skill_id, self._owner_id),
+        )
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store.set_lessons_hash: exit",
             extra={"_fields": {"skill_id": skill_id}},
         )
 
@@ -596,6 +620,9 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
         manifest_json=manifest_dict,
         loaded_at=float(str(row["loaded_at"])),
         updated_at=float(str(row["updated_at"])),
+        lessons_published_hash=(
+            str(row["lessons_published_hash"]) if row.get("lessons_published_hash") is not None else None
+        ),
     )
 
 

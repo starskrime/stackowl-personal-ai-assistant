@@ -104,6 +104,33 @@ async def test_retired_scheduled_owl_deletes_owned_row(db: DbPool) -> None:
     assert await _owned_rows(db) == []
 
 
+async def test_retired_owl_with_run_history_still_deletes_owned_row(db: DbPool) -> None:
+    """A job that has ACTUALLY RUN (has job_runs history) must still delete cleanly.
+
+    Root cause (0080): job_runs.job_id had no ON DELETE CASCADE, so retiring an
+    owl whose job had ever executed raised `FOREIGN KEY constraint failed` on
+    the DELETE — caught by reconcile's per-row B5 guard, so the row silently
+    stayed behind (drift) instead of the delete actually happening.
+    """
+    reg = OwlRegistry()
+    reg.register(_scheduled_owl("watcher"))
+    await reconcile_owl_schedules(reg, db)
+    rows = await _owned_rows(db)
+    job_id = rows[0]["job_id"]
+    # Simulate the job having actually executed at least once.
+    await db.execute(
+        "INSERT INTO job_runs (run_id, job_id, idempotency_key, ran_at) "
+        "VALUES (?, ?, ?, ?)",
+        ("run-1", job_id, "idem-1", "2026-01-01T00:00:00"),
+    )
+
+    reg.deregister("watcher")
+    result = await reconcile_owl_schedules(reg, db)
+
+    assert result.deleted == 1
+    assert await _owned_rows(db) == []
+
+
 async def test_handmade_cronjob_is_never_touched(db: DbPool) -> None:
     # A user's own cronjob-tool row (created_by='cronjob', no source marker).
     sched = JobScheduler(db=db)

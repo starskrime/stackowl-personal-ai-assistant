@@ -119,6 +119,23 @@ async def test_proxy_send_ephemeral_does_not_crash_the_canary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_proxy_delete_message_does_not_crash_cleanup() -> None:
+    """_best_effort_delete calls delete_message(chat_id, message_id) on whatever
+    adapter send_ephemeral resolved to — a proxy missing this method raised
+    AttributeError on every ephemeral send in production (caught, but logged
+    as an ERROR every tick). The proxy has no ack frame to identify a real
+    message to delete, so it must return False rather than raising."""
+    registry = ChannelRegistry()
+    conn = _FakeConn()
+    register_socket_channel_proxies(registry, cast(FrameConnection, conn), _settings(telegram="tok"))
+    adapter = registry.get("telegram")
+
+    result = await adapter.delete_message(99, -1)
+
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_registration_is_idempotent() -> None:
     registry = ChannelRegistry()
     conn = _FakeConn()

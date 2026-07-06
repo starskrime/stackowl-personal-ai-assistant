@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
@@ -397,7 +398,16 @@ class StartupOrchestrator:
         # READY=1 are now driven by the real WatchdogService INSIDE _phase_gateway
         # (F142): pinging must be recurring, and READY must fire only after the
         # service is actually serving-ready — not here, before the gateway assembles.
-        if not self._dry_run:
+        #
+        # CORE skips this: `stackowl stop` and PidManager both target this ONE
+        # shared path. Core boots ~1s after gateway and unconditionally overwrote
+        # it with its own PID, so `stop` (and any external SIGTERM sender reading
+        # the file) hit the core subprocess instead of the durable gateway — the
+        # gateway's own crash-respawn supervisor then treats that SIGTERM as an
+        # unexpected core crash and spawns a fresh core, so `stop` never actually
+        # stops the service. Only mono/gateway are the externally-stoppable
+        # top-level process; core is an internal child the gateway supervises.
+        if not self._dry_run and self._role != "core":
             self._write_pid()
 
         # Phase 6 — gateway: blocks until the user exits (no-op in dry_run)
@@ -413,6 +423,26 @@ class StartupOrchestrator:
         log.info("[startup] phase 6 (gateway): ok (%.0fms)", (time.monotonic() - t0) * 1000)
 
         log.info("[startup] orchestrator.run: exit — ready")
+
+        # F144-b — a prior boot logged this exact "shutdown complete" sequence
+        # and the OS process still didn't exit (26 threads, ~100% CPU, needed
+        # SIGKILL). A live thread census at the same point (logged just above,
+        # inside _phase_gateway's teardown) showed asyncio's default executor
+        # thread pool in play — `concurrent.futures.thread` registers an atexit
+        # hook that JOINS every worker thread it ever spawned, so ONE stuck
+        # worker (a native torch/OpenMP computation, a hung DNS/socket call
+        # dispatched via loop.run_in_executor) blocks the WHOLE interpreter's
+        # normal shutdown forever, even though our own teardown above already
+        # closed the DB pool, sockets, and watchers — everything WE care about.
+        # Force the process to actually end here rather than trust Python's
+        # normal finalization to notice we're done. Gated on ``not _dry_run``
+        # so dry-run validation runs and test harnesses that call ``run()``
+        # in-process keep normal control flow (dry_run never reaches here with
+        # real side effects to force-exit after).
+        if not self._dry_run:
+            with contextlib.suppress(Exception):
+                logging.shutdown()
+            os._exit(0)  # noqa: SLF001 — deliberate: see comment above
 
     async def _phase_migrations(self) -> None:
         # F146 — route through the single idempotent migration site so a boot
@@ -716,27 +746,48 @@ class StartupOrchestrator:
         # each skill's tools/owls extensions into the running registries, caches
         # manifests in SQLite for fast retrieval. See plan gleaming-finding-puppy.md
         # Learning Commit 3, sub-phase 3a.
-        from stackowl.skills.assembly import SkillsAssembly
+        #
+        # GATEWAY skips the real build (mirrors the browser-runtime skip above):
+        # role=="gateway" relays every turn to core over GatewayLink instead of
+        # driving the pipeline locally (turn_client wiring further down), so
+        # nothing in this process ever reads the skill catalog — only core's own
+        # SkillsAssembly.build(), in its own process, matters. Building it here
+        # anyway cost ~10-15s/boot (disk scan + embedding-registry touch) for a
+        # result nothing consumed. ponytail: the stub keeps the downstream shape
+        # (.loaded/.store) intact for SchedulerAssembly/CommandDeps below, which
+        # are themselves dead-for-gateway but still constructed unconditionally.
+        from stackowl.skills.assembly import SkillsAssembly, SkillsComponents
 
-        skills_components = await SkillsAssembly.build(
-            db=db_pool, tool_registry=tool_registry, owl_registry=owl_registry,
-            embedding_registry=memory_components.embedding_registry,
-            lessons_index=memory_components.lessons_index,
-            provider_registry=provider_registry,
-        )
+        if self._role == "gateway":
+            from stackowl.skills.loader import SkillLoader
+            from stackowl.skills.store import SkillIndexStore
+
+            skills_components = SkillsComponents(
+                loader=SkillLoader(tool_registry=tool_registry, owl_registry=owl_registry),
+                store=SkillIndexStore(db_pool), loaded=(),
+            )
+            learned_count = 0
+        else:
+            skills_components = await SkillsAssembly.build(
+                db=db_pool, tool_registry=tool_registry, owl_registry=owl_registry,
+                embedding_registry=memory_components.embedding_registry,
+                lessons_index=memory_components.lessons_index,
+                provider_registry=provider_registry,
+            )
+            # H4 — reload agent-authored (learned) tools so a tool the agent
+            # minted via tool_build survives reboots. Runs AFTER with_defaults +
+            # SkillsAssembly so the built-ins are already registered: the
+            # collision/dangerous-shadow guard then protects them (a learned spec
+            # can never clobber a built-in). Reads declarative *.json specs only
+            # — NEVER execs model-authored Python. Same GATEWAY skip as above —
+            # core's own copy is what actually matters.
+            from stackowl.tools.meta.learned_tool_loader import LearnedToolLoader
+
+            learned_count = await LearnedToolLoader().load_all(tool_registry)
         log.info(
             "[startup] gateway: skills loaded",
             extra={"_fields": {"count": len(skills_components.loaded)}},
         )
-
-        # H4 — reload agent-authored (learned) tools so a tool the agent minted via
-        # tool_build survives reboots. Runs AFTER with_defaults + SkillsAssembly so
-        # the built-ins are already registered: the collision/dangerous-shadow guard
-        # then protects them (a learned spec can never clobber a built-in). Reads
-        # declarative *.json specs only — NEVER execs model-authored Python.
-        from stackowl.tools.meta.learned_tool_loader import LearnedToolLoader
-
-        learned_count = await LearnedToolLoader().load_all(tool_registry)
         log.info(
             "[startup] gateway: learned tools loaded",
             extra={"_fields": {"count": learned_count}},
@@ -749,7 +800,10 @@ class StartupOrchestrator:
         # can reference it unconditionally, mirroring browser_runtime's pattern.
         mcp_client: McpClient | None = None
         mcp_cfg = self._settings.mcp_client
-        if mcp_cfg.auto_discover_on_startup and mcp_cfg.servers:
+        # GATEWAY skip: federated tools land in `tool_registry`, which nothing
+        # reads in this role (turns relay to core via GatewayLink) — mirrors the
+        # SkillsAssembly skip above.
+        if self._role != "gateway" and mcp_cfg.auto_discover_on_startup and mcp_cfg.servers:
             try:
                 from stackowl.mcp.allowlist import McpServerAllowlist
                 from stackowl.mcp.cache import McpToolCache
@@ -3435,9 +3489,13 @@ class StartupOrchestrator:
             # F144 — remove the PID file LAST (after the DB pool is closed) so a
             # racing `stackowl serve` never sees "not running" while this process
             # still holds the DB lock. Moved out of the old SystemExit handler.
-            with contextlib.suppress(Exception):
-                _pid_path().unlink(missing_ok=True)
-                log.info("[startup] gateway: PID file removed in shutdown finally")
+            # CORE never wrote this file (see the _write_pid guard above) — it
+            # must not unlink it either, or every core crash-respawn/exec-restart
+            # would delete the gateway's still-valid pidfile out from under it.
+            if self._role != "core":
+                with contextlib.suppress(Exception):
+                    _pid_path().unlink(missing_ok=True)
+                    log.info("[startup] gateway: PID file removed in shutdown finally")
 
         # 5. EXIT
         # CORE code-change restart: teardown has released the DB pool / browser /
@@ -3450,6 +3508,22 @@ class StartupOrchestrator:
             with contextlib.suppress(Exception):
                 logging.shutdown()
             os.execv(sys.executable, [sys.executable, "-m", "stackowl", "__core__"])
+        # Diagnostic: a prior boot logged this exact "shutdown complete" line and
+        # the OS process still didn't exit (26 threads, ~100% CPU, needed SIGKILL).
+        # Every daemon thread this module starts (config/code watcher) is stopped
+        # above, so a lingering non-Python or non-daemon thread here is the
+        # remaining suspect (torch/OpenMP from the embedding model, an aiosqlite
+        # worker, etc). Logging the live set at the exact point run() returns
+        # tells us definitively on the next restart, instead of guessing.
+        with contextlib.suppress(Exception):
+            live_threads = [
+                {"name": t.name, "daemon": t.daemon, "alive": t.is_alive()}
+                for t in threading.enumerate()
+            ]
+            log.info(
+                "[startup] gateway: shutdown-complete thread census",
+                extra={"_fields": {"threads": live_threads, "count": len(live_threads)}},
+            )
         log.info("[startup] gateway: adapter exited — shutdown complete")
 
     def _write_pid(self) -> None:
