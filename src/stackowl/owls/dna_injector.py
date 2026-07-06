@@ -93,6 +93,14 @@ class DNAPromptInjector:
             "[dna] injector.inject: entry",
             extra={"_fields": {"owl": manifest.name, "lean": lean}},
         )
+        # Fold the behavioural guardrail into the base prompt FIRST (design
+        # decision 4), so it survives whether or not DNA also modulates. Empty
+        # boundaries → byte-identical to the prior behaviour.
+        base = manifest.system_prompt
+        boundaries = (manifest.boundaries or "").strip()
+        if boundaries:
+            base = f"{manifest.system_prompt}\n\nBoundaries: {boundaries}"
+
         directives: list[str] = []
         for trait, directive in _HIGH_DIRECTIVES:
             if lean and trait in _LEAN_SUPPRESSED_TRAITS:
@@ -109,9 +117,9 @@ class DNAPromptInjector:
                 "[dna] injector.inject: exit — no modulation",
                 extra={"_fields": {"owl": manifest.name, "lean": lean}},
             )
-            return manifest.system_prompt
+            return base
         joined = "\n- ".join(directives)
-        result = f"{manifest.system_prompt}\n\nBehavioural modulation (from owl DNA):\n- {joined}"
+        result = f"{base}\n\nBehavioural modulation (from owl DNA):\n- {joined}"
         log.engine.debug(
             "[dna] injector.inject: exit — directives appended",
             extra={"_fields": {"owl": manifest.name, "lean": lean, "directive_count": len(directives)}},

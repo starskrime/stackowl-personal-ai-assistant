@@ -59,6 +59,28 @@ EVOLUTION_PER_OWL_TIMEOUT_SECONDS = 120.0
 # is untouched — one owl's failure never propagates out of _evolve_one_bounded.
 _EVOLUTION_MAX_ATTEMPTS = 2  # original attempt + one retry on transient failure
 _EVOLUTION_RETRY_BACKOFF_SECONDS = 1.0
+
+# Design decision 3 — per-owl evolution aggressiveness. Scales the FINALIZED
+# per-trait deltas before they are applied: conservative halves drift,
+# experimental doubles it, adaptive (the default) is unchanged. bound_dna still
+# clamps the resulting DNA, so experimental can never breach the safe governor
+# band — this only tunes how fast the owl moves within it.
+_EVOLUTION_STRATEGY_FACTOR: dict[str, float] = {
+    "conservative": 0.5,
+    "adaptive": 1.0,
+    "experimental": 2.0,
+}
+
+
+def _scale_deltas(deltas: dict[str, float], strategy: str) -> dict[str, float]:
+    """Scale each trait delta by the owl's evolution strategy. Returns the input
+    unchanged (same object) for the 1× / unknown-strategy case (no allocation)."""
+    factor = _EVOLUTION_STRATEGY_FACTOR.get(strategy, 1.0)
+    if factor == 1.0:
+        return deltas
+    return {trait: delta * factor for trait, delta in deltas.items()}
+
+
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.UNICODE)
 
 _FETCH_EXCERPTS_SQL = """
@@ -285,6 +307,16 @@ class EvolutionCoordinator(JobHandler):
                 extra={"_fields": {"owl": manifest.name}},
             )
             return False
+        # Apply the owl's evolution strategy to the finalized deltas (single
+        # chokepoint — uniform whether the deltas came from attribution or LLM).
+        deltas = _scale_deltas(deltas, manifest.evolution_strategy)
+        log.engine.debug(
+            "[dna] coordinator.evolve_one: deltas scaled by evolution strategy",
+            extra={"_fields": {
+                "owl": manifest.name, "strategy": manifest.evolution_strategy,
+                "n_deltas": len(deltas),
+            }},
+        )
         # 3. STEP — checkpoint + apply mutations
         checkpoint_id = await self._checkpointer.checkpoint(manifest.name, manifest.dna)
         new_dna = manifest.dna
