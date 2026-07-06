@@ -591,17 +591,196 @@ git commit -m "feat(owl_build): add pause/resume actions reusing scheduler primi
 
 ### Task 4: `/owl` unified dispatcher (single path to `owl_build` for every mutation)
 
+**Sub-part A (Steps 1-5): edit-scope parity — `can_edit` + `_edit_unbound`.**
+Capability-loss gap found while planning: `owl_build._edit` gates on `can_modify`,
+which only allows editing an `origin="agent"` owl YOU created — it refuses
+`builtin`/`human` owls outright. Today's `/owls edit` CAN change e.g. the
+Secretary's `model_tier` (no creator/ceiling check at all — it's a raw
+validate-and-persist). Routing `/owl edit` through unmodified `owl_build._edit`
+would silently drop that capability the day `/owls` is deleted (Task 7). Fix:
+`_edit` gets its OWN gate (`can_edit`, looser for `builtin`/`human`) and, for
+those origins, skips the agent-authority ratchet machinery entirely (re-forge/
+clamp-against-`creation_ceiling`/consent-on-widening) — that machinery exists to
+bound what a MINTED owl can widen to; a `builtin`/`human` owl was never
+ceiling-bound in the first place, so running it would incorrectly refuse them
+for having no `creation_ceiling` (see the existing fail-closed check at
+`owl_build.py:938-948`) instead of just applying the edit.
+
+**Sub-part B (Steps 6-10): the dispatcher itself.**
+
 **Files:**
+- Modify: `src/stackowl/tools/meta/owl_build.py` (add `can_edit` near `can_modify`/`can_retire`/`can_rename`; `_edit` branches to a new `_edit_unbound` for `builtin`/`human` origin, unchanged agent-origin path otherwise)
 - Modify: `src/stackowl/commands/owls_helpers.py` (add `parse_owl_build_flags`)
 - Modify: `src/stackowl/commands/owls_command.py:674-686` (rewrite the `OwlCommand` alias into the unified dispatcher; add `_OWL_META`)
 - Modify: `src/stackowl/commands/assembly.py:230-236` (registration unchanged in shape — same deps; only the class behaviour changes, so this is a no-op verification unless the constructor signature drifts)
-- Test: `tests/commands/test_owl_dispatcher.py` (new)
+- Test: `tests/tools/meta/test_owl_build_betters.py` (add `can_edit` cases), `tests/tools/meta/test_owl_build_edit_unbound.py` (new), `tests/commands/test_owl_dispatcher.py` (new)
 
 **Interfaces:**
 - Consumes: `OwlBuildTool().execute(action=..., **kwargs) -> ToolResult` (Tasks 1/3), `TraceContext.start(...)`/`reset(...)`, inherited `OwlsCommand._list`/`_dna`/`_reset_dna`/`_health`/`_objectives`/`_objective`/`_objective_cancel`.
-- Produces: `parse_owl_build_flags(rest: str) -> dict[str, Any]`; `OwlCommand` whose `command == "owl"` routes create/edit/rename/pause/resume/retire through `owl_build` and list/dna/reset-dna/health/objectives* through the inherited registry surface.
+- Produces: `can_edit(manifest, *, caller, target_name) -> str | None`; `OwlBuildTool._edit_unbound(spec, current, registry, t0, creator) -> ToolResult`; `parse_owl_build_flags(rest: str) -> dict[str, Any]`; `OwlCommand` whose `command == "owl"` routes create/edit/rename/pause/resume/retire through `owl_build` and list/dna/reset-dna/health/objectives* through the inherited registry surface.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/tools/meta/test_owl_build_betters.py`:
+```python
+def test_can_edit_secretary():
+    """Edit's own gate is looser than can_modify for builtin/human — preserves
+    /owls edit's historical ability to change the Secretary's tier."""
+    assert can_edit(_Owl("builtin", None, "secretary"), caller="secretary", target_name="secretary") is None
+
+
+def test_can_edit_human_owl():
+    assert can_edit(_Owl("human", None, "planner"), caller="secretary", target_name="planner") is None
+
+
+def test_cannot_edit_another_agents_owl_via_can_edit():
+    assert can_edit(_Owl("agent", "other_owl", "scout"), caller="secretary", target_name="scout") is not None
+
+
+def test_can_edit_own_agent_owl_via_can_edit():
+    assert can_edit(_Owl("agent", "secretary", "scout"), caller="secretary", target_name="scout") is None
+```
+(add `can_edit` to the existing `from stackowl.tools.meta.owl_build import ...` line at the top of the file)
+
+`tests/tools/meta/test_owl_build_edit_unbound.py` (new):
+```python
+"""Task 4 sub-part A — editing a builtin/human owl's tier/specialty works
+directly (no agent-authority ratchet), preserving /owls edit's historical scope."""
+from __future__ import annotations
+
+import pytest
+
+from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.registry import OwlRegistry
+from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.tools.meta.owl_build import OwlBuildTool
+
+pytestmark = pytest.mark.asyncio
+
+
+async def test_edit_builtin_owl_tier() -> None:
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="scout", role="research-scout", system_prompt="p",
+            model_tier="fast", origin="builtin",
+        ),
+        source_name="t",
+    )
+    token = set_services(StepServices(owl_registry=reg, db_pool=None))
+    try:
+        result = await OwlBuildTool().execute(action="edit", name="scout", model_tier="powerful")
+        assert result.success, result.error
+        assert reg.get("scout").model_tier == "powerful"
+    finally:
+        reset_services(token)
+
+
+async def test_edit_refuses_another_agents_owl() -> None:
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="helper", role="r", system_prompt="p", model_tier="fast",
+            origin="agent", created_by="other_owl",
+        ),
+        source_name="t",
+    )
+    token = set_services(StepServices(owl_registry=reg, db_pool=None))
+    try:
+        result = await OwlBuildTool().execute(action="edit", name="helper", model_tier="powerful")
+        assert not result.success
+        assert "you may only modify owls you created" in result.error
+    finally:
+        reset_services(token)
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+Run: `uv run pytest tests/tools/meta/test_owl_build_betters.py tests/tools/meta/test_owl_build_edit_unbound.py -v`
+Expected: FAIL — `can_edit` does not exist (`ImportError`); the edit-unbound tests fail because `_edit` currently refuses `origin="builtin"` via `can_modify` ("cannot be modified by owl_build").
+
+- [ ] **Step 3: Write minimal implementation**
+
+`src/stackowl/tools/meta/owl_build.py` — add near `can_modify`/`can_retire`/`can_rename`:
+```python
+def can_edit(manifest: object, *, caller: str, target_name: str) -> str | None:
+    """Edit's own gate — looser than can_modify for origin in {'builtin','human'}.
+    Those owls were never creator/ceiling-bound (operator-configured, not
+    agent-minted), so the authority-ratchet machinery in _edit (re-forge/clamp
+    against creation_ceiling) doesn't apply to them and must not run for them —
+    it would incorrectly refuse them for having no ceiling to ratchet against.
+    Preserves /owls edit's historical scope (e.g. changing the Secretary's tier)
+    so retiring /owls loses no capability. Still refuses an agent-minted owl you
+    did not create — unchanged from can_modify."""
+    origin = getattr(manifest, "origin", None)
+    if origin in ("builtin", "human"):
+        return None
+    if origin != "agent":
+        return f"'{target_name}' is a {origin} owl and cannot be edited by owl_build."
+    if getattr(manifest, "created_by", None) != caller:
+        return f"'{target_name}' was created by another owl — you may only modify owls you created."
+    return None
+```
+
+In `_edit`, replace the guard call and branch before the re-forge step:
+```python
+        guard = can_edit(current, caller=creator, target_name=spec.name)
+        if guard is not None:
+            return self._err(guard, t0)
+
+        if current.origin in ("builtin", "human"):
+            return await self._edit_unbound(spec, current, registry, t0, creator)
+
+        # 3. Re-forge — clamps to the creator's CURRENT floor (authority forced server-side).
+        rebuilt, dropped = build_agent_manifest(
+```
+(the rest of `_edit`'s agent-origin body — re-forge/ratchet/consent/persist — is
+UNCHANGED; only the guard line and the new branch above it move.)
+
+Add `_edit_unbound` (e.g. directly above `_edit`):
+```python
+    async def _edit_unbound(
+        self, spec: OwlBuildSpec, current: object, registry: object, t0: float, creator: str,
+    ) -> ToolResult:
+        """Edit path for builtin/human owls (can_edit already cleared it) — no
+        creator/ceiling to ratchet against, so apply the given fields directly,
+        the same scope /owls edit historically had (tier/specialty), without
+        owl_build's agent-authority machinery (re-forge/clamp/consent-on-
+        widening), which does not apply to an owl that was never
+        authority-bounded."""
+        updates: dict[str, object] = {}
+        if spec.model_tier is not None:
+            updates["model_tier"] = spec.model_tier
+        if spec.specialty is not None:
+            updates["system_prompt"] = spec.specialty
+        rebuilt = current.model_copy(update=updates) if updates else current
+        snapshot = self._yaml_snapshot()
+        try:
+            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            registry.replace(rebuilt)
+        except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
+            log.tool.error(
+                "owl_build.execute: builtin/human edit persist failed — rolling back yaml",
+                exc_info=exc, extra={"_fields": {"owl": rebuilt.name}},
+            )
+            self._yaml_restore(snapshot)
+            return self._err(f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0)
+        await self._audit("edit", rebuilt.name, creator)
+        return self._ok(
+            f"Updated owl '{rebuilt.name}'.", t0, extra={"owl": rebuilt.name, "op": "edit"}
+        )
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+Run: `uv run pytest tests/tools/meta/test_owl_build_betters.py tests/tools/meta/test_owl_build_edit_unbound.py -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+```bash
+git add src/stackowl/tools/meta/owl_build.py tests/tools/meta/test_owl_build_betters.py tests/tools/meta/test_owl_build_edit_unbound.py
+git commit -m "fix(owl_build): edit builtin/human owls without the agent-authority ratchet"
+```
+
+- [ ] **Step 6: Write the failing test**
 
 `tests/commands/test_owl_dispatcher.py` (new):
 ```python
@@ -698,11 +877,11 @@ async def test_owl_list_uses_inherited_registry_surface() -> None:
     assert "no owl registry" in out.lower()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 7: Run test to verify it fails**
 Run: `uv run pytest tests/commands/test_owl_dispatcher.py -v`
 Expected: FAIL — `parse_owl_build_flags` does not exist (`ImportError`); `OwlCommand.handle("pause Sage", ...)` currently inherits `OwlsCommand.handle` which has no `pause` subcommand and returns usage text, not the routed result.
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 8: Write minimal implementation**
 
 `src/stackowl/commands/owls_helpers.py` — add:
 ```python
@@ -923,11 +1102,11 @@ Add `import shlex` and `from typing import Any` if not already present at the to
 
 `src/stackowl/commands/assembly.py` — the `/owl` registration (lines 230-236) already constructs `OwlCommand(owl_registry=..., db=..., event_bus=..., tool_registry=...)`; the rewritten `OwlCommand` inherits `OwlsCommand.__init__`, so the constructor signature is unchanged. Update the code comment above it to reflect the new role (unified dispatcher, no longer a plain alias). No functional change to this file in Task 4.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 9: Run test to verify it passes**
 Run: `uv run pytest tests/commands/test_owl_dispatcher.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 10: Commit**
 ```bash
 git add src/stackowl/commands/owls_helpers.py src/stackowl/commands/owls_command.py src/stackowl/commands/assembly.py tests/commands/test_owl_dispatcher.py
 git commit -m "feat(owl): /owl unified dispatcher routes all mutations through owl_build"
@@ -1250,7 +1429,8 @@ git commit -m "chore(owl): final verification fixups for unified /owl command"
 - Decision 4 (`boundaries` free-text guardrail into system prompt): Task 1 (field) + Task 2 (`DNAPromptInjector.inject`).
 - Decision 5 (legacy removed, not aliased, only after tests prove coverage): Task 6 (green gate) → Task 7 (delete) → Task 8 (manual confirm).
 - Decision 6 (extend `owl_build`, one path): Tasks 3 + 4 (every `/owl` mutation → one `OwlBuildSpec` → `owl_build.execute`).
+- Capability-loss gap found during planning, user-confirmed fix (extend edit scope rather than accept the narrowing): Task 4 sub-part A (`can_edit` + `_edit_unbound`) — `/owl edit` on a `builtin`/`human` owl (e.g. the Secretary's tier) now matches `/owls edit`'s historical scope instead of silently losing it when `/owls` is deleted in Task 7.
 
 **Placeholder scan:** no TBD/TODO/"similar to Task N"; every code step shows real code.
 
-**Type/signature consistency across tasks:** `boundaries`/`evolution_strategy` field types identical on `OwlAgentManifest` (non-optional, defaulted) and `OwlBuildSpec` (optional); `_scale_deltas(deltas, strategy)` defined in Task 2, no other task redefines it; `_job_id_for` consistently imported (never renamed); `_VALID_ACTIONS` tuple and the `action` Literal list the same six actions; `parse_owl_build_flags`/`_split_name`/`_two_positional` defined once (Task 4) and only consumed by `OwlCommand`.
+**Type/signature consistency across tasks:** `boundaries`/`evolution_strategy` field types identical on `OwlAgentManifest` (non-optional, defaulted) and `OwlBuildSpec` (optional); `_scale_deltas(deltas, strategy)` defined in Task 2, no other task redefines it; `_job_id_for` consistently imported (never renamed); `_VALID_ACTIONS` tuple and the `action` Literal list the same six actions; `parse_owl_build_flags`/`_split_name`/`_two_positional` defined once (Task 4) and only consumed by `OwlCommand`; `can_edit`/`_edit_unbound` defined once (Task 4 sub-part A), consumed only by `_edit` (Task 4 sub-part A) — no other task redefines or calls them.
