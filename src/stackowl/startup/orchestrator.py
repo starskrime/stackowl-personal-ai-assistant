@@ -2473,6 +2473,19 @@ class StartupOrchestrator:
 
                     tg_clarify_resolver = TelegramClarifyResolver(clarify_gateway)
                     tg_callback_router.register("clarify:", tg_clarify_resolver.handle_callback)
+                    # Plan C Task 3 — a tapped CommandResponse action button
+                    # replays its command through the SAME CommandRegistry.dispatch
+                    # path a typed slash command uses.
+                    from stackowl.channels.telegram.command_buttons import (
+                        TelegramCommandButtonResolver,
+                    )
+
+                    tg_command_button_resolver = TelegramCommandButtonResolver(
+                        adapter=telegram_adapter, registry=CommandRegistry.instance()
+                    )
+                    tg_callback_router.register(
+                        "cmd:", tg_command_button_resolver.handle_callback
+                    )
                     # Voice-transcript Send/Discard taps (only when transcription is
                     # enabled — tg_voice_pending is None otherwise).
                     if tg_voice_pending is not None:

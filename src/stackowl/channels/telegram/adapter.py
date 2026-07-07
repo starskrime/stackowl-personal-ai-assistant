@@ -47,6 +47,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 if TYPE_CHECKING:
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.channels.telegram.voice import TelegramVoiceHandler
+    from stackowl.commands.response import Action
 
 _UPDATE_DEGRADED_AFTER_S = 120.0
 
@@ -336,6 +337,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         # (which a newer concurrent inbound update may have overwritten). None →
         # send_text falls back to `_last_chat_id` (single-terminal/back-compat).
         target: int | None = None
+        actions: tuple[Action, ...] = ()
         view: TelegramProgressView | None = None
         answer_started = False
         try:
@@ -364,12 +366,44 @@ class TelegramChannelAdapter(ChannelAdapter):
                     continue
 
                 buffer += chunk.content
+                chunk_actions = getattr(chunk, "actions", ())
+                if chunk_actions:
+                    actions = chunk_actions
                 if view is not None and not answer_started:
                     view.on_first_answer()  # stop mutating the status; answer is here
                     answer_started = True
             # send_text is the single formatting chokepoint — pass RAW buffer. The
             # answer is delivered as its own clean message(s), independent of progress.
-            await self.send_text(buffer, chat_id=target)
+            # A CommandResponse's tappable actions (Plan C) render as an inline
+            # keyboard attached to the SAME message — mirrors send_clarify's shape
+            # (body text + keyboard together, self-healing to a plain text-only
+            # send if keyboard construction/delivery fails, so the answer is never
+            # lost). Requires a resolved concrete chat — the no-target contract for
+            # a bare text answer is unchanged when one isn't available.
+            resolved_chat = target if target is not None else self._last_chat_id
+            if actions and resolved_chat is not None:
+                try:
+                    from stackowl.channels.telegram.command_buttons import (
+                        build_command_keyboard,
+                        set_command_button_message_id,
+                    )
+
+                    keyboard, callback_ids = build_command_keyboard(resolved_chat, actions)
+                    formatted = self._formatter.format_response(buffer)
+                    message = await self.send_inline_keyboard(formatted, keyboard, chat_id=target)
+                    message_id = getattr(message, "message_id", None)
+                    if message_id is not None:
+                        for callback_data in callback_ids:
+                            set_command_button_message_id(callback_data, message_id)
+                except Exception as exc:  # self-healing — never lose the answer
+                    log.telegram.error(
+                        "[telegram] adapter.send: action keyboard delivery failed — text fallback",
+                        exc_info=exc,
+                        extra={"_fields": {"n_actions": len(actions)}},
+                    )
+                    await self.send_text(buffer, chat_id=target)
+            else:
+                await self.send_text(buffer, chat_id=target)
             if view is not None:
                 await view.settle()  # collapse the status to a "✓ done in Ns" footer
         finally:
