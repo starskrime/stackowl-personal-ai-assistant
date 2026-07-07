@@ -22,7 +22,7 @@ async def test_why_dispatch_returns_pipeline_step() -> None:
         owl_name="secretary",
         pipeline_step="react_loop",
     )
-    result = await CommandRegistry.instance().dispatch("why", "", state)
+    result = (await CommandRegistry.instance().dispatch("why", "", state)).text
     assert "pipeline step" in result.lower()
 
 

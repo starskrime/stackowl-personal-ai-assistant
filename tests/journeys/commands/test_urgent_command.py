@@ -59,9 +59,9 @@ async def test_urgent_targets_live_registry_channels() -> None:
     deps = CommandDeps(router=router)  # no proactive_deliverer → route-only
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "urgent", "system alert", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("urgent", "system alert", make_state())
+    ).text
 
     # Routed to both channels — router.deliver called twice
     assert router.deliver.call_count == 2
@@ -86,9 +86,9 @@ async def test_urgent_fallback_to_cli_when_registry_empty() -> None:
     deps = CommandDeps(router=router)  # no proactive_deliverer → route-only
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "urgent", "fallback alert", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("urgent", "fallback alert", make_state())
+    ).text
 
     assert router.deliver.call_count == 1
     called_channels = {
@@ -105,9 +105,9 @@ async def test_urgent_not_configured_when_router_none() -> None:
     deps = CommandDeps(router=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "urgent", "hello", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("urgent", "hello", make_state())
+    ).text
 
     assert "not configured" in result
 
@@ -118,9 +118,9 @@ async def test_urgent_requires_message() -> None:
     deps = CommandDeps(router=router)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "urgent", "   ", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("urgent", "   ", make_state())
+    ).text
 
     assert "message required" in result
     assert router.deliver.call_count == 0

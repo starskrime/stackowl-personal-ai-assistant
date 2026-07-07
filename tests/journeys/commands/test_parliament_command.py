@@ -20,7 +20,7 @@ async def test_parliament_no_args_returns_usage() -> None:
     """/parliament with no args returns the usage block."""
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("parliament", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("parliament", "", make_state())).text
     assert "Usage:" in result
 
 
@@ -28,7 +28,7 @@ async def test_parliament_log_no_store() -> None:
     """/parliament log with no session store returns the not-configured message."""
     deps = CommandDeps(parliament_session_store=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("parliament", "log", make_state())
+    result = (await CommandRegistry.instance().dispatch("parliament", "log", make_state())).text
     assert _NO_STORE in result
 
 
@@ -36,9 +36,9 @@ async def test_parliament_unsuppress_returns_reset() -> None:
     """/parliament unsuppress always returns the suggestions-reset message."""
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "parliament", "unsuppress", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("parliament", "unsuppress", make_state())
+    ).text
     assert _SUGGESTIONS_RESET in result
 
 

@@ -33,7 +33,7 @@ def _state():  # type: ignore[no-untyped-def]
 
 
 async def _dispatch(args: str) -> str:
-    return await CommandRegistry.instance().dispatch("find", args, _state())
+    return (await CommandRegistry.instance().dispatch("find", args, _state())).text
 
 
 @pytest.mark.asyncio

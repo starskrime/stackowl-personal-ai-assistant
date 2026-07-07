@@ -22,7 +22,7 @@ async def test_bye_sets_shutdown_event() -> None:
     register_all_commands(CommandDeps(shutdown_event=stop_event), registry=CommandRegistry.instance())
 
     assert not stop_event.is_set()
-    result = await CommandRegistry.instance().dispatch("bye", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("bye", "", make_state())).text
 
     assert stop_event.is_set(), "/bye must trip the shutdown event"
     assert "Goodbye" in result or "shutting down" in result.lower()
@@ -31,5 +31,5 @@ async def test_bye_sets_shutdown_event() -> None:
 async def test_bye_honest_when_no_shutdown_wire() -> None:
     """With no shutdown_event wired, /bye degrades honestly (no crash, no false claim)."""
     register_all_commands(CommandDeps(shutdown_event=None), registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("bye", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("bye", "", make_state())).text
     assert "not available" in result.lower() or "✗" in result

@@ -64,7 +64,7 @@ async def test_plugins_enable_existing_plugin_reports_success(
     await plugin_registry.install(sample_manifest)
 
     state = make_state()
-    result = await reg.dispatch("plugins", "enable test-plugin", state)
+    result = (await reg.dispatch("plugins", "enable test-plugin", state)).text
 
     assert "enabled" in result.lower()
     assert "not found" not in result.lower()
@@ -75,7 +75,7 @@ async def test_plugins_enable_bogus_name_returns_not_found(
 ) -> None:
     """dispatch 'plugins enable bogus' → honest not-found, NOT false success."""
     state = make_state()
-    result = await reg.dispatch("plugins", "enable bogus-plugin-xyz", state)
+    result = (await reg.dispatch("plugins", "enable bogus-plugin-xyz", state)).text
 
     assert "not found" in result.lower()
     assert "enabled" not in result.lower() or "not found" in result.lower()
@@ -88,7 +88,7 @@ async def test_plugins_disable_existing_plugin_reports_success(
     await plugin_registry.install(sample_manifest)
 
     state = make_state()
-    result = await reg.dispatch("plugins", "disable test-plugin", state)
+    result = (await reg.dispatch("plugins", "disable test-plugin", state)).text
 
     assert "disabled" in result.lower()
     assert "not found" not in result.lower()
@@ -99,7 +99,7 @@ async def test_plugins_disable_bogus_name_returns_not_found(
 ) -> None:
     """dispatch 'plugins disable bogus' → honest not-found, NOT false success."""
     state = make_state()
-    result = await reg.dispatch("plugins", "disable bogus-plugin-xyz", state)
+    result = (await reg.dispatch("plugins", "disable bogus-plugin-xyz", state)).text
 
     assert "not found" in result.lower()
     assert "disabled" not in result.lower() or "not found" in result.lower()
@@ -112,7 +112,7 @@ async def test_plugins_list_shows_installed_plugin(
     await plugin_registry.install(sample_manifest)
 
     state = make_state()
-    result = await reg.dispatch("plugins", "list", state)
+    result = (await reg.dispatch("plugins", "list", state)).text
 
     assert "test-plugin" in result
 
@@ -124,6 +124,6 @@ async def test_plugins_not_configured_when_registry_none() -> None:
     reg = register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
 
-    result = await reg.dispatch("plugins", "list", state)
+    result = (await reg.dispatch("plugins", "list", state)).text
 
     assert "not configured" in result.lower() or "✗" in result

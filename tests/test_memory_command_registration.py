@@ -68,7 +68,7 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
     )
 
     # 1) remember through the registry dispatch path
-    remember_out = await registry.dispatch("memory", f"remember {_MARKER}", make_state())
+    remember_out = (await registry.dispatch("memory", f"remember {_MARKER}", make_state())).text
     assert remember_out.startswith("✓ Remembered"), remember_out
 
     # 2) verify persistence via an INDEPENDENT bridge over the same DB
@@ -79,7 +79,7 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
     )
 
     # 3) search through the registry recalls it
-    search_out = await registry.dispatch("memory", "search great wall", make_state())
+    search_out = (await registry.dispatch("memory", "search great wall", make_state())).text
     assert _MARKER in search_out, search_out
 
 

@@ -24,7 +24,7 @@ def _reset_registry() -> None:
 async def test_whoami_includes_role_and_tier() -> None:
     deps = CommandDeps(owl_registry=_FakeOwlRegistry())
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("whoami", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("whoami", "", make_state())).text
     assert "primary-assistant" in result
     assert "powerful" in result
 
@@ -38,7 +38,7 @@ async def test_whoami_degrades_without_registry() -> None:
     """With no owl_registry, /whoami still returns basic identity (no crash,
     no silent failure) — covers the honest-degradation path."""
     register_all_commands(CommandDeps(owl_registry=None), registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("whoami", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("whoami", "", make_state())).text
     assert "Owl:" in result
     assert "Channel:" in result
     assert "Session:" in result

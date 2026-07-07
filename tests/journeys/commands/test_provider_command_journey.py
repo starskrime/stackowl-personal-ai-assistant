@@ -55,7 +55,7 @@ def tmp_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 async def test_provider_reachable_via_assembly(tmp_yaml: Path) -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("provider", "list", make_state())
+    result = (await CommandRegistry.instance().dispatch("provider", "list", make_state())).text
     assert isinstance(result, str) and result
 
 
@@ -82,9 +82,11 @@ async def test_provider_add_emits_on_production_bus(tmp_yaml: Path) -> None:
     deps = CommandDeps(event_bus=spy)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "provider", "add acme openai gpt-x fast", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "provider", "add acme openai gpt-x fast", make_state()
+        )
+    ).text
 
     assert "✓" in result or "added" in result.lower()
     spy.emit.assert_called_once()
@@ -110,9 +112,9 @@ async def test_provider_remove_emits_on_production_bus(tmp_yaml: Path) -> None:
     deps = CommandDeps(event_bus=spy)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "provider", "remove acme", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("provider", "remove acme", make_state())
+    ).text
 
     assert "✓" in result or "removed" in result.lower()
     spy.emit.assert_called_once()
@@ -122,9 +124,11 @@ async def test_provider_remove_emits_on_production_bus(tmp_yaml: Path) -> None:
 async def test_provider_no_bus_does_not_crash(tmp_yaml: Path) -> None:
     deps = CommandDeps(event_bus=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "provider", "add acme openai gpt-x fast", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "provider", "add acme openai gpt-x fast", make_state()
+        )
+    ).text
     assert "✓" in result or "added" in result.lower()
 
 
@@ -137,7 +141,9 @@ async def test_provider_add_message_is_honest_about_timing(tmp_yaml: Path) -> No
     """/provider add must say 'applied immediately' since emit now carries a real Settings."""
     deps = CommandDeps(event_bus=MagicMock())
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "provider", "add acme openai gpt-x fast", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "provider", "add acme openai gpt-x fast", make_state()
+        )
+    ).text
     assert "immediately" in result.lower()

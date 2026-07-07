@@ -74,14 +74,14 @@ def _reset_registry() -> None:
 async def test_audit_chain_intact() -> None:
     deps = CommandDeps(audit_logger=_FakeAuditLogger())
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("audit", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("audit", "", make_state())).text
     assert "Chain intact" in result
 
 
 async def test_audit_not_configured_when_logger_none() -> None:
     deps = CommandDeps(audit_logger=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("audit", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("audit", "", make_state())).text
     assert "not configured" in result
 
 
@@ -106,9 +106,11 @@ async def test_audit_export_writes_json_and_sig(
     deps = CommandDeps(audit_logger=logger, settings=Settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "audit", f"export --output {out_path}", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "audit", f"export --output {out_path}", make_state()
+        )
+    ).text
 
     # Message confirms success
     assert "Rows exported" in result
@@ -140,9 +142,11 @@ async def test_audit_export_empty_key_refused(tmp_path: Path) -> None:
     deps = CommandDeps(audit_logger=logger, settings=Settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "audit", f"export --output {out_path}", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "audit", f"export --output {out_path}", make_state()
+        )
+    ).text
 
     # Honest refusal — no file written
     assert "✗" in result
@@ -158,6 +162,6 @@ async def test_audit_export_not_configured_when_logger_none(
     deps = CommandDeps(audit_logger=None, settings=Settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch("audit", "export", make_state())
+    result = (await CommandRegistry.instance().dispatch("audit", "export", make_state())).text
 
     assert "not configured" in result

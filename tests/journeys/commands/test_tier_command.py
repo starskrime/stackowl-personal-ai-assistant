@@ -71,15 +71,15 @@ async def test_tier_set_and_read_back_same_session() -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    set_result = await CommandRegistry.instance().dispatch(
-        "tier", "fast", state
-    )
+    set_result = (
+        await CommandRegistry.instance().dispatch("tier", "fast", state)
+    ).text
     assert "fast" in set_result
 
     # Read back
-    read_result = await CommandRegistry.instance().dispatch(
-        "tier", "", state
-    )
+    read_result = (
+        await CommandRegistry.instance().dispatch("tier", "", state)
+    ).text
     assert "fast" in read_result
 
 
@@ -109,9 +109,9 @@ async def test_tier_unknown_tier_rejected() -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "tier", "ultra", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("tier", "ultra", make_state())
+    ).text
     assert "✗" in result or "unknown" in result.lower()
 
 
@@ -120,9 +120,9 @@ async def test_tier_show_current_when_no_arg() -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "tier", "", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("tier", "", make_state())
+    ).text
     assert "fast" in result or "standard" in result or "powerful" in result or "local" in result
 
 

@@ -107,7 +107,7 @@ async def test_connect_list_shows_registered_adapters(
 ) -> None:
     """dispatch 'connect' with no args → lists all registered integrations."""
     state = make_state()
-    result = await reg.dispatch("connect", "", state)
+    result = (await reg.dispatch("connect", "", state)).text
 
     assert "fake-service" in result
     assert "empty-service" in result
@@ -120,7 +120,7 @@ async def test_connect_not_configured_when_registry_none() -> None:
     reg = register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
 
-    result = await reg.dispatch("connect", "", state)
+    result = (await reg.dispatch("connect", "", state)).text
 
     assert "not configured" in result.lower() or "✗" in result
 
@@ -134,7 +134,7 @@ async def test_disconnect_with_creds_reports_removed(
 ) -> None:
     """dispatch 'disconnect fake-service' → calls delete_credentials(); reports removed."""
     state = make_state()
-    result = await reg.dispatch("disconnect", "fake-service", state)
+    result = (await reg.dispatch("disconnect", "fake-service", state)).text
 
     assert adapter_with_creds.delete_credentials_calls == 1
     assert "credentials removed" in result.lower()
@@ -146,7 +146,7 @@ async def test_disconnect_no_creds_reports_honest_nothing_to_remove(
 ) -> None:
     """dispatch 'disconnect empty-service' → delete_credentials() returns False → honest message."""
     state = make_state()
-    result = await reg.dispatch("disconnect", "empty-service", state)
+    result = (await reg.dispatch("disconnect", "empty-service", state)).text
 
     assert adapter_no_creds.delete_credentials_calls == 1
     # Must NOT claim "credentials removed" when none existed
@@ -159,7 +159,7 @@ async def test_disconnect_unknown_service_returns_not_found(
 ) -> None:
     """dispatch 'disconnect bogus' → honest not-found."""
     state = make_state()
-    result = await reg.dispatch("disconnect", "bogus-service", state)
+    result = (await reg.dispatch("disconnect", "bogus-service", state)).text
 
     assert "unknown" in result.lower() or "not found" in result.lower()
 
@@ -171,6 +171,6 @@ async def test_disconnect_not_configured_when_registry_none() -> None:
     reg = register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
 
-    result = await reg.dispatch("disconnect", "foo", state)
+    result = (await reg.dispatch("disconnect", "foo", state)).text
 
     assert "not configured" in result.lower() or "✗" in result

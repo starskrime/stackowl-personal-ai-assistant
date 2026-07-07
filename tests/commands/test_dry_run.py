@@ -96,7 +96,7 @@ def _isolate_registry():  # type: ignore[no-untyped-def]
 async def test_dry_run_does_not_call_handler() -> None:
     spy = _SpyCommand()
     CommandRegistry.instance().register(spy)
-    out = await CommandRegistry.instance().dispatch("spy", "go??", _state())
+    out = (await CommandRegistry.instance().dispatch("spy", "go??", _state())).text
     assert spy.ran is False  # the whole point: no side effects
     assert "Preview" in out and "/spy go" in out
 
@@ -105,6 +105,6 @@ async def test_dry_run_does_not_call_handler() -> None:
 async def test_without_sigil_handler_runs_normally() -> None:
     spy = _SpyCommand()
     CommandRegistry.instance().register(spy)
-    out = await CommandRegistry.instance().dispatch("spy", "go", _state())
+    out = (await CommandRegistry.instance().dispatch("spy", "go", _state())).text
     assert spy.ran is True
     assert out == "ran"

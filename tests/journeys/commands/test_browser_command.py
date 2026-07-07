@@ -60,9 +60,11 @@ async def test_browser_profile_delete_success(tmp_path: Path) -> None:
     deps = CommandDeps()
     with patch("stackowl.commands.browser_command.get_services", return_value=fake_svc):
         register_all_commands(deps, registry=CommandRegistry.instance())
-        result = await CommandRegistry.instance().dispatch(
-            "browser", "profile delete my_profile", make_state()
-        )
+        result = (
+            await CommandRegistry.instance().dispatch(
+                "browser", "profile delete my_profile", make_state()
+            )
+        ).text
 
     assert "Deleted profile 'my_profile'" in result
     assert not profile_dir.exists(), "Directory must actually be removed"
@@ -83,9 +85,11 @@ async def test_browser_profile_delete_rejects_path_traversal(tmp_path: Path) -> 
     deps = CommandDeps()
     with patch("stackowl.commands.browser_command.get_services", return_value=fake_svc):
         register_all_commands(deps, registry=CommandRegistry.instance())
-        result = await CommandRegistry.instance().dispatch(
-            "browser", "profile delete ..", make_state()
-        )
+        result = (
+            await CommandRegistry.instance().dispatch(
+                "browser", "profile delete ..", make_state()
+            )
+        ).text
 
     assert "Invalid profile name" in result
     # Nothing outside the rejected name was touched.
@@ -103,9 +107,11 @@ async def test_browser_profile_delete_not_found(tmp_path: Path) -> None:
     deps = CommandDeps()
     with patch("stackowl.commands.browser_command.get_services", return_value=fake_svc):
         register_all_commands(deps, registry=CommandRegistry.instance())
-        result = await CommandRegistry.instance().dispatch(
-            "browser", "profile delete ghost_profile", make_state()
-        )
+        result = (
+            await CommandRegistry.instance().dispatch(
+                "browser", "profile delete ghost_profile", make_state()
+            )
+        ).text
 
     # Must NOT claim success
     assert "Deleted" not in result
@@ -131,9 +137,11 @@ async def test_browser_profile_delete_rmtree_failure_honest(tmp_path: Path) -> N
         ),
     ):
         register_all_commands(deps, registry=CommandRegistry.instance())
-        result = await CommandRegistry.instance().dispatch(
-            "browser", "profile delete locked_profile", make_state()
-        )
+        result = (
+            await CommandRegistry.instance().dispatch(
+                "browser", "profile delete locked_profile", make_state()
+            )
+        ).text
 
     # Must NOT claim "Deleted" — must be an honest failure message
     assert "Deleted" not in result

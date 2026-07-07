@@ -26,14 +26,14 @@ def _reset_registry() -> None:
 async def test_brief_delivers_output() -> None:
     deps = CommandDeps(morning_brief_handler=_FakeHandler())
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("brief", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("brief", "", make_state())).text
     assert result == "Good morning"
 
 
 async def test_brief_not_configured_when_handler_none() -> None:
     deps = CommandDeps(morning_brief_handler=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("brief", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("brief", "", make_state())).text
     assert "not configured" in result
 
 

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.dry_run import build_preview, strip_sigil
 from stackowl.commands.metadata import SubCommand, resolve_path
+from stackowl.commands.response import CommandResponse
 from stackowl.exceptions import CommandNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
@@ -56,7 +57,7 @@ class CommandRegistry:
         )
         return len(names)
 
-    async def dispatch(self, name: str, args: str, state: PipelineState) -> str:
+    async def dispatch(self, name: str, args: str, state: PipelineState) -> CommandResponse:
         if name not in self._commands:
             raise CommandNotFoundError(name)
         cmd = self._commands[name]
@@ -71,7 +72,7 @@ class CommandRegistry:
                 "[commands] registry.dispatch: dry-run preview (handler NOT run)",
                 extra={"_fields": {"command": name}},
             )
-            return build_preview(name, cmd, cleaned)
+            return CommandResponse(text=build_preview(name, cmd, cleaned))
 
         # Log the LENGTH, never the raw args — a command's args can carry a
         # secret (e.g. `/provider add … token=…`) and the field-key redactor
@@ -81,7 +82,10 @@ class CommandRegistry:
             "[commands] registry.dispatch: dispatching",
             extra={"_fields": {"command": name, "args_len": len(args)}},
         )
-        return await cmd.handle(args, state)
+        result = await cmd.handle(args, state)
+        if isinstance(result, CommandResponse):
+            return result
+        return CommandResponse(text=result)
 
     def list(self) -> list[SlashCommand]:
         return sorted(self._commands.values(), key=lambda c: c.command)

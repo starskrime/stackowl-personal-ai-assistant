@@ -49,7 +49,7 @@ async def test_staged_reject_real_fact_deletes_and_confirms(
     bridge.seed("staged", fact)
 
     state = make_state()
-    result = await reg.dispatch("staged", f"reject {fact.fact_id} YES", state)
+    result = (await reg.dispatch("staged", f"reject {fact.fact_id} YES", state)).text
 
     assert "✓" in result
     assert "Rejected" in result
@@ -63,7 +63,7 @@ async def test_staged_reject_bogus_id_returns_not_found(
 ) -> None:
     """dispatch 'staged reject bogus-id YES' → honest not-found, NOT '✓ Rejected'."""
     state = make_state()
-    result = await reg.dispatch("staged", "reject bogus-id-does-not-exist YES", state)
+    result = (await reg.dispatch("staged", "reject bogus-id-does-not-exist YES", state)).text
 
     # Must NOT claim success
     assert "✓" not in result
@@ -82,7 +82,7 @@ async def test_staged_list_returns_table(
     bridge.seed("staged", fact)
 
     state = make_state()
-    result = await reg.dispatch("staged", "list", state)
+    result = (await reg.dispatch("staged", "list", state)).text
 
     assert "important knowledge" in result or fact.fact_id[:8] in result
 
@@ -94,7 +94,7 @@ async def test_staged_not_configured_when_bridge_none() -> None:
     reg = register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
 
-    result = await reg.dispatch("staged", "list", state)
+    result = (await reg.dispatch("staged", "list", state)).text
 
     # Must not crash; must surface an honest not-configured message
     assert "not configured" in result.lower() or "✗" in result

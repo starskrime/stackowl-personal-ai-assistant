@@ -79,7 +79,7 @@ def _first_verb_command_with_sub(reg: CommandRegistry) -> tuple[str, str] | None
 
 async def test_help_index_renders_and_sends() -> None:
     reg = _registry()
-    reply = await reg.dispatch("help", "", _state())
+    reply = (await reg.dispatch("help", "", _state())).text
     # Rung-1 index: grouped, with the ▸ "has sub-commands" marker.
     assert "▸" in reply
     adapter, bot = _adapter()
@@ -95,7 +95,7 @@ async def test_help_index_renders_and_sends() -> None:
 async def test_help_command_page_renders_and_sends() -> None:
     reg = _registry()
     # /help <command> — use /help itself, which is always registered.
-    reply = await reg.dispatch("help", "help", _state())
+    reply = (await reg.dispatch("help", "help", _state())).text
     assert "help" in reply.lower()
     adapter, bot = _adapter()
     parts = await _send(adapter, reply)
@@ -107,7 +107,7 @@ async def test_help_subcommand_page_renders_and_sends() -> None:
     pair = _first_verb_command_with_sub(reg)
     assert pair is not None, "expected at least one verb command with a sub-command"
     cmd, sub = pair
-    reply = await reg.dispatch("help", f"{cmd} {sub}", _state())
+    reply = (await reg.dispatch("help", f"{cmd} {sub}", _state())).text
     assert sub in reply
     adapter, bot = _adapter()
     parts = await _send(adapter, reply)
@@ -123,7 +123,7 @@ async def test_dry_run_preview_renders_and_sends() -> None:
     assert pair is not None
     cmd, _sub = pair
     # A trailing `??` previews without running the handler (intercepted in dispatch).
-    reply = await reg.dispatch(cmd, "??", _state())
+    reply = (await reg.dispatch(cmd, "??", _state())).text
     assert reply.strip()
     adapter, bot = _adapter()
     parts = await _send(adapter, reply)
@@ -132,7 +132,7 @@ async def test_dry_run_preview_renders_and_sends() -> None:
 
 async def test_find_replies_and_sends() -> None:
     reg = _registry()
-    reply = await reg.dispatch("find", "remember a fact", _state())
+    reply = (await reg.dispatch("find", "remember a fact", _state())).text
     assert reply.strip()
     adapter, bot = _adapter()
     parts = await _send(adapter, reply)
@@ -144,7 +144,7 @@ async def test_find_replies_and_sends() -> None:
 
 async def test_help_chunks_over_the_limit() -> None:
     reg = _registry()
-    reply = await reg.dispatch("help", "", _state())
+    reply = (await reg.dispatch("help", "", _state())).text
 
     adapter, bot = _adapter()
 

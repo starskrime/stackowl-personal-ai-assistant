@@ -73,7 +73,7 @@ async def test_config_reachable_via_assembly() -> None:
     """/config must register via DI, not only via Pattern-A self-registration."""
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("config", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("config", "", make_state())).text
     assert "Usage" in result or "/config" in result
 
 
@@ -99,9 +99,11 @@ async def test_config_set_emits_on_production_bus(tmp_yaml: Path) -> None:
     deps = CommandDeps(event_bus=spy)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "config", "set autonomy_level low", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "config", "set autonomy_level low", make_state()
+        )
+    ).text
 
     assert "✓" in result
     spy.emit.assert_called_once()
@@ -126,9 +128,11 @@ async def test_config_set_emits_real_settings(tmp_yaml: Path) -> None:
     deps = CommandDeps(event_bus=bus)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "config", "set autonomy_level high", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "config", "set autonomy_level high", make_state()
+        )
+    ).text
 
     assert "✓" in result
     reload_events = [p for e, p in bus.events if e == "settings_reloaded"]
@@ -140,9 +144,11 @@ async def test_config_set_no_bus_does_not_crash(tmp_yaml: Path) -> None:
     """bus=None (no bus dep) must not raise — if-guard inside the command holds."""
     deps = CommandDeps(event_bus=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "config", "set autonomy_level low", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "config", "set autonomy_level low", make_state()
+        )
+    ).text
     assert "✓" in result
 
 
@@ -163,9 +169,11 @@ async def test_config_reset_emits_real_settings(tmp_yaml: Path) -> None:
     deps = CommandDeps(event_bus=bus)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "config", "reset autonomy_level", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "config", "reset autonomy_level", make_state()
+        )
+    ).text
 
     assert "✓" in result
     reload_events = [p for e, p in bus.events if e == "settings_reloaded"]
@@ -182,9 +190,11 @@ async def test_config_set_does_not_claim_applied_immediately(tmp_yaml: Path) -> 
     """A hot_reload=True field change is honest: does not say 'applied immediately'."""
     deps = CommandDeps(event_bus=MagicMock())
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "config", "set autonomy_level medium", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "config", "set autonomy_level medium", make_state()
+        )
+    ).text
     assert "✓" in result
     assert "live now" not in result.lower()
     assert "applied immediately" not in result.lower()
@@ -198,14 +208,14 @@ async def test_config_set_does_not_claim_applied_immediately(tmp_yaml: Path) -> 
 async def test_config_list_works_via_dispatch(tmp_yaml: Path) -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("config", "list", make_state())
+    result = (await CommandRegistry.instance().dispatch("config", "list", make_state())).text
     assert isinstance(result, str) and result
 
 
 async def test_config_get_works_via_dispatch(tmp_yaml: Path) -> None:
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "config", "get test_mode", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("config", "get test_mode", make_state())
+    ).text
     assert "test_mode" in result

@@ -51,7 +51,7 @@ async def test_style_with_stored_style_lists_active_rules(store: PreferenceStore
     await store.set("user1", OUTPUT_STYLE_KEY,
                     json.dumps({"markdown": "minimal", "links": "titles"}))
     register_all_commands(CommandDeps(preference_store=store), registry=CommandRegistry.instance())
-    out = await CommandRegistry.instance().dispatch("style", "", _state())
+    out = (await CommandRegistry.instance().dispatch("style", "", _state())).text
     assert "no asterisks" in out
     assert "links shown as titles" in out
     assert "Telegram" in out  # channel surfaced
@@ -61,7 +61,7 @@ async def test_style_with_stored_style_lists_active_rules(store: PreferenceStore
 async def test_style_with_no_style_is_honest(store: PreferenceStore) -> None:
     """(b) No style set → an honest 'none set' message, not a fabricated rule."""
     register_all_commands(CommandDeps(preference_store=store), registry=CommandRegistry.instance())
-    out = await CommandRegistry.instance().dispatch("style", "", _state())
+    out = (await CommandRegistry.instance().dispatch("style", "", _state())).text
     assert "no custom output style" in out.lower()
     assert "(active)" not in out  # never claims an active rule when none is set
 
@@ -69,7 +69,7 @@ async def test_style_with_no_style_is_honest(store: PreferenceStore) -> None:
 async def test_style_unconfigured_store_is_honest() -> None:
     """A missing store degrades to an honest 'not configured' message."""
     register_all_commands(CommandDeps(preference_store=None), registry=CommandRegistry.instance())
-    out = await CommandRegistry.instance().dispatch("style", "", _state())
+    out = (await CommandRegistry.instance().dispatch("style", "", _state())).text
     assert "not configured" in out.lower()
 
 

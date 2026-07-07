@@ -74,9 +74,11 @@ async def test_owl_create_with_flags_routes_to_owl_build(monkeypatch: pytest.Mon
 
     monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _StubOwlBuildTool)
     register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "owl", "create --name testowl --tier standard", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "owl", "create --name testowl --tier standard", make_state()
+        )
+    ).text
 
     assert seen == {"action": "create", "name": "testowl", "model_tier": "standard"}
     assert "✓ stubbed" in result
@@ -94,9 +96,11 @@ async def test_owl_edit_routes_to_owl_build(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _StubOwlBuildTool)
     register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "owl", "edit editowl --tier powerful", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "owl", "edit editowl --tier powerful", make_state()
+        )
+    ).text
 
     assert seen == {"action": "edit", "name": "editowl", "model_tier": "powerful"}
     assert "✓ stubbed" in result
@@ -123,7 +127,9 @@ async def test_owl_create_freetext_reaches_owl_build_tool(
     monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _StubOwlBuildTool)
     register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
     sentence = "a researcher that reads arxiv daily and summarizes transformer papers"
-    result = await CommandRegistry.instance().dispatch("owl", f"create {sentence}", make_state())
+    result = (
+        await CommandRegistry.instance().dispatch("owl", f"create {sentence}", make_state())
+    ).text
 
     assert len(calls) == 1
     assert calls[0]["action"] == "create"

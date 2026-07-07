@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from stackowl.commands.metadata import CommandMeta
+from stackowl.commands.response import CommandResponse
 from stackowl.pipeline.state import PipelineState
 
 
@@ -35,6 +36,7 @@ class SlashCommand(ABC):
         return CommandMeta()
 
     @abstractmethod
-    async def handle(self, args: str, state: PipelineState) -> str:
-        """Execute and return a response string."""
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
+        """Execute and return a response string, or a CommandResponse with
+        tappable follow-up actions."""
         ...

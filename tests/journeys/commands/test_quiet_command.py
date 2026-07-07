@@ -71,9 +71,9 @@ async def test_quiet_inserts_override_row(db: DbPool) -> None:
     deps = CommandDeps(db=db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "quiet", "22:00 08:00", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("quiet", "22:00 08:00", make_state())
+    ).text
 
     assert "22:00-08:00" in result or "22:00" in result
 
@@ -117,9 +117,11 @@ async def test_quiet_category_override(db: DbPool) -> None:
     deps = CommandDeps(db=db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "quiet", "--category alerts 20:00 06:00", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "quiet", "--category alerts 20:00 06:00", make_state()
+        )
+    ).text
 
     assert "alerts" in result or "category:alerts" in result
 
@@ -133,9 +135,9 @@ async def test_quiet_invalid_time_format(db: DbPool) -> None:
     deps = CommandDeps(db=db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "quiet", "not-a-time 08:00", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("quiet", "not-a-time 08:00", make_state())
+    ).text
 
     assert "invalid" in result.lower() or "✗" in result
     rows = await db.fetch_all("SELECT * FROM notification_overrides")

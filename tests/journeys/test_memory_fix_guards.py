@@ -643,7 +643,7 @@ async def test_guard_memory_command_registered_via_orchestrator(
     from tests._story_6_7_helpers import make_state  # registry dispatch state
 
     marker = "the deploy bastion host is bastion-prod-7"
-    remember_out = await registry.dispatch("memory", f"remember {marker}", make_state())
+    remember_out = (await registry.dispatch("memory", f"remember {marker}", make_state())).text
     assert remember_out.startswith("✓ Remembered"), remember_out
 
     # Persistence via an INDEPENDENT bridge over the same tmp DB.
@@ -654,7 +654,7 @@ async def test_guard_memory_command_registered_via_orchestrator(
         f"{[f.content for f in committed]!r}"
     )
 
-    search_out = await registry.dispatch("memory", "search bastion", make_state())
+    search_out = (await registry.dispatch("memory", "search bastion", make_state())).text
     assert "bastion-prod-7" in search_out, (
         f"GUARD P0-5 FAIL: /memory search did not recall the fact. Got: {search_out!r}"
     )

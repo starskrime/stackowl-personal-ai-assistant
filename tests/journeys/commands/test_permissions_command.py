@@ -30,7 +30,7 @@ async def test_permissions_header_present() -> None:
         plugin_registry=_FakePluginRegistry(),
     )
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("permissions", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("permissions", "", make_state())).text
     assert "=== Permissions ===" in result
 
 
@@ -38,7 +38,7 @@ async def test_permissions_degrades_with_none_deps() -> None:
     """All-None deps still registers and returns the header (no crash)."""
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("permissions", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("permissions", "", make_state())).text
     assert "=== Permissions ===" in result
 
 

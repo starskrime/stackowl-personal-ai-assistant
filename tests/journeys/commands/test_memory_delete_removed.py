@@ -60,9 +60,11 @@ async def test_memory_delete_no_longer_a_subcommand(db: DbPool) -> None:
     deps = _make_deps(bridge, db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "memory", "delete aabbccdd YES", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "memory", "delete aabbccdd YES", make_state()
+        )
+    ).text
 
     # No longer a real subcommand — falls through to usage, same as any typo.
     assert "usage" in result.lower()
@@ -80,9 +82,11 @@ async def test_memory_forget_still_works(db: DbPool) -> None:
     deps = _make_deps(bridge, db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "memory", "forget aabbccdd YES", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "memory", "forget aabbccdd YES", make_state()
+        )
+    ).text
 
     assert "✓" in result
     assert fact.fact_id in bridge.delete_calls

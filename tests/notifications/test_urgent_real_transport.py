@@ -107,9 +107,9 @@ async def test_urgent_wired_through_assembly_uses_deliverer() -> None:
     deps = CommandDeps(router=router, proactive_deliverer=deliverer)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await CommandRegistry.instance().dispatch(
-        "urgent", "system alert", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch("urgent", "system alert", make_state())
+    ).text
 
     # The deliverer (real transport) must be used, NOT the bare router.
     assert deliverer.deliver.call_count == 1

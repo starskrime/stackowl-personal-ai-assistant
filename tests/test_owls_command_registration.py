@@ -57,13 +57,13 @@ async def test_owls_command_registered_list_and_health(db) -> None:  # noqa: F81
     )
 
     # 1) list through the registry dispatch path — must return owl rows
-    list_out = await registry.dispatch("owls", "list", make_state())
+    list_out = (await registry.dispatch("owls", "list", make_state())).text
     assert "secretary" in list_out.lower(), (
         f"secretary owl not in /owls list output: {list_out!r}"
     )
 
     # 2) health through the registry — must not be an error
-    health_out = await registry.dispatch("owls", "health", make_state())
+    health_out = (await registry.dispatch("owls", "health", make_state())).text
     assert "✗" not in health_out, f"/owls health returned error: {health_out!r}"
 
 

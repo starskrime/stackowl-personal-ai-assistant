@@ -15,7 +15,7 @@ def _reset_registry() -> None:
 async def test_webhook_usage_with_no_args() -> None:
     deps = CommandDeps(db=object(), settings=make_settings())  # type: ignore[arg-type]
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("webhook", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("webhook", "", make_state())).text
     assert "Usage:" in result
 
 
@@ -27,9 +27,11 @@ async def test_webhook_register_writes_yaml_via_registry(tmp_path, monkeypatch) 
     CommandRegistry.reset()
     deps = CommandDeps(db=object(), settings=make_settings())  # type: ignore[arg-type]
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch(
-        "webhook", "register mygithub timestamp_header=X-Hub-Signature", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "webhook", "register mygithub timestamp_header=X-Hub-Signature", make_state()
+        )
+    ).text
     assert "✓" in result
     from stackowl.commands.config_helpers import load_yaml
     data = load_yaml(config_file)
@@ -100,7 +102,7 @@ async def test_webhook_not_configured_when_db_none() -> None:
     CommandRegistry.reset()
     deps = CommandDeps(db=None, settings=None)
     register_all_commands(deps, registry=CommandRegistry.instance())
-    result = await CommandRegistry.instance().dispatch("webhook", "", make_state())
+    result = (await CommandRegistry.instance().dispatch("webhook", "", make_state())).text
     assert "not configured" in result
 
 

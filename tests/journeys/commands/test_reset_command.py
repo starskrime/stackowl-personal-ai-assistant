@@ -82,7 +82,7 @@ async def test_reset_clears_turns_and_reports_count(bridge: SqliteMemoryBridge) 
     state = make_state()
     state = state.model_copy(update={"session_id": session_id})
 
-    result = await CommandRegistry.instance().dispatch("reset", "", state)
+    result = (await CommandRegistry.instance().dispatch("reset", "", state)).text
 
     # Message reflects real count
     assert "2" in result
@@ -123,7 +123,7 @@ async def test_reset_empty_session_returns_nothing_to_clear(bridge: SqliteMemory
     state = make_state()
     state = state.model_copy(update={"session_id": "sess-empty"})
 
-    result = await CommandRegistry.instance().dispatch("reset", "", state)
+    result = (await CommandRegistry.instance().dispatch("reset", "", state)).text
 
     assert "Nothing to clear" in result or "0" in result
 
@@ -134,7 +134,7 @@ async def test_reset_not_configured_when_bridge_none() -> None:
     register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
 
-    result = await CommandRegistry.instance().dispatch("reset", "", state)
+    result = (await CommandRegistry.instance().dispatch("reset", "", state)).text
 
     assert "not configured" in result
     assert "✗" in result
