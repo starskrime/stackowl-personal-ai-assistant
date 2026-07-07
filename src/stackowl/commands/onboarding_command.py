@@ -102,10 +102,26 @@ class OnboardingCommand(SlashCommand):
     async def _autonomy_step(self, params: dict[str, str], state: PipelineState) -> CommandResponse:
         level = params.get("value")
         if level in ("low", "medium", "high"):
-            if self._registry is not None:
-                config_cmd = self._registry.get("config")
-                if config_cmd is not None:
-                    await config_cmd.handle(f"set autonomy_level {level}", state)
+            config_cmd = self._registry.get("config") if self._registry is not None else None
+            if config_cmd is None:
+                log.gateway.error(
+                    "[commands] onboarding.autonomy: config command unavailable",
+                    extra={"_fields": {"level": level}},
+                )
+                return CommandResponse(
+                    text="✗ Could not set autonomy level — config command unavailable."
+                )
+            result = await config_cmd.handle(f"set autonomy_level {level}", state)
+            result_text = result.text if isinstance(result, CommandResponse) else result
+            if not result_text.startswith("✓"):
+                log.gateway.error(
+                    "[commands] onboarding.autonomy: delegated /config set failed",
+                    extra={"_fields": {"level": level, "result": result_text}},
+                )
+                return CommandResponse(
+                    text=f"✗ Could not set autonomy level: {result_text}",
+                    actions=(Action(label="Continue to channels", command="/onboarding step=channels"),),
+                )
             return CommandResponse(
                 text=f"Autonomy set to {level}.",
                 actions=(Action(label="Continue to channels", command="/onboarding step=channels"),),

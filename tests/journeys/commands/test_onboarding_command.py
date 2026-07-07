@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
@@ -66,3 +67,44 @@ async def test_onboarding_step_autonomy_shows_three_level_buttons() -> None:
 
     labels = {a.label.lower() for a in result.actions}
     assert {"low", "medium", "high"} <= labels
+
+
+async def test_onboarding_step_autonomy_write_lands_and_reports_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delegated /config set must actually persist, not just look successful."""
+    cfg = tmp_path / "stackowl.yaml"
+    cfg.write_text(yaml.dump({"providers": []}), encoding="utf-8")
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(cfg))
+    deps = CommandDeps(settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch(
+        "onboarding", "step=autonomy value=high", make_state()
+    )
+
+    assert isinstance(result, CommandResponse)
+    assert "autonomy set to high" in result.text.lower()
+    on_disk = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+    assert on_disk.get("autonomy_level") == "high"
+
+
+async def test_onboarding_step_autonomy_surfaces_delegated_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the delegated /config set fails, onboarding must not claim success."""
+    deps = CommandDeps(settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+    # STACKOWL_CONFIG_FILE resolves to a directory, not a file — save_yaml's
+    # os.replace onto it raises, so the delegated /config set call returns a
+    # real "✗ ..." failure (config_path() reads the env var fresh on every call).
+    # Set only now — Settings() construction above also reads this env var.
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(tmp_path))
+
+    result = await CommandRegistry.instance().dispatch(
+        "onboarding", "step=autonomy value=high", make_state()
+    )
+
+    assert isinstance(result, CommandResponse)
+    assert "autonomy set to high" not in result.text.lower()
+    assert result.text.startswith("✗")
