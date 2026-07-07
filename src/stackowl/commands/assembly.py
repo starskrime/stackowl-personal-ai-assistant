@@ -294,7 +294,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
 
     # /webhook
     from stackowl.commands.webhook_command import WebhookCommand
-    _safe_register(registry, "webhook", lambda: WebhookCommand(db=deps.db, settings=deps.settings))
+    _safe_register(
+        registry,
+        "webhook",
+        lambda: WebhookCommand(db=deps.db, settings=deps.settings, event_bus=deps.event_bus),
+    )
 
     # /permissions
     from stackowl.commands.permissions import PermissionsCommand
