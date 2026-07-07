@@ -83,7 +83,7 @@ class MemoryBridge(ABC):
         (for ``status="committed"``) only ever sees a residual ``staged_facts``
         row and misses facts that live solely in ``committed_facts``. Used by
         :func:`stackowl.commands.staged_helpers.find_staged_by_id` to resolve
-        an id prefix for ``/memory delete``. Default no-op (``None``); concrete
+        an id prefix for ``/memory forget``. Default no-op (``None``); concrete
         bridges backed by a real ``committed_facts`` table override this.
         """
         return None

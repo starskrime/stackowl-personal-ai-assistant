@@ -239,8 +239,8 @@ async def forget_fact(
     """Delete a committed/staged fact and (optionally) audit — the shared
     forget-with-provenance chokepoint mirroring :func:`remember_fact`.
 
-    BOTH the ``/memory forget`` / ``/memory delete`` slash paths AND the
-    ``memory`` tool route deletes through here, so a tool-driven delete cannot
+    BOTH the ``/memory forget`` slash path AND the ``memory`` tool route
+    deletes through here, so a tool-driven delete cannot
     bypass the audit row a human delete would (eventually) leave. ``fact_id`` is
     the resolved, full fact id (the caller resolves any prefix first). When
     ``audit`` is supplied an append-only audit row is written; the slash path

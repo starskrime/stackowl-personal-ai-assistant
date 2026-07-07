@@ -373,7 +373,7 @@ class SqliteMemoryBridge(MemoryBridge):
 
         Queries ``committed_facts`` directly (bound LIKE param — never
         string-formatted) so facts that live only there (no residual
-        ``staged_facts`` row) are still resolvable by ``/memory delete``.
+        ``staged_facts`` row) are still resolvable by ``/memory forget``.
         ``committed_facts`` has no ``confidence`` column (dropped at
         promotion); the mapped :class:`StagedFact` uses ``1.0`` since
         promotion already passed the confidence gate.
