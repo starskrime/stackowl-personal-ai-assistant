@@ -138,3 +138,12 @@ async def test_browser_profile_delete_rmtree_failure_honest(tmp_path: Path) -> N
     # Must NOT claim "Deleted" — must be an honest failure message
     assert "Deleted" not in result
     assert "✗" in result or "Failed" in result or "could not" in result.lower()
+
+
+def test_browser_watch_list_has_no_dead_agent_reference() -> None:
+    """The /browser watch list help text must not reference the retired /agent command."""
+    from stackowl.commands.browser_command import BrowserCommand
+
+    cmd = BrowserCommand()
+    result = cmd._watch_subcmd(["list"])
+    assert "/agent" not in result

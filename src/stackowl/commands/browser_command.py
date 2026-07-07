@@ -266,8 +266,7 @@ class BrowserCommand(SlashCommand):
         if sub == "list":
             return (
                 "Website watches are persisted as scheduler jobs. "
-                "Ask an owl to 'watch <url> daily' to register one. "
-                "Use /agent list to see scheduler activity."
+                "Ask an owl to 'watch <url> daily' to register one."
             )
         return "Usage: /browser watch list (use natural language to add/remove watches)"
 
