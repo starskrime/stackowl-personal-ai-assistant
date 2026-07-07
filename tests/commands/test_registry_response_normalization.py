@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import pytest
+from tests._story_6_7_helpers import make_state
 
 from stackowl.commands.base import SlashCommand
-from stackowl.commands.metadata import CommandMeta
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.response import Action, CommandResponse
-from tests._story_6_7_helpers import make_state
 
 
 class _PlainStringCommand(SlashCommand):
