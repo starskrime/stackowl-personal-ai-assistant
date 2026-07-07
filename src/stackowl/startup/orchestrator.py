@@ -1528,6 +1528,9 @@ class StartupOrchestrator:
                 ))
                 await writer.close()
 
+        # Mirrored in tests/startup/test_deliver_command_stub.py (this closure is
+        # unreachable from outside _phase_gateway, so the test hand-copies it) —
+        # keep both in sync on any change here.
         async def _deliver_command_stub(
             cmd: str, session_id: str, state: PipelineState, args: str, trace_id: str,
         ) -> None:
