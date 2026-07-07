@@ -14,7 +14,6 @@ from stackowl.commands.metadata import render_usage
 _EXPECTED = {
     "stats",
     "search",
-    "delete",
     "budget",
     "reindex",
     "remember",

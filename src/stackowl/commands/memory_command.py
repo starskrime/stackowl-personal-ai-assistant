@@ -4,7 +4,6 @@ Subcommands:
 
 * ``/memory stats``                       — counts + storage bytes
 * ``/memory search <query>``              — recall against committed facts
-* ``/memory delete <id> [YES]``           — delete a fact (requires YES)
 * ``/memory budget``                      — show per-user storage vs ceiling
 * ``/memory reindex``                     — push every committed fact to LanceDB
 * ``/memory remember <text>``             — explicitly stage + promote a fact
@@ -68,22 +67,6 @@ _MEMORY_META = CommandMeta(
             ),
             args=(Arg(name="query", summary="natural-language query"),),
             examples=(Example(invocation="/memory search where do I live"),),
-        ),
-        SubCommand(
-            name="delete",
-            summary="Delete a fact by id",
-            description=(
-                "You permanently remove a committed fact. Re-run with YES appended "
-                "to confirm — without it you only see a confirmation prompt."
-            ),
-            args=(
-                Arg(name="fact_id", summary="full or prefix fact id"),
-                Arg(name="YES", required=False, summary="confirm the deletion"),
-            ),
-            examples=(
-                Example(invocation="/memory delete a1b2c3d4"),
-                Example(invocation="/memory delete a1b2c3d4 YES", note="Skip the prompt"),
-            ),
         ),
         SubCommand(
             name="budget",
@@ -194,7 +177,7 @@ class MemoryCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Memory management commands (stats, search, delete, budget, reindex)."
+        return "Memory management commands (stats, search, forget, budget, reindex)."
 
     @property
     def meta(self) -> CommandMeta:
@@ -220,8 +203,6 @@ class MemoryCommand(SlashCommand):
                 result = await self._stats()
             elif sub == "search":
                 result = await self._search(rest.strip())
-            elif sub == "delete":
-                result = await self._delete(rest.strip())
             elif sub == "budget":
                 result = await self._budget()
             elif sub == "reindex":
@@ -279,37 +260,6 @@ class MemoryCommand(SlashCommand):
             extra={"_fields": {"n_hits": len(hits)}},
         )
         return out
-
-    async def _delete(self, args: str) -> str:
-        log.memory.debug(
-            "[commands] memory.delete: entry",
-            extra={"_fields": {"args_len": len(args)}},
-        )
-        if not args:
-            return "Usage: /memory delete <fact_id> [YES]"
-        parts = args.split(maxsplit=1)
-        prefix = parts[0]
-        confirmation = parts[1].strip() if len(parts) > 1 else ""
-        # Resolve prefix → full fact, mirroring _forget so that short IDs work.
-        fact = await find_staged_by_id(self._bridge, prefix)
-        if fact is None:
-            log.memory.debug(
-                "[commands] memory.delete: no match",
-                extra={"_fields": {"prefix": prefix[:16]}},
-            )
-            return f"✗ /memory delete: no fact matches prefix '{prefix}'"
-        if confirmation != _CONFIRMATION:
-            log.memory.debug("[commands] memory.delete: decision — missing YES")
-            return (
-                f"Confirm deletion of {fact.fact_id[:8]} ('{fact.content[:40]}...').\n"
-                f"Type '/memory delete {fact.fact_id} YES' to proceed."
-            )
-        await forget_fact(self._bridge, fact.fact_id, actor="user:delete")
-        log.memory.info(
-            "[commands] memory.delete: exit",
-            extra={"_fields": {"fact_id": fact.fact_id}},
-        )
-        return f"✓ Deleted {fact.fact_id}"
 
     async def _budget(self) -> str:
         log.memory.debug("[commands] memory.budget: entry")

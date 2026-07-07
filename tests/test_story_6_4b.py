@@ -86,32 +86,32 @@ async def test_memory_command_budget(db: DbPool) -> None:
     assert "%" in out
 
 
-async def test_memory_command_delete_requires_confirmation(db: DbPool) -> None:
+async def test_memory_command_forget_requires_confirmation(db: DbPool) -> None:
     _reset_registry()
-    await insert_committed(db, "del-cmd-1", "to delete")
+    await insert_committed(db, "forget-cmd-1", "to forget")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
         bridge=bridge, settings=settings, db=db, event_bus=EventBus()
     )
-    out = await cmd.handle("delete del-cmd-1", make_state())
+    out = await cmd.handle("forget forget-cmd-1", make_state())
     assert "confirm" in out.lower() or "yes" in out.lower()
     rows = await db.fetch_all("SELECT fact_id FROM committed_facts")
-    assert any(r["fact_id"] == "del-cmd-1" for r in rows)
+    assert any(r["fact_id"] == "forget-cmd-1" for r in rows)
 
 
-async def test_memory_command_delete_with_confirmation(db: DbPool) -> None:
+async def test_memory_command_forget_with_confirmation(db: DbPool) -> None:
     _reset_registry()
-    await insert_committed(db, "del-cmd-2", "to delete")
+    await insert_committed(db, "forget-cmd-2", "to forget")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
         bridge=bridge, settings=settings, db=db, event_bus=EventBus()
     )
-    out = await cmd.handle("delete del-cmd-2 YES", make_state())
-    assert "del-cmd-2" in out or "✓" in out or "removed" in out.lower()
+    out = await cmd.handle("forget forget-cmd-2 YES", make_state())
+    assert "forget-cmd-2" in out or "✓" in out or "removed" in out.lower()
     rows = await db.fetch_all("SELECT fact_id FROM committed_facts")
-    assert not any(r["fact_id"] == "del-cmd-2" for r in rows)
+    assert not any(r["fact_id"] == "forget-cmd-2" for r in rows)
 
 
 async def test_memory_command_unknown_subcommand(db: DbPool) -> None:

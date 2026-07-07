@@ -19,7 +19,7 @@ from stackowl.tui.widgets.submit_text_area import SubmitTextArea
 pytestmark = pytest.mark.tui
 
 _CMD_INFOS = [
-    ("memory", "Memory: stats, search, delete"),
+    ("memory", "Memory: stats, search, forget"),
     ("parliament", "Start a multi-owl debate"),
     ("tools", "List registered tools"),
 ]
