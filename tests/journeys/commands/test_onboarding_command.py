@@ -32,31 +32,49 @@ async def test_onboarding_bare_shows_provider_step() -> None:
 async def test_onboarding_provider_already_configured_offers_skip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "stackowl.commands.config_helpers.config_path", lambda: tmp_path / "stackowl.yaml"
+    cfg = tmp_path / "stackowl.yaml"
+    cfg.write_text(
+        yaml.dump(
+            {
+                "providers": [
+                    {
+                        "name": "acme",
+                        "protocol": "openai",
+                        "enabled": True,
+                        "default_model": "gpt-4o",
+                        "tier": "powerful",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
     )
-    from stackowl.commands.config_helpers import save_yaml
-
-    save_yaml(
-        tmp_path / "stackowl.yaml",
-        {
-            "providers": [
-                {
-                    "name": "acme",
-                    "protocol": "openai",
-                    "enabled": True,
-                    "default_model": "gpt-4o",
-                    "tier": "powerful",
-                }
-            ]
-        },
-    )
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(cfg))
     deps = CommandDeps(settings=make_settings())
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = await CommandRegistry.instance().dispatch("onboarding", "", make_state())
 
     assert "already" in result.text.lower() or "skip" in result.text.lower()
+
+
+async def test_onboarding_provider_step_prompts_to_add_when_none_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proves isolation the other direction: an env-pointed file with zero
+    providers must produce the add-first-provider prompt, not the
+    already-configured/skip branch — which would happen if this test were
+    silently reading the real ~/.stackowl/stackowl.yaml on this dev box."""
+    cfg = tmp_path / "stackowl.yaml"
+    cfg.write_text(yaml.dump({"providers": []}), encoding="utf-8")
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(cfg))
+    deps = CommandDeps(settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch("onboarding", "", make_state())
+
+    assert "already" not in result.text.lower()
+    assert "first ai provider" in result.text.lower()
 
 
 async def test_onboarding_step_autonomy_shows_three_level_buttons() -> None:
