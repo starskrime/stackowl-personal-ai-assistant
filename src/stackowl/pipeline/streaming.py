@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from stackowl.commands.response import Action
 from stackowl.infra.observability import log
 
 # Discriminates the durable ANSWER body from ephemeral live-PROGRESS updates that
@@ -39,6 +40,10 @@ class ResponseChunk(BaseModel, frozen=True):
     # NOT-yet-usable so a localized LLM apology (better UX) can REPLACE it when any
     # provider is alive. A genuine (non-floor) response short-circuits the cascade.
     is_floor: bool = False
+    # Tappable follow-up actions from a slash-command CommandResponse. Empty
+    # for every ordinary LLM-answer chunk — only slash-command replies ever
+    # populate this (see startup/orchestrator.py::_deliver_command_stub).
+    actions: tuple[Action, ...] = ()
 
 
 class StreamWriter:

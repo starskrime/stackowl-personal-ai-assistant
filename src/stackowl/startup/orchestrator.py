@@ -582,6 +582,7 @@ class StartupOrchestrator:
         from stackowl.channels.cli_adapter import CLIAdapter
         from stackowl.channels.socket_adapter import SocketChannelAdapter
         from stackowl.commands.registry import CommandRegistry
+        from stackowl.commands.response import CommandResponse
         from stackowl.exceptions import CommandNotFoundError
         from stackowl.gateway.scanner import GatewayScanner
         from stackowl.ipc.client import IpcClient
@@ -1536,13 +1537,10 @@ class StartupOrchestrator:
             writer = stream_registry.get_writer(trace_id)
             dispatched_ok = False
             try:
-                # CommandRegistry.dispatch always returns CommandResponse now — this
-                # stub still streams plain text; a follow-up task threads .actions
-                # through ResponseChunk for interactive buttons.
-                reply = (await registry.dispatch(cmd, args, state)).text
+                reply = await registry.dispatch(cmd, args, state)
                 dispatched_ok = True
             except CommandNotFoundError:
-                reply = f"Unknown slash command: '/{cmd}'. Try /help to see what's available."
+                text = f"Unknown slash command: '/{cmd}'. Try /help to see what's available."
                 # Surface the commands they likely meant, using the same resolver
                 # that powers /find (lexical, no model load). Never fatal.
                 try:
@@ -1551,12 +1549,13 @@ class StartupOrchestrator:
                         f"{cmd} {args}".strip(), registry.list(), limit=3
                     )
                     if hits:
-                        reply += "\n\nDid you mean:\n" + "\n".join(f"  {h}" for h in hits)
+                        text += "\n\nDid you mean:\n" + "\n".join(f"  {h}" for h in hits)
                 except Exception as exc:  # suggestion is best-effort
                     log.debug("[startup] gateway: command suggestion failed", exc_info=exc)
+                reply = CommandResponse(text=text)
             except Exception as exc:
                 log.error("[startup] gateway: slash command failed", exc_info=exc)
-                reply = f"Command '/{cmd}' failed: {exc}"
+                reply = CommandResponse(text=f"Command '/{cmd}' failed: {exc}")
             # WS-D — learn the command sequence (best-effort, only on a real
             # successful dispatch; a `??` dry-run is skipped inside record_dispatch).
             # owner_key matches the per-turn identity the TUI provider reads back,
@@ -1577,8 +1576,9 @@ class StartupOrchestrator:
                     )
             if writer is not None:
                 await writer.write(ResponseChunk(
-                    content=reply, is_final=False, chunk_index=0,
+                    content=reply.text, is_final=False, chunk_index=0,
                     trace_id=trace_id, owl_name="system",
+                    actions=reply.actions,
                 ))
                 await writer.close()
 
