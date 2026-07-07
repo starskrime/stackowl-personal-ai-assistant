@@ -52,6 +52,11 @@ class _PendingButton:
     action: Action
     expires_at: float
     message_id: int | None = None
+    # Other short_ids registered as part of the SAME keyboard group (currently
+    # only the confirm prompt's Yes+Cancel pair) — resolving ONE pops the
+    # OTHERS too, so a raced/replayed tap on the sibling can't fire after the
+    # group has already been resolved (see handle_callback).
+    sibling_ids: tuple[str, ...] = ()
 
 
 # In-memory only (module-level) — a process restart drops any pending
@@ -107,6 +112,25 @@ def build_command_keyboard(
     return builder.build(), callback_ids
 
 
+def _link_confirm_siblings(callback_ids: list[str]) -> None:
+    """Cross-link a just-registered button GROUP (the confirm keyboard's
+    Yes + Cancel) so resolving ONE pops the OTHER too.
+
+    Without this, backfilling the confirm prompt's message_id (Bug B) closes
+    the UI-visible half of the gap — Cancel's edit removes the keyboard, so
+    Yes is no longer *rendered* — but the Yes entry would otherwise linger in
+    ``_button_map`` for its full TTL, so a raced or directly-replayed tap on
+    its callback_data could still dispatch the destructive action. Confirm is
+    the only multi-button group this module creates; a bare replay button
+    (one entry, no group) gets an empty ``sibling_ids`` and this is a no-op.
+    """
+    short_ids = [cd[len(_CALLBACK_PREFIX) :] for cd in callback_ids]
+    for sid in short_ids:
+        entry = _button_map.get(sid)
+        if entry is not None:
+            entry.sibling_ids = tuple(s for s in short_ids if s != sid)
+
+
 def _pop_valid(short_id: str) -> _PendingButton | None:
     entry = _button_map.pop(short_id, None)
     if entry is None:
@@ -145,6 +169,16 @@ class TelegramCommandButtonResolver:
             )
             return
         chat_id, action = entry.chat_id, entry.action
+        if entry.sibling_ids:
+            # This tap resolves the whole group (confirm Yes+Cancel) — pop the
+            # sibling(s) too so a raced/replayed tap on them can't fire after
+            # the group is already decided.
+            for sid in entry.sibling_ids:
+                _button_map.pop(sid, None)
+            log.telegram.debug(
+                "[telegram] command_buttons.handle_callback: invalidated sibling buttons",
+                extra={"_fields": {"n_siblings": len(entry.sibling_ids)}},
+            )
 
         if action.command == CANCEL_SENTINEL:
             await self._rewrite_or_send(chat_id, entry.message_id, "Cancelled.", None)
@@ -156,9 +190,19 @@ class TelegramCommandButtonResolver:
         if action.destructive:
             confirm = make_confirm_response(action)
             keyboard, callback_ids = build_command_keyboard(chat_id, confirm.actions)
-            await self._rewrite_or_send(chat_id, entry.message_id, confirm.text, keyboard)
+            _link_confirm_siblings(callback_ids)
+            resolved_message_id = await self._rewrite_or_send(
+                chat_id, entry.message_id, confirm.text, keyboard
+            )
             # The confirm prompt lives on the SAME message (edit) or a fresh one
-            # (fallback) — either way, backfill once we know which.
+            # (fallback) — either way, backfill the NEW Yes/Cancel buttons with
+            # the id of the message that now shows them. Without this, a later
+            # Cancel tap has no message_id to edit, falls through to a FRESH
+            # "Cancelled." send, and leaves the original message's Yes button
+            # live and tappable — a real safety gap in the confirm flow.
+            if resolved_message_id is not None:
+                for cd in callback_ids:
+                    set_command_button_message_id(cd, resolved_message_id)
             log.telegram.debug(
                 "[telegram] command_buttons.handle_callback: exit — confirm prompt shown",
                 extra={"_fields": {"n_buttons": len(callback_ids)}},
@@ -192,16 +236,12 @@ class TelegramCommandButtonResolver:
             )
             return
         reply = await self._registry.dispatch(name, args, state)
-        await self._adapter.send_text(reply.text, chat_id=chat_id)
-        if reply.actions:
-            keyboard, callback_ids = build_command_keyboard(chat_id, reply.actions)
-            message = await self._adapter.send_inline_keyboard(
-                reply.text, keyboard, chat_id=chat_id
-            )
-            message_id = getattr(message, "message_id", None)
-            if message_id is not None:
-                for cd in callback_ids:
-                    set_command_button_message_id(cd, message_id)
+        # Single formatted send whether or not the reply carries its own
+        # actions — mirrors adapter.send()'s chunk-delivery shape exactly (see
+        # TelegramChannelAdapter.send_text_or_actions) so a reply with actions
+        # is never sent twice (once raw via send_text, once formatted via the
+        # keyboard message).
+        await self._adapter.send_text_or_actions(reply.text, reply.actions, chat_id=chat_id)
         log.telegram.debug(
             "[telegram] command_buttons.handle_callback: exit — dispatched",
             extra={"_fields": {"command": name}},
@@ -213,23 +253,31 @@ class TelegramCommandButtonResolver:
         message_id: int | None,
         text: str,
         keyboard: dict[str, object] | None,
-    ) -> None:
+    ) -> int | None:
         """Edit the tapped message in place when its id is known; else send fresh.
 
         Mirrors :class:`~stackowl.channels.telegram.consent.TelegramConsentPrompter`'s
         best-effort edit — a missing/stale ``message_id`` (e.g. the button was
         registered by a code path that never backfilled it) falls back to a new
         message so the interaction is never silently dropped.
+
+        Returns the id of the message that NOW shows ``text``/``keyboard`` (the
+        original ``message_id`` on the edit path, the freshly sent message's id
+        on the fallback path, or ``None`` if it can't be determined) — the
+        caller needs it to backfill any NEW buttons in ``keyboard`` (see the
+        confirm-prompt path in :meth:`handle_callback`).
         """
         if message_id is not None:
             await self._adapter.edit_message(
                 chat_id=chat_id, message_id=message_id, text=text, reply_markup=keyboard
             )
-            return
+            return message_id
         if keyboard is not None:
-            await self._adapter.send_inline_keyboard(text, keyboard, chat_id=chat_id)
-        else:
-            await self._adapter.send_text(text, chat_id=chat_id)
+            message = await self._adapter.send_inline_keyboard(text, keyboard, chat_id=chat_id)
+            return getattr(message, "message_id", None)
+        # send_text has no return (-> None) — nothing to backfill a sibling with.
+        await self._adapter.send_text(text, chat_id=chat_id)
+        return None
 
 
 def _new_trace_id() -> str:
