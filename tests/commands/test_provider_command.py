@@ -99,13 +99,17 @@ class TestProviderList:
         ]
         tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
         out = await _make_cmd().handle("list", _state())
-        assert "acme" in out
-        assert "openai" in out
-        assert "gpt-x" in out
-        assert "fast" in out
+        text = out.text if hasattr(out, "text") else out
+        assert "acme" in text
+        assert "openai" in text
+        assert "gpt-x" in text
+        assert out.actions[0].label == "Remove acme"
+        assert out.actions[0].command == "/provider remove acme"
+        assert out.actions[0].destructive is True
+        assert "fast" in text
         # The REF may be shown; the raw secret must NEVER appear.
-        assert "keychain:stackowl-provider-acme" in out
-        assert RAW_TOKEN not in out
+        assert "keychain:stackowl-provider-acme" in text
+        assert RAW_TOKEN not in text
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ from typing import Any
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_writer import store_secret
 from stackowl.config.settings import Settings
@@ -134,7 +135,7 @@ class ProviderCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _PROVIDER_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.config.debug(
             "[commands] provider.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
@@ -203,7 +204,7 @@ class ProviderCommand(SlashCommand):
 
     # -- list ------------------------------------------------------------------
 
-    def _list(self) -> str:
+    def _list(self) -> str | CommandResponse:
         log.config.debug("[commands] provider.list: entry")
         path = config_path()
         if not path.exists():
@@ -213,6 +214,7 @@ class ProviderCommand(SlashCommand):
         if not providers:
             return "No providers configured. Add one with: /provider add <name> <protocol> <model> <tier>"
         lines: list[str] = []
+        actions: list[Action] = []
         for p in providers:
             name = p.get("name", "?")
             protocol = p.get("protocol", "?")
@@ -226,8 +228,11 @@ class ProviderCommand(SlashCommand):
                 f"{name} | {protocol} | {model} | {tier} | "
                 f"enabled={enabled} | api_key={key_disp}"
             )
+            actions.append(
+                Action(label=f"Remove {name}", command=f"/provider remove {name}", destructive=True)
+            )
         log.config.debug("[commands] provider.list: exit", extra={"_fields": {"count": len(lines)}})
-        return "\n".join(lines)
+        return CommandResponse(text="\n".join(lines), actions=tuple(actions))
 
     # -- add -------------------------------------------------------------------
 
