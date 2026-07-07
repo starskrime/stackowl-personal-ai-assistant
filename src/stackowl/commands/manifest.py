@@ -53,6 +53,7 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "connect",
     "disconnect",
     "plugins",
+    "onboarding",
 })
 
 # ---------------------------------------------------------------------------

@@ -350,3 +350,8 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /bye — graceful server shutdown via the orchestrator's stop_event
     from stackowl.commands.bye_command import ByeCommand
     _safe_register(registry, "bye", lambda: ByeCommand(shutdown_event=deps.shutdown_event))
+
+    # /onboarding — needs the live registry instance itself to call other
+    # commands' handle() directly (config/provider/owl), not a fresh DI dep.
+    from stackowl.commands.onboarding_command import OnboardingCommand
+    _safe_register(registry, "onboarding", lambda: OnboardingCommand(registry=registry))
