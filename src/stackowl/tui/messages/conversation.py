@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from stackowl.commands.response import Action
 from stackowl.tui.messages._base import FrozenMessage
 
 
@@ -35,6 +36,10 @@ class ResponseChunkMessage(FrozenMessage):
         trace_id: W3C-style trace identifier propagated from the request.
         is_final: ``True`` on the last chunk of a turn — closes the active
             bubble so the next chunk opens a fresh one.
+        actions: Tappable follow-up actions from a slash-command
+            ``CommandResponse``. Empty for every ordinary LLM-answer chunk —
+            only slash-command replies ever populate this (mirrors
+            :class:`stackowl.pipeline.streaming.ResponseChunk`).
     """
 
     text: str
@@ -45,6 +50,7 @@ class ResponseChunkMessage(FrozenMessage):
     chunk_index: int = 0
     trace_id: str = ""
     is_final: bool = False
+    actions: tuple[Action, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,7 @@ from stackowl.tui.widgets.conversation_helpers import (
     ChunkRenderer,
     ScrollState,
 )
-from stackowl.tui.widgets.message_bubble import MessageBubble, MessageRow
+from stackowl.tui.widgets.message_bubble import ActionButtonRow, MessageBubble, MessageRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -186,6 +186,12 @@ class ConversationView(Widget):
                 self._active_trace_id = chunk.trace_id
                 container.mount(MessageRow(bubble, role="agent"))
                 opened += 1
+                # Tappable follow-up actions arrive on the SAME chunk that opens
+                # the bubble (a slash-command reply is always a single chunk —
+                # see _deliver_command_stub); an ordinary LLM-answer chunk never
+                # carries actions, so this never fires mid-stream.
+                if chunk.actions:
+                    container.mount(ActionButtonRow(chunk.actions))
             # new_turn guarantees an active bubble exists by here.
             active = self._active_bubble
             if active is not None:

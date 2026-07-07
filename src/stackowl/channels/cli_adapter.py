@@ -102,7 +102,7 @@ class CLIAdapter(ChannelAdapter):
         if tui_components is not None and event_bus is not None:
             # Production 4-zone mode.
             self._mode = "fullzone"
-            self._tui = tui_components
+            self._tui: TuiComponents | None = tui_components
             self._event_bus: EventBus | None = event_bus
             self._app: App[None] = tui_components.app
             self._event_bus.subscribe(_COMPOSE_EVENT, self._on_compose_submitted)
@@ -195,6 +195,7 @@ class CLIAdapter(ChannelAdapter):
                     "chunk_index": chunk_idx,
                     "trace_id": chunk.trace_id,
                     "is_final": chunk.is_final,
+                    "actions": chunk.actions,
                 })
                 chunk_idx += 1
                 last_is_final = chunk.is_final

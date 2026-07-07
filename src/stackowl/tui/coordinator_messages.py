@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from stackowl.commands.response import Action
 from stackowl.tui.messages import (
     BudgetAlertMessage,
     ComposeAreaStateMessage,
@@ -52,7 +53,32 @@ def coerce_citations(raw: Any) -> tuple[FactCitation, ...]:
     return tuple(out)
 
 
-def build_message(event_name: str, payload: dict[str, Any]) -> "Message | None":
+def coerce_actions(raw: Any) -> tuple[Action, ...]:
+    """Best-effort conversion of an iterable of dict/Action values.
+
+    Mirrors :func:`coerce_citations` — the EventBus is in-process, so the
+    payload usually carries real ``Action`` instances straight through, but a
+    dict form is still accepted for parity with the citations helper.
+    """
+    if not raw:
+        return ()
+    out: list[Action] = []
+    for item in raw:
+        if isinstance(item, Action):
+            out.append(item)
+            continue
+        if isinstance(item, dict):
+            out.append(
+                Action(
+                    label=str(item.get("label", "")),
+                    command=str(item.get("command", "")),
+                    destructive=bool(item.get("destructive", False)),
+                )
+            )
+    return tuple(out)
+
+
+def build_message(event_name: str, payload: dict[str, Any]) -> Message | None:
     """Construct the Textual message for the given event payload."""
     if event_name == "pipeline_step_changed":
         return PipelineStepMessage(
@@ -132,6 +158,7 @@ def build_message(event_name: str, payload: dict[str, Any]) -> "Message | None":
             chunk_index=int(payload.get("chunk_index", 0)),
             trace_id=str(payload.get("trace_id", "")),
             is_final=bool(payload.get("is_final", False)),
+            actions=coerce_actions(payload.get("actions", ())),
         )
     if event_name == "mcp_spectator_active":
         return ComposeAreaStateMessage(state="mcp-disabled")
