@@ -3182,6 +3182,27 @@ class StartupOrchestrator:
                     exc_info=exc,
                     extra={"_fields": {}},
                 )
+        # F145 — the webhook HTTP receiver was a fully-built SupervisedTask with
+        # no caller anywhere in the codebase: registered-but-unreachable (the
+        # listener never bound, regardless of `webhook.enabled`). Wired into the
+        # SAME app supervisor already used for browser/dream-worker/notification
+        # jobs — no new subsystem. GATEWAY skips this for the same reason it
+        # skips the scheduler supervisor: the core owns the running instance.
+        webhook_receiver = None
+        if self._role != "gateway" and self._settings.webhook.enabled:
+            from stackowl.webhooks.receiver import WebhookReceiver
+
+            webhook_receiver = WebhookReceiver(
+                scheduler=scheduler_components.scheduler,
+                settings=self._settings,
+                db=db_pool,
+            )
+            scheduler_components.supervisor.register(webhook_receiver)
+            log.info(
+                "[startup] gateway: webhook receiver registered",
+                extra={"_fields": {"port": self._settings.webhook.port}},
+            )
+
         # Start the scheduler under Supervisor so all registered handlers
         # (browser, dream worker, fact extraction, notification digest,
         # morning brief, etc.) actually dispatch. GATEWAY skips this — the core
