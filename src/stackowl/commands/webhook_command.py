@@ -141,16 +141,24 @@ class WebhookCommand(SlashCommand):
         sub = parts[0]
         rest = parts[1:]
 
-        if sub == "register":
-            if not rest:
-                return "webhook register: missing <source>\n\n" + usage
-            return await self._register(rest[0], rest[1:], state)
-        if sub == "list":
-            return await self._list(state)
-        if sub == "disable":
-            if not rest:
-                return "webhook disable: missing <source>\n\n" + usage
-            return await self._disable(rest[0], state)
+        try:
+            if sub == "register":
+                if not rest:
+                    return "webhook register: missing <source>\n\n" + usage
+                return await self._register(rest[0], rest[1:], state)
+            if sub == "list":
+                return await self._list(state)
+            if sub == "disable":
+                if not rest:
+                    return "webhook disable: missing <source>\n\n" + usage
+                return await self._disable(rest[0], state)
+        except Exception as exc:
+            log.webhook.error(
+                "[webhook] command.handle: subcommand failed",
+                exc_info=exc,
+                extra={"_fields": {"sub": sub}},
+            )
+            return f"✗ /webhook {sub}: {exc}"
 
         log.webhook.debug(
             "[webhook] command.handle: unknown subcommand",
@@ -257,9 +265,15 @@ class WebhookCommand(SlashCommand):
         return "\n".join(lines)
 
     async def _list(self, state: PipelineState) -> str:
-        assert self._db is not None and self._settings is not None  # narrowed by handle() guard
+        assert self._db is not None  # narrowed by handle() guard
         log.webhook.debug("[webhook] command.list: entry")
-        configured = sorted(self._settings.webhook.sources.keys())
+        # Read the live YAML, not ``self._settings`` — this command is a
+        # singleton constructed once at startup with a settings snapshot that
+        # is never refreshed, so a frozen-settings read would show stale data
+        # after a live /webhook register or /webhook disable.
+        data = load_yaml(config_path())
+        sources_cfg: dict[str, Any] = data.get("webhook", {}).get("sources", {})
+        configured = sorted(sources_cfg.keys())
         try:
             rows = await self._db.fetch_all(_LIST_SQL, ())
         except Exception as exc:  # B5 — never silent
@@ -278,8 +292,9 @@ class WebhookCommand(SlashCommand):
             return "webhook: no sources configured.  Add some via /webhook register."
         lines = [f"webhook: {len(configured)} source(s) configured:"]
         for src in configured:
-            cfg = self._settings.webhook.sources[src]
-            state_label = "enabled" if cfg.enabled else "disabled"
+            cfg = sources_cfg.get(src) or {}
+            enabled = cfg.get("enabled", True) if isinstance(cfg, dict) else True
+            state_label = "enabled" if enabled else "disabled"
             last = last_by_source.get(src, "never")
             count = counts_by_source.get(src, 0)
             lines.append(

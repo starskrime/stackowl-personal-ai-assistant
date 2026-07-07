@@ -135,3 +135,52 @@ async def test_webhook_disable_writes_real_config(tmp_path, monkeypatch, db) -> 
     from stackowl.commands.config_helpers import load_yaml
     data = load_yaml(config_file)
     assert data["webhook"]["sources"]["acme"]["enabled"] is False
+
+
+async def test_webhook_list_reads_live_yaml_not_frozen_settings(tmp_path, monkeypatch, db) -> None:
+    """/webhook list must reflect the live YAML file, not the settings snapshot
+    frozen at WebhookCommand construction time (the command is a singleton;
+    ``self._settings`` is never refreshed after a live register/disable)."""
+    config_file = tmp_path / "stackowl.yaml"
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
+    # settings is constructed BEFORE "acme" ever exists on disk — this is the
+    # frozen snapshot the (singleton, in real use) command was built with.
+    settings = make_settings()
+    cmd = WebhookCommand(db=db, settings=settings)
+
+    from stackowl.commands.config_helpers import save_yaml
+    save_yaml(config_file, {
+        "webhook": {
+            "enabled": True,
+            "sources": {
+                "acme": {
+                    "enabled": True,
+                    "secret": "keychain:x",
+                    "delivery_id_header": "X-Id",
+                }
+            },
+        }
+    })
+
+    result = await cmd.handle("list", make_state())
+
+    assert "acme" in result
+    assert "[enabled]" in result
+
+
+async def test_webhook_handle_catches_register_exception(tmp_path, monkeypatch, db) -> None:
+    """A raising store_secret (e.g. keyring outage) must surface as a clean
+    ✗ /webhook error, never an unhandled traceback escaping handle()."""
+    config_file = tmp_path / "stackowl.yaml"
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
+
+    def _boom(*a, **kw):  # type: ignore[no-untyped-def]
+        raise RuntimeError("keyring unavailable")
+
+    monkeypatch.setattr("stackowl.commands.webhook_command.store_secret", _boom)
+    cmd = WebhookCommand(db=db, settings=make_settings())
+
+    result = await cmd.handle("register acme timestamp_header=X-Ts", make_state())
+
+    assert result.startswith("✗ /webhook register:")
+    assert "keyring unavailable" in result
