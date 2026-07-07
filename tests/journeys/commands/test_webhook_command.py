@@ -107,3 +107,31 @@ async def test_webhook_not_configured_when_db_none() -> None:
 async def test_webhook_not_found_when_not_registered() -> None:
     with pytest.raises(CommandNotFoundError):
         await CommandRegistry.instance().dispatch("webhook", "", make_state())
+
+
+async def test_webhook_disable_writes_real_config(tmp_path, monkeypatch, db) -> None:
+    """/webhook disable must flip sources[source].enabled to False in stackowl.yaml."""
+    config_file = tmp_path / "stackowl.yaml"
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
+    from stackowl.commands.config_helpers import save_yaml
+    save_yaml(config_file, {
+        "webhook": {
+            "enabled": True,
+            "sources": {
+                "acme": {
+                    "enabled": True,
+                    "secret": "keychain:x",
+                    "delivery_id_header": "X-Id",
+                }
+            },
+        }
+    })
+    settings = make_settings()
+    cmd = WebhookCommand(db=db, settings=settings)
+
+    result = await cmd.handle("disable acme", make_state())
+
+    assert "✓" in result
+    from stackowl.commands.config_helpers import load_yaml
+    data = load_yaml(config_file)
+    assert data["webhook"]["sources"]["acme"]["enabled"] is False

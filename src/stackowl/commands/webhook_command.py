@@ -6,7 +6,16 @@ Subcommands:
   [secret=<RAW>] [replay_tolerance_s=<N>]`` — really register a source: writes
   ``stackowl.yaml`` and persists the secret via the shared secret writer.
 * ``list``              — show configured sources + last receipt timestamp
-* ``disable <source>``  — print the YAML disable stanza + audit-log the request
+* ``disable <source>``  — disable a source: flips ``enabled: false`` in ``stackowl.yaml``
+
+``register``/``disable`` write real config: register creates a new source
+(auto-generating a secret via ``store_secret`` if none supplied), disable
+flips ``enabled: false``. Both verify the write persisted before claiming
+success, and emit an immediate ``settings_reloaded`` (see
+``startup/webhook_reload.py``) so a running receiver picks up the change
+without a restart — except the very first source ever registered, which
+needs a restart to bind the listener in the first place (see
+``startup/orchestrator.py``'s webhook wiring).
 
 SECURITY: a supplied secret is NEVER written in plaintext and NEVER logged or
 echoed. It is persisted via :func:`store_secret` (OS keyring → mode-0600 file
@@ -74,7 +83,7 @@ _WEBHOOK_META = CommandMeta(
         ),
         SubCommand(
             name="disable",
-            summary="Print the disable stanza and audit-log the request",
+            summary="Disable a webhook source (sets enabled: false)",
             args=(Arg(name="source", summary="webhook source name"),),
         ),
     ),
@@ -110,7 +119,7 @@ class WebhookCommand(SlashCommand):
 
     @property
     def description(self) -> str:
-        return "Show webhook source config instructions and audit disable requests"
+        return "Register, list, and disable webhook sources"
 
     @property
     def meta(self) -> CommandMeta:
@@ -285,9 +294,26 @@ class WebhookCommand(SlashCommand):
     async def _disable(self, source: str, state: PipelineState) -> str:
         assert self._db is not None  # narrowed by handle() guard
         log.webhook.info(
-            "[webhook] command.disable: instructions + audit-log",
+            "[webhook] command.disable: entry",
             extra={"_fields": {"source": source}},
         )
+        path = config_path()
+        data = load_yaml(path)
+        sources = data.get("webhook", {}).get("sources", {})
+        if source not in sources:
+            return f"✗ Webhook '{source}' not found"
+        sources[source]["enabled"] = False
+        save_yaml(path, data)
+
+        # F-81-style verified-persist re-read before claiming success.
+        reloaded = load_yaml(path)
+        if reloaded.get("webhook", {}).get("sources", {}).get(source, {}).get("enabled") is not False:
+            log.webhook.error(
+                "[webhook] command.disable: write did not persist",
+                extra={"_fields": {"source": source}},
+            )
+            return f"✗ Webhook '{source}' was not disabled — check file permissions/disk."
+
         await write_audit(
             self._db,
             event_type="webhook_disabled",
@@ -295,15 +321,20 @@ class WebhookCommand(SlashCommand):
             actor=state.session_id or "user",
             details={"reason": "user_requested"},
         )
-        return (
-            f"To disable webhook '{source}', edit stackowl.yaml:\n"
-            "  webhook:\n"
-            "    sources:\n"
-            f"      {source}:\n"
-            "        enabled: false\n"
-            "\n"
-            "Then restart the supervisor."
+        if self._bus is not None:
+            try:
+                self._bus.emit("settings_reloaded", Settings())
+            except Exception as exc:
+                log.webhook.error(
+                    "[webhook] command.disable: immediate reload failed",
+                    exc_info=exc,
+                    extra={"_fields": {"source": source}},
+                )
+        log.webhook.info(
+            "[webhook] command.disable: exit — disabled",
+            extra={"_fields": {"source": source}},
         )
+        return f"✓ Webhook '{source}' disabled — live now."
 
     @classmethod
     def create_and_register(cls, db: DbPool, settings: Settings) -> WebhookCommand:
