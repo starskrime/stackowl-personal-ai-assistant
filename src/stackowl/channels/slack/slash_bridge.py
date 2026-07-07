@@ -67,7 +67,10 @@ class SlackSlashCommandBridge:
         )
 
         try:
-            result = await self._registry.dispatch(name, text, state)
+            # CommandRegistry.dispatch always returns CommandResponse now — this
+            # bridge's contract is still plain text back to Slack, so unwrap it.
+            # A future Slack task can render .actions as Block Kit buttons.
+            result = (await self._registry.dispatch(name, text, state)).text
         except CommandNotFoundError as err:
             log.slack.warning(
                 "[slack] slash_bridge.handle_slash_command: unknown command",

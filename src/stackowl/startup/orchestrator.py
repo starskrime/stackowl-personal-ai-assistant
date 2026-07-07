@@ -1536,7 +1536,10 @@ class StartupOrchestrator:
             writer = stream_registry.get_writer(trace_id)
             dispatched_ok = False
             try:
-                reply = await registry.dispatch(cmd, args, state)
+                # CommandRegistry.dispatch always returns CommandResponse now — this
+                # stub still streams plain text; a follow-up task threads .actions
+                # through ResponseChunk for interactive buttons.
+                reply = (await registry.dispatch(cmd, args, state)).text
                 dispatched_ok = True
             except CommandNotFoundError:
                 reply = f"Unknown slash command: '/{cmd}'. Try /help to see what's available."
