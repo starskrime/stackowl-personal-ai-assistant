@@ -1,9 +1,10 @@
 """Dispatch test — /webhook is wired through CommandRegistry."""
 from __future__ import annotations
+
 import pytest
+
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandNotFoundError, CommandRegistry
-from stackowl.commands.webhook_command import WebhookCommand
 from tests._story_6_7_helpers import db, make_settings, make_state, no_test_mode_guard  # noqa: F401
 
 
@@ -42,12 +43,15 @@ async def test_webhook_register_writes_real_config(tmp_path, monkeypatch, db) ->
     """/webhook register must write stackowl.yaml, not just print instructions."""
     config_file = tmp_path / "stackowl.yaml"
     monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
-    settings = make_settings()
-    cmd = WebhookCommand(db=db, settings=settings)
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await cmd.handle(
-        "register acme timestamp_header=X-Ts-Header", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "webhook", "register acme timestamp_header=X-Ts-Header", make_state()
+        )
+    ).text
 
     assert "✓" in result
     from stackowl.commands.config_helpers import load_yaml
@@ -60,9 +64,13 @@ async def test_webhook_register_writes_real_config(tmp_path, monkeypatch, db) ->
 async def test_webhook_register_requires_anti_replay_mechanism(db) -> None:
     """Neither timestamp_header nor delivery_id_header given → clear rejection,
     never a silent guess at a vendor-specific header name."""
-    cmd = WebhookCommand(db=db, settings=make_settings())
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await cmd.handle("register acme", make_state())
+    result = (
+        await CommandRegistry.instance().dispatch("webhook", "register acme", make_state())
+    ).text
 
     assert "✗" in result
     assert "timestamp_header" in result
@@ -72,11 +80,15 @@ async def test_webhook_register_requires_anti_replay_mechanism(db) -> None:
 async def test_webhook_register_auto_generates_secret_and_shows_it_once(tmp_path, monkeypatch, db) -> None:
     config_file = tmp_path / "stackowl.yaml"
     monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
-    cmd = WebhookCommand(db=db, settings=make_settings())
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await cmd.handle(
-        "register acme delivery_id_header=X-Delivery-Id", make_state()
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "webhook", "register acme delivery_id_header=X-Delivery-Id", make_state()
+        )
+    ).text
 
     assert "won't be shown again" in result.lower() or "shown once" in result.lower()
     from stackowl.commands.config_helpers import load_yaml
@@ -88,12 +100,17 @@ async def test_webhook_register_auto_generates_secret_and_shows_it_once(tmp_path
 async def test_webhook_register_with_supplied_secret_never_echoes_it(tmp_path, monkeypatch, db) -> None:
     config_file = tmp_path / "stackowl.yaml"
     monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
-    cmd = WebhookCommand(db=db, settings=make_settings())
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await cmd.handle(
-        "register acme delivery_id_header=X-Delivery-Id secret=my-raw-secret-value",
-        make_state(),
-    )
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "webhook",
+            "register acme delivery_id_header=X-Delivery-Id secret=my-raw-secret-value",
+            make_state(),
+        )
+    ).text
 
     assert "my-raw-secret-value" not in result
 
@@ -128,10 +145,13 @@ async def test_webhook_disable_writes_real_config(tmp_path, monkeypatch, db) -> 
             },
         }
     })
-    settings = make_settings()
-    cmd = WebhookCommand(db=db, settings=settings)
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await cmd.handle("disable acme", make_state())
+    result = (
+        await CommandRegistry.instance().dispatch("webhook", "disable acme", make_state())
+    ).text
 
     assert "✓" in result
     from stackowl.commands.config_helpers import load_yaml
@@ -147,8 +167,9 @@ async def test_webhook_list_reads_live_yaml_not_frozen_settings(tmp_path, monkey
     monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
     # settings is constructed BEFORE "acme" ever exists on disk — this is the
     # frozen snapshot the (singleton, in real use) command was built with.
-    settings = make_settings()
-    cmd = WebhookCommand(db=db, settings=settings)
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
     from stackowl.commands.config_helpers import save_yaml
     save_yaml(config_file, {
@@ -164,7 +185,9 @@ async def test_webhook_list_reads_live_yaml_not_frozen_settings(tmp_path, monkey
         }
     })
 
-    result = await cmd.handle("list", make_state())
+    result = (
+        await CommandRegistry.instance().dispatch("webhook", "list", make_state())
+    ).text
 
     assert "acme" in result
     assert "[enabled]" in result
@@ -180,9 +203,15 @@ async def test_webhook_handle_catches_register_exception(tmp_path, monkeypatch, 
         raise RuntimeError("keyring unavailable")
 
     monkeypatch.setattr("stackowl.commands.webhook_command.store_secret", _boom)
-    cmd = WebhookCommand(db=db, settings=make_settings())
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
 
-    result = await cmd.handle("register acme timestamp_header=X-Ts", make_state())
+    result = (
+        await CommandRegistry.instance().dispatch(
+            "webhook", "register acme timestamp_header=X-Ts", make_state()
+        )
+    ).text
 
     assert result.startswith("✗ /webhook register:")
     assert "keyring unavailable" in result
