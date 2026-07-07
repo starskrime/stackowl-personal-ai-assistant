@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
@@ -36,7 +37,6 @@ from stackowl.webhooks.receiver_helpers import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
-    from stackowl.config.settings import Settings
     from stackowl.config.webhook_settings import WebhookSourceConfig
     from stackowl.db.pool import DbPool
     from stackowl.scheduler.scheduler import JobScheduler
@@ -165,6 +165,26 @@ class WebhookReceiver(SupervisedTask):
         self._runner = None
         self._bound = False
         log.webhook.info("[webhook] receiver.stop: exit")
+
+    def apply_settings(self, settings: Settings) -> None:
+        """Hot-swap the sources dict the running receiver reads per-request.
+
+        Only ``sources`` is genuinely hot-reload-capable (schema-declared in
+        webhook_settings.py) — bind_address/port/the top-level enabled flag
+        require a real restart to take effect (a brand-new listener bind),
+        which this method does NOT attempt.
+        """
+        old_count = len(self._settings.webhook.sources)
+        self._settings = settings
+        log.webhook.info(
+            "[webhook] receiver.apply_settings: sources refreshed",
+            extra={
+                "_fields": {
+                    "old_count": old_count,
+                    "new_count": len(settings.webhook.sources),
+                }
+            },
+        )
 
     async def health(self) -> HealthReport:
         log.webhook.debug("[webhook] receiver.health: entry")

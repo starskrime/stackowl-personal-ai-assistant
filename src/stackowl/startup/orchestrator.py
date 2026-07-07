@@ -3202,6 +3202,18 @@ class StartupOrchestrator:
                 "[startup] gateway: webhook receiver registered",
                 extra={"_fields": {"port": self._settings.webhook.port}},
             )
+            # LIVE webhook hot-reload — mirrors the provider/identity reload
+            # subscriptions above (same `settings_watch` guard, same event_bus,
+            # same `settings_reloaded` event from the ConfigWatcher already
+            # started there). Subscribed HERE rather than next to that block
+            # because `webhook_receiver` doesn't exist until this point in
+            # `_phase_gateway` — it is registered only when webhook.enabled.
+            if self._settings.settings_watch:
+                from stackowl.startup.webhook_reload import make_webhook_reload_handler
+
+                event_bus.subscribe(
+                    "settings_reloaded", make_webhook_reload_handler(webhook_receiver)
+                )
 
         # Start the scheduler under Supervisor so all registered handlers
         # (browser, dream worker, fact extraction, notification digest,
