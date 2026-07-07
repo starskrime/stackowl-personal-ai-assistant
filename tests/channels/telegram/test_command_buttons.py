@@ -3,6 +3,7 @@ from __future__ import annotations
 from stackowl.channels.telegram.command_buttons import (
     TelegramCommandButtonResolver,
     _button_map,
+    build_command_keyboard,
     register_command_button,
     set_command_button_message_id,
 )
@@ -244,6 +245,68 @@ async def test_confirm_then_cancel_neutralizes_the_live_yes_button():
     await resolver.handle_callback("cbid-stale-yes", f"cmd:{yes_sid}")
     assert len(adapter.edited) == 2
     assert adapter.sent_text == []
+
+
+async def test_multi_action_group_tapping_one_invalidates_siblings():
+    """Plan D pre-work: an independent, non-destructive multi-choice row —
+    e.g. the upcoming /onboarding autonomy step's [low][medium][high] — must
+    match TUI's row-level ``_resolved`` freeze (message_bubble.ActionButtonRow):
+    tapping ONE button invalidates ALL the others rendered in the same
+    group, not just the tapped one. Before this fix, build_command_keyboard
+    registered independent per-button entries with no sibling_ids, so the
+    untapped buttons stayed live and dispatchable for the full 15-minute TTL."""
+    dispatched: list[tuple[str, str]] = []
+
+    class _FakeRegistry:
+        async def dispatch(self, name, args, state):
+            dispatched.append((name, args))
+            return CommandResponse(text=f"✓ set to {args}")
+
+    adapter = _FakeAdapter()
+    resolver = TelegramCommandButtonResolver(adapter=adapter, registry=_FakeRegistry())
+
+    actions = (
+        Action(label="Low", command="/autonomy set low", destructive=False),
+        Action(label="Medium", command="/autonomy set medium", destructive=False),
+        Action(label="High", command="/autonomy set high", destructive=False),
+    )
+    _keyboard, callback_ids = build_command_keyboard(777, actions)
+    low_data, medium_data, high_data = callback_ids
+
+    # All three siblings are live before any tap.
+    assert all(cd[4:] in _button_map for cd in callback_ids)
+
+    await resolver.handle_callback("cbid-medium", medium_data)
+    assert dispatched == [("autonomy", "set medium")]
+
+    # Stale tap on "low" — the button is still visible on the old message but
+    # must now be a silent no-op, exactly like an expired button.
+    await resolver.handle_callback("cbid-stale-low", low_data)
+    assert dispatched == [("autonomy", "set medium")]
+    assert adapter.sent_actions == [(777, "✓ set to set medium", ())]
+
+    # Same for "high".
+    await resolver.handle_callback("cbid-stale-high", high_data)
+    assert dispatched == [("autonomy", "set medium")]
+    assert len(adapter.sent_actions) == 1
+
+
+async def test_single_action_group_has_no_siblings():
+    """A lone replay button (no group) must not invalidate itself — regression
+    guard for the empty-sibling_ids no-op case build_command_keyboard already
+    handled before this generalization."""
+    adapter = _FakeAdapter()
+
+    class _FakeRegistry:
+        async def dispatch(self, name, args, state):
+            return CommandResponse(text="ok")
+
+    resolver = TelegramCommandButtonResolver(adapter=adapter, registry=_FakeRegistry())
+    keyboard, callback_ids = build_command_keyboard(888, (Action(label="Retry", command="/retry"),))
+    assert len(callback_ids) == 1
+
+    await resolver.handle_callback("cbid-solo", callback_ids[0])
+    assert adapter.sent_actions == [(888, "ok", ())]
 
 
 def test_expired_or_unknown_button_is_ignored():

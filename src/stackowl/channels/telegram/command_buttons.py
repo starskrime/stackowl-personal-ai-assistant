@@ -52,10 +52,14 @@ class _PendingButton:
     action: Action
     expires_at: float
     message_id: int | None = None
-    # Other short_ids registered as part of the SAME keyboard group (currently
-    # only the confirm prompt's Yes+Cancel pair) — resolving ONE pops the
-    # OTHERS too, so a raced/replayed tap on the sibling can't fire after the
-    # group has already been resolved (see handle_callback).
+    # Other short_ids registered as part of the SAME rendered keyboard group
+    # (every button ``build_command_keyboard`` mints together — confirm's
+    # Yes+Cancel pair, or an independent multi-choice row like an onboarding
+    # step's [low][medium][high]) — resolving ONE pops the OTHERS too, so a
+    # raced/replayed tap on a sibling can't fire after the group has already
+    # been resolved (see handle_callback). Mirrors the TUI's row-level
+    # ``_resolved`` latch (message_bubble.ActionButtonRow) — tapping any one
+    # button in a rendered row freezes the whole row on both channels.
     sibling_ids: tuple[str, ...] = ()
 
 
@@ -96,7 +100,15 @@ def set_command_button_message_id(callback_data: str, message_id: int) -> None:
 def build_command_keyboard(
     chat_id: int, actions: tuple[Action, ...]
 ) -> tuple[dict[str, object], list[str]]:
-    """Register one button per action and build the Telegram keyboard dict.
+    """Register one button per action, cross-link them as siblings, and build
+    the Telegram keyboard dict.
+
+    Every button rendered together on ONE message (a multi-choice row like
+    ``[low][medium][high]``, or the confirm keyboard's Yes+Cancel pair) is a
+    sibling group: resolving ANY one of them invalidates the OTHERS too (see
+    ``_link_siblings`` and ``handle_callback``) — this is the Telegram side
+    of the TUI's row-level ``_resolved`` latch (message_bubble.py). A
+    single-action call is a no-op group of one (empty ``sibling_ids``).
 
     Returns the keyboard plus the callback_data list (in button order) so the
     caller can backfill each button's ``message_id`` once the send returns.
@@ -109,19 +121,25 @@ def build_command_keyboard(
         data = register_command_button(chat_id, action)
         builder.add_button(action.label, data)
         callback_ids.append(data)
+    _link_siblings(callback_ids)
     return builder.build(), callback_ids
 
 
-def _link_confirm_siblings(callback_ids: list[str]) -> None:
-    """Cross-link a just-registered button GROUP (the confirm keyboard's
-    Yes + Cancel) so resolving ONE pops the OTHER too.
+def _link_siblings(callback_ids: list[str]) -> None:
+    """Cross-link a just-registered button GROUP (every button rendered
+    together on one message) so resolving ONE pops the OTHERS too.
 
-    Without this, backfilling the confirm prompt's message_id (Bug B) closes
+    Originally built for the confirm keyboard's Yes+Cancel pair (a 2-button
+    group): without this, backfilling the confirm prompt's message_id closes
     the UI-visible half of the gap — Cancel's edit removes the keyboard, so
     Yes is no longer *rendered* — but the Yes entry would otherwise linger in
     ``_button_map`` for its full TTL, so a raced or directly-replayed tap on
-    its callback_data could still dispatch the destructive action. Confirm is
-    the only multi-button group this module creates; a bare replay button
+    its callback_data could still dispatch the destructive action.
+
+    Generalized to ANY group size: an independent multi-choice row (e.g. an
+    onboarding step's ``[low][medium][high]``) has the same gap — tapping
+    ``medium`` must invalidate the still-rendered ``low``/``high`` buttons on
+    that same old message, not just the tapped one. A bare replay button
     (one entry, no group) gets an empty ``sibling_ids`` and this is a no-op.
     """
     short_ids = [cd[len(_CALLBACK_PREFIX) :] for cd in callback_ids]
@@ -189,8 +207,9 @@ class TelegramCommandButtonResolver:
 
         if action.destructive:
             confirm = make_confirm_response(action)
+            # build_command_keyboard links the new Yes/Cancel pair as siblings
+            # itself now — see _link_siblings.
             keyboard, callback_ids = build_command_keyboard(chat_id, confirm.actions)
-            _link_confirm_siblings(callback_ids)
             resolved_message_id = await self._rewrite_or_send(
                 chat_id, entry.message_id, confirm.text, keyboard
             )
