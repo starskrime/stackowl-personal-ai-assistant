@@ -48,6 +48,7 @@ def chunk_to_frame(chunk: ResponseChunk) -> ChunkFrame:
         kind=chunk.kind,
         target=chunk.target,
         is_floor=chunk.is_floor,
+        actions=chunk.actions,
     )
 
 
@@ -63,6 +64,7 @@ def frame_to_chunk(frame: ChunkFrame) -> ResponseChunk:
         kind=frame.kind,
         target=frame.target,
         is_floor=frame.is_floor,
+        actions=frame.actions,
     )
 
 

@@ -11,6 +11,7 @@ import asyncio
 
 import pytest
 
+from stackowl.commands.response import Action
 from stackowl.ipc.client import IpcClient
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import ChunkFrame
@@ -34,6 +35,17 @@ def test_converter_round_trip_preserves_all_fields() -> None:
     chunk = _chunk(
         content="x\ny", chunk_index=3, duration_ms=12.5, kind="progress",
         target="chan:thread", is_floor=True,
+    )
+    assert frame_to_chunk(chunk_to_frame(chunk)) == chunk
+
+
+def test_converter_round_trip_preserves_actions() -> None:
+    # Regression: a command reply's tappable buttons (ResponseChunk.actions,
+    # added for the button-layer feature) must survive the core->gateway wire
+    # hop unchanged — a bare ChunkFrame(**fields) copy that forgets this field
+    # silently strips every button from a reply delivered over split IPC.
+    chunk = _chunk(
+        actions=(Action(label="Remove x", command="/provider remove x", destructive=True),),
     )
     assert frame_to_chunk(chunk_to_frame(chunk)) == chunk
 

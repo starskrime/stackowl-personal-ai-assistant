@@ -22,6 +22,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from stackowl.commands.response import Action
+
 
 class _Frame(BaseModel):
     """Base for all wire frames — frozen, reject unknown keys."""
@@ -87,6 +89,7 @@ class ChunkFrame(_Frame):
     kind: Literal["answer", "progress"] = "answer"
     target: int | str | None = None
     is_floor: bool = False
+    actions: tuple[Action, ...] = ()
 
 
 class SteerFrame(_Frame):
