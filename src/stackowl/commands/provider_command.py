@@ -254,9 +254,14 @@ class ProviderCommand(SlashCommand):
         data = load_yaml(path)
         providers = self._providers(data)
         if not providers:
-            return "No providers configured. Add one with: /provider add <name> <protocol> <model> <tier>"
+            return CommandResponse(
+                text="No providers configured.",
+                actions=(Action(label="+ Add provider", command="/provider add", destructive=False),),
+            )
         lines: list[str] = []
-        actions: list[Action] = []
+        actions: list[Action] = [
+            Action(label="+ Add provider", command="/provider add", destructive=False)
+        ]
         for p in providers:
             name = p.get("name", "?")
             protocol = p.get("protocol", "?")

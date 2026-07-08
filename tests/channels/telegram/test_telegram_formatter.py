@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from stackowl.channels.telegram.formatter import (
     TelegramBriefFormatter,
     TelegramEvolutionFormatter,
@@ -13,15 +11,19 @@ from stackowl.channels.telegram.formatter import (
     escape_md,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1. escape_md escapes all 18 reserved MarkdownV2 chars
 # ---------------------------------------------------------------------------
 
 
 def test_escape_md_escapes_all_reserved_chars() -> None:
-    # Full set of MarkdownV2 reserved characters (18 chars, excluding backslash itself)
-    reserved_chars = ["_", "*", "[", "]", "(", ")", "~", "`", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
+    # Full set of MarkdownV2 reserved characters (18 chars, excluding backslash itself).
+    # Regression: this list previously omitted '>' — the comment said 18 but only 17
+    # were actually checked, so escape_md's matching gap shipped undetected until a
+    # real '>' in output text (e.g. "<field>") 400'd the Telegram send.
+    reserved_chars = [
+        "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!",
+    ]
     for char in reserved_chars:
         result = escape_md(char)
         assert result == f"\\{char}", f"Expected \\{char!r} but got {result!r}"

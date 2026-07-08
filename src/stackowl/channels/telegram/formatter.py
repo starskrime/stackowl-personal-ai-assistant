@@ -26,7 +26,7 @@ __all__ = [
 
 # MarkdownV2 reserved characters (Telegram Bot API specification).
 # Compiled once at module load; never re-instantiated per call.
-_MD_ESCAPE_RE = re.compile(r"([_*\[\]()~`#\+\-=|{}.!\\])")
+_MD_ESCAPE_RE = re.compile(r"([_*\[\]()~`>#\+\-=|{}.!\\])")
 # Inside a MarkdownV2 link/code URL only ``)`` and ``\`` are special and must be
 # escaped (Bot API spec); the rest of the URL stays verbatim.
 _MD_URL_ESCAPE_RE = re.compile(r"([)\\])")

@@ -77,12 +77,14 @@ class TestProviderList:
     @pytest.mark.asyncio
     async def test_list_no_providers(self, tmp_yaml: Path) -> None:
         out = await _make_cmd().handle("list", _state())
-        assert "No providers" in out or "no providers" in out.lower()
+        assert "no providers" in out.text.lower()
+        assert out.actions[0].label == "+ Add provider"
+        assert out.actions[0].command == "/provider add"
 
     @pytest.mark.asyncio
     async def test_empty_args_acts_as_list(self, tmp_yaml: Path) -> None:
         out = await _make_cmd().handle("", _state())
-        assert "no providers" in out.lower()
+        assert "no providers" in out.text.lower()
 
     @pytest.mark.asyncio
     async def test_list_shows_providers_without_raw_token(self, tmp_yaml: Path) -> None:
@@ -103,9 +105,10 @@ class TestProviderList:
         assert "acme" in text
         assert "openai" in text
         assert "gpt-x" in text
-        assert out.actions[0].label == "acme"
-        assert out.actions[0].command == "/provider menu acme"
-        assert out.actions[0].destructive is False
+        assert out.actions[0].label == "+ Add provider"
+        assert out.actions[1].label == "acme"
+        assert out.actions[1].command == "/provider menu acme"
+        assert out.actions[1].destructive is False
         assert "fast" in text
         # The REF may be shown; the raw secret must NEVER appear.
         assert "keychain:stackowl-provider-acme" in text
