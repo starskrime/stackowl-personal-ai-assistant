@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Literal
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.learning.failure_outcome_miner import (
+    FailureCluster,
     RcaVerdict,
     cluster_failures_by_capability_and_signature,
 )
@@ -375,6 +376,30 @@ class IncidentEscalationHandler(JobHandler):
             sig = f"outcome:{cluster.capability_class}:{cluster.failure_class}"
             if sig in incidents:  # a health incident already owns this signature
                 continue
+            # Fake-incident guard: a cluster with ZERO precisely-attributed rows
+            # (every member has failed_capability=None, i.e. the turn's failure
+            # was never pinned on a specific tool) exists only because the
+            # clustering fallback credits EVERY tool named in a long, sprawling
+            # turn's tool_sequence. A frequently-called innocent tool (skill_view,
+            # memory, tool_search...) then "recurs" across many unrelated failed
+            # turns by pure co-occurrence, not because it's actually broken.
+            # Escalating that to a full RCA produces a confidently-worded but
+            # WRONG "structurally broken" verdict (2026-07-08 incident: skill_view
+            # was blamed this way — see project_skill_view_false_incident_rejected
+            # memory). Require at least one row where failed_capability itself
+            # resolves to this capability — real, specific evidence — before
+            # opening an incident for it.
+            if not self._has_precise_attribution(cluster):
+                log.scheduler.info(
+                    "[scheduler] incident_escalation: co-occurrence-only cluster "
+                    "— skipping (no row precisely attributes this capability)",
+                    extra={"_fields": {
+                        "capability": cluster.capability_class,
+                        "failure_class": cluster.failure_class,
+                        "size": cluster.size,
+                    }},
+                )
+                continue
             samples = tuple(
                 f"- trace={o.trace_id} tools={list(o.tool_sequence)} "
                 f"failure_class={o.failure_class} input={(o.input_text or '')[:120]!r}"
@@ -445,6 +470,42 @@ class IncidentEscalationHandler(JobHandler):
                 ),
             )
         return incidents
+
+    def _has_precise_attribution(self, cluster: FailureCluster) -> bool:
+        """True unless EVERY outcome in *cluster* is only an ambiguous
+        co-occurrence credit for this capability.
+
+        A row counts as real evidence when either: (a) ``failed_capability``
+        itself names this capability (an actual unrecovered/raised failure was
+        pinned on it), or (b) the row is UNAMBIGUOUS — its ``tool_sequence``
+        maps to exactly one capability class, so "blamed by co-occurrence"
+        and "blamed because it's the only suspect" are the same thing (a
+        single-tool turn has no fan-out to be wrong about).
+
+        What this rejects: a row from a long, multi-capability turn where
+        ``failed_capability`` is ``None`` (the failure was never pinned on a
+        specific tool — e.g. a goal-level acceptance refutation) AND several
+        DIFFERENT capabilities appear in ``tool_sequence``. Crediting every one
+        of those as "the recurring offender" is how a frequently-called,
+        perfectly healthy tool (skill_view, memory, tool_search...) gets framed
+        for an incident it had nothing to do with — see
+        project_skill_view_false_incident_rejected memory (2026-07-08).
+        """
+        for o in cluster.outcomes:
+            if o.failed_capability is not None:
+                if (
+                    _capability_class_for(o.failed_capability, self._capability_tag_lookup)
+                    == cluster.capability_class
+                ):
+                    return True
+                continue
+            row_capabilities = {
+                _capability_class_for(tool, self._capability_tag_lookup)
+                for tool in o.tool_sequence
+            }
+            if row_capabilities == {cluster.capability_class}:
+                return True
+        return False
 
     async def _consume_verdict(
         self, inc: _Incident, verdict: RcaVerdict, kind: Literal["fix", "alternative"],

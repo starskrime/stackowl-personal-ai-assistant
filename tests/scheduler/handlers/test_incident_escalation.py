@@ -235,6 +235,72 @@ async def test_transient_failure_class_runs_rca() -> None:
     assert result.metadata["short_circuited"] == 0
 
 
+def _sprawling_outcome(trace: str, *, tools: tuple[str, ...]) -> TaskOutcome:
+    """A long, multi-capability turn whose failure was never pinned on one
+    tool (``failed_capability`` stays unset/None) — the shape that produced
+    the 2026-07-08 false skill_view incident."""
+    return TaskOutcome(
+        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        channel="cli", success=False, latency_ms=1.0, tool_call_count=len(tools),
+        failure_class="unachieved_effect", quality_score=None, step_durations={},
+        input_text="do the thing", response_text="", captured_at=0.0,
+        scored_at=None, tool_sequence=tools,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fake_incident_guard_skips_co_occurrence_only_cluster() -> None:
+    """A frequently-called tool that only ever CO-OCCURS in sprawling,
+    goal-refuted turns (failed_capability=None every time, paired with a
+    DIFFERENT other tool each time) must NOT trigger a full RCA — the
+    skill_view false-incident shape (2026-07-08, see
+    project_skill_view_false_incident_rejected memory)."""
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _sprawling_outcome("t1", tools=("skill_view", "memory")),
+        _sprawling_outcome("t2", tools=("skill_view", "owl_build")),
+        _sprawling_outcome("t3", tools=("skill_view", "tool_search")),
+    ]
+    rca = _RecordingRca()
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=rca,  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(_job())
+
+    assert rca.calls == []
+    assert ("skill_view", "unachieved_effect") not in handler.verdicts
+    assert result.metadata["analyzed"] == 0
+    assert result.metadata["short_circuited"] == 0
+
+
+@pytest.mark.asyncio
+async def test_single_tool_turns_still_open_a_real_incident() -> None:
+    """The guard must NOT swallow genuine single-capability recurrence: every
+    row names exactly one capability (no fan-out ambiguity), so co-occurrence
+    IS precise here — this must still open and run the RCA."""
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    rca = _RecordingRca()
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=rca,  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(_job())
+
+    assert len(rca.calls) == 1
+    assert rca.calls[0].capability_class == "web_fetch"
+    assert result.metadata["analyzed"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Review Finding 1 — masked-recurring-substitution (the arc's central antipattern:
 # a permanent fallback with zero retry) must be DETECTED even though every turn
