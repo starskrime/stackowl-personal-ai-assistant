@@ -13,6 +13,7 @@ Security posture:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time as _time
 from typing import TYPE_CHECKING, Any, Literal
@@ -97,6 +98,7 @@ class WebhookReceiver(SupervisedTask):
         self._runner: Any | None = None
         self._site: Any | None = None
         self._bound = False
+        self._stop_event: asyncio.Event | None = None
 
     @property
     def task_id(self) -> str:
@@ -144,6 +146,23 @@ class WebhookReceiver(SupervisedTask):
             extra={"_fields": {"port": self._settings.webhook.port}},
         )
 
+        # F145 follow-up (2026-07-08) — Supervisor._run_with_backoff calls
+        # task.run() in a loop FOREVER regardless of whether the previous call
+        # returned cleanly or raised (every other SupervisedTask, e.g.
+        # JobScheduler.run(), is itself a perpetual `while True` loop for
+        # exactly this reason). Returning here right after a successful bind
+        # made the supervisor treat the bind as "the task finished" and
+        # re-invoke run() ~1s later — a SECOND aiohttp site then failed to
+        # bind against the FIRST (still-bound, never-stopped) socket on the
+        # same port, 5 times in a row, permanently parking this task "failed"
+        # while the original listener was silently still serving. Block here
+        # until cancelled or stop() is called, mirroring the scheduler's loop.
+        self._stop_event = asyncio.Event()
+        try:
+            await self._stop_event.wait()
+        finally:
+            await self.stop()
+
     async def stop(self) -> None:
         """Tear down the HTTP server.  Idempotent."""
         log.webhook.debug("[webhook] receiver.stop: entry")
@@ -164,6 +183,8 @@ class WebhookReceiver(SupervisedTask):
         self._site = None
         self._runner = None
         self._bound = False
+        if self._stop_event is not None:
+            self._stop_event.set()
         log.webhook.info("[webhook] receiver.stop: exit")
 
     def apply_settings(self, settings: Settings) -> None:
