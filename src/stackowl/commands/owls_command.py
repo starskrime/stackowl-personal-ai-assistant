@@ -35,6 +35,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 from stackowl.owls.registry import _SECRETARY_NAME
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:
@@ -799,9 +800,17 @@ class OwlCommand(OwlsCommand):
             channel=state.channel,
             reply_target=state.reply_target,
         )
+        # Slash-command dispatch never runs the LLM pipeline backend, which is
+        # the ONLY other place that populates get_services() (asyncio_backend /
+        # langgraph_backend). Without this, OwlBuildTool's registry/db_pool
+        # reads (e.g. _toggle_schedule's pause/resume) always see an empty
+        # StepServices() and fail closed with "scheduling unavailable" even
+        # though this command was constructed with real registry/db deps.
+        svc_token = set_services(StepServices(owl_registry=self._registry, db_pool=self._db))
         try:
             result = await OwlBuildTool().execute(action=action, **kwargs)
         finally:
+            reset_services(svc_token)
             TraceContext.reset(token)
         log.gateway.info("[commands] owl._build: exit",
                         extra={"_fields": {"action": action, "success": result.success}})

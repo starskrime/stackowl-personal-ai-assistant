@@ -76,6 +76,34 @@ async def test_owl_pause_routes_to_owl_build(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+async def test_owl_build_populates_services_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: OwlBuildTool reads registry/db via get_services(), which is
+    # ONLY populated by the LLM pipeline backend (asyncio_backend/
+    # langgraph_backend) — slash-command dispatch bypasses that entirely, so
+    # any OwlBuildTool action reading get_services().db_pool (e.g. pause/
+    # resume's scheduling check) always saw an empty StepServices() and failed
+    # closed with "owl scheduling unavailable" even when the command itself
+    # was constructed with real registry/db deps.
+    from stackowl.pipeline.services import get_services
+
+    seen: dict[str, Any] = {}
+
+    class _FakeTool:
+        async def execute(self, **kw: Any) -> ToolResult:
+            svc = get_services()
+            seen["registry_wired"] = svc.owl_registry is not None
+            seen["db_wired"] = svc.db_pool is not None
+            return ToolResult(success=True, output="ok", duration_ms=1.0)
+
+    monkeypatch.setattr("stackowl.tools.meta.owl_build.OwlBuildTool", _FakeTool)
+    reg = OwlRegistry.with_default_secretary()
+    db = object()  # any non-None sentinel — only identity/None-ness is asserted
+    out = await OwlCommand(owl_registry=reg, db=db).handle("pause secretary", _State())
+    assert out == "ok"
+    assert seen == {"registry_wired": True, "db_wired": True}
+
+
+@pytest.mark.asyncio
 async def test_owl_rename_routes_positional_args(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
