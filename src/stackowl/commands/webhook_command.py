@@ -33,6 +33,7 @@ from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
 from stackowl.commands.metadata import Arg, CommandMeta, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.config.secret_writer import store_secret
 from stackowl.config.settings import Settings
 from stackowl.infra.observability import log
@@ -82,6 +83,11 @@ _WEBHOOK_META = CommandMeta(
             summary="Show configured sources and recent receipts",
         ),
         SubCommand(
+            name="enable",
+            summary="Re-enable a disabled webhook source",
+            args=(Arg(name="source", summary="webhook source name"),),
+        ),
+        SubCommand(
             name="disable",
             summary="Disable a webhook source (sets enabled: false)",
             args=(Arg(name="source", summary="webhook source name"),),
@@ -125,7 +131,7 @@ class WebhookCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _WEBHOOK_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         if self._db is None or self._settings is None:
             return "✗ /webhook: not configured"
         # 1. ENTRY
@@ -148,10 +154,18 @@ class WebhookCommand(SlashCommand):
                 return await self._register(rest[0], rest[1:], state)
             if sub == "list":
                 return await self._list(state)
+            if sub == "enable":
+                if not rest:
+                    return "webhook enable: missing <source>\n\n" + usage
+                return await self._set_enabled(rest[0], True, state)
             if sub == "disable":
                 if not rest:
                     return "webhook disable: missing <source>\n\n" + usage
-                return await self._disable(rest[0], state)
+                return await self._set_enabled(rest[0], False, state)
+            if sub == "menu":
+                if not rest:
+                    return "webhook menu: missing <source>\n\n" + usage
+                return await self._menu(rest[0])
         except Exception as exc:
             log.webhook.error(
                 "[webhook] command.handle: subcommand failed",
@@ -264,7 +278,7 @@ class WebhookCommand(SlashCommand):
             lines.append("Give this to the sending service to sign requests.")
         return "\n".join(lines)
 
-    async def _list(self, state: PipelineState) -> str:
+    async def _list(self, state: PipelineState) -> str | CommandResponse:
         assert self._db is not None  # narrowed by handle() guard
         log.webhook.debug("[webhook] command.list: entry")
         # Read the live YAML, not ``self._settings`` — this command is a
@@ -291,6 +305,7 @@ class WebhookCommand(SlashCommand):
         if not configured:
             return "webhook: no sources configured.  Add some via /webhook register."
         lines = [f"webhook: {len(configured)} source(s) configured:"]
+        actions: list[Action] = []
         for src in configured:
             cfg = sources_cfg.get(src) or {}
             enabled = cfg.get("enabled", True) if isinstance(cfg, dict) else True
@@ -300,16 +315,50 @@ class WebhookCommand(SlashCommand):
             lines.append(
                 f"  - {src} [{state_label}] — events:{count}, last:{last}"
             )
+            actions.append(Action(label=src, command=f"/webhook menu {src}", destructive=False))
         log.webhook.debug(
             "[webhook] command.list: exit",
             extra={"_fields": {"configured": len(configured)}},
         )
-        return "\n".join(lines)
+        return CommandResponse(text="\n".join(lines), actions=tuple(actions))
 
-    async def _disable(self, source: str, state: PipelineState) -> str:
+    async def _menu(self, source: str) -> str | CommandResponse:
+        log.webhook.debug(
+            "[webhook] command.menu: entry", extra={"_fields": {"source": source}}
+        )
+        data = load_yaml(config_path())
+        sources_cfg: dict[str, Any] = data.get("webhook", {}).get("sources", {})
+        cfg = sources_cfg.get(source)
+        if cfg is None or not isinstance(cfg, dict):
+            log.webhook.warning(
+                "[webhook] command.menu: not found", extra={"_fields": {"source": source}}
+            )
+            return f"✗ Webhook '{source}' not found"
+        enabled = cfg.get("enabled", True)
+        lines = [f"{source} | endpoint=/webhook/{source} | enabled={enabled}"]
+        if cfg.get("timestamp_header"):
+            lines.append(f"  timestamp_header: {cfg['timestamp_header']}")
+        if cfg.get("delivery_id_header"):
+            lines.append(f"  delivery_id_header: {cfg['delivery_id_header']}")
+        lines.append(f"  secret ref: {cfg.get('secret') or '(none)'}")
+        toggle_verb = "disable" if enabled else "enable"
+        actions = (
+            Action(
+                label=toggle_verb.capitalize(),
+                command=f"/webhook {toggle_verb} {source}",
+                destructive=False,
+            ),
+        )
+        log.webhook.debug(
+            "[webhook] command.menu: exit", extra={"_fields": {"source": source}}
+        )
+        return CommandResponse(text="\n".join(lines), actions=actions)
+
+    async def _set_enabled(self, source: str, enabled: bool, state: PipelineState) -> str:
         assert self._db is not None  # narrowed by handle() guard
+        verb = "enable" if enabled else "disable"
         log.webhook.info(
-            "[webhook] command.disable: entry",
+            f"[webhook] command.{verb}: entry",
             extra={"_fields": {"source": source}},
         )
         path = config_path()
@@ -317,21 +366,21 @@ class WebhookCommand(SlashCommand):
         sources = data.get("webhook", {}).get("sources", {})
         if source not in sources:
             return f"✗ Webhook '{source}' not found"
-        sources[source]["enabled"] = False
+        sources[source]["enabled"] = enabled
         save_yaml(path, data)
 
         # F-81-style verified-persist re-read before claiming success.
         reloaded = load_yaml(path)
-        if reloaded.get("webhook", {}).get("sources", {}).get(source, {}).get("enabled") is not False:
+        if reloaded.get("webhook", {}).get("sources", {}).get(source, {}).get("enabled") is not enabled:
             log.webhook.error(
-                "[webhook] command.disable: write did not persist",
+                f"[webhook] command.{verb}: write did not persist",
                 extra={"_fields": {"source": source}},
             )
-            return f"✗ Webhook '{source}' was not disabled — check file permissions/disk."
+            return f"✗ Webhook '{source}' was not {verb}d — check file permissions/disk."
 
         await write_audit(
             self._db,
-            event_type="webhook_disabled",
+            event_type=f"webhook_{verb}d",
             target=source,
             actor=state.session_id or "user",
             details={"reason": "user_requested"},
@@ -341,15 +390,15 @@ class WebhookCommand(SlashCommand):
                 self._bus.emit("settings_reloaded", Settings())
             except Exception as exc:
                 log.webhook.error(
-                    "[webhook] command.disable: immediate reload failed",
+                    f"[webhook] command.{verb}: immediate reload failed",
                     exc_info=exc,
                     extra={"_fields": {"source": source}},
                 )
         log.webhook.info(
-            "[webhook] command.disable: exit — disabled",
+            f"[webhook] command.{verb}: exit — {verb}d",
             extra={"_fields": {"source": source}},
         )
-        return f"✓ Webhook '{source}' disabled — live now."
+        return f"✓ Webhook '{source}' {verb}d — live now."
 
     @classmethod
     def create_and_register(cls, db: DbPool, settings: Settings) -> WebhookCommand:

@@ -193,6 +193,83 @@ async def test_webhook_list_reads_live_yaml_not_frozen_settings(tmp_path, monkey
     assert "[enabled]" in result
 
 
+async def test_webhook_list_returns_one_action_per_source(tmp_path, monkeypatch, db) -> None:
+    config_file = tmp_path / "stackowl.yaml"
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
+    from stackowl.commands.config_helpers import save_yaml
+    save_yaml(config_file, {
+        "webhook": {
+            "enabled": True,
+            "sources": {"acme": {"enabled": True, "secret": "keychain:x", "delivery_id_header": "X-Id"}},
+        }
+    })
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch("webhook", "list", make_state())
+
+    assert len(result.actions) == 1
+    assert result.actions[0].label == "acme"
+    assert result.actions[0].command == "/webhook menu acme"
+    assert result.actions[0].destructive is False
+
+
+async def test_webhook_menu_shows_state_and_toggle_action(tmp_path, monkeypatch, db) -> None:
+    config_file = tmp_path / "stackowl.yaml"
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
+    from stackowl.commands.config_helpers import save_yaml
+    save_yaml(config_file, {
+        "webhook": {
+            "enabled": True,
+            "sources": {"acme": {"enabled": True, "secret": "keychain:x", "delivery_id_header": "X-Id"}},
+        }
+    })
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch("webhook", "menu acme", make_state())
+
+    assert "enabled=True" in result.text
+    assert len(result.actions) == 1
+    assert result.actions[0].label == "Disable"
+    assert result.actions[0].command == "/webhook disable acme"
+    assert result.actions[0].destructive is False
+
+
+async def test_webhook_menu_not_found(db) -> None:
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch("webhook", "menu ghost", make_state())
+
+    assert "not found" in result.text
+
+
+async def test_webhook_enable_reverses_disable(tmp_path, monkeypatch, db) -> None:
+    config_file = tmp_path / "stackowl.yaml"
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(config_file))
+    from stackowl.commands.config_helpers import save_yaml
+    save_yaml(config_file, {
+        "webhook": {
+            "enabled": True,
+            "sources": {"acme": {"enabled": False, "secret": "keychain:x", "delivery_id_header": "X-Id"}},
+        }
+    })
+    CommandRegistry.reset()
+    deps = CommandDeps(db=db, settings=make_settings())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = await CommandRegistry.instance().dispatch("webhook", "enable acme", make_state())
+
+    assert "✓" in result.text
+    from stackowl.commands.config_helpers import load_yaml
+    data = load_yaml(config_file)
+    assert data["webhook"]["sources"]["acme"]["enabled"] is True
+
+
 async def test_webhook_handle_catches_register_exception(tmp_path, monkeypatch, db) -> None:
     """A raising store_secret (e.g. keyring outage) must surface as a clean
     ✗ /webhook error, never an unhandled traceback escaping handle()."""

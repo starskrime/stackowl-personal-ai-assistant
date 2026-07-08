@@ -23,7 +23,7 @@ def _state():  # type: ignore[no-untyped-def]
 def test_webhook_declares_real_subcommands() -> None:
     cmd = WebhookCommand()
     names = {s.name for s in cmd.meta.subcommands}
-    assert names == {"register", "list", "disable"}
+    assert names == {"register", "list", "enable", "disable"}
     assert cmd.meta.grammar == "verb"
     assert cmd.meta.group == "Integrations"
     for sub in cmd.meta.subcommands:
@@ -33,7 +33,7 @@ def test_webhook_declares_real_subcommands() -> None:
 def test_source_subcommands_declare_source_arg() -> None:
     cmd = WebhookCommand()
     by_name = {s.name: s for s in cmd.meta.subcommands}
-    for sub in ("register", "disable"):
+    for sub in ("register", "enable", "disable"):
         assert by_name[sub].args
         assert by_name[sub].args[0].name == "source"
     assert by_name["list"].args == ()
