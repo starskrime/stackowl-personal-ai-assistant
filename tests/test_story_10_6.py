@@ -50,6 +50,13 @@ def _make_manifest(name: str = "test-plugin") -> PluginManifest:
     )
 
 
+def _text(out: object) -> str:
+    """Unwrap a CommandResponse to its text, or pass through a plain str."""
+    from stackowl.commands.response import CommandResponse
+
+    return out.text if isinstance(out, CommandResponse) else out  # type: ignore[return-value]
+
+
 def _make_state() -> object:
     """Return a minimal PipelineState-like object for command tests."""
     from stackowl.pipeline.state import PipelineState
@@ -170,7 +177,7 @@ class TestPluginsCommand:
         cmd = PluginsCommand(mock_registry)
 
         result = asyncio.run(cmd.handle("list", _make_state()))
-        assert "No plugins installed" in result
+        assert "No plugins installed" in _text(result)
 
     def test_plugins_command_list_with_plugins(self) -> None:
         """PluginsCommand list subcommand includes installed plugin names."""
@@ -184,8 +191,8 @@ class TestPluginsCommand:
         cmd = PluginsCommand(mock_registry)
 
         result = asyncio.run(cmd.handle("list", _make_state()))
-        assert "plugin-alpha" in result
-        assert "plugin-beta" in result
+        assert "plugin-alpha" in _text(result)
+        assert "plugin-beta" in _text(result)
 
     def test_plugins_command_info_found(self) -> None:
         """PluginsCommand info subcommand returns plugin details when found."""

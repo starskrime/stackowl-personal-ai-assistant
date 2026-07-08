@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, SubCommand, render_usage
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -63,7 +64,7 @@ class PluginsCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _PLUGINS_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         # 1. ENTRY
         log.gateway.debug(
             "plugins_command.handle: entry",
@@ -91,6 +92,8 @@ class PluginsCommand(SlashCommand):
                 result = await self._handle_enable(arg.strip())
             elif sub == "disable" and arg:
                 result = await self._handle_disable(arg.strip())
+            elif sub == "menu" and arg:
+                result = await self._handle_menu(arg.strip())
             else:
                 result = render_usage("plugins", _PLUGINS_META)
         except Exception as exc:
@@ -102,13 +105,14 @@ class PluginsCommand(SlashCommand):
             return f"Error running /plugins {sub}: {exc}"
 
         # 4. EXIT
+        out_text = result.text if isinstance(result, CommandResponse) else result
         log.gateway.debug(
             "plugins_command.handle: exit",
-            extra={"_fields": {"sub": sub, "len": len(result)}},
+            extra={"_fields": {"sub": sub, "len": len(out_text)}},
         )
         return result
 
-    def _handle_list(self) -> str:
+    def _handle_list(self) -> str | CommandResponse:
         assert self._registry is not None  # guarded by handle()
         # 1. ENTRY
         log.gateway.debug("plugins_command._handle_list: entry")
@@ -120,9 +124,13 @@ class PluginsCommand(SlashCommand):
             )
             return "No plugins installed."
         lines = ["Installed plugins:\n"]
+        actions = []
         for p in plugins:
             lines.append(
                 f"  {p.name}  v{p.version}  [{p.type}]  — {p.description[:60]}"
+            )
+            actions.append(
+                Action(label=p.name, command=f"/plugins menu {p.name}", destructive=False)
             )
         result = "\n".join(lines)
         # 4. EXIT
@@ -130,7 +138,7 @@ class PluginsCommand(SlashCommand):
             "plugins_command._handle_list: exit",
             extra={"_fields": {"count": len(plugins)}},
         )
-        return result
+        return CommandResponse(text=result, actions=tuple(actions))
 
     async def _handle_info(self, name: str) -> str:
         assert self._registry is not None  # guarded by handle()
@@ -175,6 +183,44 @@ class PluginsCommand(SlashCommand):
             extra={"_fields": {"name": name}},
         )
         return result
+
+    async def _handle_menu(self, name: str) -> str | CommandResponse:
+        assert self._registry is not None  # guarded by handle()
+        # 1. ENTRY
+        log.gateway.debug(
+            "plugins_command._handle_menu: entry",
+            extra={"_fields": {"name": name}},
+        )
+        # ponytail: registry.list() only returns enabled=1 rows (PluginRegistry.list
+        # filters WHERE enabled = 1), so any plugin reachable via a list-row tap is
+        # always currently enabled — toggle is always "Disable" here. Same gap
+        # already exists in /plugins info (a disabled plugin is invisible to both).
+        # Upgrade path: add PluginRegistry.get(name) returning disabled rows too.
+        plugins = self._registry.list()
+        found = next((p for p in plugins if p.name == name), None)
+        if found is None:
+            log.gateway.debug(
+                "plugins_command._handle_menu: not found",
+                extra={"_fields": {"name": name}},
+            )
+            return (
+                f"Plugin '{name}' not found. "
+                "Run /plugins list to see installed plugins."
+            )
+        text = (
+            f"{found.name}  v{found.version}  [{found.type}]  — enabled\n"
+            f"{found.description[:120]}"
+        )
+        actions = (
+            Action(label="Disable", command=f"/plugins disable {found.name}", destructive=False),
+            Action(label="Info", command=f"/plugins info {found.name}", destructive=False),
+        )
+        # 4. EXIT
+        log.gateway.debug(
+            "plugins_command._handle_menu: exit",
+            extra={"_fields": {"name": found.name}},
+        )
+        return CommandResponse(text=text, actions=actions)
 
     async def _handle_enable(self, name: str) -> str:
         assert self._registry is not None  # guarded by handle()
