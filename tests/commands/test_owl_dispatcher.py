@@ -8,6 +8,9 @@ import pytest
 
 from stackowl.commands.owls_command import OwlCommand
 from stackowl.commands.owls_helpers import parse_owl_build_flags
+from stackowl.commands.response import CommandResponse
+from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.registry import OwlRegistry
 from stackowl.tools.base import ToolResult
 
 
@@ -91,3 +94,38 @@ async def test_owl_list_uses_inherited_registry_surface() -> None:
     # No registry wired → the inherited _list returns the honest no-registry note.
     out = await OwlCommand().handle("list", _State())
     assert "no owl registry" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_owl_menu_unknown_name_errors_cleanly() -> None:
+    reg = OwlRegistry.with_default_secretary()
+    out = await OwlCommand(owl_registry=reg).handle("menu ghost", _State())
+    assert isinstance(out, str)
+    assert "✗" in out
+
+
+@pytest.mark.asyncio
+async def test_owl_menu_on_demand_owl_has_retire_but_no_pause_resume() -> None:
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(
+        OwlAgentManifest(
+            name="Sage", role="researcher",
+            system_prompt="You are Sage.", model_tier="fast",
+        )
+    )
+    out = await OwlCommand(owl_registry=reg).handle("menu Sage", _State())
+    assert isinstance(out, CommandResponse)
+    labels = {a.label for a in out.actions}
+    assert "Retire Sage" in labels
+    assert not ({"Pause", "Resume"} & labels)
+    retire = next(a for a in out.actions if a.label == "Retire Sage")
+    assert retire.destructive is True
+    assert retire.command == "/owl retire Sage"
+
+
+@pytest.mark.asyncio
+async def test_owl_list_actions_open_menu() -> None:
+    reg = OwlRegistry.with_default_secretary()
+    out = await OwlCommand(owl_registry=reg).handle("list", _State())
+    assert isinstance(out, CommandResponse)
+    assert any(a.command == "/owl menu secretary" for a in out.actions)

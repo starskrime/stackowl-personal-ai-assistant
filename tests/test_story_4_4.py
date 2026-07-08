@@ -15,6 +15,7 @@ from stackowl.commands.owls_helpers import (
     format_dna_display,
     format_owl_table,
 )
+from stackowl.commands.response import CommandResponse
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.exceptions import (
@@ -25,7 +26,6 @@ from stackowl.owls.dna import OwlDNA
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.state import PipelineState
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -41,6 +41,11 @@ def _state(session: str = "sess-test") -> PipelineState:
         owl_name="secretary",
         pipeline_step="receive",
     )
+
+
+def _text(out: object) -> str:
+    """Unwrap a CommandResponse to its text, or pass through a plain str."""
+    return out.text if isinstance(out, CommandResponse) else out  # type: ignore[return-value]
 
 
 def _manifest(name: str, role: str = "analyst", tier: str = "fast") -> OwlAgentManifest:
@@ -139,7 +144,7 @@ class TestOwlsList:
     async def test_owls_list_secretary_only(self) -> None:
         reg = OwlRegistry.with_default_secretary()
         cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("list", _state())
+        out = _text(await cmd.handle("list", _state()))
         assert "secretary" in out
 
     async def test_owls_list_multiple_owls(self) -> None:
@@ -147,10 +152,21 @@ class TestOwlsList:
         reg.register(_manifest("alice"))
         reg.register(_manifest("bob"))
         cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("list", _state())
+        out = _text(await cmd.handle("list", _state()))
         # All three should appear (alphabetically: alice, bob, secretary).
         for name in ("alice", "bob", "secretary"):
             assert name in out
+
+    async def test_owls_list_has_menu_action_per_owl(self) -> None:
+        reg = OwlRegistry.with_default_secretary()
+        reg.register(_manifest("alice"))
+        cmd = OwlsCommand(owl_registry=reg)
+        out = await cmd.handle("list", _state())
+        assert isinstance(out, CommandResponse)
+        labels = {a.label for a in out.actions}
+        commands = {a.command for a in out.actions}
+        assert "alice" in labels
+        assert "/owls menu alice" in commands
 
     async def test_owls_list_no_registry(self) -> None:
         cmd = OwlsCommand(owl_registry=None)
@@ -160,7 +176,7 @@ class TestOwlsList:
     async def test_owls_default_subcommand_is_list(self) -> None:
         reg = OwlRegistry.with_default_secretary()
         cmd = OwlsCommand(owl_registry=reg)
-        out = await cmd.handle("", _state())
+        out = _text(await cmd.handle("", _state()))
         assert "secretary" in out
 
 

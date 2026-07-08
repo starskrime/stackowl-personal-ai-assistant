@@ -25,6 +25,7 @@ from stackowl.commands.owls_helpers import (
     parse_owl_build_flags,
 )
 from stackowl.commands.registry import CommandRegistry
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.exceptions import (
     CommandParseError,
     ManifestValidationError,
@@ -170,7 +171,7 @@ class OwlsCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _OWLS_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "[commands] owls.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
@@ -228,13 +229,24 @@ class OwlsCommand(SlashCommand):
         return result
 
     # ------------------------------------------------------------------ list
-    def _list(self) -> str:
+    def _list(self) -> str | CommandResponse:
         log.gateway.debug("[commands] owls.list: entry")
         if self._registry is None:
             return _NO_REGISTRY
-        result = format_owl_roster(self._registry.list())
-        log.gateway.debug("[commands] owls.list: exit")
-        return result
+        manifests = self._registry.list()
+        text = format_owl_roster(manifests)
+        if not manifests:
+            log.gateway.debug("[commands] owls.list: exit — empty")
+            return CommandResponse(
+                text=text,
+                actions=(Action(label="+ Add owl", command=f"/{self.command} create", destructive=False),),
+            )
+        actions = tuple(
+            Action(label=m.display, command=f"/{self.command} menu {m.name}", destructive=False)
+            for m in sorted(manifests, key=lambda x: x.display.casefold())
+        )
+        log.gateway.debug("[commands] owls.list: exit", extra={"_fields": {"count": len(manifests)}})
+        return CommandResponse(text=text, actions=actions)
 
     # ------------------------------------------------------------ create (free text)
     async def _create_freetext(self, rest: str, state: PipelineState) -> str:
@@ -716,7 +728,7 @@ class OwlCommand(OwlsCommand):
     def meta(self) -> CommandMeta:
         return _OWL_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "[commands] owl.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_id}},
@@ -725,6 +737,8 @@ class OwlCommand(OwlsCommand):
         sub = parts[0].lower() if parts else "list"
         rest = parts[1] if len(parts) > 1 else ""
         try:
+            if sub == "menu":
+                return await self._menu(rest)
             if sub == "create":
                 return await self._build("create", parse_owl_build_flags(rest), state)
             if sub == "edit":
@@ -792,6 +806,51 @@ class OwlCommand(OwlsCommand):
         log.gateway.info("[commands] owl._build: exit",
                         extra={"_fields": {"action": action, "success": result.success}})
         return result.output if result.success else f"✗ /owl {action}: {result.error}"
+
+    # -- menu (per-owl drill-down: pause/resume + retire) -----------------------
+
+    async def _menu(self, raw: str) -> str | CommandResponse:
+        log.gateway.debug("[commands] owl.menu: entry", extra={"_fields": {"raw_len": len(raw)}})
+        name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        if not name:
+            return "Usage: /owl menu <name>"
+        if self._registry is None:
+            return _NO_REGISTRY
+        manifest = self._registry.get(name)  # raises OwlNotFoundError → handled in handle()
+        does = (manifest.role or "").strip() or "general help"
+        status = "🟢 active" if manifest.lifecycle == "scheduled" else "💤 resting"
+        text = (
+            f"{manifest.display} ({manifest.name}) — {does} · {status}\n"
+            f"tier={manifest.model_tier}\n"
+            f"Rename: /owl rename {name} <new_display_name>"
+        )
+        actions: list[Action] = []
+        if manifest.lifecycle == "scheduled":
+            paused = await self._is_job_paused(name)
+            if paused is not None:
+                verb = "resume" if paused else "pause"
+                actions.append(
+                    Action(label=verb.capitalize(), command=f"/owl {verb} {name}", destructive=False)
+                )
+        actions.append(Action(label=f"Retire {name}", command=f"/owl retire {name}", destructive=True))
+        log.gateway.debug(
+            "[commands] owl.menu: exit", extra={"_fields": {"name": name, "n_actions": len(actions)}}
+        )
+        return CommandResponse(text=text, actions=tuple(actions))
+
+    async def _is_job_paused(self, name: str) -> bool | None:
+        """True if the owl's scheduled job is paused, False if active, ``None``
+        if undeterminable (no db wired, or no projected job row yet)."""
+        if self._db is None:
+            return None
+        from stackowl.scheduler.owl_lifecycle import _job_id_for
+
+        rows = await self._db.fetch_all(
+            "SELECT enabled FROM jobs WHERE job_id = ?", (_job_id_for(name),)
+        )
+        if not rows:
+            return None
+        return not bool(rows[0].get("enabled", 1))
 
 
 def _split_name(rest: str) -> tuple[str, str]:
