@@ -91,11 +91,17 @@ class LessonsLanceAdapter:
         await loop.run_in_executor(
             None, _sync_publish_many, self._connect(), valid,
         )
+        # _sync_publish_many dedupes same-batch duplicate lesson_ids (last-wins)
+        # before writing — report that same distinct count here so "published"
+        # reflects rows actually written, not the raw pre-dedup input length.
+        unique_count = len({le.lesson_id for le in valid})
         log.memory.info(
             "[learning] lessons_lance.publish_many: stored",
-            extra={"_fields": {"published": len(valid), "skipped": len(lessons) - len(valid)}},
+            extra={"_fields": {
+                "published": unique_count, "skipped": len(lessons) - unique_count,
+            }},
         )
-        return len(valid)
+        return unique_count
 
     async def search(
         self,
@@ -225,7 +231,17 @@ def _sync_publish(conn: DBConnection, lesson: Lesson) -> None:
 def _sync_publish_many(conn: DBConnection, lessons: list[Lesson]) -> None:
     first_dim = len(lessons[0].embedding)
     table = _get_or_create_table(conn, first_dim)
-    rows = [_make_row(le) for le in lessons]
+    # LanceDB's merge_insert forbids two SOURCE rows matching the same TARGET
+    # row in one execute() call ("Ambiguous merge inserts are prohibited") —
+    # a same-batch duplicate lesson_id (e.g. two lessons synthesized for the
+    # same skill in one flush) collapses the whole write. Dedupe last-wins
+    # (dict insertion keeps first-seen order, each re-assignment overwrites
+    # the value — the same semantics sequential publish() calls for the same
+    # lesson_id would give).
+    by_id: dict[str, Lesson] = {}
+    for le in lessons:
+        by_id[le.lesson_id] = le
+    rows = [_make_row(le) for le in by_id.values()]
     (
         table.merge_insert("lesson_id")
         .when_matched_update_all()

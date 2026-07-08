@@ -561,10 +561,16 @@ async def test_guard_memory_command_registered_via_orchestrator(
 
     async def _fake_scheduler_build(*_a: object, **_k: object) -> object:
         # register_all_commands reads .scheduler + .morning_brief_handler.
+        # Task 7 (incident-escalation RCA wiring) also reads
+        # .incident_escalation_handler unconditionally right after this
+        # build() call returns (orchestrator.py) — omitting it here crashes
+        # the fake boot with AttributeError before this guard ever reaches
+        # its real assertions.
         return SimpleNamespace(
             scheduler=SimpleNamespace(),
             morning_brief_handler=SimpleNamespace(),
             supervisor=SimpleNamespace(),
+            incident_escalation_handler=SimpleNamespace(),
         )
 
     # Wrap the SINGLE registration entry: run the REAL registration (so /memory
