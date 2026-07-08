@@ -363,6 +363,52 @@ class TestProviderEdit:
         assert "✗" in out or "not found" in out.lower()
 
 
+class TestProviderSetTokenRename:
+    @pytest.mark.asyncio
+    async def test_set_token_stores_ref_not_raw(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle(f"set-token acme {RAW_TOKEN}", _state())
+        assert "✓" in out
+        assert RAW_TOKEN not in out
+        entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
+        assert entry["api_key"] != RAW_TOKEN
+        assert entry["api_key"]
+
+    @pytest.mark.asyncio
+    async def test_set_token_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle(f"set-token ghost {RAW_TOKEN}", _state())
+        assert "✗" in out or "not found" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_rename_success(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("rename acme acme2", _state())
+        assert "✓" in out
+        names = [p["name"] for p in _load(tmp_yaml)["providers"]]
+        assert "acme2" in names
+        assert "acme" not in names
+
+    @pytest.mark.asyncio
+    async def test_rename_collision(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        await _make_cmd().handle("add other openai gpt-x fast", _state())
+        out = await _make_cmd().handle("rename acme other", _state())
+        assert "✗" in out
+
+    @pytest.mark.asyncio
+    async def test_rename_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("rename ghost new", _state())
+        assert "✗" in out or "not found" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_edit_menu_has_token_and_rename(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("edit-menu acme", _state())
+        labels = [a.label for a in out.actions]
+        assert "Set token" in labels
+        assert "Rename" in labels
+
+
 class TestProviderEnableDisable:
     @pytest.mark.asyncio
     async def test_disable_then_enable(self, tmp_yaml: Path) -> None:

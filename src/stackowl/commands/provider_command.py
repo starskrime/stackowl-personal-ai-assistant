@@ -42,7 +42,7 @@ _VALID_TIERS: tuple[str, ...] = typing.get_args(
 )
 
 _USAGE = (
-    "Usage: /provider <list|add|remove|set-tier|edit|enable|disable> [args]\n"
+    "Usage: /provider <list|add|remove|set-tier|edit|enable|disable|set-token|rename> [args]\n"
     "  /provider list\n"
     "  /provider add <name> <protocol> <default_model> <tier> "
     "[base_url] [token=<RAW_TOKEN>]\n"
@@ -51,6 +51,8 @@ _USAGE = (
     "  /provider edit <name> <protocol|default_model|base_url> <value>\n"
     "  /provider enable <name>\n"
     "  /provider disable <name>\n"
+    "  /provider set-token <name> <RAW_TOKEN>\n"
+    "  /provider rename <old_name> <new_name>\n"
     f"  protocols: {', '.join(_VALID_PROTOCOLS)}\n"
     f"  tiers: {', '.join(_VALID_TIERS)}"
 )
@@ -147,6 +149,28 @@ _PROVIDER_META = CommandMeta(
             args=(Arg(name="name", summary="provider to disable"),),
             examples=(Example(invocation="/provider disable openai"),),
         ),
+        SubCommand(
+            name="set-token",
+            summary="Rotate a provider's auth token",
+            description=(
+                "You replace the stored secret reference for an existing provider. "
+                "The raw token is never written in plaintext or logged."
+            ),
+            args=(
+                Arg(name="name", summary="provider to update"),
+                Arg(name="token", summary="new raw auth token"),
+            ),
+            examples=(Example(invocation="/provider set-token openai sk-..."),),
+        ),
+        SubCommand(
+            name="rename",
+            summary="Rename a provider",
+            args=(
+                Arg(name="old_name", summary="current provider name"),
+                Arg(name="new_name", summary="new provider name"),
+            ),
+            examples=(Example(invocation="/provider rename openai openai-primary"),),
+        ),
     ),
 )
 
@@ -196,6 +220,10 @@ class ProviderCommand(SlashCommand):
                 result = self._edit_menu(rest)
             elif sub == "edit-field":
                 result = self._edit_field(rest)
+            elif sub == "set-token":
+                result = self._set_token(rest)
+            elif sub == "rename":
+                result = self._rename(rest)
             elif sub == "menu":
                 result = self._menu(rest)
             else:
@@ -337,6 +365,13 @@ class ProviderCommand(SlashCommand):
     # -- edit-menu / edit-field (drill-down for Edit button) ---------------------
 
     _EDIT_FIELDS: typing.ClassVar[tuple[str, ...]] = ("protocol", "default_model", "base_url")
+    _EDIT_FIELD_LABELS: typing.ClassVar[dict[str, str]] = {
+        "protocol": "Edit protocol",
+        "default_model": "Edit default_model",
+        "base_url": "Edit base_url",
+        "api_key": "Set token",
+        "name": "Rename",
+    }
 
     def _edit_menu(self, raw: str) -> str | CommandResponse:
         log.config.debug("[commands] provider.edit_menu: entry", extra={"_fields": {"raw_len": len(raw)}})
@@ -351,11 +386,11 @@ class ProviderCommand(SlashCommand):
             return f"✗ Provider '{name}' not found"
         actions = tuple(
             Action(
-                label=f"Edit {field}",
+                label=self._EDIT_FIELD_LABELS[field],
                 command=f"/provider edit-field {name} {field}",
                 destructive=False,
             )
-            for field in self._EDIT_FIELDS
+            for field in (*self._EDIT_FIELDS, "api_key", "name")
         ) + (Action(label="Back", command=f"/provider menu {name}", destructive=False),)
         return CommandResponse(text=f"Edit which field on '{name}'?", actions=actions)
 
@@ -374,6 +409,17 @@ class ProviderCommand(SlashCommand):
         target = next((p for p in providers if p.get("name") == name), None)
         if target is None:
             return f"✗ Provider '{name}' not found"
+        back = (Action(label="Back", command=f"/provider menu {name}", destructive=False),)
+        if field == "api_key":
+            key_ref = target.get("api_key")
+            text = (
+                f"Current token ref: {key_ref if key_ref else '(none)'}\n"
+                f"Reply with: /provider set-token {name} <NEW_RAW_TOKEN>"
+            )
+            return CommandResponse(text=text, actions=back)
+        if field == "name":
+            text = f"Reply with: /provider rename {name} <new_name>"
+            return CommandResponse(text=text, actions=back)
         current = target.get(field, "?")
         text = (
             f"Current {field}: {current}\n"
@@ -383,6 +429,65 @@ class ProviderCommand(SlashCommand):
             text=text,
             actions=(Action(label="Back", command=f"/provider menu {name}", destructive=False),),
         )
+
+    # -- set-token -----------------------------------------------------------------
+
+    def _set_token(self, raw: str) -> str:
+        log.config.debug("[commands] provider.set_token: entry", extra={"_fields": {"raw_len": len(raw)}})
+        bits = raw.split(maxsplit=1)
+        if len(bits) < 2:
+            return "Usage: /provider set-token <name> <RAW_TOKEN>"
+        name, token = bits[0], bits[1]
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.set_token: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        # token length/value never logged — mirrors _add's secret-storage path.
+        _description, api_key_ref = store_secret(f"stackowl-provider-{name}", token)
+        target["api_key"] = api_key_ref
+        save_yaml(path, data)
+        self._emit_reloaded(name)
+        log.config.info(
+            "[commands] provider.set_token: exit — updated", extra={"_fields": {"name": name}}
+        )
+        return f"✓ Provider '{name}' token updated (ref: {api_key_ref}) — applied immediately"
+
+    # -- rename ----------------------------------------------------------------
+
+    def _rename(self, raw: str) -> str:
+        log.config.debug("[commands] provider.rename: entry", extra={"_fields": {"raw_len": len(raw)}})
+        bits = raw.split()
+        if len(bits) != 2:
+            return "Usage: /provider rename <old_name> <new_name>"
+        old_name, new_name = bits
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        if any(p.get("name") == new_name for p in providers):
+            return f"✗ Provider '{new_name}' already exists — pick another name"
+        target = next((p for p in providers if p.get("name") == old_name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.rename: not found", extra={"_fields": {"name": old_name}}
+            )
+            return f"✗ Provider '{old_name}' not found"
+        target["name"] = new_name
+        save_yaml(path, data)
+        self._emit_reloaded(new_name)
+        log.config.info(
+            "[commands] provider.rename: exit — renamed",
+            extra={"_fields": {"old": old_name, "new": new_name}},
+        )
+        return f"✓ Provider '{old_name}' renamed to '{new_name}' — applied immediately"
 
     # -- enable/disable ----------------------------------------------------------
 
