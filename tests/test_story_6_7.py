@@ -9,14 +9,15 @@ import pytest
 
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.registry import CommandRegistry
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.commands.staged_command import StagedCommand
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
-
 from tests._story_6_7_helpers import (  # noqa: F401 — fixture re-exports
     EventBus,
     FakeBridge,
     FakePromoter,
     db,
+    make_record,
     make_settings,
     make_staged,
     make_state,
@@ -171,6 +172,63 @@ async def test_memory_forget_unknown_prefix_returns_error() -> None:
     out = await cmd.handle("forget nonexistent-prefix YES", make_state())
     assert "no fact matches" in out.lower()
     assert bridge.delete_calls == []
+
+
+async def test_memory_search_hits_return_actions() -> None:
+    _reset_registry()
+    bridge = FakeBridge()
+    bridge.recall_results = [make_record(fact_id="rec-1", content="the sky is blue")]
+    cmd = MemoryCommand(
+        bridge=bridge,
+        settings=make_settings(),
+        db=object(),  # type: ignore[arg-type]
+        event_bus=EventBus(),
+        promoter=FakePromoter(),  # type: ignore[arg-type]
+    )
+    out = await cmd.handle("search sky", make_state())
+    assert isinstance(out, CommandResponse)
+    assert "the sky is blue" in out.text
+    assert out.actions == (
+        Action(label="the sky is blue", command="/memory menu rec-1", destructive=False),
+    )
+
+
+async def test_memory_menu_shows_fact_and_forget_action() -> None:
+    _reset_registry()
+    fid = "menu-id-cccc-0000-0000-0000-000000000001"
+    bridge = FakeBridge()
+    bridge.seed("staged", make_staged(fact_id=fid, content="menu target fact"))
+    cmd = MemoryCommand(
+        bridge=bridge,
+        settings=make_settings(),
+        db=object(),  # type: ignore[arg-type]
+        event_bus=EventBus(),
+        promoter=FakePromoter(),  # type: ignore[arg-type]
+    )
+    out = await cmd.handle(f"menu {fid}", make_state())
+    assert isinstance(out, CommandResponse)
+    assert "menu target fact" in out.text
+    assert out.actions == (
+        Action(
+            label=f"Forget {fid[:8]}",
+            command=f"/memory forget {fid} YES",
+            destructive=True,
+        ),
+    )
+
+
+async def test_memory_menu_unknown_id_returns_error() -> None:
+    _reset_registry()
+    bridge = FakeBridge()
+    cmd = MemoryCommand(
+        bridge=bridge,
+        settings=make_settings(),
+        db=object(),  # type: ignore[arg-type]
+        event_bus=EventBus(),
+        promoter=FakePromoter(),  # type: ignore[arg-type]
+    )
+    out = await cmd.handle("menu nonexistent", make_state())
+    assert "no fact matches" in out.lower()  # type: ignore[union-attr]
 
 
 async def test_memory_export_json_format() -> None:

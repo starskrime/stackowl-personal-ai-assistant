@@ -29,7 +29,8 @@ from stackowl.commands.memory_helpers import (
 )
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
-from stackowl.commands.staged_helpers import find_staged_by_id
+from stackowl.commands.response import Action, CommandResponse
+from stackowl.commands.staged_helpers import find_staged_by_id, format_review
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -183,7 +184,7 @@ class MemoryCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _MEMORY_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         # 1. ENTRY
         log.memory.debug(
             "[commands] memory.handle: entry",
@@ -199,6 +200,7 @@ class MemoryCommand(SlashCommand):
         rest = parts[1] if len(parts) > 1 else ""
         try:
             # 2. DECISION — dispatch by subcommand
+            result: str | CommandResponse
             if sub == "stats":
                 result = await self._stats()
             elif sub == "search":
@@ -213,6 +215,8 @@ class MemoryCommand(SlashCommand):
                 result = await self._forget(rest.strip())
             elif sub == "export":
                 result = await self._export(rest)
+            elif sub == "menu":
+                result = await self._menu(rest.strip())
             else:
                 log.memory.debug(
                     "[commands] memory.handle: decision — unknown subcommand",
@@ -228,9 +232,10 @@ class MemoryCommand(SlashCommand):
             )
             return f"✗ /memory {sub}: {exc}"
         # 4. EXIT
+        out_text = result.text if isinstance(result, CommandResponse) else result
         log.memory.debug(
             "[commands] memory.handle: exit",
-            extra={"_fields": {"sub": sub, "out_len": len(result)}},
+            extra={"_fields": {"sub": sub, "out_len": len(out_text)}},
         )
         return result
 
@@ -246,7 +251,7 @@ class MemoryCommand(SlashCommand):
         )
         return out
 
-    async def _search(self, query: str) -> str:
+    async def _search(self, query: str) -> str | CommandResponse:
         log.memory.debug(
             "[commands] memory.search: entry",
             extra={"_fields": {"query_len": len(query)}},
@@ -259,7 +264,37 @@ class MemoryCommand(SlashCommand):
             "[commands] memory.search: exit",
             extra={"_fields": {"n_hits": len(hits)}},
         )
-        return out
+        if not hits:
+            return out
+        actions = tuple(
+            Action(
+                label=h.content if len(h.content) <= 40 else h.content[:37] + "...",
+                command=f"/memory menu {h.fact_id}",
+                destructive=False,
+            )
+            for h in hits
+        )
+        return CommandResponse(text=out, actions=actions)
+
+    async def _menu(self, args: str) -> str | CommandResponse:
+        log.memory.debug("[commands] memory.menu: entry", extra={"_fields": {"args_len": len(args)}})
+        prefix = args.split(maxsplit=1)[0] if args else ""
+        if not prefix:
+            return "Usage: /memory menu <fact_id_prefix>"
+        fact = await find_staged_by_id(self._bridge, prefix)
+        if fact is None:
+            log.memory.debug("[commands] memory.menu: no match", extra={"_fields": {"prefix": prefix[:16]}})
+            return f"✗ /memory menu: no fact matches prefix '{prefix}'"
+        text = format_review(fact)
+        actions = (
+            Action(
+                label=f"Forget {fact.fact_id[:8]}",
+                command=f"/memory forget {fact.fact_id} {_CONFIRMATION}",
+                destructive=True,
+            ),
+        )
+        log.memory.debug("[commands] memory.menu: exit", extra={"_fields": {"fact_id": fact.fact_id}})
+        return CommandResponse(text=text, actions=actions)
 
     async def _budget(self) -> str:
         log.memory.debug("[commands] memory.budget: entry")

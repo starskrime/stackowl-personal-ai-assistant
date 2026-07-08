@@ -18,7 +18,6 @@ from stackowl.events.bus import EventBus
 from stackowl.memory.budget_enforcer import MemoryBudgetEnforcer
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.scheduler.job import Job
-
 from tests._story_6_4_helpers import (  # noqa: F401 — fixtures re-exported
     FakeLanceDB,
     db,
@@ -31,6 +30,11 @@ from tests._story_6_4_helpers import (  # noqa: F401 — fixtures re-exported
 
 def _reset_registry() -> None:
     CommandRegistry.reset()
+
+
+def _text(out: object) -> str:
+    """Unwrap a CommandResponse to its text, or pass through a plain str."""
+    return out.text if hasattr(out, "text") else out  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +63,7 @@ async def test_memory_command_search_calls_recall(db: DbPool) -> None:
     cmd = MemoryCommand.create_and_register(
         bridge=bridge, settings=settings, db=db, event_bus=EventBus()
     )
-    out = await cmd.handle("search alpha", make_state())
+    out = _text(await cmd.handle("search alpha", make_state()))
     assert "alpha bravo charlie" in out
 
 
