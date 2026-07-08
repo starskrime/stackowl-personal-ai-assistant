@@ -437,9 +437,23 @@ class ToolRegistry:
             # Cap the COUNT too: a weak model derails when offered too many tools
             # even if they fit in tokens. Effective cap comes from the budget dict's
             # optional "max_tools" (OrchestratorSettings.tool_count_cap), default 40.
+            hard_cap = resolve_tool_count_cap(budget.get("max_tools"))
+            if len(guaranteed) >= hard_cap:
+                # The non-evictable guaranteed set alone already meets/exceeds the
+                # configured cap — every discretionary/profile-group/tool_search-
+                # hydrated candidate is silently starved (fit_items' loop breaks on
+                # its first iteration). This has bitten us before: an operator
+                # lowered tool_count_cap below the guaranteed floor, and no
+                # candidate tool (e.g. a newly tool_search-hydrated one) could ever
+                # be presented again. Loud, not silent.
+                log.tool.warning(
+                    "registry.to_provider_schema: guaranteed tools >= tool_count_cap "
+                    "— discretionary/hydrated tools are entirely starved this turn",
+                    extra={"_fields": {"guaranteed": len(guaranteed), "hard_cap": hard_cap}},
+                )
             fitted = fit_items(
                 guaranteed=guaranteed, candidates=ranked, budget=b, size_of=_size,
-                hard_cap=resolve_tool_count_cap(budget.get("max_tools")),
+                hard_cap=hard_cap,
             )
             return [_schema_for(t) for t in fitted]
 

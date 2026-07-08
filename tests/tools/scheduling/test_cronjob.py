@@ -214,6 +214,30 @@ async def test_run_now_executes_handler(migrated_db: DbPool) -> None:
     assert backend.calls[0].input_text == "ping"
 
 
+async def test_run_now_already_running_is_not_reported_as_failure(migrated_db: DbPool) -> None:
+    # Regression: a run_now call losing the pending->running CAS to the job's
+    # OWN schedule (a benign race — the real delivery is already in flight) was
+    # echoed as {"success": false, "error": "..."} in cronjob's JSON payload,
+    # which downstream floor synthesis misread as "capability failed: cronjob"
+    # even though the scheduled delivery went on to succeed moments later.
+    await _seed_session(migrated_db)
+    backend = _StubBackend()
+    _register_handler(backend, migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="ping", schedule="daily@09:00")
+    )
+    job_id = created["job_id"]
+    await migrated_db.execute(
+        "UPDATE jobs SET status = 'running' WHERE job_id = ?", (job_id,)
+    )
+
+    ran = _payload(await _run(migrated_db, action="run", job_id=job_id))
+    assert ran["ran"] is False
+    assert "success" not in ran
+    assert "error" not in ran
+    assert "note" in ran
+
+
 async def test_create_blocks_injection_prompt(migrated_db: DbPool) -> None:
     await _seed_session(migrated_db)
     result = await _run(

@@ -83,6 +83,13 @@ _DEFAULT_BASE = frozenset({
     # skills_list. owl_build has no query action; without this, "check what
     # owls exist" had nowhere to go except a failing owl_build call.
     "owls_list",
+    # cronjob — mirrors the owl_build fix 1:1: as a discretionary/ranked
+    # candidate, lexical relevance to the request text decided whether a
+    # reminder ask ("ping me in 5 min" scored well; "remind me ... at 15:00"
+    # didn't) ever got cronjob a slot. A one-shot/recurring reminder is as
+    # fundamental as self-extension — guarantee it instead of gambling on
+    # wording. Consequential → still consent-gated at dispatch.
+    "cronjob",
 })
 _DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
 
