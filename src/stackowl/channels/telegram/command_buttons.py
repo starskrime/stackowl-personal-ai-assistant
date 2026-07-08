@@ -112,6 +112,10 @@ def build_command_keyboard(
 
     Returns the keyboard plus the callback_data list (in button order) so the
     caller can backfill each button's ``message_id`` once the send returns.
+
+    One button per row — a stacked (not side-by-side) layout reads better for
+    the typically longer command-replay labels (provider names, tier names)
+    than Telegram's default packed rows.
     """
     from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 
@@ -120,6 +124,7 @@ def build_command_keyboard(
     for action in actions:
         data = register_command_button(chat_id, action)
         builder.add_button(action.label, data)
+        builder.add_row()
         callback_ids.append(data)
     _link_siblings(callback_ids)
     return builder.build(), callback_ids
