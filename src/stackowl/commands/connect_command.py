@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, render_usage
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ class ConnectCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _CONNECT_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "connect_command.handle: entry",
             extra={"_fields": {"args": args[:40], "session": state.session_id}},
@@ -55,18 +56,24 @@ class ConnectCommand(SlashCommand):
         if self._registry is None:
             log.gateway.warning("connect_command.handle: integration_registry not configured")
             return "✗ /connect: not configured (integration registry unavailable)"
-        service = args.strip()
-        if not service:
+        stripped = args.strip()
+        result: str | CommandResponse
+        if not stripped:
             result = await self._handle_list()
         else:
-            result = await self._handle_connect(service)
+            parts = stripped.split(maxsplit=1)
+            if parts[0] == "menu" and len(parts) > 1 and parts[1].strip():
+                result = await self._menu(parts[1].strip())
+            else:
+                result = await self._handle_connect(stripped)
+        out_text = result.text if isinstance(result, CommandResponse) else result
         log.gateway.debug(
             "connect_command.handle: exit",
-            extra={"_fields": {"result_len": len(result)}},
+            extra={"_fields": {"result_len": len(out_text)}},
         )
         return result
 
-    async def _handle_list(self) -> str:
+    async def _handle_list(self) -> str | CommandResponse:
         """Return a formatted list of all registered integrations with their status."""
         assert self._registry is not None  # guarded by handle()
         log.gateway.debug("connect_command._handle_list: entry")
@@ -75,6 +82,7 @@ class ConnectCommand(SlashCommand):
             log.gateway.debug("connect_command._handle_list: exit — no adapters registered")
             return "No integrations registered. Install an integration plugin first."
         lines = ["Available integrations:\n"]
+        actions: list[Action] = []
         for adapter in adapters:
             try:
                 connected = await adapter.is_connected()
@@ -87,11 +95,58 @@ class ConnectCommand(SlashCommand):
                 )
                 status = "unknown"
             lines.append(f"  {adapter.service_name}: {status}")
+            actions.append(
+                Action(
+                    label=adapter.service_name,
+                    command=f"/connect menu {adapter.service_name}",
+                    destructive=False,
+                )
+            )
         log.gateway.debug(
             "connect_command._handle_list: exit",
             extra={"_fields": {"count": len(adapters)}},
         )
-        return "\n".join(lines)
+        return CommandResponse(text="\n".join(lines), actions=tuple(actions))
+
+    async def _menu(self, service: str) -> str | CommandResponse:
+        """Per-service drill-down: current connection state + a Connect/Disconnect toggle."""
+        assert self._registry is not None  # guarded by handle()
+        from stackowl.exceptions import IntegrationNotFoundError
+
+        log.gateway.debug(
+            "connect_command._menu: entry", extra={"_fields": {"service": service}}
+        )
+        try:
+            adapter = self._registry.get(service)
+        except IntegrationNotFoundError:
+            log.gateway.debug(
+                "connect_command._menu: decision — service not found",
+                extra={"_fields": {"service": service}},
+            )
+            return (
+                f"Unknown integration: {service!r}. "
+                "Run /connect to see available integrations."
+            )
+        try:
+            connected = await adapter.is_connected()
+            status = "connected" if connected else "not connected"
+        except Exception as exc:
+            log.gateway.warning(
+                "connect_command._menu: adapter status check failed",
+                exc_info=exc,
+                extra={"_fields": {"service": service}},
+            )
+            connected = False
+            status = "unknown"
+        text = f"{service}: {status}"
+        if connected:
+            action = Action(label="Disconnect", command=f"/disconnect {service}", destructive=True)
+        else:
+            action = Action(label="Connect", command=f"/connect {service}", destructive=False)
+        log.gateway.debug(
+            "connect_command._menu: exit", extra={"_fields": {"service": service, "connected": connected}}
+        )
+        return CommandResponse(text=text, actions=(action,))
 
     async def _handle_connect(self, service: str) -> str:
         """Initiate the OAuth flow for the named service."""
