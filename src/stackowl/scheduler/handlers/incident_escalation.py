@@ -386,33 +386,45 @@ class IncidentEscalationHandler(JobHandler):
             # Escalating that to a full RCA produces a confidently-worded but
             # WRONG "structurally broken" verdict (2026-07-08 incident: skill_view
             # was blamed this way — see project_skill_view_false_incident_rejected
-            # memory). Require at least one row where failed_capability itself
-            # resolves to this capability — real, specific evidence — before
-            # opening an incident for it.
-            if not self._has_precise_attribution(cluster):
+            # memory).
+            #
+            # 2026-07-08 follow-up (shell misattribution): requiring only ONE
+            # precisely-attributed row let a cluster with 1 real row + many
+            # noise rows still escalate — and ALL of cluster.outcomes (including
+            # the noise) was fed to the RCA as "evidence", so the analyzer
+            # concluded shell was a common thread across turns where a
+            # DIFFERENT tool (owl_build, skill_manage) was the actual, self-
+            # reported failure. Fix: gate AND build evidence from the
+            # precisely-attributed subset only — one real occurrence is not
+            # "recurring", and noise rows must never dilute the narrative.
+            precise_outcomes = self._precisely_attributed_outcomes(cluster)
+            if len(precise_outcomes) < self._recurrence_threshold:
                 log.scheduler.info(
-                    "[scheduler] incident_escalation: co-occurrence-only cluster "
-                    "— skipping (no row precisely attributes this capability)",
+                    "[scheduler] incident_escalation: too few precisely-attributed "
+                    "rows to recur on — skipping (co-occurrence noise diluted the "
+                    "raw cluster)",
                     extra={"_fields": {
                         "capability": cluster.capability_class,
                         "failure_class": cluster.failure_class,
-                        "size": cluster.size,
+                        "cluster_size": cluster.size,
+                        "precise_count": len(precise_outcomes),
+                        "threshold": self._recurrence_threshold,
                     }},
                 )
                 continue
             samples = tuple(
                 f"- trace={o.trace_id} tools={list(o.tool_sequence)} "
                 f"failure_class={o.failure_class} input={(o.input_text or '')[:120]!r}"
-                for o in cluster.outcomes[:5]
+                for o in precise_outcomes[:5]
             )
             incidents[sig] = _Incident(
                 signature=sig,
                 capability_class=cluster.capability_class,
                 failure_class=cluster.failure_class,
                 kind="outcome",
-                parent_trace_ids=tuple(o.trace_id for o in cluster.outcomes[:10]),
+                parent_trace_ids=tuple(o.trace_id for o in precise_outcomes[:10]),
                 brief=(
-                    f"{cluster.size} failed task outcomes for capability "
+                    f"{len(precise_outcomes)} failed task outcomes for capability "
                     f"'{cluster.capability_class}' all with failure_class "
                     f"'{cluster.failure_class}' within the last "
                     f"{self._lookback_days}d — recurring past the in-turn "
@@ -471,9 +483,10 @@ class IncidentEscalationHandler(JobHandler):
             )
         return incidents
 
-    def _has_precise_attribution(self, cluster: FailureCluster) -> bool:
-        """True unless EVERY outcome in *cluster* is only an ambiguous
-        co-occurrence credit for this capability.
+    def _precisely_attributed_outcomes(self, cluster: FailureCluster) -> list[TaskOutcome]:
+        """The SUBSET of *cluster*'s outcomes that are real evidence for
+        ``cluster.capability_class`` — filtering out ambiguous co-occurrence
+        credits before they ever reach an incident brief or the RCA analyzer.
 
         A row counts as real evidence when either: (a) ``failed_capability``
         itself names this capability (an actual unrecovered/raised failure was
@@ -482,7 +495,7 @@ class IncidentEscalationHandler(JobHandler):
         and "blamed because it's the only suspect" are the same thing (a
         single-tool turn has no fan-out to be wrong about).
 
-        What this rejects: a row from a long, multi-capability turn where
+        What this excludes: a row from a long, multi-capability turn where
         ``failed_capability`` is ``None`` (the failure was never pinned on a
         specific tool — e.g. a goal-level acceptance refutation) AND several
         DIFFERENT capabilities appear in ``tool_sequence``. Crediting every one
@@ -491,21 +504,22 @@ class IncidentEscalationHandler(JobHandler):
         for an incident it had nothing to do with — see
         project_skill_view_false_incident_rejected memory (2026-07-08).
         """
+        precise: list[TaskOutcome] = []
         for o in cluster.outcomes:
             if o.failed_capability is not None:
                 if (
                     _capability_class_for(o.failed_capability, self._capability_tag_lookup)
                     == cluster.capability_class
                 ):
-                    return True
+                    precise.append(o)
                 continue
             row_capabilities = {
                 _capability_class_for(tool, self._capability_tag_lookup)
                 for tool in o.tool_sequence
             }
             if row_capabilities == {cluster.capability_class}:
-                return True
-        return False
+                precise.append(o)
+        return precise
 
     async def _consume_verdict(
         self, inc: _Incident, verdict: RcaVerdict, kind: Literal["fix", "alternative"],

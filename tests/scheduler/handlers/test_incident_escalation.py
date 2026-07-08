@@ -301,6 +301,73 @@ async def test_single_tool_turns_still_open_a_real_incident() -> None:
     assert result.metadata["analyzed"] == 1
 
 
+def _precise_outcome(trace: str, tool: str, *, failure_class: str = "unachieved_effect") -> TaskOutcome:
+    """A row with ``failed_capability`` genuinely pinned — real evidence."""
+    return TaskOutcome(
+        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        channel="cli", success=False, latency_ms=1.0, tool_call_count=1,
+        failure_class=failure_class, quality_score=None, step_durations={},
+        input_text="do the thing", response_text="", captured_at=0.0,
+        scored_at=None, tool_sequence=(tool,), failed_capability=tool,
+    )
+
+
+@pytest.mark.asyncio
+async def test_one_real_row_diluted_by_noise_does_not_escalate() -> None:
+    """2026-07-08 shell-misattribution incident: a cluster can clear the raw
+    min_size (3) with only ONE genuinely-attributed row plus co-occurrence
+    noise rows (a DIFFERENT tool actually failed each time, shell just rode
+    along in a sprawling multi-tool turn). One real occurrence is not
+    "recurring" — must NOT escalate."""
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _precise_outcome("real1", "shell"),
+        _sprawling_outcome("noise1", tools=("shell", "owl_build")),
+        _sprawling_outcome("noise2", tools=("shell", "skill_manage")),
+    ]
+    rca = _RecordingRca()
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=rca,  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(_job())
+
+    assert rca.calls == []
+    assert ("shell", "unachieved_effect") not in handler.verdicts
+    assert result.metadata["analyzed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_evidence_excludes_co_occurrence_noise_rows() -> None:
+    """When there ARE enough real rows to escalate, the evidence handed to the
+    RCA analyzer must contain ONLY the precisely-attributed rows — noise rows
+    must not dilute/mislead the root-cause narrative with unrelated traces."""
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _precise_outcome("real1", "shell"),
+        _precise_outcome("real2", "shell"),
+        _precise_outcome("real3", "shell"),
+        _sprawling_outcome("noise1", tools=("shell", "owl_build")),
+        _sprawling_outcome("noise2", tools=("shell", "skill_manage")),
+    ]
+    rca = _RecordingRca()
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=rca,  # type: ignore[arg-type]
+    )
+
+    await handler.execute(_job())
+
+    assert len(rca.calls) == 1
+    evidence = rca.calls[0]
+    assert set(evidence.parent_trace_ids) == {"real1", "real2", "real3"}
+    assert "noise1" not in evidence.brief
+    assert "noise2" not in evidence.brief
+
+
 # --------------------------------------------------------------------------- #
 # Review Finding 1 — masked-recurring-substitution (the arc's central antipattern:
 # a permanent fallback with zero retry) must be DETECTED even though every turn
