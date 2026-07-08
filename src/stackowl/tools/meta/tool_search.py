@@ -132,12 +132,23 @@ class ToolSearchTool(Tool):
             log.tool.warning("tool_search.execute: no tool_registry in services — empty result")
             return ToolResult(success=True, output="(no tools available)", duration_ms=(time.monotonic() - t0) * 1000)
 
-        # 3. STEP — build catalog (exclude self) and rank
-        entries = [
-            CatalogEntry(t.name, t.description, t.manifest.consent_category)
-            for t in registry.all()
-            if t.name != _SELF_NAME
-        ]
+        # 3. STEP — build catalog (exclude self) and rank. Isolated per-entry: a
+        # single tool whose .manifest/.description/.name raises (a bad subclass
+        # override, a lazy-import failure, etc.) must never poison the WHOLE
+        # catalog build — that turned every tool_search call into a hard failure
+        # regardless of query, since this list comprehension used to have no
+        # per-entry exception boundary (see tool_describe.py for the same fix).
+        entries: list[CatalogEntry] = []
+        for t in registry.all():
+            if t.name == _SELF_NAME:
+                continue
+            try:
+                entries.append(CatalogEntry(t.name, t.description, t.manifest.consent_category))
+            except Exception as exc:
+                log.tool.error(
+                    "tool_search.execute: skipping tool with broken manifest",
+                    exc_info=exc, extra={"_fields": {"tool": t.name}},
+                )
         ranked = rank_tools(entries, query, limit)
         if ranked:
             lines = [f"- {e.name}: {e.description.splitlines()[0] if e.description else ''}" for e in ranked]

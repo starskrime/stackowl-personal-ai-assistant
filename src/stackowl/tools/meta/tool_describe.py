@@ -69,8 +69,22 @@ class ToolDescribeTool(Tool):
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
 
-        # 3. STEP — assemble the description from the tool's own (Pydantic-derived) schema
-        manifest = tool.manifest
+        # 3. STEP — assemble the description from the tool's own (Pydantic-derived)
+        # schema. Isolated: a broken .manifest override must surface as a
+        # structured failure, not an unhandled exception (see tool_search.py for
+        # the shared root cause / matching fix).
+        try:
+            manifest = tool.manifest
+        except Exception as exc:
+            log.tool.error(
+                "tool_describe.execute: manifest access failed",
+                exc_info=exc, extra={"_fields": {"name": tool.name}},
+            )
+            return ToolResult(
+                success=False, output="",
+                error=f"Tool {name!r} has a broken manifest and cannot be described.",
+                duration_ms=(time.monotonic() - t0) * 1000,
+            )
         payload = {
             "name": tool.name,
             "description": tool.description,

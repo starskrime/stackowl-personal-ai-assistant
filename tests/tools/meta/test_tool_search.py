@@ -148,3 +148,56 @@ async def test_tool_no_registry_is_self_healing() -> None:
 
 def test_tool_severity_is_read() -> None:
     assert ToolSearchTool().manifest.action_severity == "read"
+
+
+class _BrokenManifestTool(Tool):
+    """A tool whose .manifest raises AFTER registration — simulates a lazily
+    computed manifest that degrades post-boot (register() itself reads
+    .manifest once at registration time, so a permanently-broken manifest
+    could never even get registered — this models the more realistic
+    intermittent case). Regression for the incident where one such tool
+    crashed every tool_search call regardless of query (RCA: unachieved_effect,
+    isolated to tool_search across 6 invocations / 7 days)."""
+
+    def __init__(self) -> None:
+        self.broken = False
+
+    @property
+    def name(self) -> str:
+        return "broken"
+
+    @property
+    def description(self) -> str:
+        return "a tool that is broken"
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {}}
+
+    @property
+    def manifest(self):  # type: ignore[override]
+        if self.broken:
+            raise RuntimeError("simulated broken manifest")
+        return super().manifest
+
+    async def execute(self, **kwargs: object) -> ToolResult:
+        return ToolResult(success=True, output="x", duration_ms=1.0)
+
+
+async def test_tool_search_skips_broken_manifest_not_crashes() -> None:
+    from stackowl.pipeline.services import StepServices, reset_services, set_services
+
+    reg = ToolRegistry()
+    reg.register(_StubTool("pdf", "extract text from a pdf"))
+    broken_tool = _BrokenManifestTool()
+    reg.register(broken_tool)
+    broken_tool.broken = True  # degrade AFTER registration succeeded
+    reg.register(ToolSearchTool())
+    token = set_services(StepServices(tool_registry=reg))
+    try:
+        result = await ToolSearchTool().execute(query="pdf")
+    finally:
+        reset_services(token)
+    assert result.success
+    assert "pdf" in result.output
+    assert "broken" not in result.output

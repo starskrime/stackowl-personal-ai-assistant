@@ -77,6 +77,38 @@ async def test_describe_no_registry_is_self_healing() -> None:
     assert result.error is not None
 
 
+class _BrokenManifestTool(_StubTool):
+    """A tool whose .manifest raises AFTER registration — register() itself
+    reads .manifest once at registration time, so a permanently-broken
+    manifest could never even get registered; this models the more realistic
+    intermittent case. Regression for the shared root cause with tool_search
+    (see test_tool_search.py's matching test)."""
+
+    def __init__(self, *a: object, **kw: object) -> None:
+        super().__init__(*a, **kw)  # type: ignore[arg-type]
+        self.broken = False
+
+    @property
+    def manifest(self) -> ToolManifest:  # type: ignore[override]
+        if self.broken:
+            raise RuntimeError("simulated broken manifest")
+        return super().manifest
+
+
+async def test_describe_broken_manifest_is_structured_not_raise() -> None:
+    reg = ToolRegistry()
+    broken_tool = _BrokenManifestTool("broken")
+    reg.register(broken_tool)
+    broken_tool.broken = True  # degrade AFTER registration succeeded
+    token = set_services(StepServices(tool_registry=reg))
+    try:
+        result = await ToolDescribeTool().execute(name="broken")
+    finally:
+        reset_services(token)
+    assert result.success is False
+    assert "broken" in (result.error or "")
+
+
 async def test_describe_tool_with_no_params() -> None:
     class _NoParams(_StubTool):
         @property
