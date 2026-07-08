@@ -580,7 +580,10 @@ class StartupOrchestrator:
         from stackowl.audit.logger import AuditLogger
         from stackowl.channels.base import ChannelAdapter
         from stackowl.channels.cli_adapter import CLIAdapter
-        from stackowl.channels.socket_adapter import SocketChannelAdapter
+        from stackowl.channels.socket_adapter import (
+            SocketChannelAdapter,
+            resolve_ephemeral_sent,
+        )
         from stackowl.commands.registry import CommandRegistry
         from stackowl.commands.response import CommandResponse
         from stackowl.exceptions import CommandNotFoundError
@@ -590,6 +593,7 @@ class StartupOrchestrator:
         from stackowl.ipc.frames import (
             ClarifyReplyFrame,
             ConsentResponseFrame,
+            EphemeralSentFrame,
             HelloFrame,
             IngressFrame,
             RestartNoticeFrame,
@@ -2307,6 +2311,12 @@ class StartupOrchestrator:
                         # (or is denied).
                         if socket_consent_prompter is not None:
                             socket_consent_prompter.resolve(frame.consent_id, frame.scope)
+                        continue
+                    if isinstance(frame, EphemeralSentFrame):
+                        # The gateway reports the real message_id for a pending
+                        # send_ephemeral (e.g. telegram_canary) — resolve it so
+                        # the caller can delete the probe for real.
+                        resolve_ephemeral_sent(frame.request_id, frame.message_id)
                         continue
                     if isinstance(frame, ClarifyReplyFrame):
                         # A tapped clarify button on the gateway — resolve the

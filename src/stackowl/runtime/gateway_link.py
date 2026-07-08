@@ -38,10 +38,13 @@ from stackowl.ipc.frames import (
     ClarifyAskFrame,
     ConsentRequestFrame,
     ConsentResponseFrame,
+    DeleteMessageFrame,
+    EphemeralSentFrame,
     GoodbyeFrame,
     HelloFrame,
     ProgressEventFrame,
     RestartNoticeFrame,
+    SendEphemeralFrame,
     SendFileFrame,
     SendTextFrame,
 )
@@ -70,6 +73,12 @@ class _Adapter(Protocol):
     async def send_file(  # noqa: D102
         self, file_path: str, caption: str | None = ..., *, chat_id: str | int | None = ...
     ) -> None: ...
+
+    async def send_ephemeral(self, chat_id: str | int, text: str) -> int: ...  # noqa: D102
+
+    async def delete_message(  # noqa: D102
+        self, chat_id: str | int, message_id: int
+    ) -> bool: ...
 
 
 class _EventSink(Protocol):
@@ -379,6 +388,15 @@ class GatewayLink:
             task = asyncio.create_task(self._handle_consent(frame))
             self._aux_tasks.add(task)
             task.add_done_callback(self._aux_tasks.discard)
+        elif isinstance(frame, SendEphemeralFrame):
+            task = asyncio.create_task(self._handle_send_ephemeral(frame))
+            self._aux_tasks.add(task)
+            task.add_done_callback(self._aux_tasks.discard)
+        elif isinstance(frame, DeleteMessageFrame):
+            adapter = self._adapters.get(frame.channel)
+            if adapter is not None:
+                with contextlib.suppress(Exception):
+                    await adapter.delete_message(frame.target, frame.message_id)
         elif isinstance(frame, ProgressEventFrame):
             if self._event_bus is not None:
                 self._event_bus.emit(frame.event, frame.payload)
@@ -444,5 +462,37 @@ class GatewayLink:
                 await self._conn.send(
                     ConsentResponseFrame(
                         consent_id=frame.consent_id, scope=scope.value
+                    )
+                )
+
+    async def _handle_send_ephemeral(self, frame: SendEphemeralFrame) -> None:
+        """Send a muted probe on the real adapter and report its message_id back.
+
+        Spawned (never inline) so a slow/failing send can't stall the frame
+        loop's other traffic. ``message_id`` stays ``-1`` (sentinel — nothing
+        deletable) on a missing adapter or send failure; the core's
+        ``send_ephemeral`` caller already tolerates that as a fallback.
+        """
+        adapter = self._adapters.get(frame.channel)
+        message_id = -1
+        if adapter is None:
+            log.gateway.error(
+                "[ipc] gateway link: ephemeral send for unregistered channel",
+                extra={"_fields": {"channel": frame.channel, "request_id": frame.request_id}},
+            )
+        else:
+            try:
+                message_id = await adapter.send_ephemeral(frame.target, frame.text)
+            except Exception as exc:  # noqa: BLE001 — report sentinel id, never crash the link
+                log.gateway.error(
+                    "[ipc] gateway link: ephemeral send failed",
+                    exc_info=exc,
+                    extra={"_fields": {"channel": frame.channel, "request_id": frame.request_id}},
+                )
+        if self._conn is not None:
+            with contextlib.suppress(Exception):
+                await self._conn.send(
+                    EphemeralSentFrame(
+                        request_id=frame.request_id, message_id=message_id
                     )
                 )

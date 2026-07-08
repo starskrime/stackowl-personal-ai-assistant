@@ -22,19 +22,42 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from stackowl.channels.base import ChannelAdapter
 from stackowl.exceptions import ChannelAlreadyRegisteredError, ChannelNotFoundError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
-from stackowl.ipc.frames import ClarifyAskFrame, SendFileFrame, SendTextFrame
+from stackowl.ipc.frames import (
+    ClarifyAskFrame,
+    DeleteMessageFrame,
+    SendEphemeralFrame,
+    SendFileFrame,
+    SendTextFrame,
+)
 from stackowl.ipc.stream_bridge import chunk_to_frame
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.channels.registry import ChannelRegistry
     from stackowl.config.settings import Settings
+
+_EPHEMERAL_ACK_TIMEOUT_SECONDS = 10.0
+
+# One process-wide waiter map: the core process has exactly one gateway
+# connection, so a SendEphemeralFrame's request_id is enough to correlate the
+# gateway's EphemeralSentFrame reply back to the awaiting caller regardless of
+# which per-channel SocketChannelAdapter instance sent it.
+_ephemeral_waiters: dict[str, asyncio.Future[int]] = {}
+
+
+def resolve_ephemeral_sent(request_id: str, message_id: int) -> None:
+    """Resolve a pending ``send_ephemeral`` call from an inbound EphemeralSentFrame."""
+    future = _ephemeral_waiters.get(request_id)
+    if future is None or future.done():
+        return
+    future.set_result(message_id)
 
 
 class SocketChannelAdapter(ChannelAdapter):
@@ -93,38 +116,66 @@ class SocketChannelAdapter(ChannelAdapter):
         )
 
     async def send_ephemeral(self, chat_id: str | int, text: str) -> int:
-        """Emit ``text`` as a normal SendTextFrame — the health-canary path.
+        """Round-trip a muted/self-deleting send through the gateway's real adapter.
 
-        ponytail: the real telegram adapter's ``send_ephemeral`` sends silent
-        (muted) and returns a real message_id so the caller can delete it
-        after confirming the send path works. The existing SendTextFrame
-        protocol is fire-and-forget (no reply frame — same tradeoff already
-        accepted for ``send_text``/``send_file`` in this class), so a message
-        sent cross-process cannot be silenced or deleted from here. The
-        caller's cleanup (``ProactiveDeliverer._best_effort_delete``) already
-        tolerates a delete failure as cosmetic-only, so returning a sentinel
-        id is safe — it just means the canary's probe message stays visible
-        instead of self-deleting. Upgrade path: a correlated ack/reply frame
-        carrying the gateway's real message_id, same as the send-outcome
-        upgrade noted in ``register_socket_channel_proxies``.
+        Sends a ``SendEphemeralFrame`` and awaits the correlated
+        ``EphemeralSentFrame`` (resolved by :func:`resolve_ephemeral_sent` from
+        the core frame loop) carrying the gateway's real Telegram message_id, so
+        a later ``delete_message`` can actually remove it. Falls back to the
+        ``-1`` sentinel (message never deletable) on timeout or send failure —
+        the caller's cleanup already tolerates a delete no-op as cosmetic-only.
         """
-        await self.send_text(text, chat_id=chat_id)
-        return -1
+        request_id = uuid4().hex
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[int] = loop.create_future()
+        _ephemeral_waiters[request_id] = future
+        log.tool.debug(
+            "socket_adapter.send_ephemeral: entry",
+            extra={"_fields": {"request_id": request_id, "channel": self._channel}},
+        )
+        try:
+            await self._conn.send(
+                SendEphemeralFrame(
+                    request_id=request_id,
+                    channel=self._channel,
+                    text=text,
+                    target=chat_id,
+                )
+            )
+            message_id = await asyncio.wait_for(
+                future, timeout=_EPHEMERAL_ACK_TIMEOUT_SECONDS
+            )
+            log.tool.debug(
+                "socket_adapter.send_ephemeral: exit",
+                extra={"_fields": {"request_id": request_id, "message_id": message_id}},
+            )
+            return message_id
+        except Exception as exc:  # noqa: BLE001 — probe send must never crash the canary tick
+            log.tool.error(
+                "socket_adapter.send_ephemeral: no ack — falling back to sentinel id",
+                exc_info=exc,
+                extra={"_fields": {"request_id": request_id, "channel": self._channel}},
+            )
+            return -1
+        finally:
+            _ephemeral_waiters.pop(request_id, None)
 
     async def delete_message(self, chat_id: str | int, message_id: int) -> bool:
-        """No-op cleanup for a cross-process ephemeral send.
+        """Fire-and-forget delete of a previously-sent ephemeral message.
 
-        ponytail: mirrors ``send_ephemeral`` above — this proxy has no ack
-        frame carrying a real message_id (``send_ephemeral`` always returns
-        the ``-1`` sentinel), so there is nothing on the gateway side this
-        call could identify to delete. ``_best_effort_delete`` already
-        treats a delete failure as cosmetic-only; returning ``False`` here
-        (instead of raising ``AttributeError``) avoids logging a per-tick
-        ERROR for an outcome that is not actually a failure. Same upgrade
-        path as ``send_ephemeral``: a correlated ack frame would let this
-        delete for real.
+        No reply frame round-trips back — mirrors the real adapter's own
+        ``delete_message`` contract (a delete failure is cosmetic cleanup, not a
+        delivery failure). ``message_id < 0`` means ``send_ephemeral`` never got
+        a real id (sentinel fallback), so there is nothing to delete.
         """
-        return False
+        if message_id < 0:
+            return False
+        await self._conn.send(
+            DeleteMessageFrame(
+                channel=self._channel, target=chat_id, message_id=message_id
+            )
+        )
+        return True
 
     async def send_clarify(
         self,

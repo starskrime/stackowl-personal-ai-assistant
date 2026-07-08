@@ -148,6 +148,42 @@ class SendFileFrame(_Frame):
     target: int | str | None = None
 
 
+class SendEphemeralFrame(_Frame):
+    """Core -> gateway: send a muted, self-deleting probe text (e.g. telegram_canary).
+
+    ``request_id`` correlates the gateway's reply (:class:`EphemeralSentFrame`)
+    back to the core-side caller awaiting the real message_id.
+    """
+
+    type: Literal["send_ephemeral"] = "send_ephemeral"
+    request_id: str
+    channel: str
+    text: str
+    target: int | str
+
+
+class EphemeralSentFrame(_Frame):
+    """Gateway -> core: the real message_id for a SendEphemeralFrame (by request_id)."""
+
+    type: Literal["ephemeral_sent"] = "ephemeral_sent"
+    request_id: str
+    message_id: int
+
+
+class DeleteMessageFrame(_Frame):
+    """Core -> gateway: delete a previously-sent ephemeral message.
+
+    Fire-and-forget — mirrors the real adapter's own ``delete_message`` contract
+    (a delete failure is cosmetic cleanup, never a delivery failure), so no reply
+    frame round-trips back.
+    """
+
+    type: Literal["delete_message"] = "delete_message"
+    channel: str
+    target: int | str
+    message_id: int
+
+
 class ProgressEventFrame(_Frame):
     """Core -> gateway: a UI progress event (e.g. pipeline_step_changed) as a dict.
 
@@ -237,6 +273,9 @@ Frame = Annotated[
     | RunningStateFrame
     | SendTextFrame
     | SendFileFrame
+    | SendEphemeralFrame
+    | EphemeralSentFrame
+    | DeleteMessageFrame
     | ProgressEventFrame
     | ClarifyAskFrame
     | ClarifyReplyFrame

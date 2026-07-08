@@ -19,21 +19,30 @@ from stackowl.channels.registry import ChannelRegistry
 from stackowl.channels.socket_adapter import (
     configured_gateway_channels,
     register_socket_channel_proxies,
+    resolve_ephemeral_sent,
 )
 from stackowl.config.settings import Settings
 from stackowl.exceptions import ChannelNotFoundError
 from stackowl.ipc.connection import FrameConnection
-from stackowl.ipc.frames import SendTextFrame
+from stackowl.ipc.frames import DeleteMessageFrame, SendEphemeralFrame, SendTextFrame
 
 
 class _FakeConn:
-    """Collects frames the proxy emits (stands in for the gateway socket)."""
+    """Collects frames the proxy emits (stands in for the gateway socket).
+
+    Auto-acks a ``SendEphemeralFrame`` with ``next_message_id`` — simulating the
+    gateway's instant ``EphemeralSentFrame`` reply — so tests can await
+    ``send_ephemeral`` without a real socket round-trip.
+    """
 
     def __init__(self) -> None:
         self.sent: list[object] = []
+        self.next_message_id = 4242
 
     async def send(self, frame: object) -> None:
         self.sent.append(frame)
+        if isinstance(frame, SendEphemeralFrame):
+            resolve_ephemeral_sent(frame.request_id, self.next_message_id)
 
 
 def _settings(**k: object) -> Settings:
@@ -97,34 +106,76 @@ async def test_proxy_resolves_and_emits_frame_across_socket() -> None:
 
 
 @pytest.mark.asyncio
-async def test_proxy_send_ephemeral_does_not_crash_the_canary() -> None:
+async def test_proxy_send_ephemeral_round_trips_real_message_id() -> None:
     """telegram_canary's health-canary send calls send_ephemeral(chat_id, text)
-    on whatever adapter it resolves — a proxy missing this method crashed the
-    canary every 20m in production (AttributeError). The proxy can't silence
-    or self-delete cross-process (no ack frame back), but it MUST still send
-    the text and return an int id rather than raising."""
+    on whatever adapter it resolves. The proxy round-trips a SendEphemeralFrame
+    to the gateway and awaits the correlated EphemeralSentFrame reply carrying
+    the gateway's real Telegram message_id, so a later delete_message can
+    actually remove the probe (fixes the canary staying visible forever)."""
     registry = ChannelRegistry()
     conn = _FakeConn()
+    conn.next_message_id = 777
     register_socket_channel_proxies(registry, cast(FrameConnection, conn), _settings(telegram="tok"))
     adapter = registry.get("telegram")
 
     message_id = await adapter.send_ephemeral(99, "canary probe")
 
-    assert isinstance(message_id, int)
+    assert message_id == 777
     assert len(conn.sent) == 1
     frame = conn.sent[0]
-    assert isinstance(frame, SendTextFrame)
+    assert isinstance(frame, SendEphemeralFrame)
     assert frame.text == "canary probe"
     assert frame.target == 99
 
 
 @pytest.mark.asyncio
-async def test_proxy_delete_message_does_not_crash_cleanup() -> None:
-    """_best_effort_delete calls delete_message(chat_id, message_id) on whatever
-    adapter send_ephemeral resolved to — a proxy missing this method raised
-    AttributeError on every ephemeral send in production (caught, but logged
-    as an ERROR every tick). The proxy has no ack frame to identify a real
-    message to delete, so it must return False rather than raising."""
+async def test_proxy_send_ephemeral_falls_back_to_sentinel_on_no_ack() -> None:
+    """No EphemeralSentFrame ever arrives (e.g. gateway down) -> timeout, not a crash."""
+    registry = ChannelRegistry()
+
+    class _SilentConn(_FakeConn):
+        async def send(self, frame: object) -> None:  # never acks
+            self.sent.append(frame)
+
+    conn = _SilentConn()
+    register_socket_channel_proxies(registry, cast(FrameConnection, conn), _settings(telegram="tok"))
+    adapter = registry.get("telegram")
+
+    from stackowl.channels import socket_adapter as socket_adapter_module
+
+    original_timeout = socket_adapter_module._EPHEMERAL_ACK_TIMEOUT_SECONDS
+    socket_adapter_module._EPHEMERAL_ACK_TIMEOUT_SECONDS = 0.05
+    try:
+        message_id = await adapter.send_ephemeral(99, "canary probe")
+    finally:
+        socket_adapter_module._EPHEMERAL_ACK_TIMEOUT_SECONDS = original_timeout
+
+    assert message_id == -1
+
+
+@pytest.mark.asyncio
+async def test_proxy_delete_message_sends_delete_frame_for_real_id() -> None:
+    """delete_message with a real (gateway-acked) message_id fires a
+    DeleteMessageFrame across the socket so the gateway can actually delete it."""
+    registry = ChannelRegistry()
+    conn = _FakeConn()
+    register_socket_channel_proxies(registry, cast(FrameConnection, conn), _settings(telegram="tok"))
+    adapter = registry.get("telegram")
+
+    result = await adapter.delete_message(99, 777)
+
+    assert result is True
+    assert len(conn.sent) == 1
+    frame = conn.sent[0]
+    assert isinstance(frame, DeleteMessageFrame)
+    assert frame.channel == "telegram"
+    assert frame.target == 99
+    assert frame.message_id == 777
+
+
+@pytest.mark.asyncio
+async def test_proxy_delete_message_noop_for_sentinel_id() -> None:
+    """message_id < 0 means send_ephemeral never got a real id — nothing to delete."""
     registry = ChannelRegistry()
     conn = _FakeConn()
     register_socket_channel_proxies(registry, cast(FrameConnection, conn), _settings(telegram="tok"))
@@ -133,6 +184,7 @@ async def test_proxy_delete_message_does_not_crash_cleanup() -> None:
     result = await adapter.delete_message(99, -1)
 
     assert result is False
+    assert len(conn.sent) == 0
 
 
 @pytest.mark.asyncio
