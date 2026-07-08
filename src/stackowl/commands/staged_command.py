@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.commands.staged_helpers import (
     find_staged_by_id,
     format_review,
@@ -105,7 +106,7 @@ class StagedCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _STAGED_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         # 1. ENTRY
         log.memory.debug(
             "[commands] staged.handle: entry",
@@ -130,6 +131,8 @@ class StagedCommand(SlashCommand):
                 result = await self._reject(rest)
             elif sub == "promote":
                 result = await self._promote(rest)
+            elif sub == "menu":
+                result = await self._menu(rest)
             else:
                 log.memory.debug(
                     "[commands] staged.handle: unknown subcommand",
@@ -145,15 +148,16 @@ class StagedCommand(SlashCommand):
             )
             return f"✗ /staged {sub}: {exc}"
         # 4. EXIT
+        out_text = result.text if isinstance(result, CommandResponse) else result
         log.memory.debug(
             "[commands] staged.handle: exit",
-            extra={"_fields": {"sub": sub, "out_len": len(result)}},
+            extra={"_fields": {"sub": sub, "out_len": len(out_text)}},
         )
         return result
 
     # --- subcommands ---------------------------------------------------------
 
-    async def _list(self, rest: str) -> str:
+    async def _list(self, rest: str) -> str | CommandResponse:
         assert self._bridge is not None  # guarded by handle()
         log.memory.debug(
             "[commands] staged.list: entry",
@@ -170,11 +174,52 @@ class StagedCommand(SlashCommand):
             extra={"_fields": {"status": status, "count": len(facts)}},
         )
         out = format_staged_table(facts, status)
+        if not facts:
+            log.memory.debug("[commands] staged.list: exit — empty", extra={"_fields": {"count": 0}})
+            return out
+        actions = tuple(
+            Action(
+                label=f.content if len(f.content) <= 40 else f.content[:37] + "...",
+                command=f"/staged menu {f.fact_id}",
+                destructive=False,
+            )
+            for f in facts
+        )
         log.memory.debug(
             "[commands] staged.list: exit",
             extra={"_fields": {"count": len(facts)}},
         )
-        return out
+        return CommandResponse(text=out, actions=actions)
+
+    async def _menu(self, rest: str) -> str | CommandResponse:
+        assert self._bridge is not None  # guarded by handle()
+        log.memory.debug(
+            "[commands] staged.menu: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        fact_id = rest.strip().split(maxsplit=1)[0] if rest.strip() else ""
+        if not fact_id:
+            return "Usage: /staged menu <fact_id>"
+        fact = await find_staged_by_id(self._bridge, fact_id)
+        if fact is None:
+            log.memory.debug(
+                "[commands] staged.menu: not found",
+                extra={"_fields": {"fact_id_prefix": fact_id[:16]}},
+            )
+            return f"✗ Staged fact not found: '{fact_id}'"
+        text = format_review(fact)
+        actions = (
+            Action(label="Promote", command=f"/staged promote {fact.fact_id}", destructive=False),
+            Action(
+                label="Reject",
+                command=f"/staged reject {fact.fact_id} {_CONFIRMATION}",
+                destructive=True,
+            ),
+        )
+        log.memory.debug(
+            "[commands] staged.menu: exit", extra={"_fields": {"fact_id": fact.fact_id}}
+        )
+        return CommandResponse(text=text, actions=actions)
 
     async def _review(self, rest: str) -> str:
         assert self._bridge is not None  # guarded by handle()

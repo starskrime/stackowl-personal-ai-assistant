@@ -87,6 +87,51 @@ async def test_staged_list_returns_table(
     assert "important knowledge" in result or fact.fact_id[:8] in result
 
 
+async def test_staged_list_actions_open_menu(
+    reg: CommandRegistry, bridge: FakeBridge
+) -> None:
+    """dispatch 'staged list' → one Action per row pointing at /staged menu <fact_id>."""
+    fact = make_staged(fact_id="ccddeeff-0000-0000-0000-000000000002", content="row fact")
+    bridge.seed("staged", fact)
+
+    state = make_state()
+    response = await reg.dispatch("staged", "list", state)
+
+    assert any(
+        a.command == f"/staged menu {fact.fact_id}" and not a.destructive
+        for a in response.actions
+    )
+
+
+async def test_staged_menu_shows_review_and_actions(
+    reg: CommandRegistry, bridge: FakeBridge
+) -> None:
+    """dispatch 'staged menu <id>' → review text + Promote (safe) and Reject (destructive)."""
+    fact = make_staged(fact_id="11223344-0000-0000-0000-000000000003", content="menu me")
+    bridge.seed("staged", fact)
+
+    state = make_state()
+    response = await reg.dispatch("staged", f"menu {fact.fact_id}", state)
+
+    assert fact.fact_id in response.text
+    promote = next(a for a in response.actions if a.label == "Promote")
+    assert promote.command == f"/staged promote {fact.fact_id}"
+    assert not promote.destructive
+    reject = next(a for a in response.actions if a.label == "Reject")
+    assert reject.command == f"/staged reject {fact.fact_id} YES"
+    assert reject.destructive
+
+
+async def test_staged_menu_bogus_id_returns_not_found(
+    reg: CommandRegistry, bridge: FakeBridge
+) -> None:
+    """dispatch 'staged menu bogus-id' → honest not-found, no crash."""
+    state = make_state()
+    result = (await reg.dispatch("staged", "menu bogus-id-does-not-exist", state)).text
+
+    assert "not found" in result.lower() or "✗" in result
+
+
 async def test_staged_not_configured_when_bridge_none() -> None:
     """dispatch 'staged list' with no bridge → honest not-configured message."""
     CommandRegistry.reset()

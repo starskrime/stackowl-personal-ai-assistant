@@ -28,6 +28,11 @@ def _reset_registry() -> None:
     CommandRegistry.reset()
 
 
+def _text(out: object) -> str:
+    """Unwrap a CommandResponse to its text, or pass through a plain str."""
+    return out.text if hasattr(out, "text") else out  # type: ignore[return-value]
+
+
 # ---------------------------------------------------------------------------
 # StagedCommand — list / review / reject / promote
 # ---------------------------------------------------------------------------
@@ -38,7 +43,7 @@ async def test_staged_list_calls_list_staged_with_default_status() -> None:
     bridge = FakeBridge()
     bridge.seed("staged", make_staged())
     cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = await cmd.handle("list", make_state())
+    out = _text(await cmd.handle("list", make_state()))
     assert bridge.list_calls == ["staged"]
     assert "alpha bravo" in out
 
@@ -48,7 +53,7 @@ async def test_staged_list_with_status_committed() -> None:
     bridge = FakeBridge()
     bridge.seed("committed", make_staged(content="long-term", status="committed"))
     cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = await cmd.handle("list --status committed", make_state())
+    out = _text(await cmd.handle("list --status committed", make_state()))
     assert bridge.list_calls == ["committed"]
     assert "long-term" in out
 
