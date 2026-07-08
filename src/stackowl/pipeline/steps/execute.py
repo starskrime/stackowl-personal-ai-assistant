@@ -1207,7 +1207,27 @@ async def _run_with_tools(
         t = tool_registry.get(name)
         if t is None:
             log.engine.warning("[pipeline] execute: unknown tool in dispatch", extra={"_fields": {"tool": name}})
-            return f"Tool not found: {name}"
+            # RC1 self-extension fix (2026-07-08) — an unknown tool name is the
+            # clearest possible "capability doesn't exist" signal. Previously this
+            # returned a bare, un-marked string that bypassed the ledger, the
+            # TurnProgressTracker circuit breaker, and the LLM delivery-judge's
+            # failed/ok signal (summarize_tool_outcomes) alike — nothing in the
+            # platform could tell this apart from an ordinary successful call.
+            # Route it through the SAME pre-execution-refusal shape already used
+            # for a missing required parameter a few lines below: ledger'd as a
+            # non-effectful failure (nothing ran — side_effect_committed=False),
+            # counted by the same-tool circuit breaker, and marked with the
+            # structural TOOL_FAILED_MARKER so both is_structural_giveup and the
+            # LLM judge see a real failure instead of a silent no-op.
+            tool_outcome_ledger.record_tool_outcome(
+                name=name, action_severity="read", success=False, side_effect_committed=False,
+            )
+            progress.record_no_progress(name)
+            return (
+                f"{TOOL_FAILED_MARKER}Tool '{name}' does not exist. Do not call it again — "
+                "if this capability is missing, build it with tool_build (or author a "
+                "skill) and use the new tool, or use a different existing capability."
+            )
         # E0-S1 — consent gate runs BEFORE execution for consequential tools.
         # The category is derived inside gate.check() from the TRUSTED manifest,
         # never from LLM-supplied args. Fail closed: a gate error, OR a missing
