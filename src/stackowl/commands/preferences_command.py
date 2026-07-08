@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, SubCommand, render_usage
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.infra.observability import log
 from stackowl.memory.preferences import PREFERENCE_NOTES_KEY, load_preference_notes
 
@@ -62,7 +63,7 @@ class PreferencesCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _PREFERENCES_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         # 1. ENTRY
         log.gateway.debug(
             "[commands] preferences.handle: entry",
@@ -87,7 +88,7 @@ class PreferencesCommand(SlashCommand):
             )
         return await self._list(owner_key)
 
-    async def _list(self, owner_key: str) -> str:
+    async def _list(self, owner_key: str) -> str | CommandResponse:
         assert self._store is not None  # narrowed by handle() guard
         # 3. STEP
         notes = await load_preference_notes(self._store, owner_key)
@@ -98,15 +99,25 @@ class PreferencesCommand(SlashCommand):
             )
             return "No learned preference notes yet."
         lines = ["Learned preference notes:"]
+        actions: list[Action] = []
         for i, n in enumerate(notes, start=1):
-            lines.append(f"  {i}. [{n.get('aspect')}/{n.get('polarity')}] {n.get('text')}")
+            text = str(n.get("text", ""))
+            lines.append(f"  {i}. [{n.get('aspect')}/{n.get('polarity')}] {text}")
+            preview = text if len(text) <= 40 else text[:37] + "..."
+            actions.append(
+                Action(
+                    label=f"Remove: {preview}",
+                    command=f"/preferences remove {i}",
+                    destructive=True,
+                )
+            )
         lines.append("Remove one with /preferences remove <n>.")
         # 4. EXIT
         log.gateway.info(
             "[commands] preferences.list: exit",
             extra={"_fields": {"owner_key": owner_key, "n": len(notes)}},
         )
-        return "\n".join(lines)
+        return CommandResponse(text="\n".join(lines), actions=tuple(actions))
 
     async def _remove(self, owner_key: str, n: int) -> str:
         assert self._store is not None  # narrowed by handle() guard
