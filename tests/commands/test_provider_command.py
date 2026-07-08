@@ -326,6 +326,42 @@ class TestProviderEdit:
         out = await _make_cmd().handle("edit ghost default_model gpt-4o", _state())
         assert "✗" in out or "not found" in out.lower()
 
+    @pytest.mark.asyncio
+    async def test_menu_has_edit_button(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("menu acme", _state())
+        edit = next(a for a in out.actions if a.label == "Edit")
+        assert edit.command == "/provider edit-menu acme"
+
+    @pytest.mark.asyncio
+    async def test_edit_menu_lists_fields(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("edit-menu acme", _state())
+        labels = [a.label for a in out.actions]
+        assert "Edit protocol" in labels
+        assert "Edit default_model" in labels
+        assert "Edit base_url" in labels
+        assert any(
+            a.command == "/provider edit-field acme default_model" for a in out.actions
+        )
+
+    @pytest.mark.asyncio
+    async def test_edit_menu_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("edit-menu ghost", _state())
+        assert "✗" in out or "not found" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_edit_field_shows_current_value_and_usage(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("edit-field acme default_model", _state())
+        assert "gpt-x" in out.text
+        assert "/provider edit acme default_model" in out.text
+
+    @pytest.mark.asyncio
+    async def test_edit_field_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("edit-field ghost default_model", _state())
+        assert "✗" in out or "not found" in out.lower()
+
 
 class TestProviderEnableDisable:
     @pytest.mark.asyncio

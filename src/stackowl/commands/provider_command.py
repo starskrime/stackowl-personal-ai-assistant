@@ -192,6 +192,10 @@ class ProviderCommand(SlashCommand):
                 result = self._set_enabled(rest, False)
             elif sub == "edit":
                 result = self._edit(rest)
+            elif sub == "edit-menu":
+                result = self._edit_menu(rest)
+            elif sub == "edit-field":
+                result = self._edit_field(rest)
             elif sub == "menu":
                 result = self._menu(rest)
             else:
@@ -303,10 +307,7 @@ class ProviderCommand(SlashCommand):
         model = target.get("default_model", "?")
         tier = target.get("tier", "?")
         enabled = target.get("enabled", True)
-        text = (
-            f"{name} | {protocol} | {model} | {tier} | enabled={enabled}\n"
-            f"To edit protocol/model/base_url: /provider edit {name} <field> <value>"
-        )
+        text = f"{name} | {protocol} | {model} | {tier} | enabled={enabled}"
         toggle_verb = "disable" if enabled else "enable"
         actions = (
             tuple(
@@ -319,6 +320,7 @@ class ProviderCommand(SlashCommand):
                 if t != tier
             )
             + (
+                Action(label="Edit", command=f"/provider edit-menu {name}", destructive=False),
                 Action(
                     label=toggle_verb.capitalize(),
                     command=f"/provider {toggle_verb} {name}",
@@ -331,6 +333,56 @@ class ProviderCommand(SlashCommand):
             "[commands] provider.menu: exit", extra={"_fields": {"name": name, "n_actions": len(actions)}}
         )
         return CommandResponse(text=text, actions=actions)
+
+    # -- edit-menu / edit-field (drill-down for Edit button) ---------------------
+
+    _EDIT_FIELDS: typing.ClassVar[tuple[str, ...]] = ("protocol", "default_model", "base_url")
+
+    def _edit_menu(self, raw: str) -> str | CommandResponse:
+        log.config.debug("[commands] provider.edit_menu: entry", extra={"_fields": {"raw_len": len(raw)}})
+        name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        if not name:
+            return "Usage: /provider edit-menu <name>"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        providers = self._providers(load_yaml(path))
+        if not any(p.get("name") == name for p in providers):
+            return f"✗ Provider '{name}' not found"
+        actions = tuple(
+            Action(
+                label=f"Edit {field}",
+                command=f"/provider edit-field {name} {field}",
+                destructive=False,
+            )
+            for field in self._EDIT_FIELDS
+        ) + (Action(label="Back", command=f"/provider menu {name}", destructive=False),)
+        return CommandResponse(text=f"Edit which field on '{name}'?", actions=actions)
+
+    def _edit_field(self, raw: str) -> str | CommandResponse:
+        log.config.debug(
+            "[commands] provider.edit_field: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        bits = raw.split(maxsplit=1)
+        if len(bits) < 2:
+            return "Usage: /provider edit-field <name> <field>"
+        name, field = bits[0], bits[1]
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        providers = self._providers(load_yaml(path))
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            return f"✗ Provider '{name}' not found"
+        current = target.get(field, "?")
+        text = (
+            f"Current {field}: {current}\n"
+            f"Reply with: /provider edit {name} {field} <new value>"
+        )
+        return CommandResponse(
+            text=text,
+            actions=(Action(label="Back", command=f"/provider menu {name}", destructive=False),),
+        )
 
     # -- enable/disable ----------------------------------------------------------
 
