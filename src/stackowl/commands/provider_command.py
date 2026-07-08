@@ -152,6 +152,8 @@ class ProviderCommand(SlashCommand):
                 result = self._remove(rest)
             elif sub == "set-tier":
                 result = self._set_tier(rest)
+            elif sub == "menu":
+                result = self._menu(rest)
             else:
                 log.config.debug(
                     "[commands] provider.handle: unknown subcommand",
@@ -229,10 +231,45 @@ class ProviderCommand(SlashCommand):
                 f"enabled={enabled} | api_key={key_disp}"
             )
             actions.append(
-                Action(label=f"Remove {name}", command=f"/provider remove {name}", destructive=True)
+                Action(label=name, command=f"/provider menu {name}", destructive=False)
             )
         log.config.debug("[commands] provider.list: exit", extra={"_fields": {"count": len(lines)}})
         return CommandResponse(text="\n".join(lines), actions=tuple(actions))
+
+    # -- menu (per-provider drill-down: set-tier + remove) ----------------------
+
+    def _menu(self, raw: str) -> str | CommandResponse:
+        log.config.debug("[commands] provider.menu: entry", extra={"_fields": {"raw_len": len(raw)}})
+        name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        if not name:
+            return "Usage: /provider menu <name>"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.menu: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        protocol = target.get("protocol", "?")
+        model = target.get("default_model", "?")
+        tier = target.get("tier", "?")
+        enabled = target.get("enabled", True)
+        text = f"{name} | {protocol} | {model} | {tier} | enabled={enabled}"
+        actions = tuple(
+            Action(
+                label=f"Set tier: {t}", command=f"/provider set-tier {name} {t}", destructive=False
+            )
+            for t in _VALID_TIERS
+            if t != tier
+        ) + (Action(label=f"Remove {name}", command=f"/provider remove {name}", destructive=True),)
+        log.config.debug(
+            "[commands] provider.menu: exit", extra={"_fields": {"name": name, "n_actions": len(actions)}}
+        )
+        return CommandResponse(text=text, actions=actions)
 
     # -- add -------------------------------------------------------------------
 

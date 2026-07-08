@@ -103,9 +103,9 @@ class TestProviderList:
         assert "acme" in text
         assert "openai" in text
         assert "gpt-x" in text
-        assert out.actions[0].label == "Remove acme"
-        assert out.actions[0].command == "/provider remove acme"
-        assert out.actions[0].destructive is True
+        assert out.actions[0].label == "acme"
+        assert out.actions[0].command == "/provider menu acme"
+        assert out.actions[0].destructive is False
         assert "fast" in text
         # The REF may be shown; the raw secret must NEVER appear.
         assert "keychain:stackowl-provider-acme" in text
@@ -259,6 +259,36 @@ class TestProviderRemove:
     @pytest.mark.asyncio
     async def test_remove_no_name_usage(self, tmp_yaml: Path) -> None:
         out = await _make_cmd().handle("remove", _state())
+        assert "Usage" in out or "usage" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# menu (per-provider drill-down)
+# ---------------------------------------------------------------------------
+
+
+class TestProviderMenu:
+    @pytest.mark.asyncio
+    async def test_menu_shows_other_tiers_and_remove(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("menu acme", _state())
+        assert "acme" in out.text
+        labels = [a.label for a in out.actions]
+        assert "Set tier: standard" in labels
+        assert "Set tier: powerful" in labels
+        assert "Set tier: fast" not in labels  # already the current tier
+        assert out.actions[-1].label == "Remove acme"
+        assert out.actions[-1].command == "/provider remove acme"
+        assert out.actions[-1].destructive is True
+
+    @pytest.mark.asyncio
+    async def test_menu_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("menu ghost", _state())
+        assert "✗" in out or "not found" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_menu_no_name_usage(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("menu", _state())
         assert "Usage" in out or "usage" in out.lower()
 
 
