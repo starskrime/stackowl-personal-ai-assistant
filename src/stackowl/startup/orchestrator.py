@@ -2381,9 +2381,15 @@ class StartupOrchestrator:
         telegram_adapter = None
         telegram_loop_task = None
         tg_cfg = self._settings.telegram_channel
-        # v1 split scope is CLI/TUI only — extra channels stay on the mono path
-        # (a split gateway forwards just the local TUI; Telegram/Slack/etc. land
-        # in a later phase). mono is byte-identical.
+        log.info(
+            "[startup] gateway: telegram config decision",
+            extra={"_fields": {
+                "role": self._role,
+                "bot_token_present": bool(tg_cfg.bot_token),
+                "bot_token_len": len(tg_cfg.bot_token) if tg_cfg.bot_token else 0,
+                "settings_id": id(self._settings),
+            }},
+        )
         if self._role != "core" and tg_cfg.bot_token:
             log.info("[startup] gateway: starting Telegram adapter")
             try:
@@ -2558,6 +2564,14 @@ class StartupOrchestrator:
 
                 telegram_loop_task = asyncio.create_task(_telegram_loop())
                 log.info("[startup] gateway: Telegram adapter started")
+        elif self._role == "core":
+            # Expected on every split-mode boot: the core has no direct channel
+            # (it proxies through the gateway's real adapter over the socket),
+            # regardless of whether a bot_token is configured. Distinct from the
+            # "not configured" branch below — same generic wording on both was
+            # previously indistinguishable in the shared log file, misreadable
+            # as a startup failure.
+            log.info("[startup] core: no direct Telegram channel — proxied via gateway")
         else:
             log.info("[startup] gateway: no Telegram bot_token — skipping")
 
