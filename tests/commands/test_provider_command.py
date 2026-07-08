@@ -293,6 +293,64 @@ class TestProviderMenu:
 
 
 # ---------------------------------------------------------------------------
+# edit / enable / disable
+# ---------------------------------------------------------------------------
+
+
+class TestProviderEdit:
+    @pytest.mark.asyncio
+    async def test_edit_default_model(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("edit acme default_model gpt-4o", _state())
+        assert "✓" in out
+        entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
+        assert entry["default_model"] == "gpt-4o"
+
+    @pytest.mark.asyncio
+    async def test_edit_invalid_field(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("edit acme tier powerful", _state())
+        assert "✗" in out
+
+    @pytest.mark.asyncio
+    async def test_edit_invalid_protocol(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("edit acme protocol bogus", _state())
+        assert "✗" in out
+
+    @pytest.mark.asyncio
+    async def test_edit_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("edit ghost default_model gpt-4o", _state())
+        assert "✗" in out or "not found" in out.lower()
+
+
+class TestProviderEnableDisable:
+    @pytest.mark.asyncio
+    async def test_disable_then_enable(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("disable acme", _state())
+        assert "✓" in out
+        entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
+        assert entry["enabled"] is False
+        out = await _make_cmd().handle("enable acme", _state())
+        assert "✓" in out
+        entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
+        assert entry["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_disable_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("disable ghost", _state())
+        assert "✗" in out or "not found" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_menu_shows_toggle_button(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("menu acme", _state())
+        labels = [a.label for a in out.actions]
+        assert "Disable" in labels  # enabled by default -> offer to disable
+
+
+# ---------------------------------------------------------------------------
 # set-tier
 # ---------------------------------------------------------------------------
 

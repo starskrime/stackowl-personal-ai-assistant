@@ -42,12 +42,15 @@ _VALID_TIERS: tuple[str, ...] = typing.get_args(
 )
 
 _USAGE = (
-    "Usage: /provider <list|add|remove|set-tier> [args]\n"
+    "Usage: /provider <list|add|remove|set-tier|edit|enable|disable> [args]\n"
     "  /provider list\n"
     "  /provider add <name> <protocol> <default_model> <tier> "
     "[base_url] [token=<RAW_TOKEN>]\n"
     "  /provider remove <name>\n"
     "  /provider set-tier <name> <tier>\n"
+    "  /provider edit <name> <protocol|default_model|base_url> <value>\n"
+    "  /provider enable <name>\n"
+    "  /provider disable <name>\n"
     f"  protocols: {', '.join(_VALID_PROTOCOLS)}\n"
     f"  tiers: {', '.join(_VALID_TIERS)}"
 )
@@ -113,6 +116,37 @@ _PROVIDER_META = CommandMeta(
             ),
             examples=(Example(invocation="/provider set-tier openai powerful"),),
         ),
+        SubCommand(
+            name="edit",
+            summary="Change a provider's protocol, model, or base URL",
+            description=(
+                "You update one field on an existing provider (not its tier or "
+                "enabled flag — use set-tier / enable / disable for those). The "
+                "change applies immediately."
+            ),
+            args=(
+                Arg(name="name", summary="provider to edit"),
+                Arg(
+                    name="field",
+                    summary="field to change",
+                    choices=("protocol", "default_model", "base_url"),
+                ),
+                Arg(name="value", summary="new value"),
+            ),
+            examples=(Example(invocation="/provider edit openai default_model gpt-4o"),),
+        ),
+        SubCommand(
+            name="enable",
+            summary="Re-enable a disabled provider",
+            args=(Arg(name="name", summary="provider to enable"),),
+            examples=(Example(invocation="/provider enable openai"),),
+        ),
+        SubCommand(
+            name="disable",
+            summary="Disable a provider without deleting it",
+            args=(Arg(name="name", summary="provider to disable"),),
+            examples=(Example(invocation="/provider disable openai"),),
+        ),
     ),
 )
 
@@ -152,6 +186,12 @@ class ProviderCommand(SlashCommand):
                 result = self._remove(rest)
             elif sub == "set-tier":
                 result = self._set_tier(rest)
+            elif sub == "enable":
+                result = self._set_enabled(rest, True)
+            elif sub == "disable":
+                result = self._set_enabled(rest, False)
+            elif sub == "edit":
+                result = self._edit(rest)
             elif sub == "menu":
                 result = self._menu(rest)
             else:
@@ -258,18 +298,99 @@ class ProviderCommand(SlashCommand):
         model = target.get("default_model", "?")
         tier = target.get("tier", "?")
         enabled = target.get("enabled", True)
-        text = f"{name} | {protocol} | {model} | {tier} | enabled={enabled}"
-        actions = tuple(
-            Action(
-                label=f"Set tier: {t}", command=f"/provider set-tier {name} {t}", destructive=False
+        text = (
+            f"{name} | {protocol} | {model} | {tier} | enabled={enabled}\n"
+            f"To edit protocol/model/base_url: /provider edit {name} <field> <value>"
+        )
+        toggle_verb = "disable" if enabled else "enable"
+        actions = (
+            tuple(
+                Action(
+                    label=f"Set tier: {t}",
+                    command=f"/provider set-tier {name} {t}",
+                    destructive=False,
+                )
+                for t in _VALID_TIERS
+                if t != tier
             )
-            for t in _VALID_TIERS
-            if t != tier
-        ) + (Action(label=f"Remove {name}", command=f"/provider remove {name}", destructive=True),)
+            + (
+                Action(
+                    label=toggle_verb.capitalize(),
+                    command=f"/provider {toggle_verb} {name}",
+                    destructive=False,
+                ),
+                Action(label=f"Remove {name}", command=f"/provider remove {name}", destructive=True),
+            )
+        )
         log.config.debug(
             "[commands] provider.menu: exit", extra={"_fields": {"name": name, "n_actions": len(actions)}}
         )
         return CommandResponse(text=text, actions=actions)
+
+    # -- enable/disable ----------------------------------------------------------
+
+    def _set_enabled(self, raw: str, enabled: bool) -> str:
+        verb = "enable" if enabled else "disable"
+        log.config.debug(
+            f"[commands] provider.{verb}: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        if not name:
+            return f"Usage: /provider {verb} <name>"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                f"[commands] provider.{verb}: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        target["enabled"] = enabled
+        save_yaml(path, data)
+        self._emit_reloaded(name)
+        log.config.info(
+            f"[commands] provider.{verb}: exit — updated",
+            extra={"_fields": {"name": name, "enabled": enabled}},
+        )
+        return f"✓ Provider '{name}' {verb}d — applied immediately"
+
+    # -- edit (protocol/default_model/base_url) ----------------------------------
+
+    def _edit(self, raw: str) -> str:
+        log.config.debug("[commands] provider.edit: entry", extra={"_fields": {"raw_len": len(raw)}})
+        bits = raw.split(maxsplit=2)
+        if len(bits) < 3:
+            return "Usage: /provider edit <name> <protocol|default_model|base_url> <value>"
+        name, field, value = bits
+        if field not in ("protocol", "default_model", "base_url"):
+            return (
+                f"✗ Unknown field '{field}' — use protocol, default_model, or base_url "
+                "(tier: /provider set-tier, enabled: /provider enable|disable)"
+            )
+        if field == "protocol" and value not in _VALID_PROTOCOLS:
+            return f"✗ Invalid protocol '{value}' — valid: {', '.join(_VALID_PROTOCOLS)}"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.edit: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        target[field] = value
+        save_yaml(path, data)
+        self._emit_reloaded(name)
+        log.config.info(
+            "[commands] provider.edit: exit — updated",
+            extra={"_fields": {"name": name, "field": field}},
+        )
+        return f"✓ Provider '{name}' {field} set to '{value}' — applied immediately"
 
     # -- add -------------------------------------------------------------------
 
