@@ -42,6 +42,11 @@ def _make_state() -> PipelineState:
     )
 
 
+def _text(out: object) -> str:
+    """Unwrap a CommandResponse to its text, or pass through a plain str."""
+    return out.text if hasattr(out, "text") else out  # type: ignore[return-value]
+
+
 @pytest.fixture()
 async def wired_command(tmp_db: DbPool, tmp_path: Path):
     """SkillCommand wired against tmp workspace + SQLite — yields (cmd, root, store).
@@ -211,7 +216,7 @@ async def test_install_from_archive_rejects_unrecognized_format(tmp_path: Path) 
 async def test_list_empty_workspace(wired_command) -> None:
     cmd, _, _ = wired_command
     out = await cmd.handle("list", _make_state())
-    assert "No skills installed" in out
+    assert "No skills installed" in _text(out)
 
 
 async def test_list_shows_user_skills(wired_command) -> None:
@@ -219,7 +224,7 @@ async def test_list_shows_user_skills(wired_command) -> None:
     _write_skill_md(root / "user" / "alpha", name="alpha")
     _write_skill_md(root / "user" / "beta", name="beta")
     await cmd.handle("reload", _make_state())
-    out = await cmd.handle("list", _make_state())
+    out = _text(await cmd.handle("list", _make_state()))
     assert "alpha" in out and "beta" in out
 
 
@@ -228,9 +233,9 @@ async def test_list_filters_by_source(wired_command) -> None:
     _write_skill_md(root / "user" / "u1", name="u1")
     _write_skill_md(root / "installed" / "i1", name="i1")
     await cmd.handle("reload", _make_state())
-    out_user = await cmd.handle("list --source user", _make_state())
+    out_user = _text(await cmd.handle("list --source user", _make_state()))
     assert "u1" in out_user and "i1" not in out_user
-    out_installed = await cmd.handle("list --source installed", _make_state())
+    out_installed = _text(await cmd.handle("list --source installed", _make_state()))
     assert "i1" in out_installed and "u1" not in out_installed
 
 
@@ -320,7 +325,7 @@ async def test_add_renames_on_conflict(wired_command, tmp_path: Path) -> None:
     # show up in the SQLite index. The second install's SKILL.md must have
     # been rewritten to ``name: duplicate-1`` so the (source, name) UNIQUE
     # doesn't make the second install overwrite the first row.
-    listing = await cmd.handle("list --source installed", _make_state())
+    listing = _text(await cmd.handle("list --source installed", _make_state()))
     assert "duplicate" in listing
     assert "duplicate-1" in listing
     sk_a = await store.get("installed", "duplicate")

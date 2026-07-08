@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
+from stackowl.commands.response import Action, CommandResponse
 from stackowl.commands.skill_helpers import (
     SkillInstallError,
     hash_dir,
@@ -217,7 +218,7 @@ class SkillCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _SKILL_META
 
-    async def handle(self, args: str, state: PipelineState) -> str:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         # 1. ENTRY
         log.skills.debug(
             "[commands] skill.handle: entry",
@@ -253,6 +254,8 @@ class SkillCommand(SlashCommand):
                 result = await self._reload()
             elif sub == "restore":
                 result = await self._restore(rest.strip())
+            elif sub == "menu":
+                result = await self._menu(rest.strip())
             else:
                 log.skills.debug(
                     "[commands] skill.handle: decision — unknown subcommand",
@@ -272,15 +275,16 @@ class SkillCommand(SlashCommand):
             )
             return f"✗ /skill {sub}: {exc}"
         # 4. EXIT
+        out_text = result.text if isinstance(result, CommandResponse) else result
         log.skills.debug(
             "[commands] skill.handle: exit",
-            extra={"_fields": {"sub": sub, "out_len": len(result)}},
+            extra={"_fields": {"sub": sub, "out_len": len(out_text)}},
         )
         return result
 
     # ----- subcommands --------------------------------------------------------
 
-    async def _list(self, args: str) -> str:
+    async def _list(self, args: str) -> str | CommandResponse:
         # 1. ENTRY
         log.skills.debug("[commands] skill.list: entry",
                          extra={"_fields": {"args": args[:40]}})
@@ -306,9 +310,13 @@ class SkillCommand(SlashCommand):
                 skills.extend(await self._store.list_for_source(src))
         if not skills:
             log.skills.debug("[commands] skill.list: exit — empty")
-            return "No skills installed yet. Try `/skill add <path-or-url>`."
+            return CommandResponse(
+                text="No skills installed yet.",
+                actions=(Action(label="+ Add skill", command="/skill add", destructive=False),),
+            )
         # 4. EXIT — format
         lines = ["Skills:"]
+        actions = [Action(label="+ Add skill", command="/skill add", destructive=False)]
         for s in skills:
             flag = " " if s.enabled else "✗"
             rate = "" if s.success_rate is None else f"  ({s.success_rate:.2f})"
@@ -316,10 +324,48 @@ class SkillCommand(SlashCommand):
                 f"  {flag} [{s.source:9}] {s.name}  v{s.version}{rate}  "
                 f"— {s.description[:60]}",
             )
+            actions.append(Action(label=s.name, command=f"/skill menu {s.name}", destructive=False))
         out = "\n".join(lines)
         log.skills.debug("[commands] skill.list: exit",
                          extra={"_fields": {"n": len(skills)}})
-        return out
+        return CommandResponse(text=out, actions=tuple(actions))
+
+    async def _menu(self, args: str) -> str | CommandResponse:
+        log.skills.debug("[commands] skill.menu: entry", extra={"_fields": {"name": args[:60]}})
+        if not args:
+            return "Usage: /skill menu <name>"
+        sk = await self._find_one(args)
+        if sk is None:
+            return f"✗ Skill '{args}' not found"
+        text = (
+            f"{sk.name}  [{sk.source}]  v{sk.version}  enabled={sk.enabled}\n"
+            f"{sk.description[:120]}"
+        )
+        toggle_verb = "disable" if sk.enabled else "enable"
+        actions = [
+            Action(label="Show", command=f"/skill show {sk.name}", destructive=False),
+            Action(label="Diff", command=f"/skill diff {sk.name}", destructive=False),
+            Action(
+                label=toggle_verb.capitalize(),
+                command=f"/skill {toggle_verb} {sk.name}",
+                destructive=False,
+            ),
+        ]
+        if sk.source != "builtin":
+            actions.append(
+                Action(label="Edit", command=f"/skill edit {sk.name}", destructive=False)
+            )
+            actions.append(
+                Action(
+                    label=f"Remove {sk.name}",
+                    command=f"/skill rm {sk.name} {_CONFIRMATION}",
+                    destructive=True,
+                )
+            )
+        log.skills.debug(
+            "[commands] skill.menu: exit", extra={"_fields": {"name": sk.name}}
+        )
+        return CommandResponse(text=text, actions=tuple(actions))
 
     async def _show(self, args: str) -> str:
         log.skills.debug("[commands] skill.show: entry",
