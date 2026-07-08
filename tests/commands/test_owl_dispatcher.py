@@ -129,3 +129,34 @@ async def test_owl_list_actions_open_menu() -> None:
     out = await OwlCommand(owl_registry=reg).handle("list", _State())
     assert isinstance(out, CommandResponse)
     assert any(a.command == "/owl menu secretary" for a in out.actions)
+
+
+@pytest.mark.asyncio
+async def test_owl_list_has_add_button_even_when_populated() -> None:
+    reg = OwlRegistry.with_default_secretary()
+    out = await OwlCommand(owl_registry=reg).handle("list", _State())
+    assert isinstance(out, CommandResponse)
+    add = next(a for a in out.actions if a.label == "+ Add owl")
+    assert add.command == "/owl create"
+    assert add.destructive is False
+
+
+@pytest.mark.asyncio
+async def test_owl_menu_has_set_tier_buttons_excluding_current() -> None:
+    reg = OwlRegistry.with_default_secretary()
+    reg.register(
+        OwlAgentManifest(
+            name="Sage", role="researcher",
+            system_prompt="You are Sage.", model_tier="fast",
+        )
+    )
+    out = await OwlCommand(owl_registry=reg).handle("menu Sage", _State())
+    assert isinstance(out, CommandResponse)
+    labels = {a.label for a in out.actions}
+    assert "Set tier: standard" in labels
+    assert "Set tier: powerful" in labels
+    assert "Set tier: local" in labels
+    assert "Set tier: fast" not in labels
+    set_standard = next(a for a in out.actions if a.label == "Set tier: standard")
+    assert set_standard.command == "/owl edit Sage --tier standard"
+    assert set_standard.destructive is False

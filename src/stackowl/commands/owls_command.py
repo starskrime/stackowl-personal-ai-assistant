@@ -241,7 +241,7 @@ class OwlsCommand(SlashCommand):
                 text=text,
                 actions=(Action(label="+ Add owl", command=f"/{self.command} create", destructive=False),),
             )
-        actions = tuple(
+        actions = (Action(label="+ Add owl", command=f"/{self.command} create", destructive=False),) + tuple(
             Action(label=m.display, command=f"/{self.command} menu {m.name}", destructive=False)
             for m in sorted(manifests, key=lambda x: x.display.casefold())
         )
@@ -822,9 +822,18 @@ class OwlCommand(OwlsCommand):
         text = (
             f"{manifest.display} ({manifest.name}) — {does} · {status}\n"
             f"tier={manifest.model_tier}\n"
-            f"Rename: /owl rename {name} <new_display_name>"
+            f"Rename: /owl rename {name} <new_display_name>\n"
+            f"Edit role: /owl edit {name} --role <new_role>"
         )
-        actions: list[Action] = []
+        actions: list[Action] = [
+            Action(
+                label=f"Set tier: {t}",
+                command=f"/owl edit {name} --tier {t}",
+                destructive=False,
+            )
+            for t in ("fast", "standard", "powerful", "local")
+            if t != manifest.model_tier
+        ]
         if manifest.lifecycle == "scheduled":
             paused = await self._is_job_paused(name)
             if paused is not None:
