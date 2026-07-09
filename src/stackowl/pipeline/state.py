@@ -282,6 +282,17 @@ class PipelineState(BaseModel, frozen=True):
     # nothing was delivered while a tool failed/bounced. Default False = byte-identical
     # on every normal turn; persisted to task_outcomes.overclaim_blocked.
     overclaim_blocked: bool = False
+    # Overclaim trigger 4 (SCHEDULING-COMMITMENT) inputs. ``ran_effect_classes`` is
+    # every ``effect_class`` any tool declared this turn (regardless of verified —
+    # unlike ``unverified_effects``, this asks "did a schedules-tool run AT ALL",
+    # not "did it prove itself"), stamped alongside the other snapshot tuples by
+    # execute's ``_snapshot_consequential``. ``requires_scheduling_commit`` is the
+    # lazy classifier stamp (mirrors ``requires_retrieval``): True when the draft's
+    # own text commits to doing something for the user LATER on a schedule (ping/
+    # remind/check-in/notify) — the no-tool-call sibling of the retrieval-intent
+    # trigger. Both default to byte-identical no-op values.
+    ran_effect_classes: tuple[str, ...] = ()
+    requires_scheduling_commit: bool = False
     # Per-pipeline-step elapsed time in milliseconds, keyed by step name.
     # Populated by the backend's step loop; consumed by the outcome-capture
     # helper at end-of-run. Frozen tuple-of-tuples to keep PipelineState

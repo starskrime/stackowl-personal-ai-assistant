@@ -1002,6 +1002,15 @@ class StartupOrchestrator:
         )
 
         retrieval_intent_classifier = RetrievalIntentClassifier(provider_registry)
+        # Overclaim trigger 4's scheduling-commitment classifier (fast tier,
+        # fail-safe→none). surface_overclaim_gate's wrapper reads it off services
+        # to lazily judge whether a clean draft PROMISES future scheduled work
+        # (ping/remind/check-in/notify) while no schedules-effect tool ran.
+        from stackowl.interaction.schedule_commit_classifier import (
+            ScheduleCommitClassifier,
+        )
+
+        schedule_commit_classifier = ScheduleCommitClassifier(provider_registry)
         # §6/§7 (P3 Task 16) — the mid-turn arrival TurnRouter. Reuses the SAME
         # fast-tier ``ClarifyIntentClassifier`` (its ``is_steer`` is the
         # conservative high-confidence STEER-vs-NEW propose stage), so there is ONE
@@ -1216,6 +1225,7 @@ class StartupOrchestrator:
             clarify_gateway=clarify_gateway,
             feedback_classifier=feedback_classifier,
             retrieval_intent_classifier=retrieval_intent_classifier,
+            schedule_commit_classifier=schedule_commit_classifier,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
             session_registry=session_registry,

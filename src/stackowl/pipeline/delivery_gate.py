@@ -428,6 +428,12 @@ _FLOOR_TEXT = (
     "can't stand behind those links. Want me to look it up properly?"
 )
 
+_SCHEDULE_FLOOR_TEXT = (
+    "I said I'd do that later, but I didn't actually schedule anything — no "
+    "job was set up, so it won't happen on its own. Want me to actually "
+    "schedule it now?"
+)
+
 
 def _normalize_url(raw: str) -> str:
     """Canonicalize a URL for set membership: lowercase scheme+host, drop the
@@ -515,6 +521,18 @@ def _grounding_floor_chunk(state: PipelineState) -> ResponseChunk:
     """Deterministic honest floor for an ungrounded external-info answer."""
     return ResponseChunk(
         content=_FLOOR_TEXT,
+        is_final=False,
+        chunk_index=0,
+        trace_id=state.trace_id,
+        owl_name=state.owl_name,
+        is_floor=True,
+    )
+
+
+def _schedule_commit_floor_chunk(state: PipelineState) -> ResponseChunk:
+    """Deterministic honest floor for a text-only future-scheduling promise."""
+    return ResponseChunk(
+        content=_SCHEDULE_FLOOR_TEXT,
         is_final=False,
         chunk_index=0,
         trace_id=state.trace_id,
@@ -646,11 +664,18 @@ async def surface_grounding_gate(state: PipelineState) -> PipelineState:
 # 1/2) so the wrapper knows which floor prose to render.
 _RETRIEVAL_CULPRIT = "retrieval"
 
+# Trigger 4 culprit tag — the classifier-guessed "the draft PROMISES future
+# scheduled work but no schedules-effect tool ran" veto. The no-tool-call
+# sibling of trigger 1's MEASURED unverified-effect check: trigger 1 catches an
+# ATTEMPTED-but-unproven schedule (cronjob ran, verification failed); this
+# catches a PURE TEXT promise where cronjob never ran at all.
+_SCHEDULE_CULPRIT = "scheduling_commit"
+
 
 def _is_overclaim(state: PipelineState) -> tuple[bool, str | None]:
     """Return (True, culprit) if the current draft is a structural overclaim.
 
-    THREE triggers (an affirmative non-floor draft fires the first that holds), in
+    FOUR triggers (an affirmative non-floor draft fires the first that holds), in
     descending confidence order — MEASURED ledger truth beats a classifier guess:
 
     1. MEASURED effect veto (ADR-T2 / TS3) — the turn invoked a tool that declared a
@@ -669,10 +694,18 @@ def _is_overclaim(state: PipelineState) -> tuple[bool, str | None]:
        the async wrapper) but no retrieval tool ran this turn. The affirmative draft
        is then answering from the model's own (possibly stale) knowledge with no URL
        to inspect — the no-URL sibling of the grounding gate.
+    4. SCHEDULING-COMMITMENT — classifier-stamped, evaluated alongside trigger 3 (both
+       are lower-confidence guesses gated behind the MEASURED triggers): the draft's
+       OWN text commits to doing something for the user LATER on a schedule
+       (``state.requires_scheduling_commit``, stamped lazily by the async wrapper) but
+       no ``schedules``-effect tool ran THIS TURN AT ALL
+       (``"schedules" not in state.ran_effect_classes``). A real (even if unverified)
+       schedule attempt is already caught by trigger 1 via ``unverified_effects``; this
+       is the no-tool-call sibling — a pure text promise with zero cronjob call.
 
-    The empty-draft and already-floor guards clear all three. A pure conversational/
+    The empty-draft and already-floor guards clear all four. A pure conversational/
     clarify turn (no effect-classed tool, no failures, no no_progress_tools, no
-    retrieval-intent stamp) is CLEARED.
+    retrieval-intent stamp, no scheduling-commitment stamp) is CLEARED.
     """
     if not state.responses or all(not c.content.strip() for c in state.responses):
         return (False, None)
@@ -701,6 +734,13 @@ def _is_overclaim(state: PipelineState) -> tuple[bool, str | None]:
     # own (stale) knowledge.
     if state.requires_retrieval and not _retrieval_ran(state):
         return (True, _RETRIEVAL_CULPRIT)
+    # Trigger 4 — SCHEDULING-COMMITMENT overclaim (classifier-stamped, same
+    # confidence tier as trigger 3, evaluated after it on a clean, non-delivering
+    # turn). The draft's own text promises future scheduled work but no
+    # schedules-effect tool ran this turn AT ALL — a pure text promise, not an
+    # attempted-but-unverified schedule (trigger 1 already covers that case).
+    if state.requires_scheduling_commit and "schedules" not in state.ran_effect_classes:
+        return (True, _SCHEDULE_CULPRIT)
     return (False, None)
 
 
@@ -738,6 +778,39 @@ async def _stamp_requires_retrieval(state: PipelineState) -> PipelineState:
     return state.evolve(requires_retrieval=lookup)
 
 
+def _should_classify_schedule_commit(state: PipelineState) -> bool:
+    """Cheap structural precondition gating the ONE trigger-4 classifier call.
+
+    Deliberately does NOT exclude ``conversational`` turns (unlike
+    ``_should_classify_retrieval``): a casual "sure, I'll ping you in five" is
+    exactly the shape of the bug this trigger exists to catch — the router
+    already classifies that as conversational, so excluding it would blind the
+    gate to its own target case. Confines the cost to: a non-empty, non-floored
+    affirmative draft that had no schedules-effect tool run this turn (a real
+    schedule attempt, verified or not, is trigger 1's job, not this classifier's).
+    """
+    if not state.responses or all(not c.content.strip() for c in state.responses):
+        return False
+    if any(getattr(c, "is_floor", False) for c in state.responses):
+        return False
+    return "schedules" not in state.ran_effect_classes
+
+
+async def _stamp_requires_scheduling_commit(state: PipelineState) -> PipelineState:
+    """Lazily classify + stamp ``state.requires_scheduling_commit`` (trigger 4).
+
+    Reads the classifier off ``get_services()`` — ``None`` (unwired) is a no-op so
+    ``requires_scheduling_commit`` stays at its byte-identical ``False`` default.
+    Never raises: the classifier itself is fail-safe (-> False on every degraded
+    path).
+    """
+    classifier = get_services().schedule_commit_classifier
+    if classifier is None:
+        return state
+    commits = await classifier.commits_to_future_schedule(response=_answer_text(state))
+    return state.evolve(requires_scheduling_commit=commits)
+
+
 async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
     """Replace a confident overclaim draft with an honest floor.
 
@@ -753,11 +826,19 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
     before re-evaluating. A turn that already overclaimed via trigger 1/2, or that
     fails the precondition (conversational, retrieved, delivered, empty/floored),
     never reaches the classifier.
+
+    Trigger 4 adds a SECOND lazy classifier call, same shape: only paid when
+    triggers 1-3 all cleared AND its own precondition holds (no schedules-effect
+    tool ran this turn). Each of the two classifier calls is independent and
+    gated on its own precondition — a turn can pay for zero, one, or both.
     """
     try:
         is_oc, culprit = _is_overclaim(state)
         if not is_oc and _should_classify_retrieval(state):
             state = await _stamp_requires_retrieval(state)
+            is_oc, culprit = _is_overclaim(state)
+        if not is_oc and _should_classify_schedule_commit(state):
+            state = await _stamp_requires_scheduling_commit(state)
             is_oc, culprit = _is_overclaim(state)
         if not is_oc:
             log.engine.debug(
@@ -777,6 +858,8 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
         floor = (
             _grounding_floor_chunk(state)
             if culprit == _RETRIEVAL_CULPRIT
+            else _schedule_commit_floor_chunk(state)
+            if culprit == _SCHEDULE_CULPRIT
             else _floor_chunk(state, culprit)
         )
         return state.evolve(responses=(floor,), overclaim_blocked=True)

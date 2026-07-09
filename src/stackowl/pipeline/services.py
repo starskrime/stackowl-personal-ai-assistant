@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from stackowl.interaction.cost_pause import CostPauseGuard
     from stackowl.interaction.feedback_classifier import FeedbackClassifier
     from stackowl.interaction.retrieval_intent_classifier import RetrievalIntentClassifier
+    from stackowl.interaction.schedule_commit_classifier import ScheduleCommitClassifier
     from stackowl.learning.failure_outcome_miner import RcaVerdict
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
@@ -83,6 +84,13 @@ class StepServices:
     # _should_classify_retrieval) before re-evaluating _is_overclaim. None → the
     # stamp is a no-op — requires_retrieval stays False, byte-identical.
     retrieval_intent_classifier: RetrievalIntentClassifier | None = field(default=None)
+    # Overclaim trigger 4's scheduling-commitment classifier. The
+    # surface_overclaim_gate async wrapper reads THIS off services to lazily
+    # stamp state.requires_scheduling_commit (one fast one-token call, gated by
+    # _should_classify_schedule_commit) before re-evaluating _is_overclaim.
+    # None → the stamp is a no-op — requires_scheduling_commit stays False,
+    # byte-identical.
+    schedule_commit_classifier: ScheduleCommitClassifier | None = field(default=None)
     web_search_registry: WebSearchRegistry | None = field(default=None)
     # E8-S0 — shared budget for in-flight delegated + parliament pipelines.
     # ONE instance, injected here AND into the parliament fan-out so both draw

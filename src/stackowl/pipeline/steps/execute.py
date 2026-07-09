@@ -796,6 +796,14 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             o.name for o in outcomes
             if o.effect_class is not None and o.verified is not True
         )
+        # Trigger 4 input — every effect_class that ran this turn AT ALL (success or
+        # not, verified or not). Unlike unverified_effects (which asks "did it prove
+        # itself"), this answers "did a tool of this class run" — the overclaim gate
+        # uses it to tell a real (if unverified — already caught by trigger 1)
+        # scheduling attempt apart from a pure-text promise with zero tool call.
+        ran_effect_classes = tuple(
+            o.effect_class for o in outcomes if o.effect_class is not None
+        )
         return state.evolve(
             consequential_failures=failures,
             consequential_failure_errors=failure_errors,
@@ -804,6 +812,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             recovered_consequential=recovered,
             recovered_via_substitution=recovered_via_substitution,
             unverified_effects=unverified_effects,
+            ran_effect_classes=ran_effect_classes,
             consequential_snapshot_taken=True,
         )
     except Exception as exc:  # B5 — never break the turn; fall back to the live ledger

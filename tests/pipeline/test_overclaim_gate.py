@@ -14,6 +14,7 @@ import pytest
 from stackowl.pipeline.delivery_gate import (
     _is_overclaim,
     _should_classify_retrieval,
+    _should_classify_schedule_commit,
     surface_overclaim_gate,
 )
 from stackowl.pipeline.services import (
@@ -507,3 +508,214 @@ def test_should_classify_retrieval_precondition() -> None:
 
     suspicious = _state(responses=(_draft("iOS 17 is latest"),))
     assert _should_classify_retrieval(suspicious) is True
+
+
+# ---------------------------------------------------------------------------
+# Trigger 4: SCHEDULING-COMMITMENT overclaim (classifier-stamped, no-tool-call
+# sibling of trigger 1's MEASURED unverified-effect check)
+# ---------------------------------------------------------------------------
+
+
+def test_scheduling_commit_fires() -> None:
+    """requires_scheduling_commit=True + no schedules tool ran → floored."""
+    state = _state(
+        responses=(_draft("Sure, I'll ping you in 5 minutes!"),),
+        requires_scheduling_commit=True,
+        delivered_successes=(),
+        consequential_failures=(),
+        unverified_effects=(),
+        no_progress_tools=(),
+        ran_effect_classes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert is_oc is True
+    assert culprit == "scheduling_commit"
+
+
+def test_scheduling_commit_schedules_tool_ran_not_blocked() -> None:
+    """requires_scheduling_commit=True but a schedules-effect tool DID run this
+    turn → not this trigger's job (trigger 1 already covers whether it verified)."""
+    state = _state(
+        responses=(_draft("Done — I've scheduled that reminder for you."),),
+        requires_scheduling_commit=True,
+        ran_effect_classes=("schedules",),
+        unverified_effects=(),
+        delivered_successes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_no_commitment_answer_not_blocked() -> None:
+    """requires_scheduling_commit=False (default) + no tools → CLEARED."""
+    state = _state(
+        responses=(_draft("2 + 2 = 4."),),
+        delivered_successes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_scheduling_commit_does_not_nuke_real_delivery() -> None:
+    """requires_scheduling_commit=True but something WAS delivered → delivered_successes
+    early-return wins; the classifier guess never nukes a real delivery."""
+    state = _state(
+        responses=(_draft("Sent your report, and I'll check back later too."),),
+        requires_scheduling_commit=True,
+        delivered_successes=("send_message",),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_scheduling_commit_already_floored_cleared() -> None:
+    """Already-floored draft + requires_scheduling_commit=True → cleared (no double floor)."""
+    state = _state(
+        responses=(_draft("I wasn't able to complete that.", is_floor=True),),
+        requires_scheduling_commit=True,
+        delivered_successes=(),
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (False, None)
+
+
+def test_measured_trigger_wins_over_scheduling_commit_guess() -> None:
+    """unverified_effects non-empty AND requires_scheduling_commit=True → the MEASURED
+    trigger (1) wins; the classifier guess (4) never overrides it."""
+    state = _state(
+        responses=(_draft("✅ Cronjob scheduled and I'll also ping you later."),),
+        consequential_snapshot_taken=True,
+        unverified_effects=("cronjob",),
+        requires_scheduling_commit=True,
+    )
+    is_oc, culprit = _is_overclaim(state)
+    assert (is_oc, culprit) == (True, "cronjob")
+
+
+class _FakeScheduleCommitClassifier:
+    """Records calls; returns a scripted verdict. Mirrors the real classifier's
+    ``commits_to_future_schedule(*, response: str) -> bool`` signature."""
+
+    def __init__(self, verdict: bool) -> None:
+        self._verdict = verdict
+        self.calls: list[str] = []
+
+    async def commits_to_future_schedule(self, *, response: str) -> bool:
+        self.calls.append(response)
+        return self._verdict
+
+
+def _with_schedule_classifier(classifier: object | None) -> object:
+    return set_services(StepServices(schedule_commit_classifier=classifier))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_wrapper_conversational_turn_still_pays_for_schedule_classifier() -> None:
+    """Unlike trigger 3, a conversational-intent turn is NOT skipped — this is
+    exactly the shape of the bug (a casual 'sure I'll ping you' chat reply)."""
+    fake = _FakeScheduleCommitClassifier(True)
+    token = _with_schedule_classifier(fake)
+    try:
+        state = _state(
+            responses=(_draft("Sure, I'll ping you in five!"),),
+            intent_class="conversational",
+            delivered_successes=(),
+        )
+        result = await surface_overclaim_gate(state)
+    finally:
+        reset_services(token)
+    assert fake.calls == ["Sure, I'll ping you in five!"]
+    assert result.overclaim_blocked is True
+    chunk = result.responses[0]
+    assert chunk.is_floor is True
+    assert "didn't actually schedule" in chunk.content
+
+
+@pytest.mark.asyncio
+async def test_wrapper_classifies_and_floors_on_commit_verdict() -> None:
+    """Standard turn, no schedules tool, classifier says COMMIT → schedule floor."""
+    fake = _FakeScheduleCommitClassifier(True)
+    token = _with_schedule_classifier(fake)
+    try:
+        state = _state(
+            responses=(_draft("I'll check your website every 2 hours and let you know."),),
+            intent_class="standard",
+            delivered_successes=(),
+        )
+        result = await surface_overclaim_gate(state)
+    finally:
+        reset_services(token)
+    assert result.overclaim_blocked is True
+    chunk = result.responses[0]
+    assert chunk.is_floor is True
+    assert "didn't actually schedule" in chunk.content
+
+
+@pytest.mark.asyncio
+async def test_wrapper_schedule_classifier_none_is_byte_identical_noop() -> None:
+    """Unwired classifier (None, default StepServices) → no floor, no error."""
+    token = _with_schedule_classifier(None)
+    try:
+        state = _state(
+            responses=(_draft("I'll ping you in five minutes."),),
+            intent_class="standard",
+            delivered_successes=(),
+        )
+        result = await surface_overclaim_gate(state)
+    finally:
+        reset_services(token)
+    assert result.overclaim_blocked is False
+    assert result.responses[0].content == "I'll ping you in five minutes."
+
+
+def test_should_classify_schedule_commit_precondition() -> None:
+    """Direct precondition unit coverage for the cost-gate itself."""
+    # Unlike retrieval's precondition, a conversational turn is NOT excluded —
+    # that's exactly the shape of the target bug.
+    conversational = _state(
+        responses=(_draft("sure, I'll remind you"),), intent_class="conversational",
+    )
+    assert _should_classify_schedule_commit(conversational) is True
+
+    schedules_ran = _state(
+        responses=(_draft("scheduled it"),), ran_effect_classes=("schedules",),
+    )
+    assert _should_classify_schedule_commit(schedules_ran) is False
+
+    floored = _state(responses=(_draft("x", is_floor=True),))
+    assert _should_classify_schedule_commit(floored) is False
+
+    empty = _state(responses=(_draft("   "),))
+    assert _should_classify_schedule_commit(empty) is False
+
+    suspicious = _state(responses=(_draft("I'll ping you in 5 minutes"),))
+    assert _should_classify_schedule_commit(suspicious) is True
+
+
+@pytest.mark.parametrize(
+    ("outcome_effect_class", "expected"),
+    [
+        ("schedules", ("schedules",)),
+        (None, ()),
+    ],
+)
+def test_snapshot_maps_ran_effect_classes(
+    outcome_effect_class: str | None, expected: tuple[str, ...]
+) -> None:
+    """LEDGER-FACT anchor: execute's consequential snapshot lists a tool's
+    effect_class in ran_effect_classes iff it declared one — regardless of
+    verified/success — proving trigger 4 reads "did a schedules tool run AT
+    ALL", distinct from unverified_effects' "did it prove itself"."""
+    from stackowl.infra import tool_outcome_ledger
+    from stackowl.pipeline.steps.execute import _snapshot_consequential
+
+    token = tool_outcome_ledger.bind()
+    try:
+        tool_outcome_ledger.record_tool_outcome(
+            name="cronjob", action_severity="write", success=True,
+            verified=True, effect_class=outcome_effect_class,
+        )
+        snap = _snapshot_consequential(_state())
+    finally:
+        tool_outcome_ledger.reset(token)
+    assert snap.ran_effect_classes == expected
