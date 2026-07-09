@@ -16,7 +16,7 @@ Sections (in default render order):
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -36,6 +36,14 @@ _MAX_HIGHLIGHT_CHARS = 120
 _MAX_HIGHLIGHTS = 3
 _MAX_PRIORITY_ROWS = 5
 _RECALL_QUERY = "recent important facts"
+# recall() is pure semantic top-K with NO recency filter — a vague query like
+# _RECALL_QUERY can rank an old, generically "important"-sounding fact (e.g.
+# stale world-news content from some earlier session) above anything from
+# today, so the "last 24h" this class promises must be enforced client-side.
+# Over-fetch a wider candidate pool so filtering to the window still leaves
+# enough real recent facts to fill _MAX_HIGHLIGHTS.
+_RECALL_CANDIDATE_POOL = 20
+_HIGHLIGHT_WINDOW = timedelta(hours=24)
 # F-79 — an empty recall is surfaced as this explicit item rather than silently
 # omitting the whole section. A single status literal (not a keyword/query
 # word-list) so the rendered brief honestly shows the section ran and found
@@ -142,7 +150,9 @@ class MemoryHighlightsAssembler:
             "[brief] memory_highlights.assemble: entry",
             extra={"_fields": {"job_id": ctx.job_id, "limit": _MAX_HIGHLIGHTS}},
         )
-        records = await self._bridge.recall(_RECALL_QUERY, limit=_MAX_HIGHLIGHTS)
+        candidates = await self._bridge.recall(_RECALL_QUERY, limit=_RECALL_CANDIDATE_POOL)
+        cutoff = datetime.now(UTC) - _HIGHLIGHT_WINDOW
+        records = [r for r in candidates if r.committed_at >= cutoff][:_MAX_HIGHLIGHTS]
 
         # 2. DECISION — zero records → surface an explicit "nothing notable" item
         # (F-79) rather than silently omitting the section, and log at INFO (not

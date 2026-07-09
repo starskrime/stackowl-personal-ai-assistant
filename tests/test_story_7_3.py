@@ -160,7 +160,9 @@ async def test_memory_highlights_surfaces_nothing_notable_when_recall_empty() ->
     section = await MemoryHighlightsAssembler(memory_bridge=mem).assemble(make_ctx())
     assert section.omitted is False
     assert section.items == [_NOTHING_NOTABLE_ITEM]
-    assert mem.recall_calls and mem.recall_calls[0][1] == 3
+    # Over-fetches a wider candidate pool (20) so the client-side 24h recency
+    # filter still has enough real candidates to fill 3 highlights from.
+    assert mem.recall_calls and mem.recall_calls[0][1] == 20
 
 
 @pytest.mark.asyncio
@@ -195,6 +197,41 @@ async def test_memory_highlights_returns_items_when_records_exist() -> None:
     assert len(section.items) == 3
     # 120-char truncation enforced on long entries
     assert len(section.items[1]) == 120
+
+
+@pytest.mark.asyncio
+async def test_memory_highlights_excludes_stale_records_outside_24h_window() -> None:
+    """Live incident: recall() is pure semantic top-K with no recency filter, so
+    a vague query ("recent important facts") can rank an old, generically
+    "important"-sounding fact above anything from today — stale world-news
+    content from an earlier session kept resurfacing in every brief, described
+    by the user as "not my memory". This class's own docstring promises "last
+    24h"; that must actually be enforced, client-side since recall() has no
+    time-window parameter."""
+    from datetime import UTC, datetime, timedelta
+
+    from stackowl.memory.models import MemoryRecord
+
+    def _record_at(content: str, age: timedelta) -> MemoryRecord:
+        return MemoryRecord(
+            fact_id=content,
+            content=content,
+            embedding=[0.0, 0.0],
+            embedding_model="stub",
+            committed_at=datetime.now(UTC) - age,
+            source_type="conversation",
+            source_ref="test",
+        )
+
+    mem = StubMemory(
+        records=[
+            _record_at("fresh fact", timedelta(hours=1)),
+            _record_at("stale gaza news", timedelta(days=30)),
+            _record_at("another stale one", timedelta(days=10)),
+        ]
+    )
+    section = await MemoryHighlightsAssembler(memory_bridge=mem).assemble(make_ctx())
+    assert section.items == ["fresh fact"]
 
 
 # ---------------------------------------------------------------------------
