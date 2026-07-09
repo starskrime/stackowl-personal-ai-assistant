@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,16 @@ _RETRY_DELAY_MIN = 5
 # A `defer_under_load` job overdue by MORE than this is run anyway, so heavy
 # background work is never indefinitely starved by a stream of user turns.
 _MAX_DEFER_SEC = 900.0
+# _run_job's poll iteration is sequential (`for row in rows: await
+# self._run_job(...)`) — a handler that never returns (a hung network call, a
+# deadlock) freezes EVERY subsequent job's dispatch forever, not just its own
+# (live incident: dream_worker hung, and no reminder/canary/incident job fired
+# again for 45+ minutes until process restart). 20 minutes comfortably clears
+# the slowest observed legitimate run (dream_worker: ~16 min) while still
+# bounding the worst case. A timeout routes into the SAME retry/re-arm path an
+# ordinary handler exception already takes — recurring jobs self-heal (F-60),
+# one-shots retry up to _MAX_RETRIES.
+_HANDLER_TIMEOUT_SEC = 1200.0
 
 
 def _unify_scheduler_enabled() -> bool:
@@ -117,8 +128,29 @@ class JobScheduler(SupervisedTask):
             "AND (next_run_at <= ? OR (retry_at IS NOT NULL AND retry_at <= ?))",
             (now_iso, now_iso),
         )
-        for row in rows:
-            await self._run_job(row_to_job(row))
+        if not rows:
+            return
+        # Concurrent dispatch — a sequential `for row: await self._run_job(...)`
+        # let one slow-but-legitimate handler (e.g. dream_worker's ~20-30min
+        # cycles) block every OTHER due job's on-time firing for its full
+        # duration: telegram_canary's own delivery log showed a clean 20m/20m/
+        # ~50m rhythm locked to dream_worker's 30m cadence, not a real send
+        # failure. _run_job's CAS claim (`UPDATE jobs SET status='running'
+        # WHERE status='pending'`) already exists specifically so concurrent
+        # dispatchers can never double-run the same job — this loop just never
+        # used it. return_exceptions=True + explicit logging below: one job's
+        # unexpected raise must not crash the poll cycle for every other job.
+        results = await asyncio.gather(
+            *(self._run_job(row_to_job(row)) for row in rows),
+            return_exceptions=True,
+        )
+        for row, result in zip(rows, results, strict=True):
+            if isinstance(result, BaseException):
+                log.heartbeat.error(
+                    "[scheduler] _poll: concurrent job dispatch raised",
+                    exc_info=result,
+                    extra={"_fields": {"job_id": row["job_id"]}},
+                )
 
     def _occurrence_key(self, job: Job) -> str:
         """Dedup key scoped to the SCHEDULED INSTANT being serviced.
@@ -231,7 +263,23 @@ class JobScheduler(SupervisedTask):
             return
 
         try:
-            result = await handler.execute(job)
+            result = await asyncio.wait_for(handler.execute(job), timeout=_HANDLER_TIMEOUT_SEC)
+        except TimeoutError:
+            duration_ms = (time.monotonic() - t0) * 1000
+            log.heartbeat.error(
+                "[scheduler] %s: handler timed out — freed for retry/re-arm "
+                "(a hung handler must never freeze every other job's dispatch)",
+                job.job_id,
+                extra={"_fields": {
+                    "job_id": job.job_id, "handler": job.handler_name,
+                    "timeout_sec": _HANDLER_TIMEOUT_SEC, "duration_ms": duration_ms,
+                }},
+            )
+            result = JobResult(
+                job_id=job.job_id, success=False, output=None,
+                error=f"handler timed out after {_HANDLER_TIMEOUT_SEC:.0f}s",
+                duration_ms=duration_ms,
+            )
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             log.heartbeat.error(
@@ -667,7 +715,17 @@ class JobScheduler(SupervisedTask):
                 )
                 continue
             inside_window = (now - missed_at) <= timedelta(hours=replay_window_hours)
-            if job.replay_missed and inside_window:
+            # A ONE-SHOT job (run_once — e.g. a cronjob "in 5m" reminder) has no
+            # sensible "next slot": the else branch's compute_next_run(job.schedule)
+            # would recompute a RELATIVE schedule ("in 5m") fresh from THIS boot's
+            # `now`, silently pushing the user's specific requested time further
+            # into the future on every restart before it ever fires — a reminder
+            # can be deferred forever by repeated restarts and never actually be
+            # delivered. Always replay an overdue one-shot (bounded by the same
+            # window), regardless of replay_missed — deferring it is data loss,
+            # not a benign reschedule, unlike a recurring job which gets another
+            # occurrence soon regardless.
+            if (job.replay_missed or not self._is_recurring(job)) and inside_window:
                 log.scheduler.info(
                     "[scheduler] recover: replaying missed job",
                     extra={"_fields": {"job_id": job.job_id}},
