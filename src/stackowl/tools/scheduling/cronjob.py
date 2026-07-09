@@ -498,9 +498,14 @@ class CronjobTool(Tool):
 
     async def _list(self, scheduler: JobScheduler, owl: str, t0: float) -> ToolResult:
         jobs = filter_owl_jobs(await scheduler.list_jobs(), owl)
-        return self._ok(
+        result = self._ok(
             {"count": len(jobs), "jobs": [job_summary(j) for j in jobs]}, t0
         )
+        # Pure read — the manifest's effect_class="schedules" describes what
+        # create/watch install, not what list does. side_effect_committed=False
+        # tells the overclaim veto there is no durable effect to demand proof of
+        # (mirrors the pre-execution-refusal pattern elsewhere in this file).
+        return result.model_copy(update={"side_effect_committed": False})
 
     async def _update(self, args: CronjobArgs, scheduler: JobScheduler, owl: str, t0: float) -> ToolResult:
         if not args.job_id:

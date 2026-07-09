@@ -157,6 +157,19 @@ async def test_list_returns_only_callers_jobs(migrated_db: DbPool) -> None:
     assert goals == {"job a", "job b"}
 
 
+async def test_list_reports_no_side_effect(migrated_db: DbPool) -> None:
+    """A pure read must not be tagged as an attempted durable effect — the manifest's
+    effect_class="schedules" describes what create/watch install, not what list does.
+    Without this, the overclaim gate's default-deny vetoes ANY affirmative answer
+    following a plain 'list my reminders' call (verify() has no opinion on list, so
+    verified stays None — a real live incident: a goal_execution job's reminder text
+    got floored solely because it called cronjob(action=list) first)."""
+    await _seed_session(migrated_db)
+    result = await _run(migrated_db, action="list")
+    assert result.success
+    assert result.side_effect_committed is False
+
+
 async def test_pause_resume_remove(migrated_db: DbPool) -> None:
     await _seed_session(migrated_db)
     created = _payload(

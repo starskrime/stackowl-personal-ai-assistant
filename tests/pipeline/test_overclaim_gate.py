@@ -692,6 +692,29 @@ def test_should_classify_schedule_commit_precondition() -> None:
     assert _should_classify_schedule_commit(suspicious) is True
 
 
+def test_snapshot_excludes_no_side_effect_from_unverified() -> None:
+    """A call that never attempted its effect (side_effect_committed=False) must not
+    land in unverified_effects — there is nothing to demand proof of. Mirrors
+    is_effectful_failure's own `or not side_effect_committed` guard, which this
+    predicate previously lacked (a real live bug: cronjob's read-only 'list' action
+    shares the tool's effect_class="schedules" manifest, and with no override its
+    ToolResult defaulted side_effect_committed=True, so verify()'s honest "no
+    opinion" (None) on list floored the very next affirmative answer)."""
+    from stackowl.infra import tool_outcome_ledger
+    from stackowl.pipeline.steps.execute import _snapshot_consequential
+
+    token = tool_outcome_ledger.bind()
+    try:
+        tool_outcome_ledger.record_tool_outcome(
+            name="cronjob", action_severity="write", success=True,
+            side_effect_committed=False, verified=None, effect_class="schedules",
+        )
+        snap = _snapshot_consequential(_state())
+    finally:
+        tool_outcome_ledger.reset(token)
+    assert snap.unverified_effects == ()
+
+
 @pytest.mark.parametrize(
     ("outcome_effect_class", "expected"),
     [

@@ -792,9 +792,17 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         # ContextVar may be unbound by the time the gate runs) and floors an affirmative
         # non-floor draft that claims an effect we cannot prove. Keys on effect_class
         # PRESENCE, never on the answer prose.
+        # side_effect_committed=False means nothing was attempted (pre-execution
+        # refusal, OR a read-only action sharing a multi-action tool's manifest,
+        # e.g. cronjob's "list") — there is no effect to demand proof of, matching
+        # is_effectful_failure's own guard above (`or not side_effect_committed`).
+        # Without this, any effect-classed multi-action tool's read-only actions
+        # get vetoed for "unproven" effects they never claimed to produce.
         unverified_effects = tuple(
             o.name for o in outcomes
-            if o.effect_class is not None and o.verified is not True
+            if o.effect_class is not None
+            and o.verified is not True
+            and o.side_effect_committed
         )
         # Trigger 4 input — every effect_class that ran this turn AT ALL (success or
         # not, verified or not). Unlike unverified_effects (which asks "did it prove
