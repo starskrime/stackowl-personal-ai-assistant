@@ -106,15 +106,46 @@ class JobScheduler(SupervisedTask):
 
     async def run(self) -> None:
         log.heartbeat.info("[scheduler] run: starting poll loop")
+        inflight: set[asyncio.Task[None]] = set()
         while True:
-            t0 = self._clock.monotonic()
-            await self._poll()
-            elapsed = (self._clock.monotonic() - t0) * 1000
-            log.heartbeat.debug(
-                "[scheduler] run: poll cycle complete",
-                extra={"_fields": {"duration_ms": elapsed}},
-            )
+            # Fire this cycle as its OWN task instead of awaiting it inline — a
+            # cycle containing a hung/slow handler (bounded by
+            # _HANDLER_TIMEOUT_SEC, up to 20min) must never delay the NEXT
+            # cycle's scan for newly-due jobs. _poll's own concurrent dispatch
+            # (asyncio.gather) already made jobs WITHIN one cycle independent
+            # of each other; this makes CYCLES independent of each other too —
+            # a chronically-hung dream_worker was still blocking this outer
+            # loop from ever reaching its next tick while ITS gather was still
+            # pending, starving telegram_canary for up to 20-40min at a
+            # stretch even after the within-cycle fix. Safe: overlapping
+            # pollers are EXACTLY what _run_job's CAS claim
+            # (`UPDATE jobs SET status='running' WHERE status='pending'`) was
+            # built for — a job already claimed by an earlier in-flight cycle
+            # is simply excluded from the next cycle's `WHERE status='pending'`
+            # select, so it can never be double-dispatched.
+            task = asyncio.create_task(self._poll_cycle())
+            inflight.add(task)
+            task.add_done_callback(inflight.discard)
             await self._clock.async_sleep(_POLL_INTERVAL_SEC)
+
+    async def _poll_cycle(self) -> None:
+        """One timed, error-isolated poll tick — see run()'s fire-and-forget
+        rationale. A raise here (e.g. a DB hiccup in the due-jobs fetch itself,
+        outside any single job's gather) must not silently kill this cycle's
+        task without a trace — logged, never propagated, matching _poll's own
+        per-job isolation."""
+        t0 = self._clock.monotonic()
+        try:
+            await self._poll()
+        except Exception as exc:
+            log.heartbeat.error(
+                "[scheduler] _poll_cycle: poll raised", exc_info=exc,
+            )
+        elapsed = (self._clock.monotonic() - t0) * 1000
+        log.heartbeat.debug(
+            "[scheduler] run: poll cycle complete",
+            extra={"_fields": {"duration_ms": elapsed}},
+        )
 
     async def _poll(self) -> None:
         TestModeGuard.assert_not_test_mode("scheduler.execute")
