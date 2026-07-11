@@ -27,6 +27,12 @@ log = logging.getLogger("stackowl.db")
 _PRAGMAS = [
     "PRAGMA journal_mode=WAL",
     "PRAGMA foreign_keys=ON",
+    # LAT.4 (batch background writes into chunked transactions): this WAL /
+    # busy_timeout config was evaluated as part of that story and found
+    # already correctly tuned — deliberately NOT changed here. The fix for
+    # the starvation this comment block documents is call-site write-batching
+    # (reflection_writer_handler.py, skills/store.py's set_embeddings_batch)
+    # via the existing DbPool.transaction(), not touching these pragmas.
     # SQLITE_BUSY ("database is locked") IS already classified as a retriable
     # dead-handle condition below (_DEAD_PRIMARY_CODES) and execute()/fetch_all()
     # already retry once via retry_once_on_dead_handle — but each attempt only

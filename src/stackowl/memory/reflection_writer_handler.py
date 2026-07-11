@@ -24,6 +24,7 @@ NULL filter in :meth:`ReflectionStore.list_pending`).
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from stackowl.config.test_mode import TestModeGuard
@@ -47,6 +48,24 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 
 _REFLECTION_HANDLER_NAME = "reflection_writer"
 _DEFAULT_BATCH_LIMIT = 10
+
+# LAT.4 — pending outcomes are persisted in bounded chunks of this size
+# instead of one execute()-per-row autocommit (pool.py:27-38's documented
+# starvation case). Bounded (not unbounded) so one background job can never
+# itself hold the single-writer lock for a long unbroken span (AC #3).
+CHUNK_SIZE = 50
+
+
+@dataclass
+class _PreparedReflection:
+    """A reflection whose (slow, network-bound) LLM completion + embedding
+    have already been computed — ready for a fast, lock-held DB write."""
+
+    outcome: TaskOutcome
+    summary: str
+    suggested_strategy: str
+    embedding: list[float] | None
+    embedding_model: str | None
 
 
 class ReflectionWriterHandler(JobHandler):
@@ -227,11 +246,71 @@ class ReflectionWriterHandler(JobHandler):
                 },
             )
 
+        # LAT.4 — chunked persistence. Split each row into a compute phase
+        # (LLM completion + embedding — slow, network-bound, no lock) and a
+        # persist phase (fast DB insert). Chunks of up to CHUNK_SIZE prepared
+        # rows are committed in ONE transaction each via pool.transaction(),
+        # replacing one execute()-per-row autocommit. Compute intentionally
+        # happens OUTSIDE the transaction: holding the single-writer lock
+        # across a chunk's worth of sequential LLM calls would recreate, at
+        # chunk granularity, the exact starvation this batching fixes.
         written = 0
-        for outcome in pending:
-            ok = await self._reflect_one(outcome, provider)
-            if ok:
-                written += 1
+        for chunk_start in range(0, len(pending), CHUNK_SIZE):
+            chunk = pending[chunk_start:chunk_start + CHUNK_SIZE]
+            prepared: list[_PreparedReflection] = []
+            for outcome in chunk:
+                p = await self._compute_reflection(outcome, provider)
+                if p is not None:
+                    prepared.append(p)
+            if not prepared:
+                continue
+            # Crash-safety tradeoff (AC #5): a crash mid-chunk loses at most
+            # this chunk's writes (<= CHUNK_SIZE rows), not the whole pending
+            # set and not just one row — acceptable given WAL's
+            # synchronous=NORMAL durability semantics (already in use,
+            # unchanged by this story). A write failure inside the chunk
+            # rolls back that whole chunk (pool.transaction()'s semantics) —
+            # logged and skipped rather than aborting the rest of the job
+            # (B5: one bad chunk must not lose already-prepared later rows).
+            try:
+                async with self._db.transaction() as tx:
+                    for p in prepared:
+                        await self._store.write(
+                            trace_id=p.outcome.trace_id,
+                            owl_name=p.outcome.owl_name,
+                            summary=p.summary,
+                            suggested_strategy=p.suggested_strategy,
+                            failure_class=p.outcome.failure_class,
+                            quality_score=p.outcome.quality_score,
+                            embedding=p.embedding,
+                            embedding_model=p.embedding_model,
+                            conn=tx,
+                        )
+            except Exception as exc:  # B5
+                log.memory.warning(
+                    "[reflection] execute: chunk persist failed — rolled back, skipping chunk",
+                    exc_info=exc,
+                    extra={"_fields": {
+                        "job_id": job.job_id, "chunk_size": len(prepared),
+                        "chunk_start": chunk_start,
+                    }},
+                )
+                continue
+            written += len(prepared)
+            log.memory.debug(
+                "[reflection] execute: chunk committed",
+                extra={"_fields": {
+                    "job_id": job.job_id, "chunk_size": len(prepared),
+                    "chunk_start": chunk_start,
+                }},
+            )
+            # Best-effort LessonsIndex publish per row — outside the DB
+            # transaction (LanceDB, not SQLite; never gates the DB write).
+            for p in prepared:
+                await self._publish_to_lessons(
+                    outcome=p.outcome,
+                    summary=p.summary, suggested_strategy=p.suggested_strategy,
+                )
 
         duration_ms = (time.monotonic() - t0) * 1000
         # 5. EXIT — overall success requires the reflection pass to have run
@@ -257,13 +336,19 @@ class ReflectionWriterHandler(JobHandler):
             },
         )
 
-    async def _reflect_one(
+    async def _compute_reflection(
         self, outcome: TaskOutcome, provider: ModelProvider,
-    ) -> bool:
-        """Run one reflection call + write the row. Returns success."""
+    ) -> _PreparedReflection | None:
+        """Run one reflection's LLM completion + embedding (no DB write).
+
+        LAT.4: split out of the old ``_reflect_one`` so the slow, network-
+        bound part of a row's work never runs while a chunked persist
+        transaction holds the single-writer lock (see ``execute``). Returns
+        ``None`` on any failure — mirrors the prior per-row skip semantics.
+        """
         # 1. ENTRY
         log.memory.debug(
-            "[reflection] reflect_one: entry",
+            "[reflection] compute_reflection: entry",
             extra={"_fields": {
                 "outcome_id": outcome.outcome_id,
                 "trace_id": outcome.trace_id,
@@ -278,60 +363,38 @@ class ReflectionWriterHandler(JobHandler):
             result = await provider.complete(messages, model="")
         except Exception as exc:  # B5
             log.memory.warning(
-                "[reflection] reflect_one: provider.complete failed — skipping",
+                "[reflection] compute_reflection: provider.complete failed — skipping",
                 exc_info=exc,
                 extra={"_fields": {"outcome_id": outcome.outcome_id}},
             )
-            return False
+            return None
         # 2. DECISION (cont.) — parse
         parsed = parse_reflection_response(result.content)
         if parsed is None:
             log.memory.warning(
-                "[reflection] reflect_one: could not parse response — skipping",
+                "[reflection] compute_reflection: could not parse response — skipping",
                 extra={"_fields": {
                     "outcome_id": outcome.outcome_id,
                     "raw_preview": result.content[:200],
                 }},
             )
-            return False
+            return None
         summary, suggested_strategy = parsed
 
-        # 3. STEP (cont.) — embed + write
+        # 3. STEP (cont.) — embed
         embedding, embedding_model = await self._embed(summary)
-        try:
-            await self._store.write(
-                trace_id=outcome.trace_id,
-                owl_name=outcome.owl_name,
-                summary=summary,
-                suggested_strategy=suggested_strategy,
-                failure_class=outcome.failure_class,
-                quality_score=outcome.quality_score,
-                embedding=embedding,
-                embedding_model=embedding_model,
-            )
-        except Exception as exc:  # B5
-            log.memory.warning(
-                "[reflection] reflect_one: store.write failed — skipping",
-                exc_info=exc,
-                extra={"_fields": {"outcome_id": outcome.outcome_id}},
-            )
-            return False
-        # Publish to LessonsIndex so tools/parliament can semantically find
-        # this reflection (Learning Commit 5). Best-effort — failures don't
-        # block the reflection itself.
-        await self._publish_to_lessons(
-            outcome=outcome,
-            summary=summary, suggested_strategy=suggested_strategy,
-        )
         # 4. EXIT
         log.memory.debug(
-            "[reflection] reflect_one: exit",
+            "[reflection] compute_reflection: exit",
             extra={"_fields": {
                 "outcome_id": outcome.outcome_id,
                 "summary_len": len(summary),
             }},
         )
-        return True
+        return _PreparedReflection(
+            outcome=outcome, summary=summary, suggested_strategy=suggested_strategy,
+            embedding=embedding, embedding_model=embedding_model,
+        )
 
     async def _publish_to_lessons(
         self, *, outcome: TaskOutcome, summary: str, suggested_strategy: str,

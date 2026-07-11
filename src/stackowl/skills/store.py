@@ -28,6 +28,15 @@ if TYPE_CHECKING:
     from stackowl.skills.loader import LoadedSkill
 
 
+# LAT.4 — boot-time embedding back-fill (SkillsAssembly._embed_missing, up to
+# ~300 skills) writes in bounded chunks of this size instead of one
+# execute()-per-row autocommit — the exact "~24-40s catalog scan writing
+# ~300 rows" starvation case pool.py:27-38 documents. Bounded (not
+# unbounded) so one boot-time scan can never itself hold the single-writer
+# lock for a long unbroken span.
+_EMBED_CHUNK_SIZE = 100
+
+
 @dataclass(frozen=True)
 class Skill:
     """Read-side projection of one ``skills`` row."""
@@ -333,6 +342,57 @@ class SkillIndexStore(OwnedRepository):
         # 4. EXIT
         log.skills.info("[skills] store.set_embedding: stored",
                  extra={"_fields": {"skill_id": skill_id}})
+
+    async def set_embeddings_batch(
+        self, items: Sequence[tuple[int, list[float] | None, str | None]],
+    ) -> None:
+        """Batch-write embeddings for many skills in bounded chunked
+        transactions (LAT.4). Used by SkillsAssembly's boot-time catalog scan
+        (up to ~300 skills) in place of one ``set_embedding()``
+        execute()-per-row autocommit per skill — replaces N commits with
+        ``ceil(N / _EMBED_CHUNK_SIZE)`` commits. A write failure inside a
+        chunk rolls back only that chunk (pool.transaction() semantics); a
+        crash mid-chunk loses at most that chunk's writes, not the whole
+        scan — acceptable under WAL's synchronous=NORMAL (unchanged by this
+        story). A no-op on an empty ``items``.
+        """
+        # 1. ENTRY
+        log.skills.debug(
+            "[skills] store.set_embeddings_batch: entry",
+            extra={"_fields": {"n_items": len(items)}},
+        )
+        if not items:
+            return
+        now = time.time()
+        written = 0
+        for start in range(0, len(items), _EMBED_CHUNK_SIZE):
+            chunk = items[start:start + _EMBED_CHUNK_SIZE]
+            try:
+                async with self._db.transaction() as tx:
+                    for skill_id, embedding, model in chunk:
+                        blob = pack_embedding(embedding) if embedding else None
+                        await tx.execute(
+                            "UPDATE skills SET embedding = ?, embedding_model = ?, updated_at = ? "
+                            "WHERE skill_id = ? AND owner_id = ?",
+                            (blob, model, now, skill_id, self._owner_id),
+                        )
+            except Exception as exc:  # B5 — one bad chunk must not lose other chunks
+                log.skills.warning(
+                    "[skills] store.set_embeddings_batch: chunk failed — rolled back, skipping",
+                    exc_info=exc,
+                    extra={"_fields": {"chunk_size": len(chunk), "chunk_start": start}},
+                )
+                continue
+            written += len(chunk)
+            log.skills.debug(
+                "[skills] store.set_embeddings_batch: chunk committed",
+                extra={"_fields": {"chunk_size": len(chunk), "written_so_far": written}},
+            )
+        # 4. EXIT
+        log.skills.info(
+            "[skills] store.set_embeddings_batch: exit",
+            extra={"_fields": {"total": len(items)}},
+        )
 
     async def set_summary(
         self,

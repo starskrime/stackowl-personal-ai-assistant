@@ -189,14 +189,19 @@ async def _embed_missing(
             "[skills] _embed_missing: vector count mismatch — partial write",
             extra={"_fields": {"requested": len(to_embed), "got": len(vectors)}},
         )
-    for (skill_id, _), vec in zip(to_embed, vectors, strict=False):
-        try:
-            await store.set_embedding(skill_id, list(vec), model_name)
-        except Exception as exc:  # B5
-            log.skills.warning(
-                "[skills] _embed_missing: set_embedding failed",
-                exc_info=exc, extra={"_fields": {"skill_id": skill_id}},
-            )
+    # LAT.4 — one batched call, chunked internally into bounded committed
+    # transactions (SkillIndexStore.set_embeddings_batch), replacing one
+    # set_embedding() execute()-per-row autocommit per skill. This is the
+    # exact "~24-40s catalog scan writing ~300 rows" starvation case
+    # pool.py:27-38 documents.
+    batch_items = [(skill_id, list(vec), model_name) for (skill_id, _), vec in zip(to_embed, vectors, strict=False)]
+    try:
+        await store.set_embeddings_batch(batch_items)
+    except Exception as exc:  # B5
+        log.skills.warning(
+            "[skills] _embed_missing: set_embeddings_batch failed",
+            exc_info=exc, extra={"_fields": {"n_items": len(batch_items)}},
+        )
     # 4. EXIT
     log.skills.info(
         "[skills] _embed_missing: exit",

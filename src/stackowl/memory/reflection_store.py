@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import aiosqlite
+
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.outcome_store import TaskOutcome
@@ -184,8 +186,16 @@ class ReflectionStore(OwnedRepository):
         quality_score: float | None,
         embedding: list[float] | None,
         embedding_model: str | None,
+        conn: aiosqlite.Connection | None = None,
     ) -> None:
-        """Insert a new reflection. Idempotent on trace_id."""
+        """Insert a new reflection. Idempotent on trace_id.
+
+        ``conn`` (LAT.4): when the caller is already inside a
+        ``DbPool.transaction()`` block (batched chunked writes), pass the
+        yielded connection so this INSERT joins that transaction instead of
+        opening its own autocommit via ``self._db.execute`` — nesting the
+        latter inside an open transaction would deadlock on ``_write_lock``.
+        """
         # 1. ENTRY
         log.memory.debug(
             "[reflections] write: entry",
@@ -193,18 +203,20 @@ class ReflectionStore(OwnedRepository):
                 "trace_id": trace_id, "owl_name": owl_name,
                 "has_embedding": embedding is not None,
                 "summary_len": len(summary),
+                "in_batch_tx": conn is not None,
             }},
         )
         embedding_blob = pack_embedding(embedding) if embedding else None
-        # 3. STEP
-        await self._db.execute(
-            _INSERT_SQL,
-            (
-                trace_id, owl_name, summary[:4000], suggested_strategy[:4000],
-                failure_class, quality_score, embedding_blob, embedding_model,
-                time.time(), self._owner_id,
-            ),
+        params = (
+            trace_id, owl_name, summary[:4000], suggested_strategy[:4000],
+            failure_class, quality_score, embedding_blob, embedding_model,
+            time.time(), self._owner_id,
         )
+        # 3. STEP
+        if conn is not None:
+            await conn.execute(_INSERT_SQL, params)
+        else:
+            await self._db.execute(_INSERT_SQL, params)
         # 4. EXIT
         log.memory.info(
             "[reflections] write: stored",
