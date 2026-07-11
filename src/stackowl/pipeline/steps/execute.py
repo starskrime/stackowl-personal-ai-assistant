@@ -2133,15 +2133,22 @@ def _resolve_manifest(owl_name: str) -> OwlAgentManifest | None:
         return None
 
 
+def _default_stream_manifest() -> OwlAgentManifest:
+    """Fallback manifest for a plain-stream call with no owl registry entry —
+    same default ``timeout_seconds`` any owl gets, so the raw provider.stream()
+    is never left unguarded (LiteLLM-hang root cause: an unguarded stream can
+    block forever on time-to-first-chunk with zero error)."""
+    return OwlAgentManifest(name="_stream", role="", system_prompt="", model_tier="standard")
+
+
 def _open_stream(
     provider: ModelProvider,
     manifest: OwlAgentManifest | None,
     messages: list[Message],
 ) -> AsyncIterator[str]:
-    """Return a guarded stream when a manifest exists, else a raw provider stream."""
-    if manifest is None:
-        return provider.stream(messages, model="")
-    guard = OwlResourceGuard(manifest)
+    """Return a guarded stream — every plain-stream call goes through
+    OwlResourceGuard, even with no owl manifest."""
+    guard = OwlResourceGuard(manifest if manifest is not None else _default_stream_manifest())
     return guard.stream(provider, messages, model="")
 
 
@@ -2402,6 +2409,24 @@ async def run(state: PipelineState) -> PipelineState:
             )
             chunks.append(chunk)
             chunk_index += 1
+        if chunk_index == 0 or not any(c.content for c in chunks):
+            # Stream completed cleanly (no timeout, no exception) but produced
+            # zero content chars — LiteLLM-hang sibling bug: a reasoning-only
+            # or otherwise-empty stream must not become a silent empty reply.
+            # Reuse OwlTimeoutError so the except-clause immediately below
+            # already converts this into a clear step_errors entry.
+            timeout_s = manifest.timeout_seconds if manifest is not None else (
+                _default_stream_manifest().timeout_seconds
+            )
+            log.engine.warning(
+                "[pipeline] execute: empty stream — zero content chars",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "owl": state.owl_name,
+                    "chunk_count": chunk_index,
+                }},
+            )
+            raise OwlTimeoutError(state.owl_name, timeout_s)
     except OwlTimeoutError as exc:
         log.engine.warning(
             "[pipeline] execute: owl timeout",

@@ -96,3 +96,93 @@ async def test_guard_does_not_probe_semaphore_private_value() -> None:
 
     src = inspect.getsource(guards_mod)
     assert "._value" not in src, "guard must not probe asyncio.Semaphore._value"
+
+
+# ---------------------------------------------------------------------------
+# LiteLLM-hang regression — stream() must enforce timeout even when the
+# underlying provider never yields a first chunk (or stalls between chunks),
+# not just via an after-the-fact elapsed check that only runs once a chunk
+# has already arrived.
+# ---------------------------------------------------------------------------
+
+
+class _NeverYieldsProvider:
+    """A fake ModelProvider whose stream() blocks forever before any yield."""
+
+    name = "never-yields"
+
+    async def stream(
+        self, messages: object, model: str, **kwargs: object
+    ) -> AsyncIterator[str]:
+        await asyncio.Event().wait()
+        yield "unreachable"  # pragma: no cover
+
+
+class _StallsAfterOneChunkProvider:
+    """A fake ModelProvider that yields once, then blocks forever."""
+
+    name = "stalls-after-one"
+
+    async def stream(
+        self, messages: object, model: str, **kwargs: object
+    ) -> AsyncIterator[str]:
+        yield "first "
+        await asyncio.Event().wait()
+        yield "unreachable"  # pragma: no cover
+
+
+class _EmptyStreamProvider:
+    """A fake ModelProvider whose stream() completes cleanly with zero chunks."""
+
+    name = "empty-stream"
+
+    async def stream(
+        self, messages: object, model: str, **kwargs: object
+    ) -> AsyncIterator[str]:
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+
+def _fast_manifest() -> OwlAgentManifest:
+    return OwlAgentManifest(
+        name="fastowl",
+        role="tester",
+        system_prompt="x",
+        model_tier="standard",
+        max_concurrent_requests=1,
+        max_tokens=10_000,
+        timeout_seconds=0.15,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_times_out_when_provider_never_yields_first_chunk() -> None:
+    """Root cause of the LiteLLM hang: a stalled time-to-first-chunk must not
+    block forever — the guard must enforce the timeout on __anext__() itself."""
+    from stackowl.exceptions import OwlTimeoutError
+
+    guard = OwlResourceGuard(_fast_manifest())
+    with pytest.raises(OwlTimeoutError):
+        await asyncio.wait_for(_drain(guard, _NeverYieldsProvider()), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_stream_times_out_on_stall_between_chunks() -> None:
+    """A stall AFTER a chunk has already arrived must also time out — not just
+    time-to-first-chunk."""
+    from stackowl.exceptions import OwlTimeoutError
+
+    guard = OwlResourceGuard(_fast_manifest())
+    with pytest.raises(OwlTimeoutError):
+        await asyncio.wait_for(_drain(guard, _StallsAfterOneChunkProvider()), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_stream_completes_cleanly_on_empty_stream() -> None:
+    """A clean empty stream (StopAsyncIteration with zero chunks) is NOT a
+    guard-level error — the guard's job is timeout/concurrency/token budget
+    enforcement, not deciding whether zero output is meaningful. That decision
+    belongs to the caller (execute.py's plain-stream path)."""
+    guard = OwlResourceGuard(_fast_manifest())
+    out = await asyncio.wait_for(_drain(guard, _EmptyStreamProvider()), timeout=2.0)
+    assert out == ""

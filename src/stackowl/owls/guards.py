@@ -1,9 +1,11 @@
 """OwlResourceGuard — enforces per-owl resource budgets (token, timeout, concurrency).
 
 One instance per owl. The semaphore is held for the lifetime of the provider call
-and released in a ``finally`` block. Timeout is enforced by polling elapsed time
-between yielded chunks (we cannot wrap an async generator with ``asyncio.wait_for``
-directly). Token count is approximated by whitespace-splitting yielded text.
+and released in a ``finally`` block. Timeout is enforced per-item by wrapping each
+``__anext__()`` call on the provider's stream in ``asyncio.wait_for`` — the standard
+pattern for bounding an async generator, covering both a stalled time-to-first-chunk
+and a stall between later chunks. Token count is approximated by whitespace-splitting
+yielded text.
 
 This is a class-based guard (OOP) — never a free function.
 """
@@ -136,7 +138,8 @@ class OwlResourceGuard:
 
         Enforces:
         1. Concurrency — non-blocking semaphore acquire (raises OwlConcurrencyError).
-        2. Timeout — elapsed-time check between chunks (raises OwlTimeoutError).
+        2. Timeout — per-item ``asyncio.wait_for`` on ``__anext__()``, covering both
+           time-to-first-chunk and inter-chunk stalls (raises OwlTimeoutError).
         3. Token budget — whitespace-token count vs ``manifest.max_tokens``;
            when exceeded the stream stops cleanly (no exception bubbled).
 
@@ -184,18 +187,23 @@ class OwlResourceGuard:
 
         token_count = 0
         t0 = time.monotonic()
+        stream_iter = provider.stream(messages, model, **kwargs)
         try:
-            async for text in provider.stream(messages, model, **kwargs):
-                # 3a. STEP — timeout check
-                elapsed = time.monotonic() - t0
-                if elapsed > self._manifest.timeout_seconds:
+            while True:
+                # 3a. STEP — per-item timeout, bounds time-to-first-chunk AND any
+                # later stall (the remaining budget shrinks with elapsed time so
+                # a slow-but-steady stream can't reset the deadline forever).
+                remaining = self._manifest.timeout_seconds - (time.monotonic() - t0)
+                try:
+                    text = await asyncio.wait_for(stream_iter.__anext__(), timeout=max(remaining, 0.0))
+                except TimeoutError:
                     self.record_timeout()
                     log.engine.warning(
                         "[guard] stream: timeout exceeded",
                         extra={
                             "_fields": {
                                 "owl": self._manifest.name,
-                                "elapsed_s": round(elapsed, 3),
+                                "elapsed_s": round(time.monotonic() - t0, 3),
                                 "limit_s": self._manifest.timeout_seconds,
                             }
                         },
@@ -203,7 +211,10 @@ class OwlResourceGuard:
                     raise OwlTimeoutError(
                         self._manifest.name,
                         self._manifest.timeout_seconds,
-                    )
+                    ) from None
+                except StopAsyncIteration:
+                    # Normal end-of-stream — not a timeout.
+                    return
 
                 # 3b. STEP — token budget check (approximate via whitespace split)
                 chunk_tokens = len(text.split())
