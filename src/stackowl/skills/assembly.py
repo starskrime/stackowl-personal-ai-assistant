@@ -149,10 +149,16 @@ async def _embed_missing(
     )
     provider = embedding_registry.get()
     model_name = getattr(provider, "model_name", None)
+    # 3. STEP — one index read for the whole pass instead of one per skill
+    index = await store.index_by_source_name()
+    log.skills.debug(
+        "[skills] _embed_missing: index snapshot taken",
+        extra={"_fields": {"n_indexed": len(index)}},
+    )
     # 2. DECISION — which need embedding
     to_embed: list[tuple[int, str]] = []
     for ls in loaded:
-        existing = await store.get(ls.manifest.source, ls.manifest.name)
+        existing = index.get((ls.manifest.source, ls.manifest.name))
         if existing is None:
             continue
         if (
@@ -221,12 +227,20 @@ async def _publish_to_lessons(
     """
     from stackowl.learning.lessons_index import LessonDraft
 
+    # 3. STEP — one index read for the whole pass, taken after _embed_missing
+    # so this pass observes the embeddings that pass wrote earlier in the same
+    # build() call (fresh per-pass snapshot, not one shared across all 3 passes).
+    index = await store.index_by_source_name()
+    log.skills.debug(
+        "[skills] _publish_to_lessons: index snapshot taken",
+        extra={"_fields": {"n_indexed": len(index)}},
+    )
     to_publish: list[tuple[int, str, LessonDraft]] = []
     for ls in loaded:
         m = ls.manifest
         content = _lessons_content(ls)
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        existing = await store.get(m.source, m.name)
+        existing = index.get((m.source, m.name))
         if existing is not None and existing.lessons_published_hash == content_hash:
             continue
         draft = LessonDraft(
@@ -274,10 +288,16 @@ async def _summarize_missing(
     )
     from stackowl.providers.base import Message  # noqa: PLC0415 — deferred to avoid circular import
     from stackowl.skills.store import _summary_hash  # reuse store's hash — no reimplementation
+    # 3. STEP — one index read for the whole pass instead of one per skill
+    index = await store.index_by_source_name()
+    log.skills.debug(
+        "[skills] _summarize_missing: index snapshot taken",
+        extra={"_fields": {"n_indexed": len(index)}},
+    )
     for ls in loaded:
         if ls.manifest.summary is not None:
             continue  # author override — never regenerate
-        existing = await store.get(ls.manifest.source, ls.manifest.name)
+        existing = index.get((ls.manifest.source, ls.manifest.name))
         if existing is None:
             continue
         # 2. DECISION — check if current summary is up-to-date

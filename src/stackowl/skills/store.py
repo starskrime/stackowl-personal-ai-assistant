@@ -211,6 +211,33 @@ class SkillIndexStore(OwnedRepository):
                   extra={"_fields": {"count": len(results)}})
         return results
 
+    async def index_by_source_name(self) -> dict[tuple[str, str], Skill]:
+        """Return every skill for this owner in one query, keyed by (source, name).
+
+        Mirrors :meth:`list_enabled`'s single-query shape. Unlike
+        :meth:`get_many_by_name`, duplicate names across sources are NOT
+        collapsed — a builtin and a learned skill can legitimately share a
+        name, and callers (SkillsAssembly's boot back-fill passes) need to
+        track each row independently. Snapshot semantics: reflects the table
+        at call time only: callers that need to observe writes made by an
+        earlier pass in the same boot must take a fresh snapshot per pass.
+        """
+        # 1. ENTRY
+        log.skills.debug("[skills] store.index_by_source_name: entry")
+        rows = await self._db.fetch_all(
+            f"SELECT {_SELECT_FIELDS} FROM skills WHERE owner_id = ?",
+            (self._owner_id,),
+        )
+        index: dict[tuple[str, str], Skill] = {
+            (str(sk.source), sk.name): sk for sk in (_row_to_skill(r) for r in rows)
+        }
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store.index_by_source_name: exit",
+            extra={"_fields": {"count": len(index)}},
+        )
+        return index
+
     async def get(self, source: SkillSource, name: str) -> Skill | None:
         """Return one skill by (source, name) or ``None`` if missing."""
         # 1. ENTRY
