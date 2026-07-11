@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -117,6 +119,33 @@ _SELECT_FIELDS = """
     summary, summary_source, summary_body_hash, tool_names, lessons_published_hash
 """
 
+# Same field list, table-prefixed for the hybrid_recall JOIN against skills_fts
+# (skills_fts has its own name/description/when_to_use/summary columns, so an
+# unprefixed SELECT would be ambiguous once joined).
+_SELECT_FIELDS_S = ", ".join(
+    f"s.{col.strip()}" for col in _SELECT_FIELDS.replace("\n", " ").split(",") if col.strip()
+)
+
+# RRF fusion constant (k in score = sum 1/(k + rank)) — standard choice, needs
+# no score-scale normalization between BM25 and cosine.
+_RRF_K = 60
+
+_FTS_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _sanitize_fts_query(query: str) -> str:
+    """Convert free text into a safe FTS5 MATCH expression.
+
+    Mirrors ``memory/sqlite_helpers._sanitize_fts_query`` (same escaping
+    approach — extract Unicode word tokens, join as a quoted disjunction,
+    cap at 16 terms). Duplicated locally (rather than imported) to avoid a
+    cross-module reach into another package's private helper.
+    """
+    tokens = _FTS_TOKEN_RE.findall(query)
+    if not tokens:
+        return ""
+    return " OR ".join(f'"{t}"' for t in tokens[:16])
+
 
 class SkillIndexStore(OwnedRepository):
     """Async SQLite wrapper for the ``skills`` + ``skill_audit`` tables (migration 0031).
@@ -173,6 +202,12 @@ class SkillIndexStore(OwnedRepository):
                 extra={"_fields": {"name": m.name, "source": m.source}},
             )
             await self.set_summary(skill_id, m.summary, "author", _summary_hash(loaded, m.summary))
+        # Keep skills_fts in sync (name/description/when_to_use may have changed
+        # even when there's no summary write above). set_summary already synced
+        # FTS with the fresh summary in that branch; this call is a cheap no-op
+        # re-sync in that case and the only sync in the no-summary case.
+        if skill_id != -1:
+            await self._sync_fts(skill_id)
         # 4. EXIT
         log.skills.info(
             "[skills] store.upsert: stored",
@@ -268,6 +303,11 @@ class SkillIndexStore(OwnedRepository):
             "WHERE skill_id = ? AND owner_id = ?",
             (int(enabled), time.time(), skill_id, self._owner_id),
         )
+        # A disabled skill re-enabled via /skill enable would otherwise be
+        # keyword-unreachable in skills_fts until the next boot re-scan
+        # (loader.py upserts all skills) — sync now so hybrid_recall's
+        # keyword tier sees it immediately.
+        await self._sync_fts(skill_id)
         # 4. EXIT
         log.skills.info("[skills] store.set_enabled: stored",
                  extra={"_fields": {"skill_id": skill_id, "enabled": enabled}})
@@ -312,6 +352,7 @@ class SkillIndexStore(OwnedRepository):
             "WHERE skill_id = ? AND owner_id = ?",
             (summary, source, body_hash, time.time(), skill_id, self._owner_id),
         )
+        await self._sync_fts(skill_id)
         # 4. EXIT
         log.skills.debug(
             "[skills] store.set_summary: exit",
@@ -437,6 +478,85 @@ class SkillIndexStore(OwnedRepository):
         )
         return results
 
+    async def hybrid_recall(
+        self,
+        query_text: str,
+        query_embedding: Sequence[float],
+        *,
+        limit: int,
+    ) -> list[tuple[Skill, float]]:
+        """Hybrid BM25 (skills_fts) + cosine (:meth:`semantic_recall`) recall,
+        fused via Reciprocal Rank Fusion.
+
+        Runs both passes independently, then fuses their rank lists:
+        ``score(skill) = sum over passes where it appears of 1/(k + rank)``
+        (``k`` = :data:`_RRF_K`). No score-scale normalization is needed —
+        that's the point of RRF over a hand-tuned weighted sum, since BM25
+        and cosine scores aren't on the same scale. Returns the top-``limit``
+        ``(Skill, fused_score)`` pairs, descending.
+        """
+        # 1. ENTRY
+        log.skills.debug(
+            "[skills] store.hybrid_recall: entry",
+            extra={"_fields": {"query_len": len(query_text), "limit": limit}},
+        )
+        # 3. STEP — cosine pass (reuses semantic_recall's own scoring, not duplicated)
+        semantic_hits = await self.semantic_recall(list(query_embedding), limit=limit)
+        # 3. STEP — keyword pass (FTS5 BM25)
+        keyword_hits = await self._fts_search(query_text, limit=limit)
+        # 3. STEP — RRF fuse
+        fused: dict[int, float] = {}
+        by_id: dict[int, Skill] = {}
+        for rank, (sk, _score) in enumerate(semantic_hits):
+            fused[sk.skill_id] = fused.get(sk.skill_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
+            by_id[sk.skill_id] = sk
+        for rank, sk in enumerate(keyword_hits):
+            fused[sk.skill_id] = fused.get(sk.skill_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
+            by_id[sk.skill_id] = sk
+        ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+        results = [(by_id[sid], score) for sid, score in ranked]
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store.hybrid_recall: exit",
+            extra={"_fields": {
+                "semantic_hits": len(semantic_hits), "keyword_hits": len(keyword_hits),
+                "fused": len(results),
+            }},
+        )
+        return results
+
+    async def _fts_search(self, query_text: str, *, limit: int) -> list[Skill]:
+        """FTS5 BM25 keyword pass over ``skills_fts``, owner-scoped +
+        enabled-only, ordered by ``bm25(skills_fts)`` — mirrors
+        ``memory/sqlite_helpers.fts_recall``'s JOIN + ``ORDER BY bm25(...)``
+        shape. Fails soft (``[]``) on a parse error the sanitizer missed."""
+        fts_query = _sanitize_fts_query(query_text)
+        if not fts_query:
+            log.skills.debug("[skills] store._fts_search: exit — empty query after sanitize")
+            return []
+        try:
+            rows = await self._db.fetch_all(
+                f"""SELECT {_SELECT_FIELDS_S} FROM skills_fts fts
+                    JOIN skills s ON s.skill_id = fts.rowid
+                    WHERE skills_fts MATCH ? AND s.owner_id = ? AND s.enabled = 1
+                    ORDER BY bm25(skills_fts)
+                    LIMIT ?""",
+                (fts_query, self._owner_id, limit),
+            )
+        except Exception as exc:
+            # FTS5 still rejected the sanitized query (rare) — fail soft.
+            log.skills.warning(
+                "[skills] store._fts_search: FTS5 query failed — returning empty",
+                exc_info=exc, extra={"_fields": {"query_len": len(query_text)}},
+            )
+            return []
+        results = [_row_to_skill(r) for r in rows]
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store._fts_search: exit", extra={"_fields": {"n_results": len(results)}},
+        )
+        return results
+
     _SOURCE_PRIORITY: dict[str, int] = {"user": 0, "learned": 1, "installed": 2, "builtin": 3}
 
     async def get_many_by_name(self, names: tuple[str, ...]) -> list[Skill]:
@@ -478,17 +598,48 @@ class SkillIndexStore(OwnedRepository):
         return result
 
     async def delete(self, skill_id: int) -> None:
-        """Remove the index row. File system deletion is the caller's job."""
+        """Remove the index row (+ its skills_fts row). File system deletion
+        is the caller's job. Base + FTS deletes run in one transaction
+        (mirrors sqlite_bridge.delete) so a crash mid-op cannot leave the
+        two divergent."""
         # 1. ENTRY
         log.skills.debug("[skills] store.delete: entry",
                   extra={"_fields": {"skill_id": skill_id}})
-        await self._db.execute(
-            "DELETE FROM skills WHERE skill_id = ? AND owner_id = ?",
-            (skill_id, self._owner_id),
-        )
+        async with self._db.transaction() as tx:
+            await tx.execute(
+                "DELETE FROM skills_fts WHERE rowid = ?", (skill_id,),
+            )
+            await tx.execute(
+                "DELETE FROM skills WHERE skill_id = ? AND owner_id = ?",
+                (skill_id, self._owner_id),
+            )
         # 4. EXIT
         log.skills.info("[skills] store.delete: deleted",
                  extra={"_fields": {"skill_id": skill_id}})
+
+    async def _sync_fts(self, skill_id: int) -> None:
+        """Re-sync ``skills_fts`` for one ``skill_id`` from the current
+        ``skills`` row. FTS5 has no UPSERT, so this deletes then re-inserts
+        the row atomically — mirrors ``committed_facts_fts``'s
+        application-layer sync (``sqlite_bridge.py``). A no-op if the skill
+        row is gone (e.g. deleted concurrently)."""
+        rows = await self._db.fetch_all(
+            "SELECT name, description, when_to_use, summary FROM skills WHERE skill_id = ?",
+            (skill_id,),
+        )
+        if not rows:
+            return
+        r = rows[0]
+        async with self._db.transaction() as tx:
+            await tx.execute("DELETE FROM skills_fts WHERE rowid = ?", (skill_id,))
+            await tx.execute(
+                "INSERT INTO skills_fts (rowid, name, description, when_to_use, summary) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    skill_id, str(r["name"]), str(r["description"]), str(r["when_to_use"]),
+                    str(r.get("summary") or ""),
+                ),
+            )
 
     # ----- audit ------------------------------------------------------------
 

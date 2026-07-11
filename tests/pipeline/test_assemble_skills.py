@@ -25,6 +25,26 @@ class _CatalogStore:
         return list(self._enabled)
 
 
+class _SpyCatalogStore:
+    """Fake store recording which retrieval tier assemble.py's three-tier
+    fallback (LAT.2) actually picked — implements all three so the router's
+    own condition (not a missing hasattr) decides."""
+    def __init__(self, owned, enabled):
+        self._owned, self._enabled = owned, enabled
+        self.calls: list[str] = []
+    async def get_many_by_name(self, names):
+        return [s for s in self._owned if s.name in names]
+    async def list_enabled(self):
+        self.calls.append("list_enabled")
+        return list(self._enabled)
+    async def semantic_recall(self, query_embedding, *, limit):
+        self.calls.append("semantic_recall")
+        return [(s, 1.0) for s in self._enabled]
+    async def hybrid_recall(self, query_text, query_embedding, *, limit):
+        self.calls.append("hybrid_recall")
+        return [(s, 1.0) for s in self._enabled]
+
+
 def _settings(global_catalog: bool):
     return SimpleNamespace(skills=SimpleNamespace(global_catalog=global_catalog))
 
@@ -176,6 +196,52 @@ async def test_global_catalog_skipped_when_settings_absent():
     from stackowl.pipeline.steps import assemble
     sp = (await assemble.run(_state(owl_name="secretary"))).system_prompt or ""
     assert "dl-video" not in sp
+
+
+@pytest.mark.asyncio
+async def test_global_catalog_routes_to_hybrid_recall_when_both_signals_present():
+    """LAT.2 three-tier fallback, tier 1: query_text + query_embedding both
+    usable -> hybrid_recall (not semantic_recall, not list_enabled)."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    store = _SpyCatalogStore(owned=[], enabled=[_Sk("dl-video", "learned")])
+    set_services(StepServices(owl_registry=reg, skill_store=store,
+                              settings=_settings(global_catalog=True)))
+    from stackowl.pipeline.steps import assemble
+    state = _state(owl_name="secretary", input_text="download a video",
+                    query_embedding=(1.0, 0.0))
+    await assemble.run(state)
+    assert store.calls == ["hybrid_recall"]
+
+
+@pytest.mark.asyncio
+async def test_global_catalog_routes_to_semantic_recall_when_only_embedding_present():
+    """LAT.2 three-tier fallback, tier 2: only query_embedding usable (no
+    input_text) -> semantic_recall."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    store = _SpyCatalogStore(owned=[], enabled=[_Sk("dl-video", "learned")])
+    set_services(StepServices(owl_registry=reg, skill_store=store,
+                              settings=_settings(global_catalog=True)))
+    from stackowl.pipeline.steps import assemble
+    state = _state(owl_name="secretary", input_text="", query_embedding=(1.0, 0.0))
+    await assemble.run(state)
+    assert store.calls == ["semantic_recall"]
+
+
+@pytest.mark.asyncio
+async def test_global_catalog_routes_to_list_enabled_when_neither_signal_present():
+    """LAT.2 three-tier fallback, tier 3: neither usable -> list_enabled()
+    (today's behavior, byte-identical)."""
+    FOCUS_TRACKER.clear_all()
+    reg = OwlRegistry.with_default_secretary()
+    store = _SpyCatalogStore(owned=[], enabled=[_Sk("dl-video", "learned")])
+    set_services(StepServices(owl_registry=reg, skill_store=store,
+                              settings=_settings(global_catalog=True)))
+    from stackowl.pipeline.steps import assemble
+    state = _state(owl_name="secretary", input_text="", query_embedding=None)
+    await assemble.run(state)
+    assert store.calls == ["list_enabled"]
 
 
 @pytest.mark.asyncio

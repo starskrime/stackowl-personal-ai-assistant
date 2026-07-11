@@ -27,6 +27,12 @@ from stackowl.skills.skill_relevance import score_owned_skills
 _injector = DNAPromptInjector()
 _skill_injector = SkillInstructionInjector()
 
+# Bounded top-K for the global skill-catalog branch (LAT.2) — comfortably above
+# what instruction_injector's render() cap actually renders, but nowhere near
+# the full enabled-skill count (hundreds), so the branch stops paying for a
+# full-row fetch + format + discard cycle just to emit a truncated name list.
+_GLOBAL_CATALOG_K = 20
+
 
 async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
@@ -158,12 +164,38 @@ async def run(state: PipelineState) -> PipelineState:
                     owl=state.owl_name, session=state.session_id, turn=turn,
                 )
             tiered = assign_tiers(owned, scores, pinned=pinned)
-            # Append every OTHER enabled skill as a CATALOG entry (names only).
+            # Append OTHER relevant skills as CATALOG entries — three-tier
+            # fallback (LAT.2): hybrid (keyword+semantic) when both signals are
+            # usable, embedding-only when just the vector is, else the original
+            # unranked list_enabled() (byte-identical to pre-LAT.2 behavior).
             if global_catalog_enabled and hasattr(store, "list_enabled"):
                 owned_names = {sk.name for sk in owned}
+                query_text = state.input_text
+                query_vec = list(state.query_embedding) if state.query_embedding is not None else None
+                if query_text and query_vec is not None and hasattr(store, "hybrid_recall"):
+                    catalog_tier = "hybrid"
+                    catalog_candidates = [
+                        sk for sk, _score in
+                        await store.hybrid_recall(query_text, query_vec, limit=_GLOBAL_CATALOG_K)
+                    ]
+                elif query_vec is not None and hasattr(store, "semantic_recall"):
+                    catalog_tier = "semantic"
+                    catalog_candidates = [
+                        sk for sk, _score in
+                        await store.semantic_recall(query_vec, limit=_GLOBAL_CATALOG_K)
+                    ]
+                else:
+                    catalog_tier = "list_enabled"
+                    catalog_candidates = await store.list_enabled()
+                log.engine.debug(
+                    "[pipeline] assemble: global catalog tier selected",
+                    extra={"_fields": {
+                        "tier": catalog_tier, "candidates": len(catalog_candidates),
+                    }},
+                )
                 tiered = tiered + [
                     (sk, SkillTier.CATALOG, False)
-                    for sk in await store.list_enabled()
+                    for sk in catalog_candidates
                     if sk.name not in owned_names
                 ]
             if tiered:
