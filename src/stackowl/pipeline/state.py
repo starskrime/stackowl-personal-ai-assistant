@@ -117,6 +117,17 @@ class PipelineState(BaseModel, frozen=True):
     # enforces the freshly-written style on that confirmation. Default False =
     # byte-identical to every non-feedback turn.
     feedback_handled: bool = False
+    # LAT.3 — the in-flight ``FeedbackClassifier.classify(...)`` + verdict-application
+    # task, started (non-blocking) by the ``feedback`` step via ``asyncio.create_task``
+    # and carried across the ``feedback`` -> ``execute`` step boundary so the classify
+    # LLM round-trip runs CONCURRENTLY with execute's own answer-prep instead of
+    # blocking in front of it. ``execute`` joins this task at the last safe point
+    # before it would generate/stream the first user-visible chunk (so a confident
+    # reaction still short-circuits correctly) and clears it back to None once
+    # consumed. None on every turn feedback.run() had nothing to classify (default =
+    # byte-identical). Typed ``Any`` (not ``asyncio.Task``) — pydantic cannot generate
+    # a schema for a live Task object; this field is never validated, only carried.
+    feedback_classify_task: Any = None
     # Recursion depth of this (sub-)pipeline in the delegation tree. 0 for a
     # top-level user turn; incremented by one each time A2ADelegator spawns a
     # specialist child (see _run_specialist). Carried across evolve() like every

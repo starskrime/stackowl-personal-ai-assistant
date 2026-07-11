@@ -115,7 +115,13 @@ async def _run_feedback(
     services.feedback_classifier = classifier  # type: ignore[assignment]
     token = set_services(services)
     try:
-        return await feedback.run(_fb_state(render, owner_key))
+        # LAT.3 — feedback.run() now only STARTS classification as a concurrent
+        # task; join it here so this helper returns the same final state
+        # run() returned synchronously before that story.
+        out = await feedback.run(_fb_state(render, owner_key))
+        if out.feedback_classify_task is not None:
+            out = await out.feedback_classify_task
+        return out
     finally:
         reset_services(token)
 

@@ -91,6 +91,16 @@ def _stored_style(store: FakeStore, owner_key: str = OWNER) -> OutputStyle:
         {k[1]: v for k, v in store.data.items() if k[0] == owner_key})
 
 
+async def _run_and_join(state: PipelineState) -> PipelineState:
+    """LAT.3 — feedback.run() now only STARTS classification as a concurrent
+    task; join it here so these tests observe the same final state run()
+    returned synchronously before that story."""
+    out = await feedback.run(state)
+    if out.feedback_classify_task is not None:
+        out = await out.feedback_classify_task
+    return out
+
+
 # --------------------------------------------------------------------------- #
 
 async def test_negative_format_asterisks_sets_markdown_minimal() -> None:
@@ -101,7 +111,7 @@ async def test_negative_format_asterisks_sets_markdown_minimal() -> None:
     state, services = _state("Here is **bold** text.", store=store, classifier=classifier, db=db)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert _stored_style(store).markdown == "minimal"
@@ -122,7 +132,7 @@ async def test_negative_format_untitled_link_sets_links_titles() -> None:
                              store=store, classifier=classifier, db=FakeDb())
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert _stored_style(store).links == "titles"
@@ -139,7 +149,7 @@ async def test_positive_format_pins_current_style() -> None:
     state, services = _state("Clean reply, no markup.", store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert _stored_style(store).markdown == "minimal"  # pinned/durable
@@ -155,7 +165,7 @@ async def test_positive_format_no_prior_infers_clean_shape() -> None:
     state, services = _state("Just plain prose here.", store=store, classifier=classifier)
     token = set_services(services)
     try:
-        await feedback.run(state)
+        await _run_and_join(state)
     finally:
         reset_services(token)
     style = _stored_style(store)
@@ -173,7 +183,7 @@ async def test_positive_content_only_writes_no_format_rule() -> None:
                              store=store, classifier=classifier, db=FakeDb())
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert (OWNER, OUTPUT_STYLE_KEY) not in store.data
@@ -189,7 +199,7 @@ async def test_abstain_surfaces_question_no_write() -> None:
     state, services = _state("Here is **bold** text.", store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert (OWNER, OUTPUT_STYLE_KEY) not in store.data  # no write
@@ -207,7 +217,7 @@ async def test_non_feedback_is_byte_identical() -> None:
     state, services = _state("What is the weather today?", store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert store.data == {}  # nothing written
@@ -224,7 +234,7 @@ async def test_confirmation_is_plain_language_not_learned_prose() -> None:
                              store=store, classifier=classifier, db=FakeDb())
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     text = "".join(c.content for c in out.responses).lower()

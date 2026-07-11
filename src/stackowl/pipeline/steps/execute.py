@@ -51,6 +51,7 @@ from stackowl.providers.base import Message, ModelProvider
 from stackowl.providers.escalation_signal import clear_escalation, request_escalation
 from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_window
 from stackowl.providers.react_callback import ReActIterationState
+from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.child_exclusion import CHILD_EXCLUDED_TOOLS
 from stackowl.tools.registry import ToolRegistry
 from stackowl.tools.verification import is_trustworthy_success
@@ -2292,32 +2293,21 @@ async def _maybe_clarify(state: PipelineState, services: object) -> PipelineStat
     return state.evolve(responses=(*state.responses, chunk))
 
 
-async def run(state: PipelineState) -> PipelineState:
-    """Stream tokens from the assigned provider and build state.responses."""
-    log.engine.info(
-        "[pipeline] execute: entry",
-        extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
-    )
-    # LS4 — the feedback step already captured a reaction to the last render and
-    # stamped the confirmation onto responses; that confirmation IS the turn's
-    # reply, so skip the tool loop entirely (no provider call). Byte-identical to
-    # every normal turn (feedback_handled default False).
-    if state.feedback_handled:
-        log.engine.info(
-            "[pipeline] execute: feedback handled this turn — skipping tool loop",
-            extra={"_fields": {"trace_id": state.trace_id}},
-        )
-        return state
-    services = get_services()
-    registry = services.provider_registry
-    tool_registry = services.tool_registry
-    if registry is None:
-        log.engine.warning("[pipeline] execute: no provider_registry — pass-through")
-        return state
+async def _resolve_provider_choice(
+    state: PipelineState, services: StepServices, registry: ProviderRegistry,
+) -> ToolProviderChoice | PipelineState:
+    """Resolve this turn's tool-provider choice (unchanged logic).
 
+    LAT.3 — extracted so it can run CONCURRENTLY, via ``asyncio.gather`` in
+    ``run()``, with the in-flight feedback-classify task (``_join_feedback_task``)
+    instead of that task's LLM round-trip blocking in front of this turn's own
+    answer-prep. Returns the resolved :class:`ToolProviderChoice`, or an
+    already-evolved error state on ``AllProvidersUnavailableError`` /
+    ``ToolUseUnsupportedError`` (callers must check
+    ``isinstance(result, PipelineState)``).
+    """
     try:
-        choice = select_tool_provider_plan(registry, services, state)
-        provider = choice.provider
+        return select_tool_provider_plan(registry, services, state)
     except AllProvidersUnavailableError as exc:
         log.engine.error(
             "[pipeline] execute: all providers unavailable — flooring",
@@ -2344,6 +2334,102 @@ async def run(state: PipelineState) -> PipelineState:
             step_errors=(*state.step_errors,
                          StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
+
+
+async def _join_feedback_task(state: PipelineState) -> PipelineState:
+    """LAT.3 join point — await the in-flight feedback-classify task (if any) and
+    fold its verdict into ``state``.
+
+    The task (started non-blocking by ``feedback.run``) already carries the FULL
+    post-classify processing — see ``feedback._classify_and_apply`` — so its
+    result IS the state execute should proceed with, exactly what
+    ``feedback.run`` used to return synchronously before this story. Clears the
+    task field once consumed (so a later abandonment check never double-cancels
+    an already-joined task). Never raises: an unexpected task failure here must
+    not crash the turn (B5), mirroring ``feedback.run``'s own fail-open guarantee.
+    """
+    # ``feedback_classify_task`` is typed ``Any`` on PipelineState (pydantic cannot
+    # schema a live asyncio.Task); narrow it here for the type-checker — its real
+    # runtime type is always the task feedback.run() created.
+    task: asyncio.Task[PipelineState] | None = state.feedback_classify_task
+    if task is None:
+        return state
+    try:
+        joined: PipelineState = await task
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — B5, never crash the turn on this join
+        log.engine.error(
+            "[pipeline] execute: feedback classify task raised at join — pass-through",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return state.evolve(feedback_classify_task=None)
+    return joined.evolve(feedback_classify_task=None)
+
+
+def _cancel_abandoned_feedback_task(state: PipelineState) -> None:
+    """AC#5 — cancel a still-pending feedback-classify task on an execute.py exit
+    path that skips ``_join_feedback_task`` above (e.g. no provider_registry
+    configured), so it never dangles as an untracked orphan — asyncio only warns
+    on garbage collection, it does not clean up gracefully."""
+    task = state.feedback_classify_task
+    if task is not None and not task.done():
+        task.cancel()
+        log.engine.warning(
+            "[pipeline] execute: feedback classify task abandoned — cancelling",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+
+
+async def run(state: PipelineState) -> PipelineState:
+    """Stream tokens from the assigned provider and build state.responses."""
+    log.engine.info(
+        "[pipeline] execute: entry",
+        extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+    )
+    services = get_services()
+    registry = services.provider_registry
+    tool_registry = services.tool_registry
+    if registry is None:
+        log.engine.warning("[pipeline] execute: no provider_registry — pass-through")
+        # LAT.3/AC#5 — the join point below is never reached on this early-return
+        # path; a pending classify task must not be left an untracked orphan.
+        # Null the handle after cancelling so downstream steps don't carry a
+        # reference to an already-cancelled task, matching _join_feedback_task's
+        # own success-path cleanup (evolve(feedback_classify_task=None)).
+        _cancel_abandoned_feedback_task(state)
+        return state.evolve(feedback_classify_task=None)
+
+    # LAT.3 — resolve the tool-provider choice CONCURRENTLY with the in-flight
+    # feedback-classify task (started non-blocking by feedback.run): the classify
+    # LLM round-trip now overlaps with this turn's own answer-prep instead of
+    # adding pure serial latency in front of it. Joined here — the last safe
+    # point before this step would generate/stream ANY user-visible content (a
+    # clarify question or generated text) — so a confident reaction still
+    # short-circuits correctly (AC#2) before either downstream branch runs.
+    choice_or_err, state = await asyncio.gather(
+        _resolve_provider_choice(state, services, registry),
+        _join_feedback_task(state),
+    )
+
+    # LS4 — the feedback task, once joined above, may have captured a reaction to
+    # the last render and stamped the confirmation onto responses; that
+    # confirmation IS the turn's reply, so skip the tool loop entirely (no
+    # provider call). Checked BEFORE choice_or_err's error-ness: a handled
+    # reaction needs no provider at all, so it must win even when every
+    # provider is down (AC#2's pre-LAT.3 invariant — provider outages must
+    # never mask a confident reaction that never needed a provider).
+    # Byte-identical to every normal turn (feedback_handled default False).
+    if state.feedback_handled:
+        log.engine.info(
+            "[pipeline] execute: feedback handled this turn — skipping tool loop",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return state
+    if isinstance(choice_or_err, PipelineState):
+        return choice_or_err
+    choice = choice_or_err
+    provider = choice.provider
 
     # Clarify branch: an interactive clarify turn surfaces ONE question and yields
     # WITHOUT entering the tool loop.  Non-clarify turns (conversational/standard)

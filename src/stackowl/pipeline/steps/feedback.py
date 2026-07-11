@@ -17,6 +17,14 @@ and the confirmation onto ``state.responses``; ``execute`` then short-circuits t
 tool loop and ``deliver`` enforces the freshly-written style on the confirmation
 itself ("the reply below already follows it").
 
+LAT.3 — the classifier LLM round-trip no longer blocks this step: ``run()``
+starts it (+ its verdict application) as a concurrent ``asyncio.Task`` carried on
+``state.feedback_classify_task`` and returns immediately; ``execute`` joins the
+task at the last safe point before generating/streaming so the short-circuit
+above still fires correctly, while the round-trip overlaps with execute's own
+answer-prep instead of adding pure serial latency to every turn that follows an
+assistant reply.
+
 Determinism + reuse (code-simplifier): the artifact→field mapping reuses the
 EXACT LS2 transforms as detectors (``_strip_emphasis`` / ``tables_to_plain_list``
 / ``_title_bare_links``) so detection can never drift from enforcement. The write
@@ -33,6 +41,7 @@ a capture fault must never crash or alter a normal turn.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING
 
@@ -52,7 +61,7 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
-    from stackowl.interaction.feedback_classifier import FeedbackSignal
+    from stackowl.interaction.feedback_classifier import FeedbackClassifier, FeedbackSignal
     from stackowl.memory.preferences import PreferenceStore
 
 # A clarifying question is the ONE thing we surface when the classifier is sure it
@@ -78,7 +87,17 @@ _PREFILTER_MAX_CHARS = 200
 
 
 async def run(state: PipelineState) -> PipelineState:
-    """Capture a confident FORMAT reaction to the last render into ``output_style``.
+    """Start (non-blocking) classification of a reaction to the last render.
+
+    LAT.3 — after the two cheap guards below, ``classify(...)`` + its verdict
+    application are started as a concurrent ``asyncio.Task`` (see
+    ``_classify_and_apply``) instead of being awaited inline: this step returns
+    IMMEDIATELY, carrying the task on ``state.feedback_classify_task`` across the
+    ``feedback`` -> ``execute`` step boundary. ``execute`` joins the task at the
+    last safe point before it would generate/stream the first user-visible chunk,
+    so a confident reaction still short-circuits the turn exactly as before —
+    only the classify LLM round-trip's WAIT moves later (concurrent with
+    execute's own answer-prep) instead of blocking every turn in front of it.
 
     Byte-identical no-op unless the turn is a confident, format-scoped reaction to
     the immediately-preceding agent message. Never raises (B5)."""
@@ -108,6 +127,27 @@ async def run(state: PipelineState) -> PipelineState:
         )
         return state  # a message this long is a new task, not a reaction (FR-8)
 
+    task = asyncio.create_task(
+        _classify_and_apply(state, classifier, store, services, render)
+    )
+    return state.evolve(feedback_classify_task=task)
+
+
+async def _classify_and_apply(
+    state: PipelineState,
+    classifier: FeedbackClassifier,
+    store: PreferenceStore,
+    services: object,
+    render: str,
+) -> PipelineState:
+    """The body of the concurrent task started by ``run()`` (LAT.3).
+
+    Classifies the reaction, then applies its verdict (note capture / format
+    write / short-circuit) — exactly the logic ``run()`` used to execute
+    synchronously before this story, unchanged. Returns the resulting
+    ``PipelineState``; ``execute``'s join point (``_join_feedback_task``) awaits
+    this task and uses its result directly, exactly as if ``run()`` had returned
+    it itself. Never raises (B5) — a capture fault must never crash the turn."""
     try:
         result = await classifier.classify(
             user_message=state.input_text,

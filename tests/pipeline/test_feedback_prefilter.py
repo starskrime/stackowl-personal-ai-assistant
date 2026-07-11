@@ -68,8 +68,21 @@ def _state(input_text: str, render: str, *, store: FakeStore,
     return state, services
 
 
+async def _run_and_join(state: PipelineState) -> PipelineState:
+    """LAT.3 — feedback.run() now only STARTS classification as a concurrent
+    task; join it here so these tests observe the same final state run()
+    returned synchronously before that story."""
+    out = await feedback.run(state)
+    if out.feedback_classify_task is not None:
+        out = await out.feedback_classify_task
+    return out
+
+
 async def test_long_message_skips_classifier_byte_identical() -> None:
-    """>= 200 chars → classifier.classify is never called; state passes through unchanged."""
+    """>= 200 chars → classifier.classify is never called; state passes through
+    unchanged. LAT.3 — asserted directly on feedback.run()'s (unjoined) return so
+    this proves the concurrent classify TASK is never even CREATED for this
+    guard, not merely that nothing awaited it."""
     store = FakeStore()
     classifier = ScriptedClassifier(
         _result(FeedbackSignal(polarity="negative", aspect="format", confidence=0.9)))
@@ -82,9 +95,35 @@ async def test_long_message_skips_classifier_byte_identical() -> None:
         out = await feedback.run(state)
     finally:
         reset_services(token)
+    assert out.feedback_classify_task is None  # LAT.3 — no task started
     assert classifier.calls == 0
     assert out is state  # byte-identical pass-through
     assert store.data == {}
+
+
+async def test_no_prior_render_guard_skips_without_creating_task() -> None:
+    """No prior assistant render (first turn) → the same byte-identical
+    pass-through guard as the long-message case above, and — LAT.3 — no
+    classify task is ever created for it either."""
+    store = FakeStore()
+    classifier = ScriptedClassifier(
+        _result(FeedbackSignal(polarity="negative", aspect="format", confidence=0.9)))
+    services = StepServices(preference_store=store, db_pool=None)  # type: ignore[arg-type]
+    services.feedback_classifier = classifier  # type: ignore[assignment]
+    state = PipelineState(
+        trace_id="t-fb-no-render", session_id="sess-fb", input_text="nice",
+        channel="telegram", owl_name="secretary", pipeline_step="feedback",
+        identity_key=OWNER,
+        # no history → no prior assistant render to react to
+    )
+    token = set_services(services)
+    try:
+        out = await feedback.run(state)
+    finally:
+        reset_services(token)
+    assert out.feedback_classify_task is None  # LAT.3 — no task started
+    assert classifier.calls == 0
+    assert out is state  # byte-identical pass-through
 
 
 async def test_short_message_still_invokes_classifier() -> None:
@@ -97,7 +136,7 @@ async def test_short_message_still_invokes_classifier() -> None:
                              store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert classifier.calls == 1

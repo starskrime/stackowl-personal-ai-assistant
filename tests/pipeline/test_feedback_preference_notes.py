@@ -74,6 +74,16 @@ def _state(input_text: str, render: str, *, store: FakeStore, classifier: object
     return state, services
 
 
+async def _run_and_join(state: PipelineState) -> PipelineState:
+    """LAT.3 — feedback.run() now only STARTS classification as a concurrent
+    task; join it here so these tests observe the same final state run()
+    returned synchronously before that story."""
+    out = await feedback.run(state)
+    if out.feedback_classify_task is not None:
+        out = await out.feedback_classify_task
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # (a) confident tone/length/content + referent=last → note written + surfaced #
 # --------------------------------------------------------------------------- #
@@ -86,7 +96,7 @@ async def test_confident_length_signal_writes_note() -> None:
                              store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     raw = store.data[(OWNER, PREFERENCE_NOTES_KEY)]
@@ -104,7 +114,7 @@ async def test_note_appears_in_next_turn_prefs_block() -> None:
                              store=store, classifier=classifier)
     token = set_services(services)
     try:
-        await feedback.run(state)
+        await _run_and_join(state)
         block = await classify._gather_preferences(OWNER)
     finally:
         reset_services(token)
@@ -128,7 +138,7 @@ async def test_content_and_format_signals_both_write_independently() -> None:
                              "Here is **bold** text.", store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert (OWNER, OUTPUT_STYLE_KEY) in store.data  # format path still fired
@@ -149,7 +159,7 @@ async def test_abstain_signal_writes_no_note() -> None:
                              store=store, classifier=classifier)
     token = set_services(services)
     try:
-        out = await feedback.run(state)
+        out = await _run_and_join(state)
     finally:
         reset_services(token)
     assert (OWNER, PREFERENCE_NOTES_KEY) not in store.data
@@ -164,7 +174,7 @@ async def test_overall_aspect_writes_no_note() -> None:
     state, services = _state("nice", "A reply.", store=store, classifier=classifier)
     token = set_services(services)
     try:
-        await feedback.run(state)
+        await _run_and_join(state)
     finally:
         reset_services(token)
     assert (OWNER, PREFERENCE_NOTES_KEY) not in store.data
