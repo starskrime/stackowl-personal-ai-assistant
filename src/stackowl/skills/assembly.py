@@ -13,6 +13,7 @@ propagate. The agent NEVER writes to ``builtin/`` (security boundary).
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,18 +55,23 @@ class SkillsAssembly:
     """Factory that wires SkillLoader + SkillIndexStore and seeds builtins."""
 
     @staticmethod
-    async def build(
+    async def load_only(
         db: DbPool,
         tool_registry: ToolRegistry,
         owl_registry: OwlRegistry,
         *,
         skills_root: Path | None = None,
         builtin_seed_dir: Path | None = None,
-        embedding_registry: EmbeddingRegistry | None = None,
-        lessons_index: LessonsIndex | None = None,
-        provider_registry: ProviderRegistry | None = None,
     ) -> SkillsComponents:
         """Wire the skills subsystem and load every skill on disk.
+
+        This is the boot-critical half of what ``build()`` used to do in one
+        shot: it never touches an LLM or embedding provider, so the platform
+        can learn what skills exist (needed to route/inject them) without
+        waiting on any network I/O. LAT.5 — the embed/summarize/publish
+        enrichment passes live in :meth:`enrich`, run separately so the boot
+        path (``startup/orchestrator.py``) can defer them to a background
+        task instead of blocking turn-readiness on serial LLM round-trips.
 
         ``skills_root`` defaults to ``~/.stackowl/workspace/skills/`` via
         :class:`StackowlHome`. ``builtin_seed_dir`` defaults to the package's
@@ -73,11 +79,11 @@ class SkillsAssembly:
         for tests.
         """
         # 1. ENTRY
-        log.skills.info("[skills] assembly.build: entry")
+        log.skills.info("[skills] assembly.load_only: entry")
         root = skills_root or StackowlHome.skills_dir()
         seed = builtin_seed_dir if builtin_seed_dir is not None else _BUILTIN_SEED_DIR
         log.skills.debug(
-            "[skills] assembly.build: paths resolved",
+            "[skills] assembly.load_only: paths resolved",
             extra={"_fields": {
                 "skills_root": str(root),
                 "builtin_seed": str(seed),
@@ -91,6 +97,41 @@ class SkillsAssembly:
         loaded = await loader.load_all(
             root, store=store, builtin_seed_dir=seed,
         )
+        # 4. EXIT
+        log.skills.info(
+            "[skills] assembly.load_only: exit",
+            extra={"_fields": {"loaded_count": len(loaded)}},
+        )
+        return SkillsComponents(
+            loader=loader, store=store, loaded=tuple(loaded),
+        )
+
+    @staticmethod
+    async def enrich(
+        components: SkillsComponents,
+        *,
+        embedding_registry: EmbeddingRegistry | None = None,
+        lessons_index: LessonsIndex | None = None,
+        provider_registry: ProviderRegistry | None = None,
+    ) -> None:
+        """Run the embed/summarize/publish-to-lessons passes for already-loaded
+        skills.
+
+        LAT.5 — split out of ``build()`` so callers can await :meth:`load_only`
+        for boot-critical skill availability, then fire this coroutine as a
+        background ``asyncio.create_task`` once the platform is serving turns.
+        Each pass is independently B5-guarded (a failure in one never blocks
+        or skips the others) exactly as it was when this lived inline in
+        ``build()``.
+        """
+        loaded = list(components.loaded)
+        store = components.store
+        # 1. ENTRY
+        t0 = time.monotonic()
+        log.skills.info(
+            "[skills] assembly.enrich: entry",
+            extra={"_fields": {"n_loaded": len(loaded)}},
+        )
         # 3. STEP — best-effort embed pass so classify can semantic-recall
         # ("at load_all() time" per operator vote for Commit 3 sub-phase 3d).
         # Failures here are non-fatal — retrieval just falls back to "no skills
@@ -100,7 +141,7 @@ class SkillsAssembly:
                 await _embed_missing(loaded, store, embedding_registry)
             except Exception as exc:  # B5
                 log.skills.warning(
-                    "[skills] assembly.build: embedding pass failed — retrieval will be empty",
+                    "[skills] assembly.enrich: embedding pass failed — retrieval will be empty",
                     exc_info=exc,
                 )
         if provider_registry is not None:
@@ -108,7 +149,7 @@ class SkillsAssembly:
                 await _summarize_missing(loaded, store, provider_registry)
             except Exception as exc:  # B5
                 log.skills.warning(
-                    "[skills] assembly.build: summary pass failed — fallback active",
+                    "[skills] assembly.enrich: summary pass failed — fallback active",
                     exc_info=exc,
                 )
         # Learning Commit 5 — publish every loaded skill into the cross-source
@@ -119,17 +160,48 @@ class SkillsAssembly:
                 await _publish_to_lessons(loaded, lessons_index, store)
             except Exception as exc:  # B5 — lessons is enhancement
                 log.skills.warning(
-                    "[skills] assembly.build: lessons publish failed — search via LessonsIndex limited",
+                    "[skills] assembly.enrich: lessons publish failed — search via LessonsIndex limited",
                     exc_info=exc,
                 )
         # 4. EXIT
         log.skills.info(
-            "[skills] assembly.build: exit",
-            extra={"_fields": {"loaded_count": len(loaded)}},
+            "[skills] assembly.enrich: exit",
+            extra={"_fields": {"elapsed_s": round(time.monotonic() - t0, 3)}},
         )
-        return SkillsComponents(
-            loader=loader, store=store, loaded=tuple(loaded),
+
+    @staticmethod
+    async def build(
+        db: DbPool,
+        tool_registry: ToolRegistry,
+        owl_registry: OwlRegistry,
+        *,
+        skills_root: Path | None = None,
+        builtin_seed_dir: Path | None = None,
+        embedding_registry: EmbeddingRegistry | None = None,
+        lessons_index: LessonsIndex | None = None,
+        provider_registry: ProviderRegistry | None = None,
+    ) -> SkillsComponents:
+        """Wire the skills subsystem, load every skill, and run the enrichment
+        passes inline (fully synchronous, end to end).
+
+        Kept for callers that want the whole pipeline awaited in one call
+        (tests, non-boot assembly wiring — see ``tests/startup/_wiring_real_assembly.py``).
+        The boot path (``startup/orchestrator.py``) calls :meth:`load_only`
+        directly and backgrounds :meth:`enrich` instead (LAT.5), so serial
+        per-skill LLM summarization never blocks the platform from accepting
+        turns.
+        """
+        components = await SkillsAssembly.load_only(
+            db, tool_registry, owl_registry,
+            skills_root=skills_root, builtin_seed_dir=builtin_seed_dir,
         )
+        await SkillsAssembly.enrich(
+            components,
+            embedding_registry=embedding_registry,
+            lessons_index=lessons_index,
+            provider_registry=provider_registry,
+        )
+        return components
 
 
 async def _embed_missing(
@@ -299,6 +371,15 @@ async def _summarize_missing(
         "[skills] _summarize_missing: index snapshot taken",
         extra={"_fields": {"n_indexed": len(index)}},
     )
+    # LAT.5 — count tracking so the exit log mirrors _embed_missing's existing
+    # count-log pattern instead of the previous bare "exit" with no numbers.
+    summarized = 0  # real write
+    skipped = 0  # stored summary's hash already matches the current body
+    failed = 0  # provider.complete() raised
+    empty = 0  # provider returned blank/whitespace-only text (distinct from
+    # `failed` — this skill has no exception to investigate, but also never
+    # persists a hash, so it's re-attempted every boot until the underlying
+    # provider/prompt issue is fixed; see story LAT.5 dev notes)
     for ls in loaded:
         if ls.manifest.summary is not None:
             continue  # author override — never regenerate
@@ -312,6 +393,7 @@ async def _summarize_missing(
             and existing.summary_source == "generated"
             and existing.summary_body_hash == want_hash
         ):
+            skipped += 1
             continue  # up-to-date — skip
         if not ls.body.strip():
             continue  # no body to summarize
@@ -331,6 +413,7 @@ async def _summarize_missing(
             ]
             result = await provider.complete(messages, model="")
         except Exception as exc:  # B5 — never block boot
+            failed += 1
             log.skills.warning(
                 "[skills] _summarize_missing: provider failed — skip",
                 exc_info=exc,
@@ -339,10 +422,23 @@ async def _summarize_missing(
             continue
         text = (result.content or "").strip()
         if not text:
+            empty += 1
+            log.skills.warning(
+                "[skills] _summarize_missing: provider returned empty text — skip "
+                "(will retry every boot until fixed — no hash written)",
+                extra={"_fields": {"skill": ls.manifest.name}},
+            )
             continue  # no-write-on-empty
         await store.set_summary(existing.skill_id, text, "generated", want_hash)
+        summarized += 1
     # 4. EXIT
-    log.skills.debug("[skills] _summarize_missing: exit")
+    log.skills.info(
+        "[skills] _summarize_missing: exit",
+        extra={"_fields": {
+            "summarized": summarized, "skipped": skipped,
+            "failed": failed, "empty": empty,
+        }},
+    )
 
 
 def _embed_text(loaded: LoadedSkill) -> str:

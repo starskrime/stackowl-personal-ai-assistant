@@ -147,6 +147,13 @@ class StepServices:
     # without a global settings singleton. None in non-orchestrated unit tests →
     # callers fall back to documented defaults (resolve_clarify_wait_timeout → 120s).
     settings: Settings | None = field(default=None)
+    # Self-heal degraded boot — set True when EVERY configured provider was
+    # unreachable at boot (see StartupOrchestrator._phase_providers). The gateway
+    # still comes up so slash commands (e.g. /provider, which needs no LLM) keep
+    # working; _dispatch_turn reads THIS to short-circuit conversational/parliament
+    # turns with a graceful notice instead of hanging on a dead provider. False →
+    # byte-identical (normal routing).
+    providers_degraded: bool = field(default=False)
     # Cross-channel identity — maps per-channel handles (e.g. "telegram:123") to a
     # stable identity_key so durable knowledge (preferences, facts) follows the user
     # across channels. None → unconfigured; callers degrade to session_id (per-channel

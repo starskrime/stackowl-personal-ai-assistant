@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import multiprocessing
 import os
 import re
 import signal
@@ -341,6 +342,7 @@ class StartupOrchestrator:
         self._role = role
         self._settings: Settings | None = None
         self._browser_probe_result: BrowserProbeResult | None = None
+        self._providers_degraded = False  # set True in _phase_providers if ALL providers unreachable
         self._shutting_down = False  # F144 — idempotency guard for double-signal
         self._migrations_applied = False  # F146 — single migration site per boot
 
@@ -440,6 +442,23 @@ class StartupOrchestrator:
         # in-process keep normal control flow (dry_run never reaches here with
         # real side effects to force-exit after).
         if not self._dry_run:
+            # A stuck torch/OpenMP THREAD (the reason for os._exit below) isn't
+            # the only orphan risk: sentence-transformers/torch can ALSO spawn
+            # real multiprocessing.Process workers (loky/joblib backend) for
+            # CPU-bound work. Those are children of THIS process, not of the
+            # thread pool os._exit bypasses — os._exit skips their atexit-based
+            # teardown too, so they're left running as orphans (and Python's
+            # own multiprocessing.resource_tracker then warns about leaked
+            # semaphores at ITS exit, sometimes wedging the parent terminal's
+            # Ctrl-C). Terminate them explicitly first so nothing survives us.
+            for child in multiprocessing.active_children():
+                log.warning(
+                    "[startup] shutdown: terminating orphaned child process",
+                    extra={"_fields": {"pid": child.pid, "name": child.name}},
+                )
+                with contextlib.suppress(Exception):
+                    child.terminate()
+                    child.join(timeout=2)
             with contextlib.suppress(Exception):
                 logging.shutdown()
             os._exit(0)  # noqa: SLF001 — deliberate: see comment above
@@ -456,13 +475,27 @@ class StartupOrchestrator:
         log.info("[startup] reconciler: ok — no agents to reconcile")
 
     async def _phase_providers(self) -> None:
+        """Probe configured providers. All-down degrades the boot rather than
+        killing it — a customer whose only LLM died still needs the gateway up
+        far enough to run ``/provider`` (LLM-independent, see ``_dispatch_turn``)
+        and self-heal instead of being locked out until an admin has shell access."""
         assert self._settings is not None
         providers = self._settings.providers
         if not providers:
             log.info("[startup] providers: no providers configured — skipping probe")
             return
         probe = ProviderProbe(providers)
-        await probe.check()
+        try:
+            await probe.check()
+        except StartupError as exc:
+            self._providers_degraded = True
+            log.error(
+                "[startup] providers: ALL providers unreachable — booting in DEGRADED "
+                "mode (gateway + slash commands still work; conversational/parliament "
+                "turns will floor with a 'no AI reachable' notice until fixed via "
+                "/provider or `stackowl providers add/edit`)",
+                extra={"_fields": {"reason": str(exc)}},
+            )
 
     async def _phase_browser_install(self) -> None:
         """Auto-install the Camoufox browser binary if missing.
@@ -763,6 +796,12 @@ class StartupOrchestrator:
         # are themselves dead-for-gateway but still constructed unconditionally.
         from stackowl.skills.assembly import SkillsAssembly, SkillsComponents
 
+        # LAT.5 — created below, once the gateway is ready to serve (near
+        # watchdog.send_ready()), so the three enrichment passes
+        # (embed/summarize/publish) run as a background task instead of
+        # blocking boot on serial per-skill LLM summarization. Torn down
+        # alongside scheduler_task/mcp_task in the shutdown sequence.
+        skills_enrich_task: asyncio.Task[None] | None = None
         if self._role == "gateway":
             from stackowl.skills.loader import SkillLoader
             from stackowl.skills.store import SkillIndexStore
@@ -773,11 +812,12 @@ class StartupOrchestrator:
             )
             learned_count = 0
         else:
-            skills_components = await SkillsAssembly.build(
+            # LAT.5 — load_only() is the boot-critical half (disk scan only,
+            # no LLM/embedding I/O) so the platform knows what skills exist
+            # without waiting on the enrich() passes below, which are
+            # deferred to a background task fired once the gateway is up.
+            skills_components = await SkillsAssembly.load_only(
                 db=db_pool, tool_registry=tool_registry, owl_registry=owl_registry,
-                embedding_registry=memory_components.embedding_registry,
-                lessons_index=memory_components.lessons_index,
-                provider_registry=provider_registry,
             )
             # H4 — reload agent-authored (learned) tools so a tool the agent
             # minted via tool_build survives reboots. Runs AFTER with_defaults +
@@ -1238,6 +1278,7 @@ class StartupOrchestrator:
             settings=self._settings,
             identity_resolver=identity_resolver,
             sticky_route_cache=sticky_route_cache,
+            providers_degraded=self._providers_degraded,
         )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
@@ -1542,6 +1583,24 @@ class StartupOrchestrator:
                 ))
                 await writer.close()
 
+        async def _deliver_no_provider_notice(trace_id: str) -> None:
+            """Self-heal degraded boot — every configured provider was unreachable at
+            startup (StartupOrchestrator._phase_providers). Floor conversational and
+            parliament turns here instead of hanging/crashing on a dead provider;
+            slash commands (routed separately in _dispatch_turn) need no LLM and are
+            unaffected, so /provider stays usable to self-heal."""
+            writer = stream_registry.get_writer(trace_id)
+            if writer is not None:
+                await writer.write(ResponseChunk(
+                    content=(
+                        "No AI provider is currently reachable, so I can't think right "
+                        "now. Use /provider to add or fix one (e.g. `/provider add`), "
+                        "or `/provider enable <name>` once it's back up."
+                    ),
+                    is_final=False, chunk_index=0, trace_id=trace_id, owl_name="system",
+                ))
+                await writer.close()
+
         # Mirrored in tests/startup/test_deliver_command_stub.py (this closure is
         # unreachable from outside _phase_gateway, so the test hand-copies it) —
         # keep both in sync on any change here.
@@ -1642,12 +1701,22 @@ class StartupOrchestrator:
             # deliver looks the writer up by), so the turn's output is never
             # stream-missed.
             writer, reader = stream_registry.create(msg.trace_id)
-            if decision.route == "parliament" and decision.parliament_owls:
+            if services.providers_degraded and decision.route != "command":
+                # Self-heal degraded boot — no LLM reachable; float the notice and
+                # skip parliament/backend entirely rather than hang on a dead call.
+                log.warning(
+                    "[startup] gateway: providers degraded — flooring turn",
+                    extra={"_fields": {"route": decision.route, "session_id": msg.session_id}},
+                )
+                producer: asyncio.Task[object] = asyncio.create_task(
+                    _deliver_no_provider_notice(msg.trace_id)
+                )
+            elif decision.route == "parliament" and decision.parliament_owls:
                 log.info(
                     "[startup] gateway: routing to parliament",
                     extra={"_fields": {"owls": decision.parliament_owls, "session_id": msg.session_id}},
                 )
-                producer: asyncio.Task[object] = asyncio.create_task(
+                producer = asyncio.create_task(
                     _deliver_parliament(
                         input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
                     )
@@ -3372,6 +3441,32 @@ class StartupOrchestrator:
         # earlier (premature READY would let systemd start dependents while startup
         # could still fail). No-op off-systemd.
         watchdog.send_ready()
+        # LAT.5 — fire the skills enrichment passes (embed/summarize/publish)
+        # now that the platform is ready to serve, instead of awaiting them
+        # inline during boot: a live measurement showed ~98s of serial
+        # per-skill LLM summarization (SkillsAssembly._summarize_missing)
+        # blocking every turn until it finished. skills_components was
+        # already populated synchronously above via load_only() (disk scan
+        # only) so routing/injection works immediately; only the
+        # embed/summarize/publish enrichment is deferred. Skipped on
+        # GATEWAY — its skills_components is a stub (see the role=="gateway"
+        # branch above) and nothing in this process reads the skill catalog.
+        if self._role != "gateway":
+            async def _run_skills_enrichment() -> None:
+                t0 = time.monotonic()
+                log.info("[startup] skills enrichment: background task started")
+                await SkillsAssembly.enrich(
+                    skills_components,
+                    embedding_registry=memory_components.embedding_registry,
+                    lessons_index=memory_components.lessons_index,
+                    provider_registry=provider_registry,
+                )
+                log.info(
+                    "[startup] skills enrichment: background task completed (%.1fs)",
+                    time.monotonic() - t0,
+                )
+
+            skills_enrich_task = asyncio.create_task(_run_skills_enrichment())
         # GATEWAY routes the core's outbound frames back to the adapters via
         # GatewayLink.run(conn) — driven by the IpcServer accept handler (one per
         # core connection), so a core exec-replace is handled by re-accepting. The
@@ -3550,6 +3645,12 @@ class StartupOrchestrator:
                 mcp_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await mcp_task
+            # skills_enrich_task is None on the GATEWAY (LAT.5 background pass
+            # only runs for the role that actually built a real skill catalog).
+            if skills_enrich_task is not None:
+                skills_enrich_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await skills_enrich_task
             if browser_sessions is not None:
                 with contextlib.suppress(Exception):
                     await browser_sessions.stop_sweep_loop()
