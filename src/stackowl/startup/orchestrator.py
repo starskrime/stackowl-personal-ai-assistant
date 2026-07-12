@@ -1051,6 +1051,14 @@ class StartupOrchestrator:
         )
 
         schedule_commit_classifier = ScheduleCommitClassifier(provider_registry)
+        # Task 7 — manual "do it again" retry-intent classifier (fast tier,
+        # fail-closed→not-a-retry). triage.py reads it off services to decide
+        # whether a new message asking about a session's pending retry_queue
+        # row should dispatch RetryActuator immediately instead of waiting for
+        # the 1-minute cron sweep (Task 6).
+        from stackowl.interaction.retry_intent_classifier import RetryIntentClassifier
+
+        retry_intent_classifier = RetryIntentClassifier(provider_registry)
         # §6/§7 (P3 Task 16) — the mid-turn arrival TurnRouter. Reuses the SAME
         # fast-tier ``ClarifyIntentClassifier`` (its ``is_steer`` is the
         # conservative high-confidence STEER-vs-NEW propose stage), so there is ONE
@@ -1274,6 +1282,7 @@ class StartupOrchestrator:
             feedback_classifier=feedback_classifier,
             retrieval_intent_classifier=retrieval_intent_classifier,
             schedule_commit_classifier=schedule_commit_classifier,
+            retry_intent_classifier=retry_intent_classifier,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
             session_registry=session_registry,
@@ -1312,6 +1321,11 @@ class StartupOrchestrator:
             retry_store=retry_queue_store,
         )
         register_retry_sweep_handler(actuator=retry_actuator, retry_store=retry_queue_store)
+        # Task 7 — inject the SAME actuator instance back onto services (built
+        # after services/backend exist, same reason a2a_delegator is injected
+        # post-construction above) so triage.py's manual retry-intent hook
+        # dispatches through this exact actuator, not a second instance.
+        services.retry_actuator = retry_actuator
 
         parliament_session_store = SessionStore(db_pool)
         parliament = ParliamentOrchestrator(

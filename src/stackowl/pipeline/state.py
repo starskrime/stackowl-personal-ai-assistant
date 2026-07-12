@@ -309,6 +309,13 @@ class PipelineState(BaseModel, frozen=True):
     # helper at end-of-run. Frozen tuple-of-tuples to keep PipelineState
     # immutable (pydantic frozen=True forbids mutable dicts).
     step_durations: tuple[tuple[str, float], ...] = ()
+    # Task 7 — manual "do it again" retry path. Set True by the triage step when
+    # it detected a session's pending retry_queue row and RetryIntentClassifier
+    # confirmed the incoming message is asking to retry it; triage then already
+    # dispatched RetryActuator.attempt_retry itself and short-circuits the rest
+    # of this pipeline run. Default False = byte-identical to every turn with no
+    # pending retry row / not a retry-intent message.
+    retry_dispatched: bool = False
 
     @property
     def has_consequential_snapshot(self) -> bool:

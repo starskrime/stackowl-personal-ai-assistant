@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from stackowl.interaction.cost_pause import CostPauseGuard
     from stackowl.interaction.feedback_classifier import FeedbackClassifier
     from stackowl.interaction.retrieval_intent_classifier import RetrievalIntentClassifier
+    from stackowl.interaction.retry_intent_classifier import RetryIntentClassifier
     from stackowl.interaction.schedule_commit_classifier import ScheduleCommitClassifier
     from stackowl.learning.failure_outcome_miner import RcaVerdict
     from stackowl.learning.lessons_index import LessonsIndex
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from stackowl.owls.registry import OwlRegistry
     from stackowl.owls.session_registry import SessionRegistry
     from stackowl.owls.sticky_route_cache import StickyRouteCache
+    from stackowl.pipeline.retry_actuator import RetryActuator
     from stackowl.pipeline.streaming import StreamRegistry
     from stackowl.process.registry import ProcessRegistry
     from stackowl.providers.cost_tracker import CostTracker
@@ -70,6 +72,15 @@ class StepServices:
     # sweep can retry it. None → the retry-queue insert is a no-op (byte-identical
     # to before this feature existed).
     retry_queue_store: RetryQueueStore | None = field(default=None)
+    # Task 7 — manual "do it again" retry path. triage.py reads THESE off
+    # services (right after get_services(), before any other routing) to
+    # check for a pending retry_queue row and, if the classifier confirms
+    # retry intent, dispatch the SAME RetryActuator instance the cron sweep
+    # uses (retry_sweep.py, Task 6) immediately instead of waiting up to a
+    # minute. Either None → the check is a byte-identical no-op (today's
+    # behavior — falls through to normal routing / the cron sweep).
+    retry_intent_classifier: RetryIntentClassifier | None = field(default=None)
+    retry_actuator: RetryActuator | None = field(default=None)
     notification_router: NotificationRouter | None = field(default=None)
     proactive_deliverer: ProactiveDeliverer | None = field(default=None)
     event_bus: EventBus | None = field(default=None)

@@ -43,6 +43,36 @@ async def run(state: PipelineState) -> PipelineState:
     )
 
     services = get_services()
+
+    # Task 7 — manual "do it again": earliest hook, before ANY normal turn
+    # handling (direct-address, sticky-cache, or SecretaryRouter). A session
+    # with an open pending retry_queue row (Task 2) whose new message the fast
+    # RetryIntentClassifier confirms is asking to retry it dispatches the SAME
+    # RetryActuator (Task 5) the 1-minute cron sweep (Task 6) uses, right now,
+    # and short-circuits the rest of this pipeline run. Either service missing
+    # → byte-identical no-op (falls through to normal routing below).
+    retry_store = services.retry_queue_store
+    if (
+        retry_store is not None
+        and services.retry_intent_classifier is not None
+        and services.retry_actuator is not None
+    ):
+        pending = await retry_store.get_latest_pending_for_session(state.session_id)
+        if pending is not None:
+            is_retry = await services.retry_intent_classifier.classify(
+                user_message=state.input_text, prior_goal=pending.goal,
+            )
+            if is_retry:
+                log.engine.info(
+                    "[pipeline] triage: manual retry-intent detected — dispatching now",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id, "session_id": state.session_id,
+                        "retry_id": pending.id,
+                    }},
+                )
+                await services.retry_actuator.attempt_retry(pending)
+                return state.evolve(retry_dispatched=True)
+
     owl_registry = services.owl_registry
     provider_registry = services.provider_registry
 
