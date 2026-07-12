@@ -285,6 +285,41 @@ class CostTracker(OwnedRepository):
         """
         return self._turn_ledger.total(trace_id)
 
+    async def get_turn_token_totals(self, trace_id: str) -> tuple[int, int] | None:
+        """Sum input/output tokens across all cost_records for one turn.
+
+        Owner-scoped like every other read on this repository (via
+        ``_fetch_owned``). Returns ``(total_input, total_output)`` or ``None``
+        if no rows exist for ``trace_id`` (never recorded, or a turn with no
+        billed calls).
+        """
+        log.engine.debug(
+            "[cost_tracker] get_turn_token_totals: entry",
+            extra={"_fields": {"trace_id": trace_id}},
+        )
+        rows = await self._fetch_owned(
+            "cost_records", where_sql="trace_id = ?", params=(trace_id,)
+        )
+        if not rows:
+            log.engine.debug(
+                "[cost_tracker] get_turn_token_totals: no records for trace",
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+            return None
+        total_input = sum(int(row["input_tokens"]) for row in rows)
+        total_output = sum(int(row["output_tokens"]) for row in rows)
+        log.engine.debug(
+            "[cost_tracker] get_turn_token_totals: exit",
+            extra={
+                "_fields": {
+                    "trace_id": trace_id,
+                    "total_input": total_input,
+                    "total_output": total_output,
+                }
+            },
+        )
+        return (total_input, total_output)
+
     def update_limit(self, daily_limit_usd: float | None) -> None:
         """Hot-reload budget limit (called by ConfigWatcher on settings_reloaded)."""
         log.engine.info(
