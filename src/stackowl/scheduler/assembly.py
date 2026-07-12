@@ -1024,6 +1024,15 @@ def _build_health_alert_sink(
         return None
     brief_channels = list(settings.brief.channels)
     channel = brief_channels[0] if brief_channels else None
+    # Health degraded/recovered flaps are operator noise, not durable content —
+    # they should not linger in the chat forever. Reuse the SAME ephemeral
+    # (send-then-self-delete) path the health-canary probe already uses
+    # (Notification.ephemeral, deliverer._transport) instead of a normal
+    # permanent send. Requires a resolved chat_id (telegram only); falls back
+    # to a normal visible send on any other channel or if resolution fails.
+    target_chat_id: str | int | None = None
+    if channel:
+        target_chat_id = _resolve_owner_addresses(settings, [channel]).get(channel)
 
     async def _alert(message: str) -> None:
         from stackowl.notifications.router import Notification
@@ -1033,6 +1042,8 @@ def _build_health_alert_sink(
             urgency="critical",
             category="operator_health",
             channel_name=channel,
+            target=target_chat_id,
+            ephemeral=True,
         )
         await proactive_deliverer.deliver(note)
 
