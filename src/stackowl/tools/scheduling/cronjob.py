@@ -307,8 +307,36 @@ class CronjobTool(Tool):
                 t0,
             )
 
-        # Soft cap is an advisory NUDGE (fork C), not enforcement (hint, no block).
         existing = filter_owl_jobs(await scheduler.list_jobs(), owl)
+
+        # Dedup — reject an exact (schedule, prompt) repeat instead of silently
+        # stacking another identical job. Nothing upstream of this tool call
+        # prevents the same ask ("watch google stock") from reaching _create
+        # more than once across turns/sessions, and there was no content check
+        # here at all — only the count-based soft cap below, which does not
+        # stop two identical jobs from both existing under the cap.
+        dupe = next(
+            (
+                j for j in existing
+                if j.enabled
+                and j.status in ("pending", "running")
+                and j.schedule == schedule
+                and j.params.get("goal") == prompt
+            ),
+            None,
+        )
+        if dupe is not None:
+            return self._ok(
+                {
+                    "nudge": f"a job with this exact schedule and prompt already exists "
+                    f"(job_id={dupe.job_id}) — not creating a duplicate.",
+                    "duplicate_of": dupe.job_id,
+                    "created": False,
+                },
+                t0,
+            )
+
+        # Soft cap is an advisory NUDGE (fork C), not enforcement (hint, no block).
         if len(existing) >= self._soft_cap:
             return self._ok(
                 {

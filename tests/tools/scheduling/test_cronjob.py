@@ -141,6 +141,35 @@ async def test_create_persists_and_is_reloadable(migrated_db: DbPool) -> None:
     assert persisted[job_id].params["owl"] == _OWL
 
 
+async def test_create_rejects_exact_duplicate(migrated_db: DbPool) -> None:
+    """Same owl + same schedule + same prompt must not stack a second job —
+    the reported bug: several identical 'watch google stock' jobs existed
+    because _create had a count-based soft cap but no content dedup."""
+    await _seed_session(migrated_db)
+    first = _payload(await _run(
+        migrated_db, action="create", prompt="watch google stock", schedule="daily@09:00"
+    ))
+    assert first["created"] is True
+    second = _payload(await _run(
+        migrated_db, action="create", prompt="watch google stock", schedule="daily@09:00"
+    ))
+    assert second["created"] is False
+    assert second["duplicate_of"] == first["job_id"]
+    jobs = await JobScheduler(db=migrated_db).list_jobs()
+    matching = [j for j in jobs if j.params.get("goal") == "watch google stock"]
+    assert len(matching) == 1
+
+    # A DIFFERENT schedule or prompt for the same owl is not a duplicate.
+    diff_schedule = _payload(await _run(
+        migrated_db, action="create", prompt="watch google stock", schedule="daily@10:00"
+    ))
+    assert diff_schedule["created"] is True
+    diff_prompt = _payload(await _run(
+        migrated_db, action="create", prompt="watch apple stock", schedule="daily@09:00"
+    ))
+    assert diff_prompt["created"] is True
+
+
 async def test_list_returns_only_callers_jobs(migrated_db: DbPool) -> None:
     await _seed_session(migrated_db)
     await _run(migrated_db, action="create", prompt="job a", schedule="every 30m")
