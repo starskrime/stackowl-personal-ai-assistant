@@ -59,6 +59,11 @@ class TaskOutcome:
     # cluster_failures_by_capability_and_signature falls back to its old
     # credit-every-tool-in-tool_sequence behavior for those.
     failed_capability: str | None = None
+    # Migration for Like/Dislike buttons (set_approach_rating) — "positive",
+    # "negative", or None (unrated). Consumed by dna_attribution.py's
+    # positive-only filter to exclude disliked-approach outcomes even when
+    # they otherwise look like a trustworthy success.
+    approach_rating: str | None = None
 
 
 def classify_failure(errors: tuple[str, ...]) -> str | None:
@@ -391,7 +396,8 @@ class TaskOutcomeStore(OwnedRepository):
             """SELECT outcome_id, trace_id, session_id, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
-                      captured_at, scored_at, tool_sequence, dna_snapshot
+                      captured_at, scored_at, tool_sequence, dna_snapshot,
+                      approach_rating
                FROM task_outcomes
                WHERE owner_id = ?
                  AND owl_name = ?
@@ -620,5 +626,8 @@ def _row_to_outcome(row: dict[str, object]) -> TaskOutcome:
         ),
         failed_capability=(
             str(row["failed_capability"]) if row.get("failed_capability") else None
+        ),
+        approach_rating=(
+            str(row["approach_rating"]) if row.get("approach_rating") else None
         ),
     )

@@ -96,6 +96,24 @@ def _band_for(value: float) -> str:
     return "high"
 
 
+def _filter_scored_outcomes(outcomes: list[TaskOutcome]) -> list[TaskOutcome]:
+    """POSITIVE-ONLY LEARNING filter — outcomes eligible for DNA attribution.
+
+    F-54 (ACCEPTED-BY-DIRECTIVE): tune traits from SUCCESSFUL outcomes only
+    (see feedback_positive_only_learning). Failed/penalized outcomes are
+    dropped even when they carry a quality_score + dna_snapshot. A user
+    Dislike vote (``approach_rating == "negative"``) is excluded too — the
+    turn may have technically succeeded, but the user rejected the approach,
+    so it must not reinforce the trait band that produced it.
+    """
+    return [
+        o for o in outcomes
+        if o.quality_score is not None and o.dna_snapshot
+        and o.success and not o.failure_class
+        and o.approach_rating != "negative"
+    ]
+
+
 class DnaAttributor:
     """Compute trait deltas from owl's scored outcomes.
 
@@ -148,11 +166,7 @@ class DnaAttributor:
         # mined, even when they carry a quality_score + dna_snapshot. Deliver-time
         # honesty still admits a live failure; this filter only governs what the
         # evolver LEARNS FROM. Do NOT add failure-based attribution.
-        scored = [
-            o for o in outcomes
-            if o.quality_score is not None and o.dna_snapshot
-            and o.success and not o.failure_class
-        ]
+        scored = _filter_scored_outcomes(outcomes)
         if len(scored) < self._min_samples:
             log.engine.debug(
                 "[dna] attributor.attribute: exit — below sample threshold",
