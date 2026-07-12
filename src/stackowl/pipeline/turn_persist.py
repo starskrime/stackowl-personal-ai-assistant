@@ -24,7 +24,11 @@ from __future__ import annotations
 
 from stackowl.infra.observability import log
 from stackowl.memory.trust import Trust
-from stackowl.pipeline.delivery_gate import _critical_failure_classes, is_consequential_giveup_now
+from stackowl.pipeline.delivery_gate import (
+    _attempts_for_state,
+    _critical_failure_classes,
+    is_consequential_giveup_now,
+)
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
 
@@ -55,13 +59,39 @@ def _turn_floored(state: PipelineState) -> bool:
 async def persist_turn(state: PipelineState) -> None:
     """Persist the POST-floor turn as a staged conversation fact (best-effort).
 
-    1. ENTRY — resolve the memory bridge (skip if none).
+    1. ENTRY — resolve services; a floored turn also enqueues a retry_queue row
+       (independent of memory_bridge availability — losing the memory bridge
+       must not also lose the retry-queue signal).
     2. DECISION — floored vs clean; trust from SP-2 merged_external.
     3. STEP — store user-only (floored) or user+assistant (clean) content.
     4. EXIT — log; never raise (B5).
     """
     # 1. ENTRY
     services = get_services()
+
+    # Floor-origin signal computed once, up front: gates BOTH the retry_queue
+    # bookkeeping below and the memory-bridge content/trust decision further
+    # down. A floored turn must never persist the (possibly dressed-up)
+    # assistant prose as a promotable fact (LM-3) — see _turn_floored.
+    floored = _turn_floored(state)
+    if floored:
+        retry_store = getattr(services, "retry_queue_store", None)
+        if retry_store is not None:
+            try:
+                banned = _attempts_for_state(state)
+                await retry_store.insert_pending(
+                    trace_id=state.trace_id,
+                    session_id=state.session_id,
+                    goal=state.input_text,
+                    banned_capabilities=list(banned) if banned else [],
+                )
+            except Exception as exc:  # B5 — retry-queue bookkeeping must never block delivery
+                log.scheduler.error(
+                    "[pipeline] persist_turn: retry_queue insert failed",
+                    exc_info=exc,
+                    extra={"_fields": {"trace_id": state.trace_id}},
+                )
+
     bridge = services.memory_bridge
     if bridge is None:
         log.memory.debug(
@@ -81,7 +111,6 @@ async def persist_turn(state: PipelineState) -> None:
     # 2. DECISION — a floored turn must NOT persist the (possibly dressed-up)
     # assistant prose as a promotable fact. Record ONLY the user utterance so the
     # dream worker has no "I couldn't / I did it" draft to promote (LM-3).
-    floored = _turn_floored(state)
     if floored:
         if not state.input_text:
             # Nothing safe to persist (no user utterance, floored assistant text suppressed).

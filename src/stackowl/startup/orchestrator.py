@@ -1241,6 +1241,13 @@ class StartupOrchestrator:
 
         sticky_route_cache = StickyRouteCache()
 
+        # Retry-queue bookkeeping — persist_turn reads THIS off services to
+        # enqueue a pending row on a floored turn. Same DbPool instance, same
+        # OwnedRepository construction pattern as TaskOutcomeStore(db) elsewhere.
+        from stackowl.memory.retry_queue_store import RetryQueueStore
+
+        retry_queue_store = RetryQueueStore(db_pool)
+
         services = StepServices(
             a2a_queue=a2a_queue,
             provider_registry=provider_registry,
@@ -1254,6 +1261,7 @@ class StartupOrchestrator:
             browser_sessions=browser_sessions,
             audit_logger=audit_logger,
             preference_store=preference_store,
+            retry_queue_store=retry_queue_store,
             notification_router=notification_router,
             proactive_deliverer=proactive_deliverer,
             event_bus=event_bus,

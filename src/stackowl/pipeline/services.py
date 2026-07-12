@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.preferences import PreferenceStore
+    from stackowl.memory.retry_queue_store import RetryQueueStore
     from stackowl.messaging.a2a import A2AQueue
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.router import NotificationRouter
@@ -64,6 +65,11 @@ class StepServices:
     browser_sessions: BrowserSessionRegistry | None = field(default=None)
     audit_logger: AuditLogger | None = field(default=None)
     preference_store: PreferenceStore | None = field(default=None)
+    # Retry-queue bookkeeping — persist_turn reads THIS off services to enqueue a
+    # pending row whenever a turn ends in the honest floor, so a later background
+    # sweep can retry it. None → the retry-queue insert is a no-op (byte-identical
+    # to before this feature existed).
+    retry_queue_store: RetryQueueStore | None = field(default=None)
     notification_router: NotificationRouter | None = field(default=None)
     proactive_deliverer: ProactiveDeliverer | None = field(default=None)
     event_bus: EventBus | None = field(default=None)
