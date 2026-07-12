@@ -17,9 +17,51 @@ from stackowl.pipeline.streaming import ResponseChunk
 # like/dislike vote is meaningful — a one-line reply isn't worth rating.
 _MIN_RATEABLE_LENGTH = 200
 
+# Epic 3 Task 2 — token-usage line appended to the final answer. Kept as a
+# module constant so the emoji/format is defined in exactly one place.
+_TOKEN_LINE_TEMPLATE = "\n\n\U0001F522 {input_tokens:,} in / {output_tokens:,} out"
+
 
 def _qualifies_for_rating(chunk: ResponseChunk) -> bool:
     return not chunk.is_floor and len(chunk.content) >= _MIN_RATEABLE_LENGTH
+
+
+async def _append_token_line(out_state: PipelineState) -> PipelineState:
+    """Append a "N in / M out" token-usage line to the final answer's content.
+
+    Best-effort: a cost_tracker lookup failure must never break delivery of the
+    answer itself. Must run BEFORE Task 5's approach-rating keyboard-attach
+    block (below) so that block's length check and stored "original text" for
+    edit-in-place reconstruction both see the token-line-inclusive content —
+    otherwise a vote-tap would erase the token line along with editing in the
+    vote suffix.
+    """
+    if not out_state.responses:
+        return out_state
+    last = out_state.responses[-1]
+    if last.is_floor:
+        return out_state
+    services = get_services()
+    cost_tracker = getattr(services, "cost_tracker", None)
+    if cost_tracker is None:
+        return out_state
+    try:
+        totals = await cost_tracker.get_turn_token_totals(out_state.trace_id)
+    except Exception as exc:  # token display must never break delivery
+        log.engine.error(
+            "[pipeline] consolidate: token totals lookup failed",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": out_state.trace_id}},
+        )
+        return out_state
+    if totals is None:
+        return out_state
+    input_tokens, output_tokens = totals
+    updated_content = last.content + _TOKEN_LINE_TEMPLATE.format(
+        input_tokens=input_tokens, output_tokens=output_tokens,
+    )
+    updated_chunk = last.model_copy(update={"content": updated_content})
+    return out_state.evolve(responses=(*out_state.responses[:-1], updated_chunk))
 
 
 async def run(state: PipelineState) -> PipelineState:
@@ -70,6 +112,10 @@ async def run(state: PipelineState) -> PipelineState:
     # responses was still empty) and stamped so the post-floor persist_turn (F088)
     # reads it instead of recomputing from post-floor responses (trust-laundering guard).
     out_state = out_state.evolve(merged_external=merged_external)
+    # Epic 3 Task 2 — append the token-usage line BEFORE Task 5's rating-keyboard
+    # attach block below, so that block's length check and the "original text"
+    # it stores for edit-in-place reconstruction both include the token line.
+    out_state = await _append_token_line(out_state)
     # Task 5 — attach an approach-rating like/dislike keyboard to a qualifying
     # final answer (substantial, non-floor). Best-effort: a tracker failure must
     # never break delivery of the answer itself. Gated to telegram: the tracker
