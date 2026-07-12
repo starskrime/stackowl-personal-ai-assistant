@@ -84,3 +84,42 @@ async def test_attempt_retry_failure_marks_attempt():
 
     assert outcome.status == "pending"
     retry_store.mark_attempt_failed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_attempt_retry_pins_newly_failed_capability_not_already_banned():
+    """Pins the _pick_newly_failed fix: a genuine new consequential failure from
+    this retry attempt (not already in row.banned_capabilities) must be the
+    exact value threaded to mark_attempt_failed — not "" (the no-op result a
+    broken/reverted version would also produce for an empty-ledger fixture)."""
+    row = _row(banned_capabilities=["cronjob"])
+
+    floored_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        consequential_snapshot_taken=True,
+        consequential_failures=("web_search",),
+        responses=(
+            ResponseChunk(
+                content="I still couldn't...", is_final=False, chunk_index=0,
+                trace_id="trace-new", owl_name="secretary", is_floor=True,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=floored_state)
+
+    channel_registry = MagicMock()
+    retry_store = MagicMock()
+    updated_row = _row(attempt_count=1, status="pending")
+    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "pending"
+    retry_store.mark_attempt_failed.assert_awaited_once()
+    assert (
+        retry_store.mark_attempt_failed.await_args.kwargs["newly_failed_capability"]
+        == "web_search"
+    )

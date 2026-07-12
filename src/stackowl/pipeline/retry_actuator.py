@@ -106,8 +106,25 @@ class RetryActuator:
             return outcome
 
         answer_text = "\n".join(c.content for c in final_state.responses if c.content).strip()
-        await self._deliver_success(row, answer_text)
-        await self._retry_store.mark_completed(row.id)
+        try:
+            # 3. STEP — deliver + record completion; mirrors deliverer.py's
+            # _transport contract: this must never raise into the caller.
+            await self._deliver_success(row, answer_text)
+            await self._retry_store.mark_completed(row.id)
+        except Exception as exc:  # never raise into the scheduler loop
+            log.scheduler.error(
+                "retry_actuator.attempt_retry: success-path delivery/store failed",
+                exc_info=exc, extra={"_fields": {"retry_id": row.id}},
+            )
+            # The row's DB status is unchanged by a failed delivery/mark_completed
+            # (still "pending"), so reporting "pending" here matches DB truth and
+            # lets a future sweep retry rather than silently losing the answer.
+            outcome = RetryOutcome(status="pending")
+            log.scheduler.info(
+                "retry_actuator.attempt_retry: exit",
+                extra={"_fields": {"retry_id": row.id, "status": outcome.status}},
+            )
+            return outcome
         log.scheduler.info(
             "retry_actuator.attempt_retry: exit",
             extra={"_fields": {"retry_id": row.id, "status": "completed"}},
@@ -169,9 +186,23 @@ class RetryActuator:
     async def _handle_failure(
         self, row: RetryQueueRow, error: str, *, newly_failed_capability: str,
     ) -> RetryOutcome:
-        updated = await self._retry_store.mark_attempt_failed(
-            retry_id=row.id, newly_failed_capability=newly_failed_capability, error=error,
-        )
+        try:
+            # 3. STEP — mark_attempt_failed raises ValueError when the row was
+            # raced (already moved off "pending" by a concurrent sweep/manual-
+            # retry call) or re-raises on transaction failure — this must
+            # never raise into the scheduler loop.
+            updated = await self._retry_store.mark_attempt_failed(
+                retry_id=row.id, newly_failed_capability=newly_failed_capability, error=error,
+            )
+        except Exception as exc:  # never raise into the scheduler loop
+            log.scheduler.error(
+                "retry_actuator._handle_failure: mark_attempt_failed failed",
+                exc_info=exc, extra={"_fields": {"retry_id": row.id}},
+            )
+            # Unknown terminal state (another caller may already own this row) —
+            # "pending" is the conservative, non-data-losing report: worst case
+            # is a harmless extra retry, never a silently dropped failure.
+            return RetryOutcome(status="pending")
         if updated.status == "failed":
             await self._notify_gave_up(updated)
         return RetryOutcome(status=updated.status)
