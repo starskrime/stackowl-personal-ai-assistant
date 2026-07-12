@@ -226,6 +226,30 @@ class TaskOutcomeStore(OwnedRepository):
             extra={"_fields": {"outcome_id": outcome_id, "score": score}},
         )
 
+    async def set_approach_rating(self, *, trace_id: str, rating: str) -> bool:
+        """Record a Like/Dislike vote on a turn's approach, by trace_id.
+
+        Returns False (never raises) when no row exists for that trace_id —
+        the caller (the Telegram callback handler) decides how to react.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] set_approach_rating: entry",
+            extra={"_fields": {"trace_id": trace_id, "rating": rating}},
+        )
+        # 3. STEP
+        rowcount = await self._db.execute_returning_rowcount(
+            "UPDATE task_outcomes SET approach_rating = ? WHERE trace_id = ? AND owner_id = ?",
+            (rating, trace_id, self._owner_id),
+        )
+        updated = rowcount > 0
+        # 4. EXIT
+        log.memory.info(
+            "[outcomes] set_approach_rating: exit",
+            extra={"_fields": {"trace_id": trace_id, "rating": rating, "updated": updated}},
+        )
+        return updated
+
     async def list_scored_for_owl_global(
         self, *, since_epoch: float = 0.0, limit: int = 2000,
     ) -> list[TaskOutcome]:
