@@ -210,9 +210,13 @@ class RetryActuator:
     async def _notify_gave_up(self, row: RetryQueueRow) -> None:
         if not row.channel_chat_id:
             return
-        adapter = self._channel_registry.get(row.channel)
         text = _STILL_FAILED_NOTICE.format(attempts=row.attempt_count, goal=row.goal)
         try:
+            # channel_registry.get() raises ChannelNotFoundError for an
+            # unregistered channel (channels/registry.py) — must stay inside
+            # this try, notification is best-effort and must never raise into
+            # attempt_retry's "never raise into the scheduler loop" contract.
+            adapter = self._channel_registry.get(row.channel)
             await cast("_TargetedSender", adapter).send_text(
                 text, chat_id=int(row.channel_chat_id)
             )

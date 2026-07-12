@@ -123,3 +123,37 @@ async def test_attempt_retry_pins_newly_failed_capability_not_already_banned():
         retry_store.mark_attempt_failed.await_args.kwargs["newly_failed_capability"]
         == "web_search"
     )
+
+
+@pytest.mark.asyncio
+async def test_attempt_retry_survives_channel_registry_error_on_give_up():
+    """_notify_gave_up's channel_registry.get() call can raise (e.g.
+    ChannelNotFoundError for an unregistered channel) — this must be caught
+    inside _notify_gave_up's own try block, not propagate out of
+    attempt_retry, which promises to never raise into the scheduler loop."""
+    row = _row()
+
+    floored_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        responses=(
+            ResponseChunk(
+                content="I still couldn't...", is_final=False, chunk_index=0,
+                trace_id="trace-new", owl_name="secretary", is_floor=True,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=floored_state)
+
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(side_effect=Exception("channel gone"))
+
+    retry_store = MagicMock()
+    updated_row = _row(attempt_count=3, status="failed")
+    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "failed"
