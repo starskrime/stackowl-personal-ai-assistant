@@ -46,8 +46,16 @@ class ChannelAdapter(ABC):
         ...
 
     @abstractmethod
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str) -> object | None:
         """Send a plain text message to the user.
+
+        Returns ``None`` by default (most channels). A rich channel that keeps
+        a durable, editable handle to the sent message (Telegram's
+        ``telegram.Message``, carrying ``message_id``) may return it instead —
+        e.g. to backfill a retry_queue row so a later retry can edit that exact
+        message rather than sending a duplicate. Callers that don't need it
+        simply discard the return value; the type is ``object`` (not a
+        per-channel type) to keep this base module channel-agnostic.
 
         No-target contract (C6 / C-1) — applied identically by every rich
         channel (Telegram, Slack, Discord, WhatsApp) that overrides this with an

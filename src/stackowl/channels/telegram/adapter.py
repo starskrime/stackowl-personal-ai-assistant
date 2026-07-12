@@ -16,7 +16,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from telegram import Update
@@ -45,6 +45,8 @@ from stackowl.infra.observability import log, traced_span
 from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:
+    from telegram import Message
+
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.channels.telegram.voice import TelegramVoiceHandler
     from stackowl.commands.response import Action
@@ -340,8 +342,14 @@ class TelegramChannelAdapter(ChannelAdapter):
         actions: tuple[Action, ...] = ()
         view: TelegramProgressView | None = None
         answer_started = False
+        # Tracked across the chunk stream to backfill the retry_queue row for a
+        # floored turn once the message is actually sent (below) — every chunk
+        # in one turn shares the same trace_id, so any chunk's is enough.
+        any_floor = False
+        trace_id: str | None = None
         try:
             async for chunk in chunks:
+                trace_id = getattr(chunk, "trace_id", None) or trace_id
                 raw = chunk.target
                 if isinstance(raw, str):
                     # Telegram only ever delivers int chat_id targets; a str (Slack
@@ -366,6 +374,7 @@ class TelegramChannelAdapter(ChannelAdapter):
                     continue
 
                 buffer += chunk.content
+                any_floor = any_floor or getattr(chunk, "is_floor", False)
                 chunk_actions = getattr(chunk, "actions", ())
                 if chunk_actions:
                     actions = chunk_actions
@@ -374,9 +383,11 @@ class TelegramChannelAdapter(ChannelAdapter):
                     answer_started = True
             # send_text is the single formatting chokepoint — pass RAW buffer. The
             # answer is delivered as its own clean message(s), independent of progress.
-            await self.send_text_or_actions(buffer, actions, chat_id=target)
+            message = await self.send_text_or_actions(buffer, actions, chat_id=target)
             if view is not None:
                 await view.settle()  # collapse the status to a "✓ done in Ns" footer
+            if any_floor and message is not None and trace_id is not None and target is not None:
+                await self._backfill_floor_retry_row(trace_id, target, message.message_id)
         finally:
             # Safety net: never leak the ticker task if the loop raised mid-turn.
             if view is not None:
@@ -387,9 +398,47 @@ class TelegramChannelAdapter(ChannelAdapter):
                                "live_progress": view is not None}},
         )
 
+    async def _backfill_floor_retry_row(
+        self, trace_id: str, chat_id: int, message_id: int
+    ) -> None:
+        """Stamp the just-sent message ref onto the pending retry_queue row for a
+        floored turn, so a later retry can edit THIS message instead of sending
+        a duplicate. Best-effort: a backfill failure must never break delivery
+        (the answer already landed) — log loudly and move on.
+        """
+        log.telegram.debug(
+            "[telegram] adapter._backfill_floor_retry_row: entry",
+            extra={"_fields": {
+                "trace_id": trace_id, "chat_id": chat_id, "message_id": message_id,
+            }},
+        )
+        from stackowl.pipeline.services import get_services
+
+        retry_store = get_services().retry_queue_store
+        if retry_store is None:
+            log.telegram.debug(
+                "[telegram] adapter._backfill_floor_retry_row: decision no_retry_store — no-op",
+            )
+            return
+        try:
+            await retry_store.backfill_channel_message(
+                trace_id=trace_id, channel_chat_id=chat_id, channel_message_id=message_id,
+            )
+        except Exception as exc:  # backfill must never break delivery
+            log.telegram.error(
+                "[telegram] adapter._backfill_floor_retry_row: backfill failed",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+            return
+        log.telegram.debug(
+            "[telegram] adapter._backfill_floor_retry_row: exit",
+            extra={"_fields": {"trace_id": trace_id}},
+        )
+
     async def send_text_or_actions(
         self, text: str, actions: tuple[Action, ...], *, chat_id: int | None
-    ) -> None:
+    ) -> Message | None:
         """Deliver ``text`` as ONE message — with an inline keyboard attached
         when ``actions`` is non-empty, plain ``send_text`` otherwise.
 
@@ -403,6 +452,9 @@ class TelegramChannelAdapter(ChannelAdapter):
         keyboard message and once via :meth:`send_text`. Requires a resolved
         concrete chat for the keyboard path — the no-target contract for a
         bare text answer is unchanged when one isn't available.
+
+        Returns the sent :class:`telegram.Message` (whichever branch fired) so
+        callers can backfill a retry_queue row for floored turns.
         """
         resolved_chat = chat_id if chat_id is not None else self._last_chat_id
         if actions and resolved_chat is not None:
@@ -414,19 +466,25 @@ class TelegramChannelAdapter(ChannelAdapter):
 
                 keyboard, callback_ids = build_command_keyboard(resolved_chat, actions)
                 formatted = self._formatter.format_response(text)
-                message = await self.send_inline_keyboard(formatted, keyboard, chat_id=chat_id)
+                # send_inline_keyboard is declared -> Any (python-telegram-bot's
+                # send_message is itself untyped) — narrow to its documented
+                # runtime contract (Message on success, None on no-target no-op).
+                message = cast(
+                    "Message | None",
+                    await self.send_inline_keyboard(formatted, keyboard, chat_id=chat_id),
+                )
                 message_id = getattr(message, "message_id", None)
                 if message_id is not None:
                     for callback_data in callback_ids:
                         set_command_button_message_id(callback_data, message_id)
-                return
+                return message
             except Exception as exc:  # self-healing — never lose the answer
                 log.telegram.error(
                     "[telegram] adapter.send_text_or_actions: action keyboard delivery failed — text fallback",
                     exc_info=exc,
                     extra={"_fields": {"n_actions": len(actions)}},
                 )
-        await self.send_text(text, chat_id=chat_id)
+        return await self.send_text(text, chat_id=chat_id)
 
     def _make_progress_view(self, chat_id: int) -> TelegramProgressView:
         """Build the per-turn live-status view bound to this adapter's I/O."""
@@ -446,7 +504,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             reassure_after_s=self._progress.reassure_after_s,
         )
 
-    async def send_text(self, text: str, *, chat_id: int | None = _UNSET) -> None:
+    async def send_text(self, text: str, *, chat_id: int | None = _UNSET) -> Message | None:
         """Format RAW text then deliver — THE single outbound formatting chokepoint.
 
         Every caller of ``send_text`` (the on-turn reply, the proactive deliverer,
@@ -456,8 +514,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         exactly how proactive/notification table-corruption shipped. Callers that
         already hold MarkdownV2 (the specialized notification formatters) use
         :meth:`send_markdown` instead, to avoid double-escaping.
+
+        Returns the sent :class:`telegram.Message` (see :meth:`_deliver`).
         """
-        await self._deliver(self._formatter.format_response(text), chat_id=chat_id)
+        return await self._deliver(self._formatter.format_response(text), chat_id=chat_id)
 
     async def send_markdown(self, text: str, *, chat_id: int | None = _UNSET) -> None:
         """Deliver text that is ALREADY MarkdownV2 (pre-escaped by a specialized
@@ -465,7 +525,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         double-applied. Use :meth:`send_text` for raw assistant output."""
         await self._deliver(text, chat_id=chat_id)
 
-    async def _deliver(self, text: str, *, chat_id: int | None = _UNSET) -> None:
+    async def _deliver(self, text: str, *, chat_id: int | None = _UNSET) -> Message | None:
         """Split (already-formatted) ``text`` per Telegram's limit and send each part.
 
         ``chat_id`` targets a specific chat (the per-message target threaded from
@@ -481,6 +541,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         silently dropped). ``chat_id`` OMITTED (proactive/best-effort) with no
         ``_last_chat_id`` → loud ``error``-level logged NO-OP, never a raise
         (preserves the proactive deliverer never-raises contract).
+
+        Returns the LAST part's sent :class:`telegram.Message` (or ``None`` on
+        the best-effort no-target no-op) — multi-part messages only backfill
+        the final visible part; a documented limitation, not a bug.
         """
         explicit = chat_id is not _UNSET
         resolved = chat_id if explicit else None
@@ -513,21 +577,23 @@ class TelegramChannelAdapter(ChannelAdapter):
                 "[telegram] adapter.send_text: no active chat (best-effort) — message dropped",
                 extra={"_fields": {"has_app": self._bot_app is not None}},
             )
-            return
+            return None
         parts = self._splitter.split(text)
         log.telegram.debug(
             "[telegram] adapter.send_text: decision split",
             extra={"_fields": {"part_count": len(parts)}},
         )
+        last_message: Message | None = None
         for idx, part in enumerate(parts):
             log.telegram.debug(
                 "[telegram] adapter.send_text: step part_dispatched",
                 extra={"_fields": {"idx": idx, "len": len(part)}},
             )
-            await self._send_part(target, part, idx)
+            last_message = await self._send_part(target, part, idx)
         log.telegram.debug("[telegram] adapter.send_text: exit")
+        return last_message
 
-    async def _send_part(self, target: int, part: str, idx: int) -> None:
+    async def _send_part(self, target: int, part: str, idx: int) -> Message | None:
         """Send one message part, MarkdownV2-first with a plain-text fallback.
 
         Telegram rejects malformed MarkdownV2 with a ``BadRequest``. A formatter
@@ -536,14 +602,23 @@ class TelegramChannelAdapter(ChannelAdapter):
         SAME part as plain text. The content always lands; only the markup is
         sacrificed. Any non-parse error (network, auth, chat-not-found) is a real
         delivery failure and propagates unchanged.
+
+        Returns the sent :class:`telegram.Message` (carries ``message_id``) so
+        callers can backfill a retry_queue row for floored turns.
         """
         assert self._bot_app is not None  # caller guarantees a resolved app+target
         async with traced_span(log.telegram, "telegram.send_message", idx=idx, len=len(part)):
             try:
-                await self._bot_app.bot.send_message(
-                    chat_id=target,
-                    text=part,
-                    parse_mode="MarkdownV2",
+                # python-telegram-bot's send_message is untyped (returns Any) —
+                # cast to the real runtime type (a telegram.Message on success,
+                # it never returns None; raises on failure).
+                return cast(
+                    "Message",
+                    await self._bot_app.bot.send_message(
+                        chat_id=target,
+                        text=part,
+                        parse_mode="MarkdownV2",
+                    ),
                 )
             except BadRequest as exc:
                 log.telegram.error(
@@ -551,10 +626,13 @@ class TelegramChannelAdapter(ChannelAdapter):
                     exc_info=exc,
                     extra={"_fields": {"idx": idx, "len": len(part)}},
                 )
-                await self._bot_app.bot.send_message(
-                    chat_id=target,
-                    text=part,
-                    parse_mode=None,
+                return cast(
+                    "Message",
+                    await self._bot_app.bot.send_message(
+                        chat_id=target,
+                        text=part,
+                        parse_mode=None,
+                    ),
                 )
 
     async def send_status(self, chat_id: int, text: str) -> int | None:
