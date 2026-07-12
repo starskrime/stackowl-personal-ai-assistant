@@ -47,6 +47,7 @@ from stackowl.pipeline.state import PipelineState, StepError, ToolCall
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
+from stackowl.providers._react import looks_like_tool_call
 from stackowl.providers.base import Message, ModelProvider
 from stackowl.providers.escalation_signal import clear_escalation, request_escalation
 from stackowl.providers.model_window import DEFAULT_WINDOW_FALLBACK, resolve_window
@@ -2513,6 +2514,28 @@ async def run(state: PipelineState) -> PipelineState:
                 }},
             )
             raise OwlTimeoutError(state.owl_name, timeout_s)
+        # LEAK GUARD (plain-stream path) — complete_with_tools() already refuses
+        # to deliver a "final answer" that's actually an unparsed tool-call
+        # attempt (looks_like_tool_call + re-prompt/escalate/floor, see
+        # openai_provider.py). This conversational plain-stream path had NO
+        # such guard at all: a model that tried to call a tool on a no-tools
+        # turn (or whose native tool-call attempt fell through as plain text)
+        # streamed its raw "ACTION: <function_name>..." leak straight to the
+        # user. Reuse the same detector; never deliver that raw text.
+        full_text = "".join(c.content for c in chunks)
+        if looks_like_tool_call(full_text):
+            log.engine.warning(
+                "[pipeline] execute: plain-stream final answer looks like an "
+                "unparsed tool call — flooring instead of leaking raw text",
+                extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+            )
+            # The except-clause below re-attaches *chunks* to state.responses —
+            # correct for a genuine mid-stream timeout (deliver partial
+            # progress), but WRONG here: chunks IS the leaked raw tool-call
+            # text this guard exists to suppress. Clear it so nothing from
+            # this stream reaches the user, only the floored error message.
+            chunks.clear()
+            raise OwlTimeoutError(state.owl_name, 0.0)
     except OwlTimeoutError as exc:
         log.engine.warning(
             "[pipeline] execute: owl timeout",

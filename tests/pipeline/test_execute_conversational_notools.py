@@ -163,6 +163,44 @@ async def test_conversational_does_not_enter_tool_loop(monkeypatch: pytest.Monke
     )
 
 
+class _LeakyProvider:
+    """Provider whose stream() yields a leaked, unparsed ACTION-style tool call —
+    reproduces the reported bug: a plain conversational turn (no tool loop)
+    where the model still emitted a malformed tool-call attempt as its final
+    answer, and nothing caught it before delivery."""
+
+    protocol = "anthropic"
+
+    async def stream(self, messages, model, **kwargs):  # noqa: ANN001, ANN201
+        yield "Let me check that.\n\n"
+        yield 'ACTION: <function_name>cronjob</function_name>\n<parameter=action>\nlist\n</parameter>'
+
+
+@pytest.mark.asyncio
+async def test_conversational_leaked_tool_call_is_floored_not_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plain-stream path had no leak guard at all (unlike complete_with_tools,
+    which already refuses to deliver an unparsed ACTION block). Assert the raw
+    leak never reaches state.responses and a step_errors entry is recorded
+    instead."""
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(_LeakyProvider()),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(),
+        owl_registry=OwlRegistry.with_default_secretary(),
+    )
+    stoken = set_services(services)
+    try:
+        result = await exe.run(_make_state("conversational"))
+    finally:
+        reset_services(stoken)
+
+    delivered = "".join(r.content for r in result.responses)
+    assert "ACTION:" not in delivered
+    assert "function_name" not in delivered
+    assert any(e.step == "execute" for e in result.step_errors)
+
+
 @pytest.mark.asyncio
 async def test_standard_enters_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """A standard turn MUST call _run_with_tools when tools are registered."""
