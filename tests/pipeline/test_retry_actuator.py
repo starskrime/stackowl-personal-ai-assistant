@@ -1,0 +1,86 @@
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from stackowl.memory.retry_queue_store import RetryQueueRow
+from stackowl.pipeline.retry_actuator import RetryActuator
+from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.streaming import ResponseChunk
+
+
+def _row(**overrides):
+    defaults = dict(
+        id="retry-1", trace_id="trace-orig", session_id="sess-1",
+        goal="prepare me for the interview", banned_capabilities=["cronjob"],
+        attempt_count=0, status="pending", next_retry_at="", last_error=None,
+        channel="telegram", channel_chat_id="555", channel_message_id="999",
+        created_at="", updated_at="",
+    )
+    defaults.update(overrides)
+    return RetryQueueRow(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_attempt_retry_success_edits_message():
+    row = _row()
+
+    success_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        responses=(
+            ResponseChunk(
+                content="Here's your interview prep plan...", is_final=True,
+                chunk_index=0, trace_id="trace-new", owl_name="secretary", is_floor=False,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=success_state)
+
+    adapter = MagicMock()
+    adapter.edit_message = AsyncMock()
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(return_value=adapter)
+
+    retry_store = MagicMock()
+    retry_store.mark_completed = AsyncMock()
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "completed"
+    adapter.edit_message.assert_awaited_once()
+    retry_store.mark_completed.assert_awaited_once_with("retry-1")
+
+    # banned capability must have been injected into the re-run prompt
+    call_state = backend.run.await_args.args[0]
+    assert "cronjob" in call_state.input_text
+
+
+@pytest.mark.asyncio
+async def test_attempt_retry_failure_marks_attempt():
+    row = _row()
+
+    floored_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        responses=(
+            ResponseChunk(
+                content="I still couldn't...", is_final=False, chunk_index=0,
+                trace_id="trace-new", owl_name="secretary", is_floor=True,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=floored_state)
+
+    channel_registry = MagicMock()
+    retry_store = MagicMock()
+    updated_row = _row(attempt_count=1, status="pending")
+    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "pending"
+    retry_store.mark_attempt_failed.assert_awaited_once()
