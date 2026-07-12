@@ -340,6 +340,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         # send_text falls back to `_last_chat_id` (single-terminal/back-compat).
         target: int | None = None
         actions: tuple[Action, ...] = ()
+        # Raw inline-keyboard dict for approach-rating votes (Task 6) — Action-
+        # shaped `actions` above cannot represent a callback_data payload, so
+        # this is carried and dispatched separately (see below).
+        raw_keyboard: dict[str, object] | None = None
         view: TelegramProgressView | None = None
         answer_started = False
         # Tracked across the chunk stream to backfill the retry_queue row for a
@@ -378,16 +382,40 @@ class TelegramChannelAdapter(ChannelAdapter):
                 chunk_actions = getattr(chunk, "actions", ())
                 if chunk_actions:
                     actions = chunk_actions
+                chunk_raw_keyboard = getattr(chunk, "raw_keyboard", None)
+                if chunk_raw_keyboard is not None:
+                    raw_keyboard = chunk_raw_keyboard
                 if view is not None and not answer_started:
                     view.on_first_answer()  # stop mutating the status; answer is here
                     answer_started = True
             # send_text is the single formatting chokepoint — pass RAW buffer. The
             # answer is delivered as its own clean message(s), independent of progress.
-            message = await self.send_text_or_actions(buffer, actions, chat_id=target)
+            if raw_keyboard is not None:
+                # Bypass send_text_or_actions/build_command_keyboard entirely — that
+                # path is Action-shaped and cannot carry an approach-rating vote's
+                # raw callback_data. send_inline_keyboard already accepts the same
+                # raw dict shape InlineKeyboardBuilder.build() produces.
+                try:
+                    formatted = self._formatter.format_response(buffer)
+                    message = cast(
+                        "Message | None",
+                        await self.send_inline_keyboard(formatted, raw_keyboard, chat_id=target),
+                    )
+                except Exception as exc:  # self-healing — never lose the answer
+                    log.telegram.error(
+                        "[telegram] adapter.send: raw_keyboard delivery failed — text fallback",
+                        exc_info=exc,
+                        extra={"_fields": {"trace_id": trace_id}},
+                    )
+                    message = await self.send_text_or_actions(buffer, actions, chat_id=target)
+            else:
+                message = await self.send_text_or_actions(buffer, actions, chat_id=target)
             if view is not None:
                 await view.settle()  # collapse the status to a "✓ done in Ns" footer
             if any_floor and message is not None and trace_id is not None and target is not None:
                 await self._backfill_floor_retry_row(trace_id, target, message.message_id)
+            if raw_keyboard is not None and message is not None and trace_id is not None and target is not None:
+                await self._backfill_approach_rating(trace_id, target, message.message_id)
         finally:
             # Safety net: never leak the ticker task if the loop raised mid-turn.
             if view is not None:
@@ -433,6 +461,43 @@ class TelegramChannelAdapter(ChannelAdapter):
             return
         log.telegram.debug(
             "[telegram] adapter._backfill_floor_retry_row: exit",
+            extra={"_fields": {"trace_id": trace_id}},
+        )
+
+    async def _backfill_approach_rating(
+        self, trace_id: str, chat_id: int, message_id: int
+    ) -> None:
+        """Stamp the just-sent message ref onto the pending approach-rating
+        tracker entry (Task 5's ``consolidate.py`` calls ``record_pending``
+        before a message id exists) so a tapped vote knows which message to
+        edit. Best-effort: a tracker miss must never break delivery (the
+        answer already landed) — log loudly and move on.
+        """
+        log.telegram.debug(
+            "[telegram] adapter._backfill_approach_rating: entry",
+            extra={"_fields": {
+                "trace_id": trace_id, "chat_id": chat_id, "message_id": message_id,
+            }},
+        )
+        from stackowl.pipeline.services import get_services
+
+        tracker = get_services().approach_rating_tracker
+        if tracker is None:
+            log.telegram.debug(
+                "[telegram] adapter._backfill_approach_rating: decision no_tracker — no-op",
+            )
+            return
+        try:
+            tracker.backfill_message(trace_id=trace_id, chat_id=chat_id, message_id=message_id)
+        except Exception as exc:  # backfill must never break delivery
+            log.telegram.error(
+                "[telegram] adapter._backfill_approach_rating: backfill failed",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+            return
+        log.telegram.debug(
+            "[telegram] adapter._backfill_approach_rating: exit",
             extra={"_fields": {"trace_id": trace_id}},
         )
 

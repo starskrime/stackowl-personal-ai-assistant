@@ -90,6 +90,7 @@ class ChunkFrame(_Frame):
     target: int | str | None = None
     is_floor: bool = False
     actions: tuple[Action, ...] = ()
+    raw_keyboard: dict[str, object] | None = None
 
 
 class SteerFrame(_Frame):

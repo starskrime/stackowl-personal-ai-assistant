@@ -2643,6 +2643,26 @@ class StartupOrchestrator:
                         tg_callback_router.register(
                             f"{CALLBACK_PREFIX}:", tg_voice_confirm.handle_callback
                         )
+                    # Task 6 — a tapped like/dislike button resolves through the
+                    # SAME `approach_rating_tracker` singleton constructed above
+                    # (fed into `services`) so the pending-vote state consolidate.py
+                    # writes and the one this handler reads/clears are one dict, not
+                    # two. TaskOutcomeStore is a stateless db_pool wrapper (like
+                    # every other call site) — no dedup singleton needed for it.
+                    from stackowl.channels.telegram.approach_rating import (
+                        APPROACH_RATING_PREFIX,
+                        ApproachRatingCallbackHandler,
+                    )
+                    from stackowl.memory.outcome_store import TaskOutcomeStore
+
+                    tg_approach_rating_handler = ApproachRatingCallbackHandler(
+                        tracker=approach_rating_tracker,
+                        outcome_store=TaskOutcomeStore(db_pool),
+                        adapter=telegram_adapter,
+                    )
+                    tg_callback_router.register(
+                        f"{APPROACH_RATING_PREFIX}:", tg_approach_rating_handler.handle
+                    )
                     telegram_adapter.attach_callback_router(tg_callback_router)
                     log.info("[startup] gateway: Telegram consent + clarify callbacks wired")
                 except Exception as exc:

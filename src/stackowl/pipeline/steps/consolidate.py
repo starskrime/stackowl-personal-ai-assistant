@@ -92,6 +92,11 @@ async def run(state: PipelineState) -> PipelineState:
                         exc_info=exc,
                         extra={"_fields": {"trace_id": out_state.trace_id}},
                     )
+                    # record_pending may have already landed before a later step
+                    # in this try raised — clear it here so a failed attach never
+                    # leaks a trace_id in the tracker's _pending dict forever
+                    # (otherwise only a user tap would ever clear it).
+                    tracker.clear(trace_id=out_state.trace_id)
     log.engine.info(
         "[pipeline] consolidate: exit",
         extra={"_fields": {"trace_id": state.trace_id}},
