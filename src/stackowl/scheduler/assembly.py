@@ -790,6 +790,12 @@ class SchedulerAssembly:
             db, handler_name="objective_driver", schedule="every 1m",
             interval_minutes=1,
         )
+        # Retry sweep — retries floored turns every minute, capped at 3
+        # attempts per retry_queue row (RetrySweepHandler / RetryActuator).
+        await _seed_minutes_schedule(
+            db, handler_name="retry_sweep", schedule="every 1m",
+            interval_minutes=1,
+        )
         # F-77 — notification_digest flushes the notification_queue (batched /
         # quiet-hours notifications). The handler is built+registered (in
         # NotificationAssembly), but without a recurring jobs row the scheduler

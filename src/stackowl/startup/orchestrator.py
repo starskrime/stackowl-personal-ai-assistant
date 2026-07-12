@@ -1296,6 +1296,23 @@ class StartupOrchestrator:
 
         services.a2a_delegator = A2ADelegator(a2a_queue=a2a_queue, services=services)
         backend = create_backend(self._settings.orchestrator.backend, services=services)
+
+        # Task 6 — cron retry sweep. RetryActuator is the SHARED retry function
+        # (Task 5): both this 1m cron sweep and any manual retry path call the
+        # same instance. Reuses the SAME retry_queue_store built above (line
+        # ~1249, already threaded onto services) rather than a second store —
+        # one durable view of retry_queue, not two divergent ones.
+        from stackowl.channels.registry import ChannelRegistry
+        from stackowl.pipeline.retry_actuator import RetryActuator
+        from stackowl.scheduler.handlers.retry_sweep import register_retry_sweep_handler
+
+        retry_actuator = RetryActuator(
+            backend=backend,
+            channel_registry=ChannelRegistry.instance(),
+            retry_store=retry_queue_store,
+        )
+        register_retry_sweep_handler(actuator=retry_actuator, retry_store=retry_queue_store)
+
         parliament_session_store = SessionStore(db_pool)
         parliament = ParliamentOrchestrator(
             backend=backend,
