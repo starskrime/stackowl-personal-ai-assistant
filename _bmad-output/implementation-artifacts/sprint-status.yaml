@@ -58,17 +58,17 @@ development_status:
   1-7-manual-do-it-again: backlog
   1-8-end-to-end-regression-pass: backlog
   epic-1-retrospective: optional
-  epic-2: backlog
-  2-1-approach-rating-column-migration: backlog
-  2-2-taskoutcomestore-set-approach-rating: backlog
-  2-3-wire-dislike-exclusion-into-dna-attribution: backlog
-  2-4-approach-rating-keyboard-callback-handler: backlog
-  2-5-attach-keyboard-to-qualifying-answers: backlog
-  2-6-send-raw-keyboard-backfill-tracker-register-callback: backlog
-  2-7-end-to-end-regression-pass: backlog
+  epic-2: done
+  2-1-approach-rating-column-migration: done
+  2-2-taskoutcomestore-set-approach-rating: done
+  2-3-wire-dislike-exclusion-into-dna-attribution: done
+  2-4-approach-rating-keyboard-callback-handler: done
+  2-5-attach-keyboard-to-qualifying-answers: done
+  2-6-send-raw-keyboard-backfill-tracker-register-callback: done
+  2-7-end-to-end-regression-pass: done
   epic-2-retrospective: optional
-  epic-3: backlog
-  3-1-get-turn-token-totals-query: backlog
-  3-2-append-token-line-in-consolidate: backlog
-  3-3-end-to-end-regression-pass: backlog
+  epic-3: done
+  3-1-get-turn-token-totals-query: done
+  3-2-append-token-line-in-consolidate: done
+  3-3-end-to-end-regression-pass: done
   epic-3-retrospective: optional
