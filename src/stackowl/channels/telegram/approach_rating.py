@@ -9,7 +9,7 @@ Future/park) — a vote is a one-shot write, nothing waits on it.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.infra.observability import log
@@ -28,6 +28,23 @@ _DISLIKE_LABEL = "\U0001F44E"
 _LIKED_SUFFIX = "\n\n\U0001F44D Liked"
 _DISLIKED_SUFFIX = "\n\n\U0001F44E Disliked"
 
+# Bound on the tracker's in-memory map so an untapped vote (or a non-Telegram
+# turn, pre channel-gate) can never grow it forever in a long-lived gateway
+# process — this is ephemeral state anyway (a restart clears it), so a simple
+# insert-time eviction of the oldest entry is proportionate.
+# ponytail: no TTL/background sweep — a size cap is enough for ephemeral state.
+_MAX_PENDING = 500
+
+
+class _PendingVote(NamedTuple):
+    """One pending vote's tracked state: the original answer text (known at
+    ``record_pending`` time) plus the (chat_id, message_id) backfilled once
+    the message is actually sent."""
+
+    text: str
+    chat_id: int | None = None
+    message_id: int | None = None
+
 
 class _SupportsEditMessage(Protocol):
     async def edit_message(
@@ -41,20 +58,34 @@ class _SupportsEditMessage(Protocol):
 
 
 class ApproachRatingTracker:
-    """In-memory trace_id -> (chat_id, message_id) map for pending votes."""
+    """In-memory trace_id -> pending-vote map, size-capped (see ``_MAX_PENDING``)."""
 
     def __init__(self) -> None:
-        self._pending: dict[str, tuple[int, int] | None] = {}
+        self._pending: dict[str, _PendingVote] = {}
 
-    def record_pending(self, *, trace_id: str) -> None:
-        self._pending[trace_id] = None
+    def record_pending(self, *, trace_id: str, text: str) -> None:
+        # Regular dicts preserve insertion order — evict the oldest entry
+        # before inserting a new one once at capacity, so an untapped vote
+        # (or repeated qualifying turns) can never grow this map unbounded.
+        if trace_id not in self._pending and len(self._pending) >= _MAX_PENDING:
+            oldest_trace_id = next(iter(self._pending))
+            del self._pending[oldest_trace_id]
+            log.telegram.warning(
+                "approach_rating.record_pending: cap reached — evicted oldest entry",
+                extra={"_fields": {"evicted_trace_id": oldest_trace_id, "cap": _MAX_PENDING}},
+            )
+        self._pending[trace_id] = _PendingVote(text=text)
 
     def backfill_message(self, *, trace_id: str, chat_id: int, message_id: int) -> None:
-        if trace_id in self._pending:
-            self._pending[trace_id] = (chat_id, message_id)
+        entry = self._pending.get(trace_id)
+        if entry is not None:
+            self._pending[trace_id] = entry._replace(chat_id=chat_id, message_id=message_id)
 
-    def get_message(self, *, trace_id: str) -> tuple[int, int] | None:
-        return self._pending.get(trace_id)
+    def get_message(self, *, trace_id: str) -> tuple[int, int, str] | None:
+        entry = self._pending.get(trace_id)
+        if entry is None or entry.chat_id is None or entry.message_id is None:
+            return None
+        return (entry.chat_id, entry.message_id, entry.text)
 
     def clear(self, *, trace_id: str) -> None:
         self._pending.pop(trace_id, None)
@@ -128,10 +159,15 @@ class ApproachRatingCallbackHandler:
                 extra={"_fields": {"trace_id": trace_id}},
             )
             return
-        chat_id, message_id = location
+        chat_id, message_id, original_text = location
         suffix = _LIKED_SUFFIX if vote == "positive" else _DISLIKED_SUFFIX
         try:
-            await self._adapter.edit_message(chat_id, message_id, suffix, reply_markup=None)
+            # Append to the ORIGINAL answer text — edit_message is a full-text
+            # replace (edit_message_text), never an append, so reconstructing
+            # from the stored text is required or the tap destroys the answer.
+            await self._adapter.edit_message(
+                chat_id, message_id, f"{original_text}{suffix}", reply_markup=None
+            )
         except Exception as exc:  # message may be too old/deleted — vote already recorded, don't fail the turn
             log.telegram.error(
                 "approach_rating.handle: edit failed — vote already recorded",

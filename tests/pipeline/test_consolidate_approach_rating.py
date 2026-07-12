@@ -26,7 +26,7 @@ async def test_qualifying_answer_gets_rating_keyboard(monkeypatch):
 
     long_answer = "x" * 250
     state = PipelineState(
-        trace_id="t1", session_id="s1", input_text="hi", channel="cli", owl_name="secretary",
+        trace_id="t1", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content=long_answer, is_final=False, chunk_index=0,
@@ -36,8 +36,35 @@ async def test_qualifying_answer_gets_rating_keyboard(monkeypatch):
 
     result = await consolidate.run(state)
 
-    tracker.record_pending.assert_called_once_with(trace_id="t1")
+    tracker.record_pending.assert_called_once_with(trace_id="t1", text=long_answer)
     assert result.responses[-1].raw_keyboard is not None
+
+
+@pytest.mark.asyncio
+async def test_non_telegram_channel_gets_no_keyboard(monkeypatch):
+    # Only a Telegram callback tap ever calls tracker.clear() — recording a
+    # pending vote for any other channel would leak the entry forever.
+    tracker = MagicMock()
+
+    class FakeServices:
+        approach_rating_tracker = tracker
+
+    monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
+
+    long_answer = "x" * 250
+    state = PipelineState(
+        trace_id="t4", session_id="s1", input_text="hi", channel="cli", owl_name="secretary",
+        pipeline_step="consolidate",
+        responses=(ResponseChunk(
+            content=long_answer, is_final=False, chunk_index=0,
+            trace_id="t4", owl_name="secretary", is_floor=False,
+        ),),
+    )
+
+    result = await consolidate.run(state)
+
+    tracker.record_pending.assert_not_called()
+    assert result.responses[-1].raw_keyboard is None
 
 
 @pytest.mark.asyncio
@@ -50,7 +77,7 @@ async def test_short_answer_gets_no_keyboard(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t2", session_id="s1", input_text="hi", channel="cli", owl_name="secretary",
+        trace_id="t2", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="ok", is_final=False, chunk_index=0,
@@ -74,7 +101,7 @@ async def test_floor_answer_gets_no_keyboard(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t3", session_id="s1", input_text="hi", channel="cli", owl_name="secretary",
+        trace_id="t3", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="x" * 250, is_final=False, chunk_index=0,

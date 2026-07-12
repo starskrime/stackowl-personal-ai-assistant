@@ -41,7 +41,7 @@ async def test_full_approach_rating_loop(tmp_path: Path) -> None:
         )
 
         tracker = ApproachRatingTracker()
-        tracker.record_pending(trace_id="trace-e2e")
+        tracker.record_pending(trace_id="trace-e2e", text="here's your plan...")
         tracker.backfill_message(trace_id="trace-e2e", chat_id=42, message_id=100)
 
         adapter = MagicMock()
@@ -56,7 +56,7 @@ async def test_full_approach_rating_loop(tmp_path: Path) -> None:
         )
         assert rows[0]["approach_rating"] == "positive"
         adapter.edit_message.assert_awaited_once_with(
-            42, 100, "\n\n\U0001F44D Liked", reply_markup=None
+            42, 100, "here's your plan...\n\n\U0001F44D Liked", reply_markup=None
         )
         assert tracker.get_message(trace_id="trace-e2e") is None  # cleared after vote
     finally:

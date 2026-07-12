@@ -72,15 +72,18 @@ async def run(state: PipelineState) -> PipelineState:
     out_state = out_state.evolve(merged_external=merged_external)
     # Task 5 — attach an approach-rating like/dislike keyboard to a qualifying
     # final answer (substantial, non-floor). Best-effort: a tracker failure must
-    # never break delivery of the answer itself.
-    if out_state.responses:
+    # never break delivery of the answer itself. Gated to telegram: the tracker
+    # is only ever drained by a Telegram callback tap (tracker.clear()), so a
+    # non-Telegram turn recording a pending vote here would leak forever — no
+    # other channel can ever clear it.
+    if out_state.responses and out_state.channel == "telegram":
         last = out_state.responses[-1]
         if _qualifies_for_rating(last):
             services = get_services()
             tracker = services.approach_rating_tracker
             if tracker is not None:
                 try:
-                    tracker.record_pending(trace_id=out_state.trace_id)
+                    tracker.record_pending(trace_id=out_state.trace_id, text=last.content)
                     keyboard = tracker.build_keyboard(trace_id=out_state.trace_id)
                     rated_chunk = last.model_copy(update={"raw_keyboard": keyboard})
                     out_state = out_state.evolve(
