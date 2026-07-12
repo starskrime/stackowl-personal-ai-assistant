@@ -27,15 +27,24 @@ def _qualifies_for_rating(chunk: ResponseChunk) -> bool:
 
 
 async def _append_token_line(out_state: PipelineState) -> PipelineState:
-    """Append a "N in / M out" token-usage line to the final answer's content.
+    """Attach a "N in / M out" token-usage line as the final answer's ``display_suffix``.
 
-    Best-effort: a cost_tracker lookup failure must never break delivery of the
-    answer itself. Must run BEFORE Task 5's approach-rating keyboard-attach
-    block (below) so that block's length check and stored "original text" for
-    edit-in-place reconstruction both see the token-line-inclusive content —
-    otherwise a vote-tap would erase the token line along with editing in the
-    vote suffix.
+    Display-only chrome: it is stored on ``display_suffix``, NEVER folded into
+    ``content`` — ``content`` is what flows into ``persist_turn`` and the memory
+    bridge, so a token-count footer living in ``content`` would be recalled and
+    re-injected as model context on every future turn (a real risk of the model
+    starting to mimic/hallucinate token-footers in its own output). See
+    ``ResponseChunk.display_suffix``.
+
+    Gated to the telegram channel: the spec ("every final Telegram answer")
+    scopes this to Telegram; other channels never render it. Best-effort: a
+    cost_tracker lookup failure must never break delivery of the answer itself.
+    Must run BEFORE Task 5's approach-rating keyboard-attach block (below) so
+    that block's stored "original text" for edit-in-place reconstruction can
+    combine ``content`` with this ``display_suffix``.
     """
+    if out_state.channel != "telegram":
+        return out_state
     if not out_state.responses:
         return out_state
     last = out_state.responses[-1]
@@ -57,10 +66,8 @@ async def _append_token_line(out_state: PipelineState) -> PipelineState:
     if totals is None:
         return out_state
     input_tokens, output_tokens = totals
-    updated_content = last.content + _TOKEN_LINE_TEMPLATE.format(
-        input_tokens=input_tokens, output_tokens=output_tokens,
-    )
-    updated_chunk = last.model_copy(update={"content": updated_content})
+    suffix = _TOKEN_LINE_TEMPLATE.format(input_tokens=input_tokens, output_tokens=output_tokens)
+    updated_chunk = last.model_copy(update={"display_suffix": suffix})
     return out_state.evolve(responses=(*out_state.responses[:-1], updated_chunk))
 
 
@@ -112,9 +119,9 @@ async def run(state: PipelineState) -> PipelineState:
     # responses was still empty) and stamped so the post-floor persist_turn (F088)
     # reads it instead of recomputing from post-floor responses (trust-laundering guard).
     out_state = out_state.evolve(merged_external=merged_external)
-    # Epic 3 Task 2 — append the token-usage line BEFORE Task 5's rating-keyboard
-    # attach block below, so that block's length check and the "original text"
-    # it stores for edit-in-place reconstruction both include the token line.
+    # Epic 3 Task 2 — attach the token-usage display_suffix BEFORE Task 5's
+    # rating-keyboard attach block below, so that block's "original text" for
+    # edit-in-place reconstruction can combine content + display_suffix.
     out_state = await _append_token_line(out_state)
     # Task 5 — attach an approach-rating like/dislike keyboard to a qualifying
     # final answer (substantial, non-floor). Best-effort: a tracker failure must
@@ -129,7 +136,12 @@ async def run(state: PipelineState) -> PipelineState:
             tracker = services.approach_rating_tracker
             if tracker is not None:
                 try:
-                    tracker.record_pending(trace_id=out_state.trace_id, text=last.content)
+                    # Combine content + display_suffix: the token line no longer
+                    # lives in `content` (see _append_token_line), so a vote-tap
+                    # reconstruction from `content` alone would silently drop the
+                    # token line the user actually saw.
+                    stored_text = last.content + (last.display_suffix or "")
+                    tracker.record_pending(trace_id=out_state.trace_id, text=stored_text)
                     keyboard = tracker.build_keyboard(trace_id=out_state.trace_id)
                     rated_chunk = last.model_copy(update={"raw_keyboard": keyboard})
                     out_state = out_state.evolve(

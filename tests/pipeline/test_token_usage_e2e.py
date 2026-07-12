@@ -40,7 +40,7 @@ async def test_full_token_display_loop(tmp_db: DbPool, monkeypatch: pytest.Monke
 
     state = PipelineState(
         trace_id="trace-e2e", session_id="s1", input_text="prepare me for the interview",
-        channel="cli", owl_name="secretary", pipeline_step="consolidate",
+        channel="telegram", owl_name="secretary", pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="here's your interview prep plan", is_final=False, chunk_index=0,
             trace_id="trace-e2e", owl_name="secretary", is_floor=False,
@@ -49,4 +49,7 @@ async def test_full_token_display_loop(tmp_db: DbPool, monkeypatch: pytest.Monke
 
     result = await consolidate.run(state)
 
-    assert result.responses[-1].content == "here's your interview prep plan\n\n\U0001F522 450 in / 255 out"
+    # content (what persist_turn stores) stays clean; the token line is
+    # display-only chrome carried on display_suffix.
+    assert result.responses[-1].content == "here's your interview prep plan"
+    assert result.responses[-1].display_suffix == "\n\n\U0001F522 450 in / 255 out"

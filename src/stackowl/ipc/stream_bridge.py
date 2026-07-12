@@ -50,6 +50,7 @@ def chunk_to_frame(chunk: ResponseChunk) -> ChunkFrame:
         is_floor=chunk.is_floor,
         actions=chunk.actions,
         raw_keyboard=chunk.raw_keyboard,
+        display_suffix=chunk.display_suffix,
     )
 
 
@@ -67,6 +68,7 @@ def frame_to_chunk(frame: ChunkFrame) -> ResponseChunk:
         is_floor=frame.is_floor,
         actions=frame.actions,
         raw_keyboard=frame.raw_keyboard,
+        display_suffix=frame.display_suffix,
     )
 
 

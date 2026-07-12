@@ -50,6 +50,15 @@ def test_converter_round_trip_preserves_actions() -> None:
     assert frame_to_chunk(chunk_to_frame(chunk)) == chunk
 
 
+def test_converter_round_trip_preserves_display_suffix() -> None:
+    # Regression: same class of bug as `actions` (2026-07 fix) and `raw_keyboard`
+    # (Task 6) — a bare ChunkFrame(**fields) copy that forgets a field silently
+    # drops it across the core->gateway wire hop. Epic 3's display-only
+    # token-usage footer (ResponseChunk.display_suffix) must survive too.
+    chunk = _chunk(display_suffix="\n\n\U0001F522 600 in / 320 out")
+    assert frame_to_chunk(chunk_to_frame(chunk)) == chunk
+
+
 @pytest.fixture
 def socket_path(tmp_path):
     return tmp_path / "core.sock"

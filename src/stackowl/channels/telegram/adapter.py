@@ -344,6 +344,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         # shaped `actions` above cannot represent a callback_data payload, so
         # this is carried and dispatched separately (see below).
         raw_keyboard: dict[str, object] | None = None
+        # Display-only text (e.g. Epic 3's token-usage footer) appended to the
+        # OUTBOUND text only — never merged into `buffer`/`chunk.content`, so it
+        # never reaches memory persistence (see ResponseChunk.display_suffix).
+        display_suffix: str | None = None
         view: TelegramProgressView | None = None
         answer_started = False
         # Tracked across the chunk stream to backfill the retry_queue row for a
@@ -385,18 +389,25 @@ class TelegramChannelAdapter(ChannelAdapter):
                 chunk_raw_keyboard = getattr(chunk, "raw_keyboard", None)
                 if chunk_raw_keyboard is not None:
                     raw_keyboard = chunk_raw_keyboard
+                chunk_display_suffix = getattr(chunk, "display_suffix", None)
+                if chunk_display_suffix is not None:
+                    display_suffix = chunk_display_suffix
                 if view is not None and not answer_started:
                     view.on_first_answer()  # stop mutating the status; answer is here
                     answer_started = True
-            # send_text is the single formatting chokepoint — pass RAW buffer. The
-            # answer is delivered as its own clean message(s), independent of progress.
+            # send_text is the single formatting chokepoint — pass RAW buffer, plus
+            # any display-only suffix appended for THIS outbound send only (never
+            # folded into `buffer`/chunk.content, so it never reaches persist_turn).
+            # The answer is delivered as its own clean message(s), independent of
+            # progress.
+            outbound_text = buffer + (display_suffix or "")
             if raw_keyboard is not None:
                 # Bypass send_text_or_actions/build_command_keyboard entirely — that
                 # path is Action-shaped and cannot carry an approach-rating vote's
                 # raw callback_data. send_inline_keyboard already accepts the same
                 # raw dict shape InlineKeyboardBuilder.build() produces.
                 try:
-                    formatted = self._formatter.format_response(buffer)
+                    formatted = self._formatter.format_response(outbound_text)
                     message = cast(
                         "Message | None",
                         await self.send_inline_keyboard(formatted, raw_keyboard, chat_id=target),
@@ -407,9 +418,9 @@ class TelegramChannelAdapter(ChannelAdapter):
                         exc_info=exc,
                         extra={"_fields": {"trace_id": trace_id}},
                     )
-                    message = await self.send_text_or_actions(buffer, actions, chat_id=target)
+                    message = await self.send_text_or_actions(outbound_text, actions, chat_id=target)
             else:
-                message = await self.send_text_or_actions(buffer, actions, chat_id=target)
+                message = await self.send_text_or_actions(outbound_text, actions, chat_id=target)
             if view is not None:
                 await view.settle()  # collapse the status to a "✓ done in Ns" footer
             if any_floor and message is not None and trace_id is not None and target is not None:

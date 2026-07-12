@@ -49,6 +49,13 @@ class ResponseChunk(BaseModel, frozen=True):
     # which carry a callback_data payload Action's label+command shape can't
     # represent). None for every ordinary chunk.
     raw_keyboard: dict[str, object] | None = None
+    # Display-only text appended to the message shown to the user (e.g. Epic 3's
+    # token-usage footer) but NEVER folded into ``content`` — mirrors
+    # ``raw_keyboard``'s carry-but-never-persist pattern. ``content`` is what
+    # flows into ``persist_turn``/memory recall, so any UI chrome that must
+    # never be recalled/re-injected as model context belongs here, not in
+    # ``content``. None for every ordinary chunk.
+    display_suffix: str | None = None
 
 
 class StreamWriter:
