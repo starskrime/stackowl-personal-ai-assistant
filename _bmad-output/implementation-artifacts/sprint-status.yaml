@@ -50,7 +50,7 @@ story_location: _bmad-output/implementation-artifacts
 development_status:
   epic-1: backlog
   1-1-retry-queue-migration: done
-  1-2-retryqueuestore: backlog
+  1-2-retryqueuestore: done
   1-3-insert-pending-row-on-floored-turns: backlog
   1-4-capture-and-backfill-the-sent-telegram-message-reference: backlog
   1-5-retryactuator: backlog
@@ -58,3 +58,17 @@ development_status:
   1-7-manual-do-it-again: backlog
   1-8-end-to-end-regression-pass: backlog
   epic-1-retrospective: optional
+  epic-2: backlog
+  2-1-approach-rating-column-migration: backlog
+  2-2-taskoutcomestore-set-approach-rating: backlog
+  2-3-wire-dislike-exclusion-into-dna-attribution: backlog
+  2-4-approach-rating-keyboard-callback-handler: backlog
+  2-5-attach-keyboard-to-qualifying-answers: backlog
+  2-6-send-raw-keyboard-backfill-tracker-register-callback: backlog
+  2-7-end-to-end-regression-pass: backlog
+  epic-2-retrospective: optional
+  epic-3: backlog
+  3-1-get-turn-token-totals-query: backlog
+  3-2-append-token-line-in-consolidate: backlog
+  3-3-end-to-end-regression-pass: backlog
+  epic-3-retrospective: optional
