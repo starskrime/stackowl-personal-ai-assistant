@@ -39,8 +39,6 @@ class _SupportsEditMessage(Protocol):
         reply_markup: Any | None = None,
     ) -> bool: ...
 
-    async def answer_callback_query(self, callback_id: str) -> Any: ...
-
 
 class ApproachRatingTracker:
     """In-memory trace_id -> (chat_id, message_id) map for pending votes."""
@@ -95,11 +93,26 @@ class ApproachRatingCallbackHandler:
                 "approach_rating.handle: malformed callback_data",
                 extra={"_fields": {"callback_data": callback_data}},
             )
-            await self._safe_answer(callback_id)
             return
 
-        updated = await self._outcome_store.set_approach_rating(trace_id=trace_id, rating=vote)
-        await self._safe_answer(callback_id)
+        if vote not in ("positive", "negative"):
+            log.telegram.error(
+                "approach_rating.handle: invalid vote value — rejecting before DB write",
+                extra={"_fields": {"trace_id": trace_id, "vote": vote}},
+            )
+            self._tracker.clear(trace_id=trace_id)
+            return
+
+        try:
+            updated = await self._outcome_store.set_approach_rating(trace_id=trace_id, rating=vote)
+        except Exception as exc:
+            log.telegram.error(
+                "approach_rating.handle: set_approach_rating failed",
+                exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+            )
+            self._tracker.clear(trace_id=trace_id)
+            return
+
         if not updated:
             log.telegram.warning(
                 "approach_rating.handle: no task_outcomes row for trace — vote recorded nowhere",
@@ -131,12 +144,3 @@ class ApproachRatingCallbackHandler:
             "approach_rating.handle: exit",
             extra={"_fields": {"trace_id": trace_id, "vote": vote}},
         )
-
-    async def _safe_answer(self, callback_id: str) -> None:
-        try:
-            await self._adapter.answer_callback_query(callback_id)
-        except Exception as exc:
-            log.telegram.error(
-                "approach_rating.handle: answer_callback_query failed",
-                exc_info=exc, extra={"_fields": {"callback_id": callback_id}},
-            )
