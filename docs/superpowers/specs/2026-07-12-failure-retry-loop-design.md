@@ -33,25 +33,53 @@ New migration, new table `retry_queue`:
 ```sql
 CREATE TABLE retry_queue (
     id TEXT PRIMARY KEY,
-    message_id TEXT NOT NULL REFERENCES messages(id),
-    conversation_id TEXT NOT NULL,
     trace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
     goal TEXT NOT NULL,
     banned_capabilities TEXT NOT NULL DEFAULT '[]',  -- JSON array, cumulative
     attempt_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL CHECK(status IN ('pending', 'completed', 'failed')),
     next_retry_at TEXT NOT NULL,
     last_error TEXT,
+    channel TEXT NOT NULL DEFAULT 'telegram',
+    channel_chat_id TEXT,     -- backfilled after send (NULL until then)
+    channel_message_id TEXT,  -- backfilled after send (NULL until then)
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 CREATE INDEX idx_retry_queue_status_due ON retry_queue(status, next_retry_at);
-CREATE INDEX idx_retry_queue_conversation ON retry_queue(conversation_id, status);
+CREATE INDEX idx_retry_queue_session ON retry_queue(session_id, status);
+CREATE INDEX idx_retry_queue_trace ON retry_queue(trace_id);
 ```
 
-Row is inserted at the exact point `synthesize_floor()` fires — the pipeline
-already has `goal`, `failed_capability`/`attempts`, `error`, `trace_id` there.
-`banned_capabilities` seeds from `attempts` (what already failed this turn).
+**No FK to `messages(id)`** — corrected after implementation research: a
+floored turn deliberately does NOT persist an assistant `messages` row
+(`turn_persist.py`'s F088 guard — persisting the dressed-up floor prose would
+let the dream worker promote a fake "I did it" into durable memory). So
+`retry_queue` stands alone, correlated by `trace_id`.
+
+Row insert is **two-phase**, reusing the exact backfill convention already
+used by `command_buttons.py`'s `set_command_button_message_id` (message_id is
+known only after the channel send resolves, which is a decoupled async task —
+see `clarify_pump.py:172` `spawn_send` / `adapter.py:534` `_send_part`):
+
+1. **Synchronous, in-pipeline** (`turn_persist.py`, same place that already
+   computes `_turn_floored(state)`): insert the row with `status='pending'`,
+   `goal=state.input_text`, `trace_id=state.trace_id`,
+   `session_id=state.session_id`, `channel_chat_id`/`channel_message_id`
+   still NULL. `banned_capabilities` seeds from the turn's failed-capability
+   list (same source `_floor_chunk` already reads via `_attempts_for_state`).
+2. **Async, post-send** (Telegram adapter): today `_send_part`
+   (`adapter.py:534-541`) calls `bot.send_message(...)` and **discards** the
+   returned `telegram.Message` (confirmed — the only branch that keeps it is
+   the inline-keyboard path, `adapter.py:631-684`). Fix: always capture the
+   returned message, propagate it back up through `_deliver`/`send_text`/
+   `send()`, and when the trace was a floor (checked via `trace_id` lookup
+   against `retry_queue`), UPDATE the row's `channel_chat_id`/
+   `channel_message_id`. This is a real pre-existing gap (silent loss of the
+   message reference for every plain-text send, not just floors) — fixing it
+   at the root in `_send_part` benefits future features too (editing any
+   past reply), not just this one.
 
 Migration follows repo convention: idempotent, `CREATE TABLE IF NOT EXISTS`,
 applied via `stackowl db migrate`.
@@ -65,7 +93,11 @@ called by both the cron sweep and the manual trigger:
    excluded from tool/capability selection for that turn — forces a
    different approach than what already failed.
 2. Success → `status = completed`; edit the original Telegram floor message
-   in place with the real answer (message_id known from the row).
+   in place with the real answer, using the row's `channel_chat_id`/
+   `channel_message_id`. If those are still NULL (the post-send backfill
+   race — vanishingly unlikely at 1-minute cron granularity, but possible),
+   skip the edit and send a new message instead, same as the "edit failed"
+   fallback below.
 3. Failure → append the newly-failed capability to `banned_capabilities`,
    `attempt_count += 1`, `last_error` updated, `next_retry_at` bumped forward
    1 minute.
@@ -113,6 +145,9 @@ called by both the cron sweep and the manual trigger:
 - 3rd consecutive failure flips `status` to `failed` and fires exactly one
   notification (not one per attempt).
 - success path flips `status` to `completed` and calls the Telegram edit
-  path with the right `message_id`.
+  path with the right `channel_chat_id`/`channel_message_id`.
 - manual retry-intent path finds and retries the latest `pending` row for a
-  conversation without waiting for the cron tick.
+  session without waiting for the cron tick.
+- `_send_part`'s message-id capture: a plain-text send returns the real
+  `telegram.Message.message_id` instead of discarding it (regression test
+  for the fix described in Data model step 2).
