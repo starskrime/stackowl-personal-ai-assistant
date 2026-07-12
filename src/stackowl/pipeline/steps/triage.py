@@ -51,9 +51,23 @@ async def run(state: PipelineState) -> PipelineState:
     # RetryActuator (Task 5) the 1-minute cron sweep (Task 6) uses, right now,
     # and short-circuits the rest of this pipeline run. Either service missing
     # → byte-identical no-op (falls through to normal routing below).
+    #
+    # C2 fix (final whole-branch review) — gated on ``state.interactive``. Every
+    # REAL user turn is constructed with interactive=True (startup/orchestrator.py);
+    # RetryActuator.attempt_retry's own synthetic re-run state is ALWAYS
+    # interactive=False (it drives the pipeline "exactly like a scheduled goal").
+    # Without this gate, that synthetic re-run reaches this SAME hook — the
+    # target row is still "pending" (mark_completed/mark_attempt_failed only run
+    # AFTER backend.run() returns) and the re-run's augmented goal text literally
+    # asks the model to "try a genuinely different approach", which the intent
+    # classifier is highly likely to read as retry-intent again — dispatching a
+    # SECOND attempt_retry on the same row, whose nested backend.run() hits
+    # triage again, unboundedly. Gating on interactive stops a non-interactive
+    # (synthetic/scheduled/delegated) turn from ever re-entering this hook.
     retry_store = services.retry_queue_store
     if (
-        retry_store is not None
+        state.interactive
+        and retry_store is not None
         and services.retry_intent_classifier is not None
         and services.retry_actuator is not None
     ):

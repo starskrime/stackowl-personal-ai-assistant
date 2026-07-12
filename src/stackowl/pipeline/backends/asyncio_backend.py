@@ -125,38 +125,58 @@ class AsyncioBackend(OrchestratorBackend):
                                      StepError(step=step_name, exc_type=type(exc).__name__, message=str(exc))),
                     )
 
-            # FR-11/FR-12 shared seam — gate cascade (applied_lessons → recovery →
-            # persistence_handoff → giveup floor → overclaim → grounding →
-            # critical_failure → command_hint) + F088 persist_turn ordering, now
-            # owned by pipeline/backends/shared.py so both backends call the same
-            # sequence instead of each carrying its own copy.
-            current = await run_delivery_gate(current, self._services)
+                # C1 fix (final whole-branch review) — Task 7's manual "do it
+                # again" hook (triage.run) already dispatched+delivered a retry
+                # via RetryActuator.attempt_retry (which itself edits/sends the
+                # answer). Running the REMAINING pipeline steps plus the delivery
+                # gate + deliver.run on the raw "do it again" text would produce
+                # a SECOND response to the user. Short-circuit the instant a step
+                # sets it (only triage ever does, so this fires right after it).
+                if current.retry_dispatched:
+                    log.engine.info(
+                        "[asyncio_backend] run: retry_dispatched — short-circuiting remaining pipeline",
+                        extra={"_fields": {"trace_id": state.trace_id, "step": step_name}},
+                    )
+                    break
 
-            current = current.evolve(pipeline_step="deliver")
-            deliver_t0 = time.monotonic()
-            try:
-                current = await deliver.run(current)
-                deliver_ms = (time.monotonic() - deliver_t0) * 1000
-                step_durations.append(("deliver", deliver_ms))
-                log.engine.info(
-                    "[asyncio_backend] run: step ok",
-                    extra={"_fields": {"step": "deliver", "trace_id": state.trace_id, "duration_ms": deliver_ms}},
+            if current.retry_dispatched:
+                log.engine.debug(
+                    "[asyncio_backend] run: retry_dispatched — skipping delivery gate + deliver",
+                    extra={"_fields": {"trace_id": state.trace_id}},
                 )
-            except Exception as exc:
-                deliver_ms = (time.monotonic() - deliver_t0) * 1000
-                step_durations.append(("deliver", deliver_ms))
-                error_msg = format_step_error("deliver", exc)
-                log.engine.error(
-                    "[asyncio_backend] run: deliver failed — %s",
-                    error_msg,
-                    exc_info=True,
-                    extra={"_fields": {"step": "deliver", "trace_id": state.trace_id, "duration_ms": deliver_ms}},
-                )
-                current = current.evolve(
-                    errors=(*current.errors, error_msg),
-                    step_errors=(*current.step_errors,
-                                 StepError(step="deliver", exc_type=type(exc).__name__, message=str(exc))),
-                )
+            else:
+                # FR-11/FR-12 shared seam — gate cascade (applied_lessons → recovery →
+                # persistence_handoff → giveup floor → overclaim → grounding →
+                # critical_failure → command_hint) + F088 persist_turn ordering, now
+                # owned by pipeline/backends/shared.py so both backends call the same
+                # sequence instead of each carrying its own copy.
+                current = await run_delivery_gate(current, self._services)
+
+                current = current.evolve(pipeline_step="deliver")
+                deliver_t0 = time.monotonic()
+                try:
+                    current = await deliver.run(current)
+                    deliver_ms = (time.monotonic() - deliver_t0) * 1000
+                    step_durations.append(("deliver", deliver_ms))
+                    log.engine.info(
+                        "[asyncio_backend] run: step ok",
+                        extra={"_fields": {"step": "deliver", "trace_id": state.trace_id, "duration_ms": deliver_ms}},
+                    )
+                except Exception as exc:
+                    deliver_ms = (time.monotonic() - deliver_t0) * 1000
+                    step_durations.append(("deliver", deliver_ms))
+                    error_msg = format_step_error("deliver", exc)
+                    log.engine.error(
+                        "[asyncio_backend] run: deliver failed — %s",
+                        error_msg,
+                        exc_info=True,
+                        extra={"_fields": {"step": "deliver", "trace_id": state.trace_id, "duration_ms": deliver_ms}},
+                    )
+                    current = current.evolve(
+                        errors=(*current.errors, error_msg),
+                        step_errors=(*current.step_errors,
+                                     StepError(step="deliver", exc_type=type(exc).__name__, message=str(exc))),
+                    )
         finally:
             reset_progress_callback(progress_token)
             _rec_events = recovery_context.get_recovery()

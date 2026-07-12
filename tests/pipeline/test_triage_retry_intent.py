@@ -63,6 +63,7 @@ async def test_triage_triggers_manual_retry():
         state = PipelineState(
             trace_id="t2", session_id="s1", input_text="do it again",
             channel="telegram", owl_name="secretary", pipeline_step="triage",
+            interactive=True,  # C2 fix — hook is gated on a real (interactive) user turn
         )
         result = await triage.run(state)
     finally:
@@ -128,6 +129,7 @@ async def test_triage_pending_row_but_not_retry_intent_falls_through():
         state = PipelineState(
             trace_id="t4", session_id="s1", input_text="what's the weather",
             channel="telegram", owl_name="max", pipeline_step="triage",
+            interactive=True,  # C2 fix — hook is gated on a real (interactive) user turn
         )
         result = await triage.run(state)
     finally:

@@ -273,7 +273,18 @@ class LangGraphBackend(OrchestratorBackend):
         builder.set_entry_point(PIPELINE_STEPS[0][0])
         step_names = [name for name, _ in PIPELINE_STEPS]
         for i, name in enumerate(step_names):
-            if name == "execute":
+            if name == "triage":
+                # C1 fix (final whole-branch review) — mirrors AsyncioBackend's
+                # short-circuit. Task 7's manual "do it again" hook (triage.run)
+                # already dispatched+delivered a retry via
+                # RetryActuator.attempt_retry (which itself edits/sends the
+                # answer) and stamped retry_dispatched=True. Routing straight to
+                # END skips the remaining steps AND the "deliver" node (which
+                # itself runs the delivery gate + deliver.run) — otherwise the
+                # raw "do it again" text would flow through the rest of the
+                # graph and produce a SECOND response.
+                builder.add_conditional_edges("triage", self._route_after_triage)
+            elif name == "execute":
                 builder.add_conditional_edges("execute", self._dispatch_parliament)
             elif name == "parliament_step":
                 next_name = step_names[i + 1] if i + 1 < len(step_names) else "deliver"
@@ -284,6 +295,17 @@ class LangGraphBackend(OrchestratorBackend):
                 builder.add_edge(name, "deliver")
         builder.add_edge("deliver", END)
         return builder
+
+    @staticmethod
+    def _route_after_triage(lg_state: _LGState) -> str:
+        """C1 fix — route straight to END when triage already dispatched a
+        manual retry (see the comment at the ``add_conditional_edges`` call
+        site above); otherwise continue to "dispatch" as before.
+        """
+        pipeline_state = lg_state.get("pipeline_state")
+        if pipeline_state is not None and pipeline_state.retry_dispatched:
+            return END
+        return "dispatch"
 
     @staticmethod
     def _dispatch_parliament(state: _LGState) -> list[Send]:
