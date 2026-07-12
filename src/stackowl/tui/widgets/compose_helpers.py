@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, NamedTuple
 
-from stackowl.commands.metadata import CommandMeta, resolve_path
+from stackowl.commands.metadata import Arg, CommandMeta
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -178,6 +178,12 @@ class CompletionLevel(Enum):
     NONE = "none"
     COMMAND = "command"
     SUB = "sub"
+    # A settled command/sub-command's NEXT positional Arg has no fixed choice
+    # set (free text, e.g. a provider name) — nothing is selectable, but the
+    # dropdown still shows ONE non-selectable tip row so the user isn't left
+    # guessing. CommandMeta already promised this for grammar="flag"; it now
+    # also covers a verb command's leaf sub-command args (e.g. /provider add).
+    ARG_HINT = "arg_hint"
 
 
 @dataclass(frozen=True)
@@ -206,12 +212,15 @@ class CompletionContext:
     * ``partial`` — the trailing token currently being typed (``""`` right after
       a space).
     * ``command`` — the settled top-level command name (SUB level only).
-    * ``candidates`` — sub-command rows (SUB level); empty otherwise. Top-level
-      command filtering still goes through :func:`filter_command_infos`, so this
-      tuple is only populated at SUB level.
+    * ``candidates`` — sub-command rows (SUB level, including a choice-backed
+      Arg reused as SUB rows — see :func:`_choice_candidates`); empty otherwise.
+      Top-level command filtering still goes through :func:`filter_command_infos`,
+      so this tuple is only populated at SUB level.
     * ``settled_verb`` — when the buffer is exactly ``/<verbcmd>`` (no trailing
       space) and ``<verbcmd>`` is a known ``grammar="verb"`` command, its name;
       lets the caller descend a level on Tab. ``None`` otherwise.
+    * ``arg_hint`` — the :class:`Arg` being typed right now, ONLY at ARG_HINT
+      level (a choice-less positional arg). ``None`` otherwise.
     """
 
     level: CompletionLevel
@@ -219,6 +228,7 @@ class CompletionContext:
     command: str | None = None
     candidates: tuple[SubCandidate, ...] = ()
     settled_verb: str | None = None
+    arg_hint: Arg | None = None
 
 
 def _sub_candidates(
@@ -241,16 +251,75 @@ def _sub_candidates(
     return tuple(out)
 
 
+def _match_child(subs: tuple[SubCommand, ...], token: str) -> SubCommand | None:
+    """One-level name/alias lookup — the single step :func:`resolve_path` and
+    the residual-arg walk below both build on."""
+    needle = token.casefold()
+    for sub in subs:
+        if needle == sub.name.casefold() or needle in {a.casefold() for a in sub.aliases}:
+            return sub
+    return None
+
+
+def _resolve_node_and_residual(
+    subcommands: tuple[SubCommand, ...], path: Sequence[str]
+) -> tuple[SubCommand | None, list[str]]:
+    """Walk ``path`` tokens by NAME as far as they match a child; return the
+    deepest matched node plus the residual tokens beyond it.
+
+    The residual is never further sub-command names — once a token fails to
+    match, everything from there on is arg VALUES the caller already typed for
+    the matched node (e.g. ``/provider add my-name`` → node="add", residual=
+    ["my-name"]), not more tree to descend.
+    """
+    node: SubCommand | None = None
+    subs = subcommands
+    i = 0
+    while i < len(path):
+        match = _match_child(subs, path[i])
+        if match is None:
+            break
+        node = match
+        subs = match.children
+        i += 1
+    return node, list(path[i:])
+
+
+def _leaf_arg_at(args: tuple[Arg, ...], consumed: Sequence[str]) -> Arg | None:
+    """The :class:`Arg` for the NEXT position after ``consumed`` already-typed
+    values, or ``None`` past the declared list — unless the last arg repeats
+    (``Arg.repeat``), which keeps offering itself indefinitely."""
+    if not args:
+        return None
+    idx = len(consumed)
+    if idx < len(args):
+        return args[idx]
+    return args[-1] if args[-1].repeat else None
+
+
+def _choice_candidates(arg: Arg, partial: str) -> tuple[SubCandidate, ...]:
+    """An Arg's fixed ``choices`` reused as selectable SUB-shaped rows —
+    filterable exactly like sub-command names, just never with children."""
+    needle = partial.casefold()
+    return tuple(
+        SubCandidate(name=choice, summary=arg.summary)
+        for choice in arg.choices
+        if not needle or choice.casefold().startswith(needle)
+    )
+
+
 def parse_completion(
     buffer: str, infos: list[CommandInfo]
 ) -> CompletionContext:
     """Decide what (if anything) the buffer is completing — pure, no I/O.
 
-    Walks the already-typed sub tokens with :func:`resolve_path`, so 2-level
-    (``/browser profile ``) and any future N-level case share one code path —
-    NO command is special-cased.  Honesty: ``grammar != "verb"`` commands never
-    offer selectable sub-command rows (their operands are args, not
-    sub-commands).
+    Walks the already-typed sub tokens with :func:`_resolve_node_and_residual`,
+    so 2-level (``/browser profile ``) and any future N-level case share one
+    code path — NO command is special-cased. Honesty: only a ``grammar="verb"``
+    command's sub-command NAMES are ever offered as selectable rows; a settled
+    leaf (sub-command or flag/leaf-grammar command) instead offers its next
+    positional :class:`Arg` — choices as selectable rows (SUB, reused), or a
+    single non-selectable tip (ARG_HINT) when the arg is free text.
     """
     if not buffer.startswith("/"):
         return CompletionContext(level=CompletionLevel.NONE)
@@ -275,8 +344,7 @@ def parse_completion(
     # First token is a settled command name; look it up.
     cmd_name = tokens[0]
     info = _find_info(cmd_name, infos)
-    if info is None or info.meta.grammar != "verb":
-        # Unknown command, or a flag/leaf command: no selectable sub rows.
+    if info is None:
         return CompletionContext(level=CompletionLevel.NONE, command=cmd_name)
 
     # Remaining tokens after the command name. The last one is the partial
@@ -289,6 +357,21 @@ def parse_completion(
         path = rest[:-1]
         partial = rest[-1]
 
+    if info.meta.grammar != "verb":
+        # Flag/leaf grammar: no sub-command tree, so `path` IS the already-
+        # typed arg values for the command's own `meta.args`.
+        arg = _leaf_arg_at(info.meta.args, path)
+        if arg is None:
+            return CompletionContext(level=CompletionLevel.NONE, command=cmd_name)
+        if arg.choices:
+            return CompletionContext(
+                level=CompletionLevel.SUB, partial=partial, command=cmd_name,
+                candidates=_choice_candidates(arg, partial),
+            )
+        return CompletionContext(
+            level=CompletionLevel.ARG_HINT, partial=partial, command=cmd_name, arg_hint=arg,
+        )
+
     if not path:
         # Directly under the command: complete its first-level sub-commands.
         return CompletionContext(
@@ -298,18 +381,33 @@ def parse_completion(
             candidates=_sub_candidates(info.meta.subcommands, partial),
         )
 
-    # Descend the already-typed sub tokens. resolve_path is N-level + alias-aware.
-    node = resolve_path(info.meta.subcommands, path)
-    if node is None or not node.children:
-        # Past the navigable tree (e.g. `/memory search foo `, or a terminal
-        # leaf followed by a space): nothing left to complete.
+    # Descend the already-typed sub tokens by NAME; anything beyond the deepest
+    # match is arg VALUES for that node, not more tree.
+    node, residual = _resolve_node_and_residual(info.meta.subcommands, path)
+    if node is None or (residual and node.children):
+        # Unknown path, or tokens past a branch node that matched no child.
         return CompletionContext(level=CompletionLevel.NONE, command=cmd_name)
+    if not residual and node.children:
+        # Settled exactly on a branch node with more descendants.
+        return CompletionContext(
+            level=CompletionLevel.SUB,
+            partial=partial,
+            command=cmd_name,
+            candidates=_sub_candidates(node.children, partial),
+        )
 
+    # A leaf sub-command: `residual` is however many of ITS args are already
+    # typed; offer the next one (if any).
+    arg = _leaf_arg_at(node.args, residual)
+    if arg is None:
+        return CompletionContext(level=CompletionLevel.NONE, command=cmd_name)
+    if arg.choices:
+        return CompletionContext(
+            level=CompletionLevel.SUB, partial=partial, command=cmd_name,
+            candidates=_choice_candidates(arg, partial),
+        )
     return CompletionContext(
-        level=CompletionLevel.SUB,
-        partial=partial,
-        command=cmd_name,
-        candidates=_sub_candidates(node.children, partial),
+        level=CompletionLevel.ARG_HINT, partial=partial, command=cmd_name, arg_hint=arg,
     )
 
 
@@ -323,8 +421,12 @@ def command_dropdown_items(
 
     * COMMAND level → top-level commands prefix-filtered by the partial, each
       carrying its one-line ``description`` (unchanged legacy behaviour).
-    * SUB level → the settled command's sub-command rows, each carrying its
-      ``summary`` and a trailing ``›`` marker when the node has children.
+    * SUB level → the settled command's sub-command rows (or a choice-backed
+      Arg's values, reused as SUB rows), each carrying its ``summary`` and a
+      trailing ``›`` marker when the node has children.
+    * ARG_HINT level → exactly ONE non-selectable row naming the next
+      positional arg (e.g. ``<name> — unique provider name``) — the caller
+      must open the dropdown with ``allow_no_selection=True`` for this level.
     * NONE → empty items (caller hides the dropdown).
 
     Keeping this one function authoritative means the widget never re-derives the
@@ -342,6 +444,8 @@ def command_dropdown_items(
             label = f"{cand.summary}{marker}" if cand.summary else (marker.strip() or None)
             rows.append((cand.name, label))
         return (CompletionLevel.SUB, tuple(rows))
+    if ctx.level is CompletionLevel.ARG_HINT and ctx.arg_hint is not None:
+        return (CompletionLevel.ARG_HINT, ((ctx.arg_hint.render(), ctx.arg_hint.summary or None),))
     return (CompletionLevel.NONE, ())
 
 

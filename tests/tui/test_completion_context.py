@@ -68,6 +68,26 @@ _QUIET_META = CommandMeta(
 
 _WHOAMI_META = CommandMeta(grammar="leaf")
 
+# A faithful slice of /provider's shape: a verb command whose LEAF sub-command
+# ("add") takes a free-text arg, then a choice-backed arg, then an optional
+# free-text arg — exactly the case that was silently swallowed before this fix.
+_SVC_META = CommandMeta(
+    grammar="verb",
+    subcommands=(
+        SubCommand(
+            "add",
+            "Register a new service",
+            args=(
+                Arg("name"),
+                Arg("protocol", choices=("openai", "anthropic")),
+                Arg("note", required=False),
+            ),
+        ),
+    ),
+)
+
+_TAG_META = CommandMeta(grammar="flag", args=(Arg("tag", repeat=True),))
+
 
 def _infos() -> list[CommandInfo]:
     return [
@@ -76,6 +96,8 @@ def _infos() -> list[CommandInfo]:
         CommandInfo("quiet", "Mute notifications", meta=_QUIET_META),
         CommandInfo("whoami", "Show identity", meta=_WHOAMI_META),
         CommandInfo("memorize", "Decoy prefix-overlap", meta=CommandMeta(grammar="leaf")),
+        CommandInfo("svc", "Service management", meta=_SVC_META),
+        CommandInfo("tag", "Add tags", meta=_TAG_META),
     ]
 
 
@@ -204,13 +226,19 @@ def test_leaf_sub_followed_by_space_is_past_args() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_flag_grammar_offers_no_subcommands() -> None:
+def test_flag_grammar_offers_no_subcommands_but_hints_its_arg() -> None:
+    # No fake sub-command rows (candidates stays empty) — but /quiet DOES take
+    # a free-text arg (minutes), so it now surfaces as a non-selectable tip
+    # per CommandMeta's own documented promise for grammar="flag".
     ctx = parse_completion("/quiet ", _infos())
-    assert ctx.level is CompletionLevel.NONE
+    assert ctx.level is CompletionLevel.ARG_HINT
     assert ctx.candidates == ()
+    assert ctx.arg_hint is not None
+    assert ctx.arg_hint.name == "minutes"
 
 
 def test_leaf_grammar_offers_no_subcommands() -> None:
+    # /whoami takes NO args at all → nothing to hint either.
     ctx = parse_completion("/whoami ", _infos())
     assert ctx.level is CompletionLevel.NONE
     assert ctx.candidates == ()
@@ -240,3 +268,51 @@ def test_partial_command_not_exact_has_no_settled_verb() -> None:
     ctx = parse_completion("/mem", _infos())
     assert ctx.level is CompletionLevel.COMMAND
     assert ctx.settled_verb is None
+
+
+# ---------------------------------------------------------------------------
+# ARG_HINT — a leaf sub-command's (or flag command's) positional args, which
+# were previously swallowed entirely (level NONE, no tip at all).
+# ---------------------------------------------------------------------------
+
+
+def test_leaf_sub_free_text_arg_is_arg_hint() -> None:
+    ctx = parse_completion("/svc add ", _infos())
+    assert ctx.level is CompletionLevel.ARG_HINT
+    assert ctx.candidates == ()
+    assert ctx.arg_hint is not None
+    assert ctx.arg_hint.name == "name"
+
+
+def test_leaf_sub_choice_arg_is_selectable_sub() -> None:
+    # The 2nd arg (protocol) HAS choices → reused as selectable SUB rows,
+    # exactly like sub-command names, not a silent/hint-only dead end.
+    ctx = parse_completion("/svc add myname ", _infos())
+    assert ctx.level is CompletionLevel.SUB
+    assert _names(ctx) == ["openai", "anthropic"]
+
+
+def test_leaf_sub_choice_arg_prefix_filters() -> None:
+    ctx = parse_completion("/svc add myname op", _infos())
+    assert ctx.level is CompletionLevel.SUB
+    assert _names(ctx) == ["openai"]
+    assert ctx.partial == "op"
+
+
+def test_leaf_sub_optional_trailing_arg_still_hints() -> None:
+    ctx = parse_completion("/svc add myname openai ", _infos())
+    assert ctx.level is CompletionLevel.ARG_HINT
+    assert ctx.arg_hint is not None
+    assert ctx.arg_hint.name == "note"
+
+
+def test_leaf_sub_past_all_declared_args_is_none() -> None:
+    ctx = parse_completion("/svc add myname openai a-note extra ", _infos())
+    assert ctx.level is CompletionLevel.NONE
+
+
+def test_repeating_arg_keeps_hinting_after_first_value() -> None:
+    ctx = parse_completion("/tag a b ", _infos())
+    assert ctx.level is CompletionLevel.ARG_HINT
+    assert ctx.arg_hint is not None
+    assert ctx.arg_hint.name == "tag"

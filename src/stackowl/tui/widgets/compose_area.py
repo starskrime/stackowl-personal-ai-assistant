@@ -76,6 +76,7 @@ class MicButton(Static):
         self.post_message(self.Pressed())
 
 _MAX_INPUT_ROWS = 8
+_MAX_HISTORY = 200
 
 _STATE_IDLE = "idle"
 _STATE_COMPOSING = "composing"
@@ -211,6 +212,15 @@ class ComposeArea(Vertical):
         # (top-level) or SUB (sub-command) level, so selection inserts the right
         # token and Tab can descend a level. NONE when no command dropdown.
         self._completion_level: CompletionLevel = CompletionLevel.NONE
+        # Shell-style Up/Down history over THIS session's submitted messages.
+        # In-memory only (no persistence) — see _handle_history_key.
+        self._history: list[str] = []
+        self._history_index: int | None = None  # None == not browsing
+        self._history_draft: str = ""  # in-progress text saved when browsing starts
+        # Guards on_text_area_changed's "abandon browsing" reset against firing
+        # on OUR OWN recall write (Changed fires on ANY .text= mutation,
+        # programmatic or not — only a REAL keystroke should abandon browsing).
+        self._history_recalling: bool = False
 
     # ------------------------------------------------------------------ binding
     def set_command_names(self, names: Iterable[str]) -> None:
@@ -257,6 +267,7 @@ class ComposeArea(Vertical):
         try:
             editor = self.query_one(f"#{_INPUT_ID}", SubmitTextArea)
             editor.nav_hook = self._handle_autocomplete_key
+            editor.focus()
         except Exception as exc:
             log.tui.warning(
                 "[tui] compose_area.on_mount: editor not mounted",
@@ -285,6 +296,16 @@ class ComposeArea(Vertical):
         )
         # Grow the editor with its content (compact when empty).
         self._autogrow(event.text_area)
+        # A real keystroke abandons history browsing; further Up/Down starts a
+        # fresh walk from the end again. Our OWN recall writes are guarded out
+        # (see _recall_history_entry) since Changed fires on those too — but
+        # ASYNCHRONOUSLY (posted, not synchronous with the .text= write), so
+        # the flag is cleared HERE, on first consumption, not right after the
+        # write.
+        if self._history_recalling:
+            self._history_recalling = False
+        else:
+            self._history_index = None
         if self.state == _STATE_MCP_DISABLED:
             return
         if value:
@@ -347,6 +368,7 @@ class ComposeArea(Vertical):
         text = event.text.strip()
         if not text:
             return
+        self._push_history(text)
         self.state = _STATE_SUBMITTING
         self.post_message(ComposeSubmittedMessage(text=text))
         try:
@@ -479,7 +501,9 @@ class ComposeArea(Vertical):
         dropdown = self._dropdown()
         if dropdown is None:
             return
-        dropdown.set_items(list(items))
+        # ARG_HINT is a tip, not a choice — never selected by default (Enter/Tab
+        # must fall through to submit/typing, not insert the hint text).
+        dropdown.set_items(list(items), allow_no_selection=level == CompletionLevel.ARG_HINT)
         dropdown.display = True
         self._dropdown_open = True
 
@@ -660,6 +684,8 @@ class ComposeArea(Vertical):
         if key == "right" and self._ghost_suffix:
             return self._accept_ghost()
         if not self._dropdown_open:
+            if key in ("up", "down"):
+                return self._handle_history_key(key)
             return False
         dropdown = self._dropdown()
         if dropdown is None:
@@ -785,13 +811,81 @@ class ComposeArea(Vertical):
         head = text if ends_with_space else text.rsplit(" ", 1)[0] + " "
         candidate_buffer = f"{head}{name}"
         # Does the node we just completed take children or args? If so, add a
-        # trailing space so the user can keep going (and re-open the dropdown).
+        # trailing space so the user can keep going (and re-open the dropdown —
+        # SUB for more sub-commands/choices, ARG_HINT for a free-text arg tip).
         level, items = command_dropdown_items(f"{candidate_buffer} ", self._command_infos)
-        has_more = level == CompletionLevel.SUB and bool(items)
+        has_more = level in (CompletionLevel.SUB, CompletionLevel.ARG_HINT) and bool(items)
         node_takes_args = self._sub_node_takes_args(candidate_buffer)
         if has_more or node_takes_args:
-            return (f"{candidate_buffer} ", has_more)
+            return (f"{candidate_buffer} ", has_more or node_takes_args)
         return (candidate_buffer, False)
+
+    # ------------------------------------------------------------------ history
+    def _push_history(self, text: str) -> None:
+        """Record a just-submitted message for Up/Down recall (this session only).
+
+        Skips an exact repeat of the immediately-previous entry (shell
+        convention — repeatedly resubmitting the same line shouldn't pad the
+        walk with duplicates) and caps growth at ``_MAX_HISTORY``.
+        """
+        if self._history and self._history[-1] == text:
+            return
+        self._history.append(text)
+        if len(self._history) > _MAX_HISTORY:
+            del self._history[0]
+        self._history_index = None
+        self._history_draft = ""
+
+    def _handle_history_key(self, key: str) -> bool:
+        """Shell-style Up/Down recall over ``self._history``.
+
+        Only fires at the cursor's vertical boundary (top row for Up, bottom
+        row for Down) so it never fights normal cursor movement inside a
+        multi-line draft-in-progress — everywhere else the key falls through
+        (returns ``False``) to the TextArea's ordinary cursor move.
+        """
+        if not self._history:
+            return False
+        editor = self._editor()
+        if editor is None:
+            return False
+        row, _col = editor.cursor_location
+        if key == "up":
+            if row != 0:
+                return False
+            if self._history_index is None:
+                self._history_draft = editor.text
+                self._history_index = len(self._history) - 1
+            elif self._history_index > 0:
+                self._history_index -= 1
+            else:
+                return True  # already at the oldest entry — consume, stay put
+            self._recall_history_entry(editor, self._history[self._history_index])
+            return True
+        # key == "down"
+        if self._history_index is None:
+            return False  # not browsing — ordinary cursor-down
+        if row != editor.document.line_count - 1:
+            return False
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+            self._recall_history_entry(editor, self._history[self._history_index])
+        else:
+            self._history_index = None
+            self._recall_history_entry(editor, self._history_draft)
+        return True
+
+    def _recall_history_entry(self, editor: SubmitTextArea, text: str) -> None:
+        """Write a recalled history entry into the editor, cursor at the end.
+
+        Sets the guard flag but does NOT clear it here — the resulting
+        ``Changed`` message is posted, not delivered synchronously, so
+        ``on_text_area_changed`` clears it itself on first consumption.
+        """
+        self._history_recalling = True
+        editor.text = text
+        editor.move_cursor(editor.document.end)
+        self._autogrow(editor)
 
     def _sub_node_takes_args(self, buffer: str) -> bool:
         """True when the fully-typed sub path resolves to a node with args."""

@@ -82,10 +82,12 @@ def test_two_level_descent() -> None:
     assert [n for n, _ in items] == ["list"]
 
 
-def test_flag_grammar_yields_none_no_rows() -> None:
+def test_flag_grammar_yields_arg_hint_not_subcommands() -> None:
+    # No selectable sub-command rows — but /quiet's free-text `minutes` arg now
+    # surfaces as one non-selectable tip row (ARG_HINT), not silence.
     level, items = command_dropdown_items("/quiet ", _infos())
-    assert level is CompletionLevel.NONE
-    assert items == ()
+    assert level is CompletionLevel.ARG_HINT
+    assert items == (("[minutes]", None),)
 
 
 def test_past_args_yields_none() -> None:

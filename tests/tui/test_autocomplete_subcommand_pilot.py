@@ -91,7 +91,7 @@ async def test_pilot_down_enter_composes_subcommand() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pilot_flag_command_shows_no_subcommands() -> None:
+async def test_pilot_flag_command_shows_arg_hint_not_subcommands() -> None:
     app = _app(command_infos=_COMMAND_INFOS)
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one("#compose_input", SubmitTextArea).focus()
@@ -102,6 +102,8 @@ async def test_pilot_flag_command_shows_no_subcommands() -> None:
         await pilot.pause()
 
         dd = app.query_one("#autocomplete_dropdown", AutocompleteDropdown)
-        # flag grammar → no selectable sub rows; dropdown hidden.
-        assert dd.display is False
-        assert app.query_one(ComposeArea)._completion_level.value == "none"
+        # flag grammar → no selectable sub rows, but /quiet's free-text
+        # `minutes` arg shows as one non-selectable tip (current() is None).
+        assert dd.display is True
+        assert dd.current() is None
+        assert app.query_one(ComposeArea)._completion_level.value == "arg_hint"
