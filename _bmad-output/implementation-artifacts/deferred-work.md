@@ -33,3 +33,15 @@ Append-only. Entries here are pre-existing issues surfaced incidentally during a
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-retry-queue-migration.md`
   summary: No `CHECK(attempt_count >= 0)` guard on `attempt_count`.
   evidence: nothing in the schema prevents a future buggy UPDATE from decrementing it below zero and bypassing a future max-attempts cutoff.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-retryqueuestore.md`
+  summary: `retry_queue` has no claimed/in-flight state, so `RetryQueueStore.get_due()` can return the same due row to two overlapping callers (two sweep worker instances, or a slow sweep tick overlapping the next), who then both retry the same floored turn and both call `mark_attempt_failed`/`mark_completed` on it — duplicating a user-facing send once Story 1.6's sweep is wired in.
+  evidence: confirms and extends the equivalent story-1.1 entry above with the concrete manifestation point (`get_due`'s plain `SELECT ... WHERE status = 'pending'`, no claim step) that Story 1.6 (RetrySweepHandler) must address before going live.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-retryqueuestore.md`
+  summary: No UNIQUE constraint on `trace_id` lets `insert_pending` be called twice for the same `trace_id`, creating two pending rows that `RetryQueueStore.backfill_channel_message`/`get_latest_pending_for_session` can only partially disambiguate (backfill now stamps just one, most-recent, row rather than both — mitigated at the store level this story — but two live pending rows for one floored turn is still possible and unintended).
+  evidence: confirms and extends the equivalent story-1.1 entry above; Story 1.3 (insert-on-floor) should confirm a floored turn can never re-enter `insert_pending` with a `trace_id` already present, or the schema should gain the guard.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-retryqueuestore.md`
+  summary: `RetryQueueStore` timestamps (`next_retry_at`, `created_at`, `updated_at`) are compared/sorted as TEXT via Python's `datetime.isoformat()`, which omits the fractional-seconds component entirely when `microsecond == 0` — two timestamps at the same wall-clock second can serialize as `"...T10:00:00+00:00"` vs `"...T10:00:00.500000+00:00"`, and lexicographically `'+' < '.'`, so the whole-second timestamp sorts *before* the fractional one regardless of true chronological order. `get_due`'s `next_retry_at <= ?` filter/sort inherits this.
+  evidence: confirms and extends the equivalent story-1.1 entry (no documented/enforced timestamp format); low probability in practice (requires an exact-second coincidence) but directly affects `idx_retry_queue_status_due`, the retry worker's hot-path due-poll query once Story 1.6 wires in real polling.
