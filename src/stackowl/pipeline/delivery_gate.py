@@ -29,6 +29,7 @@ section.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from urllib.parse import urlsplit, urlunsplit
@@ -764,20 +765,6 @@ def _should_classify_retrieval(state: PipelineState) -> bool:
     return not state.delivered_successes
 
 
-async def _stamp_requires_retrieval(state: PipelineState) -> PipelineState:
-    """Lazily classify + stamp ``state.requires_retrieval`` (PBC Q2).
-
-    Reads the classifier off ``get_services()`` — ``None`` (unwired) is a no-op so
-    ``requires_retrieval`` stays at its byte-identical ``False`` default. Never
-    raises: the classifier itself is fail-safe (-> False on every degraded path).
-    """
-    classifier = get_services().retrieval_intent_classifier
-    if classifier is None:
-        return state
-    lookup = await classifier.requires_lookup(request=state.input_text)
-    return state.evolve(requires_retrieval=lookup)
-
-
 def _should_classify_schedule_commit(state: PipelineState) -> bool:
     """Cheap structural precondition gating the ONE trigger-4 classifier call.
 
@@ -796,19 +783,47 @@ def _should_classify_schedule_commit(state: PipelineState) -> bool:
     return "schedules" not in state.ran_effect_classes
 
 
-async def _stamp_requires_scheduling_commit(state: PipelineState) -> PipelineState:
-    """Lazily classify + stamp ``state.requires_scheduling_commit`` (trigger 4).
+async def _stamp_overclaim_classifiers(state: PipelineState) -> PipelineState:
+    """Run trigger-3 (retrieval) + trigger-4 (schedule-commit) fast classifiers
+    CONCURRENTLY — whichever pass their own precondition — and stamp both verdicts.
 
-    Reads the classifier off ``get_services()`` — ``None`` (unwired) is a no-op so
-    ``requires_scheduling_commit`` stays at its byte-identical ``False`` default.
-    Never raises: the classifier itself is fail-safe (-> False on every degraded
-    path).
+    The two calls are genuinely independent: trigger 3 reads the REQUEST
+    (``input_text``) and stamps ``requires_retrieval``; trigger 4 reads the
+    RESPONSE (``_answer_text``) and stamps ``requires_scheduling_commit`` — disjoint
+    inputs, disjoint output fields, no ordering dependency. They previously ran in
+    series, so a clean turn (the common case: neither triggers) paid BOTH latencies
+    back-to-back on the pre-deliver hot path. Under one ``asyncio.gather`` that clean
+    case now costs ``max`` of the two calls, not their sum. Each classifier is read
+    off ``get_services()`` (``None`` unwired ⇒ that field keeps its ``False``
+    default) and is itself fail-safe (-> False on every degraded path), so a gathered
+    branch never raises. A branch whose precondition is unmet is not launched at all,
+    preserving the "pay only for the checks a turn actually needs" contract.
     """
-    classifier = get_services().schedule_commit_classifier
-    if classifier is None:
-        return state
-    commits = await classifier.commits_to_future_schedule(response=_answer_text(state))
-    return state.evolve(requires_scheduling_commit=commits)
+    services = get_services()
+    ric = services.retrieval_intent_classifier
+    scc = services.schedule_commit_classifier
+    run_retrieval = ric is not None and _should_classify_retrieval(state)
+    run_schedule = scc is not None and _should_classify_schedule_commit(state)
+
+    async def _retrieval() -> bool:
+        if not run_retrieval:
+            return state.requires_retrieval
+        assert ric is not None  # narrowed by run_retrieval
+        return await ric.requires_lookup(request=state.input_text)
+
+    async def _schedule() -> bool:
+        if not run_schedule:
+            return state.requires_scheduling_commit
+        assert scc is not None  # narrowed by run_schedule
+        return await scc.commits_to_future_schedule(response=_answer_text(state))
+
+    requires_retrieval, requires_scheduling_commit = await asyncio.gather(
+        _retrieval(), _schedule(),
+    )
+    return state.evolve(
+        requires_retrieval=requires_retrieval,
+        requires_scheduling_commit=requires_scheduling_commit,
+    )
 
 
 async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
@@ -827,18 +842,22 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
     fails the precondition (conversational, retrieved, delivered, empty/floored),
     never reaches the classifier.
 
-    Trigger 4 adds a SECOND lazy classifier call, same shape: only paid when
-    triggers 1-3 all cleared AND its own precondition holds (no schedules-effect
-    tool ran this turn). Each of the two classifier calls is independent and
-    gated on its own precondition — a turn can pay for zero, one, or both.
+    Trigger 4 adds a SECOND lazy classifier call, same shape and its own
+    precondition (no schedules-effect tool ran this turn). Triggers 3 + 4 are
+    independent (request-side vs response-side) so when both preconditions hold
+    they run CONCURRENTLY under one ``asyncio.gather`` (see
+    ``_stamp_overclaim_classifiers``) rather than in series — a turn still pays for
+    zero, one, or both, but never their latencies back-to-back.
     """
     try:
         is_oc, culprit = _is_overclaim(state)
-        if not is_oc and _should_classify_retrieval(state):
-            state = await _stamp_requires_retrieval(state)
-            is_oc, culprit = _is_overclaim(state)
-        if not is_oc and _should_classify_schedule_commit(state):
-            state = await _stamp_requires_scheduling_commit(state)
+        if not is_oc and (
+            _should_classify_retrieval(state) or _should_classify_schedule_commit(state)
+        ):
+            # Triggers 3 + 4 are independent fast-classifier checks — run whichever
+            # are needed CONCURRENTLY (see _stamp_overclaim_classifiers) rather than
+            # paying their latency in series, then re-evaluate the overclaim verdict.
+            state = await _stamp_overclaim_classifiers(state)
             is_oc, culprit = _is_overclaim(state)
         if not is_oc:
             log.engine.debug(

@@ -56,10 +56,14 @@ def _live_io():  # noqa: ANN202
 class _CountingTool(Tool):
     """A tool whose success/failure per call is scripted; counts its executions."""
 
-    def __init__(self, name: str, results: list[bool], severity: str = "write") -> None:
+    def __init__(
+        self, name: str, results: list[bool], severity: str = "write",
+        error: str = "boom",
+    ) -> None:
         self._name = name
         self._results = results
         self._severity = severity
+        self._error = error
         self.calls = 0
 
     @property
@@ -88,7 +92,7 @@ class _CountingTool(Tool):
         if ok:
             return ToolResult(success=True, output="ok", duration_ms=1.0)
         # Genuine execution failure: ran and failed, boundary crossed (default True).
-        return ToolResult(success=False, output="", error="boom", duration_ms=1.0)
+        return ToolResult(success=False, output="", error=self._error, duration_ms=1.0)
 
 
 class _SeqProvider:
@@ -229,3 +233,67 @@ async def test_bounce_records_no_effectful_failure() -> None:
         recovery_context.reset(recovery_token)
         tool_outcome_ledger.reset(ledger_token)
         reset_services(token)
+
+
+async def test_deterministic_open_does_not_request_escalation() -> None:
+    # FIX 1 — a breaker that opens on PURELY-DETERMINISTIC failures (dead URL /
+    # non-2xx / SSRF block: no dead-handle marker in the error) must NOT trigger an
+    # expensive model-tier escalation — a stronger tier cannot revive a dead endpoint.
+    # (Pre-fix this branch called request_escalation unconditionally.)
+    from stackowl.providers.escalation_signal import clear_escalation, escalation_requested
+
+    clear_escalation()
+    tool = _CountingTool("web_fetch", results=[False, False, False, False], error="HTTP 404 Not Found")
+    calls = [("web_fetch", {"url": str(i)}) for i in range(4)]
+    await _run([tool], calls)
+    assert tool.calls == 3, "deterministic tool must still be bounced after 3 failures"
+    assert escalation_requested() is False, "a deterministic dead tool must not escalate the tier"
+
+
+async def test_transient_open_still_requests_escalation() -> None:
+    # CONTROL for FIX 1 — a breaker that opens on TRANSIENT failures (a dead-handle
+    # marker: dropped connection) SHOULD still escalate: a fresh tier / attempt may
+    # self-heal it. This proves the deterministic guard didn't kill the PA3 wiring.
+    from stackowl.providers.escalation_signal import clear_escalation, escalation_requested
+
+    clear_escalation()
+    tool = _CountingTool("web_fetch", results=[False, False, False, False], error="Connection reset")
+    calls = [("web_fetch", {"url": str(i)}) for i in range(4)]
+    await _run([tool], calls)
+    assert escalation_requested() is True, "a transient open must still request tier escalation"
+
+
+async def test_deterministic_dead_bounce_is_durable_across_iterations() -> None:
+    # FIX 2 — once a tool is deterministic-dead this turn it stays bounced for EVERY
+    # later call, never re-executing and never re-requesting escalation. This is the
+    # same set (deterministic_dead) that _on_tier_escalate deliberately does NOT reset,
+    # so an escalated tier cannot blindly re-fire a call already proven dead-on-arrival.
+    from stackowl.providers.escalation_signal import clear_escalation, escalation_requested
+
+    clear_escalation()
+    tool = _CountingTool("web_fetch", results=[False], error="HTTP 403 Forbidden")
+    calls = [("web_fetch", {"url": str(i)}) for i in range(6)]
+    provider = await _run([tool], calls)
+    assert tool.calls == 3, "after the deterministic open the tool must never run again"
+    assert escalation_requested() is False, "durable deterministic bounce must not escalate"
+    # calls 4-6 all render the containment refusal, not a fresh tool result.
+    for i in (3, 4, 5):
+        assert "no longer available" in provider.rendered[i]
+
+
+async def test_repeat_deterministic_failure_render_collapses() -> None:
+    # FIX 3 — repeated identical deterministic failures must not re-append full failure
+    # text to context every iteration (production saw input tokens climb 8k→11k from
+    # this). The FIRST failure keeps full detail; subsequent ones collapse to a summary.
+    from stackowl.providers.escalation_signal import clear_escalation
+
+    clear_escalation()
+    tool = _CountingTool("web_fetch", results=[False, False, False], error="HTTP 404 verbose body")
+    calls = [("web_fetch", {"url": str(i)}) for i in range(3)]
+    provider = await _run([tool], calls)
+    # First failure: full detail retained.
+    assert "HTTP 404 verbose body" in provider.rendered[0]
+    # Second (still a rendered failure, before the breaker bounces): collapsed summary.
+    assert "HTTP 404 verbose body" not in provider.rendered[1]
+    assert "non-retryable" in provider.rendered[1]
+    assert "attempts" in provider.rendered[1]

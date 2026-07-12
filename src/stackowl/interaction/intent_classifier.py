@@ -252,6 +252,7 @@ class ClarifyIntentClassifier:
                         ],
                         model="",
                         max_tokens=4,
+                        disable_thinking=True,
                     ),
                     timeout=self._timeout_s,
                 )
@@ -369,6 +370,7 @@ class ClarifyIntentClassifier:
                         ],
                         model="",
                         max_tokens=4,
+                        disable_thinking=True,
                     ),
                     timeout=self._timeout_s,
                 )
@@ -464,6 +466,7 @@ class ClarifyIntentClassifier:
                         ],
                         model="",
                         max_tokens=4,
+                        disable_thinking=True,
                     ),
                     timeout=self._timeout_s,
                 )

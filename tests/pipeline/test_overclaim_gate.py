@@ -7,6 +7,8 @@ floor.  Runs AFTER surface_consequential_giveup_floor in both backends.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import get_args
 
 import pytest
@@ -742,3 +744,65 @@ def test_snapshot_maps_ran_effect_classes(
     finally:
         tool_outcome_ledger.reset(token)
     assert snap.ran_effect_classes == expected
+
+
+# ---------------------------------------------------------------------------
+# LAT — trigger 3 (retrieval) + trigger 4 (schedule-commit) run CONCURRENTLY
+# ---------------------------------------------------------------------------
+
+
+class _SlowRetrievalClassifier:
+    """Fake retrieval classifier that sleeps ``delay`` before returning ``verdict``.
+    Used to prove the two independent classifier calls overlap in wall-clock."""
+
+    def __init__(self, delay: float, verdict: bool = False) -> None:
+        self._delay = delay
+        self._verdict = verdict
+
+    async def requires_lookup(self, *, request: str) -> bool:
+        await asyncio.sleep(self._delay)
+        return self._verdict
+
+
+class _SlowScheduleClassifier:
+    def __init__(self, delay: float, verdict: bool = False) -> None:
+        self._delay = delay
+        self._verdict = verdict
+
+    async def commits_to_future_schedule(self, *, response: str) -> bool:
+        await asyncio.sleep(self._delay)
+        return self._verdict
+
+
+@pytest.mark.asyncio
+async def test_trigger3_and_trigger4_classifiers_run_concurrently() -> None:
+    """Both preconditions hold → the two independent fast classifiers run under one
+    asyncio.gather, so total wall-clock is ~max(delay), not the serial sum(2*delay)."""
+    delay = 0.25
+    ric = _SlowRetrievalClassifier(delay)
+    scc = _SlowScheduleClassifier(delay)
+    token = set_services(
+        StepServices(  # type: ignore[arg-type]
+            retrieval_intent_classifier=ric,
+            schedule_commit_classifier=scc,
+        )
+    )
+    try:
+        # A standard turn, non-floor non-empty draft, no retrieval/schedule tool ran,
+        # delivered nothing → BOTH trigger preconditions are satisfied.
+        state = _state(
+            responses=(_draft("The latest iOS version is 17 and I'll ping you later."),),
+            intent_class="standard",
+            delivered_successes=(),
+        )
+        assert _should_classify_retrieval(state) is True
+        assert _should_classify_schedule_commit(state) is True
+        t0 = time.perf_counter()
+        result = await surface_overclaim_gate(state)
+        elapsed = time.perf_counter() - t0
+    finally:
+        reset_services(token)
+    # Both verdicts False → no overclaim floor.
+    assert result.overclaim_blocked is False
+    # Concurrent: close to one delay, comfortably under the serial 2*delay sum.
+    assert elapsed < delay * 1.8, f"expected concurrent (~{delay}s), got {elapsed:.3f}s (serial?)"

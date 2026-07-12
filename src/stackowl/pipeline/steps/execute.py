@@ -1066,6 +1066,23 @@ async def _run_with_tools(
     # (finer: exact args; fires on the FIRST repeat, not after a threshold). Flag-gated:
     # ``trustworthy_learning`` OFF ⇒ the set is never consulted/filled ⇒ byte-identical.
     failed_approaches: dict[str, str] = {}
+    # Escalation-honesty (deterministic circuit-open). Same turn-scoped lifetime and
+    # NON-reset-on-escalation pattern as ``failed_approaches`` above (``_on_tier_escalate``
+    # must NOT clear these — see the note there): a model-tier escalation cannot fix a
+    # dead URL / SSRF-blocked host / non-2xx status, so that memory has to OUTLIVE the
+    # reset that re-arms the transient breaker.
+    #   * ``non_deterministic_failures`` — tools that had AT LEAST ONE transient / timeout
+    #     / unverified-effect failure this turn (a mixed history). A breaker that opens
+    #     while a tool is in this set is NOT purely-deterministic → escalation still helps.
+    #   * ``deterministic_dead`` — tools whose breaker opened with EVERY failure a genuine
+    #     non-transient failure. Escalating tier is pointless; bounce WITHOUT escalation,
+    #     and keep bouncing even after ``progress.reset()`` re-arms the transient breaker.
+    #   * ``deterministic_fail_count`` — per-tool count of rendered genuine-deterministic
+    #     failures, so repeat identical failures collapse to a one-line summary instead of
+    #     re-appending full failure text to context every iteration (token-bloat guard).
+    non_deterministic_failures: set[str] = set()
+    deterministic_dead: set[str] = set()
+    deterministic_fail_count: dict[str, int] = {}
     _trustworthy_learning = False
     try:
         from stackowl.config.settings import Settings
@@ -1102,6 +1119,21 @@ async def _run_with_tools(
                 f"The action '{name}' was already declined this turn. Do not call it again — "
                 "respond to the user instead."
             )
+        # Deterministic dead-on-arrival bounce. A tool whose breaker opened this turn
+        # for PURELY-DETERMINISTIC reasons (dead URL / non-2xx / SSRF block) stays
+        # bounced for the rest of the turn EVEN ACROSS a tier escalation — unlike the
+        # transient breaker (``progress.is_open``) which ``_on_tier_escalate`` re-arms.
+        # This is what stops an escalated (smarter, costlier) tier from blindly re-firing
+        # a call already proven dead: it short-circuits HERE, before any re-execution,
+        # and — critically — WITHOUT re-requesting escalation (escalating cannot revive a
+        # dead endpoint). PRE-EXECUTION REFUSAL: records nothing, carries no
+        # TOOL_FAILED_MARKER (mirrors denied_this_run — P0 honesty invariant preserved).
+        if name in deterministic_dead:
+            log.engine.info(
+                "[pipeline] execute: deterministic dead tool — bounced without escalation",
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+            )
+            return _circuit_open_refusal(name)
         # Incident P2 — circuit-open bounce. A tool that failed
         # SAME_TOOL_FAILURE_THRESHOLD times in a row this turn is unavailable for
         # the rest of the turn. This is a PRE-EXECUTION REFUSAL (like
@@ -1121,11 +1153,19 @@ async def _run_with_tools(
             # refusal string still returns, so THIS tier never re-offers the dead
             # tool. At the ceiling (can_escalate False) the request is ignored and
             # the existing honest floor takes over.
-            request_escalation(name)
-            log.engine.info(
-                "[pipeline] execute: circuit open — requested tier escalation",
-                extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
-            )
+            #
+            # ONLY escalate when the failures that opened this breaker were NOT all
+            # deterministic. A purely-deterministic open (dead URL / non-2xx / SSRF
+            # block) is already routed through the ``deterministic_dead`` early-return
+            # above and never reaches here; the guard is explicit so a tool that opened
+            # with a MIXED (some transient) history escalates while a deterministic one
+            # never spends a fresh, expensive tier round-trip on a call tier cannot fix.
+            if name not in deterministic_dead:
+                request_escalation(name)
+                log.engine.info(
+                    "[pipeline] execute: circuit open — requested tier escalation",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+                )
             return _circuit_open_refusal(name)
         # ADR-5 MOVE 3 (F-26/43/72) — within-turn failed-approach consult. When the model
         # blindly RE-ISSUES the EXACT approach (this tool + these same inputs) that already
@@ -1391,7 +1431,11 @@ async def _run_with_tools(
                     effect_class=t.manifest.effect_class,  # TS3 — durable-effect class
                 )
                 # G1 — a timeout is zero-progress: advance the streak so a tool that
-                # keeps timing out gets bounced rather than spiralling the budget.
+                # keeps timing out gets bounced rather than spiralling the budget. A
+                # timeout is a TRANSIENT shape (a stronger tier / retry can self-heal it),
+                # so it disqualifies this tool from the deterministic-dead bounce — an
+                # opened breaker here must still be allowed to escalate.
+                non_deterministic_failures.add(name)
                 progress.record_no_progress(name)
                 return None
             log.engine.debug(
@@ -1429,12 +1473,24 @@ async def _run_with_tools(
                 # Ephemeral, never persisted; ``_approach_sig`` is "" when the flag is OFF.
                 if _approach_sig:
                     failed_approaches[_approach_sig] = r.error or "no reason recorded"
+                # Classify this zero-progress result for the deterministic-dead breaker.
+                # A GENUINE non-transient failure (success=False AND no dead-handle marker
+                # — a dead URL / non-2xx / SSRF block) is deterministic. Anything else — a
+                # transient genuine failure, OR an unverified-effect (success=True,
+                # verified=False) that may self-heal — disqualifies "all failures were
+                # deterministic", so an eventual open still routes into tier escalation.
+                if not ((not r.success) and not _is_transient_failure(r)):
+                    non_deterministic_failures.add(name)
                 opened = progress.record_no_progress(name)
                 if opened:
+                    _deterministic_open = name not in non_deterministic_failures
+                    if _deterministic_open:
+                        deterministic_dead.add(name)
                     log.engine.warning(
                         "[pipeline] execute: same-tool failure threshold reached — circuit open",
                         extra={"_fields": {"tool": name, "trace_id": state.trace_id,
-                                           "threshold": _np_threshold}},
+                                           "threshold": _np_threshold,
+                                           "deterministic": _deterministic_open}},
                     )
             # F038 — honest no-IO log of the tool outcome (the old per-call heuristic
             # matcher had no production subscriber). match_and_log never raises.
@@ -1532,6 +1588,27 @@ async def _run_with_tools(
                 f"Treat it as NOT done — try another approach, or tell the user it could not "
                 f"be completed."
             )
+        # Context-bloat guard. A tool that keeps failing DETERMINISTICALLY (same dead
+        # URL / non-2xx / SSRF block) re-appends its full failure text to the message
+        # history every iteration — production saw input tokens climb 8k→11k across one
+        # turn from this alone. The first failure keeps full detail (the model needs the
+        # reason once); every subsequent genuine-deterministic failure of the SAME tool
+        # collapses to a one-line summary so context stays bounded. Transient failures
+        # are NOT collapsed — they may carry distinct, actionable infra detail each time.
+        if (not tr.success) and not _is_transient_failure(tr):
+            deterministic_fail_count[name] = deterministic_fail_count.get(name, 0) + 1
+            _n = deterministic_fail_count[name]
+            if _n > 1:
+                log.engine.info(
+                    "[pipeline] execute: repeat deterministic failure — collapsed to summary",
+                    extra={"_fields": {"tool": name, "trace_id": state.trace_id,
+                                       "attempts_this_turn": _n}},
+                )
+                return (
+                    f"{TOOL_FAILED_MARKER}'{name}' failed (non-retryable), {_n} attempts "
+                    f"this turn. Do not retry it — try a different approach or answer "
+                    f"without it."
+                )
         return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
@@ -1694,7 +1771,12 @@ async def _run_with_tools(
         reset_ledger_for_tier_escalation(from_tier, to_tier, trace_id=state.trace_id)
         # PA3 — clear the escalation request and re-arm the breaker so the fresh,
         # stronger tier starts clean (it is not pre-bounced by the weak tier's
-        # open breaker, and won't immediately re-escalate off a stale flag).
+        # open breaker, and won't immediately re-escalate off a stale flag). This
+        # reset is CORRECT for transient / reasoning-stuck opens — a stronger tier
+        # deserves a fresh attempt. It deliberately does NOT touch ``deterministic_dead``
+        # / ``deterministic_fail_count`` (turn-scoped, like ``failed_approaches``): a tier
+        # cannot revive a dead URL, so that memory must survive the reset or the escalated
+        # tier would blindly re-fire the same dead call and re-open → re-escalate.
         clear_escalation()
         progress.reset()
 

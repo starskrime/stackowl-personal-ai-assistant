@@ -811,6 +811,29 @@ class OpenAIProvider(ModelProvider):
         w = cached_window(self._name, resolved_model)
         return {"extra_body": {"options": {"num_ctx": w}}} if w else {}
 
+    def _complete_extra_body(self, resolved_model: str, *, disable_thinking: bool) -> dict[str, Any]:
+        """Merge the ollama ``num_ctx`` window (if any) with an optional
+        reasoning-disable hint into ONE ``extra_body`` kwarg for ``create()``.
+
+        ``disable_thinking`` (passed by structured/classifier callers) tells a
+        vLLM/Qwen-style reasoning endpoint to SKIP its ``<think>`` block for this
+        one call via the standard OpenAI-compatible passthrough
+        ``chat_template_kwargs={"enable_thinking": False}``. A 1-object JSON
+        verdict needs no chain-of-thought; forcing it makes the model burn the
+        whole token/timeout budget reasoning before it emits the answer the caller
+        immediately discards (the live empty-verdict / 10s-timeout bug). Default
+        ``False`` ⇒ byte-identical to prior behaviour; a provider whose endpoint
+        ignores the hint is unaffected. Merges (not clobbers) the ollama window so
+        both hints survive when a local reasoning model is also num_ctx-budgeted.
+        """
+        body: dict[str, Any] = {}
+        ollama = self._ollama_extra_body(resolved_model)
+        if ollama:
+            body.update(ollama["extra_body"])
+        if disable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        return {"extra_body": body} if body else {}
+
     def _output_cap(self, resolved_model: str) -> int:
         """Output-token budget for a generation — as much as the model's window
         allows, never a small fixed cap.
@@ -832,6 +855,11 @@ class OpenAIProvider(ModelProvider):
         )
         t0 = time.monotonic()
         resolved_model = model or self._config.default_model
+        # ``disable_thinking`` (opt-in per call; classifier/structured callers set it)
+        # routes to chat_template_kwargs enable_thinking=False so a reasoning model
+        # emits its JSON verdict WITHOUT a preceding <think> block. Absent ⇒ unchanged.
+        disable_thinking = bool(kwargs.get("disable_thinking", False))
+        extra_body = self._complete_extra_body(resolved_model, disable_thinking=disable_thinking)
         # A message with image blocks → multimodal content parts (data-URL image);
         # a plain message keeps the cheap string form (B6 minimal change).
         oai_msgs = [
@@ -845,7 +873,7 @@ class OpenAIProvider(ModelProvider):
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
                 max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
-                **self._ollama_extra_body(resolved_model),
+                **extra_body,
             )
 
         try:
@@ -897,7 +925,7 @@ class OpenAIProvider(ModelProvider):
                     model=resolved_model,
                     messages=retry_msgs,  # type: ignore[arg-type]
                     max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
-                    **self._ollama_extra_body(resolved_model),
+                    **extra_body,
                 )
 
             try:

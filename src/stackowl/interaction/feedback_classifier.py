@@ -68,11 +68,12 @@ _MAX_REFERENT_CHARS = 600
 _MAX_CONTEXT_CHARS = 600
 # Truncation budget for LOGGED text (sensitive-data + log-size hygiene).
 _LOG_TEXT_CHARS = 120
-# A reasoning model (thinking always on) burns output tokens on its <think> block
-# BEFORE the JSON verdict — a tight cap truncates mid-thought and yields an empty
-# verdict (the exact judge-empty bug from memory). Give it room to think AND emit the
-# small JSON; the verdict itself is tiny, so this is spent only when the model thinks.
-_MAX_TOKENS = 8192
+# The provider call passes ``disable_thinking=True`` so a reasoning model emits its
+# JSON verdict WITHOUT a <think> block. With reasoning off there is nothing to give
+# the model room to think about, so the cap is back to just-enough-for-the-JSON —
+# the prior 8192 (room-to-think) budget could not finish within the 10s timeout on a
+# slow reasoning fast-tier, so this classifier abstained on ~every call (the live bug).
+_MAX_TOKENS = 256
 
 _SYSTEM_PROMPT = (
     "You classify what a user's message MEANS as feedback on the assistant's "
@@ -218,6 +219,7 @@ class FeedbackClassifier:
                         model="",
                         max_tokens=_MAX_TOKENS,
                         temperature=0.0,
+                        disable_thinking=True,
                     ),
                     timeout=self._timeout_s,
                 )

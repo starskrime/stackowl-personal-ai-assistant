@@ -50,9 +50,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 _MAX_RESPONSE_CHARS = 400
 # Truncation budget for LOGGED text (sensitive-data + log-size hygiene).
 _LOG_TEXT_CHARS = 80
-# One-token verdict. ponytail: if the resolved fast tier is a reasoning/thinking
-# model, this truncates its <think> block before it can emit the verdict token,
-# which fail-safes to False (safe, but the trigger never fires for that tier).
+# One-token verdict. The provider call passes ``disable_thinking=True`` so a
+# reasoning fast tier skips its <think> block and emits the verdict token directly —
+# without that, a 4-token cap truncated mid-thought and the trigger never fired.
 _MAX_TOKENS = 4
 
 _SYSTEM_PROMPT = (
@@ -127,6 +127,7 @@ class ScheduleCommitClassifier:
                         ],
                         model="",
                         max_tokens=_MAX_TOKENS,
+                        disable_thinking=True,
                     ),
                     timeout=self._timeout_s,
                 )

@@ -138,12 +138,14 @@ class _CountingTool(Tool):
         severity: str = "write",
         side_effect_committed: bool = True,
         sleep_s: float = 0.0,
+        error: str = "boom",
     ) -> None:
         self._name = name
         self._results = results
         self._severity = severity
         self._committed = side_effect_committed
         self._sleep_s = sleep_s
+        self._error = error
         # calls incremented at ENTRY (before any await) so timeout-cancelled calls
         # are still counted.
         self.calls = 0
@@ -177,7 +179,7 @@ class _CountingTool(Tool):
         if ok:
             return ToolResult(success=True, output="ok", duration_ms=1.0)
         return ToolResult(
-            success=False, output="", error="boom", duration_ms=1.0,
+            success=False, output="", error=self._error, duration_ms=1.0,
             side_effect_committed=self._committed,
         )
 
@@ -363,6 +365,12 @@ async def test_state_stamped_made_progress() -> None:
 # PA3: the circuit-open bounce REQUESTS tier escalation (dispatch half of the
 # breaker→ladder path). The provider half — escalation_requested() → ESCALATE
 # SENTINEL — is covered in tests/providers/test_auto_escalate.py.
+#
+# NOTE: escalation is requested only for a NON-deterministic open (transient /
+# reasoning-stuck) — a stronger tier CAN self-heal one. A purely-deterministic
+# open (dead URL / non-2xx / SSRF) is bounced WITHOUT escalation; that case is
+# covered in tests/pipeline/test_circuit_breaker.py. This test therefore uses a
+# TRANSIENT failure (a dead-handle marker) so the PA3 wiring is exercised.
 # ---------------------------------------------------------------------------
 
 async def test_breaker_open_requests_escalation() -> None:
@@ -372,8 +380,9 @@ async def test_breaker_open_requests_escalation() -> None:
     )
 
     clear_escalation()
-    # 3 failures open the circuit; the 4th call is the bounce that requests escalation.
-    tool = _CountingTool("shell", results=[False, False, False, False])
+    # 3 TRANSIENT failures open the circuit; the 4th call is the bounce that
+    # requests escalation (a fresh tier may self-heal a dropped-connection class).
+    tool = _CountingTool("shell", results=[False, False, False, False], error="Connection reset")
     calls = [("shell", {"x": str(i)}) for i in range(4)]
     try:
         _provider, _out = await _run([tool], calls)
