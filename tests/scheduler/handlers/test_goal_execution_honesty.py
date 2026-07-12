@@ -28,6 +28,7 @@ never prose classification:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,30 @@ async def test_recurring_poke_routes_normal_for_quiet_hours(
 
     await handler.execute(_poke_job())  # recurring (no run_once)
     assert deliverer.calls[0]["urgency"] == "normal"
+
+
+async def test_execute_prefixes_todays_date_and_freshness_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reported bug: recurring jobs returned stale/old info because the raw
+    goal text sent to the pipeline never changed run to run — nothing told
+    the model this was a fresh, dated check. Every run must prefix today's
+    date + an explicit fetch-current instruction, keeping the original goal
+    text intact after it."""
+    disable_guard(monkeypatch)
+    backend = DeliverBandBackend(draft="fresh answer.", search_urls=())
+    deliverer = FakeJobDeliverer(rollup="delivered")
+    handler = GoalExecutionHandler(
+        backend=backend, db=RecordingDb(), job_deliverer=deliverer,  # type: ignore[arg-type]
+    )
+
+    await handler.execute(_poke_job())
+
+    sent = backend.calls[0].input_text
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    assert today in sent
+    assert "fetch current" in sent.lower()
+    assert sent.endswith("Poke me with the latest AI news")
 
 
 async def test_one_shot_goal_stays_critical(

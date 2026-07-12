@@ -147,10 +147,24 @@ class GoalExecutionHandler(JobHandler):
         # a collision that conflated distinct goals' sessions. The full id is
         # unique per job.
         session_id = f"goal-{job.job_id}"
+        # A recurring job sends the IDENTICAL raw goal text to the pipeline on
+        # every run — no date, no "this is a fresh check" signal. Reported
+        # symptom: scheduled jobs returning stale/old information instead of
+        # same-day data, because nothing in the prompt tells the model this
+        # run is happening NOW and must not reuse a memorized or prior
+        # answer. Prefix a freshness preamble (today's date, explicit
+        # fetch-current instruction) so every run is grounded in its actual
+        # execution time — the raw `goal` is unchanged for logging/dedup.
+        dated_goal = (
+            f"Today's date is {datetime.now(UTC).strftime('%Y-%m-%d')}. This is a "
+            f"recurring scheduled check running right now — fetch current, "
+            f"up-to-date information; do not answer from memory or reuse a "
+            f"previous run's result for this same goal.\n\n{goal}"
+        )
         state = PipelineState(
             trace_id=trace_id,
             session_id=session_id,
-            input_text=goal,
+            input_text=dated_goal,
             # Deliver to the channel the goal was scheduled from (persisted on
             # the job row), not a hardcoded "cli" that drops the answer.
             channel=job.primary_channel or "cli",
