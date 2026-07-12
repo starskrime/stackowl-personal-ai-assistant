@@ -1256,6 +1256,14 @@ class StartupOrchestrator:
 
         retry_queue_store = RetryQueueStore(db_pool)
 
+        # Approach-rating like/dislike votes — ONE process-wide singleton (pure
+        # in-memory, no dependencies) so consolidate.py's record_pending/
+        # build_keyboard calls and the (Task 6) Telegram backfill + "apr"
+        # callback handler all observe the SAME pending-vote state.
+        from stackowl.channels.telegram.approach_rating import ApproachRatingTracker
+
+        approach_rating_tracker = ApproachRatingTracker()
+
         services = StepServices(
             a2a_queue=a2a_queue,
             provider_registry=provider_registry,
@@ -1270,6 +1278,7 @@ class StartupOrchestrator:
             audit_logger=audit_logger,
             preference_store=preference_store,
             retry_queue_store=retry_queue_store,
+            approach_rating_tracker=approach_rating_tracker,
             notification_router=notification_router,
             proactive_deliverer=proactive_deliverer,
             event_bus=event_bus,

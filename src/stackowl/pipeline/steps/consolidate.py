@@ -9,7 +9,17 @@ consolidate now only merges tool output and carries the SP-2 trust decision forw
 from __future__ import annotations
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.streaming import ResponseChunk
+
+# Approach-rating keyboard is only attached to answers substantial enough that a
+# like/dislike vote is meaningful — a one-line reply isn't worth rating.
+_MIN_RATEABLE_LENGTH = 200
+
+
+def _qualifies_for_rating(chunk: ResponseChunk) -> bool:
+    return not chunk.is_floor and len(chunk.content) >= _MIN_RATEABLE_LENGTH
 
 
 async def run(state: PipelineState) -> PipelineState:
@@ -27,7 +37,6 @@ async def run(state: PipelineState) -> PipelineState:
     merged_external = bool(state.tool_calls and not state.responses)
     # Merge tool results into responses when tool_calls produced content but responses is empty.
     if merged_external:
-        from stackowl.pipeline.streaming import ResponseChunk
         # F095 — failure-aware merge: only SUCCESSFUL tool output may become the
         # answer. ``tc.error is None`` is the ONLY typed success signal at the
         # pipeline layer (ToolCall has no `failed` bool; the TOOL_FAILED_MARKER is
@@ -61,6 +70,28 @@ async def run(state: PipelineState) -> PipelineState:
     # responses was still empty) and stamped so the post-floor persist_turn (F088)
     # reads it instead of recomputing from post-floor responses (trust-laundering guard).
     out_state = out_state.evolve(merged_external=merged_external)
+    # Task 5 — attach an approach-rating like/dislike keyboard to a qualifying
+    # final answer (substantial, non-floor). Best-effort: a tracker failure must
+    # never break delivery of the answer itself.
+    if out_state.responses:
+        last = out_state.responses[-1]
+        if _qualifies_for_rating(last):
+            services = get_services()
+            tracker = services.approach_rating_tracker
+            if tracker is not None:
+                try:
+                    tracker.record_pending(trace_id=out_state.trace_id)
+                    keyboard = tracker.build_keyboard(trace_id=out_state.trace_id)
+                    rated_chunk = last.model_copy(update={"raw_keyboard": keyboard})
+                    out_state = out_state.evolve(
+                        responses=(*out_state.responses[:-1], rated_chunk)
+                    )
+                except Exception as exc:  # rating attachment must never break delivery
+                    log.engine.error(
+                        "[pipeline] consolidate: approach-rating keyboard attach failed",
+                        exc_info=exc,
+                        extra={"_fields": {"trace_id": out_state.trace_id}},
+                    )
     log.engine.info(
         "[pipeline] consolidate: exit",
         extra={"_fields": {"trace_id": state.trace_id}},

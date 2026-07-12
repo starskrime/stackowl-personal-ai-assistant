@@ -44,6 +44,11 @@ class ResponseChunk(BaseModel, frozen=True):
     # for every ordinary LLM-answer chunk — only slash-command replies ever
     # populate this (see startup/orchestrator.py::_deliver_command_stub).
     actions: tuple[Action, ...] = ()
+    # Raw inline-keyboard dict (InlineKeyboardBuilder.build() output) for buttons
+    # that don't map to a re-invocable slash command (e.g. approach-rating votes,
+    # which carry a callback_data payload Action's label+command shape can't
+    # represent). None for every ordinary chunk.
+    raw_keyboard: dict[str, object] | None = None
 
 
 class StreamWriter:

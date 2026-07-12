@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from stackowl.audit.logger import AuditLogger
+    from stackowl.channels.telegram.approach_rating import ApproachRatingTracker
     from stackowl.commands.resolver import CommandResolver
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
@@ -72,6 +73,13 @@ class StepServices:
     # sweep can retry it. None → the retry-queue insert is a no-op (byte-identical
     # to before this feature existed).
     retry_queue_store: RetryQueueStore | None = field(default=None)
+    # Approach-rating like/dislike votes — consolidate.py reads THIS off services
+    # to record a pending vote + build the inline keyboard for a qualifying final
+    # answer. ONE process-wide singleton (in-memory trace_id -> message map) so
+    # the Telegram adapter's post-send backfill and the "apr" callback handler
+    # observe the SAME pending state consolidate.py wrote. None → the keyboard
+    # attach is a byte-identical no-op (feature absent).
+    approach_rating_tracker: ApproachRatingTracker | None = field(default=None)
     # Task 7 — manual "do it again" retry path. triage.py reads THESE off
     # services (right after get_services(), before any other routing) to
     # check for a pending retry_queue row and, if the classifier confirms
