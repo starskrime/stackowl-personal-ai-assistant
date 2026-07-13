@@ -510,10 +510,15 @@ class JobScheduler(SupervisedTask):
             await self._notify_failure(job, last_error, terminal=True)
             return
 
-        # CIRCUIT-BREAKER (S11c) — a scheduled OWL's job that fails this many
-        # consecutive runs is PAUSED (not re-armed) and the user is alerted ONCE,
-        # so a broken owl never fires forever. Scoped to owl-lifecycle jobs by
-        # provenance marker; every other recurring job keeps its re-arm behavior.
+        # CIRCUIT-BREAKER (S11c, generalized) — ANY recurring job that fails this
+        # many CONSECUTIVE full cycles (across occurrences, not the within-turn
+        # retry_queue counter) is PAUSED (not re-armed) and the user is alerted
+        # ONCE, so a structurally-doomed job (e.g. a goal that can never finish
+        # inside its step budget) never loops/re-arms/spams forever. Originally
+        # scoped to owl-lifecycle jobs only (``source == OWL_LIFECYCLE_SOURCE``);
+        # widened to every recurring job — a user-created cronjob goal hitting the
+        # SAME budget cap on every run is exactly this failure mode and was falling
+        # through to the unconditional re-arm-forever path below.
         from stackowl.owls.owl_schedule_guards import (
             MAX_CONSECUTIVE_FAILURES,
             OWL_LIFECYCLE_SOURCE,
@@ -521,7 +526,7 @@ class JobScheduler(SupervisedTask):
 
         new_failure_count = job.failure_count + 1
         is_owl_job = job.params.get("source") == OWL_LIFECYCLE_SOURCE
-        if is_owl_job and new_failure_count >= MAX_CONSECUTIVE_FAILURES:
+        if new_failure_count >= MAX_CONSECUTIVE_FAILURES:
             await self._db.execute(
                 "UPDATE jobs SET status = 'failed', enabled = 0, "
                 "retry_count = 0, retry_at = NULL, failure_count = ?, last_error = ? "
@@ -529,7 +534,7 @@ class JobScheduler(SupervisedTask):
                 (new_failure_count, last_error, job.job_id),
             )
             log.heartbeat.error(
-                "[scheduler] %s: scheduled owl job circuit-broken — paused after "
+                "[scheduler] %s: scheduled job circuit-broken — paused after "
                 "%d consecutive failures",
                 job.job_id,
                 new_failure_count,
@@ -541,13 +546,13 @@ class JobScheduler(SupervisedTask):
             )
             await write_audit(
                 self._db,
-                "owl_job_circuit_broken",
+                "job_circuit_broken",
                 job.job_id,
                 actor="scheduler",
                 details={"owner": job.params.get("owner"), "failures": new_failure_count,
                          "last_error": last_error},
             )
-            await self._notify_failure(job, last_error, terminal=True)
+            await self._notify_failure(job, last_error, terminal=True, circuit_broken=True)
             return
 
         # Recurring job: re-arm onto the next cadence slot instead of dying.
@@ -594,12 +599,19 @@ class JobScheduler(SupervisedTask):
             await self._notify_failure(job, last_error, terminal=False)
 
     async def _notify_failure(
-        self, job: Job, last_error: str | None, *, terminal: bool
+        self,
+        job: Job,
+        last_error: str | None,
+        *,
+        terminal: bool,
+        circuit_broken: bool = False,
     ) -> None:
         """Route an operator alert for a retry-exhausted job (F-61).
 
-        A job that exhausts its retries — whether it dies (one-shot ``terminal``)
-        or re-arms onto its next slot (recurring) — is an outage whose only prior
+        A job that exhausts its retries — whether it dies (one-shot ``terminal``),
+        is circuit-broken (``circuit_broken`` — a recurring job paused after
+        ``MAX_CONSECUTIVE_FAILURES`` full-cycle failures), or re-arms onto its next
+        slot (recurring, still under threshold) — is an outage whose only prior
         signal was a buried ERROR log line. This pushes a proactive notification
         through the SAME delivery seam (:class:`ProactiveJobDeliverer`) that
         morning_brief / check_in / goal_execution use, addressed from the job's
@@ -618,14 +630,20 @@ class JobScheduler(SupervisedTask):
                 extra={"_fields": {"job_id": job.job_id}},
             )
             return
-        disposition = (
-            "permanently failed"
-            if terminal
-            else "is failing repeatedly (re-armed to its next slot)"
-        )
+        if circuit_broken:
+            disposition = "keeps failing and has been PAUSED"
+        elif terminal:
+            disposition = "permanently failed"
+        else:
+            disposition = "is failing repeatedly (re-armed to its next slot)"
         message = f"Scheduled job '{job.handler_name}' {disposition} after exhausting retries."
         if last_error:
             message += f" Last error: {last_error}"
+        if circuit_broken:
+            message += (
+                f" It will not run again until you fix it — use /cronjob "
+                f"(job_id: {job.job_id}) to review, adjust, or remove it."
+            )
         try:
             outcome = await self._job_deliverer.deliver_for_job(
                 job,
