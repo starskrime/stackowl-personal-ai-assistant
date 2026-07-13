@@ -22,7 +22,12 @@ from typing import Any
 
 import pytest
 
-from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, DEFAULT_TURN_MAX_TIME_S, ResourceCaps
+from stackowl.authz.bounds import (
+    DEFAULT_SCHEDULED_TURN_MAX_STEPS,
+    DEFAULT_TURN_MAX_STEPS,
+    DEFAULT_TURN_MAX_TIME_S,
+    ResourceCaps,
+)
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -192,4 +197,73 @@ async def test_default_backstop_stops_loop_before_hard_cap() -> None:
     assert result.responses, (
         f"Expected at least one ResponseChunk in state.responses after a backstop stop. "
         f"errors={result.errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 3 — scheduled/deferred (non-interactive) turns get the LARGER default cap
+# ---------------------------------------------------------------------------
+
+_SCHEDULED_SCRIPTED_ITERATIONS = DEFAULT_SCHEDULED_TURN_MAX_STEPS + 1  # 46
+
+
+@pytest.mark.asyncio
+async def test_default_backstop_uses_larger_cap_for_deferred_scheduled_turn() -> None:
+    """A non-interactive, defer_delivery=True turn (scheduled goal_execution / its
+    retry_actuator retry) gets DEFAULT_SCHEDULED_TURN_MAX_STEPS, not the smaller
+    live-chat DEFAULT_TURN_MAX_STEPS — the actual field values goal_execution.py and
+    retry_actuator.py set on their PipelineState (interactive=False, defer_delivery=True).
+    """
+    tool = _MinimalTool()
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+
+    owl_registry = OwlRegistry()
+    owl_registry.register(OwlAgentManifest(
+        name="nocaps_owl",
+        role="tester",
+        system_prompt="Test default backstop.",
+        model_tier="fast",
+        bounds=None,  # NO explicit caps → default backstop must activate
+    ))
+
+    provider = _LoopProvider(iterations=_SCHEDULED_SCRIPTED_ITERATIONS)
+
+    state = PipelineState(
+        trace_id="trace-scheduled-backstop-test",
+        session_id="sess-scheduled-backstop-test",
+        input_text="run many steps",
+        channel="cli",
+        owl_name="nocaps_owl",
+        pipeline_step="execute",
+        interactive=False,
+        defer_delivery=True,  # scheduled/background turn — no live human waiting
+    )
+
+    token = set_services(StepServices(
+        tool_registry=tool_registry,
+        owl_registry=owl_registry,
+        cost_tracker=None,
+        clarify_gateway=None,
+    ))  # type: ignore[arg-type]
+    try:
+        result = await _run_with_tools(state, provider, tool_registry)  # type: ignore[arg-type]
+    finally:
+        reset_services(token)
+
+    assert any("budget" in e for e in result.errors), (
+        f"DEFAULT SCHEDULED BACKSTOP MISS: no 'budget' marker in errors. "
+        f"errors={result.errors}"
+    )
+    # Must run PAST the interactive-turn cap (20) — proving the larger cap applied.
+    assert len(provider.completed_iterations) > DEFAULT_TURN_MAX_STEPS, (
+        f"Scheduled/deferred turn stopped at {len(provider.completed_iterations)} iterations, "
+        f"which did not exceed the interactive DEFAULT_TURN_MAX_STEPS={DEFAULT_TURN_MAX_STEPS}. "
+        f"The larger scheduled-turn default did not apply."
+    )
+    # And must still be bounded by the new, larger scheduled default (not run away).
+    assert len(provider.completed_iterations) <= DEFAULT_SCHEDULED_TURN_MAX_STEPS, (
+        f"DEFAULT SCHEDULED BACKSTOP MISS: {len(provider.completed_iterations)} iterations "
+        f"completed, expected <= {DEFAULT_SCHEDULED_TURN_MAX_STEPS}. "
+        f"completed_iterations={provider.completed_iterations}"
     )

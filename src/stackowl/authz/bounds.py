@@ -50,6 +50,18 @@ class NetworkRule(BaseModel):
 DEFAULT_TURN_MAX_TIME_S: float = 120.0
 DEFAULT_TURN_MAX_STEPS: int = 20
 
+# Default backstop for a NON-interactive, DEFERRED-delivery turn (a scheduled
+# goal_execution job or its retry — no live human waiting on a reply, so the
+# live-chat responsiveness tradeoff behind DEFAULT_TURN_MAX_STEPS does not apply).
+# These turns are inherently more thorough by nature (e.g. "check N news sources,
+# each needing search + fetch + a fallback retry on a 404/timeout"): production
+# saw a real recurring goal_execution job max out DEFAULT_TURN_MAX_STEPS (20, then
+# 23) checking up to 6 sources. Budgeted for ~6 sources x up to 3 steps each
+# (search, fetch, one fallback retry) plus headroom for a final synthesis step —
+# same safety-backstop role as DEFAULT_TURN_MAX_STEPS, just sized for background
+# work instead of a live reply.
+DEFAULT_SCHEDULED_TURN_MAX_STEPS: int = 45
+
 
 class ResourceCaps(BaseModel):
     """Per-run resource ceilings on the ``caps`` bounds axis.

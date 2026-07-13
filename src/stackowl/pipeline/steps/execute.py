@@ -9,7 +9,11 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS, ResourceCaps
+from stackowl.authz.bounds import (
+    DEFAULT_SCHEDULED_TURN_MAX_STEPS,
+    DEFAULT_TURN_MAX_STEPS,
+    ResourceCaps,
+)
 from stackowl.exceptions import (
     AllProvidersUnavailableError,
     BudgetBreach,
@@ -1649,8 +1653,19 @@ async def _run_with_tools(
         # be allowed to finish; the wall-clock timeout was killing good turns
         # mid-work. The step backstop still prevents a genuine infinite loop; time
         # is bounded only if an owl sets an explicit max_time_s cap.
+        #
+        # STEP cap depends on whether a live human is waiting. A non-interactive,
+        # DEFERRED-delivery turn (state.defer_delivery — a scheduler handler owns
+        # delivery, e.g. goal_execution and its retry_actuator retries) has no live
+        # chat responsiveness tradeoff and is inherently more thorough (multi-source
+        # background checks), so it gets the larger scheduled-turn default instead of
+        # the live-chat default. Every interactive turn is unaffected.
+        _is_deferred_turn = state.defer_delivery and not state.interactive
+        _default_max_steps = (
+            DEFAULT_SCHEDULED_TURN_MAX_STEPS if _is_deferred_turn else DEFAULT_TURN_MAX_STEPS
+        )
         _caps = _caps.model_copy(update={
-            "max_steps": DEFAULT_TURN_MAX_STEPS,
+            "max_steps": _default_max_steps,
         })
     # F093 — cumulative cost across durable resume: seed the governor with the
     # spend already accumulated by PRIOR attempts of this durable task (the
