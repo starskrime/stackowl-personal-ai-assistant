@@ -30,6 +30,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.recipient import resolve_owner_addresses
 from stackowl.pipeline.services import get_services
+from stackowl.scheduler.job import Job
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.scheduler.scheduler_helpers import parse_at, parse_in
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -157,21 +158,30 @@ class CronjobTool(Tool):
     async def verify(
         self, args: dict[str, object], result: ToolResult, *, started_at: float
     ) -> bool | None:
-        """PA5(a-followup) — confirm a schedule-CREATING action persisted a job row.
+        """PA5(a-followup) + remove/pause/resume-followup — confirm a mutating
+        action's claimed post-condition actually persisted.
 
-        Closes the ``effect_class="schedules"`` honesty hole: ``create``/``watch``
-        each claim "scheduled ✓" after an INSERT they did not re-read. This re-queries
-        the scheduler through the SAME db facade :meth:`execute` used and confirms
-        the claimed ``job_id`` is present — turning the over-claim into a MEASURED
-        success/failure that the honesty layer can demand a receipt for.
+        Closes the ``effect_class="schedules"`` honesty hole: every action here
+        claims a durable schedule mutation without re-reading its own write. This
+        re-queries the scheduler through the SAME db facade already used elsewhere
+        in this method and confirms the claimed post-condition — turning the
+        over-claim into a MEASURED success/failure the honesty layer can demand a
+        receipt for.
 
-        Scope: only the two schedule-CREATING actions (``create``, ``watch``). Every
-        other action returns ``None`` (no opinion):
+        Scope:
 
+        * ``create`` / ``watch`` — confirm the claimed ``job_id`` is now present
+          (INSERT re-read).
+        * ``remove`` — confirm the ``job_id`` row is now ABSENT (DELETE re-read).
+        * ``pause`` / ``resume`` — confirm the row is present with the expected
+          ``enabled`` flag (``pause`` → ``enabled=False``; ``resume`` →
+          ``enabled=True``); mirrors :meth:`JobScheduler.pause` /
+          :meth:`JobScheduler.resume`, which set ``enabled`` (there is no separate
+          ``paused`` column — see ``scheduler.py``).
         * ``list`` is a read — nothing to verify.
-        * ``update`` / ``pause`` / ``resume`` / ``remove`` mutate an EXISTING row;
-          their post-condition (changed schedule / paused flag / deleted row) is
-          out of scope here — wire its own probe later.
+        * ``update`` mutates an existing row's schedule/prompt fields; there is no
+          cheap single boolean post-condition to re-check (unlike a flag flip),
+          so it still returns ``None`` — wire its own field-diff probe later.
         * ``run`` invokes a job out of band — its effect is the handler's, not the
           scheduler's.
         * A success payload without a job_id (the soft-cap nudge ``created: False``)
@@ -179,11 +189,17 @@ class CronjobTool(Tool):
 
         Total / never raises (the seam catches but stay total here). A DB outage at
         verify-time yields ``None`` (cannot observe), never ``False`` — an unobservable
-        reality must not flip a real success.
+        reality must not flip a real success. A row genuinely absent/present when the
+        opposite was expected IS an observation (not an outage) and yields ``False``.
         """
         action = args.get("action")
-        if action not in ("create", "watch"):
-            return None
+        if action in ("create", "watch"):
+            return await self._verify_created(result)
+        if action in ("remove", "pause", "resume"):
+            return await self._verify_mutated(action, args)
+        return None
+
+    async def _verify_created(self, result: ToolResult) -> bool | None:
         try:
             payload = json.loads(result.output)
         except (ValueError, TypeError):
@@ -193,6 +209,40 @@ class CronjobTool(Tool):
         job_id = payload.get("job_id")
         if not isinstance(job_id, str) or not job_id:
             return None
+        jobs = await self._reread_jobs(job_id)
+        if jobs is None:
+            return None
+        observed = any(j.job_id == job_id for j in jobs)
+        log.tool.debug(
+            "cronjob.verify: exit",
+            extra={"_fields": {"job_id": job_id, "observed": observed}},
+        )
+        return observed
+
+    async def _verify_mutated(
+        self, action: object, args: dict[str, object]
+    ) -> bool | None:
+        job_id = args.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            return None
+        jobs = await self._reread_jobs(job_id)
+        if jobs is None:
+            return None
+        job = next((j for j in jobs if j.job_id == job_id), None)
+        if action == "remove":
+            observed = job is None
+        elif action == "pause":
+            observed = job is not None and not job.enabled
+        else:  # resume
+            observed = job is not None and job.enabled
+        log.tool.debug(
+            "cronjob.verify: exit",
+            extra={"_fields": {"job_id": job_id, "action": action, "observed": observed}},
+        )
+        return observed
+
+    async def _reread_jobs(self, job_id: str) -> list[Job] | None:
+        """Re-query every job row through the scheduler facade. ``None`` = unobservable."""
         db = get_services().db_pool
         if db is None:
             log.tool.warning(
@@ -201,7 +251,7 @@ class CronjobTool(Tool):
             )
             return None
         try:
-            jobs = await JobScheduler(db=db).list_jobs()
+            return await JobScheduler(db=db).list_jobs()
         except Exception as exc:
             log.tool.warning(
                 "cronjob.verify: scheduler read failed — no opinion",
@@ -209,12 +259,6 @@ class CronjobTool(Tool):
                 extra={"_fields": {"job_id": job_id}},
             )
             return None
-        observed = any(getattr(j, "job_id", None) == job_id for j in jobs)
-        log.tool.debug(
-            "cronjob.verify: exit",
-            extra={"_fields": {"job_id": job_id, "observed": observed}},
-        )
-        return observed
 
     async def execute(self, **kwargs: object) -> ToolResult:
         # 1. ENTRY

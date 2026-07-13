@@ -826,7 +826,8 @@ async def test_verify_returns_false_when_row_missing(migrated_db: DbPool) -> Non
 
 
 async def test_verify_returns_none_for_non_creating_action(migrated_db: DbPool) -> None:
-    """list/update/pause/resume/remove/run are out of scope here ⇒ no opinion."""
+    """list/update/run are out of scope here ⇒ no opinion (remove/pause/resume
+    now have their own probes — see the tests below)."""
     import time
 
     fake = ToolResult(
@@ -922,6 +923,210 @@ async def test_verify_returns_none_when_scheduler_read_raises(
     finally:
         reset_services(token)
     assert verdict is None
+
+
+async def test_verify_remove_observes_row_gone(migrated_db: DbPool) -> None:
+    """remove lands → row genuinely DELETEd → verify re-reads and confirms
+    absence ⇒ verified=True. This is the live incident: cronjob.remove
+    succeeded but the turn was floored as if it hadn't."""
+    import time
+
+    await _seed_session(migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
+    )
+    job_id = created["job_id"]
+    remove_result = await _run(migrated_db, action="remove", job_id=job_id)
+    assert remove_result.success
+
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "remove", "job_id": job_id}, remove_result, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is True
+
+
+async def test_verify_remove_returns_false_when_row_still_present(
+    migrated_db: DbPool,
+) -> None:
+    """A claimed removal whose row is STILL in the scheduler ⇒ verified=False
+    (the lying-success case the honesty layer must catch)."""
+    import time
+
+    await _seed_session(migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
+    )
+    job_id = created["job_id"]
+    fake = ToolResult(
+        success=True, output=json.dumps({"remove": True, "job_id": job_id}),
+        error=None, duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "remove", "job_id": job_id}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is False
+
+
+async def test_verify_pause_observes_disabled_row(migrated_db: DbPool) -> None:
+    """pause lands → row's enabled flag flips to False → verify confirms ⇒ True."""
+    import time
+
+    await _seed_session(migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
+    )
+    job_id = created["job_id"]
+    pause_result = await _run(migrated_db, action="pause", job_id=job_id)
+    assert pause_result.success
+
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "pause", "job_id": job_id}, pause_result, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is True
+
+
+async def test_verify_pause_returns_false_when_row_still_enabled(
+    migrated_db: DbPool,
+) -> None:
+    """A claimed pause whose row is still enabled ⇒ verified=False."""
+    import time
+
+    await _seed_session(migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
+    )
+    job_id = created["job_id"]
+    fake = ToolResult(
+        success=True, output=json.dumps({"pause": True, "job_id": job_id}),
+        error=None, duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "pause", "job_id": job_id}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is False
+
+
+async def test_verify_resume_observes_enabled_row(migrated_db: DbPool) -> None:
+    """pause then resume → row's enabled flag flips back to True → verify
+    confirms ⇒ True."""
+    import time
+
+    await _seed_session(migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
+    )
+    job_id = created["job_id"]
+    assert (await _run(migrated_db, action="pause", job_id=job_id)).success
+    resume_result = await _run(migrated_db, action="resume", job_id=job_id)
+    assert resume_result.success
+
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "resume", "job_id": job_id}, resume_result, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is True
+
+
+async def test_verify_resume_returns_false_when_row_still_disabled(
+    migrated_db: DbPool,
+) -> None:
+    """A claimed resume whose row is still disabled ⇒ verified=False."""
+    import time
+
+    await _seed_session(migrated_db)
+    created = _payload(
+        await _run(migrated_db, action="create", prompt="x", schedule="every 2h")
+    )
+    job_id = created["job_id"]
+    assert (await _run(migrated_db, action="pause", job_id=job_id)).success
+    fake = ToolResult(
+        success=True, output=json.dumps({"resume": True, "job_id": job_id}),
+        error=None, duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "resume", "job_id": job_id}, fake, started_at=time.time()
+        )
+    finally:
+        reset_services(token)
+    assert verdict is False
+
+
+async def test_verify_mutated_returns_none_when_db_unavailable() -> None:
+    """A DB outage at verify-time for remove/pause/resume yields None (cannot
+    observe), never False — mirrors the create/watch DB-outage contract."""
+    import time
+
+    fake = ToolResult(
+        success=True, output=json.dumps({"remove": True, "job_id": "goal_execution-abc"}),
+        error=None, duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=None))
+    try:
+        verdict = await CronjobTool().verify(
+            {"action": "remove", "job_id": "goal_execution-abc"},
+            fake,
+            started_at=time.time(),
+        )
+    finally:
+        reset_services(token)
+    assert verdict is None
+
+
+async def test_verify_mutated_returns_none_without_job_id() -> None:
+    """No job_id on the args ⇒ nothing to re-query ⇒ no opinion, never raises."""
+    import time
+
+    fake = ToolResult(
+        success=True, output=json.dumps({"remove": True}), error=None, duration_ms=1.0,
+    )
+    verdict = await CronjobTool().verify(
+        {"action": "remove"}, fake, started_at=time.time()
+    )
+    assert verdict is None
+
+
+async def test_verify_returns_none_for_update_and_run(migrated_db: DbPool) -> None:
+    """update/run still have no probe wired — deliberate scope limit, not a gap
+    that silently masks a lying success (update has no cheap boolean
+    post-condition; run's effect belongs to the invoked handler, not the
+    scheduler)."""
+    import time
+
+    fake = ToolResult(
+        success=True, output=json.dumps({"updated": True, "job_id": "x"}),
+        error=None, duration_ms=1.0,
+    )
+    token = set_services(StepServices(db_pool=migrated_db))
+    try:
+        assert await CronjobTool().verify(
+            {"action": "update", "job_id": "x"}, fake, started_at=time.time()
+        ) is None
+        assert await CronjobTool().verify(
+            {"action": "run", "job_id": "x"}, fake, started_at=time.time()
+        ) is None
+    finally:
+        reset_services(token)
 
 
 async def test_call_seam_runs_verify_and_stamps_verified_true(migrated_db: DbPool) -> None:
