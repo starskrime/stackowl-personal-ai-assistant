@@ -499,7 +499,7 @@ class TelegramChannelAdapter(ChannelAdapter):
             )
             return
         try:
-            tracker.backfill_message(trace_id=trace_id, chat_id=chat_id, message_id=message_id)
+            await tracker.backfill_message(trace_id=trace_id, chat_id=chat_id, message_id=message_id)
         except Exception as exc:  # backfill must never break delivery
             log.telegram.error(
                 "[telegram] adapter._backfill_approach_rating: backfill failed",

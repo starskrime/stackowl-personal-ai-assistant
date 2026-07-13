@@ -141,7 +141,7 @@ async def run(state: PipelineState) -> PipelineState:
                     # reconstruction from `content` alone would silently drop the
                     # token line the user actually saw.
                     stored_text = last.content + (last.display_suffix or "")
-                    tracker.record_pending(trace_id=out_state.trace_id, text=stored_text)
+                    await tracker.record_pending(trace_id=out_state.trace_id, text=stored_text)
                     keyboard = tracker.build_keyboard(trace_id=out_state.trace_id)
                     rated_chunk = last.model_copy(update={"raw_keyboard": keyboard})
                     out_state = out_state.evolve(
@@ -155,9 +155,9 @@ async def run(state: PipelineState) -> PipelineState:
                     )
                     # record_pending may have already landed before a later step
                     # in this try raised — clear it here so a failed attach never
-                    # leaks a trace_id in the tracker's _pending dict forever
+                    # leaks a trace_id in the pending-vote table forever
                     # (otherwise only a user tap would ever clear it).
-                    tracker.clear(trace_id=out_state.trace_id)
+                    await tracker.clear(trace_id=out_state.trace_id)
     log.engine.info(
         "[pipeline] consolidate: exit",
         extra={"_fields": {"trace_id": state.trace_id}},

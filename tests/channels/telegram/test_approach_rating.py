@@ -1,15 +1,14 @@
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from stackowl.channels.telegram.approach_rating import (
     ApproachRatingCallbackHandler,
     ApproachRatingTracker,
 )
+from stackowl.db.pool import DbPool
 
 
-def test_build_keyboard_has_two_buttons():
-    tracker = ApproachRatingTracker()
+def test_build_keyboard_has_two_buttons(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
     keyboard = tracker.build_keyboard(trace_id="trace-1")
 
     buttons = keyboard["inline_keyboard"][0]
@@ -18,34 +17,48 @@ def test_build_keyboard_has_two_buttons():
     assert buttons[1]["callback_data"] == "apr:trace-1:negative"
 
 
-def test_backfill_then_lookup():
-    tracker = ApproachRatingTracker()
-    tracker.record_pending(trace_id="trace-1", text="original answer")
-    tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
+async def test_backfill_then_lookup(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
+    await tracker.record_pending(trace_id="trace-1", text="original answer")
+    await tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
 
-    assert tracker.get_message(trace_id="trace-1") == (555, 999, "original answer")
-
-
-def test_record_pending_caps_and_evicts_oldest():
-    tracker = ApproachRatingTracker()
-    for i in range(500):
-        tracker.record_pending(trace_id=f"trace-{i}", text="x")
-
-    # At capacity — recording one more must evict the OLDEST entry (trace-0),
-    # never silently grow past the cap.
-    tracker.record_pending(trace_id="trace-500", text="x")
-
-    assert len(tracker._pending) == 500
-    assert "trace-0" not in tracker._pending
-    assert "trace-500" in tracker._pending
-    assert "trace-1" in tracker._pending  # everything else survives
+    assert await tracker.get_message(trace_id="trace-1") == (555, 999, "original answer")
 
 
-@pytest.mark.asyncio
-async def test_handle_positive_vote_records_and_edits():
-    tracker = ApproachRatingTracker()
-    tracker.record_pending(trace_id="trace-1", text="original answer")
-    tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
+async def test_record_pending_survives_a_separate_tracker_instance(tmp_db: DbPool):
+    # Regression guard for the gateway/core process split: two independently
+    # constructed trackers sharing the same DbPool (mirrors two processes
+    # sharing the same SQLite file) must observe the same pending-vote row.
+    writer = ApproachRatingTracker(tmp_db)
+    reader = ApproachRatingTracker(tmp_db)
+
+    await writer.record_pending(trace_id="trace-1", text="original answer")
+    await writer.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
+
+    assert await reader.get_message(trace_id="trace-1") == (555, 999, "original answer")
+
+
+async def test_get_message_none_before_backfill(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
+    await tracker.record_pending(trace_id="trace-1", text="original answer")
+
+    assert await tracker.get_message(trace_id="trace-1") is None
+
+
+async def test_clear_removes_row(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
+    await tracker.record_pending(trace_id="trace-1", text="original answer")
+    await tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
+
+    await tracker.clear(trace_id="trace-1")
+
+    assert await tracker.get_message(trace_id="trace-1") is None
+
+
+async def test_handle_positive_vote_records_and_edits(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
+    await tracker.record_pending(trace_id="trace-1", text="original answer")
+    await tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
 
     outcome_store = MagicMock()
     outcome_store.set_approach_rating = AsyncMock(return_value=True)
@@ -66,9 +79,8 @@ async def test_handle_positive_vote_records_and_edits():
     assert call_args.args[2] == "original answer\n\n\U0001F44D Liked"
 
 
-@pytest.mark.asyncio
-async def test_handle_unknown_trace_id_noops_gracefully():
-    tracker = ApproachRatingTracker()
+async def test_handle_unknown_trace_id_noops_gracefully(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
     outcome_store = MagicMock()
     outcome_store.set_approach_rating = AsyncMock(return_value=False)
     adapter = MagicMock()
@@ -80,10 +92,9 @@ async def test_handle_unknown_trace_id_noops_gracefully():
     adapter.edit_message.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_handle_invalid_vote_rejected_before_db_write():
-    tracker = ApproachRatingTracker()
-    tracker.record_pending(trace_id="trace-1", text="original answer")
+async def test_handle_invalid_vote_rejected_before_db_write(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
+    await tracker.record_pending(trace_id="trace-1", text="original answer")
 
     outcome_store = MagicMock()
     outcome_store.set_approach_rating = AsyncMock(return_value=True)
@@ -96,14 +107,13 @@ async def test_handle_invalid_vote_rejected_before_db_write():
 
     outcome_store.set_approach_rating.assert_not_awaited()
     adapter.edit_message.assert_not_awaited()
-    assert tracker.get_message(trace_id="trace-1") is None
+    assert await tracker.get_message(trace_id="trace-1") is None
 
 
-@pytest.mark.asyncio
-async def test_handle_store_exception_still_clears_tracker():
-    tracker = ApproachRatingTracker()
-    tracker.record_pending(trace_id="trace-1", text="original answer")
-    tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
+async def test_handle_store_exception_still_clears_tracker(tmp_db: DbPool):
+    tracker = ApproachRatingTracker(tmp_db)
+    await tracker.record_pending(trace_id="trace-1", text="original answer")
+    await tracker.backfill_message(trace_id="trace-1", chat_id=555, message_id=999)
 
     outcome_store = MagicMock()
     outcome_store.set_approach_rating = AsyncMock(side_effect=RuntimeError("db down"))
@@ -116,4 +126,4 @@ async def test_handle_store_exception_still_clears_tracker():
 
     adapter.edit_message.assert_not_awaited()
     # tracker entry must not leak on a store failure
-    assert "trace-1" not in tracker._pending
+    assert await tracker.get_message(trace_id="trace-1") is None

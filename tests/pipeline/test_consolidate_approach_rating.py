@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -14,7 +14,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 @pytest.mark.asyncio
 async def test_qualifying_answer_gets_rating_keyboard(monkeypatch):
     tracker = MagicMock()
-    tracker.record_pending = MagicMock()
+    tracker.record_pending = AsyncMock()
     tracker.build_keyboard = MagicMock(
         return_value={"inline_keyboard": [[{"text": "x", "callback_data": "apr:t1:positive"}]]}
     )
@@ -36,7 +36,7 @@ async def test_qualifying_answer_gets_rating_keyboard(monkeypatch):
 
     result = await consolidate.run(state)
 
-    tracker.record_pending.assert_called_once_with(trace_id="t1", text=long_answer)
+    tracker.record_pending.assert_awaited_once_with(trace_id="t1", text=long_answer)
     assert result.responses[-1].raw_keyboard is not None
 
 

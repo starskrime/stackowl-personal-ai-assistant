@@ -44,7 +44,7 @@ async def _stream(*chunks: ResponseChunk) -> AsyncIterator[ResponseChunk]:
 async def test_send_with_raw_keyboard_backfills_tracker() -> None:
     adapter, bot = _adapter(message_id=777)
     tracker = MagicMock()
-    tracker.backfill_message = MagicMock()
+    tracker.backfill_message = AsyncMock()
     token = set_services(StepServices(approach_rating_tracker=tracker))
     try:
         await adapter.send(
@@ -64,7 +64,7 @@ async def test_send_with_raw_keyboard_backfills_tracker() -> None:
     finally:
         reset_services(token)
 
-    tracker.backfill_message.assert_called_once_with(
+    tracker.backfill_message.assert_awaited_once_with(
         trace_id="trace-9", chat_id=321, message_id=777
     )
     # Delivered via the raw-keyboard path (send_message with a reply_markup),
@@ -76,7 +76,7 @@ async def test_send_with_raw_keyboard_backfills_tracker() -> None:
 async def test_send_without_raw_keyboard_does_not_touch_tracker() -> None:
     adapter, bot = _adapter(message_id=1)
     tracker = MagicMock()
-    tracker.backfill_message = MagicMock()
+    tracker.backfill_message = AsyncMock()
     token = set_services(StepServices(approach_rating_tracker=tracker))
     try:
         await adapter.send(
@@ -94,5 +94,5 @@ async def test_send_without_raw_keyboard_does_not_touch_tracker() -> None:
     finally:
         reset_services(token)
 
-    tracker.backfill_message.assert_not_called()
+    tracker.backfill_message.assert_not_awaited()
     bot.send_message.assert_awaited_once()
