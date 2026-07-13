@@ -1308,13 +1308,19 @@ class StartupOrchestrator:
 
         retry_queue_store = RetryQueueStore(db_pool)
 
-        # Approach-rating like/dislike votes — ONE process-wide singleton (pure
-        # in-memory, no dependencies) so consolidate.py's record_pending/
-        # build_keyboard calls and the (Task 6) Telegram backfill + "apr"
-        # callback handler all observe the SAME pending-vote state.
+        # Approach-rating like/dislike votes — DB-backed (migration 0084), NOT an
+        # in-memory singleton: this codebase runs a genuine two-process split
+        # (runtime.split_process) and this same _phase_gateway function runs in
+        # BOTH the gateway and core processes, so a plain in-memory dict built
+        # here would give each process its OWN separate object — consolidate.py's
+        # record_pending (core process) and the Telegram backfill + "apr" callback
+        # handler (gateway process) would never see each other's writes. Both
+        # processes share the same SQLite DB file, so DbPool-backed storage (same
+        # construction convention as RetryQueueStore(db_pool) above) is what
+        # actually lets both processes observe the same pending-vote state.
         from stackowl.channels.telegram.approach_rating import ApproachRatingTracker
 
-        approach_rating_tracker = ApproachRatingTracker()
+        approach_rating_tracker = ApproachRatingTracker(db_pool)
 
         services = StepServices(
             a2a_queue=a2a_queue,
@@ -2703,11 +2709,13 @@ class StartupOrchestrator:
                             f"{CALLBACK_PREFIX}:", tg_voice_confirm.handle_callback
                         )
                     # Task 6 — a tapped like/dislike button resolves through the
-                    # SAME `approach_rating_tracker` singleton constructed above
-                    # (fed into `services`) so the pending-vote state consolidate.py
-                    # writes and the one this handler reads/clears are one dict, not
-                    # two. TaskOutcomeStore is a stateless db_pool wrapper (like
-                    # every other call site) — no dedup singleton needed for it.
+                    # SAME `approach_rating_tracker` instance constructed above
+                    # (fed into `services`); it is DB-backed (migration 0084), so
+                    # the pending-vote row consolidate.py writes (in the core
+                    # process) and the one this handler reads/clears (in the
+                    # gateway process) is the same durable row, not two separate
+                    # in-memory objects. TaskOutcomeStore is a stateless db_pool
+                    # wrapper (like every other call site) — no dedup needed for it.
                     from stackowl.channels.telegram.approach_rating import (
                         APPROACH_RATING_PREFIX,
                         ApproachRatingCallbackHandler,
