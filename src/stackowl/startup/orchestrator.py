@@ -689,7 +689,7 @@ class StartupOrchestrator:
         from stackowl.parliament.orchestrator import ParliamentOrchestrator
         from stackowl.parliament.session_store import SessionStore
         from stackowl.pipeline.backends.factory import create_backend
-        from stackowl.pipeline.services import StepServices, resolve_identity_key
+        from stackowl.pipeline.services import StepServices, resolve_identity_key, set_services
         from stackowl.pipeline.state import PipelineState
         from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
         from stackowl.providers.registry import ProviderRegistry
@@ -1371,6 +1371,26 @@ class StartupOrchestrator:
         from stackowl.owls.a2a_delegation import A2ADelegator
 
         services.a2a_delegator = A2ADelegator(a2a_queue=a2a_queue, services=services)
+        # Root-cause fix (live-bugfix-backfill-nulls): bind this SAME mutable
+        # StepServices onto the ambient ContextVar in _phase_gateway's OWN
+        # context — the true common ancestor of every channel loop task this
+        # function spawns below (asyncio.create_task copies the CALLER's
+        # context at creation time). Without this, get_services() only ever
+        # saw a value inside AsyncioBackend.run()/LangGraphBackend.run()'s own
+        # per-turn task (each sets/resets it around its own body) — a SIBLING
+        # task created off the same dispatch call, e.g. ClarifyPump.spawn_send's
+        # send task that drives adapter.send(), copied _dispatch_turn's context
+        # BEFORE that per-turn set_services ever ran and never observed it,
+        # so get_services() there fell through to an empty StepServices().
+        # That silently no-op'd TelegramAdapter._backfill_approach_rating and
+        # _backfill_floor_retry_row (both read get_services() inside the send
+        # task) — proven via an isolated contextvars repro reproducing the
+        # exact LookupError a sibling task sees. Never reset: this is a
+        # process-lifetime ambient default, and it is the SAME object every
+        # per-turn set_services()/reset_services() pair already (redundantly)
+        # sets/restores, so this is a byte-identical no-op for every existing
+        # get_services() call site that already worked correctly.
+        set_services(services)
         backend = create_backend(self._settings.orchestrator.backend, services=services)
 
         # Task 6 — cron retry sweep. RetryActuator is the SHARED retry function
