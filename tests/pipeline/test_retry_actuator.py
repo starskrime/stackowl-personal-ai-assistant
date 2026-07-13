@@ -126,6 +126,52 @@ async def test_attempt_retry_pins_newly_failed_capability_not_already_banned():
 
 
 @pytest.mark.asyncio
+async def test_attempt_retry_budget_capped_partial_is_not_success():
+    """A retry attempt that hits the SAME budget cap again produces a non-floored
+    response chunk (execute.py's default-backstop branch never sets is_floor=True
+    on a non-empty partial) but DOES stamp budget_capped=True on the final state.
+    That must route through _handle_failure (mark_attempt_failed), NOT be treated
+    as a genuine success (_deliver_success/mark_completed) — otherwise a
+    recurring scheduled objective that always hits the same cap gets its
+    half-finished partial delivered to the user as if it were done, forever."""
+    row = _row()
+
+    budget_capped_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        budget_capped=True,
+        responses=(
+            ResponseChunk(
+                content="Found multiple stories... let me get the details.",
+                is_final=False, chunk_index=0,
+                trace_id="trace-new", owl_name="secretary", is_floor=False,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=budget_capped_state)
+
+    adapter = MagicMock()
+    adapter.edit_message = AsyncMock()
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(return_value=adapter)
+
+    retry_store = MagicMock()
+    retry_store.mark_completed = AsyncMock()
+    updated_row = _row(attempt_count=1, status="pending")
+    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "pending"
+    retry_store.mark_attempt_failed.assert_awaited_once()
+    retry_store.mark_completed.assert_not_awaited()
+    adapter.edit_message.assert_not_awaited()
+    adapter.send_text.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_attempt_retry_survives_channel_registry_error_on_give_up():
     """_notify_gave_up's channel_registry.get() call can raise (e.g.
     ChannelNotFoundError for an unregistered channel) — this must be caught

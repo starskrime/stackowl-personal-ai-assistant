@@ -91,8 +91,13 @@ class RetryActuator:
             )
             return outcome
 
-        # 2. DECISION — floored (still couldn't) vs a genuine answer.
-        floored = any(c.is_floor for c in final_state.responses)
+        # 2. DECISION — floored (still couldn't) vs a genuine answer. A budget-capped
+        # final state (delivery_gate.py's own established signal — see
+        # is_consequential_giveup_now / surface_persistence_handoff) is treated the
+        # same as an explicit floor chunk: the turn was cut off mid-thought, not
+        # genuinely completed, even when the partial text never got an is_floor chunk
+        # (execute.py's default-backstop budget-breach branch omits it).
+        floored = any(c.is_floor for c in final_state.responses) or final_state.budget_capped
         if floored:
             newly_failed = self._pick_newly_failed(row, final_state)
             outcome = await self._handle_failure(
