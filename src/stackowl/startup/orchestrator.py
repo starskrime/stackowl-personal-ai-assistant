@@ -343,6 +343,13 @@ class StartupOrchestrator:
         self._settings: Settings | None = None
         self._browser_probe_result: BrowserProbeResult | None = None
         self._providers_degraded = False  # set True in _phase_providers if ALL providers unreachable
+        # Live re-heal cooldown for the degraded latch above — mirrors
+        # CircuitBreaker.half_open_seconds (circuit_breaker.py, default 30) so a
+        # dead provider isn't re-probed on every single turn, but a provider that
+        # comes back up gets caught within one cooldown window instead of
+        # requiring a full process restart. See _maybe_reprobe_providers.
+        self._degraded_recheck_cooldown_s = 30.0
+        self._last_degraded_probe_at: float | None = None
         self._shutting_down = False  # F144 — idempotency guard for double-signal
         self._migrations_applied = False  # F146 — single migration site per boot
 
@@ -496,6 +503,51 @@ class StartupOrchestrator:
                 "/provider or `stackowl providers add/edit`)",
                 extra={"_fields": {"reason": str(exc)}},
             )
+
+    async def _maybe_reprobe_providers(self) -> bool:
+        """Live self-heal check for the boot-time degraded latch.
+
+        ``_phase_providers`` sets ``self._providers_degraded`` ONCE at boot and
+        nothing ever revisited it afterward, so a provider that came back up
+        after boot was never re-checked — every conversational turn floored
+        forever with the "no AI reachable" notice until the process was
+        restarted, even though the provider was healthy again. Called from
+        ``_dispatch_turn`` only while degraded; throttled by
+        ``_degraded_recheck_cooldown_s`` (same cooldown philosophy as
+        ``CircuitBreaker.half_open_seconds``) so a dead endpoint isn't hammered
+        on every single message. Uses a single-attempt ``ProviderProbe``
+        (``max_retries=1``) — the boot-time 3-retry/backoff variant is too slow
+        to run inline on a turn.
+
+        Returns the (possibly updated) degraded state; callers must write it
+        back onto the SAME ``StepServices`` instance the dispatch loop reads.
+        """
+        if not self._providers_degraded:
+            return False
+        now = time.monotonic()
+        if (
+            self._last_degraded_probe_at is not None
+            and now - self._last_degraded_probe_at < self._degraded_recheck_cooldown_s
+        ):
+            return True  # still within cooldown — don't hammer a dead endpoint
+        self._last_degraded_probe_at = now
+        assert self._settings is not None
+        providers = self._settings.providers
+        if not providers:
+            return True  # nothing configured to probe; stay degraded
+        probe = ProviderProbe(providers, max_retries=1)
+        try:
+            await probe.check()
+        except StartupError as exc:
+            log.warning(
+                "[startup] providers: live re-probe still all-down — remaining degraded",
+                extra={"_fields": {"reason": str(exc)}},
+            )
+            return True
+        log.info(
+            "[startup] providers: live re-probe succeeded — self-healed, resuming normal routing"
+        )
+        return False
 
     async def _phase_browser_install(self) -> None:
         """Auto-install the Camoufox browser binary if missing.
@@ -1749,6 +1801,13 @@ class StartupOrchestrator:
             # deliver looks the writer up by), so the turn's output is never
             # stream-missed.
             writer, reader = stream_registry.create(msg.trace_id)
+            if services.providers_degraded and decision.route != "command":
+                # Live re-heal — the boot-time latch never revisited itself, so a
+                # provider that recovered after boot was floored forever. Re-probe
+                # (cooldown-throttled) and write the result back onto THIS SAME
+                # StepServices instance the dispatch loop (and every future turn)
+                # reads, so a successful re-probe resumes normal routing immediately.
+                services.providers_degraded = await self._maybe_reprobe_providers()
             if services.providers_degraded and decision.route != "command":
                 # Self-heal degraded boot — no LLM reachable; float the notice and
                 # skip parliament/backend entirely rather than hang on a dead call.
