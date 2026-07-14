@@ -98,6 +98,15 @@ def _loads_outcome(text: Any) -> ExpectedOutcome | None:
         return None
 
 
+def _dumps_depends_on(ids: list[str]) -> str | None:
+    """JSON-encode subgoal_id dependencies; empty ⇒ SQL NULL (ready immediately)."""
+    return _dumps(ids)
+
+
+def _loads_depends_on(text: Any) -> list[str]:
+    return _loads_list(text)
+
+
 class ObjectiveStore(OwnedRepository):
     """Persist + query objectives, their ordered sub-goals, and an event log."""
 
@@ -126,6 +135,9 @@ class ObjectiveStore(OwnedRepository):
                 "target_addresses": _dumps(objective.target_addresses),
                 "blocker": objective.blocker,
                 "blocker_kind": objective.blocker_kind,
+                "repo": objective.repo,
+                "integration_branch": objective.integration_branch,
+                "base_branch": objective.base_branch,
                 "created_at": now,
                 "updated_at": now,
             },
@@ -186,20 +198,31 @@ class ObjectiveStore(OwnedRepository):
 
         Each item is either a plain description string (legacy / no acceptance
         criterion) or a :class:`SubgoalSpec` carrying an OPTIONAL declared
-        ``acceptance_criteria`` and complexity estimate. A bare string is
-        normalized to a criterion-free spec, so every existing caller is
-        unchanged (byte-identical). ``depth`` stamps ``decomposition_depth`` on
-        every created row (Task 3); 0 (the default) for the objective's initial,
-        top-level decomposition."""
+        ``acceptance_criteria``, complexity estimate, and (Task #4) a
+        ``depends_on`` list of INDICES into this SAME batch — resolved here to
+        real subgoal_ids, since ids don't exist until insert. A bare string is
+        normalized to a criterion-free, dependency-free spec, so every
+        existing caller is unchanged (byte-identical). ``depth`` stamps
+        ``decomposition_depth`` on every created row (Task 3); 0 (the
+        default) for the objective's initial, top-level decomposition."""
         existing = await self.list_subgoals(objective_id)
         start = len(existing)
-        created: list[Subgoal] = []
+        specs = [SubgoalSpec(description=item) if isinstance(item, str) else item for item in items]
         now = _now()
-        for offset, item in enumerate(items):
-            spec = SubgoalSpec(description=item) if isinstance(item, str) else item
+        # First pass: mint every subgoal_id up front so depends_on indices
+        # (which reference OTHER items in this same batch, including ones
+        # that come later positionally) can all be resolved before any row
+        # is inserted.
+        ids = [f"sub-{uuid.uuid4().hex[:12]}" for _ in specs]
+        created: list[Subgoal] = []
+        for offset, spec in enumerate(specs):
             position = start + offset
+            depends_on_ids = [ids[i] for i in spec.depends_on]
             created.append(
-                await self._create_subgoal_row(objective_id, position, spec, depth, now)
+                await self._create_subgoal_row(
+                    objective_id, position, spec, depth, now,
+                    subgoal_id=ids[offset], depends_on=depends_on_ids,
+                )
             )
         return created
 
@@ -295,9 +318,13 @@ class ObjectiveStore(OwnedRepository):
         spec: SubgoalSpec,
         depth: int,
         now: datetime,
+        *,
+        subgoal_id: str | None = None,
+        depends_on: list[str] | None = None,
     ) -> Subgoal:
         """Shared INSERT core for :meth:`add_subgoals` and :meth:`insert_subgoals_at`."""
-        subgoal_id = f"sub-{uuid.uuid4().hex[:12]}"
+        subgoal_id = subgoal_id or f"sub-{uuid.uuid4().hex[:12]}"
+        depends_on = depends_on or []
         await self._insert_owned(
             _SUBGOALS,
             {
@@ -313,6 +340,9 @@ class ObjectiveStore(OwnedRepository):
                 "task_id": None,
                 "estimated_complexity": spec.estimated_complexity,
                 "decomposition_depth": depth,
+                "depends_on": _dumps_depends_on(depends_on),
+                "worktree_path": None,
+                "story_branch": None,
                 "created_at": now.isoformat(),
                 "updated_at": now.isoformat(),
             },
@@ -327,6 +357,7 @@ class ObjectiveStore(OwnedRepository):
             acceptance_criteria=spec.acceptance_criteria,
             estimated_complexity=spec.estimated_complexity,
             decomposition_depth=depth,
+            depends_on=depends_on,
             created_at=now,
             updated_at=now,
         )
@@ -356,6 +387,8 @@ class ObjectiveStore(OwnedRepository):
         task_id: str | None = None,
         attempts: int | None = None,
         verified: bool | None = None,
+        worktree_path: str | None = None,
+        story_branch: str | None = None,
     ) -> None:
         """Update a sub-goal's status and (optionally) result / task id / attempts /
         verification disposition.
@@ -363,7 +396,9 @@ class ObjectiveStore(OwnedRepository):
         ``attempts`` and ``verified`` are only written when explicitly supplied —
         an absent argument leaves the stored value untouched (so the legacy callers
         that pass neither are byte-identical). ``verified`` is tri-state: pass
-        ``True``/``False`` to stamp it; omit (``None``) to leave it as-is."""
+        ``True``/``False`` to stamp it; omit (``None``) to leave it as-is.
+        ``worktree_path``/``story_branch`` follow the same "only written when
+        supplied" convention (Task #4)."""
         sets = ["status = ?", "updated_at = ?"]
         params: list[Any] = [status, _now().isoformat()]
         if result is not None:
@@ -378,6 +413,12 @@ class ObjectiveStore(OwnedRepository):
         if verified is not None:
             sets.append("verified = ?")
             params.append(1 if verified else 0)
+        if worktree_path is not None:
+            sets.append("worktree_path = ?")
+            params.append(worktree_path)
+        if story_branch is not None:
+            sets.append("story_branch = ?")
+            params.append(story_branch)
         await self._update_owned(
             _SUBGOALS,
             set_sql=", ".join(sets),
@@ -434,6 +475,9 @@ class ObjectiveStore(OwnedRepository):
             target_addresses=_loads_dict(row.get("target_addresses")),
             blocker=row.get("blocker"),
             blocker_kind=row.get("blocker_kind"),
+            repo=row.get("repo"),
+            integration_branch=row.get("integration_branch"),
+            base_branch=row.get("base_branch"),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
@@ -453,6 +497,9 @@ class ObjectiveStore(OwnedRepository):
             task_id=row.get("task_id"),
             estimated_complexity=float(row.get("estimated_complexity") or 0.0),
             decomposition_depth=int(row.get("decomposition_depth") or 0),
+            depends_on=_loads_depends_on(row.get("depends_on")),
+            worktree_path=row.get("worktree_path"),
+            story_branch=row.get("story_branch"),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
