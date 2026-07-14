@@ -10,6 +10,7 @@ pings the owner — it never silently acts on the irreversible thing.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -714,3 +715,84 @@ async def test_completion_falls_back_when_no_provider_registry(pool: DbPool) -> 
 
     _job, message, _category = deliverer.calls[-1]
     assert "the real output" in message  # a real sub-goal result, not just the intent
+
+
+# ------------------------------------------------- Task 8: epic branch -----
+
+
+def _epic_objective(objective_id: str) -> Objective:
+    return Objective(
+        objective_id=objective_id, owner_id="principal-default", intent="epic",
+        repo="/tmp/fake-repo", integration_branch=f"stackowl/epic-{objective_id}",
+        base_branch="main",
+    )
+
+
+async def test_epic_advance_launches_ready_stories_concurrently(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task #4 epic path: independent stories are launched CONCURRENTLY in one
+    tick, not one-per-tick like the plain-objective linear path."""
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic")
+    await store.create(objective)
+    await store.add_subgoals(
+        "obj-epic",
+        [SubgoalSpec(description="a"), SubgoalSpec(description="b")],  # both independent
+    )
+
+    launched: list[str] = []
+
+    async def _fake_run_story(
+        objective: Objective, subgoal: object, store_: ObjectiveStore, locks: object,
+    ) -> None:
+        launched.append(subgoal.subgoal_id)  # type: ignore[attr-defined]
+        await store_.update_subgoal(subgoal.subgoal_id, "done", result="ok")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("stackowl.objectives.driver.run_story", _fake_run_story)
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+
+    result = await handler._advance(store, await store.get("obj-epic"))
+
+    assert result is True
+    for _ in range(20):
+        if len(launched) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(launched) == 2  # both independent stories launched THIS tick
+
+
+async def test_epic_failure_isolation_does_not_block_siblings(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One story blocking must not prevent an independent sibling from completing."""
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic2")
+    await store.create(objective)
+    await store.add_subgoals(
+        "obj-epic2",
+        [SubgoalSpec(description="a"), SubgoalSpec(description="b")],  # independent
+    )
+
+    async def _fake_run_story(
+        objective: Objective, subgoal: object, store_: ObjectiveStore, locks: object,
+    ) -> None:
+        if subgoal.description == "a":  # type: ignore[attr-defined]
+            await store_.update_subgoal(subgoal.subgoal_id, "blocked", result="failed")  # type: ignore[attr-defined]
+        else:
+            await store_.update_subgoal(subgoal.subgoal_id, "done", result="ok")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("stackowl.objectives.driver.run_story", _fake_run_story)
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+
+    await handler._advance(store, await store.get("obj-epic2"))
+
+    for _ in range(20):
+        subgoals = await store.list_subgoals("obj-epic2")
+        if all(sg.status in ("blocked", "done") for sg in subgoals):
+            break
+        await asyncio.sleep(0.01)
+    subgoals = await store.list_subgoals("obj-epic2")
+    by_desc = {sg.description: sg for sg in subgoals}
+    assert by_desc["a"].status == "blocked"
+    assert by_desc["b"].status == "done"
