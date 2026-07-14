@@ -1,0 +1,119 @@
+- id: t01
+  title: Migration — epic execution columns
+  description: >
+    Implement "Task 1: Migration — epic columns" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (files, exact SQL, verification steps, commit message). Read that
+    Task 1 section in full before starting.
+
+- id: t02
+  title: Model updates — Objective/Subgoal/SubgoalSpec epic fields
+  description: >
+    Implement "Task 2: Model updates" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (files, test code, field definitions, commit message). Depends on
+    t01's migration being applied. Read that Task 2 section in full before
+    starting.
+
+- id: t03
+  title: Graph module — readiness + cycle validation
+  description: >
+    Implement "Task 3: Graph module — readiness + cycle validation" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (new file src/stackowl/objectives/graph.py, full test suite
+    including the diamond-dependency case, commit message). Depends on t02's
+    model fields. Read that Task 3 section in full before starting.
+
+- id: t04
+  title: Store — persist epic columns and story dependencies
+  description: >
+    Implement "Task 4: Store — persist the new columns" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (src/stackowl/objectives/store.py changes, depends_on
+    index-to-id resolution, test code, commit message). Depends on t02/t03.
+    Read that Task 4 section in full before starting — the store's existing
+    fixture names must be confirmed by reading tests/objectives/test_objective_store.py
+    first, per the plan's own instruction.
+
+- id: t05
+  title: Decomposer — graph-aware epic prompt
+  description: >
+    Implement "Task 5: Decomposer — graph-aware epic prompt" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (src/stackowl/objectives/decomposer.py's new decompose_epic_specs
+    method, depends-on marker parsing, test code, commit message). Depends
+    on t02. Read that Task 5 section in full before starting — reuse the
+    existing test file's stub-provider pattern rather than inventing a new
+    one, per the plan's own instruction.
+
+- id: t06
+  title: ObjectiveTool — consent gate, integration branch, graph validation
+  description: >
+    Implement "Task 6: ObjectiveTool — repo param, consent gate, branch
+    setup, validation" from docs/superpowers/plans/2026-07-13-epic-execution.md
+    exactly as specified there (src/stackowl/tools/scheduling/objective_tool.py
+    changes mirroring shell.py's _gate_catastrophic — NOT a
+    manifest.action_severity change, src/stackowl/tools/system/git_tool.py's
+    new current_branch helper, test code, commit message). Depends on
+    t03/t05. Read that Task 6 section in full before starting, and read
+    src/stackowl/tools/system/shell.py's _gate_catastrophic function as the
+    exact pattern to mirror.
+
+- id: t07
+  title: epic_runner.py — per-story background sequence
+  description: >
+    Implement "Task 7: epic_runner.py — per-story background sequence" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (new file src/stackowl/objectives/epic_runner.py, real-git test
+    suite with no git mocking, commit message). Depends on t04/t06. Read
+    that Task 7 section in full before starting, and read
+    src/stackowl/tools/system/git_tool.py, claude_code.py, and run_tests.py
+    in full first since this task composes all three.
+
+- id: t08
+  title: Driver — epic branch in _advance
+  description: >
+    Implement "Task 8: Driver — epic branch in _advance" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (src/stackowl/objectives/driver.py changes — readiness scan,
+    explicit launch synchronization point, RecoveryDriver-style held
+    strong-ref task set, test code, commit message). Depends on t03/t07.
+    Read that Task 8 section in full before starting, and read the full
+    current src/stackowl/objectives/driver.py first (829 lines) — this
+    codebase has fragile history, do not skim it.
+
+- id: t09
+  title: Driver — objective-level settle (failure isolation, partial completion)
+  description: >
+    Implement "Task 9: Driver — objective-level settle" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (replaces Task 8's _settle_epic_status stub with the real
+    implementation, test code, commit message). Depends on t08. Read that
+    Task 9 section in full before starting.
+
+- id: t10
+  title: objective-merge slash command
+  description: >
+    Implement "Task 10: objective-merge slash command" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (src/stackowl/commands/owls_command.py changes — new subcommand
+    mirroring objective-cancel exactly, objective-cancel extended to clean
+    up epic worktrees, test code, commit message). Depends on t04/t07.
+    Read that Task 10 section in full before starting, and read the full
+    current src/stackowl/commands/owls_command.py first to confirm both
+    dispatch sites and the exact _objective_cancel variable names.
+
+- id: t11
+  title: End-to-end integration test
+  description: >
+    Implement "Task 11: End-to-end integration test" from
+    docs/superpowers/plans/2026-07-13-epic-execution.md exactly as specified
+    there (new file tests/objectives/test_epic_e2e.py, real git repos
+    throughout, only the claude binary stubbed, commit message). Depends on
+    t01-t10 all being complete. Read that Task 11 section in full before
+    starting. Before finalizing, confirm ObjectiveDriverHandler(db=db_pool,
+    backend=None) is valid for a pure-epic driver instance by checking
+    Task 8's actual _advance_epic implementation and the
+    `assert self._backend is not None` in _run_subgoal — that assert must
+    only be reachable from the plain-objective path, never from
+    _advance_epic, for this construction to be safe.
