@@ -203,3 +203,41 @@ async def test_decompose_fallback_specs_have_zero_complexity() -> None:
     specs = await d.decompose_specs("do the thing")
     assert len(specs) == 1
     assert specs[0].estimated_complexity == 0.0
+
+
+# --------------------------------------------------- depends-on markers (Task #4)
+
+
+@pytest.mark.asyncio
+async def test_decompose_epic_parses_depends_on_markers() -> None:
+    """A trailing <<depends-on: i>> (or comma-separated i,j) marker parses into
+    SubgoalSpec.depends_on and is stripped from the description; steps without
+    the marker default to no dependencies (ready immediately)."""
+    d = _decomposer(
+        "Set up the database schema <<complexity: 0.2>>\n"
+        "Write the API endpoint <<depends-on: 0>> <<complexity: 0.3>>\n"
+        "Write the frontend page <<depends-on: 0>> <<complexity: 0.3>>\n"
+    )
+    specs = await d.decompose_epic_specs("build a feature")
+    assert len(specs) == 3
+    assert specs[0].depends_on == []
+    assert specs[1].depends_on == [0]
+    assert specs[2].depends_on == [0]
+
+
+@pytest.mark.asyncio
+async def test_decompose_epic_no_markers_means_no_deps() -> None:
+    """No dependency marker on any line ⇒ every step is dependency-free."""
+    d = _decomposer("Step one\nStep two\n")
+    specs = await d.decompose_epic_specs("build a feature")
+    assert all(s.depends_on == [] for s in specs)
+
+
+@pytest.mark.asyncio
+async def test_decompose_epic_provider_failure_falls_back_single_step() -> None:
+    """Same fail-safe contract as decompose_specs: provider unavailable degrades
+    to a single dependency-free spec that IS the whole objective."""
+    d = ObjectiveDecomposer(provider_registry=ProviderRegistry())
+    specs = await d.decompose_epic_specs("build a feature")
+    assert len(specs) == 1
+    assert specs[0].depends_on == []

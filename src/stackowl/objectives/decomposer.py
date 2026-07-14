@@ -48,6 +48,10 @@ _COMPLEXITY_RE = re.compile(
     r"<<\s*complexity\s*:\s*(?P<val>[0-9]*\.?[0-9]+)\s*>>", re.IGNORECASE
 )
 
+#: Task #4 — a trailing ``<<depends-on: i,j,k>>`` marker naming this step's
+#: zero-based dependency indices within the SAME decomposition batch.
+_DEPENDS_ON_RE = re.compile(r"<<\s*depends-on\s*:\s*(?P<idx>[0-9,\s]+)\s*>>", re.IGNORECASE)
+
 
 class ObjectiveDecomposer:
     """Decompose an objective's natural-language intent into ordered sub-goals."""
@@ -77,6 +81,20 @@ class ObjectiveDecomposer:
             "bundles several distinct actions and would benefit from being broken "
             "down further. Use the full range, not just the extremes.\n\n"
             f"Objective: {intent}"
+        )
+
+    def _build_epic_prompt(self, intent: str) -> str:
+        """Graph-aware decomposition prompt (Task #4) — same base instructions
+        as :meth:`_build_prompt` plus the dependency-marker convention."""
+        base = self._build_prompt(intent)
+        return (
+            base
+            + "\n\nAdditionally: if a step depends on one or more EARLIER "
+            "steps in this list being done first, append "
+            "`<<depends-on: i>>` (or `<<depends-on: i,j>>` for multiple) at "
+            "the end of that step's line, using the 0-based position of "
+            "each step it depends on. Independent steps that can run "
+            "concurrently need no marker."
         )
 
     @staticmethod
@@ -174,6 +192,101 @@ class ObjectiveDecomposer:
                     "intent_preview": intent[:80],
                     "subgoal_count": len(specs),
                     "with_acceptance": sum(1 for s in specs if s.acceptance_criteria),
+                    "latency_ms": (time.monotonic() - t0) * 1000,
+                }
+            },
+        )
+        return specs
+
+    @staticmethod
+    def _parse_depends_on(line: str) -> tuple[str, list[int]]:
+        """Extract a trailing ``<<depends-on: ...>>`` marker; returns
+        (line with marker removed, parsed indices — invalid/unparseable
+        tokens are dropped, never raise)."""
+        match = _DEPENDS_ON_RE.search(line)
+        if match is None:
+            return line, []
+        indices: list[int] = []
+        for token in match.group("idx").split(","):
+            token = token.strip()
+            if token.isdigit():
+                indices.append(int(token))
+        return _DEPENDS_ON_RE.sub("", line), indices
+
+    async def decompose_epic_specs(self, intent: str) -> list[SubgoalSpec]:
+        """Graph-aware decomposition (Task #4): same fail-safe contract as
+        :meth:`decompose_specs` (provider failure / empty reply degrades to a
+        single dependency-free spec), but parses ``<<depends-on: ...>>``
+        markers into :attr:`SubgoalSpec.depends_on`. Does not call or modify
+        :meth:`decompose_specs` — kept fully separate so the plain-objective
+        path is untouched."""
+        log.engine.debug(
+            "[objectives] decompose_epic: entry",
+            extra={"_fields": {"intent_preview": intent[:80]}},
+        )
+        prompt = self._build_epic_prompt(intent)
+        messages = [Message(role="user", content=prompt)]
+        t0 = time.monotonic()
+        try:
+            provider = self._provider_registry.get_with_cascade(_DECOMP_TIER)
+            result = await provider.complete(
+                messages,
+                model="",
+                max_tokens=_DECOMP_MAX_TOKENS,
+                temperature=_DECOMP_TEMPERATURE,
+            )
+        except Exception as exc:  # noqa: BLE001 — never strand an epic
+            log.engine.error(
+                "[objectives] decompose_epic: provider call failed — single-step fallback",
+                exc_info=exc,
+                extra={"_fields": {"intent_preview": intent[:80]}},
+            )
+            return [SubgoalSpec(description=intent)]
+
+        specs: list[SubgoalSpec] = []
+        for line in (result.content or "").splitlines():
+            stripped = _MARKER_RE.sub("", line)
+            stripped, depends_on = self._parse_depends_on(stripped)
+            criterion: ExpectedOutcome | None = None
+            match = _PRODUCES_FILE_RE.search(stripped)
+            if match is not None:
+                raw_dir = (match.group("dir") or "").strip()
+                criterion = ExpectedOutcome(kind="artifact", artifact_dir=raw_dir or None)
+                stripped = _PRODUCES_FILE_RE.sub("", stripped)
+            complexity = 0.0
+            cmatch = _COMPLEXITY_RE.search(stripped)
+            if cmatch is not None:
+                try:
+                    complexity = max(0.0, min(1.0, float(cmatch.group("val"))))
+                except ValueError:
+                    complexity = 0.0
+                stripped = _COMPLEXITY_RE.sub("", stripped)
+            cleaned = stripped.strip()
+            if cleaned:
+                specs.append(
+                    SubgoalSpec(
+                        description=cleaned,
+                        acceptance_criteria=criterion,
+                        estimated_complexity=complexity,
+                        depends_on=depends_on,
+                    )
+                )
+            if len(specs) >= _MAX_SUBGOALS:
+                break
+
+        if not specs:
+            log.engine.info(
+                "[objectives] decompose_epic: empty/garbled reply — single-step fallback",
+                extra={"_fields": {"intent_preview": intent[:80]}},
+            )
+            return [SubgoalSpec(description=intent)]
+        log.engine.info(
+            "[objectives] decompose_epic: exit",
+            extra={
+                "_fields": {
+                    "intent_preview": intent[:80],
+                    "subgoal_count": len(specs),
+                    "with_deps": sum(1 for s in specs if s.depends_on),
                     "latency_ms": (time.monotonic() - t0) * 1000,
                 }
             },
