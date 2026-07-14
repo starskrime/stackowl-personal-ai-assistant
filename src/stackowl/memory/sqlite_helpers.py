@@ -94,6 +94,9 @@ def row_to_record(row: dict[str, Any]) -> MemoryRecord:
         # MEM-1 (F073) — present once the 0062 migration runs; legacy SELECTs
         # without the column .get() to the conservative one-off floor.
         reinforcement_count=int(row.get("reinforcement_count", 0) or 0),
+        # Phase 2 — present once the 0085 migration runs; .get() so a SELECT
+        # that hasn't been updated yet degrades to unscoped, never KeyErrors.
+        scope_key=row.get("scope_key"),
     )
 
 
@@ -127,7 +130,7 @@ async def fts_recall(
         rows = await db.fetch_all(
             """SELECT cf.fact_id, cf.content, cf.embedding, cf.embedding_model,
                       cf.committed_at, cf.source_type, cf.source_ref, cf.tags,
-                      cf.trust, cf.reinforcement_count
+                      cf.trust, cf.reinforcement_count, cf.scope_key
                FROM committed_facts_fts fts
                JOIN committed_facts cf ON cf.rowid = fts.rowid
                WHERE committed_facts_fts MATCH ?
@@ -156,7 +159,7 @@ async def fetch_committed_by_ids(
     rows = await db.fetch_all(
         f"""SELECT fact_id, content, embedding, embedding_model,
                    committed_at, source_type, source_ref, tags, trust,
-                   reinforcement_count
+                   reinforcement_count, scope_key
             FROM committed_facts
             WHERE fact_id IN ({placeholders})""",
         tuple(fact_ids),
@@ -214,6 +217,19 @@ async def semantic_recall(
     return await fetch_committed_by_ids(db, [h.fact_id for h in hits])
 
 
+def filter_by_scope(
+    records: list[MemoryRecord], scope_key: str | None
+) -> list[MemoryRecord]:
+    """Phase 2 (coding-capability build plan) — POST-filter a recall candidate
+    set by scope. ``scope_key=None`` (the default) is a no-op — byte-identical
+    to every pre-Phase-2 call. Otherwise keeps a record only when its OWN
+    ``scope_key`` matches the requested one, or is ``None`` (global facts stay
+    visible in every scope, never hidden by a scoped query)."""
+    if scope_key is None:
+        return records
+    return [r for r in records if r.scope_key is None or r.scope_key == scope_key]
+
+
 def row_to_staged(row: dict[str, Any]) -> StagedFact:
     """Map a ``staged_facts`` row dict to a :class:`StagedFact`."""
     embedding_blob = row.get("embedding")
@@ -232,4 +248,7 @@ def row_to_staged(row: dict[str, Any]) -> StagedFact:
         # Task 8 promoter SELECTs don't yet include trust; .get() avoids KeyError.
         # Once Task 8 adds trust to those SELECTs, this will also read the real value.
         trust=row.get("trust", "untrusted"),
+        # Phase 2 — present once the 0085 migration runs; .get() so a SELECT
+        # that hasn't been updated yet degrades to unscoped, never KeyErrors.
+        scope_key=row.get("scope_key"),
     )

@@ -22,6 +22,7 @@ class _TraceToken(NamedTuple):
     reply_target: Token[str | int | None]
     delegation_depth: Token[int]
     delegation_chain: Token[tuple[str, ...]]
+    delegation_profile: Token[str]
     owl_name: Token[str | None]
     creation_ceiling: Token[Any]
     task_id: Token[str | None]
@@ -47,6 +48,13 @@ class TraceContext:
     # this off TraceContext (tools never see PipelineState) for its depth
     # backstop and to stamp the reconstructed parent_state. Default 0.
     _delegation_depth: ContextVar[int] = ContextVar("delegation_depth", default=0)
+    # Phase 0 (coding-capability build plan) — "interactive" (default, a human is
+    # watching each delegation level) vs "autonomous" (an unattended run, e.g. an
+    # ObjectiveDriverHandler-driven epic subgoal). delegate_task reads this to pick
+    # the effective depth/width cap (owls.delegation_limits.depth_cap/width_cap);
+    # everything else about delegation is unchanged. Default "interactive" is
+    # byte-identical to every existing call site that doesn't pass it.
+    _delegation_profile: ContextVar[str] = ContextVar("delegation_profile", default="interactive")
     # E8-S1 — the owl running the current (sub-)pipeline. delegate_task reads this
     # to attribute the TRUE caller (from_owl) instead of hardcoding "secretary",
     # avoiding mis-attribution + a self-delegation loop when a non-secretary owl
@@ -85,6 +93,7 @@ class TraceContext:
         reply_target: str | int | None = None,
         delegation_depth: int = 0,
         delegation_chain: tuple[str, ...] = (),
+        delegation_profile: str = "interactive",
         owl_name: str | None = None,
         creation_ceiling: BoundsSpec | None = None,
         task_id: str | None = None,
@@ -113,6 +122,7 @@ class TraceContext:
             reply_target=cls._reply_target.set(reply_target),
             delegation_depth=cls._delegation_depth.set(delegation_depth),
             delegation_chain=cls._delegation_chain.set(delegation_chain),
+            delegation_profile=cls._delegation_profile.set(delegation_profile),
             owl_name=cls._owl_name.set(owl_name),
             creation_ceiling=cls._creation_ceiling.set(creation_ceiling),
             task_id=cls._task_id.set(task_id),
@@ -131,6 +141,7 @@ class TraceContext:
         cls._reply_target.reset(token.reply_target)
         cls._delegation_depth.reset(token.delegation_depth)
         cls._delegation_chain.reset(token.delegation_chain)
+        cls._delegation_profile.reset(token.delegation_profile)
         cls._owl_name.reset(token.owl_name)
         cls._creation_ceiling.reset(token.creation_ceiling)
         cls._task_id.reset(token.task_id)
@@ -189,6 +200,7 @@ class TraceContext:
             "reply_target": cls._reply_target.get(),
             "delegation_depth": cls._delegation_depth.get(),
             "delegation_chain": cls._delegation_chain.get(),
+            "delegation_profile": cls._delegation_profile.get(),
             "owl_name": cls._owl_name.get(),
             "task_id": cls._task_id.get(),
         }

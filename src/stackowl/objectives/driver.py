@@ -37,6 +37,7 @@ from stackowl.objectives.decomposer import ObjectiveDecomposer
 from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal, SubgoalSpec
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.acceptance import AcceptanceChecker
+from stackowl.pipeline.acceptance_authority import aggregate_verdicts
 from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import Message
@@ -212,14 +213,30 @@ class ObjectiveDriverHandler(JobHandler):
             # intent text back verbatim.
             subgoals = await store.list_subgoals(objective.objective_id)
             summary = await self._synthesize_completion(objective, subgoals)
+            # Phase 1 (coding-capability build plan) — combine every sub-goal's
+            # OWN verified tri-state into one honest epic-level signal instead of
+            # reporting "✓ complete" unconditionally the moment every sub-goal
+            # merely reaches "done" status. accepted is not True whenever any
+            # sub-goal was unconfirmed (no acceptance criterion observed) — that
+            # never blocks completion (only a REFUTED sub-goal, handled above,
+            # does), but the notification must not overclaim a confidence it
+            # doesn't have.
+            agg = aggregate_verdicts([sg.verified for sg in subgoals])
             await store.update_status(objective.objective_id, "done")
             await store.append_event(objective.objective_id, "completed", objective.intent)
-            await self._notify(
-                objective, f"✓ Objective complete: {objective.intent}\n\n{summary}"
-            )
+            message = f"✓ Objective complete: {objective.intent}\n\n{summary}"
+            if agg.accepted is not True:
+                message += (
+                    f"\n\n({agg.verified_count}/{agg.total} steps independently "
+                    f"verified — {agg.reason})"
+                )
+            await self._notify(objective, message)
             log.scheduler.info(
                 "[scheduler] objective_driver: objective complete",
-                extra={"_fields": {"objective_id": objective.objective_id}},
+                extra={"_fields": {
+                    "objective_id": objective.objective_id,
+                    "aggregate_accepted": agg.accepted, "confidence": agg.confidence,
+                }},
             )
             return True
 
@@ -549,6 +566,12 @@ class ObjectiveDriverHandler(JobHandler):
             # No human present to answer a clarify; the handler owns delivery.
             interactive=False,
             defer_delivery=True,
+            # Phase 0 (coding-capability build plan) — an objective's sub-goal is an
+            # unattended run (no human watching each delegation level, matching
+            # interactive=False above); resolves the wider depth/width delegation
+            # budget (owls.delegation_limits.depth_cap/width_cap) instead of the
+            # interactive default sized for a live chat turn.
+            delegation_profile="autonomous",
             # Carry the declared post-condition onto the turn so downstream layers
             # (and the future LLM-derived acceptance) can see it. The driver itself
             # performs the authoritative deterministic check after the run.

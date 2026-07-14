@@ -13,6 +13,7 @@ from stackowl.memory.bridge import HealthReport, MemoryBridge
 from stackowl.memory.models import MemoryRecord, StagedFact
 from stackowl.memory.recall_ranker import RecallRanker
 from stackowl.memory.sqlite_helpers import (
+    filter_by_scope,
     fts_recall,
     pack_embedding,
     parse_iso,
@@ -200,8 +201,8 @@ class SqliteMemoryBridge(MemoryBridge):
                 """INSERT INTO staged_facts (
                        fact_id, content, source_type, source_ref, confidence,
                        staged_at, reinforcement_count, status, embedding, embedding_model,
-                       trust
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       trust, scope_key
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     fact.fact_id,
                     fact.content,
@@ -214,6 +215,7 @@ class SqliteMemoryBridge(MemoryBridge):
                     embedding_blob,
                     fact.embedding_model,
                     fact.trust,
+                    fact.scope_key,
                 ),
             )
         except aiosqlite.IntegrityError as exc:
@@ -230,12 +232,25 @@ class SqliteMemoryBridge(MemoryBridge):
             extra={"_fields": {"fact_id": fact.fact_id, "source_type": fact.source_type}},
         )
 
-    async def recall(self, query: str, limit: int = 10) -> list[MemoryRecord]:
-        """Semantic recall via LanceDB when enabled; FTS5 BM25 fallback otherwise."""
+    async def recall(
+        self, query: str, limit: int = 10, *, scope_key: str | None = None
+    ) -> list[MemoryRecord]:
+        """Semantic recall via LanceDB when enabled; FTS5 BM25 fallback otherwise.
+
+        ``scope_key`` (Phase 2, coding-capability build plan) POST-filters the
+        candidate set (from either path) to records whose OWN scope_key matches
+        it, or is None (global facts stay visible in every scope). None (the
+        default) applies no filter — byte-identical to every pre-Phase-2 call.
+        Known limitation: filtering happens AFTER ``limit`` is applied at the
+        query layer, so a heavily-scoped recall may return fewer than ``limit``
+        records even when more scoped facts exist — acceptable for this first
+        slice; pushing the filter into the SQL/ANN predicate is a documented
+        follow-up, not silently assumed to be equivalent.
+        """
         # 1. ENTRY
         log.memory.debug(
             "[memory] sqlite_bridge.recall: entry",
-            extra={"_fields": {"query_len": len(query), "limit": limit}},
+            extra={"_fields": {"query_len": len(query), "limit": limit, "scope_key": scope_key}},
         )
         # 2. DECISION — try the semantic path when wired and embedder available.
         # F062 — gate on the CORPUS-LEVEL identity (read once), NOT a flappy
@@ -280,17 +295,19 @@ class SqliteMemoryBridge(MemoryBridge):
                     filter_expr=f"embedding_model = '{escaped}'",
                 )
                 if semantic:
+                    filtered = filter_by_scope(semantic, scope_key)
                     log.memory.debug(
                         "[memory] sqlite_bridge.recall: exit — semantic",
-                        extra={"_fields": {"n_results": len(semantic)}},
+                        extra={"_fields": {"n_results": len(filtered)}},
                     )
-                    return semantic
+                    return filtered
                 log.memory.debug(
                     "[memory] sqlite_bridge.recall: semantic empty → FTS5 fallback",
                     extra={"_fields": {"semantic_is_none": semantic is None}},
                 )
         # 3. STEP — FTS5 BM25 fallback
         records = await fts_recall(self._db, query, limit)
+        records = filter_by_scope(records, scope_key)
         # 4. EXIT
         log.memory.debug(
             "[memory] sqlite_bridge.recall: exit — fts5",

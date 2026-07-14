@@ -19,7 +19,8 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 
 _SELECT_ELIGIBLE_SQL = """
 SELECT fact_id, content, source_type, source_ref, confidence,
-       staged_at, reinforcement_count, status, embedding, embedding_model, trust
+       staged_at, reinforcement_count, status, embedding, embedding_model, trust,
+       scope_key
 FROM staged_facts
 WHERE status = 'staged'
   AND confidence >= ?
@@ -32,7 +33,8 @@ WHERE status = 'staged'
 
 _SELECT_BY_ID_SQL = """
 SELECT fact_id, content, source_type, source_ref, confidence,
-       staged_at, reinforcement_count, status, embedding, embedding_model, trust
+       staged_at, reinforcement_count, status, embedding, embedding_model, trust,
+       scope_key
 FROM staged_facts
 WHERE fact_id = ?
 """
@@ -40,8 +42,8 @@ WHERE fact_id = ?
 _INSERT_COMMITTED_SQL = """
 INSERT OR IGNORE INTO committed_facts
     (fact_id, content, embedding, embedding_model, committed_at,
-     source_type, source_ref, tags, trust, reinforcement_count)
-VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?, ?, ?)
+     source_type, source_ref, tags, trust, reinforcement_count, scope_key)
+VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?, ?, ?, ?)
 """
 
 _UPDATE_STAGED_STATUS_SQL = (
@@ -267,6 +269,9 @@ class FactPromoter:
                     # while staged into the committed row, so blended recall can
                     # lift a repeatedly-confirmed preference.
                     fact.reinforcement_count,
+                    # Phase 2 — carry the fact's scope (if any) from staged into
+                    # committed, so recall(scope_key=...) can filter on it.
+                    fact.scope_key,
                 ),
             )
             await tx.execute(_UPDATE_STAGED_STATUS_SQL, (fact.fact_id,))

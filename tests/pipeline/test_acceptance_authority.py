@@ -21,7 +21,9 @@ from stackowl.pipeline.acceptance_authority import (
     HttpOk,
     NonEmptyText,
     NoPostCondition,
+    TestsPassed,
     Verdict,
+    aggregate_verdicts,
     final_verified,
 )
 from stackowl.tools.verification import is_trustworthy_success
@@ -96,6 +98,31 @@ def test_delivery_ack_tri_state(authority: AcceptanceAuthority) -> None:
     assert authority.observe(DeliveryAck(acked=None), success=True).accepted is None
 
 
+# --- TestsPassed: the coding-capability build plan's real verified signal ------
+
+
+def test_tests_passed_all_green(authority: AcceptanceAuthority) -> None:
+    v = authority.observe(TestsPassed(total=5, failed=0, errors=0), success=True)
+    assert v.accepted is True
+
+
+def test_tests_passed_refutes_on_any_failure(authority: AcceptanceAuthority) -> None:
+    v = authority.observe(TestsPassed(total=5, failed=1, errors=0), success=True)
+    assert v.accepted is False
+
+
+def test_tests_passed_refutes_on_errors_too(authority: AcceptanceAuthority) -> None:
+    v = authority.observe(TestsPassed(total=5, failed=0, errors=2), success=True)
+    assert v.accepted is False
+
+
+def test_tests_passed_no_tests_run_is_no_opinion(authority: AcceptanceAuthority) -> None:
+    # A claimed run that parsed to zero tests is unobservable, not a fabricated pass.
+    v = authority.observe(TestsPassed(total=0, failed=0, errors=0), success=True)
+    assert v.accepted is None
+    assert v.unobservable is True
+
+
 # --- ArtifactFresh: reuses verify_artifact (file kind) -------------------------
 
 
@@ -148,3 +175,34 @@ def test_observe_never_raises(authority: AcceptanceAuthority) -> None:
     # A malformed post-condition must yield no-opinion, never raise into a turn.
     v = authority.observe(ArtifactFresh(path=None), success=True, started_at=None)
     assert v.accepted is None
+
+
+# --- Phase 1 (coding-capability build plan): aggregate_verdicts ----------------
+
+
+def test_aggregate_all_verified_is_accepted_true() -> None:
+    agg = aggregate_verdicts([True, True, True])
+    assert agg.accepted is True
+    assert agg.confidence == 1.0
+    assert agg.total == 3
+
+
+def test_aggregate_any_refuted_is_accepted_false() -> None:
+    agg = aggregate_verdicts([True, False, True])
+    assert agg.accepted is False
+    assert agg.refuted_count == 1
+
+
+def test_aggregate_unconfirmed_is_accepted_none_not_true() -> None:
+    """Volume of passing steps never promotes an aggregate to True on its own —
+    an unconfirmed (None) step keeps the whole aggregate honestly undecided."""
+    agg = aggregate_verdicts([True, True, None])
+    assert agg.accepted is None
+    assert agg.confidence == pytest.approx(2 / 3)
+
+
+def test_aggregate_empty_has_no_opinion() -> None:
+    agg = aggregate_verdicts([])
+    assert agg.accepted is None
+    assert agg.confidence == 0.0
+    assert agg.total == 0

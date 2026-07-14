@@ -33,6 +33,10 @@ class StagedFact(BaseModel):
     embedding_model: str | None = None
     # Provenance trust tier (Story E). Default 'untrusted' = fail-safe (a forgotten stamp recalls fenced).
     trust: Literal["trusted", "self", "untrusted"] = "untrusted"
+    # Phase 2 (coding-capability build plan) — optional scope (e.g. a repo path
+    # or remote) distinct from user/conversation memory. None = global/unscoped,
+    # byte-identical to every pre-Phase-2 fact.
+    scope_key: str | None = None
 
 
 class MemoryRecord(BaseModel):
@@ -54,3 +58,5 @@ class MemoryRecord(BaseModel):
     # can lift a repeatedly-confirmed preference over a stale one-off. Default 0
     # = a one-off (legacy rows backfill to 0 via the 0062 migration default).
     reinforcement_count: int = 0
+    # Phase 2 (coding-capability build plan) — see StagedFact.scope_key.
+    scope_key: str | None = None

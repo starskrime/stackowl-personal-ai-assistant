@@ -32,7 +32,7 @@ keyword/language lists, no per-vendor logic. Never raises — an inability to ob
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from stackowl.infra import decision_ledger
@@ -105,6 +105,24 @@ class DeliveryAck:
 
 
 @dataclass(frozen=True)
+class TestsPassed:
+    """A declared test run must have completed with zero failures/errors.
+
+    Set from a STRUCTURED test-run record (``run_tests``, and any future
+    edit/apply_patch/claude_code caller that ran tests itself) — ``total``/
+    ``failed``/``errors`` are the parsed counts, not the tool's own success
+    self-report. This is the coding-capability build plan's REAL verified
+    signal: :func:`aggregate_verdicts` below has nothing honest to combine
+    across an epic's steps without it (Task #4, coding-capability build plan)."""
+
+    total: int = 0
+    failed: int = 0
+    errors: int = 0
+    framework: str = "unknown"
+    kind: str = "tests_passed"
+
+
+@dataclass(frozen=True)
 class Custom:
     """Escape hatch / judge-of-last-resort: an injected probe returning tri-state. Used
     only when no objective post-condition fits (the ADR forbids a draft-reading LLM judge
@@ -117,7 +135,7 @@ class Custom:
 
 #: The declared post-condition for an action: one of the family, or ``None`` (≡ no opinion).
 PostCondition = (
-    NoPostCondition | NonEmptyText | ArtifactFresh | HttpOk | DeliveryAck | Custom
+    NoPostCondition | NonEmptyText | ArtifactFresh | HttpOk | DeliveryAck | TestsPassed | Custom
 )
 
 
@@ -235,6 +253,8 @@ class AcceptanceAuthority:
                 return self._observe_http(post_condition)
             if isinstance(post_condition, DeliveryAck):
                 return self._observe_delivery(post_condition)
+            if isinstance(post_condition, TestsPassed):
+                return self._observe_tests(post_condition)
             if isinstance(post_condition, Custom):
                 return self._observe_custom(post_condition)
             return Verdict(None, f"unknown post-condition: {type(post_condition).__name__}")
@@ -301,6 +321,18 @@ class AcceptanceAuthority:
             return Verdict(True, "delivery acknowledged", {"channel": pc.channel})
         return Verdict(False, "delivery was not acknowledged", {"channel": pc.channel})
 
+    def _observe_tests(self, pc: TestsPassed) -> Verdict:
+        ev: dict[str, object] = {
+            "total": pc.total, "failed": pc.failed, "errors": pc.errors, "framework": pc.framework,
+        }
+        if pc.total == 0:
+            return Verdict(None, "no tests were declared as run", ev, unobservable=True)
+        if pc.failed > 0 or pc.errors > 0:
+            return Verdict(
+                False, f"{pc.failed + pc.errors}/{pc.total} test(s) failed or errored", ev,
+            )
+        return Verdict(True, f"all {pc.total} test(s) passed", ev)
+
     def _observe_custom(self, pc: Custom) -> Verdict:
         if pc.probe is None:
             return Verdict(None, f"custom probe '{pc.label}' is empty")
@@ -320,3 +352,63 @@ class AcceptanceAuthority:
             bool(observed),
             f"custom probe '{pc.label}' {'passed' if observed else 'refuted'}",
         )
+
+
+# --- Phase 1 (coding-capability build plan) — verdict aggregation --------------
+# Combines N per-step ``verified`` tri-states (e.g. one per objective sub-goal /
+# story) into ONE honest epic-level signal, so a multi-step run can report "is
+# the WHOLE thing done?" without silently promoting "most steps passed" into
+# "verified".
+
+
+@dataclass(frozen=True)
+class AggregateVerdict:
+    """The combined signal for N steps' tri-state verdicts.
+
+    ``accepted`` mirrors :class:`Verdict`'s tri-state semantics at the aggregate
+    level: ``True`` only when EVERY step verified ``True``; ``False`` when ANY
+    step was refuted (fail-closed — one broken story fails the whole run);
+    ``None`` otherwise (some steps unconfirmed, none refuted) — volume of passing
+    steps never promotes this to ``True`` on its own.
+
+    ``confidence`` is ADDITIVE REPORTING ONLY (0.0-1.0, the fraction of steps
+    independently verified ``True``). It must never be read as a second, softer
+    path to "done" — only ``accepted is True`` means done. Its sole job is to let
+    a human skimming the final report tell a hard-won pass from a shaky one.
+    """
+
+    accepted: bool | None
+    confidence: float
+    total: int
+    verified_count: int
+    refuted_count: int
+    reason: str
+
+
+def aggregate_verdicts(verdicts: Sequence[bool | None]) -> AggregateVerdict:
+    """Combine N tri-state ``verified`` flags into one honest aggregate.
+
+    Never raises; an empty sequence has no opinion (``accepted=None``,
+    ``confidence=0.0``) — mirrors :class:`Verdict`'s "nothing to observe" case.
+    """
+    total = len(verdicts)
+    if total == 0:
+        return AggregateVerdict(None, 0.0, 0, 0, 0, "no steps to aggregate")
+    verified_count = sum(1 for v in verdicts if v is True)
+    refuted_count = sum(1 for v in verdicts if v is False)
+    confidence = verified_count / total
+    if refuted_count > 0:
+        return AggregateVerdict(
+            False, confidence, total, verified_count, refuted_count,
+            f"{refuted_count}/{total} step(s) refuted",
+        )
+    if verified_count == total:
+        return AggregateVerdict(
+            True, confidence, total, verified_count, refuted_count,
+            f"all {total} step(s) independently verified",
+        )
+    unconfirmed = total - verified_count - refuted_count
+    return AggregateVerdict(
+        None, confidence, total, verified_count, refuted_count,
+        f"{verified_count}/{total} step(s) independently verified; {unconfirmed} unconfirmed",
+    )

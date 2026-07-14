@@ -60,8 +60,17 @@ class MemoryBridge(ABC):
         ...
 
     @abstractmethod
-    async def recall(self, query: str, limit: int = 10) -> list[MemoryRecord]:
-        """Return committed facts matching ``query``, best first."""
+    async def recall(
+        self, query: str, limit: int = 10, *, scope_key: str | None = None
+    ) -> list[MemoryRecord]:
+        """Return committed facts matching ``query``, best first.
+
+        ``scope_key`` (Phase 2, coding-capability build plan) is an optional
+        additional filter: when given, only facts scoped to it OR globally
+        scoped (``scope_key is None`` on the fact) are returned. ``None`` (the
+        default) applies no scope filter — byte-identical to every pre-Phase-2
+        caller.
+        """
         ...
 
     @abstractmethod
@@ -143,10 +152,12 @@ class NullMemoryBridge(MemoryBridge):
             extra={"_fields": {"fact_id": fact.fact_id, "source_type": fact.source_type}},
         )
 
-    async def recall(self, query: str, limit: int = 10) -> list[MemoryRecord]:
+    async def recall(
+        self, query: str, limit: int = 10, *, scope_key: str | None = None
+    ) -> list[MemoryRecord]:
         log.memory.debug(
             "[memory] NullMemoryBridge.recall: noop — returning []",
-            extra={"_fields": {"query_len": len(query), "limit": limit}},
+            extra={"_fields": {"query_len": len(query), "limit": limit, "scope_key": scope_key}},
         )
         return []
 

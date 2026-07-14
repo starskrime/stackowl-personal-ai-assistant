@@ -24,7 +24,10 @@ from stackowl.infra.trace import TraceContext
 #: the pipeline imports this so the schema filter, the dispatch-seam re-check, and
 #: the per-tool self-defense never drift.
 CHILD_EXCLUDED_TOOLS: frozenset[str] = frozenset(
-    {"delegate_task", "sessions_spawn", "sessions_send", "process", "execute_code", "owl_build"}
+    {
+        "delegate_task", "sessions_spawn", "sessions_send", "process",
+        "execute_code", "owl_build", "claude_code",
+    }
 )
 
 

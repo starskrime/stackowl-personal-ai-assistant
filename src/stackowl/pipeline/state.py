@@ -138,6 +138,15 @@ class PipelineState(BaseModel, frozen=True):
     # Owl-name ancestry of the current delegation (governor-stamped, model-untouchable).
     # Powers cycle detection (refuse if a target is already in the chain). len() == delegation_depth.
     delegation_chain: tuple[str, ...] = ()
+    # Phase 0 (coding-capability build plan) — "interactive" (default; a human is
+    # watching each delegation level) vs "autonomous" (an unattended run, e.g. an
+    # ObjectiveDriverHandler-driven epic subgoal). Carried across evolve() like
+    # every other field, so a delegated child of an autonomous run stays
+    # autonomous. delegate_task reads the PROJECTED TraceContext value (not this
+    # field directly — tools never see PipelineState) to resolve the effective
+    # depth/width cap via owls.delegation_limits.depth_cap/width_cap. Default
+    # "interactive" is byte-identical to every existing turn.
+    delegation_profile: Literal["interactive", "autonomous"] = "interactive"
     # ID of the durable task this pipeline turn belongs to, or None for an
     # ephemeral (non-durable) turn. Carried across evolve() like every other
     # field. Consumed by the langgraph backend to isolate per-task checkpoints

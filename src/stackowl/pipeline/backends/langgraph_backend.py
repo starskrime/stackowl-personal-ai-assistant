@@ -119,6 +119,7 @@ class LangGraphBackend(OrchestratorBackend):
             reply_target=state.reply_target,
             delegation_depth=state.delegation_depth,
             delegation_chain=state.delegation_chain,
+            delegation_profile=state.delegation_profile,
             owl_name=state.owl_name,
             creation_ceiling=state.creation_ceiling,
             task_id=state.task_id,

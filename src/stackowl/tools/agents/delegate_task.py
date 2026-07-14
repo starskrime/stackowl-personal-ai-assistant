@@ -40,9 +40,9 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.cost_pause import gate_or_continue
 from stackowl.owls.delegation_limits import (
-    MAX_CONCURRENT_DELEGATIONS,
     MAX_DELEGATION_ATTEMPTS_PER_TURN,
-    MAX_DELEGATION_DEPTH,
+    depth_cap,
+    width_cap,
 )
 from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
 from stackowl.pipeline.durable.context import get_active
@@ -335,21 +335,32 @@ class DelegateTaskTool(Tool):
 
         ctx = TraceContext.get()
         depth = int(ctx.get("delegation_depth") or 0)
+        # Phase 0 (coding-capability build plan) — "interactive" (default) vs
+        # "autonomous" (an unattended run, e.g. an ObjectiveDriverHandler-driven
+        # epic subgoal) resolves a wider depth/width budget; see
+        # owls.delegation_limits.depth_cap/width_cap. Malformed/unknown values
+        # fall back to the stricter interactive cap (fail-safe) — narrowed
+        # explicitly (not just str()) so it type-checks straight into the
+        # PipelineState Literal field it's carried into below.
+        profile: Literal["interactive", "autonomous"] = (
+            "autonomous" if ctx.get("delegation_profile") == "autonomous" else "interactive"
+        )
+        depth_limit = depth_cap(profile)
         # Width counter is keyed per turn; fall back to session (not a shared "")
         # so untraced turns don't contend for one global bucket (L1).
         trace_id = str(ctx.get("trace_id") or ctx.get("session_id") or "delegate-task")
         caller = self._caller_owl()
 
         # 2. DECISION — depth backstop (defense-in-depth; delegate NOT called).
-        if depth >= MAX_DELEGATION_DEPTH:
+        if depth >= depth_limit:
             log.tool.warning(
                 "delegate_task.execute: depth backstop — refusing",
-                extra={"_fields": {"trace_id": trace_id, "depth": depth, "cap": MAX_DELEGATION_DEPTH}},
+                extra={"_fields": {"trace_id": trace_id, "depth": depth, "cap": depth_limit, "profile": profile}},
             )
             return refusal_result(
                 t0, reason="depth_limit",
                 detail=(
-                    f"delegation depth limit reached ({depth} >= {MAX_DELEGATION_DEPTH}); "
+                    f"delegation depth limit reached ({depth} >= {depth_limit}); "
                     "handle this sub-task yourself instead of delegating further."
                 ),
             )
@@ -414,16 +425,17 @@ class DelegateTaskTool(Tool):
                 ),
             )
 
-        # Width cap — refuse past MAX_CONCURRENT_DELEGATIONS in-flight for this trace.
-        if not self._try_acquire(trace_id):
+        # Width cap — refuse past the profile's concurrent-delegation budget for this trace.
+        width_limit = width_cap(profile)
+        if not self._try_acquire(trace_id, width_limit):
             log.tool.warning(
                 "delegate_task.execute: width cap — refusing",
-                extra={"_fields": {"trace_id": trace_id, "cap": MAX_CONCURRENT_DELEGATIONS}},
+                extra={"_fields": {"trace_id": trace_id, "cap": width_limit, "profile": profile}},
             )
             return refusal_result(
                 t0, reason="width_limit",
                 detail=(
-                    f"too many concurrent delegations this turn (>= {MAX_CONCURRENT_DELEGATIONS}); "
+                    f"too many concurrent delegations this turn (>= {width_limit}); "
                     "handle this sub-task yourself."
                 ),
             )
@@ -438,7 +450,7 @@ class DelegateTaskTool(Tool):
                 delegator=delegator, args=args, caller=caller, target=target, depth=depth,
                 trace_id=trace_id, session_id=str(ctx.get("session_id") or ""),
                 channel=str(ctx.get("channel") or "internal"), t0=t0,
-                durable_scope=durable_scope,
+                durable_scope=durable_scope, delegation_profile=profile,
             )
         finally:
             self._release(trace_id)
@@ -461,6 +473,7 @@ class DelegateTaskTool(Tool):
         channel: str,
         t0: float,
         durable_scope: _DurableChildScope,
+        delegation_profile: Literal["interactive", "autonomous"] = "interactive",
     ) -> ToolResult:
         """Build parent_state once, then run the bounded recovery ladder.
 
@@ -505,7 +518,7 @@ class DelegateTaskTool(Tool):
         parent_state = PipelineState(
             trace_id=trace_id or "delegate-task", session_id=session_id, input_text=sub_task,
             channel=channel, owl_name=caller, pipeline_step="dispatch", delegation_depth=depth,
-            delegation_chain=chain,
+            delegation_chain=chain, delegation_profile=delegation_profile,
             # E2-S2 delegation floor — clamp to parent EFFECTIVE bounds (owl ∩ ceiling).
             # Reused for ALL attempts so the fallback cannot escalate the creation_ceiling.
             creation_ceiling=child_floor(
@@ -946,11 +959,14 @@ class DelegateTaskTool(Tool):
         owl = TraceContext.get().get("owl_name")
         return str(owl) if owl else _DEFAULT_CALLER
 
-    def _try_acquire(self, trace_id: str) -> bool:
-        """Increment the per-trace in-flight counter; refuse past the width cap."""
+    def _try_acquire(self, trace_id: str, width_limit: int = width_cap("interactive")) -> bool:
+        """Increment the per-trace in-flight counter; refuse past ``width_limit``
+        (the caller's profile-resolved cap — see owls.delegation_limits.width_cap).
+        Default is the interactive cap, byte-identical to the pre-Phase-0 behavior
+        for any caller that doesn't pass a profile-resolved value explicitly."""
         with self._lock:
             current = self._active.get(trace_id, 0)
-            if current >= MAX_CONCURRENT_DELEGATIONS:
+            if current >= width_limit:
                 return False
             self._active[trace_id] = current + 1
             return True
