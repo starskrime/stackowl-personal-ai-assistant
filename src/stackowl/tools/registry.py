@@ -564,6 +564,9 @@ class ToolRegistry:
         from stackowl.tools.scheduling.send_file import SendFileTool
         from stackowl.tools.scheduling.send_message import SendMessageTool
         from stackowl.tools.search.web_search import WebSearchTool
+        from stackowl.tools.system.claude_code import ClaudeCodeTool
+        from stackowl.tools.system.git_tool import GitTool
+        from stackowl.tools.system.run_tests import RunTestsTool
         from stackowl.tools.system.shell import ShellTool
         from stackowl.tools.tasks.task_status import TaskStatusTool
 
@@ -579,6 +582,21 @@ class ToolRegistry:
         registry.register(ApplyPatchTool(store=_undo_store))
         registry.register(UndoWriteTool(store=_undo_store))
         registry.register(ShellTool())
+        # claude_code — delegates an open-ended coding task to a headless Claude
+        # Code CLI subprocess (reuses shell.run_argv for the actual spawn/timeout/
+        # logging seam). Consequential + child-excluded (SEC-3): it can edit files
+        # and run shell commands on the HOST in workdir, so the consent gate fires
+        # before every call and a delegated child (depth>0) is refused.
+        registry.register(ClaudeCodeTool())
+        # git — structured status/diff/commit/branch/worktree operations, reusing
+        # shell.run_argv for the actual spawn (exec mode, no shell interpretation).
+        # 'write' severity (mirrors shell): mutates the repo/filesystem but is
+        # locally reversible git state, not a consent-gated consequential action.
+        registry.register(GitTool())
+        # run_tests — structured pass/fail/failure-list test-run tool, reusing
+        # shell.run_argv (host subprocess, so it can see the actual repo checkout).
+        # Declares a TestsPassed post-condition (ADR-1) from its own parsed counts.
+        registry.register(RunTestsTool())
         registry.register(WebFetchTool())
         # web_search — reads get_services().web_search_registry at execute time, so
         # no constructor wiring here (the registry is built in the gateway phase).

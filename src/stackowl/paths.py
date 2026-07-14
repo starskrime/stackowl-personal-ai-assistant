@@ -67,6 +67,15 @@ class StackowlHome:
         return cls.tools_dir() / "learned"
 
     @classmethod
+    def worktrees_dir(cls) -> Path:
+        """Scratch git worktrees for isolated coding runs (claude_code, epic orchestration).
+
+        Never inside the target repo itself — kept under our own workspace so a
+        throwaway branch/checkout is never mistaken for tracked project state.
+        """
+        return cls.workspace() / "worktrees"
+
+    @classmethod
     def knowledge_dir(cls) -> Path:
         return cls.workspace() / "knowledge"
 

@@ -88,6 +88,9 @@ class OwlScheduleTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity="write",
+            # transactional: the toggle IS the write to our own db_pool-backed job
+            # row (JobScheduler.pause/resume/snooze) — no remote/lossy boundary.
+            commit_coupling="transactional",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
