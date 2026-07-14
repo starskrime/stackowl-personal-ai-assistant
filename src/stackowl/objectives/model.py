@@ -76,6 +76,11 @@ class SubgoalSpec(BaseModel, frozen=True):
     #: ("no signal") is the conservative choice — an unparsed reply, or the
     #: fail-safe single-spec fallback, never triggers recursive decomposition.
     estimated_complexity: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: Task #4 — indices into the SAME decomposition batch this spec's story
+    #: depends on (e.g. story 2 depending on story 0 emits `depends_on=[0]`).
+    #: Resolved to real subgoal_ids by the store on insert. Empty (default,
+    #: every existing caller) ⇒ ready immediately.
+    depends_on: list[int] = Field(default_factory=list)
 
 
 class Objective(BaseModel):
@@ -97,6 +102,16 @@ class Objective(BaseModel):
     #: cooldown; ``decision`` (or ``None``) ⇒ stays blocked until a human intervenes.
     #: Set only when status == "blocked"; cleared on every active/done transition.
     blocker_kind: BlockerKind | None = None
+    #: Task #4 (coding-capability build plan) — set only for an EPIC objective.
+    #: None (every existing row, every plain-objective caller) ⇒ the linear,
+    #: single-subgoal-per-tick driver path, byte-identical to today.
+    repo: str | None = None
+    #: The epic's internal integration branch (e.g. "stackowl/epic-obj-1"),
+    #: branched off base_branch when the epic starts. Set together with repo.
+    integration_branch: str | None = None
+    #: The branch `objective-merge` targets — captured via `git branch
+    #: --show-current` in `repo` at epic creation.
+    base_branch: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -139,6 +154,14 @@ class Subgoal(BaseModel):
     #: (``objectives/driver.py``), so a persistently "complex" reply can never
     #: recurse without bound.
     decomposition_depth: int = Field(default=0, ge=0)
+    #: Task #4 — subgoal_ids that must reach status "done" before this story
+    #: is ready to launch. Empty (default, every existing row) ⇒ ready
+    #: immediately — matches today's linear behavior.
+    depends_on: list[str] = Field(default_factory=list)
+    #: Set once this story's worktree is created (epic path only).
+    worktree_path: str | None = None
+    #: Set once this story's scratch branch is created (epic path only).
+    story_branch: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
