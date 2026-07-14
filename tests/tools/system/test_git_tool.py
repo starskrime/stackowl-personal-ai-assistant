@@ -157,3 +157,11 @@ async def test_status_on_non_repo_fails_structured(tmp_path: Path) -> None:
     result = await GitTool()(operation="status", repo=str(tmp_path))
 
     assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_current_branch_returns_checked_out_branch(repo: Path) -> None:
+    from stackowl.tools.system.git_tool import current_branch
+
+    branch = await current_branch(str(repo))
+    assert branch in ("main", "master")  # git init's default varies by config

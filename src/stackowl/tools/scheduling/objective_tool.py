@@ -40,6 +40,16 @@ class ObjectiveArgs(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     intent: str = Field(..., description="The standing objective to pursue.")
+    repo: str | None = Field(
+        default=None,
+        description=(
+            "Path to a git repo — makes this an EPIC: decomposed into a "
+            "dependency graph of stories that run concurrently in isolated "
+            "worktrees, verified by tests, and auto-merged into an internal "
+            "integration branch. CONSEQUENTIAL: requires consent (stories "
+            "run unattended, bypassPermissions). Omit for a plain objective."
+        ),
+    )
 
 
 class ObjectiveTool(Tool):
@@ -59,7 +69,10 @@ class ObjectiveTool(Tool):
             "hits an irreversible decision only you can make. LANE: durable, "
             "multi-step goals the user wants pursued to completion without "
             "re-asking. ANTI-LANE: a one-off task you can finish right now (just do "
-            "it), or a clock-driven recurring job (use cronjob)."
+            "it), or a clock-driven recurring job (use cronjob). Pass 'repo' to make "
+            "this an EPIC — a coding objective decomposed into stories that run "
+            "unattended and concurrently in isolated worktrees, auto-merged when "
+            "verified; requires the user's explicit consent before it starts."
         )
 
     @property
@@ -70,6 +83,17 @@ class ObjectiveTool(Tool):
                 "intent": {
                     "type": "string",
                     "description": "The standing objective to pursue to completion.",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": (
+                        "Path to a git repo — makes this an EPIC: decomposed into a "
+                        "dependency graph of stories that run concurrently in "
+                        "isolated worktrees, verified by tests, and auto-merged "
+                        "into an internal integration branch. CONSEQUENTIAL: "
+                        "requires the user's consent (stories run unattended, "
+                        "bypassPermissions). Omit for a plain objective."
+                    ),
                 },
             },
             "required": ["intent"],
@@ -84,6 +108,27 @@ class ObjectiveTool(Tool):
             action_severity="write",
             commit_coupling="transactional",
             toolset_group=_TOOLSET_GROUP,
+        )
+
+    def consent_summary(self, **call_args: object) -> str | None:
+        """Bounded consent digest for an EPIC (repo-bearing) call only —
+        mirrors execute_code's per-call summary. A plain objective (no repo)
+        has nothing consequential to summarize; returns None (falls back to
+        the static description, which is fine since the gate is never
+        consulted for a plain call — see execute())."""
+        repo = call_args.get("repo")
+        if not isinstance(repo, str) or not repo:
+            return None
+        intent = call_args.get("intent")
+        intent = intent if isinstance(intent, str) else ""
+        digest = intent[:200] + ("…" if len(intent) > 200 else "")
+        return (
+            f"Run an EPIC in {repo}: decompose \"{digest}\" into stories that "
+            "run UNATTENDED and CONCURRENTLY, each with permission_mode="
+            "bypassPermissions (full shell access, isolated to a worktree — "
+            "not sandboxed from network/host side effects). Auto-merges "
+            "each verified story into an internal integration branch; you "
+            "confirm once at the end to merge into your real branch."
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:
@@ -119,7 +164,23 @@ class ObjectiveTool(Tool):
         channel_str = channel if isinstance(channel, str) else None
         target_channels, target_addresses = self._resolve_durable_target(channel_str)
 
+        repo = args.repo.strip() if args.repo else None
+        if repo:
+            gated = await self._gate_epic_consent(repo=repo, intent=intent, t0=t0)
+            if gated is not None:
+                return gated
+
         objective_id = f"obj-{uuid.uuid4().hex[:8]}"
+        base_branch: str | None = None
+        integration_branch: str | None = None
+        if repo:
+            from stackowl.tools.system.git_tool import current_branch
+
+            base_branch = await current_branch(repo)
+            if base_branch is None:
+                return self._err(f"could not determine the current branch in {repo!r}", t0)
+            integration_branch = f"stackowl/epic-{objective_id}"
+
         objective = Objective(
             objective_id=objective_id,
             owner_id=DEFAULT_PRINCIPAL_ID,
@@ -127,17 +188,57 @@ class ObjectiveTool(Tool):
             channel=channel_str,
             target_channels=target_channels,
             target_addresses=target_addresses,
+            repo=repo,
+            integration_branch=integration_branch,
+            base_branch=base_branch,
         )
         try:
+            if repo:
+                from stackowl.tools.system.shell import run_argv
+
+                assert integration_branch is not None  # set above whenever repo is set
+                branch_result = await run_argv(
+                    ["git", "branch", integration_branch],
+                    tool_name="git", workdir=repo, intent="write",
+                )
+                if not branch_result.success:
+                    return self._err(
+                        f"could not create integration branch: {branch_result.error}", t0,
+                    )
+
             store = ObjectiveStore(db, DEFAULT_PRINCIPAL_ID)
             await store.create(objective)
             await store.append_event(objective_id, "created", intent)
 
-            decomposer = ObjectiveDecomposer(services.provider_registry) if services.provider_registry else None
-            specs = (
-                await decomposer.decompose_specs(intent)
-                if decomposer else [SubgoalSpec(description=intent)]
-            )
+            if repo:
+                decomposer = (
+                    ObjectiveDecomposer(services.provider_registry)
+                    if services.provider_registry else None
+                )
+                specs = (
+                    await decomposer.decompose_epic_specs(intent)
+                    if decomposer else [SubgoalSpec(description=intent)]
+                )
+                from stackowl.objectives.graph import validate_graph
+
+                graph_error = validate_graph(specs)
+                if graph_error is not None:
+                    await store.update_status(objective_id, "abandoned")
+                    return self._err(
+                        f"invalid story dependency graph ({graph_error.kind}): "
+                        f"{graph_error.detail}",
+                        t0,
+                    )
+            else:
+                decomposer = (
+                    ObjectiveDecomposer(services.provider_registry)
+                    if services.provider_registry else None
+                )
+                specs = (
+                    await decomposer.decompose_specs(intent)
+                    if decomposer else [SubgoalSpec(description=intent)]
+                )
+
             await store.add_subgoals(objective_id, specs)
             await store.append_event(
                 objective_id, "decomposed", f"{len(specs)} step(s)"
@@ -169,6 +270,56 @@ class ObjectiveTool(Tool):
         return self._ok(payload, t0)
 
     # ---------------------------------------------------------------- helpers
+
+    async def _gate_epic_consent(self, *, repo: str, intent: str, t0: float) -> ToolResult | None:
+        """Require consent before creating an EPIC — the ONE consent point for
+        its entire unattended run (Consent posture, design spec). Mirrors
+        shell.py's `_gate_catastrophic`: `ObjectiveTool.manifest.action_severity`
+        stays "write" unconditionally (no per-call manifest variance — the
+        tool ABC has no seam for that); this calls the SAME consent policy
+        directly instead. Returns a refused ToolResult when consent must NOT
+        proceed (no interactive user, no gate wired, declined); returns None
+        when approved. Fail-closed on every path, matching every other
+        consequential gate in this codebase."""
+        ctx = TraceContext.get()
+        interactive = bool(ctx.get("interactive", False))
+        channel = ctx.get("channel")
+        session_id = ctx.get("session_id")
+        if not interactive or not session_id or not channel:
+            log.tool.warning(
+                "objective.execute: epic creation with no interactive user — refused",
+                extra={"_fields": {"repo": repo}},
+            )
+            return self._err(
+                "refused: creating an epic requires an interactive user to "
+                "approve unattended execution, and none is present", t0,
+            )
+        gate = get_services().consent_gate
+        if gate is None:
+            log.tool.error(
+                "objective.execute: epic creation but no consent gate wired — refused",
+            )
+            return self._err(
+                "refused: epic creation requires a consent gate, none is available", t0,
+            )
+        try:
+            allowed = await gate.policy.request(
+                tool_name="objective",
+                channel=channel,
+                session_id=session_id,
+                category="epic_execution",
+                summary=self.consent_summary(intent=intent, repo=repo) or "",
+            )
+        except Exception as exc:  # fail-closed on any gate error
+            log.tool.error(
+                "objective.execute: consent gate raised — refused",
+                exc_info=exc,
+            )
+            return self._err("refused: consent check failed", t0)
+        if not allowed:
+            log.tool.info("objective.execute: epic creation declined by user")
+            return self._err("declined by user", t0)
+        return None
 
     def _resolve_durable_target(
         self, channel: str | None
