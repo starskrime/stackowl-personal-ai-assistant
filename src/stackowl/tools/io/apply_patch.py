@@ -51,9 +51,11 @@ from stackowl.tools.io.patch_parser import (
     count_occurrences,
     parse_v4a_patch,
 )
+from stackowl.tools.io.path_guard import data_root
 from stackowl.tools.io.path_guard import is_within_root as _guard
 from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve
 from stackowl.tools.io.undo_store import UndoStore
+from stackowl.tools.system.git_tool import diff_summary, is_git_repo
 
 # Reject patches larger than this (defends against pathological/oversized input
 # and accidental whole-repo dumps). 2 MiB is far above any sane multi-file edit.
@@ -253,6 +255,20 @@ class ApplyPatchTool(Tool):
         payload = f"Patch applied to {len(state.summary)} file(s).\n{undo_hint}\n\n{body}"
         if diff:
             payload += f"\n\n{diff}"
+        # Independent confirmation of what changed, alongside (never replacing)
+        # the self-computed diff above — best-effort: any failure is logged
+        # and omitted, never fails this already-successful patch application
+        # (research artifact §3 proposal 4).
+        repo_dir = str(data_root())
+        if await is_git_repo(repo_dir):
+            git_diff = await diff_summary(repo_dir)
+            if git_diff.success:
+                payload += f"\n\n--- git diff (independent check) ---\n{git_diff.output}"
+            else:
+                log.tool.debug(
+                    "apply_patch.execute: diff_summary failed — omitting git diff",
+                    extra={"_fields": {"error": git_diff.error}},
+                )
         return ToolResult(success=True, output=payload, duration_ms=duration_ms)
 
     def _rollback(self, state: _ApplyState) -> None:
