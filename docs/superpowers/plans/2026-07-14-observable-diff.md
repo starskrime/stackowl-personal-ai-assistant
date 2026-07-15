@@ -347,6 +347,8 @@ class TestGitDiffAppend:
     async def test_git_repo_workspace_appends_real_diff(self, home: Path, ws: Path) -> None:
         _init_repo(ws)
         (ws / "code.py").write_text("def foo():\n    return 1\n")
+        subprocess.run(["git", "add", "code.py"], cwd=ws, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add code.py"], cwd=ws, check=True)
         patch = _patch(
             "*** Update File: code.py",
             "@@ def foo():",
