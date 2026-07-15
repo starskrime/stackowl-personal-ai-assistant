@@ -15,8 +15,10 @@ worktrees for isolated story execution.
 
 from __future__ import annotations
 
+import difflib
 import json
 import time
+from pathlib import Path
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -29,6 +31,12 @@ _OPERATIONS = frozenset(
     {"status", "diff", "commit", "branch", "worktree_add", "worktree_remove"}
 )
 _DEFAULT_MAX_DIFF_CHARS = 6000
+#: Bounds for the untracked-file scan `diff_summary` folds in below — a
+#: workspace full of un-gitignored build artifacts must never make this
+#: unbounded. Both ceilings are reported (never silently dropped): an
+#: overflow note names how many files/bytes were skipped.
+_MAX_UNTRACKED_FILES = 20
+_MAX_UNTRACKED_FILE_BYTES = 100_000
 
 
 def _resolve_repo(raw: object) -> str:
@@ -118,12 +126,94 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[:max_chars] + f"\n…[truncated, showing {max_chars} of {len(text)} chars]"
 
 
+async def _untracked_diff(repo: str, paths: list[str] | None) -> tuple[int, list[dict[str, object]], str]:
+    """Synthesize diff entries for UNTRACKED files — `git diff` never reports
+    these (git's own design: it only ever compares tracked content against
+    the index/HEAD). Without this, a brand-new file an agent creates is
+    invisible to the "independent confirmation" check, which is exactly the
+    class of silent-failure this feature exists to catch.
+
+    Detection is `git ls-files --others --exclude-standard` (respects
+    .gitignore, touches nothing — no index mutation, unlike `git add -N`).
+    Each untracked TEXT file gets a `difflib` "new file" unified diff (the
+    same `/dev/null` vs `b/<path>` shape git itself uses for additions) —
+    matching the pattern `edit.py`/`apply_patch.py` already use for their own
+    self-computed diffs, not a new paradigm. A binary or oversized file is
+    still counted in `files_changed` but contributes no diff text (mirrors
+    how `_parse_numstat` marks a binary tracked file with insertions=0).
+
+    Never raises: any failure (ls-files errors, an unreadable file) degrades
+    to "skip this file" / "no untracked files found" — this is a best-effort
+    enhancement layered on top of the core tracked-diff, which must still
+    succeed even if this entirely fails.
+    """
+    argv = ["git", "ls-files", "--others", "--exclude-standard"]
+    if paths:
+        argv += ["--"] + paths
+    result = await run_argv(argv, tool_name="git", workdir=repo, intent="read")
+    if not result.success or not result.output.strip():
+        return 0, [], ""
+
+    all_files = [line for line in result.output.splitlines() if line.strip()]
+    processed, overflow = all_files[:_MAX_UNTRACKED_FILES], len(all_files) - _MAX_UNTRACKED_FILES
+
+    insertions = 0
+    entries: list[dict[str, object]] = []
+    diff_parts: list[str] = []
+    for rel_path in processed:
+        try:
+            raw = (Path(repo) / rel_path).read_bytes()
+        except OSError as exc:
+            log.tool.debug(
+                "git.diff_summary: could not read untracked file — skipping",
+                extra={"_fields": {"path": rel_path, "err": str(exc)}},
+            )
+            continue
+        if len(raw) > _MAX_UNTRACKED_FILE_BYTES:
+            entries.append({
+                "path": rel_path, "insertions": 0, "deletions": 0,
+                "binary": False, "status": "untracked", "note": "too large to diff",
+            })
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            entries.append({
+                "path": rel_path, "insertions": 0, "deletions": 0,
+                "binary": True, "status": "untracked",
+            })
+            continue
+        lines = text.splitlines(keepends=True)
+        insertions += len(lines)
+        entries.append({
+            "path": rel_path, "insertions": len(lines), "deletions": 0,
+            "binary": False, "status": "untracked",
+        })
+        diff_parts.append("".join(difflib.unified_diff([], lines, fromfile="/dev/null", tofile=f"b/{rel_path}")))
+
+    if overflow > 0:
+        diff_parts.append(
+            f"\n…[{overflow} more untracked file(s) not shown — over the {_MAX_UNTRACKED_FILES}-file cap]"
+        )
+    return insertions, entries, "\n".join(diff_parts)
+
+
 async def diff_summary(
     repo: str, *, staged: bool = False, paths: list[str] | None = None,
     max_chars: int = _DEFAULT_MAX_DIFF_CHARS,
 ) -> ToolResult:
     """Structured git diff (files_changed/insertions/deletions/files/diff, as
     JSON in ``.output``) as a :class:`ToolResult` — never raises.
+
+    Covers BOTH tracked changes (via ``git diff``) and untracked new files
+    (via :func:`_untracked_diff`) — see that function's docstring for why the
+    latter matters: plain ``git diff`` silently misses new files by design,
+    which would otherwise blind this "here's what really changed" check to
+    exactly the failure mode it exists to catch. Skipped when ``staged=True``
+    (untracked files are never staged, so there is nothing to add there).
+    Each tracked entry gets an explicit ``status: "modified"`` alongside
+    untracked entries' ``status: "untracked"``, so a consumer can tell them
+    apart without re-deriving it.
 
     Module-level (not a GitTool method) so a caller that needs git diff info
     without the full Tool wrapper — e.g. claude_code/apply_patch/edit's
@@ -139,19 +229,29 @@ async def diff_summary(
     if not stat_result.success:
         return stat_result
     insertions, deletions, files = _parse_numstat(stat_result.output)
+    for f in files:
+        f["status"] = "modified"
 
     text_result = await run_argv(base + path_args, tool_name="git", workdir=repo, intent="read")
     if not text_result.success:
         return text_result
+    diff_text = text_result.output
+    duration_ms = stat_result.duration_ms + text_result.duration_ms
+
+    if not staged:
+        untracked_insertions, untracked_files, untracked_diff_text = await _untracked_diff(repo, paths)
+        insertions += untracked_insertions
+        files += untracked_files
+        if untracked_diff_text:
+            diff_text = f"{diff_text}\n{untracked_diff_text}" if diff_text else untracked_diff_text
 
     parsed = {
         "files_changed": len(files),
         "insertions": insertions,
         "deletions": deletions,
         "files": files,
-        "diff": _truncate(text_result.output, max_chars),
+        "diff": _truncate(diff_text, max_chars),
     }
-    duration_ms = stat_result.duration_ms + text_result.duration_ms
     log.tool.debug(
         "git.diff_summary: exit",
         extra={"_fields": {"success": True, "duration_ms": duration_ms}},

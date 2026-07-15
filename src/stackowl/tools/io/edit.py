@@ -219,9 +219,9 @@ class EditTool(Tool):
         # artifact §3 proposal 4).
         repo_dir = str(data_root())
         if await is_git_repo(repo_dir):
-            git_diff = await diff_summary(repo_dir)
+            git_diff = await diff_summary(repo_dir, paths=[str(target)])
             if git_diff.success:
-                payload += f"\n\n--- git diff (independent check) ---\n{git_diff.output}"
+                payload += f"\n\n--- git diff summary, JSON (independent check) ---\n{git_diff.output}"
             else:
                 log.tool.debug(
                     "edit.execute: diff_summary failed — omitting git diff",

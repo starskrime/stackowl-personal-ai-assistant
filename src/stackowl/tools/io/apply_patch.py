@@ -261,9 +261,10 @@ class ApplyPatchTool(Tool):
         # (research artifact §3 proposal 4).
         repo_dir = str(data_root())
         if await is_git_repo(repo_dir):
-            git_diff = await diff_summary(repo_dir)
+            touched_paths = [str(p) for p, _ in state.pre_images] + [str(p) for p in state.created]
+            git_diff = await diff_summary(repo_dir, paths=touched_paths)
             if git_diff.success:
-                payload += f"\n\n--- git diff (independent check) ---\n{git_diff.output}"
+                payload += f"\n\n--- git diff summary, JSON (independent check) ---\n{git_diff.output}"
             else:
                 log.tool.debug(
                     "apply_patch.execute: diff_summary failed — omitting git diff",
