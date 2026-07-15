@@ -1,0 +1,71 @@
+# generated: 2026-07-15
+# last_updated: 2026-07-15
+# project: stackowl-personal-ai-assistant
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+# arc: Owl DNA Self-Improvement Lifecycle (separate from sprint-status.yaml's retry-queue arc — epic-1/2/3 numbers are local to this file, not global)
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; sprint-status surfaces open ones
+
+generated: 2026-07-15
+last_updated: 2026-07-15
+project: stackowl-personal-ai-assistant
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  epic-1: in-progress
+  1-1-reflect-recall-chain-e2e-test: done
+  1-2-fix-reflect-recall-chain-break: backlog
+  epic-1-retrospective: optional
+  epic-2: backlog
+  2-1-learning-artifact-store: backlog
+  2-2-dna-restore-command: backlog
+  2-3-migrate-callsites-to-learning-artifact-store: backlog
+  2-4-signal-strength-tiered-clamp: backlog
+  2-5-shadow-validation-gate-replay-harness: backlog
+  2-6-wire-gate-into-promotion-auto-restore: backlog
+  2-7-gate-observability-and-manual-dry-run: backlog
+  epic-2-retrospective: optional
+  epic-3: backlog
+  3-1-evolve-now-tool: backlog
+  3-2-route-evolve-now-through-shadow-gate: backlog
+  3-3-resolve-decay-rate-per-week: backlog
+  3-4-skill-success-rate-feeds-dna-attribution: backlog
+  3-5-dna-traits-inform-skill-retention: backlog
+  epic-3-retrospective: optional
