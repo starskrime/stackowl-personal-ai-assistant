@@ -79,11 +79,23 @@ def detach_skill_from_owl(
     """Live inverse of :func:`attach_skill_to_owl`: drop *skill_name* from the
     owl's ``skills`` tuple. Returns True when the manifest changed; False when the
     owl is an orphan or never owned the skill. Never raises."""
+    log.startup.debug(
+        "[owls] skill_ownership.detach: entry",
+        extra={"_fields": {"owl": owl_name, "skill": skill_name}},
+    )
     try:
         current = registry.get(owl_name)
     except Exception:
+        log.startup.debug(
+            "[owls] skill_ownership.detach: orphan — owl not in registry",
+            extra={"_fields": {"owl": owl_name, "skill": skill_name}},
+        )
         return False
     if skill_name not in current.skills:
+        log.startup.debug(
+            "[owls] skill_ownership.detach: not owned — no-op",
+            extra={"_fields": {"owl": owl_name, "skill": skill_name}},
+        )
         return False
     registry.replace(
         current.model_copy(
