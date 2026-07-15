@@ -22,7 +22,7 @@ from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.system.shell import _default_workspace_cwd, run_argv
 
-__all__ = ["GitTool", "add_worktree", "is_git_repo"]
+__all__ = ["GitTool", "add_worktree", "diff_summary", "is_git_repo"]
 
 _TOOLSET_GROUP = "code"
 _OPERATIONS = frozenset(
@@ -116,6 +116,50 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + f"\n…[truncated, showing {max_chars} of {len(text)} chars]"
+
+
+async def diff_summary(
+    repo: str, *, staged: bool = False, paths: list[str] | None = None,
+    max_chars: int = _DEFAULT_MAX_DIFF_CHARS,
+) -> ToolResult:
+    """Structured git diff (files_changed/insertions/deletions/files/diff, as
+    JSON in ``.output``) as a :class:`ToolResult` — never raises.
+
+    Module-level (not a GitTool method) so a caller that needs git diff info
+    without the full Tool wrapper — e.g. claude_code/apply_patch/edit's
+    post-edit "here's what really changed" append — can call it directly
+    (mirroring ``is_git_repo``/``add_worktree`` above). On failure (not a
+    repo, git error), returns the failed ``ToolResult`` from the underlying
+    ``run_argv`` call unchanged; a best-effort caller checks ``.success`` and
+    omits the diff rather than propagating the failure.
+    """
+    base = ["git", "diff"] + (["--cached"] if staged else [])
+    path_args = (["--"] + paths) if paths else []
+    stat_result = await run_argv(base + ["--numstat"] + path_args, tool_name="git", workdir=repo, intent="read")
+    if not stat_result.success:
+        return stat_result
+    insertions, deletions, files = _parse_numstat(stat_result.output)
+
+    text_result = await run_argv(base + path_args, tool_name="git", workdir=repo, intent="read")
+    if not text_result.success:
+        return text_result
+
+    parsed = {
+        "files_changed": len(files),
+        "insertions": insertions,
+        "deletions": deletions,
+        "files": files,
+        "diff": _truncate(text_result.output, max_chars),
+    }
+    duration_ms = stat_result.duration_ms + text_result.duration_ms
+    log.tool.debug(
+        "git.diff_summary: exit",
+        extra={"_fields": {"success": True, "duration_ms": duration_ms}},
+    )
+    return ToolResult(
+        success=True, output=json.dumps(parsed, ensure_ascii=False),
+        duration_ms=duration_ms, side_effect_committed=False,
+    )
 
 
 async def is_git_repo(path: str) -> bool:
@@ -312,34 +356,14 @@ class GitTool(Tool):
 
     async def _diff(self, repo: str, kwargs: dict[str, object], t0: float) -> ToolResult:
         staged = bool(kwargs.get("staged", False))
-        paths = kwargs.get("paths")
-        path_args = [str(p) for p in paths] if isinstance(paths, list) else []
+        paths_raw = kwargs.get("paths")
+        paths = [str(p) for p in paths_raw] if isinstance(paths_raw, list) else None
         max_chars_raw = kwargs.get("max_chars")
         try:
             max_chars = int(max_chars_raw) if max_chars_raw else _DEFAULT_MAX_DIFF_CHARS  # type: ignore[call-overload]
         except (TypeError, ValueError):
             max_chars = _DEFAULT_MAX_DIFF_CHARS
-
-        base = ["git", "diff"] + (["--cached"] if staged else [])
-        stat_argv = base + ["--numstat"] + (["--"] + path_args if path_args else [])
-        stat_result = await run_argv(stat_argv, tool_name="git", workdir=repo, intent="read")
-        if not stat_result.success:
-            return stat_result
-        insertions, deletions, files = _parse_numstat(stat_result.output)
-
-        text_argv = base + (["--"] + path_args if path_args else [])
-        text_result = await run_argv(text_argv, tool_name="git", workdir=repo, intent="read")
-        if not text_result.success:
-            return text_result
-
-        parsed = {
-            "files_changed": len(files),
-            "insertions": insertions,
-            "deletions": deletions,
-            "files": files,
-            "diff": _truncate(text_result.output, max_chars),
-        }
-        return self._ok(parsed, t0, stat_result.duration_ms + text_result.duration_ms, committed=False)
+        return await diff_summary(repo, staged=staged, paths=paths, max_chars=max_chars)
 
     async def _commit(self, repo: str, kwargs: dict[str, object], t0: float) -> ToolResult:
         message = str(kwargs.get("message", "")).strip()

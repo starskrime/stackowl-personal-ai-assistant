@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.tools.system.git_tool import GitTool
+from stackowl.tools.system.git_tool import GitTool, diff_summary
 
 
 def _init_repo(path: Path) -> None:
@@ -156,4 +156,23 @@ async def test_unknown_operation_refused(repo: Path) -> None:
 async def test_status_on_non_repo_fails_structured(tmp_path: Path) -> None:
     result = await GitTool()(operation="status", repo=str(tmp_path))
 
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_diff_summary_direct_call(repo: Path) -> None:
+    (repo / "README.md").write_text("changed\n")
+    result = await diff_summary(str(repo))
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert payload["files_changed"] == 1
+    assert payload["insertions"] >= 1
+    assert payload["files"][0]["path"] == "README.md"
+
+
+@pytest.mark.asyncio
+async def test_diff_summary_non_repo_returns_failed_result(tmp_path: Path) -> None:
+    non_repo = tmp_path / "not-a-repo"
+    non_repo.mkdir()
+    result = await diff_summary(str(non_repo))
     assert result.success is False
