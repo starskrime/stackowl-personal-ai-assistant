@@ -253,7 +253,11 @@ async def test_run_now_executes_handler(migrated_db: DbPool) -> None:
     assert ran["ran"] is True
     assert ran["success"] is True
     assert len(backend.calls) == 1
-    assert backend.calls[0].input_text == "ping"
+    # goal_execution.py prefixes every run with a freshness preamble (today's
+    # date + "fetch current data" instruction, see GoalExecutionHandler) so a
+    # recurring job never reuses a memorized/prior answer — the raw goal is
+    # still present verbatim, just no longer the ENTIRE input_text.
+    assert backend.calls[0].input_text.endswith("ping")
 
 
 async def test_run_now_already_running_is_not_reported_as_failure(migrated_db: DbPool) -> None:

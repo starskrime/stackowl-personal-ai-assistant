@@ -88,6 +88,11 @@ def authority_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(base_mod, "_acceptance_authority_enabled", lambda: True)
 
 
+@pytest.fixture
+def authority_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_mod, "_acceptance_authority_enabled", lambda: False)
+
+
 async def _call(tool: SendMessageTool, status: str, **kwargs: Any) -> Any:
     """Invoke the tool through __call__ (exercises the post_condition seam)."""
     services = StepServices(proactive_deliverer=_FakeDeliverer(status))
@@ -119,9 +124,11 @@ async def test_batched_stays_unverified_when_authority_on(authority_on: None) ->
 
 
 @pytest.mark.asyncio
-async def test_flag_off_delivered_is_byte_identical() -> None:
-    # No flag patch ⇒ default OFF ⇒ seam skipped ⇒ the self-stamp's True is demoted by
-    # the existing F-25 block to None (exactly pre-ADR behavior), still trustworthy.
+async def test_flag_off_delivered_is_byte_identical(authority_off: None) -> None:
+    # Flag explicitly forced OFF ⇒ ADR-1 seam skipped ⇒ the self-stamp's True is
+    # demoted by the existing F-25 block to None (exactly pre-ADR behavior), still
+    # trustworthy. (acceptance_authority now defaults True — see settings.py — so
+    # this must force the flag off itself rather than assume an ambient default.)
     result = await _call(SendMessageTool(), "delivered")
     assert result.verified is None
     assert is_trustworthy_success(result.success, result.verified) is True

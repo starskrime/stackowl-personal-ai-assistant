@@ -11,7 +11,7 @@ import pytest
 from stackowl.commands.metadata import render_usage
 from stackowl.commands.provider_command import ProviderCommand
 
-_EXPECTED = {"list", "add", "remove", "set-tier"}
+_EXPECTED = {"list", "add", "remove", "set-tier", "edit", "enable", "disable", "set-token", "rename"}
 
 
 def _state():  # type: ignore[no-untyped-def]
