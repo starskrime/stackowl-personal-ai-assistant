@@ -24,11 +24,9 @@ from difflib import SequenceMatcher
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.io.fuzzy_match import fuzzy_find_and_replace
-from stackowl.tools.io.path_guard import data_root
 from stackowl.tools.io.path_guard import is_within_root as _guard
 from stackowl.tools.io.path_guard import resolve_in_workspace as _resolve
 from stackowl.tools.io.undo_store import UndoStore
-from stackowl.tools.system.git_tool import diff_summary, is_git_repo
 
 # Similarity floor below which we don't bother quoting a "nearest" candidate —
 # anything lower is noise that would mislead more than help.
@@ -213,20 +211,6 @@ class EditTool(Tool):
             f"Undo token: {token}\n{caution}\n"
             f"{diff}"
         )
-        # Independent confirmation of what changed, alongside (never replacing)
-        # the self-computed diff above — best-effort: any failure is logged
-        # and omitted, never fails this already-successful edit (research
-        # artifact §3 proposal 4).
-        repo_dir = str(data_root())
-        if await is_git_repo(repo_dir):
-            git_diff = await diff_summary(repo_dir)
-            if git_diff.success:
-                payload += f"\n\n--- git diff (independent check) ---\n{git_diff.output}"
-            else:
-                log.tool.debug(
-                    "edit.execute: diff_summary failed — omitting git diff",
-                    extra={"_fields": {"error": git_diff.error}},
-                )
         return ToolResult(success=True, output=payload, duration_ms=duration_ms)
 
     # ------------------------------------------------------------------ helpers

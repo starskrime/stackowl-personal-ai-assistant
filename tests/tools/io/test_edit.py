@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -234,38 +233,3 @@ class TestEditRefusalNotEffectful:
         result = await EditTool().execute(path=str(f), old_string="beta", new_string="gamma")
         assert result.success is True
         assert result.side_effect_committed is True
-
-
-def _init_repo(path: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
-    (path / "README.md").write_text("hello\n")
-    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=path, check=True)
-
-
-class TestGitDiffAppend:
-    async def test_git_repo_workspace_appends_real_diff(self, workspace: Path) -> None:
-        _init_repo(workspace)
-        f = workspace / "code.py"
-        f.write_text("def foo():\n    return 1\n")
-        subprocess.run(["git", "add", "code.py"], cwd=workspace, check=True)
-        subprocess.run(["git", "commit", "-q", "-m", "add code.py"], cwd=workspace, check=True)
-
-        result = await EditTool().execute(path=str(f), old_string="return 1", new_string="return 2")
-
-        assert result.success is True
-        assert "Undo token:" in result.output  # original self-computed block, unchanged
-        assert '"files_changed"' in result.output  # appended real git-diff JSON block
-        assert '"code.py"' in result.output
-
-    async def test_non_git_workspace_output_unchanged(self, workspace: Path) -> None:
-        f = workspace / "code.py"
-        f.write_text("def foo():\n    return 1\n")
-
-        result = await EditTool().execute(path=str(f), old_string="return 1", new_string="return 2")
-
-        assert result.success is True
-        assert "Undo token:" in result.output
-        assert '"files_changed"' not in result.output
