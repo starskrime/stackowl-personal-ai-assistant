@@ -243,13 +243,32 @@ class SecretaryRouter:
         )
         return _DEFAULT_FALLBACK
 
-    def _parse_intent_class(self, raw: str) -> Literal["conversational", "standard", "clarify"]:
-        """Scan every line AFTER the owl-name line for the class token. Fail-safe → 'standard'."""
+    def _parse_intent_class(
+        self, raw: str, trace_id: str | None = None
+    ) -> Literal["conversational", "standard", "clarify"]:
+        """Scan every line AFTER the owl-name line for the class token.
+
+        A totally EMPTY reply (provider returned nothing — no signal at all)
+        fails safe to 'conversational': no tool loop rather than the full
+        agentic path. A NON-empty reply that's just missing a valid class
+        token keeps the deliberate act-on-likely-intent bias to 'standard'.
+        """
         lines = (raw or "").strip().splitlines()
+        if not lines:
+            log.engine.warning(
+                "[router] _parse_intent_class: empty routing reply — "
+                "fail-safe to conversational, not standard",
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+            return "conversational"
         for line in lines[1:]:
             token = line.strip().strip("\"'`.,:;()[]{}<>").lower()
             if token in _VALID_CLASSES:
                 return token  # type: ignore[return-value]
+        log.engine.warning(
+            "[router] _parse_intent_class: no valid class token — fail-safe to standard",
+            extra={"_fields": {"trace_id": trace_id, "raw_preview": raw[:80]}},
+        )
         return "standard"
 
     def _parse_clarify_question(self, raw: str, intent_class: str) -> str | None:
@@ -372,7 +391,7 @@ class SecretaryRouter:
         )
 
         owl = self._parse_choice(result.content, known_names)  # UNCHANGED owl parse
-        intent_class = self._parse_intent_class(result.content)
+        intent_class = self._parse_intent_class(result.content, state.trace_id)
         clarify_question = self._parse_clarify_question(result.content, intent_class)
         if intent_class == "clarify" and not clarify_question:
             # A clarify verdict with no question is malformed — downgrade to the

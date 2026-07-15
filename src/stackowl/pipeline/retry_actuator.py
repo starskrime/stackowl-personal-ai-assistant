@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, cast
+
+from telegram.error import RetryAfter
 
 from stackowl.infra.observability import log
 from stackowl.memory.retry_queue_store import RetryQueueRow, RetryQueueStore
@@ -34,6 +37,29 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 _STILL_FAILED_NOTICE = (
     "Still couldn't complete this after {attempts} tries: {goal}"
 )
+
+# Fixed cadence kept for any delivery failure that ISN'T a Telegram flood-control
+# error (matches the sweep's own 1-minute tick — see retry_sweep.py).
+_DEFAULT_DELIVERY_RETRY_DELAY_SECONDS = 60.0
+# Small margin past what Telegram itself reports, so a retry landing exactly at
+# the boundary doesn't get flood-controlled again by clock skew.
+_DELIVERY_RETRY_DELAY_BUFFER_SECONDS = 5.0
+
+
+def _delivery_retry_delay_seconds(exc: BaseException) -> float:
+    """Honor Telegram's own flood-control cooldown when the delivery failure is
+    a ``RetryAfter`` — blindly retrying on the fixed cadence while still banned
+    only extends the ban. Any other delivery failure keeps the prior cadence.
+    """
+    if isinstance(exc, RetryAfter):
+        retry_after = exc.retry_after
+        seconds = (
+            retry_after.total_seconds()
+            if isinstance(retry_after, timedelta)
+            else float(retry_after)
+        )
+        return seconds + _DELIVERY_RETRY_DELAY_BUFFER_SECONDS
+    return _DEFAULT_DELIVERY_RETRY_DELAY_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,10 +143,27 @@ class RetryActuator:
             await self._deliver_success(row, answer_text)
             await self._retry_store.mark_completed(row.id)
         except Exception as exc:  # never raise into the scheduler loop
+            delay_seconds = _delivery_retry_delay_seconds(exc)
             log.scheduler.error(
                 "retry_actuator.attempt_retry: success-path delivery/store failed",
-                exc_info=exc, extra={"_fields": {"retry_id": row.id}},
+                exc_info=exc, extra={"_fields": {"retry_id": row.id, "delay_seconds": delay_seconds}},
             )
+            # Without this, the row's next_retry_at is unchanged (still due),
+            # so the NEXT 1-minute sweep tick retries immediately — hammering
+            # an already flood-controlled channel and extending the ban
+            # instead of waiting it out. Reschedule failure is best-effort:
+            # worst case is the old behavior (immediate re-try), never a
+            # crash into the scheduler loop.
+            try:
+                await self._retry_store.reschedule(
+                    row.id, delay_seconds=delay_seconds, error=str(exc),
+                )
+            except Exception as store_exc:
+                log.scheduler.error(
+                    "retry_actuator.attempt_retry: reschedule after delivery "
+                    "failure also failed",
+                    exc_info=store_exc, extra={"_fields": {"retry_id": row.id}},
+                )
             # The row's DB status is unchanged by a failed delivery/mark_completed
             # (still "pending"), so reporting "pending" here matches DB truth and
             # lets a future sweep retry rather than silently losing the answer.

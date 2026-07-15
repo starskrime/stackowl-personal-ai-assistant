@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telegram.error import RetryAfter
 
 from stackowl.memory.retry_queue_store import RetryQueueRow
 from stackowl.pipeline.retry_actuator import RetryActuator
@@ -203,3 +204,44 @@ async def test_attempt_retry_survives_channel_registry_error_on_give_up():
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_attempt_retry_reschedules_by_telegram_retry_after_on_flood_control():
+    """The bug this pins: a delivery failure used to leave next_retry_at
+    unchanged, so the very next 1-minute sweep tick re-hammered an already
+    flood-controlled Telegram bot — extending the ban instead of waiting it
+    out. A RetryAfter(2698) failure must reschedule using THAT delay (+ the
+    small safety buffer), not the old fixed 60s cadence."""
+    # No channel_message_id — _deliver_success skips the edit_message branch
+    # and goes straight to send_text, so the RetryAfter below is the ONLY
+    # delivery attempt (no edit-then-fallback masking it with a second error).
+    row = _row(channel_message_id=None)
+
+    success_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        responses=(
+            ResponseChunk(
+                content="Here's your interview prep plan...", is_final=True,
+                chunk_index=0, trace_id="trace-new", owl_name="secretary", is_floor=False,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=success_state)
+
+    adapter = MagicMock()
+    adapter.send_text = AsyncMock(side_effect=RetryAfter(2698))
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(return_value=adapter)
+
+    retry_store = MagicMock()
+    retry_store.reschedule = AsyncMock()
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "pending"
+    retry_store.reschedule.assert_awaited_once()
+    assert retry_store.reschedule.await_args.kwargs["delay_seconds"] == pytest.approx(2703.0)

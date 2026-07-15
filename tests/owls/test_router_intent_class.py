@@ -151,6 +151,13 @@ def test_failsafe_standard_when_no_class_token() -> None:
     assert _r()._parse_intent_class("secretary\nblah blah") == "standard"
 
 
+def test_failsafe_conversational_when_reply_totally_empty() -> None:
+    # A provider that returns nothing (empty completion) carries zero signal —
+    # fail safe to no-tool-loop, not the full agentic path.
+    assert _r()._parse_intent_class("") == "conversational"
+    assert _r()._parse_intent_class("   \n  ") == "conversational"
+
+
 def test_owl_name_line_not_treated_as_class() -> None:
     assert _r()._parse_intent_class("standard\nconversational") == "conversational"
 

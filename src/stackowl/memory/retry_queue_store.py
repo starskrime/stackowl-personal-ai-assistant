@@ -363,6 +363,52 @@ class RetryQueueStore(OwnedRepository):
             extra={"_fields": {"retry_id": retry_id}},
         )
 
+    async def reschedule(self, retry_id: str, *, delay_seconds: float, error: str) -> None:
+        """Push a pending row's ``next_retry_at`` out by ``delay_seconds``,
+        WITHOUT touching ``attempt_count``/``status``/``banned_capabilities``.
+
+        Used when a retry's ANSWER was computed fine but DELIVERY itself
+        failed for a reason unrelated to which capability the model chose
+        (e.g. a Telegram ``RetryAfter`` flood-control error) — re-arming on
+        the fixed 1-minute cadence :meth:`mark_attempt_failed` uses would keep
+        hammering a channel that is already rate-limited, extending the ban
+        instead of waiting it out. ``delay_seconds`` should come from the
+        transport error itself when available.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "retry_queue_store.reschedule: entry",
+            extra={"_fields": {"retry_id": retry_id, "delay_seconds": delay_seconds}},
+        )
+        next_retry_at = (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
+        truncated_error = error[:_LAST_ERROR_MAX_LEN]
+        try:
+            # 3. STEP
+            affected = await self._db.execute_returning_rowcount(
+                "UPDATE retry_queue SET next_retry_at = ?, last_error = ?, updated_at = ? "
+                "WHERE id = ? AND owner_id = ? AND status = 'pending'",
+                (next_retry_at, truncated_error, _now_iso(), retry_id, self._owner_id),
+            )
+        except Exception as exc:
+            log.memory.error(
+                "retry_queue_store.reschedule: update failed",
+                exc_info=exc,
+                extra={"_fields": {"retry_id": retry_id}},
+            )
+            raise
+        # 2. DECISION + 4. EXIT
+        if affected == 0:
+            log.memory.warning(
+                "retry_queue_store.reschedule: no matching pending row — wrong id, "
+                "wrong owner, or row already advanced",
+                extra={"_fields": {"retry_id": retry_id}},
+            )
+            return
+        log.memory.info(
+            "retry_queue_store.reschedule: exit",
+            extra={"_fields": {"retry_id": retry_id, "next_retry_at": next_retry_at}},
+        )
+
     async def mark_attempt_failed(
         self, *, retry_id: str, newly_failed_capability: str, error: str,
     ) -> RetryQueueRow:

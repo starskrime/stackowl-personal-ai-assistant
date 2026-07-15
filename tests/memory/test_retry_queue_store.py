@@ -317,3 +317,43 @@ async def test_insert_pending_truncates_goal_to_4000_chars(tmp_db: DbPool) -> No
 
     due = await store.get_due(limit=25)
     assert len(due[0].goal) == 4000
+
+
+async def test_reschedule_pushes_row_out_of_due_window(tmp_db: DbPool) -> None:
+    """A flood-controlled delivery failure must push next_retry_at into the
+    future — the row stays 'pending' but drops out of get_due() until the
+    delay elapses, so the next sweep tick does NOT immediately re-hammer the
+    still-banned channel."""
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-flood", session_id="sess-1", goal="do the thing",
+        banned_capabilities=[],
+    )
+
+    await store.reschedule(retry_id, delay_seconds=120, error="Flood control exceeded")
+
+    due = await store.get_due(limit=25)
+    assert due == []
+
+
+async def test_reschedule_does_not_touch_attempt_count_or_banned(tmp_db: DbPool) -> None:
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-flood-2", session_id="sess-1", goal="do the thing",
+        banned_capabilities=["cronjob"],
+    )
+
+    await store.reschedule(retry_id, delay_seconds=0, error="Flood control exceeded")
+
+    due = await store.get_due(limit=25)
+    row = due[0]
+    assert row.status == "pending"
+    assert row.attempt_count == 0
+    assert row.banned_capabilities == ["cronjob"]
+    assert row.last_error == "Flood control exceeded"
+
+
+async def test_reschedule_ignores_missing_row(tmp_db: DbPool) -> None:
+    store = RetryQueueStore(tmp_db)
+    # Must not raise for an id that doesn't exist — logs a warning and returns.
+    await store.reschedule("no-such-id", delay_seconds=60, error="x")
