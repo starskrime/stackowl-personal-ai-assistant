@@ -235,6 +235,23 @@ async def test_diff_summary_staged_skips_untracked_scan(repo: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_diff_summary_oversized_untracked_file_not_read_into_memory(repo: Path) -> None:
+    """The size cap is checked via stat() BEFORE read_bytes() — a huge
+    untracked file must never be fully read into memory just to be
+    discarded. Assert on the OBSERVABLE behavior (note present, no diff
+    text, still counted) since the memory-safety property itself isn't
+    directly assertable from a test, only the outcome that depends on it."""
+    big = repo / "huge.bin"
+    big.write_bytes(b"x" * 200_000)  # over _MAX_UNTRACKED_FILE_BYTES (100_000)
+    result = await diff_summary(str(repo))
+    payload = json.loads(result.output)
+    entry = next(f for f in payload["files"] if f["path"] == "huge.bin")
+    assert entry["note"] == "too large to diff"
+    assert entry["insertions"] == 0
+    assert "huge.bin" not in payload["diff"]
+
+
+@pytest.mark.asyncio
 async def test_git_diff_operation_includes_untracked_file(repo: Path) -> None:
     """End-to-end at the Tool-callable level (not just the free function) —
     GitTool's own `diff` operation inherits the untracked-file coverage

@@ -151,7 +151,13 @@ async def _untracked_diff(repo: str, paths: list[str] | None) -> tuple[int, list
     if paths:
         argv += ["--"] + paths
     result = await run_argv(argv, tool_name="git", workdir=repo, intent="read")
-    if not result.success or not result.output.strip():
+    if not result.success:
+        log.tool.debug(
+            "git.diff_summary: ls-files failed — untracked scan skipped, tracked diff unaffected",
+            extra={"_fields": {"error": result.error}},
+        )
+        return 0, [], ""
+    if not result.output.strip():
         return 0, [], ""
 
     all_files = [line for line in result.output.splitlines() if line.strip()]
@@ -161,19 +167,28 @@ async def _untracked_diff(repo: str, paths: list[str] | None) -> tuple[int, list
     entries: list[dict[str, object]] = []
     diff_parts: list[str] = []
     for rel_path in processed:
+        full_path = Path(repo) / rel_path
         try:
-            raw = (Path(repo) / rel_path).read_bytes()
+            size = full_path.stat().st_size
+        except OSError as exc:
+            log.tool.debug(
+                "git.diff_summary: could not stat untracked file — skipping",
+                extra={"_fields": {"path": rel_path, "err": str(exc)}},
+            )
+            continue
+        if size > _MAX_UNTRACKED_FILE_BYTES:
+            entries.append({
+                "path": rel_path, "insertions": 0, "deletions": 0,
+                "binary": False, "status": "untracked", "note": "too large to diff",
+            })
+            continue
+        try:
+            raw = full_path.read_bytes()
         except OSError as exc:
             log.tool.debug(
                 "git.diff_summary: could not read untracked file — skipping",
                 extra={"_fields": {"path": rel_path, "err": str(exc)}},
             )
-            continue
-        if len(raw) > _MAX_UNTRACKED_FILE_BYTES:
-            entries.append({
-                "path": rel_path, "insertions": 0, "deletions": 0,
-                "binary": False, "status": "untracked", "note": "too large to diff",
-            })
             continue
         try:
             text = raw.decode("utf-8")
