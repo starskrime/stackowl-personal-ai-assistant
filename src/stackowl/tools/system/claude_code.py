@@ -41,7 +41,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.paths import StackowlHome
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.child_exclusion import child_excluded_now
-from stackowl.tools.system.git_tool import add_worktree, is_git_repo
+from stackowl.tools.system.git_tool import add_worktree, diff_summary, is_git_repo
 from stackowl.tools.system.shell import run_argv
 
 __all__ = ["ClaudeCodeTool"]
@@ -253,6 +253,24 @@ class ClaudeCodeTool(Tool):
         parsed = {**parsed, "isolation": isolation} if isinstance(parsed, dict) else {
             "result": parsed, "isolation": isolation,
         }
+        # Independent confirmation of what changed, not just the CLI's own
+        # self-report — best-effort: any failure is logged and omitted, never
+        # fails this already-successful call (research artifact §3 proposal 4).
+        if await is_git_repo(workdir):
+            diff_result = await diff_summary(workdir)
+            if diff_result.success:
+                try:
+                    parsed["diff"] = json.loads(diff_result.output)
+                except (json.JSONDecodeError, ValueError) as exc:
+                    log.tool.warning(
+                        "claude_code.execute: diff_summary output was not valid JSON — omitting",
+                        exc_info=exc,
+                    )
+            else:
+                log.tool.debug(
+                    "claude_code.execute: diff_summary failed — omitting diff",
+                    extra={"_fields": {"error": diff_result.error}},
+                )
         log.tool.debug(
             "claude_code.execute: exit",
             extra={

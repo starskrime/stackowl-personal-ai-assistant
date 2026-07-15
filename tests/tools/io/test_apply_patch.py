@@ -12,6 +12,7 @@ boundary to the workspace.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -388,3 +389,44 @@ class TestSideEffectCommittedHonesty:
         result = await ApplyPatchTool(store=UndoStore()).execute(patch=patch)
         assert result.success is True
         assert result.side_effect_committed is True
+
+
+def _init_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    (path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=path, check=True)
+
+
+class TestGitDiffAppend:
+    async def test_git_repo_workspace_appends_real_diff(self, home: Path, ws: Path) -> None:
+        _init_repo(ws)
+        (ws / "code.py").write_text("def foo():\n    return 1\n")
+        subprocess.run(["git", "add", "code.py"], cwd=ws, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add code.py"], cwd=ws, check=True)
+        patch = _patch(
+            "*** Update File: code.py",
+            "@@ def foo():",
+            "-    return 1",
+            "+    return 2",
+        )
+        result = await ApplyPatchTool().execute(patch=patch)
+        assert result.success is True
+        assert "Patch applied to" in result.output  # original self-computed block, unchanged
+        assert '"files_changed"' in result.output  # appended real git-diff JSON block
+        assert '"code.py"' in result.output
+
+    async def test_non_git_workspace_output_unchanged(self, home: Path, ws: Path) -> None:
+        (ws / "code.py").write_text("def foo():\n    return 1\n")
+        patch = _patch(
+            "*** Update File: code.py",
+            "@@ def foo():",
+            "-    return 1",
+            "+    return 2",
+        )
+        result = await ApplyPatchTool().execute(patch=patch)
+        assert result.success is True
+        assert "Patch applied to" in result.output
+        assert '"files_changed"' not in result.output

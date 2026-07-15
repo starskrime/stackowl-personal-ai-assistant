@@ -196,3 +196,57 @@ async def test_non_git_workdir_skips_isolation(
 
     payload = json.loads(result.output)
     assert payload["isolation"]["isolated"] is False
+
+
+@pytest.mark.asyncio
+async def test_successful_run_in_git_repo_includes_diff(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A git-repo workdir gets a real `git diff` folded into the JSON payload
+    under "diff" — independent confirmation of what changed, not just the
+    CLI's own self-reported result."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    stub = repo / "claude_stub"
+    stub.write_text(
+        "#!/bin/sh\n"
+        "echo edited >> README.md\n"
+        'echo \'{"type": "result", "is_error": false, "result": "done", '
+        '"session_id": "sess-999"}\'\n'
+    )
+    os.chmod(stub, 0o755)
+    monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)
+
+    result = await ClaudeCodeTool()(prompt="add a file", workdir=str(repo))
+
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert payload["diff"]["files_changed"] == 1
+    assert payload["diff"]["files"][0]["path"] == "README.md"
+
+
+@pytest.mark.asyncio
+async def test_successful_run_in_non_git_workdir_has_no_diff_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Non-git workdir: today's behavior unchanged — no "diff" key at all."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    stub = tmp_path / "claude"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'echo \'{"type": "result", "is_error": false, "result": "done", '
+        '"session_id": "sess-123"}\'\n'
+    )
+    os.chmod(stub, 0o755)
+    monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)
+
+    result = await ClaudeCodeTool()(prompt="fix the bug", workdir=str(tmp_path))
+
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert "diff" not in payload
