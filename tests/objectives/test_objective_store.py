@@ -206,3 +206,50 @@ async def test_replace_subgoal_with_children_rolls_back_atomically_on_failure(
     assert [s.subgoal_id for s in all_subs] == [parent.subgoal_id]
     assert all_subs[0].position == parent.position
     assert all_subs[0].description == "only step"
+
+
+# --------------------------- Task 4: epic repo/branch fields + depends_on ---
+
+
+async def test_create_persists_epic_fields(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    obj = Objective(
+        objective_id="obj-epic-1", owner_id="principal-default", intent="epic test",
+        repo="/tmp/repo", integration_branch="stackowl/epic-obj-epic-1",
+        base_branch="main",
+    )
+    await store.create(obj)
+    fetched = await store.get("obj-epic-1")
+    assert fetched.repo == "/tmp/repo"
+    assert fetched.integration_branch == "stackowl/epic-obj-epic-1"
+    assert fetched.base_branch == "main"
+
+
+async def test_add_subgoals_resolves_depends_on_indices(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    obj = Objective(objective_id="obj-epic-2", owner_id="principal-default", intent="epic test")
+    await store.create(obj)
+    specs = [
+        SubgoalSpec(description="a"),
+        SubgoalSpec(description="b", depends_on=[0]),
+    ]
+    created = await store.add_subgoals("obj-epic-2", specs)
+    assert created[0].depends_on == []
+    assert created[1].depends_on == [created[0].subgoal_id]
+
+    reloaded = await store.list_subgoals("obj-epic-2")
+    by_desc = {sg.description: sg for sg in reloaded}
+    assert by_desc["b"].depends_on == [by_desc["a"].subgoal_id]
+
+
+async def test_update_subgoal_sets_worktree_and_branch(pool: DbPool) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    obj = Objective(objective_id="obj-epic-3", owner_id="principal-default", intent="epic test")
+    await store.create(obj)
+    [sg] = await store.add_subgoals("obj-epic-3", [SubgoalSpec(description="a")])
+    await store.update_subgoal(
+        sg.subgoal_id, "running", worktree_path="/tmp/wt", story_branch="stackowl/story-x",
+    )
+    reloaded = (await store.list_subgoals("obj-epic-3"))[0]
+    assert reloaded.worktree_path == "/tmp/wt"
+    assert reloaded.story_branch == "stackowl/story-x"

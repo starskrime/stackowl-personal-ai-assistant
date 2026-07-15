@@ -129,6 +129,20 @@ _OWLS_META = CommandMeta(
                 Example(invocation="/owls objective-cancel obj-1a2b3c4d YES", note="Confirm"),
             ),
         ),
+        SubCommand(
+            name="objective-merge",
+            summary="Merge a completed (or partially completed) epic",
+            description=(
+                "Merge an epic's integration branch into its base branch. "
+                "Works when every story is done, or when some are "
+                "permanently blocked (merges just the completed ones). "
+                "Confirmed with YES."
+            ),
+            args=(Arg(name="objective_id", summary="objective id"),),
+            examples=(
+                Example(invocation="/owls objective-merge obj-1a2b3c4d YES", note="Confirm"),
+            ),
+        ),
     ),
 )
 
@@ -201,6 +215,8 @@ class OwlsCommand(SlashCommand):
                 result = await self._objective(rest)
             elif sub == "objective-cancel":
                 result = await self._objective_cancel(rest)
+            elif sub == "objective-merge":
+                result = await self._objective_merge(rest)
             else:
                 log.gateway.debug(
                     "[commands] owls.handle: unknown subcommand",
@@ -522,7 +538,7 @@ class OwlsCommand(SlashCommand):
         objective_id = tokens[0]
         store = ObjectiveStore(self._db, DEFAULT_PRINCIPAL_ID)
         try:
-            await store.get(objective_id)
+            objective = await store.get(objective_id)
         except ObjectiveNotFoundError:
             return f"✗ no such objective: {objective_id!r}"
         confirmed = len(tokens) > 1 and tokens[1] == "YES"
@@ -531,6 +547,13 @@ class OwlsCommand(SlashCommand):
                 f"⚠ This will abandon objective '{objective_id}'.\n"
                 f"   Type: /owls objective-cancel {objective_id} YES to confirm."
             )
+        if objective.repo:
+            from stackowl.tools.system.git_tool import GitTool
+
+            git = GitTool()
+            for sg in await store.list_subgoals(objective_id):
+                if sg.worktree_path:
+                    await git(operation="worktree_remove", repo=objective.repo, path=sg.worktree_path, force=True)
         await store.update_status(objective_id, "abandoned")
         await store.append_event(objective_id, "abandoned", "cancelled by owner")
         log.gateway.info(
@@ -538,6 +561,72 @@ class OwlsCommand(SlashCommand):
             extra={"_fields": {"objective_id": objective_id}},
         )
         return f"✓ objective '{objective_id}' abandoned."
+
+    async def _objective_merge(self, rest: str) -> str:
+        """Merge an epic's integration branch (full or partial) — confirmed with YES."""
+        if self._db is None:
+            return _NO_OBJECTIVE_DB
+        tokens = rest.split()
+        if not tokens:
+            return "Usage: /owls objective-merge <objective_id> YES"
+        objective_id = tokens[0]
+        store = ObjectiveStore(self._db, DEFAULT_PRINCIPAL_ID)
+        try:
+            objective = await store.get(objective_id)
+        except ObjectiveNotFoundError:
+            return f"✗ no such objective: {objective_id!r}"
+
+        if not objective.repo or not objective.integration_branch:
+            return f"✗ '{objective_id}' is not an epic (no repo/integration branch)"
+        if objective.status != "blocked":
+            return f"✗ '{objective_id}' is not ready to merge (status: {objective.status})"
+
+        subgoals = await store.list_subgoals(objective_id)
+        done = [sg for sg in subgoals if sg.status == "done"]
+        if not done:
+            return f"✗ '{objective_id}' has no completed stories to merge"
+
+        confirmed = len(tokens) > 1 and tokens[1] == "YES"
+        if not confirmed:
+            return (
+                f"⚠ This will merge {len(done)}/{len(subgoals)} completed "
+                f"stories from '{objective.integration_branch}' into "
+                f"'{objective.base_branch}'.\n"
+                f"   Type: /owls objective-merge {objective_id} YES to confirm."
+            )
+
+        from stackowl.tools.system.git_tool import GitTool
+        from stackowl.tools.system.shell import run_argv
+
+        checkout = await run_argv(
+            ["git", "checkout", objective.base_branch or ""],
+            tool_name="git", workdir=objective.repo, intent="write",
+        )
+        if not checkout.success:
+            return f"✗ could not check out '{objective.base_branch}': {checkout.error}"
+        merge = await run_argv(
+            ["git", "merge", "--no-ff", objective.integration_branch],
+            tool_name="git", workdir=objective.repo, intent="write",
+        )
+        if not merge.success:
+            return f"✗ final merge failed (left blocked for manual resolution): {merge.error}"
+
+        git = GitTool()
+        done_ids = {sg.subgoal_id for sg in done}
+        for sg in subgoals:
+            if sg.subgoal_id not in done_ids and sg.worktree_path:
+                await git(operation="worktree_remove", repo=objective.repo, path=sg.worktree_path, force=True)
+
+        await store.update_status(objective_id, "done")
+        await store.append_event(
+            objective_id, "epic_merged",
+            f"{len(done)}/{len(subgoals)} stories merged into {objective.base_branch}",
+        )
+        log.gateway.info(
+            "[commands] owls.objective_merge: merged",
+            extra={"_fields": {"objective_id": objective_id, "done": len(done), "total": len(subgoals)}},
+        )
+        return f"✓ merged {len(done)}/{len(subgoals)} stories into '{objective.base_branch}'."
 
     # ----------------------------------------------------------- yaml helpers
     def _upsert_to_yaml(self, entry: dict[str, Any]) -> None:
@@ -706,6 +795,20 @@ _OWL_META = CommandMeta(
                 Example(invocation="/owl objective-cancel obj-1a2b3c4d YES", note="Confirm"),
             ),
         ),
+        SubCommand(
+            name="objective-merge",
+            summary="Merge a completed (or partially completed) epic",
+            description=(
+                "Merge an epic's integration branch into its base branch. "
+                "Works when every story is done, or when some are "
+                "permanently blocked (merges just the completed ones). "
+                "Confirmed with YES."
+            ),
+            args=(Arg(name="objective_id", summary="objective id"),),
+            examples=(
+                Example(invocation="/owl objective-merge obj-1a2b3c4d YES", note="Confirm"),
+            ),
+        ),
     ),
 )
 
@@ -766,6 +869,8 @@ class OwlCommand(OwlsCommand):
                 return await self._objective(rest)
             if sub == "objective-cancel":
                 return await self._objective_cancel(rest)
+            if sub == "objective-merge":
+                return await self._objective_merge(rest)
             log.gateway.debug("[commands] owl.handle: unknown subcommand",
                               extra={"_fields": {"sub": sub}})
             return render_usage("owl", _OWL_META)

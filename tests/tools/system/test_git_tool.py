@@ -262,3 +262,11 @@ async def test_git_diff_operation_includes_untracked_file(repo: Path) -> None:
     payload = json.loads(result.output)
     entry = next(f for f in payload["files"] if f["path"] == "new_module.py")
     assert entry["status"] == "untracked"
+
+
+@pytest.mark.asyncio
+async def test_current_branch_returns_checked_out_branch(repo: Path) -> None:
+    from stackowl.tools.system.git_tool import current_branch
+
+    branch = await current_branch(str(repo))
+    assert branch in ("main", "master")  # git init's default varies by config

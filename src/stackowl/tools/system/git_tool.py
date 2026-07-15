@@ -24,7 +24,7 @@ from stackowl.infra.observability import log
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.system.shell import _default_workspace_cwd, run_argv
 
-__all__ = ["GitTool", "add_worktree", "diff_summary", "is_git_repo"]
+__all__ = ["GitTool", "add_worktree", "current_branch", "diff_summary", "is_git_repo"]
 
 _TOOLSET_GROUP = "code"
 _OPERATIONS = frozenset(
@@ -289,6 +289,17 @@ async def is_git_repo(path: str) -> bool:
         ["git", "rev-parse", "--is-inside-work-tree"], tool_name="git", workdir=path, intent="read",
     )
     return result.success and result.output.strip() == "true"
+
+
+async def current_branch(repo: str) -> str | None:
+    """The current checked-out branch name in ``repo``, or None if detached/unreadable."""
+    result = await run_argv(
+        ["git", "branch", "--show-current"], tool_name="git", workdir=repo, intent="read",
+    )
+    if not result.success:
+        return None
+    branch = result.output.strip()
+    return branch or None
 
 
 async def add_worktree(

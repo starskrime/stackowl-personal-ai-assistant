@@ -10,6 +10,7 @@ pings the owner — it never silently acts on the irreversible thing.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -714,3 +715,203 @@ async def test_completion_falls_back_when_no_provider_registry(pool: DbPool) -> 
 
     _job, message, _category = deliverer.calls[-1]
     assert "the real output" in message  # a real sub-goal result, not just the intent
+
+
+# ------------------------------------------------- Task 8: epic branch -----
+
+
+def _epic_objective(objective_id: str) -> Objective:
+    return Objective(
+        objective_id=objective_id, owner_id="principal-default", intent="epic",
+        repo="/tmp/fake-repo", integration_branch=f"stackowl/epic-{objective_id}",
+        base_branch="main",
+    )
+
+
+async def test_epic_advance_launches_ready_stories_concurrently(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task #4 epic path: independent stories are launched CONCURRENTLY in one
+    tick, not one-per-tick like the plain-objective linear path."""
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic")
+    await store.create(objective)
+    await store.add_subgoals(
+        "obj-epic",
+        [SubgoalSpec(description="a"), SubgoalSpec(description="b")],  # both independent
+    )
+
+    launched: list[str] = []
+
+    async def _fake_run_story(
+        objective: Objective, subgoal: object, store_: ObjectiveStore, locks: object,
+    ) -> None:
+        launched.append(subgoal.subgoal_id)  # type: ignore[attr-defined]
+        await store_.update_subgoal(subgoal.subgoal_id, "done", result="ok")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("stackowl.objectives.driver.run_story", _fake_run_story)
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+
+    result = await handler._advance(store, await store.get("obj-epic"))
+
+    assert result is True
+    for _ in range(20):
+        if len(launched) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(launched) == 2  # both independent stories launched THIS tick
+
+
+async def test_epic_failure_isolation_does_not_block_siblings(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One story blocking must not prevent an independent sibling from completing."""
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic2")
+    await store.create(objective)
+    await store.add_subgoals(
+        "obj-epic2",
+        [SubgoalSpec(description="a"), SubgoalSpec(description="b")],  # independent
+    )
+
+    async def _fake_run_story(
+        objective: Objective, subgoal: object, store_: ObjectiveStore, locks: object,
+    ) -> None:
+        if subgoal.description == "a":  # type: ignore[attr-defined]
+            await store_.update_subgoal(subgoal.subgoal_id, "blocked", result="failed")  # type: ignore[attr-defined]
+        else:
+            await store_.update_subgoal(subgoal.subgoal_id, "done", result="ok")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("stackowl.objectives.driver.run_story", _fake_run_story)
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+
+    await handler._advance(store, await store.get("obj-epic2"))
+
+    for _ in range(20):
+        subgoals = await store.list_subgoals("obj-epic2")
+        if all(sg.status in ("blocked", "done") for sg in subgoals):
+            break
+        await asyncio.sleep(0.01)
+    subgoals = await store.list_subgoals("obj-epic2")
+    by_desc = {sg.description: sg for sg in subgoals}
+    assert by_desc["a"].status == "blocked"
+    assert by_desc["b"].status == "done"
+
+
+# ------------------------------------------------ Task 9: epic settle ------
+
+
+async def test_epic_all_done_notifies_full_completion(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic3")
+    await store.create(objective)
+    [sg] = await store.add_subgoals("obj-epic3", [SubgoalSpec(description="a")])
+    await store.update_subgoal(sg.subgoal_id, "done", result="ok")
+
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+    notified: list[str] = []
+
+    async def _fake_notify(obj: Objective, msg: str) -> None:
+        notified.append(msg)
+
+    monkeypatch.setattr(handler, "_notify", _fake_notify)
+    await handler._settle_epic_status(store, await store.get("obj-epic3"))
+
+    reloaded = await store.get("obj-epic3")
+    assert reloaded is not None
+    assert reloaded.status == "blocked"  # awaiting the human merge confirm, not auto-"done"
+    assert any("objective-merge" in m for m in notified)
+    assert any("1/1" in m for m in notified)
+
+
+async def test_epic_partial_stuck_notifies_per_story_reasons(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic4")
+    await store.create(objective)
+    specs = [SubgoalSpec(description="a"), SubgoalSpec(description="b", depends_on=[0])]
+    created = await store.add_subgoals("obj-epic4", specs)
+    await store.update_subgoal(created[0].subgoal_id, "blocked", result="claude_code failed")
+    # created[1] ("b") stays pending forever — its dependency never reached done.
+
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+    notified: list[str] = []
+
+    async def _fake_notify(obj: Objective, msg: str) -> None:
+        notified.append(msg)
+
+    monkeypatch.setattr(handler, "_notify", _fake_notify)
+    await handler._settle_epic_status(store, await store.get("obj-epic4"))
+
+    reloaded = await store.get("obj-epic4")
+    assert reloaded is not None
+    assert reloaded.status == "blocked"
+    message = notified[0]
+    assert "claude_code failed" in message  # a's own reason
+    assert "dependency" in message.lower()  # b's transitive reason
+
+
+async def test_epic_still_progressing_does_not_settle(
+    pool: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectiveStore(pool, "principal-default")
+    objective = _epic_objective("obj-epic5")
+    await store.create(objective)
+    [sg] = await store.add_subgoals("obj-epic5", [SubgoalSpec(description="a")])
+    await store.update_subgoal(sg.subgoal_id, "running")  # still in flight
+
+    handler = ObjectiveDriverHandler(db=pool, backend=None)
+    notified: list[str] = []
+
+    async def _fake_notify(obj: Objective, msg: str) -> None:
+        notified.append(msg)
+
+    monkeypatch.setattr(handler, "_notify", _fake_notify)
+    await handler._settle_epic_status(store, await store.get("obj-epic5"))
+
+    reloaded = await store.get("obj-epic5")
+    assert reloaded is not None
+    assert reloaded.status == "active"
+    assert notified == []
+
+
+async def test_on_story_task_done_discards_and_logs_uncaught_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Task #4 review fix: the done-callback must always discard the finished
+    task from ``_epic_drives`` (success, uncaught exception, or cancellation),
+    and must surface an uncaught exception via the structured logger instead
+    of letting it vanish into asyncio's own stderr-only warning — without
+    itself raising on a cancelled task (``Task.exception()`` re-raises
+    ``CancelledError`` rather than returning it)."""
+    handler = ObjectiveDriverHandler(db=None, backend=None)
+
+    async def _ok() -> None:
+        return None
+
+    async def _boom() -> None:
+        raise RuntimeError("story task blew up")
+
+    async def _hang() -> None:
+        await asyncio.sleep(10)
+
+    ok_task = asyncio.create_task(_ok(), name="sub-ok")
+    boom_task = asyncio.create_task(_boom(), name="sub-boom")
+    hang_task = asyncio.create_task(_hang(), name="sub-hang")
+    handler._epic_drives.update({ok_task, boom_task, hang_task})
+    hang_task.cancel()
+
+    await asyncio.gather(ok_task, boom_task, hang_task, return_exceptions=True)
+
+    with caplog.at_level("ERROR", logger="stackowl.scheduler"):
+        handler._on_story_task_done(ok_task)
+        handler._on_story_task_done(boom_task)  # must not raise
+        handler._on_story_task_done(hang_task)  # cancelled — must not raise
+
+    assert handler._epic_drives == set()  # all three cleanly discarded
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(error_records) == 1  # only the genuine uncaught exception logged
+    assert getattr(error_records[0], "_fields", {}).get("subgoal_id") == "sub-boom"

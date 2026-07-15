@@ -21,6 +21,7 @@ by adapting the objective's own recipient columns into a synthetic delivery
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from datetime import UTC, datetime
@@ -34,6 +35,8 @@ from stackowl.interaction.reversibility_resolver import (
     reversibility_resolver_enabled,
 )
 from stackowl.objectives.decomposer import ObjectiveDecomposer
+from stackowl.objectives.epic_runner import detect_orphan_and_recover, run_story
+from stackowl.objectives.graph import readiness_set
 from stackowl.objectives.model import ExpectedOutcome, Objective, Subgoal, SubgoalSpec
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.acceptance import AcceptanceChecker
@@ -140,6 +143,11 @@ class ObjectiveDriverHandler(JobHandler):
         # instead of an inline attempt-budget guard, so one policy governs every
         # subsystem's recovery. Stateless; injectable for tests.
         self._recovery = recovery or RecoveryActuator()
+        # Task #4 — held strong-refs for background story tasks (mirrors
+        # RecoveryDriver._drives) and per-repo merge locks (mirrors
+        # TurnRegistry.session_intake_lock's lazy-per-key pattern).
+        self._epic_drives: set[asyncio.Task[None]] = set()
+        self._merge_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def handler_name(self) -> str:
@@ -204,7 +212,12 @@ class ObjectiveDriverHandler(JobHandler):
     # ------------------------------------------------------------- internals
 
     async def _advance(self, store: ObjectiveStore, objective: Objective) -> bool:
-        """Advance one objective by its next pending sub-goal. Returns did-work."""
+        """Advance one objective. Plain objective (repo unset): unchanged
+        linear behavior below. Epic (repo set): dispatches to _advance_epic —
+        readiness-graph scan, concurrent background launch, worktree-aware
+        crash recovery, and partial-completion notify (Task #4)."""
+        if objective.repo:
+            return await self._advance_epic(store, objective)
         nxt = await store.next_pending_subgoal(objective.objective_id)
         if nxt is None:
             # All sub-goals finished — the objective is complete. Recombine
@@ -363,6 +376,129 @@ class ObjectiveDriverHandler(JobHandler):
         )
         await store.append_event(objective.objective_id, "subgoal_done", nxt.description)
         return True
+
+    async def _advance_epic(self, store: ObjectiveStore, objective: Objective) -> bool:
+        """Task #4 epic path: recover orphans, launch every ready story
+        concurrently, and let each story's own background task drive it to a
+        terminal state (see epic_runner.run_story). Returns did-work."""
+        subgoals = await store.list_subgoals(objective.objective_id)
+        did_work = False
+
+        # Crash recovery — worktree-aware orphan check (runs every tick, no
+        # separate boot sweep; see design spec's Crash recovery section).
+        live_ids = {t.get_name() for t in self._epic_drives}
+        for sg in subgoals:
+            if sg.status == "running" and sg.subgoal_id not in live_ids:
+                await detect_orphan_and_recover(objective, sg, store)
+                did_work = True
+        if did_work:
+            subgoals = await store.list_subgoals(objective.objective_id)  # re-read post-recovery
+
+        ready = readiness_set(subgoals)
+        for sg in subgoals:
+            if sg.subgoal_id not in ready:
+                continue
+            # Explicit synchronization point (§Execution model): the DB write
+            # completes BEFORE this tick returns, THEN the background task is
+            # created — so the scheduler never considers this job "done" (and
+            # eligible to fire again) while a launch is still in flight.
+            await store.update_subgoal(sg.subgoal_id, "running")
+            task: asyncio.Task[None] = asyncio.create_task(
+                run_story(objective, sg, store, self._merge_locks), name=sg.subgoal_id,
+            )
+            self._epic_drives.add(task)
+            task.add_done_callback(self._on_story_task_done)
+            did_work = True
+            log.scheduler.info(
+                "[scheduler] objective_driver._advance_epic: story launched",
+                extra={"_fields": {"objective_id": objective.objective_id, "subgoal_id": sg.subgoal_id}},
+            )
+
+        await self._settle_epic_status(store, objective)
+        return did_work
+
+    async def _settle_epic_status(self, store: ObjectiveStore, objective: Objective) -> None:
+        """Task #4 — decide whether the epic is fully done, stuck-but-partial,
+        or still progressing, and notify accordingly. Never called from a
+        plain objective's path. `done` (a Subgoal status) already means
+        "merged" for an epic (epic_runner.run_story) — this method only reads
+        that status, it never merges anything itself."""
+        subgoals = await store.list_subgoals(objective.objective_id)
+        if any(sg.status == "running" for sg in subgoals):
+            return  # still progressing
+        if readiness_set(subgoals):
+            return  # a tick will pick these up and launch them next
+
+        done = [sg for sg in subgoals if sg.status == "done"]
+        done_ids = {sg.subgoal_id for sg in done}
+        if len(done) == len(subgoals):
+            message = (
+                f"Epic complete — {len(done)}/{len(subgoals)} stories verified "
+                f"and merged into `{objective.integration_branch}`. Reply "
+                f"`/owls objective-merge {objective.objective_id} YES` to merge "
+                f"into `{objective.base_branch}`."
+            )
+            await store.update_status(
+                objective.objective_id, "blocked", blocker="awaiting merge confirm", blocker_kind="decision",
+            )
+            await store.append_event(objective.objective_id, "epic_ready_to_merge", message)
+            await self._notify(objective, message)
+            return
+
+        stuck = [sg for sg in subgoals if sg.subgoal_id not in done_ids]
+        if not stuck:
+            return  # nothing left, nothing stuck — unreachable given the checks above, but safe
+
+        lines = []
+        for sg in stuck:
+            if sg.status == "blocked":
+                lines.append(f"{sg.subgoal_id}: {sg.result or 'blocked'}")
+            elif sg.status == "pending":
+                missing = [d for d in sg.depends_on if d not in done_ids]
+                if missing:
+                    lines.append(f"{sg.subgoal_id}: blocked because dependency {missing[0]} is stuck")
+        reason_block = "\n".join(lines)
+        if done:
+            message = (
+                f"Epic stuck — {len(done)}/{len(subgoals)} stories done and "
+                f"merged into `{objective.integration_branch}`; {len(stuck)} "
+                f"permanently blocked. Reply `objective-merge "
+                f"{objective.objective_id} YES` to merge the {len(done)} "
+                f"completed stories, or `objective-cancel` to abandon.\n{reason_block}"
+            )
+        else:
+            message = (
+                f"Epic stuck — 0/{len(subgoals)} stories completed, nothing "
+                f"progressable. Reply `objective-cancel` to abandon.\n{reason_block}"
+            )
+        await store.update_status(
+            objective.objective_id, "blocked", blocker="epic stuck", blocker_kind="decision",
+        )
+        await store.append_event(objective.objective_id, "epic_stuck", message)
+        await self._notify(objective, message)
+
+    def _on_story_task_done(self, task: asyncio.Task[None]) -> None:
+        """Done-callback for a background story task (Task #4 review fix).
+
+        Discards the finished task from ``self._epic_drives`` and — since a
+        done-callback has no ``await``er to propagate to — surfaces any
+        uncaught exception ``run_story`` raised (a bug, not one of its own
+        handled failure paths) via the structured logger instead of letting
+        it vanish into asyncio's own stderr-only warning. A cancelled task
+        re-raises on ``.exception()`` rather than returning it — that is
+        expected shutdown/cleanup, not a failure, so it is not logged as one.
+        This self-heals on the next tick via orphan detection either way."""
+        self._epic_drives.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.scheduler.error(
+                "[scheduler] objective_driver._on_story_task_done: story task "
+                "raised uncaught",
+                exc_info=exc,
+                extra={"_fields": {"subgoal_id": task.get_name()}},
+            )
 
     async def _on_subgoal_failure(
         self,
