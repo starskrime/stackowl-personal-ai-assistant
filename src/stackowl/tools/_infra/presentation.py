@@ -51,7 +51,13 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # owls_list adds the read-only survey seam owl_build lacks (create/edit/retire
 # only, no query action) — a "check what owls exist" request had nowhere to go
 # except a failing owl_build call missing required fields. Cap bumped by 1.
-_DEFAULT_CAP = 35
+# Story 3.1 adds evolve_now — the self-improvement trio's DNA-evolution
+# sibling to reflect_now/synthesize_skills (FR-12: an owl must be able to
+# trigger its own DNA evolution mid-turn, not only via the nightly batch).
+# Without base membership it would only be reachable through tool_search's
+# fuzzy ranking — the exact "registered but not reachable" failure mode this
+# codebase has hit repeatedly for other self-extension tools. Cap bumped by 1.
+_DEFAULT_CAP = 36
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
@@ -65,6 +71,9 @@ _DEFAULT_CAP = 35
 _DEFAULT_BASE = frozenset({
     "read_file", "write_file", "shell", "web_fetch",
     "skill_manage", "reflect_now", "synthesize_skills",
+    # Story 3.1 — evolve_now: on-demand DNA evolution mid-turn, the
+    # self-improvement trio's third sibling (see cap-bump comment above).
+    "evolve_now",
     # Skill DISCOVERY — read-only; must survive the budget so a weak model can
     # always find (skills_list) and load (skill_view) an installed skill.
     "skills_list", "skill_view",

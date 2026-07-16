@@ -371,6 +371,77 @@ class EvolutionCoordinator(JobHandler):
         )
         return promoted
 
+    async def evolve_one_owl_now(self, owl_name: str) -> bool:
+        """On-demand, single-task evolution trigger (Story 3.1, FR-12/FR-13/AD-5).
+
+        A GENUINELY SEPARATE code path from :meth:`_evolve_one`'s attribution-
+        first branch — it never calls ``self._try_attribution``/``self._attributor``,
+        not even via a flag that happens to skip it today. DnaAttributor's
+        statistical path requires >=20 scored outcomes, a bar a single just-
+        finished task can never meet, so this path forces the LLM-fallback
+        (``_llm_fallback``, reused UNCHANGED) unconditionally — AD-5's "never
+        branches on DnaAttributor's sample count" is true by construction.
+
+        Reuses ``_checkpoint_validate_and_promote`` — Story 2.6's ONE promotion
+        function (AD-1/AD-3) — so this path is gated by the shadow-validation
+        gate from the moment it exists, exactly like the nightly batch.
+
+        Returns ``True`` if the mutation was promoted to live, ``False`` if no
+        deltas were proposed (not enough conversation material yet) or the
+        shadow gate rejected the mutation (both normal, non-error outcomes).
+        """
+        # 1. ENTRY
+        log.owls.debug(
+            "[dna] coordinator.evolve_one_owl_now: entry",
+            extra={"_fields": {"owl": owl_name}},
+        )
+        # manifest lookup raises OwlNotFoundError on an unknown owl — let it
+        # propagate (matches this codebase's existing convention, e.g.
+        # commands/owls_command.py's `_dna_restore`).
+        manifest = self._owl_registry.get(owl_name)
+
+        # 2. DECISION — force the LLM-fallback path unconditionally. This
+        # AttributionReport is honest metadata (zero attribution samples WERE
+        # consulted, by design), not a fake/misleading report.
+        attribution = AttributionReport(
+            owl_name=owl_name, n_scored_outcomes=0, deltas={}, per_trait=(),
+            explore_fired=False, explore_trait=None,
+            fallback_reason="evolve_now: single-task trigger, forced LLM-fallback path (FR-13/AD-5)",
+        )
+        deltas = await self._llm_fallback(manifest, attribution)
+        if not deltas:
+            log.owls.info(
+                "[dna] coordinator.evolve_one_owl_now: no deltas proposed — skip",
+                extra={"_fields": {"owl": owl_name}},
+            )
+            return False
+
+        # 3. STEP — scale by strategy, mutate, promote through the ONE shared
+        # gate (same shape as _evolve_one's mutation loop).
+        deltas = _scale_deltas(deltas, manifest.evolution_strategy)
+        new_dna = manifest.dna
+        for trait, delta in deltas.items():
+            try:
+                new_dna = new_dna.mutate(trait, delta)
+            except Exception as exc:  # B5
+                log.owls.warning(
+                    "[dna] coordinator.evolve_one_owl_now: mutate rejected — skipping trait",
+                    exc_info=exc,
+                    extra={"_fields": {"owl": owl_name, "trait": trait, "delta": delta}},
+                )
+                continue
+        promoted = await self._checkpoint_validate_and_promote(
+            manifest, new_dna, evolution_source="evolve_now", signal=SignalStrength.LLM_QUALITY,
+        )
+        # 4. EXIT
+        log.owls.info(
+            "[dna] coordinator.evolve_one_owl_now: exit",
+            extra={"_fields": {
+                "owl": owl_name, "mutated_traits": list(deltas.keys()), "promoted": promoted,
+            }},
+        )
+        return promoted
+
     async def _checkpoint_validate_and_promote(
         self,
         manifest: OwlAgentManifest,
@@ -388,9 +459,9 @@ class EvolutionCoordinator(JobHandler):
         gate rejected it (no-op — the pre-mutation checkpoint is restored).
 
         This is the ONE promotion function in the codebase (AD-3) — both the
-        nightly batch (``_evolve_one``, this story) and Story 3.2's
-        ``evolve_now`` call this same method. Do not duplicate checkpoint/gate/
-        persist/restore logic anywhere else.
+        nightly batch (``_evolve_one``, this story) and Story 3.1's
+        ``evolve_one_owl_now`` call this same method. Do not duplicate
+        checkpoint/gate/persist/restore logic anywhere else.
         """
         # 1. ENTRY
         log.engine.debug(

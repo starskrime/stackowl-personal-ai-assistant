@@ -533,6 +533,7 @@ class ToolRegistry:
         from stackowl.tools.io.undo_store import UndoStore, UndoWriteTool
         from stackowl.tools.io.web_fetch import WebFetchTool
         from stackowl.tools.io.write_file import WriteFileTool
+        from stackowl.tools.knowledge.evolve_now import EvolveNowTool
         from stackowl.tools.knowledge.memory import MemoryTool
         from stackowl.tools.knowledge.output_preference import SetOutputPreferenceTool
         from stackowl.tools.knowledge.reflect_now import ReflectNowTool
@@ -696,6 +697,13 @@ class ToolRegistry:
         # learned/ skills) → consent-gated; reflect_now is read.
         registry.register(ReflectNowTool())
         registry.register(SynthesizeSkillsTool())
+        # evolve_now (Story 3.1) — constructs EvolutionCoordinator off
+        # get_services() at execute time and calls the EXISTING
+        # evolve_one_owl_now() (forced LLM-fallback, routed through the same
+        # shadow-validation gate as the nightly batch). Read severity, same
+        # rationale as reflect_now: it evolves the agent's OWN DNA, not the
+        # user's data and not an external side effect.
+        registry.register(EvolveNowTool())
         registry.register(SessionSearchTool())
         registry.register(TranscriptsTool())
         # todo + update_plan share ONE PlanStore so they write a single plan slot

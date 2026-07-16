@@ -349,7 +349,7 @@ def test_self_improvement_tools_in_presented_schema() -> None:
         "openai", profile=[], pins=[], hydrated=set()
     )
     names = {s["function"]["name"] for s in schemas}  # type: ignore[index]
-    for expected in ("skill_manage", "reflect_now", "synthesize_skills"):
+    for expected in ("skill_manage", "reflect_now", "synthesize_skills", "evolve_now"):
         assert expected in names, (
             f"{expected!r} not in the per-owl presented base set: {sorted(names)}"
         )
