@@ -1,5 +1,5 @@
 from stackowl.owls.dna import OwlDNA
-from stackowl.owls.dna_governor import bound_dna
+from stackowl.owls.dna_governor import SignalStrength, bound_dna, scale_by_signal_strength
 
 
 def test_max_delta_caps_a_big_move():
@@ -66,3 +66,51 @@ def test_neutral_anchor_preserves_legacy_envelope():
     # anchor=neutral 0.5 → band [0.2,0.8] = old behavior
     out = bound_dna(OwlDNA(curiosity=0.79), OwlDNA(curiosity=0.99), OwlDNA())
     assert abs(out.curiosity - 0.8) < 1e-9
+
+
+# --- Story 2.4: signal-strength-tiered clamp -------------------------------
+
+
+def test_scale_by_signal_strength_pure_multipliers():
+    # OUTCOME_BINARY has no current caller (see story's Design decision) —
+    # exercised directly against the pure scaling function per the story's
+    # explicit test instruction.
+    assert scale_by_signal_strength(0.10, SignalStrength.VERIFIED) == 0.10
+    assert abs(scale_by_signal_strength(0.10, SignalStrength.OUTCOME_BINARY) - 0.06) < 1e-9
+    assert abs(scale_by_signal_strength(0.10, SignalStrength.LLM_QUALITY) - 0.03) < 1e-9
+
+
+def test_bound_dna_verified_moves_full_raw_delta():
+    # raw delta (0.02) well within MAX_DELTA (0.05) — VERIFIED (1.0x) is unscaled.
+    out = bound_dna(OwlDNA(curiosity=0.50), OwlDNA(curiosity=0.52), OwlDNA(), signal=SignalStrength.VERIFIED)
+    assert abs(out.curiosity - 0.52) < 1e-9
+
+
+def test_bound_dna_outcome_binary_scales_delta_0_6x():
+    out = bound_dna(OwlDNA(curiosity=0.50), OwlDNA(curiosity=0.52), OwlDNA(), signal=SignalStrength.OUTCOME_BINARY)
+    assert abs(out.curiosity - 0.512) < 1e-9          # 0.50 + 0.02*0.6
+
+
+def test_bound_dna_llm_quality_scales_delta_0_3x():
+    out = bound_dna(OwlDNA(curiosity=0.50), OwlDNA(curiosity=0.52), OwlDNA(), signal=SignalStrength.LLM_QUALITY)
+    assert abs(out.curiosity - 0.506) < 1e-9           # 0.50 + 0.02*0.3
+
+
+def test_signal_strength_never_widens_the_max_delta_ceiling():
+    # raw delta (0.45) already exceeds MAX_DELTA (0.05) before any scaling —
+    # scaling a smaller number can never un-cap it (AD-4/FR-7).
+    current, proposed, anchor = OwlDNA(curiosity=0.50), OwlDNA(curiosity=0.95), OwlDNA()
+    verified = bound_dna(current, proposed, anchor, signal=SignalStrength.VERIFIED)
+    outcome = bound_dna(current, proposed, anchor, signal=SignalStrength.OUTCOME_BINARY)
+    llm = bound_dna(current, proposed, anchor, signal=SignalStrength.LLM_QUALITY)
+    assert abs(verified.curiosity - 0.55) < 1e-9
+    assert abs(outcome.curiosity - 0.55) < 1e-9
+    assert abs(llm.curiosity - 0.55) < 1e-9
+
+
+def test_bound_dna_no_signal_arg_matches_pre_story_behavior():
+    # NFR-5 regression: calling exactly as every pre-story caller does (no
+    # `signal=` at all) must be byte-identical to explicit VERIFIED.
+    default = bound_dna(OwlDNA(curiosity=0.50), OwlDNA(curiosity=0.52), OwlDNA())
+    verified = bound_dna(OwlDNA(curiosity=0.50), OwlDNA(curiosity=0.52), OwlDNA(), signal=SignalStrength.VERIFIED)
+    assert default.curiosity == verified.curiosity == 0.52

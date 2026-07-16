@@ -14,6 +14,7 @@ import pytest
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.owls.dna import OwlDNA
+from stackowl.owls.dna_attribution import AttributionReport, DnaAttributor
 from stackowl.owls.evolution import EvolutionCoordinator
 from stackowl.owls.evolution_limits import MAX_DELTA
 from stackowl.owls.manifest import OwlAgentManifest
@@ -21,7 +22,6 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
-
 
 # ---------------------------------------------------------------------------
 # helpers (mirror test_story_4_3 exactly)
@@ -118,6 +118,87 @@ async def test_evolution_refreshes_live_registry_and_bounds(tmp_db: DbPool) -> N
         assert abs(rows[0]["curiosity"] - expected_curiosity) < 1e-9, (
             f"DB value not bounded: got {rows[0]['curiosity']}, expected {expected_curiosity}"
         )
+    finally:
+        if was_active:
+            TestModeGuard.activate()
+
+
+# ---------------------------------------------------------------------------
+# Story 2.4 — signal-strength-tiered clamp: prove the two known callers
+# (attribution vs. LLM-fallback) are wired to the correct SignalStrength tag
+# by observing the resulting DNA magnitude for an identical raw delta
+# (0.02, well under MAX_DELTA so the rate cap doesn't mask the difference).
+# ---------------------------------------------------------------------------
+
+
+class _FixedAttributor(DnaAttributor):
+    """Always reports a fixed +0.02 curiosity delta — bypasses seeding 20+
+    scored TaskOutcome rows just to exercise the attribution branch's signal
+    tag (evolution.py's `_try_attribution` only calls `.attribute(...)`)."""
+
+    def attribute(self, owl_name: str, current_dna: OwlDNA, outcomes: list) -> AttributionReport:  # type: ignore[override]
+        return AttributionReport(
+            owl_name=owl_name, n_scored_outcomes=len(outcomes),
+            deltas={"curiosity": 0.02}, per_trait=(),
+            explore_fired=False, explore_trait=None, fallback_reason=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_attribution_path_tagged_verified_llm_fallback_tagged_llm_quality(
+    tmp_db: DbPool,
+) -> None:
+    """Same raw +0.02 curiosity delta, only the source path differs:
+    attribution → SignalStrength.VERIFIED (unscaled, 0.02) vs.
+    llm_fallback → SignalStrength.LLM_QUALITY (0.3x, 0.006)."""
+    was_active = TestModeGuard.is_active()
+    TestModeGuard.deactivate()
+    try:
+        provider_registry = ProviderRegistry()
+        mock = MockProvider(
+            name="mock-fast",
+            canned_text=(
+                '{"challenge_level": 0.0, "verbosity": 0.0, "curiosity": 0.02, '
+                '"formality": 0.0, "creativity": 0.0, "precision": 0.0}'
+            ),
+        )
+        provider_registry.register_mock("mock-fast", mock, tier="fast")
+
+        # --- attribution path: fixed attributor short-circuits the LLM fallback ---
+        attrib_reg = OwlRegistry()
+        attrib_reg.register(
+            OwlAgentManifest(
+                name="owlattrib", role="analyst", system_prompt="Be helpful.",
+                model_tier="fast", dna=OwlDNA(curiosity=0.50),
+            )
+        )
+        attrib_coordinator = EvolutionCoordinator(
+            tmp_db, provider_registry, attrib_reg, evolution_batch_size=1,
+            attributor=_FixedAttributor(),
+        )
+        result = await attrib_coordinator.execute(_job("job-signal-attrib"))
+        assert result.success is True
+        attrib_curiosity = attrib_reg.get("owlattrib").dna.curiosity
+
+        # --- llm_fallback path: real (empty-signal) attributor falls through ---
+        llm_reg = OwlRegistry()
+        llm_reg.register(
+            OwlAgentManifest(
+                name="owlllm", role="analyst", system_prompt="Be helpful.",
+                model_tier="fast", dna=OwlDNA(curiosity=0.50),
+            )
+        )
+        await _seed_messages(tmp_db, "owlllm", count=3)
+        llm_coordinator = EvolutionCoordinator(
+            tmp_db, provider_registry, llm_reg, evolution_batch_size=1,
+        )
+        result = await llm_coordinator.execute(_job("job-signal-llm"))
+        assert result.success is True
+        llm_curiosity = llm_reg.get("owlllm").dna.curiosity
+
+        assert abs(attrib_curiosity - 0.52) < 1e-9   # VERIFIED: full 0.02 delta
+        assert abs(llm_curiosity - 0.506) < 1e-9      # LLM_QUALITY: 0.02 * 0.3
+        assert attrib_curiosity > llm_curiosity
     finally:
         if was_active:
             TestModeGuard.activate()

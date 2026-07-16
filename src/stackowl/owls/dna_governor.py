@@ -6,6 +6,8 @@ the model does NOT enforce.
 """
 from __future__ import annotations
 
+from enum import StrEnum
+
 from stackowl.owls.dna import _MUTABLE_TRAITS, OwlDNA
 from stackowl.owls.evolution_limits import (
     ENVELOPE,
@@ -15,14 +17,54 @@ from stackowl.owls.evolution_limits import (
 )
 
 
-def bound_dna(current: OwlDNA, proposed: OwlDNA, anchor: OwlDNA) -> OwlDNA:
-    """Rate-cap + clamp into the per-owl envelope [anchor±ENVELOPE] + author-deferring floor."""
+class SignalStrength(StrEnum):
+    """How trustworthy the evidence behind a proposed DNA delta is (FR-6).
+
+    Defined once here and imported by every propose-stage caller — not
+    re-derived per caller (architecture spine, Consistency Conventions).
+    """
+
+    VERIFIED = "verified"              # attribution over scored, eligible outcomes
+    OUTCOME_BINARY = "outcome_binary"  # bare success/fail — no current producer (Story 2.4)
+    LLM_QUALITY = "llm_quality"        # a single LLM completion's opinion, no TaskOutcome backing
+
+
+# Operator-tunable (no existing precedent to match) — VERIFIED=1.0 keeps
+# today's attribution-path magnitude byte-identical (NFR-5); the other tiers
+# narrow the effective delta, never widen it (AD-4).
+_SIGNAL_STRENGTH_MULTIPLIER: dict[SignalStrength, float] = {
+    SignalStrength.VERIFIED: 1.0,
+    SignalStrength.OUTCOME_BINARY: 0.6,
+    SignalStrength.LLM_QUALITY: 0.3,
+}
+
+
+def scale_by_signal_strength(delta: float, signal: SignalStrength) -> float:
+    """Scale a raw per-trait delta by how strong the signal behind it is."""
+    return delta * _SIGNAL_STRENGTH_MULTIPLIER[signal]
+
+
+def bound_dna(
+    current: OwlDNA,
+    proposed: OwlDNA,
+    anchor: OwlDNA,
+    signal: SignalStrength = SignalStrength.VERIFIED,
+) -> OwlDNA:
+    """Rate-cap + clamp into the per-owl envelope [anchor±ENVELOPE] + author-deferring floor.
+
+    ``signal`` (default VERIFIED, preserving exact pre-Story-2.4 behavior for
+    any caller that doesn't pass it — NFR-5) scales the raw per-trait delta
+    DOWN before the existing MAX_DELTA/ENVELOPE/TRAIT_FLOOR clamps run — those
+    clamps are never parameterized by signal strength; they remain the final,
+    unconditional ceiling (AD-4, FR-7).
+    """
     updates: dict[str, float] = {}
     for trait in _MUTABLE_TRAITS:
         cur = float(getattr(current, trait))
         prop = float(getattr(proposed, trait))
         anc = float(getattr(anchor, trait))
-        delta = max(-MAX_DELTA, min(MAX_DELTA, prop - cur))
+        effective_delta = scale_by_signal_strength(prop - cur, signal)
+        delta = max(-MAX_DELTA, min(MAX_DELTA, effective_delta))
         lo, hi = max(0.0, anc - ENVELOPE), min(1.0, anc + ENVELOPE)
         moved = max(lo, min(hi, cur + delta))
         if trait in FLOOR_TRAITS:

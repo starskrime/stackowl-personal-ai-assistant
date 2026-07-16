@@ -30,7 +30,7 @@ from stackowl.owls.dna_attribution import (
 )
 from stackowl.owls.dna_authored import read_authored_dna
 from stackowl.owls.dna_defaults import TRAIT_NAMES
-from stackowl.owls.dna_governor import bound_dna
+from stackowl.owls.dna_governor import SignalStrength, bound_dna
 from stackowl.owls.dna_hydrator import apply_dna_overlay
 from stackowl.owls.dna_storage import upsert_owl_dna
 from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
@@ -343,7 +343,16 @@ class EvolutionCoordinator(JobHandler):
                 manifest.name, trait, previous, current, delta, evolution_source,
             )
         anchor = await read_authored_dna(self._db, manifest.name) or OwlDNA()
-        safe_dna = bound_dna(manifest.dna, new_dna, anchor)       # governor: clamp once
+        # Story 2.4 (FR-6/AD-4) — tag the batch's effective delta with how strong
+        # the signal behind it is. "attribution"/"attribution+explore" both come
+        # from DnaAttributor's verified-outcome path (VERIFIED); "llm_fallback"
+        # has no TaskOutcome backing at all (LLM_QUALITY, scaled down).
+        signal = (
+            SignalStrength.VERIFIED
+            if evolution_source.startswith("attribution")
+            else SignalStrength.LLM_QUALITY
+        )
+        safe_dna = bound_dna(manifest.dna, new_dna, anchor, signal=signal)  # governor: clamp once
         await self._persist_dna(manifest.name, safe_dna)          # DB = source of truth (persist FIRST)
         apply_dna_overlay(self._owl_registry, manifest.name, safe_dna)  # live refresh (next turn sees it)
         for trait in _MUTABLE_TRAITS:                              # audit (drift detectable + reversible)

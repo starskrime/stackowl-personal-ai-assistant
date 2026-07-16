@@ -57,7 +57,7 @@ development_status:
   2-1-learning-artifact-store: done
   2-2-dna-restore-command: done
   2-3-migrate-callsites-to-learning-artifact-store: done
-  2-4-signal-strength-tiered-clamp: backlog
+  2-4-signal-strength-tiered-clamp: done
   2-5-shadow-validation-gate-replay-harness: backlog
   2-6-wire-gate-into-promotion-auto-restore: backlog
   2-7-gate-observability-and-manual-dry-run: backlog

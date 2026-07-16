@@ -123,9 +123,14 @@ async def test_evolution_strategy_scales_real_mutation(tmp_db: DbPool) -> None:
         conservative_delta = conservative_curiosity - 0.50
         experimental_delta = experimental_curiosity - 0.50
 
-        # conservative: 0.02 * 0.5 = 0.01; experimental: 0.02 * 2 = 0.04.
-        assert conservative_delta == pytest.approx(0.01, abs=1e-9)
-        assert experimental_delta == pytest.approx(0.04, abs=1e-9)
+        # conservative: 0.02 * 0.5 = 0.01; experimental: 0.02 * 2 = 0.04, then
+        # Story 2.4's bound_dna signal-strength scaling applies on top: this is
+        # the LLM-fallback path (no attribution signal), so it's tagged
+        # LLM_QUALITY (0.3x) — 0.01 * 0.3 = 0.003; 0.04 * 0.3 = 0.012. This is
+        # Story 2.4's intended behavior change for this path (NFR-5 dev note),
+        # not a regression: the attribution/VERIFIED path stays unscaled.
+        assert conservative_delta == pytest.approx(0.003, abs=1e-9)
+        assert experimental_delta == pytest.approx(0.012, abs=1e-9)
         assert experimental_delta > conservative_delta
     finally:
         if was_active:
