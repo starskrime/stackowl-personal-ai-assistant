@@ -146,13 +146,26 @@ class DnaAttributor:
         owl_name: str,
         current_dna: OwlDNA,
         outcomes: list[TaskOutcome],
+        *,
+        skill_success_rate: float | None = None,
     ) -> AttributionReport:
         """Compute trait deltas from ``outcomes``. Returns empty deltas when
-        signal is insufficient — caller falls back to the LLM path."""
+        signal is insufficient — caller falls back to the LLM path.
+
+        ``skill_success_rate`` (Story 3.4, FR-16/FR-17/AD-7) is the owl's
+        average success_rate across its owned, execution-tested skills —
+        an OPTIONAL advisory nudge applied to each trait's already-computed
+        ``proposed_delta`` inside :meth:`_attribute_one_trait`. Default
+        ``None`` preserves byte-identical pre-story behavior for any caller
+        that doesn't pass it.
+        """
         # 1. ENTRY
         log.engine.debug(
             "[dna] attributor.attribute: entry",
-            extra={"_fields": {"owl_name": owl_name, "n_outcomes": len(outcomes)}},
+            extra={"_fields": {
+                "owl_name": owl_name, "n_outcomes": len(outcomes),
+                "skill_success_rate": skill_success_rate,
+            }},
         )
         # 2. DECISION — too few scored outcomes. POSITIVE-ONLY LEARNING (operator
         # directive): tune traits from SUCCESSFUL outcomes only, so the bands
@@ -188,7 +201,9 @@ class DnaAttributor:
         per_trait_reports: list[TraitAttribution] = []
         deltas: dict[str, float] = {}
         for trait in _MUTABLE_TRAITS:
-            attr = self._attribute_one_trait(trait, current_dna, scored)
+            attr = self._attribute_one_trait(
+                trait, current_dna, scored, skill_success_rate=skill_success_rate,
+            )
             per_trait_reports.append(attr)
             if attr.proposed_delta != 0.0:
                 deltas[trait] = attr.proposed_delta
@@ -238,10 +253,19 @@ class DnaAttributor:
 
     def _attribute_one_trait(
         self, trait: str, current_dna: OwlDNA, scored: list[TaskOutcome],
+        *, skill_success_rate: float | None = None,
     ) -> TraitAttribution:
         """Bucket samples for one trait, propose a delta toward the winning band.
 
         Returns ``proposed_delta == 0.0`` when no qualifying gap exists.
+
+        Story 3.4 (FR-16/FR-17/AD-7): when a non-zero delta IS proposed and
+        ``skill_success_rate`` is given, apply a bounded advisory multiplier
+        ``0.85 + 0.3 * skill_success_rate`` ∈ [0.85, 1.15] — a ±15% nudge on
+        the magnitude of a decision the band analysis already made. Never
+        applied to a ``0.0`` delta (``0.0 * anything == 0.0`` — a nudge can't
+        manufacture signal from nothing), never sign-flipping, never a new
+        veto/gate of its own.
         """
         # 1. ENTRY
         log.engine.debug(
@@ -312,6 +336,14 @@ class DnaAttributor:
                     f"holding at {current_value:.2f}"
                 ),
             )
+        # 3. STEP — Story 3.4 advisory nudge, applied only to this non-zero
+        # proposed_delta (see method docstring for the bound + rationale).
+        effective_delta = delta
+        nudge_applied = False
+        if skill_success_rate is not None:
+            multiplier = 0.85 + 0.3 * skill_success_rate
+            effective_delta = delta * multiplier
+            nudge_applied = True
         # 4. EXIT
         log.engine.info(
             "[dna] attributor._attribute_one_trait: exit — proposing delta",
@@ -319,16 +351,17 @@ class DnaAttributor:
                 "trait": trait, "current": round(current_value, 3),
                 "best_band": best.band, "best_mean": round(best.mean_quality, 3),
                 "worst_band": worst.band, "worst_mean": round(worst.mean_quality, 3),
-                "gap": round(gap, 3), "delta": round(delta, 3),
+                "gap": round(gap, 3), "delta": round(effective_delta, 3),
+                "skill_success_rate": skill_success_rate, "nudge_applied": nudge_applied,
             }},
         )
         return TraitAttribution(
-            trait=trait, bands=tuple(bands), proposed_delta=delta,
+            trait=trait, bands=tuple(bands), proposed_delta=effective_delta,
             rationale=(
                 f"best band {best.band} (mean={best.mean_quality:.2f}, "
                 f"n={best.n_samples}) beats {worst.band} "
                 f"(mean={worst.mean_quality:.2f}, n={worst.n_samples}) "
-                f"by {gap:.2f}; nudge {delta:+.2f}"
+                f"by {gap:.2f}; nudge {effective_delta:+.2f}"
             ),
         )
 

@@ -41,6 +41,7 @@ from stackowl.owls.shadow_validator import ShadowValidator
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
+from stackowl.skills.store import SkillIndexStore
 
 __all__ = [
     "DeltaValidator",
@@ -191,6 +192,10 @@ class EvolutionCoordinator(JobHandler):
         # (10% explore margin, 20-sample threshold per operator vote).
         self._attributor = attributor or DnaAttributor()
         self._outcome_store = TaskOutcomeStore(db)
+        # Story 3.4 (FR-16/FR-17) — owned-skill success_rate lookup for the
+        # attribution nudge. DnaAttributor itself stays DB-free (pure logic);
+        # this store lives here, next to its one caller (_try_attribution).
+        self._skill_store = SkillIndexStore(db)
 
     @property
     def handler_name(self) -> str:
@@ -720,8 +725,10 @@ class EvolutionCoordinator(JobHandler):
                 explore_fired=False, explore_trait=None,
                 fallback_reason=f"outcome query failed: {exc}",
             )
+        skill_success_rate = await self._owl_skill_success_rate(manifest)
         report = self._attributor.attribute(
             owl_name=manifest.name, current_dna=manifest.dna, outcomes=outcomes,
+            skill_success_rate=skill_success_rate,
         )
         log.engine.debug(
             "[dna] coordinator._try_attribution: exit",
@@ -729,9 +736,52 @@ class EvolutionCoordinator(JobHandler):
                 "owl": manifest.name,
                 "n_outcomes": len(outcomes),
                 "n_deltas": len(report.deltas),
+                "skill_success_rate": skill_success_rate,
             }},
         )
         return report
+
+    async def _owl_skill_success_rate(self, manifest: OwlAgentManifest) -> float | None:
+        """Aggregate ``manifest``'s owned skills' ``success_rate`` into one
+        advisory signal (Story 3.4, FR-16/FR-17). Unexecuted skills carry
+        ``success_rate=None`` and are excluded from the average — never
+        treated as 0. Returns ``None`` (no signal, not a fabricated default)
+        when the owl owns no skills, or none have executed enough to have a
+        rate yet — matches this repo's existing "None == no opinion"
+        convention (``dna_attribution.py``/``classify.py``).
+        """
+        # 1. ENTRY
+        log.engine.debug(
+            "[dna] coordinator._owl_skill_success_rate: entry",
+            extra={"_fields": {"owl": manifest.name, "n_owned_skills": len(manifest.skills)}},
+        )
+        if not manifest.skills:
+            return None
+        # 3. STEP — batch lookup (reuses get_many_by_name; no N+1 .get() loop)
+        try:
+            skills = await self._skill_store.get_many_by_name(manifest.skills)
+        except Exception as exc:  # B5 — advisory-only signal, never blocks attribution
+            log.engine.warning(
+                "[dna] coordinator._owl_skill_success_rate: get_many_by_name failed "
+                "— treating as no signal",
+                exc_info=exc, extra={"_fields": {"owl": manifest.name}},
+            )
+            return None
+        rates = [s.success_rate for s in skills if s.success_rate is not None]
+        # 2. DECISION — no executed skills yet → no signal
+        if not rates:
+            log.engine.debug(
+                "[dna] coordinator._owl_skill_success_rate: exit — no executed skills",
+                extra={"_fields": {"owl": manifest.name, "n_skills_resolved": len(skills)}},
+            )
+            return None
+        avg = sum(rates) / len(rates)
+        # 4. EXIT
+        log.engine.debug(
+            "[dna] coordinator._owl_skill_success_rate: exit",
+            extra={"_fields": {"owl": manifest.name, "n_rated": len(rates), "avg": round(avg, 4)}},
+        )
+        return avg
 
     async def _llm_fallback(
         self, manifest: OwlAgentManifest, attribution: AttributionReport,

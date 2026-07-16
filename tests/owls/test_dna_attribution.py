@@ -5,6 +5,8 @@ from __future__ import annotations
 import random
 import time
 
+import pytest
+
 from stackowl.memory.outcome_store import TaskOutcome
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_attribution import (
@@ -314,3 +316,119 @@ def test_attributor_clamps_deltas_to_max_per_epoch() -> None:
 def test_min_samples_constant_is_20() -> None:
     """Per operator vote, must be 20."""
     assert MIN_SAMPLES_FOR_ATTRIBUTION == 20
+
+
+# ---------- Story 3.4 — skill_success_rate advisory nudge -------------------
+
+
+def _band_gap_outcomes() -> tuple[OwlDNA, list[TaskOutcome]]:
+    """Same fixture as test_attributor_proposes_delta_toward_winning_band —
+    a genuine band gap that proposes a non-zero challenge_level delta."""
+    current = OwlDNA(challenge_level=0.2)
+    outcomes: list[TaskOutcome] = []
+    for i in range(10):
+        outcomes.append(_o(
+            quality=0.45 + (i % 2) * 0.1,
+            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+                          "curiosity": 0.5, "formality": 0.5,
+                          "creativity": 0.5, "precision": 0.5},
+            trace_id=f"low-{i}",
+        ))
+    for i in range(10):
+        outcomes.append(_o(
+            quality=0.85 + (i % 2) * 0.1,
+            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+                          "curiosity": 0.5, "formality": 0.5,
+                          "creativity": 0.5, "precision": 0.5},
+            trace_id=f"high-{i}",
+        ))
+    return current, outcomes
+
+
+def test_skill_success_rate_1_0_increases_magnitude_by_15pct() -> None:
+    current, outcomes = _band_gap_outcomes()
+    baseline = DnaAttributor(rng=random.Random(99), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+    )
+    nudged = DnaAttributor(rng=random.Random(99), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+        skill_success_rate=1.0,
+    )
+    base_delta = baseline.deltas["challenge_level"]
+    nudged_delta = nudged.deltas["challenge_level"]
+    assert base_delta > 0.0
+    assert nudged_delta == pytest.approx(base_delta * 1.15)
+
+
+def test_skill_success_rate_0_0_decreases_magnitude_by_15pct() -> None:
+    current, outcomes = _band_gap_outcomes()
+    baseline = DnaAttributor(rng=random.Random(99), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+    )
+    nudged = DnaAttributor(rng=random.Random(99), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+        skill_success_rate=0.0,
+    )
+    base_delta = baseline.deltas["challenge_level"]
+    nudged_delta = nudged.deltas["challenge_level"]
+    assert nudged_delta == pytest.approx(base_delta * 0.85)
+
+
+def test_skill_success_rate_0_5_leaves_delta_unchanged() -> None:
+    """0.85 + 0.3*0.5 == 1.0 exactly — the formula's own midpoint."""
+    current, outcomes = _band_gap_outcomes()
+    baseline = DnaAttributor(rng=random.Random(99), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+    )
+    nudged = DnaAttributor(rng=random.Random(99), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+        skill_success_rate=0.5,
+    )
+    assert nudged.deltas["challenge_level"] == pytest.approx(
+        baseline.deltas["challenge_level"]
+    )
+
+
+def test_skill_success_rate_cannot_manufacture_signal_from_zero_delta() -> None:
+    """A trait with NO band gap (proposed_delta == 0.0) stays 0.0 regardless
+    of skill_success_rate — AC #1's "never gates or vetoes"."""
+    attr_none = DnaAttributor(rng=random.Random(0), explore_epsilon=0.0)
+    current = OwlDNA()
+    outcomes: list[TaskOutcome] = []
+    for i in range(10):
+        outcomes.append(_o(
+            quality=0.75,
+            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+                          "curiosity": 0.5, "formality": 0.5,
+                          "creativity": 0.5, "precision": 0.5},
+            trace_id=f"l-{i}",
+        ))
+    for i in range(10):
+        outcomes.append(_o(
+            quality=0.78,
+            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+                          "curiosity": 0.5, "formality": 0.5,
+                          "creativity": 0.5, "precision": 0.5},
+            trace_id=f"h-{i}",
+        ))
+    for rate in (None, 0.0, 0.5, 1.0):
+        report = attr_none.attribute(
+            owl_name="scout", current_dna=current, outcomes=outcomes,
+            skill_success_rate=rate,
+        )
+        cl_attr = next(t for t in report.per_trait if t.trait == "challenge_level")
+        assert cl_attr.proposed_delta == 0.0
+
+
+def test_attribute_default_skill_success_rate_is_byte_identical_to_prestory() -> None:
+    """No skill_success_rate kwarg == explicit None == pre-story behavior."""
+    current, outcomes = _band_gap_outcomes()
+    no_kwarg = DnaAttributor(rng=random.Random(7), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+    )
+    explicit_none = DnaAttributor(rng=random.Random(7), explore_epsilon=0.0).attribute(
+        owl_name="scout", current_dna=current, outcomes=outcomes,
+        skill_success_rate=None,
+    )
+    assert no_kwarg.deltas == explicit_none.deltas
+    assert no_kwarg == explicit_none

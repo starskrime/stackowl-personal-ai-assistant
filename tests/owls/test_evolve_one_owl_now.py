@@ -59,7 +59,10 @@ class _SpyAttributor(DnaAttributor):
         super().__init__()
         self.calls: list[str] = []
 
-    def attribute(self, owl_name: str, current_dna: OwlDNA, outcomes: list) -> AttributionReport:  # type: ignore[override]
+    def attribute(  # type: ignore[override]
+        self, owl_name: str, current_dna: OwlDNA, outcomes: list,
+        *, skill_success_rate: float | None = None,
+    ) -> AttributionReport:
         self.calls.append(owl_name)
         # If this were ever called, it would return a confident delta — a
         # canary that would flip a naive "assert no mutation" test green for

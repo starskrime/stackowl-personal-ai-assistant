@@ -42,7 +42,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-15
-last_updated: 2026-07-15 (3-3 moved to review)
+last_updated: 2026-07-15 (3-4 moved to review)
 project: stackowl-personal-ai-assistant
 project_key: NOKEY
 tracking_system: file-system
@@ -66,6 +66,6 @@ development_status:
   3-1-evolve-now-tool: done
   3-2-route-evolve-now-through-shadow-gate: done
   3-3-resolve-decay-rate-per-week: done
-  3-4-skill-success-rate-feeds-dna-attribution: backlog
+  3-4-skill-success-rate-feeds-dna-attribution: done
   3-5-dna-traits-inform-skill-retention: backlog
   epic-3-retrospective: optional

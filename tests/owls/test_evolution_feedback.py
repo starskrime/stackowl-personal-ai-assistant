@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,9 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from stackowl.skills.loader import LoadedSkill
+from stackowl.skills.manifest import SkillManifest
+from stackowl.skills.store import SkillIndexStore
 from tests._story_2_6_helpers import AlwaysFailShadowValidator, AlwaysPassShadowValidator
 
 # ---------------------------------------------------------------------------
@@ -151,7 +155,10 @@ class _FixedAttributor(DnaAttributor):
     scored TaskOutcome rows just to exercise the attribution branch's signal
     tag (evolution.py's `_try_attribution` only calls `.attribute(...)`)."""
 
-    def attribute(self, owl_name: str, current_dna: OwlDNA, outcomes: list) -> AttributionReport:  # type: ignore[override]
+    def attribute(  # type: ignore[override]
+        self, owl_name: str, current_dna: OwlDNA, outcomes: list,
+        *, skill_success_rate: float | None = None,
+    ) -> AttributionReport:
         return AttributionReport(
             owl_name=owl_name, n_scored_outcomes=len(outcomes),
             deltas={"curiosity": 0.02}, per_trait=(),
@@ -305,3 +312,108 @@ async def test_gate_rejects_mutation_restores_checkpoint_and_logs_warning(
     assert rejection_fields["consecutive_non_regressions"] == 0
     assert rejection_fields["n_consecutive_required"] == 3  # ShadowValidator's module default
     assert rejection_fields["failures"] == []
+
+
+# ---------------------------------------------------------------------------
+# Story 3.4 — EvolutionCoordinator._owl_skill_success_rate (Task 1's aggregate
+# helper). None means "no opinion" throughout — never a fabricated 0.5/0.0.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_skill(store: SkillIndexStore, name: str, success_rate: float | None) -> int:
+    sid = await store.upsert(
+        LoadedSkill(
+            manifest=SkillManifest(name=name, description="d", source="learned"),
+            path=Path("/tmp/x"), body="## Steps\n\n1. do it.\n",
+            tools_registered=0, owls_registered=0, tool_names=(),
+        )
+    )
+    if success_rate is not None:
+        await store.set_success_rate(sid, success_rate)
+    return sid
+
+
+def _coordinator(tmp_db: DbPool) -> EvolutionCoordinator:
+    return EvolutionCoordinator(tmp_db, ProviderRegistry(), OwlRegistry())
+
+
+@pytest.mark.asyncio
+async def test_owl_skill_success_rate_no_owned_skills_returns_none(tmp_db: DbPool) -> None:
+    coordinator = _coordinator(tmp_db)
+    manifest = OwlAgentManifest(
+        name="noskills", role="analyst", system_prompt="Be helpful.",
+        model_tier="fast", dna=OwlDNA(),
+    )
+    assert await coordinator._owl_skill_success_rate(manifest) is None
+
+
+@pytest.mark.asyncio
+async def test_owl_skill_success_rate_owned_but_unexecuted_returns_none(tmp_db: DbPool) -> None:
+    """Owned skills exist but none have executed (success_rate=None for all)
+    → None, never a fabricated 0.0/0.5."""
+    coordinator = _coordinator(tmp_db)
+    await _seed_skill(coordinator._skill_store, "alpha", success_rate=None)
+    await _seed_skill(coordinator._skill_store, "beta", success_rate=None)
+    manifest = OwlAgentManifest(
+        name="unexecuted", role="analyst", system_prompt="Be helpful.",
+        model_tier="fast", dna=OwlDNA(), skills=("alpha", "beta"),
+    )
+    assert await coordinator._owl_skill_success_rate(manifest) is None
+
+
+@pytest.mark.asyncio
+async def test_owl_skill_success_rate_mixed_averages_excluding_none(tmp_db: DbPool) -> None:
+    """Mixed executed/unexecuted owned skills → average across the executed
+    ones only; the unexecuted skill's None is excluded, not treated as 0."""
+    coordinator = _coordinator(tmp_db)
+    await _seed_skill(coordinator._skill_store, "alpha", success_rate=0.8)
+    await _seed_skill(coordinator._skill_store, "beta", success_rate=0.4)
+    await _seed_skill(coordinator._skill_store, "gamma", success_rate=None)
+    manifest = OwlAgentManifest(
+        name="mixed", role="analyst", system_prompt="Be helpful.",
+        model_tier="fast", dna=OwlDNA(), skills=("alpha", "beta", "gamma"),
+    )
+    rate = await coordinator._owl_skill_success_rate(manifest)
+    assert rate == pytest.approx(0.6)  # (0.8 + 0.4) / 2, gamma's None excluded
+
+
+@pytest.mark.asyncio
+async def test_try_attribution_threads_skill_success_rate_into_attributor(
+    tmp_db: DbPool,
+) -> None:
+    """AC #1 — the signal is actually READ and factored into a real attribution
+    decision, not merely exposed as an unused getter: _try_attribution must
+    pass the computed aggregate through to DnaAttributor.attribute()."""
+
+    class _CapturingAttributor(DnaAttributor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.received_rate: float | None = "UNSET"  # type: ignore[assignment]
+
+        def attribute(  # type: ignore[override]
+            self, owl_name: str, current_dna: OwlDNA, outcomes: list,
+            *, skill_success_rate: float | None = None,
+        ) -> AttributionReport:
+            self.received_rate = skill_success_rate
+            return AttributionReport(
+                owl_name=owl_name, n_scored_outcomes=len(outcomes),
+                deltas={}, per_trait=(), explore_fired=False,
+                explore_trait=None, fallback_reason="test stub",
+            )
+
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="threaded", role="analyst", system_prompt="Be helpful.",
+            model_tier="fast", dna=OwlDNA(), skills=("alpha",),
+        )
+    )
+    attributor = _CapturingAttributor()
+    coordinator = EvolutionCoordinator(
+        tmp_db, ProviderRegistry(), reg, attributor=attributor,
+    )
+    await _seed_skill(coordinator._skill_store, "alpha", success_rate=0.9)
+
+    await coordinator._try_attribution(reg.get("threaded"))
+
+    assert attributor.received_rate == pytest.approx(0.9)
