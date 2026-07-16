@@ -109,6 +109,21 @@ _OWLS_META = CommandMeta(
             ),
         ),
         SubCommand(
+            name="dna-restore",
+            summary="Restore DNA to a specific prior checkpoint",
+            description=(
+                "You restore an owl's DNA to an exact checkpoint (not just "
+                "the authored baseline). Confirmed with YES."
+            ),
+            args=(
+                Arg(name="name", summary="owl name"),
+                Arg(name="checkpoint_id", summary="checkpoint id from /owls dna-history or the evolution audit log"),
+            ),
+            examples=(
+                Example(invocation="/owls dna-restore Sage a1b2c3d4e5f6 YES", note="Confirm restore"),
+            ),
+        ),
+        SubCommand(
             name="objectives",
             summary="List standing objectives and their progress",
         ),
@@ -209,6 +224,8 @@ class OwlsCommand(SlashCommand):
                 result = await self._dna(rest)
             elif sub == "reset-dna":
                 result = await self._reset_dna(rest)
+            elif sub == "dna-restore":
+                result = await self._dna_restore(rest)
             elif sub == "objectives":
                 result = await self._objectives()
             elif sub == "objective":
@@ -482,6 +499,49 @@ class OwlsCommand(SlashCommand):
             extra={"_fields": {"name": name}},
         )
         return f"✓ Owl '{name}' DNA reset to authored baseline."
+
+    # ------------------------------------------------------------ dna-restore
+    async def _dna_restore(self, rest: str) -> str:
+        log.gateway.debug(
+            "[commands] owls.dna_restore: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._registry is None:
+            return _NO_REGISTRY
+        tokens = rest.split()
+        if len(tokens) < 2:
+            return "Usage: /owls dna-restore <name> <checkpoint_id> YES"
+        name, checkpoint_id = tokens[0], tokens[1]
+        _ = self._registry.get(name)  # raises OwlNotFoundError on miss → handled by handle()
+        confirmed = len(tokens) > 2 and tokens[2] == "YES"
+        if not confirmed:
+            log.gateway.debug(
+                "[commands] owls.dna_restore: awaiting confirmation",
+                extra={"_fields": {"name": name, "checkpoint_id": checkpoint_id}},
+            )
+            return (
+                f"⚠ This restores owl '{name}' DNA to checkpoint '{checkpoint_id}' "
+                f"(current evolution discarded).\n"
+                f"   Type: /owls dna-restore {name} {checkpoint_id} YES to confirm."
+            )
+        if self._db is None:
+            return "DNA store unavailable."
+        from stackowl.owls.directive_latch import DIRECTIVE_LATCH
+        from stackowl.owls.dna import OwlDNA
+        from stackowl.owls.dna_hydrator import apply_dna_overlay
+        from stackowl.owls.dna_storage import upsert_owl_dna
+        from stackowl.owls.learning_artifact_store import LearningArtifactStore
+        store = LearningArtifactStore(self._db)
+        payload = await store.restore("dna", name, checkpoint_id)  # ManifestValidationError propagates
+        restored_dna = OwlDNA.model_validate(payload)
+        await upsert_owl_dna(self._db, name, restored_dna, table="owl_dna")
+        apply_dna_overlay(self._registry, name, restored_dna)
+        DIRECTIVE_LATCH.reset_owl(name)
+        log.gateway.info(
+            "[commands] owls.dna_restore: exit — DNA restored to checkpoint",
+            extra={"_fields": {"name": name, "checkpoint_id": checkpoint_id}},
+        )
+        return f"✓ Owl '{name}' DNA restored to checkpoint '{checkpoint_id}'."
 
     # ------------------------------------------------------------ objectives
     async def _objectives(self) -> str:
@@ -776,6 +836,21 @@ _OWL_META = CommandMeta(
                 Example(invocation="/owl reset-dna Sage YES", note="Confirm reset"),
             ),
         ),
+        SubCommand(
+            name="dna-restore",
+            summary="Restore DNA to a specific prior checkpoint",
+            description=(
+                "You restore an owl's DNA to an exact checkpoint (not just "
+                "the authored baseline). Confirmed with YES."
+            ),
+            args=(
+                Arg(name="name", summary="owl name"),
+                Arg(name="checkpoint_id", summary="checkpoint id from /owls dna-history or the evolution audit log"),
+            ),
+            examples=(
+                Example(invocation="/owl dna-restore Sage a1b2c3d4e5f6 YES", note="Confirm restore"),
+            ),
+        ),
         SubCommand(name="health", summary="Report owl registry health"),
         SubCommand(name="objectives", summary="List standing objectives and their progress"),
         SubCommand(
@@ -861,6 +936,8 @@ class OwlCommand(OwlsCommand):
                 return await self._dna(rest)
             if sub == "reset-dna":
                 return await self._reset_dna(rest)
+            if sub == "dna-restore":
+                return await self._dna_restore(rest)
             if sub == "health":
                 return await self._health()
             if sub == "objectives":

@@ -231,16 +231,16 @@ async def test_dna_completion_full_loop(db: DbPool) -> None:
     inj = DNAPromptInjector()
     high_directive = "push back on weak arguments"  # from the challenge_level HIGH directive
 
-    # 0.72 >= HIGH_ENTER (0.70) → latch ON, directive present.
+    # 0.72 >= HIGH_ENTER (0.62) → latch ON, directive present.
     out_enter = inj.inject(_manifest(owl), OwlDNA(challenge_level=0.72))
     assert high_directive in out_enter.lower()
 
-    # 0.66 in deadband [0.60, 0.70) → latch HOLDS, directive STILL present.
-    out_hold = inj.inject(_manifest(owl), OwlDNA(challenge_level=0.66))
+    # 0.58 in deadband [0.55, 0.62) → latch HOLDS, directive STILL present.
+    out_hold = inj.inject(_manifest(owl), OwlDNA(challenge_level=0.58))
     assert high_directive in out_hold.lower()
 
-    # 0.58 < HIGH_EXIT (0.60) → latch OFF, directive gone.
-    out_exit = inj.inject(_manifest(owl), OwlDNA(challenge_level=0.58))
+    # 0.50 < HIGH_EXIT (0.55) → latch OFF, directive gone.
+    out_exit = inj.inject(_manifest(owl), OwlDNA(challenge_level=0.50))
     assert high_directive not in out_exit.lower()
 
     # =====================================================================
@@ -251,7 +251,7 @@ async def test_dna_completion_full_loop(db: DbPool) -> None:
     apply_dna_overlay(registry, owl, OwlDNA(challenge_level=0.8))
     DIRECTIVE_LATCH.clear_all()
     DIRECTIVE_LATCH.high_state(owl, "challenge_level", 0.80)  # latch ON
-    assert DIRECTIVE_LATCH.high_state(owl, "challenge_level", 0.66) is True  # held ON
+    assert DIRECTIVE_LATCH.high_state(owl, "challenge_level", 0.66) is True  # still >= HIGH_ENTER (0.62)
 
     cmd = OwlsCommand(owl_registry=registry, db=db, event_bus=None, tool_registry=None)
     out = await cmd.handle(f"reset-dna {owl} YES", _state(owl))
@@ -261,5 +261,5 @@ async def test_dna_completion_full_loop(db: DbPool) -> None:
     assert (await _persisted_dna(db, owl))["challenge_level"] == pytest.approx(0.75)
     # Live registry manifest refreshed (apply_dna_overlay ran inside reset).
     assert registry.get(owl).dna.challenge_level == pytest.approx(0.75)
-    # Latch cleared: a cold-seed at 0.66 (< HIGH_ENTER) seeds OFF → no directive.
-    assert DIRECTIVE_LATCH.high_state(owl, "challenge_level", 0.66) is False
+    # Latch cleared: a cold-seed at 0.50 (< HIGH_ENTER 0.62) seeds OFF → no directive.
+    assert DIRECTIVE_LATCH.high_state(owl, "challenge_level", 0.50) is False

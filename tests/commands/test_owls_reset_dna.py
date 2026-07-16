@@ -1,4 +1,5 @@
 """Task 9 — /owls reset-dna + current-vs-authored readout.
+Story 2.2 — /owls dna-restore <name> <checkpoint_id> YES.
 
 Tests:
   - reset-dna requires YES confirmation
@@ -6,6 +7,9 @@ Tests:
   - reset-dna with no authored baseline returns informative message
   - reset-dna clears the DIRECTIVE_LATCH for the owl
   - /owls dna <name> shows authored baseline alongside current values
+  - dna-restore requires YES confirmation, leaves DNA unchanged until confirmed
+  - dna-restore restores exact checkpointed trait values + live-refreshes registry
+  - dna-restore on an unknown checkpoint_id fails loudly, DNA unchanged
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_authored import capture_one_authored
 from stackowl.owls.dna_hydrator import apply_dna_overlay
 from stackowl.owls.dna_storage import upsert_owl_dna
+from stackowl.owls.learning_artifact_store import LearningArtifactStore
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.state import PipelineState
@@ -98,3 +103,74 @@ async def test_dna_readout_shows_authored(tmp_db):
     apply_dna_overlay(reg, "scout", OwlDNA(challenge_level=0.8))
     out = await cmd.handle("dna scout", _state())
     assert "authored" in out.lower()
+
+
+# ------------------------------------------------------------ dna-restore (Story 2.2)
+
+@pytest.mark.asyncio
+async def test_dna_restore_requires_confirm(tmp_db):
+    cmd, _ = _cmd(tmp_db)
+    store = LearningArtifactStore(tmp_db)
+    checkpoint_id = await store.checkpoint(
+        "dna", "scout", OwlDNA(challenge_level=0.3).model_dump(), reason="test"
+    )
+    out = await cmd.handle(f"dna-restore scout {checkpoint_id}", _state())
+    assert "YES" in out
+
+
+@pytest.mark.asyncio
+async def test_dna_restore_reverts_to_checkpoint_and_live_refreshes(tmp_db):
+    cmd, reg = _cmd(tmp_db)
+    store = LearningArtifactStore(tmp_db)
+    checkpoint_id = await store.checkpoint(
+        "dna", "scout", OwlDNA(challenge_level=0.3).model_dump(), reason="test"
+    )
+    # Mutate the owl's live DNA to something different than the checkpoint.
+    await upsert_owl_dna(tmp_db, "scout", OwlDNA(challenge_level=0.9), table="owl_dna")
+    apply_dna_overlay(reg, "scout", OwlDNA(challenge_level=0.9))
+
+    out = await cmd.handle(f"dna-restore scout {checkpoint_id} YES", _state())
+
+    assert "restored" in out.lower()
+    assert checkpoint_id in out
+    assert reg.get("scout").dna.challenge_level == pytest.approx(0.3)
+    rows = await tmp_db.fetch_all(
+        "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)
+    )
+    assert rows[0]["challenge_level"] == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_dna_restore_unconfirmed_leaves_dna_unchanged(tmp_db):
+    cmd, reg = _cmd(tmp_db)
+    store = LearningArtifactStore(tmp_db)
+    checkpoint_id = await store.checkpoint(
+        "dna", "scout", OwlDNA(challenge_level=0.3).model_dump(), reason="test"
+    )
+    await upsert_owl_dna(tmp_db, "scout", OwlDNA(challenge_level=0.9), table="owl_dna")
+    apply_dna_overlay(reg, "scout", OwlDNA(challenge_level=0.9))
+
+    out = await cmd.handle(f"dna-restore scout {checkpoint_id}", _state())
+
+    assert "YES" in out
+    assert reg.get("scout").dna.challenge_level == pytest.approx(0.9)
+    rows = await tmp_db.fetch_all(
+        "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)
+    )
+    assert rows[0]["challenge_level"] == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_dna_restore_unknown_checkpoint_fails_loud(tmp_db):
+    cmd, reg = _cmd(tmp_db)
+    await upsert_owl_dna(tmp_db, "scout", OwlDNA(challenge_level=0.9), table="owl_dna")
+    apply_dna_overlay(reg, "scout", OwlDNA(challenge_level=0.9))
+
+    out = await cmd.handle("dna-restore scout not-a-real-checkpoint YES", _state())
+
+    assert out.startswith("✗ /owls dna-restore:")
+    assert reg.get("scout").dna.challenge_level == pytest.approx(0.9)
+    rows = await tmp_db.fetch_all(
+        "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)
+    )
+    assert rows[0]["challenge_level"] == pytest.approx(0.9)

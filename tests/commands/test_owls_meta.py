@@ -10,7 +10,7 @@ import pytest
 from stackowl.commands.owls_command import OwlsCommand
 
 _EXPECTED = {
-    "list", "create", "edit", "remove", "health", "dna", "reset-dna",
+    "list", "create", "edit", "remove", "health", "dna", "reset-dna", "dna-restore",
     "objectives", "objective", "objective-cancel", "objective-merge",
 }
 

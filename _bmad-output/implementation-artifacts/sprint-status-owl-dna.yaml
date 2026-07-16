@@ -55,7 +55,7 @@ development_status:
   epic-1-retrospective: optional
   epic-2: in-progress
   2-1-learning-artifact-store: done
-  2-2-dna-restore-command: backlog
+  2-2-dna-restore-command: done
   2-3-migrate-callsites-to-learning-artifact-store: backlog
   2-4-signal-strength-tiered-clamp: backlog
   2-5-shadow-validation-gate-replay-harness: backlog
