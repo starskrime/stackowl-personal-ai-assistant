@@ -4,7 +4,7 @@ baseline_commit: a197fbdb
 
 # Story 2.5: Shadow-validation gate — replay harness core
 
-Status: review
+Status: done
 
 ## Story
 
