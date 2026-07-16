@@ -425,6 +425,186 @@ async def test_deprecate_moves_low_performer_to_underscored_dir(synth_env) -> No
     assert any(e.op == "deprecate" for e in audit)
 
 
+# ---------- Story 3.5: DNA completion_drive advisory nudge on deprecation --
+
+async def _seed_learned_skill(
+    store, root: Path, name: str, *, success_rate: float, n_executions: int = 6,
+) -> None:
+    """Seed a minimal learned skill directory + index row with a fixed
+    success_rate/n_executions, matching the shape the existing deprecate
+    tests build by hand."""
+    skill_dir = root / "learned" / name
+    skill_dir.mkdir(parents=True)
+    body = f"# {name}\n"
+    manifest = SkillManifest(name=name, description="d", when_to_use="w", source="learned")
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: d\nwhen_to_use: w\nsource: learned\n"
+        f"---\n\n{body}", encoding="utf-8",
+    )
+    await store.upsert(LoadedSkill(
+        manifest=manifest, path=skill_dir, body=body,
+        tools_registered=0, owls_registered=0,
+    ))
+    sk = await store.get("learned", name)
+    assert sk is not None
+    await store.set_success_rate(sk.skill_id, success_rate)
+    for _ in range(n_executions):
+        await store.increment_n_executions(sk.skill_id)
+
+
+async def _deprecate_env(tmp_db: DbPool, tmp_path: Path, *, owl_dna: dict[str, float]):
+    """synth_env-equivalent but with a wired OwlRegistry carrying named owls at
+    given completion_drive values, for the DNA->deprecate advisory tests."""
+    from stackowl.owls.dna import OwlDNA
+    from stackowl.owls.manifest import OwlAgentManifest
+
+    skills_root = tmp_path / "ws" / "skills"
+    skills_root.mkdir(parents=True)
+    registry = OwlRegistry.with_default_secretary()
+    for owl_name, drive in owl_dna.items():
+        registry.register(
+            OwlAgentManifest(
+                name=owl_name, role="research", system_prompt="P", model_tier="fast",
+                dna=OwlDNA(completion_drive=drive),
+            )
+        )
+    components = await SkillsAssembly.build(
+        db=tmp_db, tool_registry=ToolRegistry(), owl_registry=registry,
+        skills_root=skills_root, builtin_seed_dir=tmp_path / "no_builtins",
+    )
+    return registry, skills_root, components.store
+
+
+def _make_synth(db: DbPool, root: Path, store, registry: OwlRegistry) -> SkillSynthesizer:
+    return SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=_ScriptedProvider(responses=[]), skills_root=root,
+        owl_registry=registry, db=db,
+    )
+
+
+async def test_deprecate_high_completion_drive_owner_spares_borderline_skill(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """completion_drive=0.9 -> effective_threshold=0.368 (more lenient than the
+    flat 0.4). A skill at success_rate=0.38 sits ABOVE the adjusted threshold
+    but BELOW the flat one — proving the nudge genuinely changed the outcome
+    (would deprecate under flat 0.4, does NOT under the advisory nudge)."""
+    from stackowl.owls.skill_ownership import persist_skill_ownership
+
+    registry, root, store = await _deprecate_env(tmp_db, tmp_path, owl_dna={"scout": 0.9})
+    await _seed_learned_skill(store, root, "borderline-skill", success_rate=0.38)
+    await persist_skill_ownership(tmp_db, "scout", "borderline-skill")
+
+    synth = _make_synth(tmp_db, root, store, registry)
+    n = await synth.deprecate_low_performers()
+    assert n == 0
+    assert (root / "learned" / "borderline-skill").exists()
+    assert await store.get("learned", "borderline-skill") is not None
+
+
+async def test_deprecate_low_completion_drive_owner_deprecates_sooner(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """completion_drive=0.1 -> effective_threshold=0.432 (stricter than the flat
+    0.4). A skill at success_rate=0.42 sits BELOW the adjusted threshold but
+    ABOVE the flat one — proving the nudge changed the outcome the other
+    direction (would NOT deprecate under flat 0.4, DOES under the nudge)."""
+    from stackowl.owls.skill_ownership import persist_skill_ownership
+
+    registry, root, store = await _deprecate_env(tmp_db, tmp_path, owl_dna={"scout": 0.1})
+    await _seed_learned_skill(store, root, "impatient-owner-skill", success_rate=0.42)
+    await persist_skill_ownership(tmp_db, "scout", "impatient-owner-skill")
+
+    synth = _make_synth(tmp_db, root, store, registry)
+    n = await synth.deprecate_low_performers()
+    assert n == 1
+    assert not (root / "learned" / "impatient-owner-skill").exists()
+    assert (root / "learned" / "_deprecated" / "impatient-owner-skill").exists()
+
+
+async def test_deprecate_unowned_skill_uses_flat_threshold_unaffected(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """No owning owl -> unmodified _DEPRECATE_BELOW (0.4), regression: a skill
+    with no ownership row behaves exactly as before this story."""
+    registry, root, store = await _deprecate_env(tmp_db, tmp_path, owl_dna={"scout": 0.9})
+    # Deliberately no persist_skill_ownership call — "unowned".
+    await _seed_learned_skill(store, root, "unowned-skill", success_rate=0.39)
+
+    synth = _make_synth(tmp_db, root, store, registry)
+    n = await synth.deprecate_low_performers()
+    assert n == 1
+    assert (root / "learned" / "_deprecated" / "unowned-skill").exists()
+
+
+async def test_deprecate_neutral_completion_drive_byte_identical_to_flat(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """completion_drive=0.5 (neutral/default) -> effective_threshold == 0.4
+    exactly, byte-identical to the pre-story flat comparison."""
+    from stackowl.owls.skill_ownership import persist_skill_ownership
+
+    registry, root, store = await _deprecate_env(tmp_db, tmp_path, owl_dna={"scout": 0.5})
+    await _seed_learned_skill(store, root, "neutral-owner-skill", success_rate=0.39)
+    await persist_skill_ownership(tmp_db, "scout", "neutral-owner-skill")
+
+    synth = _make_synth(tmp_db, root, store, registry)
+    n = await synth.deprecate_low_performers()
+    assert n == 1
+    assert (root / "learned" / "_deprecated" / "neutral-owner-skill").exists()
+
+
+async def test_deprecate_orphaned_ownership_row_degrades_without_crashing_run(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """An ownership row naming an owl that's no longer in the live registry
+    (orphan) must degrade THAT skill to the flat threshold — not raise, and
+    not abort the rest of the deprecate pass for other candidate skills."""
+    from stackowl.owls.skill_ownership import persist_skill_ownership
+
+    registry, root, store = await _deprecate_env(tmp_db, tmp_path, owl_dna={"scout": 0.9})
+    await _seed_learned_skill(store, root, "orphan-owned-skill", success_rate=0.39)
+    # "ghost" was never registered -> attach_skill_to_owl's live overlay no-ops,
+    # but the durable row still exists (persist_skill_ownership doesn't require
+    # live registration) -- exactly the orphaned-row shape this test targets.
+    await persist_skill_ownership(tmp_db, "ghost", "orphan-owned-skill")
+    # A second, normally-owned candidate to prove the run doesn't abort.
+    await _seed_learned_skill(store, root, "sibling-skill", success_rate=0.39)
+    await persist_skill_ownership(tmp_db, "scout", "sibling-skill")
+
+    synth = _make_synth(tmp_db, root, store, registry)
+    n = await synth.deprecate_low_performers()
+    # Orphan degrades to flat 0.4 (0.39 < 0.4 -> deprecated); sibling's owner
+    # (drive=0.9 -> threshold 0.368) leaves 0.39 undeprecated. Both processed,
+    # neither raised.
+    assert n == 1
+    assert (root / "learned" / "_deprecated" / "orphan-owned-skill").exists()
+    assert (root / "learned" / "sibling-skill").exists()
+
+
+async def test_deprecate_one_gating_untouched_by_threshold_change(synth_env) -> None:
+    """Regression: _deprecate_one's own mechanics (direct move + audit_write,
+    no security-scan/consent-gate involved) are unchanged by this story — same
+    assertions as the pre-existing flat-threshold deprecate test."""
+    db, root, store = synth_env
+    await _seed_learned_skill(store, root, "bad-skill-2", success_rate=0.2)
+
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=_ScriptedProvider(responses=[]), skills_root=root,
+    )
+    n = await synth.deprecate_low_performers()
+    assert n == 1
+    assert not (root / "learned" / "bad-skill-2").exists()
+    moved = root / "learned" / "_deprecated" / "bad-skill-2"
+    assert moved.exists()
+    assert (moved / "SKILL.md").exists()
+    assert await store.get("learned", "bad-skill-2") is None
+    audit = await store.recent_audit_for_skill("bad-skill-2")
+    assert any(e.op == "deprecate" for e in audit)
+
+
 async def test_synth_attaches_skill_to_owning_owl(tmp_db: DbPool, tmp_path: Path) -> None:
     """PA4b: discover attaches the learned skill to the owl that ran the cluster
     (live manifest.skills) AND records it durably (skill_ownership row)."""

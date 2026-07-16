@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from stackowl.commands.skill_helpers import hash_dir, snapshot_dir
+from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra.observability import log
 from stackowl.memory.json_parser import parse_json_response
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
@@ -741,19 +742,81 @@ class SkillSynthesizer:
 
     # ----- phase 3 — deprecate ----------------------------------------------
 
+    async def _effective_deprecate_threshold(
+        self, skill_name: str, skill_to_owls: dict[str, list[str]],
+    ) -> float:
+        """Bounded advisory nudge on ``_DEPRECATE_BELOW`` from the owning owl(s)'
+        CURRENT ``completion_drive`` trait (AD-7 — additive weight on an existing
+        threshold, never a new veto; Story 3.5, the DNA→skill mirror of 3.4's
+        skill→DNA direction).
+
+        ``effective = _DEPRECATE_BELOW * (1.0 - 0.2 * (avg_completion_drive - 0.5))``
+        — a highly-persistent owl (drive→1.0) gets a more LENIENT (lower)
+        threshold so a skill must be worse before it's deprecated; a
+        low-persistence owl (drive→0.0) gets a stricter (higher) one. At the
+        neutral default (0.5) this returns ``_DEPRECATE_BELOW`` unchanged.
+
+        No owning owl, or ``owl_registry``/``db`` not wired → unmodified
+        ``_DEPRECATE_BELOW`` (no signal, no adjustment — the same
+        None-means-no-opinion convention Story 3.4 established). An orphaned
+        ownership row (owl name no longer in the live registry) is skipped,
+        not fatal — one bad row degrades to no-adjustment for this skill, it
+        never aborts the run for other skills.
+        """
+        owners = skill_to_owls.get(skill_name, [])
+        if not owners or self._owl_registry is None or self._db is None:
+            return _DEPRECATE_BELOW
+        drives: list[float] = []
+        for owl_name in owners:
+            try:
+                drives.append(self._owl_registry.get(owl_name).dna.completion_drive)
+            except OwlNotFoundError:
+                log.skills.debug(
+                    "[synth] effective_deprecate_threshold: orphaned ownership row — skipped",
+                    extra={"_fields": {"skill": skill_name, "owl": owl_name}},
+                )
+        if not drives:
+            return _DEPRECATE_BELOW
+        avg_drive = sum(drives) / len(drives)
+        return _DEPRECATE_BELOW * (1.0 - 0.2 * (avg_drive - 0.5))
+
     async def deprecate_low_performers(self) -> int:
         """Move chronically-failing learned skills under ``learned/_deprecated/``."""
+        # 1. ENTRY
         log.skills.debug("[synth] deprecate: entry")
+        skill_to_owls: dict[str, list[str]] = {}
+        if self._db is not None:
+            from stackowl.owls.skill_ownership import read_all_skill_ownership
+
+            try:
+                owl_to_skills = await read_all_skill_ownership(self._db)
+            except Exception as exc:  # B5 — a DB hiccup degrades to flat-threshold
+                # deprecation, matching hydrate_skill_ownership's own convention,
+                # rather than propagating and skipping this entire phase.
+                log.skills.warning(
+                    "[synth] deprecate: ownership read failed — falling back "
+                    "to flat threshold for all candidates",
+                    exc_info=exc,
+                )
+                owl_to_skills = {}
+            for owl_name, skill_names in owl_to_skills.items():
+                for skill_name in skill_names:
+                    skill_to_owls.setdefault(skill_name, []).append(owl_name)
+        # 2. DECISION — the enabled/n_executions legs of the candidate filter are
+        # unchanged; only the success_rate comparison now uses a per-skill
+        # advisory threshold instead of the flat _DEPRECATE_BELOW constant.
         learned = await self._skills.list_for_source("learned")
-        candidates = [
-            s for s in learned
-            if (
+        candidates: list[Skill] = []
+        for s in learned:
+            if not (
                 s.enabled
                 and s.success_rate is not None
-                and s.success_rate < _DEPRECATE_BELOW
                 and s.n_executions >= _MIN_EXECUTIONS_FOR_RATE
-            )
-        ]
+            ):
+                continue
+            threshold = await self._effective_deprecate_threshold(s.name, skill_to_owls)
+            if s.success_rate < threshold:
+                candidates.append(s)
         moved = 0
         deprecated_root = self._root / "learned" / _DEPRECATED_DIR_NAME
         deprecated_root.mkdir(parents=True, exist_ok=True)
@@ -761,9 +824,13 @@ class SkillSynthesizer:
             ok = await self._deprecate_one(sk, deprecated_root)
             if ok:
                 moved += 1
+        # 4. EXIT
         log.skills.info(
             "[synth] deprecate: exit",
-            extra={"_fields": {"candidates": len(candidates), "moved": moved}},
+            extra={"_fields": {
+                "candidates": len(candidates), "moved": moved,
+                "owned_skills": len(skill_to_owls),
+            }},
         )
         return moved
 
