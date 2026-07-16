@@ -64,7 +64,7 @@ development_status:
   epic-2-retrospective: optional
   epic-3: in-progress
   3-1-evolve-now-tool: done
-  3-2-route-evolve-now-through-shadow-gate: backlog
+  3-2-route-evolve-now-through-shadow-gate: done
   3-3-resolve-decay-rate-per-week: backlog
   3-4-skill-success-rate-feeds-dna-attribution: backlog
   3-5-dna-traits-inform-skill-retention: backlog
