@@ -20,6 +20,7 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._story_2_6_helpers import AlwaysPassShadowValidator
 
 
 def _manifest(
@@ -307,8 +308,11 @@ class TestEvolutionCoordinator:
             # Seed 3 conversation turns for nora.
             await _seed_messages(tmp_db, "nora", count=3)
 
+            # Story 2.6 — no task_outcomes seeded (cold start), so stub the
+            # gate: this test is about mutation math, not gate mechanics.
             coordinator = EvolutionCoordinator(
-                tmp_db, provider_registry, owl_registry, evolution_batch_size=3
+                tmp_db, provider_registry, owl_registry, evolution_batch_size=3,
+                shadow_validator=AlwaysPassShadowValidator(),
             )
             result = await coordinator.execute(_job("job-mut"))
             assert result.success is True

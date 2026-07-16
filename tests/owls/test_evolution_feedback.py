@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import stackowl.owls.evolution as evolution_module
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.owls.dna import OwlDNA
@@ -22,6 +23,7 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._story_2_6_helpers import AlwaysFailShadowValidator, AlwaysPassShadowValidator
 
 # ---------------------------------------------------------------------------
 # helpers (mirror test_story_4_3 exactly)
@@ -96,8 +98,13 @@ async def test_evolution_refreshes_live_registry_and_bounds(tmp_db: DbPool) -> N
 
         await _seed_messages(tmp_db, "nora", count=3)
 
+        # Story 2.6 — the real ShadowValidator fails CLOSED on cold start (no
+        # scored task_outcomes seeded here, only messages). This test is about
+        # bound_dna clamping, not gate mechanics, so it stubs the gate to always
+        # pass — see tests/_story_2_6_helpers.py.
         coordinator = EvolutionCoordinator(
-            tmp_db, provider_registry, reg, evolution_batch_size=3
+            tmp_db, provider_registry, reg, evolution_batch_size=3,
+            shadow_validator=AlwaysPassShadowValidator(),
         )
         result = await coordinator.execute(_job("job-feedback-t4"))
         assert result.success is True
@@ -118,6 +125,14 @@ async def test_evolution_refreshes_live_registry_and_bounds(tmp_db: DbPool) -> N
         assert abs(rows[0]["curiosity"] - expected_curiosity) < 1e-9, (
             f"DB value not bounded: got {rows[0]['curiosity']}, expected {expected_curiosity}"
         )
+
+        # (c) Story 2.6 (NFR-5) — the checkpoint step is unchanged: a
+        # learning_artifacts row for this promotion still exists.
+        cps = await tmp_db.fetch_all(
+            "SELECT checkpoint_id FROM learning_artifacts "
+            "WHERE artifact_type = 'dna' AND artifact_id = ?", ("nora",),
+        )
+        assert len(cps) == 1
     finally:
         if was_active:
             TestModeGuard.activate()
@@ -175,6 +190,7 @@ async def test_attribution_path_tagged_verified_llm_fallback_tagged_llm_quality(
         attrib_coordinator = EvolutionCoordinator(
             tmp_db, provider_registry, attrib_reg, evolution_batch_size=1,
             attributor=_FixedAttributor(),
+            shadow_validator=AlwaysPassShadowValidator(),
         )
         result = await attrib_coordinator.execute(_job("job-signal-attrib"))
         assert result.success is True
@@ -191,6 +207,7 @@ async def test_attribution_path_tagged_verified_llm_fallback_tagged_llm_quality(
         await _seed_messages(tmp_db, "owlllm", count=3)
         llm_coordinator = EvolutionCoordinator(
             tmp_db, provider_registry, llm_reg, evolution_batch_size=1,
+            shadow_validator=AlwaysPassShadowValidator(),
         )
         result = await llm_coordinator.execute(_job("job-signal-llm"))
         assert result.success is True
@@ -202,3 +219,74 @@ async def test_attribution_path_tagged_verified_llm_fallback_tagged_llm_quality(
     finally:
         if was_active:
             TestModeGuard.activate()
+
+
+# ---------------------------------------------------------------------------
+# Story 2.6 — the shadow gate rejects the mutation: no promotion, checkpoint
+# is restored (FR-10, AC #2).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gate_rejects_mutation_restores_checkpoint_and_logs_warning(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ShadowValidator.validate() reports ``passed=False``:
+    - the owl's live/DB DNA stays exactly as it was pre-mutation (no promotion)
+    - a WARNING is logged
+    - LearningArtifactStore.restore() is ACTUALLY called (spied, not just
+      inferred from the unchanged value — see Story 2.6 Dev Notes on why
+      restore is a real step even though it's usually a no-op today)
+    """
+    provider_registry = ProviderRegistry()
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="owlrejected", role="analyst", system_prompt="Be helpful.",
+            model_tier="fast", dna=OwlDNA(curiosity=0.50),
+        )
+    )
+
+    coordinator = EvolutionCoordinator(
+        tmp_db, provider_registry, reg, evolution_batch_size=1,
+        attributor=_FixedAttributor(),  # deterministic +0.02 curiosity delta
+        shadow_validator=AlwaysFailShadowValidator(),
+    )
+
+    restore_calls: list[tuple[str, str, str]] = []
+    original_restore = coordinator._learning_store.restore
+
+    async def _spy_restore(
+        artifact_type: str, artifact_id: str, checkpoint_id: str,
+    ) -> dict[str, object]:
+        restore_calls.append((artifact_type, artifact_id, checkpoint_id))
+        return await original_restore(artifact_type, artifact_id, checkpoint_id)
+
+    coordinator._learning_store.restore = _spy_restore  # type: ignore[method-assign]
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        evolution_module.log.engine, "warning",
+        lambda msg, *a, **k: warnings.append(str(msg)),
+    )
+    promoted = await coordinator._evolve_one(reg.get("owlrejected"))
+
+    assert promoted is False
+
+    # No promotion: live registry DNA is exactly the pre-mutation baseline.
+    assert reg.get("owlrejected").dna.curiosity == pytest.approx(0.50)
+
+    # Restore actually ran (not inferred) — exactly once, for this owl/artifact.
+    assert len(restore_calls) == 1
+    assert restore_calls[0][0] == "dna"
+    assert restore_calls[0][1] == "owlrejected"
+
+    # restore() -> _persist_dna wrote the baseline back to owl_dna (proves the
+    # restore-and-reaffirm path actually executed, not skipped as a no-op).
+    rows = await tmp_db.fetch_all(
+        "SELECT curiosity FROM owl_dna WHERE owl_name = ?", ("owlrejected",)
+    )
+    assert len(rows) == 1
+    assert rows[0]["curiosity"] == pytest.approx(0.50)
+
+    assert any("shadow gate REJECTED" in w for w in warnings)

@@ -7,10 +7,11 @@ scratch :class:`StepServices`, never the live global registry/services — and s
 each replay with the SAME critic prompt builder + :func:`is_trustworthy_success`
 oracle the rest of the platform already uses.
 
-NOT wired into the promotion flow yet: this class is constructed and called
-directly by its own tests only. Story 2.6 (`EvolutionCoordinator`) and Story 3.2
-(`evolve_now`) are the two production callers that will compose this class between
-checkpoint and persist.
+Wired into the promotion flow as of Story 2.6: ``EvolutionCoordinator``'s
+``_checkpoint_validate_and_promote`` (owls/evolution.py) composes this class
+between checkpoint and persist for the nightly batch. Story 3.2's
+``evolve_now`` is the second production caller — it will call that same
+method, not construct/call this class independently (AD-3).
 
 ISOLATION (load-bearing): ``validate()`` never mutates the live ``OwlRegistry``
 (no ``apply_dna_overlay``/``registry.replace()`` on it — that would be a live side

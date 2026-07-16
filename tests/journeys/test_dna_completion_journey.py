@@ -55,6 +55,7 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._story_2_6_helpers import AlwaysPassShadowValidator
 
 pytestmark = pytest.mark.asyncio
 
@@ -144,8 +145,11 @@ async def _run_batch(
     provider_registry.register_mock(
         "mock-fast", MockProvider(name="mock-fast", canned_text=deltas_json), tier="fast"
     )
+    # Story 2.6 — no task_outcomes seeded (cold start), so stub the gate: this
+    # journey is about the DNA-completion path, not gate mechanics.
     coordinator = EvolutionCoordinator(
-        db, provider_registry, owl_registry, evolution_batch_size=3
+        db, provider_registry, owl_registry, evolution_batch_size=3,
+        shadow_validator=AlwaysPassShadowValidator(),
     )
     was_active = TestModeGuard.is_active()
     TestModeGuard.deactivate()

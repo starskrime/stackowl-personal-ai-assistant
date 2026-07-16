@@ -37,6 +37,7 @@ from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
 from stackowl.owls.learning_artifact_store import LearningArtifactStore
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.owls.shadow_validator import ShadowValidator
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
@@ -165,6 +166,7 @@ class EvolutionCoordinator(JobHandler):
         attributor: DnaAttributor | None = None,
         per_owl_timeout_s: float = EVOLUTION_PER_OWL_TIMEOUT_SECONDS,
         delegation_governor: ConcurrencyGovernor | None = None,
+        shadow_validator: ShadowValidator | None = None,
     ) -> None:
         self._db = db
         self._provider_registry = provider_registry
@@ -173,6 +175,12 @@ class EvolutionCoordinator(JobHandler):
         self._prompt_builder = EvolutionPromptBuilder()
         self._validator = DeltaValidator()
         self._learning_store = LearningArtifactStore(db)
+        # Story 2.6 (FR-8, AD-1, AD-3) — the shadow-validation gate sits between
+        # checkpoint and persist for every promotion. Injectable so tests can
+        # substitute a deterministic stub; every PRODUCTION caller gets Story
+        # 2.5's module-level defaults (AD-3 "single shared config, not
+        # per-caller") — never a custom n_consecutive_required/sample_size here.
+        self._shadow_validator = shadow_validator or ShadowValidator(db, provider_registry)
         # PARL-7 (F084) — bound each owl's evolution and run the batch CONCURRENTLY
         # under the shared in-flight governor, so one stuck owl (e.g. a hung LLM
         # fallback call) cannot stall the whole nightly batch.
@@ -318,11 +326,8 @@ class EvolutionCoordinator(JobHandler):
                 "n_deltas": len(deltas),
             }},
         )
-        # 3. STEP — checkpoint + apply mutations (AD-2: unified LearningArtifactStore
-        # primitive supersedes DNACheckpointer — Story 2.3)
-        checkpoint_id = await self._learning_store.checkpoint(
-            "dna", manifest.name, manifest.dna.model_dump(), reason="evolution_batch",
-        )
+        # 3. STEP — apply mutations (checkpoint/clamp/gate/persist all live in
+        # _checkpoint_validate_and_promote — Story 2.6, AD-3's ONE promotion fn)
         new_dna = manifest.dna
         for trait, delta in deltas.items():
             previous = float(getattr(new_dna, trait))
@@ -342,7 +347,6 @@ class EvolutionCoordinator(JobHandler):
                 "[dna] %s: %s %.3f → %.3f (delta %+.3f, src=%s)",
                 manifest.name, trait, previous, current, delta, evolution_source,
             )
-        anchor = await read_authored_dna(self._db, manifest.name) or OwlDNA()
         # Story 2.4 (FR-6/AD-4) — tag the batch's effective delta with how strong
         # the signal behind it is. "attribution"/"attribution+explore" both come
         # from DnaAttributor's verified-outcome path (VERIFIED); "llm_fallback"
@@ -352,10 +356,89 @@ class EvolutionCoordinator(JobHandler):
             if evolution_source.startswith("attribution")
             else SignalStrength.LLM_QUALITY
         )
+        promoted = await self._checkpoint_validate_and_promote(
+            manifest, new_dna, evolution_source=evolution_source, signal=signal,
+        )
+        # 4. EXIT
+        log.engine.info(
+            "[dna] coordinator.evolve_one: exit",
+            extra={"_fields": {
+                "owl": manifest.name, "source": evolution_source,
+                "mutated_traits": list(deltas.keys()),
+                "explore_fired": attribution.explore_fired,
+                "promoted": promoted,
+            }},
+        )
+        return promoted
+
+    async def _checkpoint_validate_and_promote(
+        self,
+        manifest: OwlAgentManifest,
+        new_dna: OwlDNA,
+        *,
+        evolution_source: str,
+        signal: SignalStrength,
+    ) -> bool:
+        """THE single promotion path (AD-3): checkpoint -> clamp -> shadow-validate
+        -> commit-or-restore -> observe. ``new_dna`` is the RAW mutated DNA
+        (pre-governor-clamp) — clamping happens here, before the gate, so the
+        gate validates what would ACTUALLY ship.
+
+        Returns ``True`` if the mutation was promoted to live, ``False`` if the
+        gate rejected it (no-op — the pre-mutation checkpoint is restored).
+
+        This is the ONE promotion function in the codebase (AD-3) — both the
+        nightly batch (``_evolve_one``, this story) and Story 3.2's
+        ``evolve_now`` call this same method. Do not duplicate checkpoint/gate/
+        persist/restore logic anywhere else.
+        """
+        # 1. ENTRY
+        log.engine.debug(
+            "[dna] coordinator.promote: entry",
+            extra={"_fields": {"owl": manifest.name, "source": evolution_source}},
+        )
+        # 3. STEP — checkpoint + clamp (AD-2: unified LearningArtifactStore
+        # primitive supersedes DNACheckpointer — Story 2.3)
+        checkpoint_id = await self._learning_store.checkpoint(
+            "dna", manifest.name, manifest.dna.model_dump(), reason=evolution_source,
+        )
+        anchor = await read_authored_dna(self._db, manifest.name) or OwlDNA()
         safe_dna = bound_dna(manifest.dna, new_dna, anchor, signal=signal)  # governor: clamp once
-        await self._persist_dna(manifest.name, safe_dna)          # DB = source of truth (persist FIRST)
+
+        # 2. DECISION — the shadow gate (FR-8/AD-1/AD-3): persist only after N
+        # consecutive non-regressions on a held-out replay of real interactions.
+        result = await self._shadow_validator.validate(manifest.name, manifest, safe_dna)
+        if not result.passed:
+            log.engine.warning(
+                "[dna] coordinator.promote: shadow gate REJECTED — restoring checkpoint",
+                extra={"_fields": {
+                    "owl": manifest.name,
+                    "checkpoint_id": checkpoint_id,
+                    "n_replayed": result.n_replayed,
+                    "consecutive_non_regressions": result.consecutive_non_regressions,
+                }},
+            )
+            # FR-10 — restore-and-reaffirm is a STRUCTURAL guarantee, not a no-op
+            # skipped just because today's call ordering happens to make it
+            # redundant (persist never ran pre-gate). See Story 2.6 Dev Notes:
+            # don't "optimize" this away — it's the safety net regardless of
+            # what a future refactor changes about the ordering above.
+            restored_payload = await self._learning_store.restore(
+                "dna", manifest.name, checkpoint_id,
+            )
+            restored_dna = OwlDNA.model_validate(restored_payload)
+            await self._persist_dna(manifest.name, restored_dna)
+            apply_dna_overlay(self._owl_registry, manifest.name, restored_dna)
+            # 4. EXIT
+            log.engine.info(
+                "[dna] coordinator.promote: exit — rejected",
+                extra={"_fields": {"owl": manifest.name, "checkpoint_id": checkpoint_id}},
+            )
+            return False
+
+        await self._persist_dna(manifest.name, safe_dna)                # DB = source of truth (persist FIRST)
         apply_dna_overlay(self._owl_registry, manifest.name, safe_dna)  # live refresh (next turn sees it)
-        for trait in _MUTABLE_TRAITS:                              # audit (drift detectable + reversible)
+        for trait in _MUTABLE_TRAITS:                                    # audit (drift detectable + reversible)
             old_val = float(getattr(manifest.dna, trait))
             new_val = float(getattr(safe_dna, trait))
             if old_val != new_val:
@@ -372,12 +455,9 @@ class EvolutionCoordinator(JobHandler):
                 )
         # 4. EXIT
         log.engine.info(
-            "[dna] coordinator.evolve_one: mutations applied",
+            "[dna] coordinator.promote: exit — promoted",
             extra={"_fields": {
-                "owl": manifest.name, "source": evolution_source,
-                "checkpoint_id": checkpoint_id,
-                "mutated_traits": list(deltas.keys()),
-                "explore_fired": attribution.explore_fired,
+                "owl": manifest.name, "checkpoint_id": checkpoint_id, "source": evolution_source,
             }},
         )
         return True

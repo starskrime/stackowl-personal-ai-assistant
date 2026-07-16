@@ -15,6 +15,7 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._story_2_6_helpers import AlwaysPassShadowValidator
 
 
 def test_conservative_halves() -> None:
@@ -100,7 +101,12 @@ async def _run_evolution(db: DbPool, owl_name: str, strategy: str) -> float:
     )
     await _seed_messages(db, owl_name, count=3)
 
-    coordinator = EvolutionCoordinator(db, provider_registry, reg, evolution_batch_size=3)
+    # Story 2.6 — no task_outcomes seeded (cold start), so stub the gate: this
+    # test is about strategy scaling math, not gate mechanics.
+    coordinator = EvolutionCoordinator(
+        db, provider_registry, reg, evolution_batch_size=3,
+        shadow_validator=AlwaysPassShadowValidator(),
+    )
     result = await coordinator.execute(_job(f"job-strategy-{owl_name}"))
     assert result.success is True
     return reg.get(owl_name).dna.curiosity
