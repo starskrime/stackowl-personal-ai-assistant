@@ -15,6 +15,7 @@ from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 from stackowl.owls.manifest import ModelTier, OwlAgentManifest
+from stackowl.owls.shadow_validator import ShadowValidationResult
 
 # Derived from the manifest's ModelTier Literal so the CLI allowlist can never
 # drift from the field's accepted values (single source of truth).
@@ -186,6 +187,35 @@ def format_dna_display(
         "[commands] owls.format_dna_display: exit",
         extra={"_fields": {"owl": owl_name, "lines": len(lines)}},
     )
+    return "\n".join(lines)
+
+
+def format_dry_run_report(
+    owl_name: str,
+    result: ShadowValidationResult,
+    n_consecutive_required: int,
+) -> str:
+    """Render Story 2.7's manual dry-run report: pass/fail + gate detail.
+
+    Mirrors :func:`format_dna_display`'s header/separator/indented-line
+    convention rather than inventing a new style. On failure, includes each
+    held-out replay's failure reason and (truncated) input text — AC #1's
+    "the specific non-regression that failed," surfaced here too so an
+    operator triggering the dry-run interactively sees the same detail the
+    enriched rejection log carries.
+    """
+    status = "PASS" if result.passed else "FAIL"
+    lines: list[str] = [f"Dry-run for owl: {owl_name} — {status}", "-" * 48]
+    lines.append(f"  n_replayed: {result.n_replayed}")
+    lines.append(f"  consecutive_non_regressions: {result.consecutive_non_regressions}")
+    lines.append(f"  n_consecutive_required: {n_consecutive_required}")
+    if not result.passed and result.failures:
+        lines.append("")
+        lines.append("  Failures:")
+        for f in result.failures:
+            reason = f.get("reason", "")
+            input_text = str(f.get("input_text", ""))[:200]
+            lines.append(f"    - reason={reason} input={input_text!r}")
     return "\n".join(lines)
 
 

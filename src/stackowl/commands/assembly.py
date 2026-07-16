@@ -41,6 +41,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
     from stackowl.owls.registry import OwlRegistry
     from stackowl.parliament.orchestrator import ParliamentOrchestrator
     from stackowl.plugins.registry import PluginRegistry
+    from stackowl.providers.registry import ProviderRegistry
     from stackowl.skills.loader import SkillLoader
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.registry import ToolRegistry
@@ -92,7 +93,7 @@ class CommandDeps:
     parliament_orchestrator: ParliamentOrchestrator | None = None
     morning_brief_handler: object | None = None  # MorningBriefHandler
 
-    # Provider registry (for /agent create)
+    # Provider registry (for /owl dna-dry-run — Story 2.7)
     provider_registry: object | None = None  # ProviderRegistry — avoid heavy import
 
     # Parliament session store (for /parliament log)
@@ -226,6 +227,7 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         db=deps.db,
         event_bus=deps.event_bus,
         tool_registry=deps.tool_registry,
+        provider_registry=cast("ProviderRegistry | None", deps.provider_registry),
     ))
 
     # /focus

@@ -19,6 +19,7 @@ from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.owls_helpers import (
     format_dna_display,
+    format_dry_run_report,
     format_owl_roster,
     manifest_to_yaml_entry,
     parse_edit_args,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from stackowl.events.bus import EventBus
     from stackowl.owls.registry import OwlRegistry
     from stackowl.pipeline.state import PipelineState
+    from stackowl.providers.registry import ProviderRegistry
     from stackowl.tools.registry import ToolRegistry
 
 _OWLS_META = CommandMeta(
@@ -124,6 +126,20 @@ _OWLS_META = CommandMeta(
             ),
         ),
         SubCommand(
+            name="dna-dry-run",
+            summary="Run the shadow-validation gate against an owl's current DNA",
+            description=(
+                "Read-only: replays the owl's held-out sample against its own "
+                "live DNA using the exact same gate config the real promotion "
+                "path uses, and reports pass/fail. Nothing is mutated — no "
+                "confirmation needed."
+            ),
+            args=(Arg(name="name", summary="owl name"),),
+            examples=(
+                Example(invocation="/owls dna-dry-run Sage"),
+            ),
+        ),
+        SubCommand(
             name="objectives",
             summary="List standing objectives and their progress",
         ),
@@ -183,11 +199,15 @@ class OwlsCommand(SlashCommand):
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
         tool_registry: ToolRegistry | None = None,
+        provider_registry: ProviderRegistry | None = None,
     ) -> None:
         self._registry = owl_registry
         self._db = db
         self._bus = event_bus
         self._tool_registry = tool_registry
+        # Story 2.7 — dna-dry-run needs a real ProviderRegistry to construct
+        # ShadowValidator (mirrors how db/event_bus/tool_registry are threaded).
+        self._provider_registry = provider_registry
 
     @property
     def command(self) -> str:
@@ -226,6 +246,8 @@ class OwlsCommand(SlashCommand):
                 result = await self._reset_dna(rest)
             elif sub == "dna-restore":
                 result = await self._dna_restore(rest)
+            elif sub == "dna-dry-run":
+                result = await self._dna_dry_run(rest)
             elif sub == "objectives":
                 result = await self._objectives()
             elif sub == "objective":
@@ -543,6 +565,50 @@ class OwlsCommand(SlashCommand):
         )
         return f"✓ Owl '{name}' DNA restored to checkpoint '{checkpoint_id}'."
 
+    # ----------------------------------------------------------- dna-dry-run
+    async def _dna_dry_run(self, rest: str) -> str:
+        """Story 2.7 (AC #2, #3) — run the shadow-validation gate against an
+        owl's CURRENT live DNA and report pass/fail. Read-only: never mutates
+        the registry or persists anything. Uses ShadowValidator's module-level
+        config defaults — the exact same config the real promotion path uses
+        (AC #3/AD-3) — never a custom override."""
+        # 1. ENTRY
+        log.gateway.debug(
+            "[commands] owls.dna_dry_run: entry",
+            extra={"_fields": {"rest_len": len(rest)}},
+        )
+        if self._registry is None:
+            return _NO_REGISTRY
+        name = rest.strip()
+        if not name:
+            return "Usage: /owls dna-dry-run <name>"
+        manifest = self._registry.get(name)  # raises OwlNotFoundError on miss → handled by handle()
+        # 2. DECISION — the gate needs a real DB + ProviderRegistry to replay.
+        if self._db is None or self._provider_registry is None:
+            log.gateway.debug(
+                "[commands] owls.dna_dry_run: store unavailable",
+                extra={"_fields": {
+                    "name": name,
+                    "has_db": self._db is not None,
+                    "has_providers": self._provider_registry is not None,
+                }},
+            )
+            return "DNA store unavailable."
+        from stackowl.owls.shadow_validator import ShadowValidator
+
+        validator = ShadowValidator(self._db, self._provider_registry)  # module defaults only — AC #3
+        # 3. STEP — replay the owl's own held-out sample against its own live DNA.
+        result = await validator.validate(manifest.name, manifest, manifest.dna)
+        report = format_dry_run_report(name, result, validator.n_consecutive_required)
+        # 4. EXIT
+        log.gateway.info(
+            "[commands] owls.dna_dry_run: exit",
+            extra={"_fields": {
+                "name": name, "passed": result.passed, "n_replayed": result.n_replayed,
+            }},
+        )
+        return report
+
     # ------------------------------------------------------------ objectives
     async def _objectives(self) -> str:
         """List standing objectives with a done/total progress count."""
@@ -780,9 +846,13 @@ class OwlsCommand(SlashCommand):
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
         tool_registry: ToolRegistry | None = None,
+        provider_registry: ProviderRegistry | None = None,
     ) -> OwlsCommand:
         """Construct an :class:`OwlsCommand` and register it on the singleton."""
-        cmd = cls(owl_registry=owl_registry, db=db, event_bus=event_bus, tool_registry=tool_registry)
+        cmd = cls(
+            owl_registry=owl_registry, db=db, event_bus=event_bus,
+            tool_registry=tool_registry, provider_registry=provider_registry,
+        )
         CommandRegistry.instance().register(cmd)
         return cmd
 
@@ -849,6 +919,20 @@ _OWL_META = CommandMeta(
             ),
             examples=(
                 Example(invocation="/owl dna-restore Sage a1b2c3d4e5f6 YES", note="Confirm restore"),
+            ),
+        ),
+        SubCommand(
+            name="dna-dry-run",
+            summary="Run the shadow-validation gate against an owl's current DNA",
+            description=(
+                "Read-only: replays the owl's held-out sample against its own "
+                "live DNA using the exact same gate config the real promotion "
+                "path uses, and reports pass/fail. Nothing is mutated — no "
+                "confirmation needed."
+            ),
+            args=(Arg(name="name", summary="owl name"),),
+            examples=(
+                Example(invocation="/owl dna-dry-run Sage"),
             ),
         ),
         SubCommand(name="health", summary="Report owl registry health"),
@@ -938,6 +1022,8 @@ class OwlCommand(OwlsCommand):
                 return await self._reset_dna(rest)
             if sub == "dna-restore":
                 return await self._dna_restore(rest)
+            if sub == "dna-dry-run":
+                return await self._dna_dry_run(rest)
             if sub == "health":
                 return await self._health()
             if sub == "objectives":

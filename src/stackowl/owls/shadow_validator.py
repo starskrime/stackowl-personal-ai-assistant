@@ -133,6 +133,20 @@ class ShadowValidator:
             }},
         )
 
+    @property
+    def n_consecutive_required(self) -> int:
+        """Public read accessor (Story 2.7) — rejection-log enrichment and the
+        manual dry-run's config-parity check both need to read this without
+        reaching into a private attribute. Falls back to the module default
+        for test doubles (e.g. ``AlwaysFailShadowValidator``) that skip
+        ``__init__`` entirely."""
+        return getattr(self, "_n_consecutive_required", _DEFAULT_N_CONSECUTIVE)
+
+    @property
+    def sample_size(self) -> int:
+        """See :attr:`n_consecutive_required` — same rationale."""
+        return getattr(self, "_sample_size", _DEFAULT_SAMPLE_SIZE)
+
     async def validate(
         self,
         owl_name: str,

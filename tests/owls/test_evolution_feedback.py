@@ -233,7 +233,8 @@ async def test_gate_rejects_mutation_restores_checkpoint_and_logs_warning(
 ) -> None:
     """When ShadowValidator.validate() reports ``passed=False``:
     - the owl's live/DB DNA stays exactly as it was pre-mutation (no promotion)
-    - a WARNING is logged
+    - an ERROR is logged (Story 2.7 AC #1 — elevated from WARNING, visible
+      without a human going looking for it) with enriched structured fields
     - LearningArtifactStore.restore() is ACTUALLY called (spied, not just
       inferred from the unchanged value — see Story 2.6 Dev Notes on why
       restore is a real step even though it's usually a no-op today)
@@ -264,11 +265,14 @@ async def test_gate_rejects_mutation_restores_checkpoint_and_logs_warning(
 
     coordinator._learning_store.restore = _spy_restore  # type: ignore[method-assign]
 
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        evolution_module.log.engine, "warning",
-        lambda msg, *a, **k: warnings.append(str(msg)),
-    )
+    errors: list[str] = []
+    fields: list[dict[str, object]] = []
+
+    def _capture_error(msg: str, *a: object, **k: object) -> None:
+        errors.append(str(msg))
+        fields.append(k["extra"]["_fields"])  # type: ignore[index]
+
+    monkeypatch.setattr(evolution_module.log.owls, "error", _capture_error)
     promoted = await coordinator._evolve_one(reg.get("owlrejected"))
 
     assert promoted is False
@@ -289,4 +293,15 @@ async def test_gate_rejects_mutation_restores_checkpoint_and_logs_warning(
     assert len(rows) == 1
     assert rows[0]["curiosity"] == pytest.approx(0.50)
 
-    assert any("shadow gate REJECTED" in w for w in warnings)
+    assert any("shadow gate REJECTED" in w for w in errors)
+
+    # Story 2.7 (AC #1) — the rejection record carries enough structured
+    # detail to be queryable/countable by `jq`, not just a free-text line.
+    assert len(fields) == 1
+    rejection_fields = fields[0]
+    assert rejection_fields["owl"] == "owlrejected"
+    assert rejection_fields["checkpoint_id"]
+    assert rejection_fields["n_replayed"] == 0
+    assert rejection_fields["consecutive_non_regressions"] == 0
+    assert rejection_fields["n_consecutive_required"] == 3  # ShadowValidator's module default
+    assert rejection_fields["failures"] == []

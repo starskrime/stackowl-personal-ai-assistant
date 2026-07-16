@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from stackowl.commands.owls_command import OwlsCommand
+from stackowl.commands.owls_command import OwlCommand, OwlsCommand
 from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_authored import capture_one_authored
@@ -24,7 +24,14 @@ from stackowl.owls.dna_storage import upsert_owl_dna
 from stackowl.owls.learning_artifact_store import LearningArtifactStore
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.owls.shadow_validator import (
+    _DEFAULT_N_CONSECUTIVE,
+    _DEFAULT_SAMPLE_SIZE,
+    ShadowValidationResult,
+    ShadowValidator,
+)
 from stackowl.pipeline.state import PipelineState
+from stackowl.providers.registry import ProviderRegistry
 
 
 def _state() -> PipelineState:
@@ -51,6 +58,29 @@ def _cmd(tmp_db):
         source_name="t",
     )
     return OwlsCommand(owl_registry=reg, db=tmp_db, event_bus=None, tool_registry=None), reg
+
+
+def _cmd_with_providers(tmp_db):
+    """Same as ``_cmd`` but wired with a real (lightweight, no-I/O) ProviderRegistry
+    so dna-dry-run's DB/providers guard passes (Story 2.7)."""
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="scout",
+            role="r",
+            system_prompt="p",
+            model_tier="fast",
+            dna=OwlDNA(challenge_level=0.5),
+        ),
+        source_name="t",
+    )
+    return (
+        OwlsCommand(
+            owl_registry=reg, db=tmp_db, event_bus=None, tool_registry=None,
+            provider_registry=ProviderRegistry(),
+        ),
+        reg,
+    )
 
 
 @pytest.mark.asyncio
@@ -174,3 +204,116 @@ async def test_dna_restore_unknown_checkpoint_fails_loud(tmp_db):
         "SELECT challenge_level FROM owl_dna WHERE owl_name = ?", ("scout",)
     )
     assert rows[0]["challenge_level"] == pytest.approx(0.9)
+
+
+# ------------------------------------------------------------ dna-dry-run (Story 2.7)
+
+
+@pytest.mark.asyncio
+async def test_dna_dry_run_no_provider_registry_unavailable(tmp_db):
+    """Without a ProviderRegistry wired, dna-dry-run can't construct
+    ShadowValidator — same honest "store unavailable" convention as db=None."""
+    cmd, _ = _cmd(tmp_db)  # no provider_registry wired
+    out = await cmd.handle("dna-dry-run scout", _state())
+    assert out == "DNA store unavailable."
+
+
+@pytest.mark.asyncio
+async def test_dna_dry_run_pass_reports_pass_and_never_mutates(tmp_db, monkeypatch):
+    cmd, reg = _cmd_with_providers(tmp_db)
+    before = reg.get("scout").dna.model_dump()
+
+    async def _stub_validate(self, owl_name, manifest, proposed_dna):  # noqa: ANN001, ARG001
+        return ShadowValidationResult(
+            passed=True, consecutive_non_regressions=3, n_replayed=3, failures=(),
+        )
+
+    monkeypatch.setattr(ShadowValidator, "validate", _stub_validate)
+
+    out = await cmd.handle("dna-dry-run scout", _state())
+
+    assert "PASS" in out
+    # Read-only regression: registry DNA is bit-for-bit unchanged...
+    assert reg.get("scout").dna.model_dump() == before
+    # ...and nothing was ever persisted to owl_dna either.
+    rows = await tmp_db.fetch_all("SELECT * FROM owl_dna WHERE owl_name = ?", ("scout",))
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_dna_dry_run_fail_reports_failure_detail_and_never_mutates(tmp_db, monkeypatch):
+    cmd, reg = _cmd_with_providers(tmp_db)
+    before = reg.get("scout").dna.model_dump()
+
+    async def _stub_validate(self, owl_name, manifest, proposed_dna):  # noqa: ANN001, ARG001
+        return ShadowValidationResult(
+            passed=False, consecutive_non_regressions=1, n_replayed=2,
+            failures=({"input_text": "why is the sky blue", "reason": "quality_score=0.2 < 0.7"},),
+        )
+
+    monkeypatch.setattr(ShadowValidator, "validate", _stub_validate)
+
+    out = await cmd.handle("dna-dry-run scout", _state())
+
+    assert "FAIL" in out
+    assert "quality_score=0.2 < 0.7" in out
+    assert "why is the sky blue" in out
+    assert reg.get("scout").dna.model_dump() == before
+    rows = await tmp_db.fetch_all("SELECT * FROM owl_dna WHERE owl_name = ?", ("scout",))
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_dna_dry_run_uses_module_default_config_not_override(tmp_db, monkeypatch):
+    """AC #3 / AD-3 — the dry-run must construct ShadowValidator with the exact
+    same module-level defaults the real promotion path uses, never a looser
+    caller-specific override."""
+    cmd, _ = _cmd_with_providers(tmp_db)
+    captured: dict[str, int] = {}
+
+    async def _spy_validate(self, owl_name, manifest, proposed_dna):  # noqa: ANN001, ARG001
+        captured["n_consecutive_required"] = self.n_consecutive_required
+        captured["sample_size"] = self.sample_size
+        return ShadowValidationResult(
+            passed=True, consecutive_non_regressions=3, n_replayed=3, failures=(),
+        )
+
+    monkeypatch.setattr(ShadowValidator, "validate", _spy_validate)
+
+    await cmd.handle("dna-dry-run scout", _state())
+
+    assert captured["n_consecutive_required"] == _DEFAULT_N_CONSECUTIVE
+    assert captured["sample_size"] == _DEFAULT_SAMPLE_SIZE
+
+
+@pytest.mark.asyncio
+async def test_dna_dry_run_wired_in_both_owls_and_owl_commands(tmp_db, monkeypatch):
+    """Story 2.2's double-registration pattern, mirrored for dna-dry-run:
+    reachable from BOTH /owls dna-dry-run and /owl dna-dry-run, not just one
+    surface."""
+
+    async def _stub_validate(self, owl_name, manifest, proposed_dna):  # noqa: ANN001, ARG001
+        return ShadowValidationResult(
+            passed=True, consecutive_non_regressions=3, n_replayed=3, failures=(),
+        )
+
+    monkeypatch.setattr(ShadowValidator, "validate", _stub_validate)
+
+    reg = OwlRegistry()
+    reg.register(
+        OwlAgentManifest(
+            name="scout", role="r", system_prompt="p", model_tier="fast",
+            dna=OwlDNA(challenge_level=0.5),
+        ),
+        source_name="t",
+    )
+    owls_cmd = OwlsCommand(owl_registry=reg, db=tmp_db, provider_registry=ProviderRegistry())
+    owl_cmd = OwlCommand(owl_registry=reg, db=tmp_db, provider_registry=ProviderRegistry())
+
+    assert "dna-dry-run" in {s.name for s in owls_cmd.meta.subcommands}
+    assert "dna-dry-run" in {s.name for s in owl_cmd.meta.subcommands}
+
+    out1 = await owls_cmd.handle("dna-dry-run scout", _state())
+    out2 = await owl_cmd.handle("dna-dry-run scout", _state())
+    assert "PASS" in out1
+    assert "PASS" in out2

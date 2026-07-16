@@ -11,7 +11,7 @@ from stackowl.commands.owls_command import OwlsCommand
 
 _EXPECTED = {
     "list", "create", "edit", "remove", "health", "dna", "reset-dna", "dna-restore",
-    "objectives", "objective", "objective-cancel", "objective-merge",
+    "dna-dry-run", "objectives", "objective", "objective-cancel", "objective-merge",
 }
 
 

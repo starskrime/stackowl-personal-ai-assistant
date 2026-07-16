@@ -409,13 +409,26 @@ class EvolutionCoordinator(JobHandler):
         # consecutive non-regressions on a held-out replay of real interactions.
         result = await self._shadow_validator.validate(manifest.name, manifest, safe_dna)
         if not result.passed:
-            log.engine.warning(
-                "[dna] coordinator.promote: shadow gate REJECTED — restoring checkpoint",
+            # Story 2.7 (AC #1) — ERROR, not WARNING: a gate rejection must be
+            # visible without a human specifically going looking for it. The
+            # message text is held stable/greppable (never varied between
+            # calls) so `jq 'select(.msg == "...")'` reliably counts every
+            # rejection; `failures` carries Story 2.5's per-replay detail
+            # (truncated per this repo's sensitive-data convention) so "the
+            # specific non-regression that failed" is IN the record, not just
+            # a count.
+            log.owls.error(
+                "[dna] coordinator.promote: shadow gate REJECTED",
                 extra={"_fields": {
                     "owl": manifest.name,
                     "checkpoint_id": checkpoint_id,
                     "n_replayed": result.n_replayed,
                     "consecutive_non_regressions": result.consecutive_non_regressions,
+                    "n_consecutive_required": self._shadow_validator.n_consecutive_required,
+                    "failures": [
+                        {**f, "input_text": str(f.get("input_text", ""))[:200]}
+                        for f in result.failures
+                    ],
                 }},
             )
             # FR-10 — restore-and-reaffirm is a STRUCTURAL guarantee, not a no-op
