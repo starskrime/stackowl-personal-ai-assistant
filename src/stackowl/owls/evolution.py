@@ -32,8 +32,9 @@ from stackowl.owls.dna_authored import read_authored_dna
 from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.owls.dna_governor import bound_dna
 from stackowl.owls.dna_hydrator import apply_dna_overlay
-from stackowl.owls.dna_storage import DNACheckpointer, upsert_owl_dna
+from stackowl.owls.dna_storage import upsert_owl_dna
 from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
+from stackowl.owls.learning_artifact_store import LearningArtifactStore
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.registry import ProviderRegistry
@@ -171,7 +172,7 @@ class EvolutionCoordinator(JobHandler):
         self._batch_size = max(1, evolution_batch_size)
         self._prompt_builder = EvolutionPromptBuilder()
         self._validator = DeltaValidator()
-        self._checkpointer = DNACheckpointer(db)
+        self._learning_store = LearningArtifactStore(db)
         # PARL-7 (F084) — bound each owl's evolution and run the batch CONCURRENTLY
         # under the shared in-flight governor, so one stuck owl (e.g. a hung LLM
         # fallback call) cannot stall the whole nightly batch.
@@ -317,8 +318,11 @@ class EvolutionCoordinator(JobHandler):
                 "n_deltas": len(deltas),
             }},
         )
-        # 3. STEP — checkpoint + apply mutations
-        checkpoint_id = await self._checkpointer.checkpoint(manifest.name, manifest.dna)
+        # 3. STEP — checkpoint + apply mutations (AD-2: unified LearningArtifactStore
+        # primitive supersedes DNACheckpointer — Story 2.3)
+        checkpoint_id = await self._learning_store.checkpoint(
+            "dna", manifest.name, manifest.dna.model_dump(), reason="evolution_batch",
+        )
         new_dna = manifest.dna
         for trait, delta in deltas.items():
             previous = float(getattr(new_dna, trait))

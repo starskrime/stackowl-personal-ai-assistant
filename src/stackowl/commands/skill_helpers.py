@@ -24,6 +24,7 @@ import httpx
 import yaml
 
 from stackowl.infra.observability import log
+from stackowl.owls.learning_artifact_store import LearningArtifactStore
 from stackowl.skills.loader import LoadedSkill, SkillLoader
 from stackowl.skills.manifest import SkillSource
 from stackowl.skills.skill_md import parse_skill_md
@@ -183,6 +184,8 @@ async def record_skill_mutation(
     4. Compute ``after_hash`` from ``target_dir`` (empty-digest if it's now gone).
     5. If ``snapshot_when == "after"`` (e.g. create/restore), snapshot now.
     6. Append the audit row via :meth:`SkillIndexStore.audit_write`.
+    7. Additive, best-effort: also checkpoint into :class:`LearningArtifactStore`
+       (Story 2.3, AD-2) — never replaces step 6, never fails the mutation.
 
     ``snapshot_when``:
       * ``"before"`` — snapshot the pre-mutation tree (deletes — so restore can
@@ -231,6 +234,38 @@ async def record_skill_mutation(
         details=details,
         snapshot=captured,
     )
+    # 6b. STEP — ADDITIVE checkpoint into the unified LearningArtifactStore
+    # primitive (AD-2, Story 2.3). This does NOT replace skill_audit /
+    # find_audit_by_hash — those stay the read path for `/skill restore` and
+    # `/skill diff` (LearningArtifactStore's payload_json schema has no
+    # indexed before_hash/after_hash columns for the LIKE-prefix hash lookup
+    # those commands depend on; see Story 2.3 Dev Notes). Best-effort: a
+    # failure here must never fail the mutation, which already succeeded via
+    # audit_write above (same pattern as reflection_writer_handler's
+    # `_publish_to_lessons`).
+    try:
+        # ponytail: reuse store's existing DbPool/owner_id — never open a second
+        # connection/pool for this additive write.
+        learning_store = LearningArtifactStore(store._db, store.owner_id)  # noqa: SLF001
+        await learning_store.checkpoint(
+            "skill",
+            skill_name,
+            {
+                "op": op,
+                "actor": actor,
+                "before_hash": before_hash,
+                "after_hash": after_hash,
+                "details": details,
+                "snapshot": captured,
+            },
+            reason=op,
+        )
+    except Exception as exc:  # B5 — enhancement write, never blocks the primary mutation
+        log.skills.warning(
+            "[skills] record_skill_mutation: learning_artifact checkpoint failed — skipping",
+            exc_info=exc,
+            extra={"_fields": {"skill_name": skill_name, "op": op}},
+        )
     # 4. EXIT
     log.skills.info(
         "[skills] record_skill_mutation: audited",

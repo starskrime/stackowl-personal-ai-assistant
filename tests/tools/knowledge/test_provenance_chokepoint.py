@@ -65,6 +65,68 @@ async def test_record_skill_mutation_create_audits_after(
     assert "SKILL.md" in e.snapshot
 
 
+async def test_record_skill_mutation_also_writes_learning_artifact_checkpoint(
+    tmp_db: DbPool, tmp_path: Path,
+) -> None:
+    """Story 2.3 (AD-2): the additive LearningArtifactStore write happens
+    ALONGSIDE skill_audit — both rows exist, neither replaces the other."""
+    store = SkillIndexStore(tmp_db)
+    skill_dir = tmp_path / "installed" / "both-writes"
+    _write_skill(skill_dir, "both-writes")
+
+    async def _mutate() -> None:
+        return None
+
+    await record_skill_mutation(
+        store, skill_name="both-writes", source="installed", op="create",
+        actor="user:local", target_dir=skill_dir, mutate=_mutate,
+        snapshot_when="after",
+    )
+
+    # skill_audit unchanged — still the read path for /skill restore + /skill diff.
+    entries = await store.recent_audit_for_skill("both-writes")
+    assert len(entries) == 1
+    assert entries[0].op == "create"
+
+    # NEW: an additive learning_artifacts row for the same mutation.
+    rows = await tmp_db.fetch_all(
+        "SELECT artifact_type, artifact_id, reason FROM learning_artifacts "
+        "WHERE artifact_type = 'skill' AND artifact_id = ?",
+        ("both-writes",),
+    )
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "create"
+
+
+async def test_record_skill_mutation_learning_artifact_failure_does_not_abort(
+    tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken LearningArtifactStore write must never fail the skill mutation —
+    audit_write already succeeded and IS the primary provenance record (Story 2.3)."""
+    import stackowl.commands.skill_helpers as sh
+
+    async def _boom(self, *a, **kw):  # noqa: ANN001, ANN002, ANN003, ANN202
+        raise RuntimeError("learning store down")
+
+    monkeypatch.setattr(sh.LearningArtifactStore, "checkpoint", _boom)
+
+    store = SkillIndexStore(tmp_db)
+    skill_dir = tmp_path / "installed" / "resilient"
+    _write_skill(skill_dir, "resilient")
+
+    async def _mutate() -> None:
+        return None
+
+    before, after = await record_skill_mutation(
+        store, skill_name="resilient", source="installed", op="create",
+        actor="user:local", target_dir=skill_dir, mutate=_mutate,
+        snapshot_when="after",
+    )
+    assert after is not None  # mutation + audit still succeeded despite the failure
+    entries = await store.recent_audit_for_skill("resilient")
+    assert len(entries) == 1
+
+
 async def test_record_skill_mutation_delete_snapshots_before(
     tmp_db: DbPool, tmp_path: Path,
 ) -> None:

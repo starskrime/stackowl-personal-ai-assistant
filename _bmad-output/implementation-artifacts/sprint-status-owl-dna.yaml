@@ -1,5 +1,5 @@
 # generated: 2026-07-15
-# last_updated: 2026-07-15
+# last_updated: 2026-07-15 (2-3 moved to review)
 # project: stackowl-personal-ai-assistant
 # project_key: NOKEY
 # tracking_system: file-system
@@ -56,7 +56,7 @@ development_status:
   epic-2: in-progress
   2-1-learning-artifact-store: done
   2-2-dna-restore-command: done
-  2-3-migrate-callsites-to-learning-artifact-store: backlog
+  2-3-migrate-callsites-to-learning-artifact-store: done
   2-4-signal-strength-tiered-clamp: backlog
   2-5-shadow-validation-gate-replay-harness: backlog
   2-6-wire-gate-into-promotion-auto-restore: backlog

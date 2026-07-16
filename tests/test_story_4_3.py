@@ -54,11 +54,14 @@ class TestDeltaValidator:
         assert result["curiosity"] == pytest.approx(0.0)
 
     def test_values_clamped_to_range(self) -> None:
+        # FR-1 (commit 47069e05) retuned the clamp band to ±0.25 — this test
+        # was stale (still asserting the old ±0.1 band); root-caused and fixed
+        # here (pre-existing failure, unrelated to Story 2.3).
         v = DeltaValidator()
         raw = '{"challenge_level": 0.5, "verbosity": -0.4}'
         result = v.validate(raw)
-        assert result["challenge_level"] == pytest.approx(0.1)
-        assert result["verbosity"] == pytest.approx(-0.1)
+        assert result["challenge_level"] == pytest.approx(0.25)
+        assert result["verbosity"] == pytest.approx(-0.25)
 
     def test_unknown_traits_skipped(self) -> None:
         v = DeltaValidator()
@@ -240,11 +243,15 @@ class TestDNAPromptInjector:
         result = injector.inject(manifest, OwlDNA(verbosity=0.2))
         assert "concise" in result.lower()
 
-    def test_high_curiosity_adds_clarifying_directive(self) -> None:
+    def test_high_curiosity_adds_exploration_breadth_directive(self) -> None:
+        # F-53 moved act-first/anti-over-clarify to the unconditional charter;
+        # curiosity now governs exploration BREADTH, not a "clarifying"
+        # directive. Test was stale on the old wording — root-caused and
+        # fixed here (pre-existing failure, unrelated to Story 2.3).
         injector = DNAPromptInjector()
         manifest = _manifest()
         result = injector.inject(manifest, OwlDNA(curiosity=0.85))
-        assert "clarifying" in result.lower()
+        assert "explore the problem broadly" in result.lower()
 
     def test_low_formality_adds_casual_directive(self) -> None:
         injector = DNAPromptInjector()
@@ -315,9 +322,11 @@ class TestEvolutionCoordinator:
             assert rows[0]["verbosity"] == pytest.approx(0.47)
             assert rows[0]["precision"] == pytest.approx(0.52)
 
-            # A checkpoint should have been written.
+            # A checkpoint should have been written — via the unified
+            # LearningArtifactStore primitive (Story 2.3), not dna_checkpoints.
             cps = await tmp_db.fetch_all(
-                "SELECT checkpoint_id FROM dna_checkpoints WHERE owl_name = ?",
+                "SELECT checkpoint_id FROM learning_artifacts "
+                "WHERE artifact_type = 'dna' AND artifact_id = ?",
                 ("nora",),
             )
             assert len(cps) == 1
