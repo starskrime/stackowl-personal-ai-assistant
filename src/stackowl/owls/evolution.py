@@ -310,55 +310,71 @@ class EvolutionCoordinator(JobHandler):
             )
             deltas = await self._llm_fallback(manifest, attribution)
             evolution_source = "llm_fallback"
+        promoted = False
         if not deltas:
             log.engine.warning(
                 "[dna] coordinator.evolve_one: no deltas from any path — skip",
                 extra={"_fields": {"owl": manifest.name}},
             )
-            return False
-        # Apply the owl's evolution strategy to the finalized deltas (single
-        # chokepoint — uniform whether the deltas came from attribution or LLM).
-        deltas = _scale_deltas(deltas, manifest.evolution_strategy)
-        log.engine.debug(
-            "[dna] coordinator.evolve_one: deltas scaled by evolution strategy",
-            extra={"_fields": {
-                "owl": manifest.name, "strategy": manifest.evolution_strategy,
-                "n_deltas": len(deltas),
-            }},
-        )
-        # 3. STEP — apply mutations (checkpoint/clamp/gate/persist all live in
-        # _checkpoint_validate_and_promote — Story 2.6, AD-3's ONE promotion fn)
-        new_dna = manifest.dna
-        for trait, delta in deltas.items():
-            previous = float(getattr(new_dna, trait))
-            try:
-                new_dna = new_dna.mutate(trait, delta)
-            except Exception as exc:  # B5
-                log.engine.warning(
-                    "[dna] coordinator.evolve_one: mutate rejected — skipping trait",
-                    exc_info=exc,
-                    extra={"_fields": {
-                        "owl": manifest.name, "trait": trait, "delta": delta,
-                    }},
-                )
-                continue
-            current = float(getattr(new_dna, trait))
-            log.engine.info(
-                "[dna] %s: %s %.3f → %.3f (delta %+.3f, src=%s)",
-                manifest.name, trait, previous, current, delta, evolution_source,
+        else:
+            # Apply the owl's evolution strategy to the finalized deltas (single
+            # chokepoint — uniform whether the deltas came from attribution or LLM).
+            deltas = _scale_deltas(deltas, manifest.evolution_strategy)
+            log.engine.debug(
+                "[dna] coordinator.evolve_one: deltas scaled by evolution strategy",
+                extra={"_fields": {
+                    "owl": manifest.name, "strategy": manifest.evolution_strategy,
+                    "n_deltas": len(deltas),
+                }},
             )
-        # Story 2.4 (FR-6/AD-4) — tag the batch's effective delta with how strong
-        # the signal behind it is. "attribution"/"attribution+explore" both come
-        # from DnaAttributor's verified-outcome path (VERIFIED); "llm_fallback"
-        # has no TaskOutcome backing at all (LLM_QUALITY, scaled down).
-        signal = (
-            SignalStrength.VERIFIED
-            if evolution_source.startswith("attribution")
-            else SignalStrength.LLM_QUALITY
-        )
-        promoted = await self._checkpoint_validate_and_promote(
-            manifest, new_dna, evolution_source=evolution_source, signal=signal,
-        )
+            # 3. STEP — apply mutations (checkpoint/clamp/gate/persist all live in
+            # _checkpoint_validate_and_promote — Story 2.6, AD-3's ONE promotion fn)
+            new_dna = manifest.dna
+            for trait, delta in deltas.items():
+                previous = float(getattr(new_dna, trait))
+                try:
+                    new_dna = new_dna.mutate(trait, delta)
+                except Exception as exc:  # B5
+                    log.engine.warning(
+                        "[dna] coordinator.evolve_one: mutate rejected — skipping trait",
+                        exc_info=exc,
+                        extra={"_fields": {
+                            "owl": manifest.name, "trait": trait, "delta": delta,
+                        }},
+                    )
+                    continue
+                current = float(getattr(new_dna, trait))
+                log.engine.info(
+                    "[dna] %s: %s %.3f → %.3f (delta %+.3f, src=%s)",
+                    manifest.name, trait, previous, current, delta, evolution_source,
+                )
+            # Story 2.4 (FR-6/AD-4) — tag the batch's effective delta with how
+            # strong the signal behind it is. "attribution"/"attribution+explore"
+            # both come from DnaAttributor's verified-outcome path (VERIFIED);
+            # "llm_fallback" has no TaskOutcome backing at all (LLM_QUALITY,
+            # scaled down).
+            signal = (
+                SignalStrength.VERIFIED
+                if evolution_source.startswith("attribution")
+                else SignalStrength.LLM_QUALITY
+            )
+            promoted = await self._checkpoint_validate_and_promote(
+                manifest, new_dna, evolution_source=evolution_source, signal=signal,
+            )
+
+        # Story 3.3 (FR-15/AD-6) — decay every trait NOT touched by this
+        # cycle's deltas back toward its authored baseline. Re-fetch from the
+        # registry first: the promotion attempt above may have overlaid a new
+        # DNA onto the live registry (or restored the original on a gate
+        # rejection) via apply_dna_overlay — decay must operate on the
+        # registry's TRUE current state, not the stale local `manifest`.
+        # Decay's own True/False is intentionally NOT folded into `promoted`
+        # (execute()'s mutated=/skipped= bookkeeping tracks only the main
+        # deltas-based result) — decay's outcome is visible via its own
+        # evolution_source="decay" checkpoint + the [owls] evolution.delta log.
+        current_manifest = self._owl_registry.get(manifest.name)
+        await self._apply_decay(current_manifest, reinforced_traits=frozenset(deltas.keys()))
+
         # 4. EXIT
         log.engine.info(
             "[dna] coordinator.evolve_one: exit",
@@ -366,6 +382,74 @@ class EvolutionCoordinator(JobHandler):
                 "owl": manifest.name, "source": evolution_source,
                 "mutated_traits": list(deltas.keys()),
                 "explore_fired": attribution.explore_fired,
+                "promoted": promoted,
+            }},
+        )
+        return promoted
+
+    async def _apply_decay(
+        self, manifest: OwlAgentManifest, reinforced_traits: frozenset[str],
+    ) -> bool:
+        """Drift every unreinforced trait toward its authored anchor (Story 3.3,
+        FR-15/AD-6). "Unreinforced" == not a key in ``reinforced_traits`` (this
+        cycle's proposed ``deltas``) — no new persisted "last touched" state is
+        needed since ``deltas`` is already recomputed fresh every batch cycle.
+
+        ``decay_rate_per_week`` is a WEEKLY rate, but this job runs DAILY
+        (``evolution_batch``, seeded 02:00 UTC) — applying
+        ``decay_rate_per_week / 7`` per run is the simplest correct reading of
+        a weekly rate on a daily cadence (exponential decay toward the anchor,
+        compounding day over day). This is intentional, not a bug.
+
+        Returns ``True`` if a decay mutation was promoted to live, ``False``
+        if there was nothing to decay this cycle (every trait reinforced, or
+        every unreinforced trait already sits at its anchor).
+        """
+        # 1. ENTRY
+        log.owls.debug(
+            "[dna] coordinator._apply_decay: entry",
+            extra={"_fields": {
+                "owl": manifest.name, "n_reinforced": len(reinforced_traits),
+            }},
+        )
+        anchor = await read_authored_dna(self._db, manifest.name) or OwlDNA()
+        daily_fraction = manifest.dna.decay_rate_per_week / 7
+        # 2. DECISION — which traits actually need to move.
+        updates: dict[str, float] = {}
+        for trait in _MUTABLE_TRAITS:
+            if trait in reinforced_traits:
+                continue  # AC #2 — genuinely reinforced traits are never decayed
+            current = float(getattr(manifest.dna, trait))
+            anchor_value = float(getattr(anchor, trait))
+            if current == anchor_value:
+                continue  # already at baseline — nothing to decay
+            updates[trait] = current + (anchor_value - current) * daily_fraction
+        decayed_dna = manifest.dna.model_copy(update=updates)
+        if decayed_dna == manifest.dna:
+            # 4. EXIT — nothing changed (everything reinforced, everything
+            # already at baseline, or decay_rate_per_week == 0). No pointless
+            # checkpoint/gate cycle for a no-op.
+            log.owls.debug(
+                "[dna] coordinator._apply_decay: exit — nothing to decay",
+                extra={"_fields": {"owl": manifest.name}},
+            )
+            return False
+        # 3. STEP — same gated promotion path as any other mutation (AD-1/AD-6).
+        # SignalStrength.VERIFIED here is NOT a claim that decay is a
+        # "verified outcome" in the usual sense — it's chosen because its
+        # multiplier is 1.0 (no extra scaling). decay_rate_per_week / 7 is
+        # already the fully-configured step size; layering a SECOND scaling
+        # factor on top (as OUTCOME_BINARY/LLM_QUALITY would) would silently
+        # under-decay relative to the operator's configured rate.
+        promoted = await self._checkpoint_validate_and_promote(
+            manifest, decayed_dna, evolution_source="decay", signal=SignalStrength.VERIFIED,
+        )
+        # 4. EXIT
+        log.owls.info(
+            "[dna] coordinator._apply_decay: exit",
+            extra={"_fields": {
+                "owl": manifest.name,
+                "decayed_traits": list(updates.keys()),
                 "promoted": promoted,
             }},
         )
