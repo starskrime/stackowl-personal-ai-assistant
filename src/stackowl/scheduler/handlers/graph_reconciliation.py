@@ -92,7 +92,14 @@ class GraphReconciliationHandler(JobHandler):
             skill_id = f"{owner_id}::{skill_name}"
             want[skill_id] = (owner_id, owl_name, skill_name)
 
-        have = set(await self._kuzu.list_skill_ids())
+        try:
+            have = set(await self._kuzu.list_skill_ids())
+        except Exception as exc:  # noqa: BLE001 — an unreachable graph must degrade to a no-op, not fail the tick
+            log.scheduler.warning(
+                "[scheduler] graph_reconciliation._reconcile_skills: graph unreachable — skipping this tick",
+                exc_info=exc,
+            )
+            return 0
         touched = 0
         for skill_id, (owner_id, owl_name, skill_name) in want.items():
             if skill_id in have:
@@ -130,7 +137,14 @@ class GraphReconciliationHandler(JobHandler):
                 trait_id = f"{owl_name}::{trait_name}"
                 want[trait_id] = (owl_name, trait_name, float(row[trait_name]))
 
-        have = set(await self._kuzu.list_trait_ids())
+        try:
+            have = set(await self._kuzu.list_trait_ids())
+        except Exception as exc:  # noqa: BLE001 — an unreachable graph must degrade to a no-op, not fail the tick
+            log.scheduler.warning(
+                "[scheduler] graph_reconciliation._reconcile_traits: graph unreachable — skipping this tick",
+                exc_info=exc,
+            )
+            return 0
         touched = 0
         for trait_id, (owl_name, trait_name, value) in want.items():
             if trait_id in have:

@@ -94,6 +94,47 @@ async def test_no_kuzu_wired_is_a_clean_noop(db: DbPool) -> None:
     assert result.success is True
 
 
+async def test_unreachable_graph_degrades_to_noop_on_skill_fetch(
+    db: DbPool, kuzu: KuzuAdapter, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await db.execute(
+        "INSERT INTO skill_ownership (owner_id, owl_name, skill_name, attached_at) "
+        "VALUES (?, ?, ?, ?)",
+        ("principal-default", "Brain", "web_search", 0.0),
+    )
+
+    async def _raise() -> list[str]:
+        raise RuntimeError("kuzu unreachable")
+
+    monkeypatch.setattr(kuzu, "list_skill_ids", _raise)
+    handler = GraphReconciliationHandler(db, kuzu)
+
+    result = await handler.execute(_job())
+
+    assert result.success is True
+    assert result.error is None
+
+
+async def test_unreachable_graph_degrades_to_noop_on_trait_fetch(
+    db: DbPool, kuzu: KuzuAdapter, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stackowl.owls.dna import OwlDNA
+    from stackowl.owls.dna_storage import upsert_owl_dna
+
+    await upsert_owl_dna(db, "Brain", OwlDNA(), table="owl_dna")
+
+    async def _raise() -> list[str]:
+        raise RuntimeError("kuzu unreachable")
+
+    monkeypatch.setattr(kuzu, "list_trait_ids", _raise)
+    handler = GraphReconciliationHandler(db, kuzu)
+
+    result = await handler.execute(_job())
+
+    assert result.success is True
+    assert result.error is None
+
+
 async def test_one_bad_row_does_not_stop_the_sweep(
     db: DbPool, kuzu: KuzuAdapter, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
