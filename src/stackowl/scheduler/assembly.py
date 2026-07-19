@@ -285,6 +285,7 @@ class SchedulerAssembly:
             # nightly evolution batch's concurrent fan-out draws from the SAME
             # budget as delegation/parliament.
             delegation_governor=delegation_governor,
+            kuzu=memory_components.kuzu_adapter,
         )
 
         # FR-4 (learning-loop consolidation) — ReflectionWriterHandler now scores
