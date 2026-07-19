@@ -46,10 +46,19 @@ class GraphReconciliationHandler(JobHandler):
             extra={"_fields": {"job_id": job.job_id, "has_kuzu": self._kuzu is not None}},
         )
         if self._kuzu is None:
+            duration_ms = (time.monotonic() - t0) * 1000
+            log.scheduler.info(
+                "[scheduler] graph_reconciliation.execute: exit",
+                extra={"_fields": {
+                    "job_id": job.job_id,
+                    "duration_ms": duration_ms,
+                    "reason": "no graph wired",
+                }},
+            )
             return JobResult(
                 job_id=job.job_id, effect_class="state_change", success=True,
                 output="graph_reconciliation: noop (no graph wired)", error=None,
-                duration_ms=(time.monotonic() - t0) * 1000,
+                duration_ms=duration_ms,
             )
 
         backfilled_skills = await self._reconcile_skills()
