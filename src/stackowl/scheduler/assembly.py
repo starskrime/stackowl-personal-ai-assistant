@@ -288,6 +288,17 @@ class SchedulerAssembly:
             kuzu=memory_components.kuzu_adapter,
         )
 
+        # Dynamic-injection arc, sub-project 1 — weekly diff/backfill/prune between
+        # SQLite (authoritative) and the derived graph mirror.
+        from stackowl.scheduler.handlers.graph_reconciliation import (
+            GraphReconciliationHandler,
+        )
+
+        graph_reconciliation_handler = GraphReconciliationHandler(
+            db=db, kuzu=memory_components.kuzu_adapter,
+        )
+        HandlerRegistry.instance().register(graph_reconciliation_handler)
+
         # FR-4 (learning-loop consolidation) — ReflectionWriterHandler now scores
         # AND reflects in one execute() call (every 15 min). The standalone
         # critic_scorer job (was every 10 min) is gone: ReflectionWriterHandler
@@ -897,6 +908,13 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="downloads_janitor", schedule="every 12h",
             interval_minutes=720,
+        )
+        # Dynamic-injection arc, sub-project 1 — weekly diff/backfill/prune between
+        # SQLite (authoritative) and the derived graph mirror. 168h = 7 days,
+        # matching this codebase's "every Nh" schedule DSL (no dedicated "every Nd").
+        await _seed_minutes_schedule(
+            db, handler_name="graph_reconciliation", schedule="every 168h",
+            interval_minutes=10080,
         )
         # Skill synthesizer runs once per day at 03:30 (between knowledge_prune
         # at 04:00 and evolution at 02:00) — needs ≥several days of outcomes
