@@ -386,6 +386,42 @@ async def test_send_text_falls_back_to_plain_on_markdownv2_rejection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_text_records_flood_ban_and_propagates() -> None:
+    """A RetryAfter must still propagate (a real delivery failure) AND arm the
+    shared flood guard so subsequent sends short-circuit instead of repeating
+    a call already known to fail."""
+    from telegram.error import RetryAfter
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(side_effect=RetryAfter(30))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    with pytest.raises(RetryAfter):
+        await adapter.send_text("hello", chat_id=555)
+
+    assert adapter._flood_wait_remaining() > 0
+
+
+@pytest.mark.asyncio
+async def test_send_text_short_circuits_while_flood_banned() -> None:
+    """Once a ban is recorded, a further send must NOT call the Bot API again —
+    it must fail immediately without the wasted network round-trip."""
+    from telegram.error import RetryAfter
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+    adapter._flood_until = time.monotonic() + 30
+
+    with pytest.raises(RetryAfter):
+        await adapter.send_text("hello", chat_id=555)
+
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_send_text_propagates_non_parse_errors() -> None:
     """A non-parse error (network/auth/chat-not-found) is a real delivery
     failure — it propagates, it is NOT swallowed by the plain-text fallback."""
@@ -443,6 +479,75 @@ async def test_send_ephemeral_propagates_send_failure() -> None:
 
     with pytest.raises(RuntimeError):
         await adapter.send_ephemeral(555, "probe")
+
+
+@pytest.mark.asyncio
+async def test_send_ephemeral_records_flood_ban_and_propagates() -> None:
+    from telegram.error import RetryAfter
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(side_effect=RetryAfter(30))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    with pytest.raises(RetryAfter):
+        await adapter.send_ephemeral(555, "probe")
+
+    assert adapter._flood_wait_remaining() > 0
+
+
+@pytest.mark.asyncio
+async def test_send_ephemeral_short_circuits_while_flood_banned() -> None:
+    from telegram.error import RetryAfter
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+    adapter._flood_until = time.monotonic() + 30
+
+    with pytest.raises(RetryAfter):
+        await adapter.send_ephemeral(555, "probe")
+
+    bot.send_message.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# send_status — best-effort live-progress ping, never raises
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_status_records_flood_ban_and_returns_none() -> None:
+    """Best-effort: a RetryAfter is swallowed (never breaks the turn) but still
+    arms the shared flood guard for other send paths."""
+    from telegram.error import RetryAfter
+
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock(side_effect=RetryAfter(30))
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+
+    result = await adapter.send_status(555, "...")
+
+    assert result is None
+    assert adapter._flood_wait_remaining() > 0
+
+
+@pytest.mark.asyncio
+async def test_send_status_short_circuits_while_flood_banned() -> None:
+    """A live-status ping fires every ~3s during a turn — while a ban is known,
+    it must skip the call outright instead of repeating it every tick."""
+    adapter = _adapter()
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    adapter._bot_app = types.SimpleNamespace(bot=bot)
+    adapter._flood_until = time.monotonic() + 30
+
+    result = await adapter.send_status(555, "...")
+
+    assert result is None
+    bot.send_message.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

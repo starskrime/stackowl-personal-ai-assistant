@@ -16,12 +16,13 @@ import asyncio
 import contextlib
 import time
 from collections.abc import AsyncIterator, Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from telegram import Update
 from telegram.constants import ChatAction
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from stackowl.channels.base import ChannelAdapter
@@ -112,6 +113,15 @@ class TelegramChannelAdapter(ChannelAdapter):
         # transcription is enabled). None → no filters.VOICE handler is registered
         # in start(), so behavior is byte-identical to a build without the feature.
         self._voice_handler: TelegramVoiceHandler | None = None
+        # Live incident (2026-07-19): Telegram issued a ~10h RetryAfter flood-
+        # control ban, and nothing in this adapter recognized that specific
+        # exception — every send-ish call site (status pings every ~3s during a
+        # turn, the 20m canary, real message sends) kept hammering the API for
+        # the full ban duration, each attempt logging a full traceback for a
+        # failure that was already guaranteed. A monotonic deadline shared across
+        # every send path lets each one skip the doomed network call and log a
+        # single cheap line instead of repeating the same stack trace for hours.
+        self._flood_until: float | None = None
         log.telegram.debug(
             "[telegram] adapter.init: ready",
             extra={
@@ -669,6 +679,32 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.send_text: exit")
         return last_message
 
+    def _flood_wait_remaining(self) -> float:
+        """Seconds still remaining on an active flood-control ban, 0.0 if none.
+
+        Shared across every send-ish call site so a ban discovered by ANY of
+        them (status ping, ephemeral probe, real message) is honored by ALL of
+        them — one guard, not one per caller."""
+        if self._flood_until is None:
+            return 0.0
+        remaining = self._flood_until - time.monotonic()
+        return remaining if remaining > 0 else 0.0
+
+    def _note_flood_ban(self, exc: RetryAfter) -> None:
+        """Record a freshly-observed RetryAfter so subsequent sends short-circuit
+        instead of repeating a call already known to fail for its duration."""
+        raw = exc.retry_after
+        # PTB is mid-migration: retry_after is `int` today, `datetime.timedelta`
+        # in a future major version (opt-in now via PTB_TIMEDELTA=true) — accept
+        # either rather than assuming today's type.
+        retry_after = raw.total_seconds() if isinstance(raw, timedelta) else float(raw or 0)
+        self._flood_until = time.monotonic() + retry_after
+        log.telegram.error(
+            "[telegram] adapter: flood control exceeded — suppressing sends",
+            exc_info=exc,
+            extra={"_fields": {"retry_after_s": retry_after}},
+        )
+
     async def _send_part(self, target: int, part: str, idx: int) -> Message | None:
         """Send one message part, MarkdownV2-first with a plain-text fallback.
 
@@ -683,6 +719,17 @@ class TelegramChannelAdapter(ChannelAdapter):
         callers can backfill a retry_queue row for floored turns.
         """
         assert self._bot_app is not None  # caller guarantees a resolved app+target
+        remaining = self._flood_wait_remaining()
+        if remaining > 0:
+            # A ban already observed elsewhere — this call is guaranteed to fail
+            # for the same reason; skip the wasted network round-trip and the
+            # duplicate traceback, but still propagate a real failure (a floored
+            # turn behind this send still needs its retry_queue/floor handling).
+            log.telegram.warning(
+                "[telegram] adapter.send_text: still flood-banned — skipping send",
+                extra={"_fields": {"idx": idx, "remaining_s": remaining}},
+            )
+            raise RetryAfter(int(remaining) + 1)
         async with traced_span(log.telegram, "telegram.send_message", idx=idx, len=len(part)):
             try:
                 # python-telegram-bot's send_message is untyped (returns Any) —
@@ -696,6 +743,9 @@ class TelegramChannelAdapter(ChannelAdapter):
                         parse_mode="MarkdownV2",
                     ),
                 )
+            except RetryAfter as exc:
+                self._note_flood_ban(exc)
+                raise
             except BadRequest as exc:
                 log.telegram.error(
                     "[telegram] adapter.send_text: MarkdownV2 rejected — retrying as plain text",
@@ -721,11 +771,25 @@ class TelegramChannelAdapter(ChannelAdapter):
         TestModeGuard.assert_not_test_mode("telegram.send_status")
         if self._bot_app is None:
             return None
+        remaining = self._flood_wait_remaining()
+        if remaining > 0:
+            # A live-status ping fires every ~3s during a turn — during a known
+            # ban that would mean one wasted call + one full traceback every
+            # tick for the whole ban duration. Best-effort here already means
+            # "never break the turn"; skip the call outright instead.
+            log.telegram.debug(
+                "[telegram] adapter.send_status: still flood-banned — skipping",
+                extra={"_fields": {"chat_id": chat_id, "remaining_s": remaining}},
+            )
+            return None
         try:
             msg = await self._bot_app.bot.send_message(
                 chat_id=chat_id, text=text, parse_mode=None
             )
             return int(msg.message_id)
+        except RetryAfter as exc:
+            self._note_flood_ban(exc)
+            return None
         except Exception as exc:  # noqa: BLE001 — progress is best-effort
             log.telegram.warning(
                 "[telegram] adapter.send_status: failed — skipping live status",
@@ -752,10 +816,25 @@ class TelegramChannelAdapter(ChannelAdapter):
                 "[telegram] adapter.send_ephemeral: bot not initialised — failing loud",
             )
             raise DeliveryError("telegram", "no_channel")
+        remaining = self._flood_wait_remaining()
+        if remaining > 0:
+            # The canary probe fires every 20m — during a known ban that's one
+            # wasted call + one full traceback per tick for the whole ban
+            # duration. Still propagates (a probe must fail loud), just without
+            # repeating a call already known to fail.
+            log.telegram.warning(
+                "[telegram] adapter.send_ephemeral: still flood-banned — skipping send",
+                extra={"_fields": {"chat_id": chat_id, "remaining_s": remaining}},
+            )
+            raise RetryAfter(int(remaining) + 1)
         log.telegram.debug("[telegram] adapter.send_ephemeral: decision silent_send")
-        msg = await self._bot_app.bot.send_message(
-            chat_id=chat_id, text=text, parse_mode=None, disable_notification=True
-        )
+        try:
+            msg = await self._bot_app.bot.send_message(
+                chat_id=chat_id, text=text, parse_mode=None, disable_notification=True
+            )
+        except RetryAfter as exc:
+            self._note_flood_ban(exc)
+            raise
         message_id = int(msg.message_id)
         log.telegram.debug(
             "[telegram] adapter.send_ephemeral: exit",
