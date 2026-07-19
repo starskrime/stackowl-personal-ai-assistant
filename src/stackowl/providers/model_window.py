@@ -1,15 +1,17 @@
 """Resolve a model's effective context window (tokens) for per-turn budgeting.
 
 Precedence: per-provider config `context_chars` override → provider probe
-(ollama /api/show) → known cloud default → conservative fallback. Clamped to a
-ceiling so a huge-window model can't claim more KV-cache RAM than the host has.
-Memoized per (provider_name, model). NEVER raises — any probe failure logs and
-returns the fallback. A sync `cached_window` lets the provider read the already-
-resolved value (to send num_ctx) without re-probing.
+(ollama /api/show, or an active max_tokens probe for any other OpenAI-
+compatible endpoint) → known cloud default → conservative fallback. Clamped to
+a ceiling so a huge-window model can't claim more KV-cache RAM than the host
+has. Memoized per (provider_name, model). NEVER raises — any probe failure
+logs and returns the fallback. A sync `cached_window` lets the provider read
+the already-resolved value (to send num_ctx) without re-probing.
 """
 from __future__ import annotations
 
 import os
+import re
 
 import httpx
 
@@ -17,8 +19,15 @@ from stackowl.infra.observability import log
 
 # Floor used only when the model reports nothing (probe failure / no info). NOT a
 # cap — by default the window comes DYNAMICALLY from the model's own reported
-# context length, with no platform-imposed upper bound.
-DEFAULT_WINDOW_FALLBACK = 8192
+# context length, with no platform-imposed upper bound. Raised 8192 -> 262144
+# (256K) 2026-07-18: the old value was a live incident waiting to happen — any
+# provider whose probe genuinely fails (network blip, an endpoint that doesn't
+# pre-validate max_tokens) fell all the way to 8192, needlessly triggering
+# lean-mode degradation for what is very likely a modern, large-context model
+# (see the NeraAiRaw incident this session: real window 262144, 32x the old
+# fallback). 256K is a reasonable modern-model floor for the genuine probe-
+# failure case, not a substitute for probing.
+DEFAULT_WINDOW_FALLBACK = 262_144
 _CLOUD_DEFAULT = 200_000
 
 
@@ -136,6 +145,69 @@ def _looks_like_ollama(base_url: str | None) -> bool:
     return ":11434" in base_url or "ollama" in base_url.lower()
 
 
+# Live incident (2026-07-18): a custom OpenAI-compatible gateway (behind LiteLLM)
+# had NO context_chars configured and isn't ollama, so every turn fell to
+# what was THEN DEFAULT_WINDOW_FALLBACK=8192 — the model's REAL window turned
+# out to be 262144 (32x more), needlessly triggering lean-mode degradation and
+# the honest floor's "limited context window" disclaimer on nearly every turn.
+# (The fallback itself was raised to 262144 the same day — see its own comment
+# above — but probing the real value is still strictly better than any fallback.)
+# Neither the
+# plain OpenAI `/v1/models` shape nor LiteLLM's richer `/model/info` (scoped out
+# for our virtual key) exposes the real window, so this discovers it the same
+# way a human would: deliberately request an absurd `max_tokens` against a
+# trivial prompt. LiteLLM/vLLM-style backends validate the output budget against
+# the model's real context ceiling BEFORE generating anything, so the error
+# message states the real number — and the probe costs near-zero tokens
+# regardless of the actual window size (fails fast on validation, never
+# generates). Some other stack might not pre-validate and instead just run a
+# real (but tiny-prompt) generation — that only costs one wasted call, still
+# safe, and still degrades to the fallback below if no limit is stated.
+_CONTEXT_LIMIT_RE = re.compile(
+    r"(?:max_model_len|max_total_tokens|maximum context length is)\D{0,20}?(\d{3,7})",
+    re.IGNORECASE,
+)
+_PROBE_MAX_TOKENS = 999_999_999  # absurd but within int32 — avoids a server-side overflow error masking the real one
+
+
+async def _probe_openai_compatible(
+    base_url: str, model: str, api_key: str | None
+) -> int | None:
+    """Actively discover a non-ollama OpenAI-compatible endpoint's real context
+    window — see the module comment above ``_CONTEXT_LIMIT_RE`` for why/how.
+    Returns None (never raises) on any request failure or an unparseable/absent
+    limit in the response, so the caller falls back to the conservative default."""
+    url = base_url.rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": _PROBE_MAX_TOKENS,
+    }
+    try:
+        client = _get_probe_client()
+        resp = await client.post(url, json=payload, headers=headers)
+        body = resp.text
+    except Exception as exc:
+        log.engine.debug(
+            "[model_window] openai-compatible probe request failed",
+            exc_info=exc, extra={"_fields": {"url": url, "model": model}},
+        )
+        return None
+    m = _CONTEXT_LIMIT_RE.search(body)
+    if not m:
+        log.engine.debug(
+            "[model_window] openai-compatible probe — no context-limit stated "
+            "in the response (endpoint may not pre-validate max_tokens)",
+            extra={"_fields": {"url": url, "model": model}},
+        )
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
 async def resolve_window(
     *,
     provider_name: str,
@@ -143,6 +215,7 @@ async def resolve_window(
     model: str,
     context_chars: int | None,
     protocol: str,
+    api_key: str | None = None,
 ) -> int:
     """Resolve + memoize the effective window (tokens). Never raises."""
     key = (provider_name, model)
@@ -162,6 +235,16 @@ async def resolve_window(
     elif protocol in ("anthropic", "openai", "gemini", "grok") and base_url is None:
         w = _clamp(_CLOUD_DEFAULT)
         log.engine.debug("[model_window] cloud default", extra={"_fields": {"model": model, "window": w}})
+    elif protocol == "openai" and base_url is not None:
+        # A custom OpenAI-compatible endpoint that isn't ollama (e.g. a LiteLLM/
+        # vLLM gateway) — actively discover its real window instead of assuming
+        # the conservative fallback (see _probe_openai_compatible above).
+        probed = await _probe_openai_compatible(base_url, model, api_key)
+        w = _clamp(probed) if probed else DEFAULT_WINDOW_FALLBACK
+        log.engine.info(
+            "[model_window] resolved via openai-compatible probe",
+            extra={"_fields": {"model": model, "probed": probed, "window": w}},
+        )
     else:
         w = DEFAULT_WINDOW_FALLBACK
         log.engine.info("[model_window] fallback window", extra={"_fields": {"model": model, "window": w}})

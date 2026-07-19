@@ -1,0 +1,22 @@
+-- Migration 0088 — circuit_broken_at timestamp on jobs (cooldown auto-requeue).
+--
+-- Root cause (live incident, 2026-07-18): JobScheduler._mark_failed's circuit
+-- breaker (S11c/MAX_CONSECUTIVE_FAILURES=3) permanently disables ANY recurring
+-- job after 3 consecutive full-cycle failures, with no way back except a manual
+-- /cronjob resume. That's correct for a job that is structurally doomed (e.g.
+-- always blows its own step budget), but the SAME mechanism also permanently
+-- kills a job whose failures were caused by a shared, transient upstream
+-- problem (the already-tracked NeraAiRaw tool-calling gateway gap, see
+-- docs/nera-gateway-tool-calling-gap.md) -- six otherwise-healthy scheduled
+-- goals (stock check, trend scan, idea hunter, reflection_writer, dream_worker)
+-- went silently dead this way and stayed dead for days.
+--
+-- circuit_broken_at stamps WHEN a job was disabled by the circuit breaker so a
+-- new cooldown-based auto-requeue (mirrors ObjectiveDriverHandler's F-41
+-- transient-block requeue) can give it one fresh attempt after a bounded
+-- cooldown, instead of leaving it dead forever. NULL for every existing row
+-- and every job that has never been circuit-broken.
+--
+-- NOTE no semicolons in comments per migration runner gotcha
+
+ALTER TABLE jobs ADD COLUMN circuit_broken_at TEXT;

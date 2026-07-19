@@ -44,6 +44,16 @@ _MAX_DEFER_SEC = 900.0
 # ordinary handler exception already takes — recurring jobs self-heal (F-60),
 # one-shots retry up to _MAX_RETRIES.
 _HANDLER_TIMEOUT_SEC = 1200.0
+# Live incident (2026-07-18): the circuit breaker below permanently disabled 6
+# otherwise-healthy recurring jobs whose 3 consecutive failures all traced back
+# to a shared, transient upstream outage (the tracked NeraAiRaw tool-calling
+# gateway gap — docs/nera-gateway-tool-calling-gap.md), not a structurally-
+# doomed goal. A cooldown long enough to comfortably outlast a transient
+# provider blip, but short enough that a genuinely-doomed job's periodic
+# re-attempt cost stays negligible (mirrors ObjectiveDriverHandler's F-41
+# transient-block cooldown, scaled up — a shared provider outage plausibly
+# outlasts a single sub-goal's cooldown).
+_CIRCUIT_BREAKER_COOLDOWN_SEC = 6 * 3600.0
 
 
 def _unify_scheduler_enabled() -> bool:
@@ -149,6 +159,7 @@ class JobScheduler(SupervisedTask):
 
     async def _poll(self) -> None:
         TestModeGuard.assert_not_test_mode("scheduler.execute")
+        await self._requeue_circuit_broken()
         now_iso = datetime.now(UTC).isoformat()
         # STEER-5/F113 — a job is due when EITHER its canonical recurring slot
         # (next_run_at) OR its separate retry slot (retry_at, when set) is reached.
@@ -182,6 +193,79 @@ class JobScheduler(SupervisedTask):
                     exc_info=result,
                     extra={"_fields": {"job_id": row["job_id"]}},
                 )
+
+    async def _requeue_circuit_broken(self) -> int:
+        """Give a circuit-broken recurring job ONE fresh attempt after a cooldown.
+
+        F-61 circuit-broken a job forever with no way back except a manual
+        ``/cronjob resume`` — correct for a structurally-doomed goal, but the same
+        mechanism also permanently kills a job whose 3 consecutive failures were
+        caused by a shared, transient upstream outage (e.g. a provider circuit
+        opening). Mirrors :meth:`ObjectiveDriverHandler._requeue_recoverable`
+        (F-41): after ``_CIRCUIT_BREAKER_COOLDOWN_SEC`` has elapsed since a job was
+        disabled, reuse :meth:`resume` (same failure_count/enabled/next_run_at
+        reset a manual resume performs) so the schedule keeps trying periodically
+        instead of staying dead forever. A job that fails 3 more times simply
+        circuit-breaks again — bounded, alerted, and never a silent infinite loop.
+        Returns how many jobs were re-queued this tick (0 in the steady state).
+        """
+        cutoff = (datetime.now(UTC) - timedelta(seconds=_CIRCUIT_BREAKER_COOLDOWN_SEC)).isoformat()
+        rows = await self._db.fetch_all(
+            "SELECT * FROM jobs WHERE enabled = 0 AND status = 'failed' "
+            "AND circuit_broken_at IS NOT NULL AND circuit_broken_at <= ?",
+            (cutoff,),
+        )
+        for row in rows:
+            job = row_to_job(row)
+            await self.resume(job.job_id)
+            await write_audit(
+                self._db, "job_circuit_broken_cooldown_requeue", job.job_id, actor="scheduler",
+            )
+            log.heartbeat.info(
+                "[scheduler] %s: circuit-broken cooldown elapsed — auto-requeued "
+                "for one fresh attempt",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            # Self-healing must be OBSERVABLE, not silent (feedback_no_hidden_errors /
+            # feedback_always_self_healing) — every OTHER lifecycle transition on this
+            # job (circuit-break, re-arm) already alerts the owner; a resume the owner
+            # never asked for is exactly as notify-worthy.
+            await self._notify_self_healed(job)
+        return len(rows)
+
+    async def _notify_self_healed(self, job: Job) -> None:
+        """Tell the owner a circuit-broken job was auto-resumed after cooldown.
+
+        Best-effort/honest, mirroring :meth:`_notify_failure`: no deliverer wired
+        or no durable recipient ⇒ nothing sent, never a fake "notified"; a send
+        error is logged but never allowed to break the requeue that already
+        committed.
+        """
+        if self._job_deliverer is None:
+            log.heartbeat.debug(
+                "[scheduler] %s: no deliverer wired — self-heal notice skipped",
+                job.job_id,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return
+        message = (
+            f"Scheduled job '{job.handler_name}' had failed repeatedly and was "
+            f"automatically resumed after a cooldown — it will run again on its "
+            f"normal schedule. Use /cronjob (job_id: {job.job_id}) to review or "
+            f"remove it if the underlying problem persists."
+        )
+        try:
+            await self._job_deliverer.deliver_for_job(
+                job, message=message, category="job_self_healed", urgency="normal",
+            )
+        except Exception as exc:  # B5 — a notify failure must never undo the requeue
+            log.heartbeat.error(
+                "[scheduler] %s: self-heal notice delivery raised",
+                job.job_id,
+                exc_info=exc,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
 
     def _occurrence_key(self, job: Job) -> str:
         """Dedup key scoped to the SCHEDULED INSTANT being serviced.
@@ -527,11 +611,12 @@ class JobScheduler(SupervisedTask):
         new_failure_count = job.failure_count + 1
         is_owl_job = job.params.get("source") == OWL_LIFECYCLE_SOURCE
         if new_failure_count >= MAX_CONSECUTIVE_FAILURES:
+            now_iso = datetime.now(UTC).isoformat()
             await self._db.execute(
                 "UPDATE jobs SET status = 'failed', enabled = 0, "
-                "retry_count = 0, retry_at = NULL, failure_count = ?, last_error = ? "
-                "WHERE job_id = ?",
-                (new_failure_count, last_error, job.job_id),
+                "retry_count = 0, retry_at = NULL, failure_count = ?, last_error = ?, "
+                "circuit_broken_at = ? WHERE job_id = ?",
+                (new_failure_count, last_error, now_iso, job.job_id),
             )
             log.heartbeat.error(
                 "[scheduler] %s: scheduled job circuit-broken — paused after "
@@ -698,7 +783,7 @@ class JobScheduler(SupervisedTask):
         next_run = compute_next_run(rows[0]["schedule"], tz=self._tz)
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', enabled = 1, failure_count = 0, "
-            "last_error = NULL, next_run_at = ? WHERE job_id = ?",
+            "last_error = NULL, circuit_broken_at = NULL, next_run_at = ? WHERE job_id = ?",
             (next_run, job_id),
         )
         await write_audit(self._db, "job_resumed", job_id, details={"next_run_at": next_run})

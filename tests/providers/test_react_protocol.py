@@ -97,6 +97,48 @@ def test_parse_bare_json_not_a_tool_call_returns_none() -> None:
     assert parse_react_action('{"answer": "Paris", "confidence": 0.9}') is None
 
 
+def test_parse_native_call_syntax_namespaced() -> None:
+    # Observed live leak: a native-tool-calling-trained model (NeraAiRaw)
+    # verbalized its call as OpenAI/Gemini-style function-call text instead of
+    # the taught ACTION: protocol or the structured tool_calls API field.
+    text = 'call:default_api:web_search{"query": "latest AI news July 2026"}'
+    assert parse_react_action(text, known={"web_search"}) == (
+        "web_search", {"query": "latest AI news July 2026"},
+    )
+
+
+def test_parse_native_call_syntax_bare_name() -> None:
+    assert parse_react_action(
+        'web_search{"query": "x"}', known={"web_search"},
+    ) == ("web_search", {"query": "x"})
+
+
+def test_parse_native_call_syntax_unknown_name_rejected() -> None:
+    text = 'call:default_api:not_a_tool{"query": "x"}'
+    assert parse_react_action(text, known={"web_search"}) is None
+
+
+def test_parse_native_call_syntax_leading_colon_dropped_word() -> None:
+    # Live variant (2026-07-16): the leading "call" word was dropped entirely,
+    # leaving a bare leading separator before the namespace.
+    text = ':default_api:search{"query": "x"}'
+    assert parse_react_action(text, known={"search"}) == ("search", {"query": "x"})
+
+
+def test_parse_native_call_syntax_whitespace_around_separators() -> None:
+    # Root-caused (2026-07-16): the gateway's per-token whitespace artifact
+    # gets normalized to single spaces by stream(), so a leaked call arrives
+    # as "call : default _api : search {...}" rather than one contiguous run.
+    text = 'call : default _api : search {"query": "x"}'
+    assert parse_react_action(text, known={"search"}) == ("search", {"query": "x"})
+
+
+def test_parse_native_call_syntax_requires_known() -> None:
+    # No `known` set → never guess a tool name out of bare content.
+    text = 'call:default_api:web_search{"query": "x"}'
+    assert parse_react_action(text) is None
+
+
 def test_looks_like_tool_call_detects_action_block() -> None:
     from stackowl.providers._react import looks_like_tool_call
 
@@ -119,9 +161,124 @@ def test_looks_like_tool_call_false_for_real_answer() -> None:
     assert not looks_like_tool_call(None)
 
 
+def test_looks_like_tool_call_detects_namespaced_native_call() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    # No `known` set is available at this delivery-guard boundary — must still
+    # flag the shape structurally so it never ships raw to the user.
+    assert looks_like_tool_call(
+        'call:default_api:web_search{"query": "latest AI news July 2026"}'
+    )
+    assert looks_like_tool_call('web_search{"query": "x"}')
+
+
+def test_looks_like_tool_call_detects_leading_separator_variant() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    assert looks_like_tool_call(':default_api:search{"query": "x"}')
+
+
+def test_looks_like_tool_call_false_for_prose_mentioning_a_tool_name() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    # A tool name appearing mid-sentence (not the whole message, no trailing
+    # "}") must never false-positive the delivery guard.
+    assert not looks_like_tool_call("You can call web_search to look that up.")
+
+
+def test_parse_native_call_syntax_trailing_after_prose() -> None:
+    # Live incident 2026-07-16: a refusal sentence followed by the leaked
+    # call, not the whole message — must still dispatch, not leak raw.
+    text = (
+        'Sorry, but I cannot fulfill your request at the moment. , :\n\n'
+        'default\n_api\n:\nsearch\n{"query": "latest AI news"}'
+    )
+    assert parse_react_action(text, known={"search"}) == (
+        "search", {"query": "latest AI news"},
+    )
+
+
+def test_parse_native_call_syntax_trailing_unknown_name_rejected() -> None:
+    # A prose label immediately followed by a JSON blob (e.g. "example: {...}")
+    # must never be mistaken for a leaked call — only a name that resolves
+    # against the real tool set may match.
+    text = 'Here is an example: {"key": "value"}'
+    assert parse_react_action(text, known={"search"}) is None
+
+
+def test_looks_like_tool_call_detects_trailing_call_after_prose_with_known() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    text = (
+        'Sorry, but I cannot fulfill your request at the moment. , :\n\n'
+        'default\n_api\n:\nsearch\n{"query": "latest AI news"}'
+    )
+    assert looks_like_tool_call(text, known={"search"})
+
+
+def test_looks_like_tool_call_trailing_variant_false_without_known() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    # No known set in scope (e.g. a no-tools conversational turn) — behavior
+    # stays byte-identical to before: whole-message-only detection.
+    text = (
+        'Sorry, but I cannot fulfill your request at the moment. , :\n\n'
+        'default\n_api\n:\nsearch\n{"query": "latest AI news"}'
+    )
+    assert not looks_like_tool_call(text)
+
+
+def test_looks_like_tool_call_false_for_example_json_with_known() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    text = 'Here is an example: {"key": "value"}'
+    assert not looks_like_tool_call(text, known={"search"})
+
+
 def test_parse_malformed_json_returns_none() -> None:
     text = "ACTION: web_search\n```json\n{not valid json}\n```"
     assert parse_react_action(text) is None
+
+
+def test_looks_like_tool_call_detects_xml_invoke_leak() -> None:
+    """Live incident 2026-07-18: a model verbalized Claude's own legacy XML
+    tool-use convention as message content — same failure class as the
+    default_api: leak, a different hallucinated shape. Needs no `known` set:
+    this app's own protocol is ACTION: text, never XML tags, so <invoke>/
+    <function_calls> anywhere is unconditionally a leak, never real prose."""
+    from stackowl.providers._react import looks_like_tool_call
+
+    text = (
+        "<function_calls>\n"
+        "<invoke name='schedule_delete_cron_job'>\n"
+        "<parameter name='cron_job_id'>goal_execution-515ec15d</parameter>\n"
+        "</invoke>\n"
+        "<invoke name='schedule_delete_cron_job'>\n"
+        "<parameter name='cron_job_id'>goal_execution-5ba09a39</parameter>\n"
+        "</invoke>\n"
+        "</function_calls>"
+    )
+    assert looks_like_tool_call(text)
+    assert looks_like_tool_call(text, known={"schedule_delete_cron_job"})
+
+
+def test_looks_like_tool_call_detects_xml_invoke_leak_trailing_after_prose() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    text = (
+        "Sure, removing the redundant jobs now.\n\n"
+        "<invoke name='schedule_delete_cron_job'>"
+        "<parameter name='cron_job_id'>goal_execution-1fedf1ec</parameter>"
+        "</invoke>"
+    )
+    assert looks_like_tool_call(text)
+
+
+def test_looks_like_tool_call_false_for_prose_mentioning_invoke_word() -> None:
+    from stackowl.providers._react import looks_like_tool_call
+
+    # A bare mention of the word must not false-positive without the `<` tag.
+    assert not looks_like_tool_call("I will invoke the correct tool for this.")
 
 
 def test_parse_no_action_returns_none() -> None:

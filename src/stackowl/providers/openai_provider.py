@@ -67,15 +67,23 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
     return int(str(val))
 
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_RE = re.compile(
+    r"<think>.*?</think>|<thought>.*?</thought>", re.DOTALL | re.IGNORECASE
+)
+# Known reasoning-block tag conventions across model families: qwen3-style
+# <think> and Gemini-style <thought> (NeraAiRaw is confirmed Gemini-family —
+# see docs/nera-gateway-tool-calling-gap.md). Live incident 2026-07-16: a
+# <thought>...</thought> block shipped raw because only <think> was recognized.
+_THINK_OPEN_TAGS = ("<think>", "<thought>")
 
 
 def strip_think(text: str) -> str:
-    """Remove qwen3-style ``<think>…</think>`` reasoning blocks from output.
+    """Remove chain-of-thought reasoning blocks (``<think>`` or ``<thought>``)
+    from output.
 
-    Reasoning models emit chain-of-thought inside ``<think></think>`` before the
+    Reasoning models emit chain-of-thought inside a reasoning tag before the
     answer; structured/utility callers (judge, fact extractor) never want it.
-    Also handles a response TRUNCATED mid-thinking — an unclosed ``<think>`` left
+    Also handles a response TRUNCATED mid-thinking — an unclosed opening tag left
     when the output-token cap is hit — by dropping everything from that dangling
     tag onward. That truncation is exactly what left ``content`` empty and
     crashed the fact extractor / fooled the judge into failing open.
@@ -83,10 +91,87 @@ def strip_think(text: str) -> str:
     if not text:
         return ""
     cleaned = _THINK_RE.sub("", text)
-    idx = cleaned.lower().find("<think>")
-    if idx != -1:  # unclosed (truncated) block — the rest is all reasoning
-        cleaned = cleaned[:idx]
+    lowered = cleaned.lower()
+    indices = [i for tag in _THINK_OPEN_TAGS if (i := lowered.find(tag)) != -1]
+    if indices:  # unclosed (truncated) block — the rest is all reasoning
+        cleaned = cleaned[: min(indices)]
     return cleaned.strip()
+
+
+_THINK_TAGS: tuple[tuple[str, str], ...] = (
+    ("<think>", "</think>"),
+    ("<thought>", "</thought>"),
+)
+
+
+class _ThinkStreamFilter:
+    """Stateful reasoning-block filter for a LIVE token stream.
+
+    ``strip_think()`` above only works on a complete string — a streamed delta
+    can split an opening/closing tag across multiple chunks, so a per-chunk
+    regex sub would miss it. ``stream()`` (unlike this provider's non-streaming
+    ``complete()``/``complete_with_tools()``, which already call strip_think())
+    never filtered this at all — a live reasoning trace on a plain
+    conversational turn streamed straight to the user as the "answer".
+
+    A reasoning block always OPENS at the very start of a completion (models
+    never interleave it mid-answer), so only the opening boundary needs
+    buffering: once the reply is confirmed not to start with any known
+    reasoning tag (see ``_THINK_TAGS``), every later delta passes through
+    unfiltered — no unbounded buffering.
+    """
+
+    def __init__(self) -> None:
+        self._state = "sniffing"  # sniffing -> (suppressing ->) passthrough
+        self._pending = ""
+        self._close_tag = ""
+
+    def feed(self, delta: str) -> str:
+        if self._state == "passthrough":
+            return delta
+        self._pending += delta
+        if self._state == "sniffing":
+            stripped = self._pending.lstrip()
+            if not stripped:
+                return ""  # only whitespace so far — keep sniffing
+            lowered = stripped.lower()
+            matched = next(
+                (pair for pair in _THINK_TAGS if lowered.startswith(pair[0])), None
+            )
+            if matched is not None:
+                open_tag, self._close_tag = matched
+                self._pending = stripped[len(open_tag):]
+                self._state = "suppressing"
+            elif any(
+                len(lowered) < len(open_tag) and open_tag.startswith(lowered)
+                for open_tag, _ in _THINK_TAGS
+            ):
+                return ""  # ambiguous prefix (any candidate tag) — need more chars
+            else:
+                self._state = "passthrough"
+                out, self._pending = self._pending, ""
+                return out
+        # state == "suppressing" (falls through here in the same feed() call
+        # when a single delta contains both the opening and closing tag)
+        close_idx = self._pending.lower().find(self._close_tag)
+        if close_idx == -1:
+            return ""  # still inside the block — emit nothing
+        rest = self._pending[close_idx + len(self._close_tag):]
+        self._pending = ""
+        self._state = "passthrough"
+        return rest
+
+    def flush(self) -> str:
+        """Call once the stream ends. An unclosed ``<think>`` (truncated mid-
+        reasoning, e.g. output-token cap hit) means everything buffered is
+        reasoning, not answer — drop it, matching strip_think()'s truncation
+        policy. Otherwise (stream ended before sniffing resolved) return
+        whatever was buffered so a short real reply is never lost."""
+        if self._state == "suppressing":
+            self._pending = ""
+            return ""
+        out, self._pending = self._pending, ""
+        return out
 
 
 # F027 extension — the in-loop tool round had NO app-level timeout (only the
@@ -156,6 +241,7 @@ class OpenAIProvider(ModelProvider):
         # tolerated below (record nothing, debug log, never break the stream).
         final_usage: Any = None
         final_model: str = resolved_model
+        think_filter = _ThinkStreamFilter()
         try:
             stream_resp = await self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=resolved_model,
@@ -172,9 +258,45 @@ class OpenAIProvider(ModelProvider):
                     if chunk_usage is not None:
                         final_usage = chunk_usage
                         final_model = getattr(chunk, "model", resolved_model) or resolved_model
-                    delta = chunk.choices[0].delta.content if chunk.choices else None
-                    if delta:
-                        yield delta
+                    delta_obj = chunk.choices[0].delta if chunk.choices else None
+                    delta = getattr(delta_obj, "content", None) if delta_obj else None
+                    # NeraAiRaw (post gateway-fix 2026-07-16): reasoning now streams via
+                    # its OWN structured `delta.reasoning_content` field — never inline
+                    # in `delta.content` — so the ACTION:/<thought> leak-guards above
+                    # rarely see it anymore. But `delta.content` is empty/absent for the
+                    # ENTIRE reasoning phase now, and this loop used to `continue`
+                    # (yielding nothing) for every such chunk — silence for as long as
+                    # the model reasons, which OwlResourceGuard's per-chunk timeout
+                    # (guards.py) reads as a dead/hung provider and kills at the
+                    # ceiling. A reasoning delta must still reset that clock even
+                    # though it has nothing displayable to yield.
+                    if not delta:
+                        if getattr(delta_obj, "reasoning_content", None) if delta_obj else None:
+                            yield ""
+                        continue
+                    # NOTE (2026-07-16): a standalone whitespace-only SSE delta used to
+                    # collapse to a single space here — a workaround for a gateway
+                    # framing bug (junk "\n\n\n" splitting real tokens mid-identifier).
+                    # The gateway operator fixed that bug the same night; collapsing
+                    # every whitespace-only delta to a space now DESTROYS legitimate
+                    # newlines (list items, paragraph breaks) the fixed gateway
+                    # correctly streams as their own delta, flattening every multi-line
+                    # reply onto one line. Removed — pass whitespace-only deltas through
+                    # verbatim, same as any other content. _NATIVE_CALL_RE (_react.py)
+                    # already tolerates whitespace/newlines around a leaked call's
+                    # separators independent of this, so leak detection is unaffected.
+                    visible = think_filter.feed(delta)
+                    # Yield unconditionally, even when suppressed (empty string):
+                    # OwlResourceGuard's per-chunk timeout (guards.py) resets its
+                    # clock on every __anext__() this generator yields — a raw
+                    # delta arriving during a long-but-legitimate reasoning block
+                    # (all suppressed to "" by think_filter) must still reset that
+                    # clock, or a real, actively-generating model gets killed at
+                    # the timeout ceiling and misread as a hung/dead provider.
+                    yield visible
+                tail = think_filter.flush()
+                if tail:
+                    yield tail
             finally:
                 # B5/F119 — record consumed spend even if the consumer abandoned the
                 # stream early (OwlTimeout/disconnect): best-effort, fail-open.
@@ -553,7 +675,7 @@ class OpenAIProvider(ModelProvider):
                 # that raw text to the user. Re-prompt the exact format a bounded
                 # number of times; if it persists, ESCALATE to a stronger tier when
                 # allowed (the gateway re-runs), else fall to the honest floor.
-                if looks_like_tool_call(content):
+                if looks_like_tool_call(content, known=_known_tools):
                     if _fmt_fix_count < _MAX_FORMAT_FIX:
                         _fmt_fix_count += 1
                         log.engine.warning(
@@ -836,16 +958,28 @@ class OpenAIProvider(ModelProvider):
 
     def _output_cap(self, resolved_model: str) -> int:
         """Output-token budget for a generation — as much as the model's window
-        allows, never a small fixed cap.
+        allows, never a small fixed cap, but NEVER the whole window either.
 
         A fixed cap truncates a reasoning model mid-thought and starves the answer.
-        The budget is the model's RESOLVED context window — a general abstraction
-        that already works for every backend (no per-vendor logic). Only when the
-        window is unknown do we fall back to the configured ``max_output_tokens``.
+        The budget is bounded by the model's RESOLVED context window — a general
+        abstraction that already works for every backend (no per-vendor logic) —
+        but the window is a TOTAL (input + output) ceiling, not an output-only
+        budget: requesting the entire window as ``max_tokens`` leaves zero room
+        for the prompt itself and 400s on every real call once the window is a
+        large, correctly-resolved value (live incident 2026-07-18 — NeraAiRaw's
+        real 262144-token window used whole as max_tokens immediately exceeded
+        the SAME window once the ~12k-token prompt was added on top). Bounding
+        by ``max_output_tokens`` (a config ceiling already documented as
+        "generous", not "small") keeps a genuinely small/unknown window
+        unaffected (``min`` picks the window) while capping a huge window to a
+        response size that safely coexists with real prompt sizes.
         """
         from stackowl.providers.model_window import cached_window
 
-        return cached_window(self._name, resolved_model) or self._config.max_output_tokens
+        window = cached_window(self._name, resolved_model)
+        if window is None:
+            return self._config.max_output_tokens
+        return min(window, self._config.max_output_tokens)
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("openai.complete")
