@@ -252,8 +252,8 @@ def sync_upsert_trait(
 
 def sync_link_owl_owns_skill(conn: kuzu.Connection, owl_name: str, skill_id: str) -> None:
     """Add an OWNS edge from Owl -> Skill (idempotent — MERGE, unlike the
-    existing MENTIONS/RELATED_TO edges which use CREATE; verified safe for
-    this Kuzu version, see Task 1's test suite)."""
+    existing MENTIONS/RELATED_TO edges which use CREATE; verified idempotent
+    for this Kuzu version, see tests/memory/test_kuzu_owl_skill_trait_sync.py)."""
     conn.execute(
         """MATCH (o:Owl {name: $owl_name}), (s:Skill {id: $skill_id})
            MERGE (o)-[:OWNS]->(s)""",
