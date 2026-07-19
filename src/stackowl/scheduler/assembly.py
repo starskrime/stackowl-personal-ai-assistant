@@ -336,6 +336,7 @@ class SchedulerAssembly:
             embedding_registry=memory_components.embedding_registry,
             owl_registry=owl_registry,
             consent_gate=consent_gate,
+            kuzu=memory_components.kuzu_adapter,
         )
         HandlerRegistry.instance().register(skill_synthesizer_handler)
 

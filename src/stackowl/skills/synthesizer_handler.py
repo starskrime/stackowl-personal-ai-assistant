@@ -23,6 +23,7 @@ from stackowl.skills.synthesizer import SkillSynthesizer
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
+    from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.owls.registry import OwlRegistry
     from stackowl.tools.registry import ConsequentialActionGate
 
@@ -44,6 +45,7 @@ class SkillSynthesizerHandler(JobHandler):
         embedding_registry: EmbeddingRegistry | None = None,
         owl_registry: OwlRegistry | None = None,
         consent_gate: ConsequentialActionGate | None = None,
+        kuzu: KuzuAdapter | None = None,
         synth_tier: str = "fast",
         lookback_days: int = 14,
         min_cluster_size: int = 3,
@@ -56,6 +58,7 @@ class SkillSynthesizerHandler(JobHandler):
         self._embedding_registry = embedding_registry
         self._owl_registry = owl_registry
         self._consent_gate = consent_gate
+        self._kuzu = kuzu
         self._synth_tier = synth_tier
         self._lookback_days = lookback_days
         self._min_cluster_size = min_cluster_size
@@ -109,6 +112,7 @@ class SkillSynthesizerHandler(JobHandler):
             owl_registry=self._owl_registry,
             db=self._db,
             consent_gate=self._consent_gate,
+            kuzu=self._kuzu,
             lookback_days=self._lookback_days,
             min_cluster_size=self._min_cluster_size,
             min_mean_quality=self._min_mean_quality,
