@@ -18,14 +18,12 @@ from typing import Any
 
 import pytest
 
-from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import execute as exe
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
-
 
 # ---------------------------------------------------------------------------
 # Minimal tool — gives tool_registry.all() a non-empty result
@@ -201,6 +199,49 @@ async def test_conversational_leaked_tool_call_is_floored_not_delivered(
     assert any(e.step == "execute" for e in result.step_errors)
 
 
+class _StuckLoopProvider:
+    """Provider whose stream() repeats the SAME short unit hundreds of times —
+    reproduces the live incident (2026-07-16): the model got stuck emitting
+    empty ``<tool_code></tool_code>`` pairs ~250 times (~1000 deltas) instead
+    of a real answer. This shape matches NEITHER ``ACTION:`` nor a native
+    ``name{...}`` call — no syntax-specific regex catches it; only a general
+    repetition guard does."""
+
+    protocol = "anthropic"
+
+    async def stream(self, messages, model, **kwargs):  # noqa: ANN001, ANN201
+        for _ in range(300):
+            yield "<tool_code>"
+            yield "\n"
+            yield "</tool_code>"
+            yield "\n"
+
+
+@pytest.mark.asyncio
+async def test_conversational_degenerate_repetition_is_floored_not_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stuck-loop stream (same short unit repeated far past any legitimate
+    answer) must be floored, not shipped raw as ~1000+ chunks to the user."""
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(_StuckLoopProvider()),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(),
+        owl_registry=OwlRegistry.with_default_secretary(),
+    )
+    stoken = set_services(services)
+    try:
+        result = await exe.run(_make_state("conversational"))
+    finally:
+        reset_services(stoken)
+
+    delivered = "".join(r.content for r in result.responses)
+    assert "tool_code" not in delivered
+    assert any(e.step == "execute" for e in result.step_errors)
+    # Must catch it FAR short of the full 300-repeat stream, not after burning
+    # through every repetition to the end.
+    assert len(delivered) < 100
+
+
 @pytest.mark.asyncio
 async def test_standard_enters_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """A standard turn MUST call _run_with_tools when tools are registered."""
@@ -221,3 +262,56 @@ async def test_standard_enters_tool_loop(monkeypatch: pytest.MonkeyPatch) -> Non
     assert entered["tools"] is True, (
         "standard turn failed to enter _run_with_tools"
     )
+
+
+class _LongFormAnswerProvider:
+    """Provider whose stream() yields a realistic long-form technical answer:
+    prose, a numbered list, a markdown table (repeated "---" separator
+    deltas), and multiple fenced code blocks (repeated "```" deltas). The
+    degenerate-repetition guard's threshold (20) must never trip on
+    LEGITIMATE structural repetition — only on a genuinely stuck loop. This
+    is the guard's own party-mode review calling out that only the failure
+    case had been tested, never the realistic legitimate case."""
+
+    protocol = "anthropic"
+    name = "long-form-test-provider"
+
+    async def stream(self, messages, model, **kwargs):  # noqa: ANN001, ANN201
+        yield "Here's a rundown of the three approaches:\n\n"
+        yield "1. Use a cache — fastest, but stale data risk.\n"
+        yield "2. Query live — always fresh, slower.\n"
+        yield "3. Hybrid — cache with a short TTL.\n\n"
+        yield "| Approach | Speed | Freshness |\n"
+        yield "| --- | --- | --- |\n"
+        yield "| Cache | Fast | Stale |\n"
+        yield "| --- | --- | --- |\n"
+        yield "| Live | Slow | Fresh |\n"
+        yield "| --- | --- | --- |\n"
+        yield "| Hybrid | Medium | Mostly fresh |\n\n"
+        for i in range(3):
+            yield "```python\n"
+            yield f"def approach_{i}():\n    return {i}\n"
+            yield "```\n\n"
+        yield "The hybrid approach is usually the right default."
+
+
+@pytest.mark.asyncio
+async def test_conversational_long_form_answer_does_not_trip_repetition_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A realistic long-form answer (list + table + repeated code fences) must
+    be delivered whole, not floored by the degenerate-repetition guard."""
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(_LongFormAnswerProvider()),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(),
+        owl_registry=OwlRegistry.with_default_secretary(),
+    )
+    stoken = set_services(services)
+    try:
+        result = await exe.run(_make_state("conversational"))
+    finally:
+        reset_services(stoken)
+
+    delivered = "".join(r.content for r in result.responses)
+    assert "hybrid approach is usually the right default" in delivered
+    assert result.step_errors == ()

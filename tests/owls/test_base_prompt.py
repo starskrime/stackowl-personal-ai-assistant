@@ -222,6 +222,52 @@ def test_adapter_example_parses_with_real_parser() -> None:
     assert args == {"arg": "value"}
 
 
+def test_adapter_omits_protocol_when_tool_free() -> None:
+    """describe_tool_protocol=False (a TOOL_FREE_CLASSES turn) drops the ACTION:
+    calling protocol entirely — teaching a call format with nothing real to call
+    primes a less-instruction-following model to imitate it anyway (the live
+    incident: a plain conversational reply flagged/floored as an unparsed
+    tool-call). The date/downloads-convention content must still be present."""
+    adapter = operational_adapter(_fixed(), describe_tool_protocol=False)
+
+    assert "ACTION:" not in adapter
+    assert "```json" not in adapter
+    assert "May" in adapter
+    assert "2026" in adapter
+    assert "downloads" in adapter.lower()
+    # Live incident 2026-07-16 (round 2): omitting the taught ACTION: format only
+    # stops the model imitating OUR format — it does not stop a natively
+    # tool-trained model (NeraAiRaw/Gemini-family) from attempting its OWN
+    # inherent function-calling convention on a turn with zero tools offered.
+    # An explicit negative instruction is required to override that.
+    assert "no capabilities are available" in adapter.lower()
+    assert "do not attempt to call" in adapter.lower()
+
+
+def test_adapter_default_is_byte_identical_to_pre_flag_behavior() -> None:
+    """describe_tool_protocol's default (True) must reproduce the EXACT prior
+    text — no accidental whitespace/paragraph-break change from refactoring the
+    string into a list-join."""
+    now = _fixed()
+    human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
+    expected = (
+        "Operational context (this changes; your character above does not).\n"
+        f"Right now it is {human_now}.\n\n"
+        "To use a capability, output exactly:\n"
+        "ACTION: <name>\n"
+        "```json\n"
+        '{"<arg>": "<value>"}\n'
+        "```\n"
+        "Then stop and wait for the OBSERVATION (the result) before continuing. "
+        "The capabilities currently available to you are listed separately; use "
+        "their exact names in place of <name>.\n\n"
+        "When you fetch or save a file for the user, write it into the workspace's "
+        "downloads/ folder, so it can be delivered to them and is cleaned up "
+        "automatically over time."
+    )
+    assert operational_adapter(now) == expected
+
+
 def test_adapter_carries_downloads_convention() -> None:
     """The operational adapter steers downloads into the workspace downloads/
     folder — generic file-hygiene mechanics, no tool/domain words. The charter

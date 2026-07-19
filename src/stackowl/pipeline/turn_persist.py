@@ -76,15 +76,39 @@ async def persist_turn(state: PipelineState) -> None:
     floored = _turn_floored(state)
     if floored:
         retry_store = getattr(services, "retry_queue_store", None)
-        if retry_store is not None:
+        # retry_replay=True means THIS turn is already RetryActuator's own replay
+        # of an existing retry_queue row — its floor is tracked by that row's own
+        # attempt_count/_MAX_ATTEMPTS (retry_actuator.py's mark_attempt_failed),
+        # not a fresh row. Without this guard, insert_pending() (no dedup, always
+        # a brand-new attempt_count=0 row due immediately) fires on every replay's
+        # floor too, defeating the cap and compounding into an unbounded loop.
+        if retry_store is not None and not state.retry_replay:
             try:
-                banned = _attempts_for_state(state)
-                await retry_store.insert_pending(
-                    trace_id=state.trace_id,
-                    session_id=state.session_id,
-                    goal=state.input_text,
-                    banned_capabilities=list(banned) if banned else [],
-                )
+                # Dedup against an already-pending row for this session (live
+                # incident 2026-07-16): insert_pending() has no dedup, so every
+                # floored turn tonight minted its OWN independent row — each one
+                # later fires on its own via the 1-minute sweep, unprompted and
+                # disconnected from whatever the user is discussing by then,
+                # reading as the agent contradicting/forgetting itself. One
+                # in-flight retry per session is enough; a second floor while one
+                # is already pending piles onto the confusion instead of helping.
+                existing = await retry_store.get_latest_pending_for_session(state.session_id)
+                if existing is not None:
+                    log.scheduler.info(
+                        "[pipeline] persist_turn: retry already pending for session — "
+                        "skipping duplicate row",
+                        extra={"_fields": {
+                            "trace_id": state.trace_id, "existing_retry_id": existing.id,
+                        }},
+                    )
+                else:
+                    banned = _attempts_for_state(state)
+                    await retry_store.insert_pending(
+                        trace_id=state.trace_id,
+                        session_id=state.session_id,
+                        goal=state.input_text,
+                        banned_capabilities=list(banned) if banned else [],
+                    )
             except Exception as exc:  # B5 — retry-queue bookkeeping must never block delivery
                 log.scheduler.error(
                     "[pipeline] persist_turn: retry_queue insert failed",

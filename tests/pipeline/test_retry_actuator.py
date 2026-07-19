@@ -59,6 +59,44 @@ async def test_attempt_retry_success_edits_message():
 
 
 @pytest.mark.asyncio
+async def test_attempt_retry_success_joins_streamed_chunks_without_newlines():
+    """Live bug (2026-07-16): a streamed response is one chunk per token
+    (execute.py yields once per delta) — joining chunks with "\n" put every
+    token on its own line in the delivered message. Must match deliver.py's
+    normal-path join ("".join), not fragment word-by-word."""
+    row = _row()
+
+    success_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        responses=tuple(
+            ResponseChunk(
+                content=tok, is_final=False, chunk_index=i,
+                trace_id="trace-new", owl_name="secretary", is_floor=False,
+            )
+            for i, tok in enumerate(["Hi", ",", " how", " can", " I", " help", "?"])
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=success_state)
+
+    adapter = MagicMock()
+    adapter.edit_message = AsyncMock()
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(return_value=adapter)
+
+    retry_store = MagicMock()
+    retry_store.mark_completed = AsyncMock()
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    await actuator.attempt_retry(row)
+
+    delivered_text = adapter.edit_message.await_args.args[2]
+    assert "\n" not in delivered_text
+    assert delivered_text == "Hi, how can I help?"
+
+
+@pytest.mark.asyncio
 async def test_attempt_retry_failure_marks_attempt():
     row = _row()
 

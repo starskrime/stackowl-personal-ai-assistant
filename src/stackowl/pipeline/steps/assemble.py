@@ -34,6 +34,25 @@ _skill_injector = SkillInstructionInjector()
 _GLOBAL_CATALOG_K = 20
 
 
+def _safe_resolve_api_key(cfg: object) -> str | None:
+    """Resolve a provider config's api_key for the window probe; NEVER raises —
+    a bad/missing secret must degrade to no-auth-header (the probe itself then
+    fails closed to the safe default window), never sink the turn."""
+    raw = getattr(cfg, "api_key", None)
+    if not raw:
+        return None
+    try:
+        from stackowl.config.secret_resolver import SecretResolver
+
+        return SecretResolver.resolve(raw)
+    except Exception as exc:  # noqa: BLE001 — a secret-resolution error must never break window probing
+        log.engine.debug(
+            "[pipeline] assemble: api_key resolution failed for window probe — proceeding unauthenticated",
+            exc_info=exc,
+        )
+        return None
+
+
 async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
         "[pipeline] assemble: entry", extra={"_fields": {"trace_id": state.trace_id}}
@@ -63,6 +82,7 @@ async def run(state: PipelineState) -> PipelineState:
                 model=(_pc.default_model if _pc is not None else "") or "",
                 context_chars=(_pc.context_chars if _pc is not None else None),
                 protocol=getattr(_p, "protocol", "") or "",
+                api_key=_safe_resolve_api_key(_pc),
             )
             lean = model_window <= LEAN_WINDOW_THRESHOLD
             log.engine.debug(
@@ -216,7 +236,16 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
     try:
-        base = build_base_prompt(now_local(), lean=lean)
+        # describe_tool_protocol: same TOOL_FREE_CLASSES signal already used for
+        # the capability manifest a few lines below (tools_enabled=) — a tool-free
+        # turn has nothing to call, so teaching the ACTION: calling PROTOCOL only
+        # gives a less-instruction-following model a pattern to imitate with
+        # nothing real behind it (traced live: a plain conversational reply
+        # flagged and floored as an unparsed tool-call attempt).
+        base = build_base_prompt(
+            now_local(), lean=lean,
+            describe_tool_protocol=state.intent_class not in TOOL_FREE_CLASSES,
+        )
     except Exception as exc:  # no-hidden-errors: never let prompt-building crash the turn
         log.engine.error(
             "[pipeline] assemble: base prompt build FAILED — persona-only",

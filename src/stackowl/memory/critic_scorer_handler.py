@@ -176,7 +176,11 @@ class CriticScorerHandler(JobHandler):
         messages = self._prompt_builder.build(outcome)
         # 3. STEP — provider call
         try:
-            result = await provider.complete(messages, model="")
+            # disable_thinking: a JSON quality-score verdict needs no chain-of-
+            # thought; a reasoning-capable provider otherwise burns the whole
+            # max_tokens budget on <think> and never emits the score (same
+            # empty-reply failure mode fixed in owls/router.py).
+            result = await provider.complete(messages, model="", disable_thinking=True)
         except Exception as exc:  # B5
             log.memory.warning(
                 "[critic] score_one: provider.complete failed — skipping",

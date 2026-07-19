@@ -1096,8 +1096,13 @@ async def _generate_localized_apology(
             continue  # same provider serves multiple tiers — don't re-attempt
         tried.add(id(provider))
         try:
+            # disable_thinking: a one-sentence apology needs no chain-of-thought;
+            # a reasoning-capable provider otherwise burns the whole 60-token
+            # budget on <think> and never emits the sentence (same empty-reply
+            # failure mode fixed in owls/router.py).
             result = await provider.complete(
                 messages, model="", max_tokens=_APOLOGY_MAX_TOKENS,
+                disable_thinking=True,
             )
         except Exception as exc:  # provider call itself failed (outage mid-cascade)
             log.engine.warning(

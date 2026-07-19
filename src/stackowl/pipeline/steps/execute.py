@@ -106,6 +106,20 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
 # skipping a real give-up, not the extra judge call on a real short one-liner.
 _SHORT_DRAFT_CHARS = 150
 
+# Plain-stream degenerate-repetition guard (live incident 2026-07-16): a model
+# that gets "stuck" can repeat the SAME short unit hundreds of times (e.g. an
+# empty ``<tool_code></tool_code>`` pair) instead of ever producing a real
+# answer — a distinct failure mode from a single unparsed tool-call attempt
+# (the shape-specific ``looks_like_tool_call`` guard below), and one no
+# syntax-specific regex can enumerate in advance: it is a THIRD hallucinated
+# convention on top of ``ACTION:`` and native ``name{...}`` call syntax. No
+# legitimate short answer repeats an identical non-trivial delta this many
+# times, so this is a general, syntax-agnostic backstop — mirrors
+# ``LoopGuard`` (providers/_react.py), same "identical unit repeats too many
+# times" concept, applied to raw streamed text instead of (name, args) tuples.
+_DEGENERATE_REPEAT_THRESHOLD = 20
+_DEGENERATE_REPEAT_MIN_LEN = 3
+
 
 def build_persistence_check(
     state: PipelineState,
@@ -668,6 +682,25 @@ _TOOL_DEADLINE_S = 180.0
 SAME_TOOL_FAILURE_THRESHOLD = 3
 
 
+def _safe_resolve_api_key(cfg: object) -> str | None:
+    """Resolve a provider config's api_key for the window probe; NEVER raises —
+    a bad/missing secret must degrade to no-auth-header (the probe itself then
+    fails closed to the safe default window), never sink the turn."""
+    raw = getattr(cfg, "api_key", None)
+    if not raw:
+        return None
+    try:
+        from stackowl.config.secret_resolver import SecretResolver
+
+        return SecretResolver.resolve(raw)
+    except Exception as exc:  # noqa: BLE001 — a secret-resolution error must never break window probing
+        log.engine.debug(
+            "[pipeline] execute: api_key resolution failed for window probe — proceeding unauthenticated",
+            exc_info=exc,
+        )
+        return None
+
+
 async def _resolve_execute_window(state: PipelineState, provider: ModelProvider) -> int:
     """Resolve THIS turn's context window for the tool-loop budget — single probe.
 
@@ -696,6 +729,7 @@ async def _resolve_execute_window(state: PipelineState, provider: ModelProvider)
                 model=(cfg.default_model if cfg is not None else "") or "",
                 context_chars=(cfg.context_chars if cfg is not None else None),
                 protocol=getattr(provider, "protocol", "") or "",
+                api_key=_safe_resolve_api_key(cfg),
             ),
             timeout=_WINDOW_PROBE_DEADLINE_S,
         )
@@ -2582,8 +2616,26 @@ async def run(state: PipelineState) -> PipelineState:
     t0 = time.monotonic()
     chunks: list[ResponseChunk] = []
     chunk_index = 0
+    repeat_counts: dict[str, int] = {}
     try:
         async for text in stream_iter:
+            stripped = text.strip()
+            if len(stripped) >= _DEGENERATE_REPEAT_MIN_LEN:
+                repeat_counts[stripped] = repeat_counts.get(stripped, 0) + 1
+                if repeat_counts[stripped] >= _DEGENERATE_REPEAT_THRESHOLD:
+                    log.engine.warning(
+                        "[pipeline] execute: plain-stream degenerate repetition "
+                        "detected — flooring instead of shipping a stuck-loop stream",
+                        extra={"_fields": {
+                            "trace_id": state.trace_id,
+                            "owl": state.owl_name,
+                            "repeated_chunk_preview": stripped[:80],
+                            "repeat_count": repeat_counts[stripped],
+                            "chunks_so_far": chunk_index,
+                        }},
+                    )
+                    chunks.clear()
+                    raise OwlTimeoutError(state.owl_name, 0.0)
             chunk = ResponseChunk(
                 content=text,
                 is_final=False,

@@ -101,6 +101,12 @@ class RetryActuator:
             pipeline_step="",
             interactive=False,
             defer_delivery=True,
+            # This run IS the retry — its own outcome is tracked below via
+            # mark_attempt_failed()/_MAX_ATTEMPTS. Without this flag, a floor on
+            # THIS attempt would make persist_turn mint a SECOND, independent
+            # retry_queue row (attempt_count=0, due immediately), compounding
+            # forever instead of respecting this row's own attempt cap.
+            retry_replay=True,
         )
         try:
             # 3. STEP — drive the pipeline exactly like a scheduled goal.
@@ -136,7 +142,11 @@ class RetryActuator:
             )
             return outcome
 
-        answer_text = "\n".join(c.content for c in final_state.responses if c.content).strip()
+        # "".join, not "\n".join: a streamed response is one chunk per token
+        # (execute.py yields once per delta) — joining with a newline put every
+        # token on its own line in the delivered message. Matches deliver.py's
+        # normal-path join (`combined = "".join(...)`), which never had this bug.
+        answer_text = "".join(c.content for c in final_state.responses if c.content).strip()
         try:
             # 3. STEP — deliver + record completion; mirrors deliverer.py's
             # _transport contract: this must never raise into the caller.

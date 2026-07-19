@@ -200,6 +200,21 @@ def test_prompt_forbids_self_denial_classification() -> None:
     assert "scan" in low and "device" in low and "network" in low
 
 
+def test_prompt_treats_addressing_a_named_owl_as_standard() -> None:
+    # Live incident (2026-07-16): "He Brain" (a vocative greeting addressed to
+    # the "Brain" owl by name) was classified 'conversational' — the wording
+    # alone reads like a plain greeting, so no tool was ever offered and the
+    # user's actual delegation request could never be fulfilled (it could only
+    # be floored/apologized, never dispatched). The prompt must state that
+    # addressing/delegating to a named owl IS the action, regardless of how
+    # greeting-shaped the wording looks.
+    p = _r()._build_prompt([("Brain", "general reasoning"), ("secretary", "general")], "He Brain")
+    low = p.lower()
+    assert "delegat" in low
+    assert "named owl" in low or "owls above" in low
+    assert "greeting" in low  # explicitly covers the greeting-shaped wording case
+
+
 def test_prompt_attempts_resolution_before_clarify() -> None:
     # F-56: 'clarify' is a last resort. Before choosing it, the router must be
     # instructed to first try to resolve the ambiguity itself — recall what it

@@ -127,37 +127,69 @@ def behavioral_charter_lean() -> str:
     )
 
 
-def operational_adapter(now: datetime) -> str:
+def operational_adapter(now: datetime, *, describe_tool_protocol: bool = True) -> str:
     """The swappable operational layer for the current environment.
 
-    Carries today's date/time as a human-readable grounding fact and the generic
-    call protocol. Pure function: same ``now`` → same text. The ``ACTION:`` line
-    and ```json fence below MUST match ``providers/_react.parse_react_action``.
+    Carries today's date/time as a human-readable grounding fact and, when
+    ``describe_tool_protocol`` is True, the generic call protocol. Pure function:
+    same ``(now, describe_tool_protocol)`` → same text. The ``ACTION:`` line and
+    ```json fence below MUST match ``providers/_react.parse_react_action``.
     A portable strftime is used (no GNU-only ``%-d``/``%-I`` directives).
+
+    ``describe_tool_protocol=False`` (tool-free turns — the SAME
+    ``state.intent_class in TOOL_FREE_CLASSES`` signal ``assemble.py`` already
+    computes for ``tools_enabled`` a few lines after this call) omits the
+    ACTION:-format paragraph entirely: teaching a calling PROTOCOL for a turn
+    where no capability is actually on offer gives a less-instruction-following
+    (e.g. reasoning/base) model a pattern to imitate with nothing real to call,
+    which is exactly what the live incident traced to (a plain conversational
+    reply getting flagged and floored as an unparsed tool-call attempt). Default
+    True keeps every other/not-yet-updated caller byte-identical.
     """
     # Portable, human-readable rendering — works on Linux, macOS, and Windows.
     human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
-    return (
+    parts = [
         "Operational context (this changes; your character above does not).\n"
-        f"Right now it is {human_now}.\n\n"
-        "To use a capability, output exactly:\n"
-        "ACTION: <name>\n"
-        "```json\n"
-        '{"<arg>": "<value>"}\n'
-        "```\n"
-        "Then stop and wait for the OBSERVATION (the result) before continuing. "
-        "The capabilities currently available to you are listed separately; use "
-        "their exact names in place of <name>.\n\n"
+        f"Right now it is {human_now}.",
+    ]
+    if describe_tool_protocol:
+        parts.append(
+            "To use a capability, output exactly:\n"
+            "ACTION: <name>\n"
+            "```json\n"
+            '{"<arg>": "<value>"}\n'
+            "```\n"
+            "Then stop and wait for the OBSERVATION (the result) before continuing. "
+            "The capabilities currently available to you are listed separately; use "
+            "their exact names in place of <name>."
+        )
+    else:
+        # Omitting the ACTION: paragraph only stops the model imitating a format
+        # WE taught it — it does not stop a natively tool-trained model from
+        # attempting ITS OWN inherent function-calling convention (observed live:
+        # a namespaced "default_api:search{...}"-style call on a turn with zero
+        # capabilities offered). An explicit negative instruction is needed to
+        # override that native training, not just silence about the topic.
+        parts.append(
+            "No capabilities are available to you this turn. Do not attempt to "
+            "call a function, tool, or capability of any kind, in any format — "
+            "answer entirely from your own knowledge instead."
+        )
+    parts.append(
         "When you fetch or save a file for the user, write it into the workspace's "
         "downloads/ folder, so it can be delivered to them and is cleaned up "
         "automatically over time."
     )
+    return "\n\n".join(parts)
 
 
-def build_base_prompt(now: datetime, *, lean: bool = False) -> str:
+def build_base_prompt(
+    now: datetime, *, lean: bool = False, describe_tool_protocol: bool = True,
+) -> str:
     """Compose the charter (lean or full) and the swappable adapter (charter first)."""
     charter = behavioral_charter_lean() if lean else behavioral_charter()
-    return charter + "\n\n" + operational_adapter(now)
+    adapter = operational_adapter(now, describe_tool_protocol=describe_tool_protocol)
+    return charter + "\n\n" + adapter
 
 
 def build_base_prompt_now() -> str:

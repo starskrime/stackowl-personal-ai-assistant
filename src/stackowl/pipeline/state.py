@@ -110,6 +110,15 @@ class PipelineState(BaseModel, frozen=True):
     # producer (e.g. a scheduler handler) owns delivery via the durable seam.
     # Prevents double-send. Default False = unchanged behavior.
     defer_delivery: bool = False
+    # True when this turn IS RetryActuator's own replay of an existing retry_queue
+    # row (retry_actuator.py stamps this on construction). Prevents persist_turn's
+    # floored-turn handling from calling retry_queue_store.insert_pending() AGAIN —
+    # that call has no dedup, so every floored replay was minting a brand-new
+    # attempt_count=0 row instead of feeding back into the row RetryActuator is
+    # already tracking via mark_attempt_failed(), defeating the store's own
+    # _MAX_ATTEMPTS circuit breaker and compounding into an unbounded retry loop.
+    # Default False = every non-replay turn (live user, scheduled job) unchanged.
+    retry_replay: bool = False
     # LS4 — set True by the ``feedback`` step when it captured a reaction to the
     # last render into the durable ``output_style`` preference and stamped a
     # plain-language confirmation onto ``responses``. ``execute`` reads this and

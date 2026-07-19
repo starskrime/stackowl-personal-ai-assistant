@@ -190,7 +190,11 @@ class SecretaryRouter:
             "action — classify it 'standard'.\n"
             "- 'standard' if answering REQUIRES doing, finding, fetching, creating, "
             "or changing something — AND the request is clear enough to act on, OR "
-            "the likely action is cheap and reversible (just try it).\n"
+            "the likely action is cheap and reversible (just try it). Directly "
+            "addressing or delegating to one of the named owls above (greeting them "
+            "by name, handing them a task) is ITSELF an action — routing/delegating "
+            "to that specialist — even when the wording alone reads like a plain "
+            "greeting or chit-chat; classify it 'standard', never 'conversational'.\n"
             "- 'clarify' is a LAST RESORT, ONLY when the request is genuinely "
             "ambiguous about WHAT to do AND the most likely action is expensive, "
             "slow, irreversible, or you are unsure it is even possible — so a wrong "
@@ -359,6 +363,17 @@ class SecretaryRouter:
                 model="",
                 max_tokens=_ROUTING_MAX_TOKENS,
                 temperature=_ROUTING_TEMPERATURE,
+                # A reasoning-capable provider (e.g. a vLLM/Qwen3-style endpoint)
+                # burns its entire max_tokens budget on <think> chain-of-thought
+                # before ever emitting the owl-name/intent-class verdict this
+                # prompt asks for, so `result.content` comes back empty every
+                # time (root cause of "[router] _parse_intent_class: empty
+                # routing reply") — the same failure mode the other five
+                # interaction/*_classifier.py callers already avoid via this
+                # exact flag (built 2026-07-11, "Wired disable_thinking through
+                # complete() to providers"); the router call was the one
+                # structured/classifier call site that never got wired to it.
+                disable_thinking=True,
             )
         except Exception as exc:  # noqa: BLE001 — defensive: never block routing
             duration_ms = (time.monotonic() - t0) * 1000

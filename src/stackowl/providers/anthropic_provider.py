@@ -463,7 +463,7 @@ class AnthropicProvider(ModelProvider):
                 # that raw text. Re-prompt the exact format a bounded number of times;
                 # if it persists, ESCALATE to a stronger tier when allowed (the gateway
                 # re-runs), else fall to the honest floor — never the raw tool call.
-                if looks_like_tool_call(text):
+                if looks_like_tool_call(text, known=_known_tools):
                     if _fmt_fix_count < _MAX_FORMAT_FIX:
                         _fmt_fix_count += 1
                         log.engine.warning(

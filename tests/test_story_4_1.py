@@ -17,7 +17,6 @@ from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry, _make_default_secretary
 from stackowl.owls.yaml_source import YamlOwlSource
 
-
 # ---------------------------------------------------------------------------
 # OwlDNA
 # ---------------------------------------------------------------------------
@@ -178,7 +177,7 @@ class TestOwlAgentManifest:
 
     def test_new_field_defaults(self) -> None:
         manifest = self._base()
-        assert manifest.timeout_seconds == pytest.approx(30.0)
+        assert manifest.timeout_seconds == pytest.approx(400.0)
         assert manifest.max_concurrent_requests == 1
         assert isinstance(manifest.dna, OwlDNA)
         assert manifest.dna.challenge_level == pytest.approx(0.5)
@@ -382,6 +381,6 @@ class TestSettingsOwlsField:
         assert len(settings.owls) == 1
         assert settings.owls[0].name == "nora"
         # All extended-manifest defaults should be set:
-        assert settings.owls[0].timeout_seconds == pytest.approx(30.0)
+        assert settings.owls[0].timeout_seconds == pytest.approx(400.0)
         assert settings.owls[0].max_concurrent_requests == 1
         assert isinstance(settings.owls[0].dna, OwlDNA)

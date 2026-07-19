@@ -72,7 +72,11 @@ class OwlAgentManifest(BaseModel):
     pinned_skills: tuple[str, ...] = ()
     max_tokens: int = 4096
     temperature: float = 0.7
-    timeout_seconds: float = Field(default=30.0, gt=0.0)
+    # Raised 30->60->400 (2026-07-16): live traffic on NeraAiRaw confirmed genuine
+    # answers legitimately running 30+s (reasoning-heavy turns, 1000+ streamed
+    # deltas) — 30s was flooring real, actively-generating turns rather than
+    # catching actual hangs. 400 per explicit operator request.
+    timeout_seconds: float = Field(default=400.0, gt=0.0)
     max_concurrent_requests: int = Field(default=1, ge=1)
     dna: OwlDNA = Field(default_factory=OwlDNA)
     # Toolset-group names this owl is provisioned for — drives DNA-gated
