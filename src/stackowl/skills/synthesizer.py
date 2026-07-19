@@ -47,10 +47,12 @@ from stackowl.skills.authoring import (
 )
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.store import Skill, SkillIndexStore
+from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
+    from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.owls.registry import OwlRegistry
     from stackowl.skills.loader import LoadedSkill
     from stackowl.tools.registry import ConsequentialActionGate
@@ -345,6 +347,7 @@ class SkillSynthesizer:
         owl_registry: OwlRegistry | None = None,
         db: DbPool | None = None,
         consent_gate: ConsequentialActionGate | None = None,
+        kuzu: KuzuAdapter | None = None,
         lookback_days: int = _LOOKBACK_DAYS_DEFAULT,
         min_cluster_size: int = _MIN_CLUSTER_SIZE_DEFAULT,
         min_mean_quality: float = _MIN_MEAN_QUALITY_DEFAULT,
@@ -370,6 +373,10 @@ class SkillSynthesizer:
         # fails closed (refuses) when consent_gate is None. No gate wired is
         # therefore "discover/refine writes nothing", never "write unguarded".
         self._consent_gate = consent_gate
+        # Dynamic-injection arc, sub-project 1 — best-effort graph mirror of
+        # skill ownership. None (no graph wired) degrades to exactly today's
+        # behavior; a Kuzu failure at sync time never affects the durable attach.
+        self._kuzu = kuzu
         self._lookback_days = lookback_days
         self._min_cluster_size = min_cluster_size
         self._min_mean_quality = min_mean_quality
@@ -593,6 +600,7 @@ class SkillSynthesizer:
             # for the next boot even if the owl wasn't loaded this process
             # (idempotent upsert — boot hydrate then attaches it).
             await persist_skill_ownership(self._db, owner, skill_name)
+            await self._sync_ownership_to_graph(owner, skill_name)
             log.skills.info(
                 "[synth] attach_to_owner: exit",
                 extra={"_fields": {
@@ -607,6 +615,26 @@ class SkillSynthesizer:
                 extra={"_fields": {"skill": skill_name, "owner": owner}},
             )
             return False
+
+    async def _sync_ownership_to_graph(self, owner: str, skill_name: str) -> None:
+        """Best-effort mirror of a new skill attach into the graph.
+
+        Never raises, never blocks the caller — a Kuzu failure here must not
+        affect the already-committed durable (SQLite) attach outcome. No-op
+        when no graph is wired (``self._kuzu is None``, the default)."""
+        if self._kuzu is None:
+            return
+        try:
+            skill_id = f"{DEFAULT_PRINCIPAL_ID}::{skill_name}"
+            await self._kuzu.upsert_owl_node(owner)
+            await self._kuzu.upsert_skill_node(skill_id, DEFAULT_PRINCIPAL_ID, skill_name)
+            await self._kuzu.link_owl_owns_skill(owner, skill_id)
+        except Exception as exc:  # noqa: BLE001 — a graph-sync failure must never break synthesis
+            log.skills.warning(
+                "[synth] _sync_ownership_to_graph: failed — graph left stale",
+                exc_info=exc,
+                extra={"_fields": {"owner": owner, "skill": skill_name}},
+            )
 
     async def _purge_ownership(self, skill_name: str) -> None:
         """Drop a deleted skill's ownership (live detach + durable delete). Best-

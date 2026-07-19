@@ -20,6 +20,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import TransientError
 from stackowl.infra.observability import log
+from stackowl.memory.kuzu_adapter import KuzuAdapter
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.owls.concurrency import ConcurrencyGovernor
 from stackowl.owls.dna import _MUTABLE_TRAITS, OwlDNA
@@ -168,6 +169,7 @@ class EvolutionCoordinator(JobHandler):
         per_owl_timeout_s: float = EVOLUTION_PER_OWL_TIMEOUT_SECONDS,
         delegation_governor: ConcurrencyGovernor | None = None,
         shadow_validator: ShadowValidator | None = None,
+        kuzu: KuzuAdapter | None = None,
     ) -> None:
         self._db = db
         self._provider_registry = provider_registry
@@ -196,6 +198,10 @@ class EvolutionCoordinator(JobHandler):
         # attribution nudge. DnaAttributor itself stays DB-free (pure logic);
         # this store lives here, next to its one caller (_try_attribution).
         self._skill_store = SkillIndexStore(db)
+        # Dynamic-injection arc, sub-project 1 — best-effort graph mirror of DNA
+        # trait state. None (no graph wired) degrades to exactly today's
+        # behavior; a Kuzu failure at sync time never affects the durable persist.
+        self._kuzu = kuzu
 
     @property
     def handler_name(self) -> str:
@@ -849,6 +855,29 @@ class EvolutionCoordinator(JobHandler):
 
     async def _persist_dna(self, owl_name: str, dna: OwlDNA) -> None:
         await upsert_owl_dna(self._db, owl_name, dna, table="owl_dna")
+        await self._sync_dna_to_graph(owl_name, dna)
+
+    async def _sync_dna_to_graph(self, owl_name: str, dna: OwlDNA) -> None:
+        """Best-effort mirror of the just-persisted DNA values into the graph.
+
+        Never raises, never blocks the caller — a Kuzu failure here must not
+        affect the already-committed durable (SQLite) persist. No-op when no
+        graph is wired (``self._kuzu is None``, the default)."""
+        if self._kuzu is None:
+            return
+        try:
+            await self._kuzu.upsert_owl_node(owl_name)
+            for trait_name in _MUTABLE_TRAITS:
+                trait_id = f"{owl_name}::{trait_name}"
+                value = float(getattr(dna, trait_name))
+                await self._kuzu.upsert_trait_node(trait_id, owl_name, trait_name, value)
+                await self._kuzu.link_owl_has_trait(owl_name, trait_id)
+        except Exception as exc:  # noqa: BLE001 — a graph-sync failure must never break evolution
+            log.engine.warning(
+                "[dna] coordinator._sync_dna_to_graph: failed — graph left stale",
+                exc_info=exc,
+                extra={"_fields": {"owl": owl_name}},
+            )
 
 
 def _attribution_to_stats_summary(report: AttributionReport) -> dict[str, object]:

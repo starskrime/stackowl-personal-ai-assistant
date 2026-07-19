@@ -40,12 +40,21 @@ from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport
 from stackowl.memory.kuzu_helpers import (
     sync_create_schema,
+    sync_delete_skill,
+    sync_delete_trait,
     sync_link_entities,
     sync_link_fact_to_entity,
+    sync_link_owl_has_trait,
+    sync_link_owl_owns_skill,
+    sync_list_skill_ids,
+    sync_list_trait_ids,
     sync_probe,
     sync_traverse,
     sync_upsert_entity,
     sync_upsert_fact,
+    sync_upsert_owl,
+    sync_upsert_skill,
+    sync_upsert_trait,
 )
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -259,6 +268,155 @@ class KuzuAdapter:
             "[memory] kuzu.link_entities: exit",
             extra={"_fields": {"from_id": from_id, "to_id": to_id}},
         )
+
+    async def upsert_owl_node(self, name: str) -> None:
+        """Upsert an Owl node keyed by ``name``."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.upsert_owl_node: entry", extra={"_fields": {"name": name}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.upsert_owl_node")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(self._executor, sync_upsert_owl, self._conn, name)
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.upsert_owl_node: exit", extra={"_fields": {"name": name}},
+        )
+
+    async def upsert_skill_node(self, skill_id: str, owner_id: str, name: str) -> None:
+        """Upsert a Skill node keyed by ``skill_id`` (``f"{owner_id}::{name}"``)."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.upsert_skill_node: entry",
+            extra={"_fields": {"skill_id": skill_id, "name": name}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.upsert_skill_node")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(
+            self._executor, sync_upsert_skill, self._conn, skill_id, owner_id, name,
+        )
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.upsert_skill_node: exit", extra={"_fields": {"skill_id": skill_id}},
+        )
+
+    async def upsert_trait_node(
+        self, trait_id: str, owl_name: str, trait_name: str, value: float,
+    ) -> None:
+        """Upsert a Trait node keyed by ``trait_id`` (``f"{owl_name}::{trait_name}"``)."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.upsert_trait_node: entry",
+            extra={"_fields": {"trait_id": trait_id, "value": value}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.upsert_trait_node")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(
+            self._executor, sync_upsert_trait, self._conn, trait_id, owl_name, trait_name, value,
+        )
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.upsert_trait_node: exit", extra={"_fields": {"trait_id": trait_id}},
+        )
+
+    async def link_owl_owns_skill(self, owl_name: str, skill_id: str) -> None:
+        """Create an Owl -> Skill OWNS edge (idempotent)."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.link_owl_owns_skill: entry",
+            extra={"_fields": {"owl_name": owl_name, "skill_id": skill_id}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.link_owl_owns_skill")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(
+            self._executor, sync_link_owl_owns_skill, self._conn, owl_name, skill_id,
+        )
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.link_owl_owns_skill: exit",
+            extra={"_fields": {"owl_name": owl_name, "skill_id": skill_id}},
+        )
+
+    async def link_owl_has_trait(self, owl_name: str, trait_id: str) -> None:
+        """Create an Owl -> Trait HAS_TRAIT edge (idempotent)."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.link_owl_has_trait: entry",
+            extra={"_fields": {"owl_name": owl_name, "trait_id": trait_id}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.link_owl_has_trait")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(
+            self._executor, sync_link_owl_has_trait, self._conn, owl_name, trait_id,
+        )
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.link_owl_has_trait: exit",
+            extra={"_fields": {"owl_name": owl_name, "trait_id": trait_id}},
+        )
+
+    async def delete_skill_node(self, skill_id: str) -> None:
+        """Remove a Skill node and its edges (reconciliation prune)."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.delete_skill_node: entry", extra={"_fields": {"skill_id": skill_id}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.delete_skill_node")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(self._executor, sync_delete_skill, self._conn, skill_id)
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.delete_skill_node: exit", extra={"_fields": {"skill_id": skill_id}},
+        )
+
+    async def delete_trait_node(self, trait_id: str) -> None:
+        """Remove a Trait node and its edges (reconciliation prune)."""
+        # 1. ENTRY
+        log.memory.debug(
+            "[memory] kuzu.delete_trait_node: entry", extra={"_fields": {"trait_id": trait_id}},
+        )
+        TestModeGuard.assert_not_test_mode("kuzu.delete_trait_node")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        await loop.run_in_executor(self._executor, sync_delete_trait, self._conn, trait_id)
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.delete_trait_node: exit", extra={"_fields": {"trait_id": trait_id}},
+        )
+
+    async def list_skill_ids(self) -> list[str]:
+        """All Skill node ids currently in the graph (reconciliation diffing)."""
+        # 1. ENTRY
+        log.memory.debug("[memory] kuzu.list_skill_ids: entry")
+        TestModeGuard.assert_not_test_mode("kuzu.list_skill_ids")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        ids = await loop.run_in_executor(self._executor, sync_list_skill_ids, self._conn)
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.list_skill_ids: exit", extra={"_fields": {"count": len(ids)}},
+        )
+        return ids
+
+    async def list_trait_ids(self) -> list[str]:
+        """All Trait node ids currently in the graph (reconciliation diffing)."""
+        # 1. ENTRY
+        log.memory.debug("[memory] kuzu.list_trait_ids: entry")
+        TestModeGuard.assert_not_test_mode("kuzu.list_trait_ids")
+        loop = asyncio.get_event_loop()
+        # 3. STEP
+        ids = await loop.run_in_executor(self._executor, sync_list_trait_ids, self._conn)
+        # 4. EXIT
+        log.memory.debug(
+            "[memory] kuzu.list_trait_ids: exit", extra={"_fields": {"count": len(ids)}},
+        )
+        return ids
 
     async def traverse(
         self, entity_id: str, max_hops: int = 2

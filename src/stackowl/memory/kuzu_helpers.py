@@ -36,6 +36,29 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         relation STRING,
         strength FLOAT
     )""",
+    """CREATE NODE TABLE IF NOT EXISTS Owl (
+        name STRING,
+        PRIMARY KEY (name)
+    )""",
+    """CREATE NODE TABLE IF NOT EXISTS Skill (
+        id STRING,
+        owner_id STRING,
+        name STRING,
+        PRIMARY KEY (id)
+    )""",
+    """CREATE NODE TABLE IF NOT EXISTS Trait (
+        id STRING,
+        owl_name STRING,
+        trait_name STRING,
+        value FLOAT,
+        PRIMARY KEY (id)
+    )""",
+    """CREATE REL TABLE IF NOT EXISTS OWNS (
+        FROM Owl TO Skill
+    )""",
+    """CREATE REL TABLE IF NOT EXISTS HAS_TRAIT (
+        FROM Owl TO Trait
+    )""",
 )
 
 
@@ -172,3 +195,98 @@ def sync_probe(conn: kuzu.Connection) -> int:
         return 0
     raw = rows[0].get("c", 0)
     return int(raw) if raw is not None else 0
+
+
+def sync_upsert_owl(conn: kuzu.Connection, name: str) -> None:
+    """Upsert an Owl node by name via MERGE (no other properties to set)."""
+    conn.execute("MERGE (o:Owl {name: $name})", {"name": name})
+
+
+def sync_upsert_skill(
+    conn: kuzu.Connection,
+    skill_id: str,
+    owner_id: str,
+    name: str,
+) -> None:
+    """Upsert a Skill node by id via MERGE + SET.
+
+    ``skill_id`` is the caller-composed ``f"{owner_id}::{name}"`` — matches
+    ``skill_ownership``'s own ``(owner_id, owl_name, skill_name)`` PK shape
+    directly, so syncing an ownership row never needs a join through
+    ``skills.skill_id`` (that table's own surrogate PK, unrelated to this key).
+    """
+    conn.execute(
+        """MERGE (s:Skill {id: $id})
+           SET s.owner_id = $owner_id,
+               s.name = $name""",
+        {"id": skill_id, "owner_id": owner_id, "name": name},
+    )
+
+
+def sync_upsert_trait(
+    conn: kuzu.Connection,
+    trait_id: str,
+    owl_name: str,
+    trait_name: str,
+    value: float,
+) -> None:
+    """Upsert a Trait node by id via MERGE + SET.
+
+    ``trait_id`` is the caller-composed ``f"{owl_name}::{trait_name}"``.
+    ``value`` overwrites on every sync (current state, not history — SQLite's
+    ``dna_checkpoints`` table owns mutation history).
+    """
+    conn.execute(
+        """MERGE (t:Trait {id: $id})
+           SET t.owl_name = $owl_name,
+               t.trait_name = $trait_name,
+               t.value = $value""",
+        {
+            "id": trait_id,
+            "owl_name": owl_name,
+            "trait_name": trait_name,
+            "value": float(value),
+        },
+    )
+
+
+def sync_link_owl_owns_skill(conn: kuzu.Connection, owl_name: str, skill_id: str) -> None:
+    """Add an OWNS edge from Owl -> Skill (idempotent — MERGE, unlike the
+    existing MENTIONS/RELATED_TO edges which use CREATE; verified idempotent
+    for this Kuzu version, see tests/memory/test_kuzu_owl_skill_trait_sync.py)."""
+    conn.execute(
+        """MATCH (o:Owl {name: $owl_name}), (s:Skill {id: $skill_id})
+           MERGE (o)-[:OWNS]->(s)""",
+        {"owl_name": owl_name, "skill_id": skill_id},
+    )
+
+
+def sync_link_owl_has_trait(conn: kuzu.Connection, owl_name: str, trait_id: str) -> None:
+    """Add a HAS_TRAIT edge from Owl -> Trait (idempotent — MERGE)."""
+    conn.execute(
+        """MATCH (o:Owl {name: $owl_name}), (t:Trait {id: $trait_id})
+           MERGE (o)-[:HAS_TRAIT]->(t)""",
+        {"owl_name": owl_name, "trait_id": trait_id},
+    )
+
+
+def sync_delete_skill(conn: kuzu.Connection, skill_id: str) -> None:
+    """Remove a Skill node and any edges touching it (reconciliation prune)."""
+    conn.execute("MATCH (s:Skill {id: $id}) DETACH DELETE s", {"id": skill_id})
+
+
+def sync_delete_trait(conn: kuzu.Connection, trait_id: str) -> None:
+    """Remove a Trait node and any edges touching it (reconciliation prune)."""
+    conn.execute("MATCH (t:Trait {id: $id}) DETACH DELETE t", {"id": trait_id})
+
+
+def sync_list_skill_ids(conn: kuzu.Connection) -> list[str]:
+    """All Skill node ids currently in the graph (for reconciliation diffing)."""
+    result = conn.execute("MATCH (s:Skill) RETURN s.id AS id")
+    return [str(row["id"]) for row in _rows_from_result(result)]
+
+
+def sync_list_trait_ids(conn: kuzu.Connection) -> list[str]:
+    """All Trait node ids currently in the graph (for reconciliation diffing)."""
+    result = conn.execute("MATCH (t:Trait) RETURN t.id AS id")
+    return [str(row["id"]) for row in _rows_from_result(result)]
