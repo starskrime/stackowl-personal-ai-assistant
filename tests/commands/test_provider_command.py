@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -265,6 +266,82 @@ class TestProviderAdd:
         reply = await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
         assert isinstance(reply, str)
         assert reply.startswith("✓ Provider 'myprov' added")
+
+
+# ---------------------------------------------------------------------------
+# add-pick / add-token (Task 10: live discovery doubles as validation)
+# ---------------------------------------------------------------------------
+
+
+class TestProviderAddPickToken:
+    @pytest.mark.asyncio
+    async def test_add_pick_keyless_local_entry_skips_straight_to_discovery(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stackowl.setup.provider_catalog import ProviderEntry
+
+        keyless = ProviderEntry(
+            name="ollama-local",
+            label="Ollama (local)",
+            protocol="openai",
+            base_url="http://localhost:11434/v1",
+            default_model="llama3",
+            needs_api_key=False,
+            is_local=True,
+        )
+        monkeypatch.setattr(
+            "stackowl.setup.provider_catalog.ProviderCatalog.load",
+            classmethod(lambda cls: [keyless]),
+        )
+        monkeypatch.setattr(
+            "stackowl.providers.model_discovery.list_models",
+            AsyncMock(return_value=["llama3", "llama3:70b"]),
+        )
+        cmd = _make_cmd()
+        reply = await cmd.handle("add-pick ollama-local", _state())
+        assert isinstance(reply, CommandResponse)
+        assert any("add-model" in a.command for a in reply.actions)
+
+    @pytest.mark.asyncio
+    async def test_add_pick_key_required_entry_prompts_for_token(self, tmp_yaml: Path) -> None:
+        cmd = _make_cmd()
+        reply = await cmd.handle("add-pick groq", _state())
+        assert isinstance(reply, str)
+        assert "add-token groq" in reply
+
+    @pytest.mark.asyncio
+    async def test_add_token_valid_stores_secret_and_shows_model_picker(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "stackowl.providers.model_discovery.list_models",
+            AsyncMock(return_value=["llama-3.3-70b-versatile"]),
+        )
+        cmd = _make_cmd()
+        reply = await cmd.handle(f"add-token groq {RAW_TOKEN}", _state())
+        assert isinstance(reply, CommandResponse)
+        assert any("add-model groq llama-3.3-70b-versatile" in a.command for a in reply.actions)
+        # The raw token must never appear in the reply text or any action command.
+        assert RAW_TOKEN not in reply.text
+        assert all(RAW_TOKEN not in a.command for a in reply.actions)
+
+    @pytest.mark.asyncio
+    async def test_add_token_invalid_reports_reason_and_offers_retry(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stackowl.exceptions import ModelDiscoveryError
+
+        monkeypatch.setattr(
+            "stackowl.providers.model_discovery.list_models",
+            AsyncMock(side_effect=ModelDiscoveryError("groq", "401 Unauthorized")),
+        )
+        cmd = _make_cmd()
+        reply = await cmd.handle(f"add-token groq {RAW_TOKEN}", _state())
+        assert isinstance(reply, str)
+        assert "401 Unauthorized" in reply
+        assert "add-token groq" in reply
+        # The raw token must never appear in the retry hint / error text.
+        assert RAW_TOKEN not in reply
 
 
 # ---------------------------------------------------------------------------

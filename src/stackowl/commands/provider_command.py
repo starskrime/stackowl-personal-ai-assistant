@@ -207,6 +207,10 @@ class ProviderCommand(SlashCommand):
             elif sub == "add":
                 add_tokens = rest.split()
                 result = self._add(rest) if len(add_tokens) >= 4 else self._add_browse(rest.strip())
+            elif sub == "add-pick":
+                result = await self._add_pick(rest)
+            elif sub == "add-token":
+                result = await self._add_token(rest)
             elif sub == "remove":
                 result = self._remove(rest)
             elif sub == "set-tier":
@@ -603,6 +607,124 @@ class ProviderCommand(SlashCommand):
             extra={"_fields": {"matches": len(entries), "shown": len(shown)}},
         )
         return CommandResponse(text=text, actions=actions)
+
+    def _catalog_entry(self, catalog_name: str) -> Any:
+        """Look up one catalog entry by name, or ``None`` if unknown."""
+        from stackowl.setup.provider_catalog import ProviderCatalog
+
+        return next((e for e in ProviderCatalog.load() if e.name == catalog_name), None)
+
+    async def _add_pick(self, raw: str) -> str | CommandResponse:
+        """Picked a catalog entry: prompt for a token, or skip straight to
+        live discovery when the entry is keyless/local."""
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.add_pick: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        catalog_name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        entry = self._catalog_entry(catalog_name)
+        # 2. DECISION — unknown entry, keyless/local, or needs a token
+        if entry is None:
+            log.config.debug(
+                "[commands] provider.add_pick: exit — unknown catalog entry",
+                extra={"_fields": {"catalog": catalog_name}},
+            )
+            return f"✗ Unknown catalog provider '{catalog_name}' — run /provider add to browse"
+        if not entry.needs_api_key or entry.is_local:
+            log.config.debug(
+                "[commands] provider.add_pick: keyless/local — going straight to discovery",
+                extra={"_fields": {"catalog": catalog_name}},
+            )
+            return await self._add_discover(catalog_name, api_key="")
+        key_hint = f"Get a key at: {entry.key_url}\n" if entry.key_url else ""
+        # 4. EXIT
+        log.config.debug(
+            "[commands] provider.add_pick: exit — awaiting token",
+            extra={"_fields": {"catalog": catalog_name}},
+        )
+        return f"{key_hint}Reply with: /provider add-token {catalog_name} <RAW_TOKEN>"
+
+    async def _add_token(self, raw: str) -> str | CommandResponse:
+        """Received a raw token for a catalog entry: hand off to live discovery,
+        which both validates the token and lists real models in one call."""
+        # 1. ENTRY — token value/length never logged, only whether one was given
+        log.config.debug(
+            "[commands] provider.add_token: entry",
+            extra={"_fields": {"raw_len": len(raw), "has_token": bool(raw.strip())}},
+        )
+        bits = raw.split(maxsplit=1)
+        if len(bits) < 2:
+            return "Usage: /provider add-token <catalog_name> <RAW_TOKEN>"
+        catalog_name, token = bits
+        return await self._add_discover(catalog_name, api_key=token)
+
+    async def _add_discover(self, catalog_name: str, *, api_key: str) -> str | CommandResponse:
+        """Live-query real models for *catalog_name* — this single call ALSO
+        validates the token (a bad key makes the call fail), so this is the
+        one place both add-pick (keyless) and add-token (keyed) funnel into.
+
+        SECURITY: *api_key* (the raw token) is never logged, never placed in
+        the returned text, and never placed in a button command. On success
+        it is persisted via ``store_secret`` immediately and only the
+        resulting ref is threaded into the model-pick button commands.
+        """
+        # 1. ENTRY — token value/length never logged, only whether one was given
+        log.config.debug(
+            "[commands] provider.add_discover: entry",
+            extra={"_fields": {"catalog": catalog_name, "has_token": bool(api_key)}},
+        )
+        from stackowl.exceptions import ModelDiscoveryError
+        from stackowl.providers.model_discovery import list_models
+
+        entry = self._catalog_entry(catalog_name)
+        if entry is None:
+            log.config.debug(
+                "[commands] provider.add_discover: exit — unknown catalog entry",
+                extra={"_fields": {"catalog": catalog_name}},
+            )
+            return f"✗ Unknown catalog provider '{catalog_name}' — run /provider add to browse"
+
+        # 2. STEP — the live call: lists models AND validates the token/base_url
+        try:
+            models = await list_models(entry.protocol, entry.base_url or None, api_key)
+        except ModelDiscoveryError as exc:
+            log.config.warning(
+                "[commands] provider.add_discover: validation failed",
+                extra={"_fields": {"catalog": catalog_name, "reason": exc.reason}},
+            )
+            # Retry hint preserves catalog_name context so the user doesn't
+            # have to re-browse — it never carries the (already-rejected) token.
+            retry = f"\nReply with: /provider add-token {catalog_name} <NEW_TOKEN>" if api_key else ""
+            return f"✗ Could not connect to {entry.label}: {exc.reason}{retry}"
+
+        # 3. STEP — only after success: persist the secret, keep only the ref
+        api_key_ref = "-"
+        if api_key:
+            _description, api_key_ref = store_secret(f"stackowl-provider-{catalog_name}", api_key)
+
+        if not models:
+            log.config.debug(
+                "[commands] provider.add_discover: exit — connected, no models reported",
+                extra={"_fields": {"catalog": catalog_name}},
+            )
+            return (
+                f"✓ Connected to {entry.label}, but it reported no models.\n"
+                f"Reply with: /provider add {catalog_name} {entry.protocol} <model_id> <tier>"
+            )
+        actions = tuple(
+            Action(
+                label=model,
+                command=f"/provider add-model {catalog_name} {model} {api_key_ref}",
+                destructive=False,
+            )
+            for model in models[:30]
+        )
+        # 4. EXIT
+        log.config.debug(
+            "[commands] provider.add_discover: exit — models found",
+            extra={"_fields": {"catalog": catalog_name, "model_count": len(models)}},
+        )
+        return CommandResponse(text=f"{entry.label} — pick a model:", actions=actions)
 
     # -- add -------------------------------------------------------------------
 
