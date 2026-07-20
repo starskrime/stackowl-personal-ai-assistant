@@ -31,3 +31,6 @@ logs/
 .bmad-loop/runs/
 .bmad-loop/cache/
 .bmad-loop/policy.toml
+
+# graphify — regenerated locally via post-commit/post-checkout hooks (graphify hook install)
+graphify-out/
