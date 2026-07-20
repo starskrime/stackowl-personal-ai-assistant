@@ -22,6 +22,7 @@ from stackowl.config.notification_settings import (
 )
 from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.provider import ProviderConfig
+from stackowl.config.provider_tier_migration import migrate_legacy_tier_field
 from stackowl.config.runtime_settings import RuntimeSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.config.ui_settings import UISettings
@@ -60,6 +61,15 @@ class _YamlSource(PydanticBaseSettingsSource):
         # a boot-time typo fails loud instead of booting an empty config.
         if not self._path.exists():
             return {}
+        # F-multi-tier — real, idempotent, comment-preserving one-time rewrite
+        # of any legacy `tier:` provider entry to `tiers:`. This is the ONE
+        # place every Settings() construction (orchestrator boot, every CLI
+        # subcommand, MCP, identity CLI, hot-reload) already funnels through,
+        # so no per-call-site migration hook is needed. Best-effort: a
+        # migration failure is logged (inside migrate_legacy_tier_field
+        # itself) and never blocks the read below — ProviderConfig's own
+        # legacy-tier validator is the boot-safety backstop regardless.
+        migrate_legacy_tier_field(self._path)
         try:
             raw = yaml.safe_load(self._path.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -959,7 +969,7 @@ class Settings(BaseSettings):
                 config_path,
             )
         else:
-            names = ", ".join(f"{p.name}[{p.tier}]" for p in self.providers if p.enabled)
+            names = ", ".join(f"{p.name}[{'/'.join(p.tiers)}]" for p in self.providers if p.enabled)
             log.info("[config] Loaded providers: %s", names or "(none enabled)")
 
         if self.test_mode:
