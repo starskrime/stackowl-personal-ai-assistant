@@ -8,6 +8,7 @@ flows through LangGraph's mutable graph-state contract.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable, Coroutine
@@ -34,6 +35,8 @@ from stackowl.pipeline.services import StepServices, get_services, reset_service
 from stackowl.pipeline.state import PipelineState, StepError
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
+from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.pipeline.supervisor import synthesize_floor
 
 
 async def _deliver_with_surfacing(state: PipelineState) -> PipelineState:
@@ -138,6 +141,20 @@ class LangGraphBackend(OrchestratorBackend):
             else None
         )
         human_wait_token = human_wait_ctx.bind()
+        # Global interactive turn deadline — parity with AsyncioBackend (same
+        # 2026-07 incident: a telegram turn hung 1670+s; lower-level timeouts
+        # don't cover every hang). Interactive turns only; non-interactive runs
+        # (goal_execution, parliament, delegation children, evolution) carry
+        # their own budgets and must never be cut by this.
+        # getattr-guarded: unit tests hand StepServices duck-typed settings
+        # stubs without a `system` section — those (and settings=None) mean
+        # "deadline disabled", never a crash.
+        deadline_s: float = (
+            getattr(getattr(_settings, "system", None),
+                    "interactive_turn_timeout_s", 0.0)
+            if state.interactive
+            else 0.0
+        )
         try:
             compiled = await self._ensure_compiled()
             # Isolate per-task checkpoints: a durable task gets its own thread so
@@ -154,8 +171,18 @@ class LangGraphBackend(OrchestratorBackend):
                 "callbacks": [LoggingCallback()],
                 "recursion_limit": 50,
             }
-            output: _LGState = await compiled.ainvoke({"pipeline_state": state}, config=config)
-            final = output.get("pipeline_state", state)
+            if deadline_s > 0:
+                try:
+                    output: _LGState = await asyncio.wait_for(
+                        compiled.ainvoke({"pipeline_state": state}, config=config),
+                        timeout=deadline_s,
+                    )
+                    final = output.get("pipeline_state", state)
+                except TimeoutError:
+                    final = await self._deadline_floor(state, deadline_s)
+            else:
+                output = await compiled.ainvoke({"pipeline_state": state}, config=config)
+                final = output.get("pipeline_state", state)
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             log.engine.error(
@@ -238,6 +265,64 @@ class LangGraphBackend(OrchestratorBackend):
         acceptance = await _verify_turn_acceptance(final, wall_t0, self._services)
         await _capture_outcome(final, total_ms, self._services, acceptance=acceptance)
         return final
+
+    async def _deadline_floor(self, state: PipelineState, deadline_s: float) -> PipelineState:
+        """Interactive deadline expiry — mirror of AsyncioBackend's TimeoutError arm.
+
+        The cancelled graph invocation took every intermediate step state with
+        it; the pre-graph state + this error is everything that survives. The
+        floor ADDS an honest chunk; the error STAYS in errors so task_outcomes
+        records a real failure (classify_failure → "TimeoutError"). Unlike
+        AsyncioBackend — where the timeout arm falls through to the gate +
+        deliver code below it — the graph's own "deliver" node died with the
+        cancellation, so the gate cascade and deliver.run are invoked here
+        explicitly, in the same order.
+        """
+        error_msg = (
+            f"deadline: TimeoutError: interactive turn exceeded "
+            f"{deadline_s:.0f}s deadline"
+        )
+        log.engine.error(
+            "[langgraph_backend] run: interactive turn deadline exceeded — cancelled",
+            extra={"_fields": {"trace_id": state.trace_id, "deadline_s": deadline_s}},
+        )
+        floor_chunk = ResponseChunk(
+            content=synthesize_floor(
+                goal=state.input_text,
+                error=f"turn cancelled after {deadline_s:.0f}s deadline",
+                attempts=[],
+                partial="",
+            ),
+            is_final=False,
+            chunk_index=0,
+            trace_id=state.trace_id,
+            owl_name=state.owl_name,
+            is_floor=True,
+        )
+        floored = state.evolve(
+            responses=(*state.responses, floor_chunk),
+            errors=(*state.errors, error_msg),
+            step_errors=(*state.step_errors,
+                         StepError(step="deadline", exc_type="TimeoutError",
+                                   message=f"interactive turn exceeded {deadline_s:.0f}s deadline")),
+        )
+        surfaced = await run_delivery_gate(floored, self._services)
+        try:
+            return await deliver.run(surfaced)
+        except Exception as exc:
+            deliver_msg = format_step_error("deliver", exc)
+            log.engine.error(
+                "[langgraph_backend] run: deliver failed after deadline — %s",
+                deliver_msg,
+                exc_info=True,
+                extra={"_fields": {"step": "deliver", "trace_id": state.trace_id}},
+            )
+            return surfaced.evolve(
+                errors=(*surfaced.errors, deliver_msg),
+                step_errors=(*surfaced.step_errors,
+                             StepError(step="deliver", exc_type=type(exc).__name__,
+                                       message=str(exc))),
+            )
 
     async def shutdown(self) -> None:
         if self._sqlite_conn is None:
