@@ -806,3 +806,74 @@ async def test_trigger3_and_trigger4_classifiers_run_concurrently() -> None:
     assert result.overclaim_blocked is False
     # Concurrent: close to one delay, comfortably under the serial 2*delay sum.
     assert elapsed < delay * 1.8, f"expected concurrent (~{delay}s), got {elapsed:.3f}s (serial?)"
+
+
+# ---------------------------------------------------------------------------
+# Trigger 4 fulfillment — do-the-action upgrade: a detected scheduling promise
+# is FULFILLED (job minted via the fulfiller) instead of confessed; the honest
+# ask-floor remains the fallback when fulfillment fails.
+# ---------------------------------------------------------------------------
+
+
+class _FakeFulfiller:
+    def __init__(self, receipt: str | None) -> None:
+        self._receipt = receipt
+        self.calls: list[tuple[str, str]] = []
+
+    async def fulfill(self, *, response: str, request: str) -> str | None:
+        self.calls.append((response, request))
+        return self._receipt
+
+
+@pytest.mark.asyncio
+async def test_scheduling_commit_fulfilled_keeps_answer_and_appends_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFulfiller("\n\n📅 Scheduled: ping the user (in 5m)")
+
+    async def _fake_try(state):  # noqa: ANN001, ANN202
+        return await fake.fulfill(response="r", request=state.input_text)
+
+    import stackowl.pipeline.delivery_gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "_try_fulfill_schedule_commit", _fake_try)
+    state = _state(
+        responses=(_draft("Sure, I'll ping you in 5 minutes!"),),
+        requires_scheduling_commit=True,
+        delivered_successes=(),
+        unverified_effects=(),
+        ran_effect_classes=(),
+    )
+    result = await surface_overclaim_gate(state)
+    # Original answer preserved, receipt appended, NOT blocked, NOT floored.
+    assert result.overclaim_blocked is False
+    texts = [c.content for c in result.responses]
+    assert texts[0] == "Sure, I'll ping you in 5 minutes!"
+    assert "📅 Scheduled" in texts[-1]
+    assert not any(getattr(c, "is_floor", False) for c in result.responses)
+    assert fake.calls, "fulfiller was never consulted"
+
+
+@pytest.mark.asyncio
+async def test_scheduling_commit_fulfillment_failure_falls_back_to_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_try(state):  # noqa: ANN001, ANN202
+        return None  # every degraded path collapses to None
+
+    import stackowl.pipeline.delivery_gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "_try_fulfill_schedule_commit", _fake_try)
+    state = _state(
+        responses=(_draft("Sure, I'll ping you in 5 minutes!"),),
+        requires_scheduling_commit=True,
+        delivered_successes=(),
+        unverified_effects=(),
+        ran_effect_classes=(),
+    )
+    result = await surface_overclaim_gate(state)
+    # Unchanged legacy behavior: the honest ask-floor replaces the draft.
+    assert result.overclaim_blocked is True
+    assert len(result.responses) == 1
+    assert result.responses[0].is_floor is True
+    assert "didn't actually schedule" in result.responses[0].content

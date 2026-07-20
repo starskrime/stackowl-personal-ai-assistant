@@ -542,6 +542,34 @@ def _schedule_commit_floor_chunk(state: PipelineState) -> ResponseChunk:
     )
 
 
+async def _try_fulfill_schedule_commit(state: PipelineState) -> str | None:
+    """Attempt to ACTUALLY create the promised job; receipt line or ``None``.
+
+    Built lazily from ``services.provider_registry`` (no new wiring point);
+    every degraded path — no registry, extraction failure, cronjob refusal —
+    returns ``None`` so the caller falls back to the honest ask-floor. Never
+    raises.
+    """
+    try:
+        registry = get_services().provider_registry
+        if registry is None:
+            return None
+        from stackowl.interaction.schedule_commit_fulfiller import (
+            ScheduleCommitFulfiller,
+        )
+
+        return await ScheduleCommitFulfiller(registry).fulfill(
+            response=_answer_text(state), request=state.input_text
+        )
+    except Exception as exc:  # no-hidden-errors: fall back to the floor, loudly
+        log.engine.error(
+            "[overclaim_gate] schedule fulfillment failed — falling back to floor",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+
+
 async def surface_grounding_gate(state: PipelineState) -> PipelineState:
     """Strip fabricated citations / floor an ungrounded external-info answer.
 
@@ -874,6 +902,29 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
                 }
             },
         )
+        if culprit == _SCHEDULE_CULPRIT:
+            # Do-the-action upgrade: before confessing "I didn't actually
+            # schedule anything", TRY to actually schedule it — extract the
+            # promised (goal, schedule) and mint the job through the real
+            # CronjobTool (same guarded path the model should have called).
+            # On success the promise is backed by a verified job row: keep the
+            # original answer, append a truthful receipt, and the overclaim is
+            # RESOLVED (not blocked). Only when fulfillment fails does the
+            # honest ask-floor fire, exactly as before.
+            receipt = await _try_fulfill_schedule_commit(state)
+            if receipt is not None:
+                log.engine.info(
+                    "overclaim.fulfilled",
+                    extra={"_fields": {"trace_id": state.trace_id, "culprit": culprit}},
+                )
+                receipt_chunk = ResponseChunk(
+                    content=receipt,
+                    is_final=False,
+                    chunk_index=len(state.responses),
+                    trace_id=state.trace_id,
+                    owl_name=state.owl_name,
+                )
+                return state.evolve(responses=(*state.responses, receipt_chunk))
         floor = (
             _grounding_floor_chunk(state)
             if culprit == _RETRIEVAL_CULPRIT
