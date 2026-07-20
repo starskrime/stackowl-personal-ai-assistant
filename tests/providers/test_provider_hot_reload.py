@@ -39,7 +39,12 @@ def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _provider(
-    name: str, *, tier: str = "fast", model: str = "m1", api_key: str | None = None
+    name: str,
+    *,
+    tier: str = "fast",
+    model: str = "m1",
+    api_key: str | None = None,
+    cooldown_hours: float | None = None,
 ) -> ProviderConfig:
     return ProviderConfig(
         name=name,
@@ -49,6 +54,7 @@ def _provider(
         default_model=model,
         tier=tier,
         api_key=api_key,
+        cooldown_hours=cooldown_hours,
     )
 
 
@@ -200,6 +206,36 @@ def test_apply_settings_secret_rotation_reinjects_breaker(
     assert getattr(rebuilt, "_breaker", None) is carried_breaker
     assert getattr(rebuilt, "_limiter", None) is carried_limiter
     assert registry._breakers["a"] is carried_breaker
+
+
+def test_apply_settings_secret_rotation_reinjects_cooldown_hours(
+    _isolated_config: Path, tmp_path: Path
+) -> None:
+    """Minor finding (Task 7+8 review): the ORIGINAL cooldown_hours-on-reload
+    test only exercised the NEW-or-CHANGED rebuild branch (varying
+    cooldown_hours makes pydantic's __eq__ see a different config), never the
+    secret-ROTATION branch at registry.py:316 where _inject_cooldown_hours was
+    ALSO added. Force rotation via a byte-identical config whose underlying
+    `file:`-secret changed (same technique as
+    test_apply_settings_secret_rotation_reinjects_breaker) and assert the
+    rebuilt provider's _cooldown_hours survives the rotation."""
+    cfg = _isolated_config
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("OLD-KEY", encoding="utf-8")
+    ref = f"file:{secret_file}"
+
+    registry = ProviderRegistry.from_settings(
+        _write_settings(cfg, _provider("a", api_key=ref, cooldown_hours=4.0))
+    )
+    assert registry.get("a")._cooldown_hours == 4.0
+
+    # Rotate the underlying secret; the yaml config (incl. cooldown_hours) is
+    # byte-identical, so this MUST take the rotation branch, not NEW/CHANGED.
+    secret_file.write_text("NEW-KEY", encoding="utf-8")
+    registry.apply_settings(_write_settings(cfg, _provider("a", api_key=ref, cooldown_hours=4.0)))
+
+    rebuilt = registry._providers["a"]
+    assert getattr(rebuilt, "_cooldown_hours", None) == 4.0
 
 
 def test_apply_settings_unchanged_secret_fully_preserves_provider(

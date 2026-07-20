@@ -27,6 +27,7 @@ Design (per the converged C2 spec, CONFLICT 1/2/3):
 from __future__ import annotations
 
 import enum
+import math
 from collections.abc import Awaitable, Callable
 
 from stackowl.exceptions import (
@@ -196,7 +197,15 @@ def _parse_retry_after_seconds(exc: BaseException) -> float | None:
 
     Defensive by construction — ANY failure (missing attrs, non-numeric value,
     HTTP-date form) falls back to None so a parsing bug can never crash a round.
+
+    Also rejects non-finite values (``inf``/``nan``): ``float()`` happily
+    accepts the literal strings "inf", "Infinity", and "nan", and either one
+    reaching :meth:`CircuitBreaker.open_for` would wedge the breaker OPEN
+    forever with no self-healing path (see Finding 1, Task 7+8 review) —
+    treated the same as any other unparseable header so the caller falls
+    through to the ``cooldown_hours`` fallback / generic threshold path.
     """
+    raw: object = None
     try:
         response = getattr(exc, "response", None)
         headers = getattr(response, "headers", None)
@@ -205,8 +214,19 @@ def _parse_retry_after_seconds(exc: BaseException) -> float | None:
         raw = headers.get("retry-after") if hasattr(headers, "get") else None
         if raw is None:
             return None
-        return float(raw)
-    except Exception:  # noqa: BLE001 — parsing is best-effort, never fatal.
+        parsed = float(raw)
+        if not math.isfinite(parsed):
+            log.engine.debug(
+                "[resilient_round] retry-after header non-finite — falling through",
+                extra={"_fields": {"raw": str(raw)[:40]}},
+            )
+            return None
+        return parsed
+    except Exception as exc_parse:  # noqa: BLE001 — parsing is best-effort, never fatal.
+        log.engine.debug(
+            "[resilient_round] retry-after header unparseable — falling through",
+            extra={"_fields": {"raw": str(raw)[:40] if raw is not None else None, "error": str(exc_parse)}},
+        )
         return None
 
 

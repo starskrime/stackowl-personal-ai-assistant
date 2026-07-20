@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import math
 from collections import deque
 from collections.abc import Awaitable
 from typing import TypeVar
@@ -203,7 +204,34 @@ class CircuitBreaker:
         field ``retry_after_seconds`` already reads — so no new state is
         needed; the NEXT open (after this cooldown clears) resets to the
         base window via the existing HALF_OPEN->CLOSED success path.
+
+        ``seconds`` MUST be finite. A non-finite value (``inf``/``nan`` — e.g.
+        from an adversarial upstream header that slipped past
+        ``_parse_retry_after_seconds``, or an operator typo like `.inf` in
+        ``cooldown_hours`` in stackowl.yaml, which reaches here directly
+        WITHOUT going through that parser) would make
+        ``_maybe_promote_to_half_open``'s ``elapsed >= self._current_half_open_seconds``
+        comparison permanently False (nan compares False against everything;
+        elapsed can never reach inf) — a permanently stuck-OPEN breaker with
+        no self-healing path short of a process restart. Guard against that
+        HERE too (defense-in-depth) by falling back to the module's bounded
+        half-open backoff cap: the breaker still opens (a real fault did
+        occur) but with a finite, self-healing duration.
         """
+        if not math.isfinite(seconds):
+            log.engine.warning(
+                "[circuit] open_for: non-finite cooldown requested — "
+                "clamping to the bounded backoff cap to avoid a permanently "
+                "stuck-OPEN breaker",
+                extra={
+                    "_fields": {
+                        "provider": self._provider_name,
+                        "requested_seconds": str(seconds),
+                        "clamped_to_seconds": _HALF_OPEN_BACKOFF_CAP_SECONDS,
+                    }
+                },
+            )
+            seconds = _HALF_OPEN_BACKOFF_CAP_SECONDS
         log.engine.debug(
             "[circuit] open_for: entry",
             extra={"_fields": {"provider": self._provider_name, "seconds": seconds}},

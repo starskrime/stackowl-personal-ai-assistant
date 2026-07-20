@@ -8,7 +8,7 @@ import pytest
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.infra.clock import Clock
-from stackowl.providers._resilient_round import resilient_round
+from stackowl.providers._resilient_round import _parse_retry_after_seconds, resilient_round
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
 from stackowl.providers.rate_limiter import RateLimiter
 from stackowl.providers.registry import ProviderRegistry
@@ -89,6 +89,60 @@ async def test_malformed_reset_header_falls_back_to_cooldown_hours_not_crash() -
 
     async def failing_round() -> None:
         raise _RateLimited429(retry_after="not-a-number")
+
+    with pytest.raises(_RateLimited429):
+        await resilient_round(breaker, limiter, failing_round, cooldown_hours=2.0)
+
+    assert breaker.state is CircuitState.OPEN
+    assert breaker.retry_after_seconds == pytest.approx(7200.0)
+
+
+# --------------------------------------------------------------------------- #
+# Finding 1 (Task 7+8 review) — non-finite Retry-After values must never reach
+# CircuitBreaker.open_for, since inf/nan there permanently wedges the breaker
+# OPEN with no self-healing path (elapsed >= inf is never True; nan compares
+# always False). float() happily parses "inf"/"Infinity"/"nan" strings, so
+# _parse_retry_after_seconds must reject them explicitly.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("raw", ["inf", "Infinity", "-inf", "nan"])
+def test_parse_retry_after_seconds_rejects_non_finite_values(raw: str) -> None:
+    exc = _RateLimited429(retry_after=raw)
+    assert _parse_retry_after_seconds(exc) is None
+
+
+@pytest.mark.asyncio
+async def test_infinite_reset_header_falls_back_to_cooldown_hours_not_stuck_open() -> None:
+    """A malicious/malformed 'Retry-After: inf' header must NOT wedge the
+    breaker open forever — it should be rejected by the parser and fall
+    through to the configured cooldown_hours, same as any other unparseable
+    header (test_malformed_reset_header_falls_back_to_cooldown_hours_not_crash)."""
+    clock = _FakeClock()
+    breaker = CircuitBreaker(provider_name="p", clock=clock)
+    limiter = RateLimiter.from_rpm("p", None, clock=clock)
+
+    async def failing_round() -> None:
+        raise _RateLimited429(retry_after="inf")
+
+    with pytest.raises(_RateLimited429):
+        await resilient_round(breaker, limiter, failing_round, cooldown_hours=2.0)
+
+    assert breaker.state is CircuitState.OPEN
+    assert breaker.retry_after_seconds == pytest.approx(7200.0)
+
+
+@pytest.mark.asyncio
+async def test_nan_reset_header_falls_back_to_cooldown_hours_not_stuck_open() -> None:
+    """Same as above for 'Retry-After: nan' — nan is worse than inf pre-fix
+    because max(0.0, nan) == 0.0, so retry_after_seconds misleadingly
+    reports 0.0 while the breaker is actually stuck OPEN forever."""
+    clock = _FakeClock()
+    breaker = CircuitBreaker(provider_name="p", clock=clock)
+    limiter = RateLimiter.from_rpm("p", None, clock=clock)
+
+    async def failing_round() -> None:
+        raise _RateLimited429(retry_after="nan")
 
     with pytest.raises(_RateLimited429):
         await resilient_round(breaker, limiter, failing_round, cooldown_hours=2.0)
