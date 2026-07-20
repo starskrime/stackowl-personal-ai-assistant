@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
+from stackowl.commands.provider_shared import live_status_badge, providers_list
 from stackowl.commands.response import Action, CommandResponse
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_writer import store_secret
@@ -278,11 +279,7 @@ class ProviderCommand(SlashCommand):
 
     def _providers(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """Return the (live) providers list, normalising a missing/odd value."""
-        raw = data.get("providers")
-        if not isinstance(raw, list):
-            raw = []
-            data["providers"] = raw
-        return raw
+        return providers_list(data)
 
     def _emit_reloaded(self, name: str) -> None:
         if self._bus is None:
@@ -313,32 +310,7 @@ class ProviderCommand(SlashCommand):
     def _live_status_badge(self, name: str) -> str:
         """Return a trailing ` [state]` badge for *name*, or "" when no live
         registry is wired (degrades gracefully — never crashes list/menu)."""
-        log.config.debug(
-            "[commands] provider.live_status_badge: entry", extra={"_fields": {"name": name}}
-        )
-        if self._registry is None:
-            return ""
-        breaker = self._registry.get_circuit_breaker(name)
-        if breaker is None:
-            log.config.debug(
-                "[commands] provider.live_status_badge: exit — no breaker",
-                extra={"_fields": {"name": name}},
-            )
-            return " [no breaker]"
-        from stackowl.providers.circuit_breaker import CircuitState
-
-        state = breaker.state
-        if state is CircuitState.CLOSED:
-            badge = " [closed]"
-        elif state is CircuitState.HALF_OPEN:
-            badge = " [half-open]"
-        else:
-            badge = f" [open, retry in {breaker.retry_after_seconds:.0f}s]"
-        log.config.debug(
-            "[commands] provider.live_status_badge: exit",
-            extra={"_fields": {"name": name, "state": state.value}},
-        )
-        return badge
+        return live_status_badge(self._registry, name)
 
     def _status(self, raw: str) -> str | CommandResponse:
         log.config.debug("[commands] provider.status: entry", extra={"_fields": {"raw_len": len(raw)}})

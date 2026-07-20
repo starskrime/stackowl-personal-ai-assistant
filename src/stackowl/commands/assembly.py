@@ -355,6 +355,18 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         registry=cast("ProviderRegistry | None", deps.provider_registry),
     ))
 
+    # /tier — session preference (unchanged job) + provider-tier membership
+    # admin (list/menu/add/remove, new). Migrated from Pattern-A to DI for the
+    # same reason /provider was: the admin subcommands need the live
+    # event_bus (to apply changes immediately) and the SAME ProviderRegistry
+    # instance /provider uses (for live circuit-status badges), not a
+    # permanently-None pair frozen at Pattern-A import time.
+    from stackowl.commands.tier_command import TierCommand
+    _safe_register(registry, "tier", lambda: TierCommand(
+        event_bus=deps.event_bus,
+        registry=cast("ProviderRegistry | None", deps.provider_registry),
+    ))
+
     # /bye — graceful server shutdown via the orchestrator's stop_event
     from stackowl.commands.bye_command import ByeCommand
     _safe_register(registry, "bye", lambda: ByeCommand(shutdown_event=deps.shutdown_event))
