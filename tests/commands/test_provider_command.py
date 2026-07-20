@@ -96,7 +96,7 @@ class TestProviderList:
                 "name": "acme",
                 "protocol": "openai",
                 "default_model": "gpt-x",
-                "tier": "fast",
+                "tiers": ["fast"],
                 "enabled": True,
                 "api_key": "keychain:stackowl-provider-acme",
             }
@@ -131,7 +131,7 @@ class TestProviderList:
                 "name": "myprov",
                 "protocol": "openai",
                 "default_model": "m",
-                "tier": "fast",
+                "tiers": ["fast"],
                 "enabled": True,
             }
         ]
@@ -585,7 +585,7 @@ class TestProviderMenu:
                 "name": "myprov",
                 "protocol": "openai",
                 "default_model": "m",
-                "tier": "fast",
+                "tiers": ["fast"],
                 "enabled": True,
             }
         ]
@@ -618,8 +618,8 @@ class TestProviderStatus:
 
         data = _load(tmp_yaml)
         data["providers"] = [
-            {"name": "a", "protocol": "openai", "default_model": "m", "tier": "fast", "enabled": True},
-            {"name": "b", "protocol": "openai", "default_model": "m", "tier": "fast", "enabled": True},
+            {"name": "a", "protocol": "openai", "default_model": "m", "tiers": ["fast"], "enabled": True},
+            {"name": "b", "protocol": "openai", "default_model": "m", "tiers": ["fast"], "enabled": True},
         ]
         tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
 
@@ -661,6 +661,19 @@ class TestProviderStatus:
         out = await cmd.handle("status fast", _state())
         text = out.text if hasattr(out, "text") else out
         assert "no providers configured" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_list_shows_every_tier_a_provider_belongs_to(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [
+            {"name": "multi", "protocol": "openai", "default_model": "m",
+             "tiers": ["fast", "standard"], "enabled": True},
+        ]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("list", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "fast" in text
+        assert "standard" in text
 
 
 # ---------------------------------------------------------------------------

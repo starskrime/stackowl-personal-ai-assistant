@@ -43,7 +43,7 @@ _VALID_PROTOCOLS: tuple[str, ...] = typing.get_args(
     ProviderConfig.model_fields["protocol"].annotation
 )
 _VALID_TIERS: tuple[str, ...] = typing.get_args(
-    ProviderConfig.model_fields["tier"].annotation
+    typing.get_args(ProviderConfig.model_fields["tiers"].annotation)[0]
 )
 
 _USAGE = (
@@ -330,7 +330,7 @@ class ProviderCommand(SlashCommand):
         names = [
             str(p.get("name"))
             for p in self._providers(data)
-            if p.get("tier") == tier and p.get("name")
+            if tier in (p.get("tiers") or []) and p.get("name")
         ]
         if not names:
             log.config.debug(
@@ -366,13 +366,13 @@ class ProviderCommand(SlashCommand):
             name = p.get("name", "?")
             protocol = p.get("protocol", "?")
             model = p.get("default_model", "?")
-            tier = p.get("tier", "?")
+            tiers_display = ", ".join(p.get("tiers") or [])
             enabled = p.get("enabled", True)
             # Show ONLY the ref string — never resolve/print the actual secret.
             key_ref = p.get("api_key")
             key_disp = key_ref if key_ref else "(none)"
             lines.append(
-                f"{name} | {protocol} | {model} | {tier} | "
+                f"{name} | {protocol} | {model} | {tiers_display} | "
                 f"enabled={enabled} | api_key={key_disp}{self._live_status_badge(name)}"
             )
             actions.append(
@@ -401,19 +401,20 @@ class ProviderCommand(SlashCommand):
             return f"✗ Provider '{name}' not found"
         protocol = target.get("protocol", "?")
         model = target.get("default_model", "?")
-        tier = target.get("tier", "?")
+        current_tiers = target.get("tiers") or []
+        tiers_display = ", ".join(current_tiers)
         enabled = target.get("enabled", True)
-        text = f"{name} | {protocol} | {model} | {tier} | enabled={enabled}{self._live_status_badge(name)}"
+        text = f"{name} | {protocol} | {model} | {tiers_display} | enabled={enabled}{self._live_status_badge(name)}"
         toggle_verb = "disable" if enabled else "enable"
         actions = (
             tuple(
                 Action(
-                    label=f"Set tier: {t}",
+                    label=f"Add tier: {t}",
                     command=f"/provider set-tier {name} {t}",
                     destructive=False,
                 )
                 for t in _VALID_TIERS
-                if t != tier
+                if t not in current_tiers
             )
             + (
                 Action(label="Edit", command=f"/provider edit-menu {name}", destructive=False),
