@@ -193,6 +193,32 @@ class CircuitBreaker:
                 return True
             return False
 
+    async def open_for(self, seconds: float) -> None:
+        """Force OPEN for exactly ``seconds`` (quota-aware cooldown).
+
+        Distinct from the failure-counted ``_record_failure`` path: this sets
+        an EXACT duration (from a provider's own reset signal, or a
+        configured ``cooldown_hours`` fallback) instead of the adaptive
+        half-open backoff. Reuses ``_current_half_open_seconds`` — the same
+        field ``retry_after_seconds`` already reads — so no new state is
+        needed; the NEXT open (after this cooldown clears) resets to the
+        base window via the existing HALF_OPEN->CLOSED success path.
+        """
+        log.engine.debug(
+            "[circuit] open_for: entry",
+            extra={"_fields": {"provider": self._provider_name, "seconds": seconds}},
+        )
+        async with self._lock:
+            self._current_half_open_seconds = max(seconds, 0.0)
+            self._state = CircuitState.OPEN
+            self._opened_at = self._clock.monotonic()
+            self._failures.clear()
+            self._probe_in_flight = False
+        log.engine.warning(
+            "[circuit] open_for: exit — forced OPEN with explicit cooldown",
+            extra={"_fields": {"provider": self._provider_name, "cooldown_seconds": seconds}},
+        )
+
     def clear_probe(self) -> None:
         """Release the in-flight probe flag WITHOUT recording an outcome.
 

@@ -191,19 +191,42 @@ def _is_transport_error(exc: BaseException) -> bool:
     )
 
 
+def _parse_retry_after_seconds(exc: BaseException) -> float | None:
+    """Best-effort: read a numeric Retry-After header off exc.response, if present.
+
+    Defensive by construction — ANY failure (missing attrs, non-numeric value,
+    HTTP-date form) falls back to None so a parsing bug can never crash a round.
+    """
+    try:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return None
+        raw = headers.get("retry-after") if hasattr(headers, "get") else None
+        if raw is None:
+            return None
+        return float(raw)
+    except Exception:  # noqa: BLE001 — parsing is best-effort, never fatal.
+        return None
+
+
 async def resilient_round[T](
     breaker: CircuitBreaker | None,
     limiter: RateLimiter | None,
     do_round: Callable[[], Awaitable[T]],
     *,
     is_provider_fault: Callable[[BaseException], bool] = is_provider_fault,
+    cooldown_hours: float | None = None,
 ) -> T:
     """Run ONE remote round under breaker + limiter protection (SP-2).
 
     Order (CONFLICT/F117): (1) cheap breaker gate FIRST — OPEN (and not an
     admitted half-open probe) raises :class:`CircuitOpenError` before any I/O;
     (2) ``limiter.acquire()`` AFTER the gate; (3) execute ``do_round`` and record
-    a CLASSIFIED outcome onto the breaker, re-raising ALWAYS.
+    a CLASSIFIED outcome onto the breaker, re-raising ALWAYS; on a RATE_LIMIT
+    fault this also opens the breaker for a quota-aware duration — the
+    response's own reset signal if parseable, else ``cooldown_hours``, else no
+    change (generic threshold path).
 
     When ``breaker``/``limiter`` are ``None`` (nothing configured) this is a
     byte-identical pass-through. Breaker/limiter INTERNAL errors fail OPEN (logged,
@@ -300,6 +323,21 @@ async def resilient_round[T](
                     exc_info=pen_exc,
                     extra={"_fields": {"provider": provider}},
                 )
+            if breaker is not None:
+                reset_seconds = _parse_retry_after_seconds(exc)
+                cooldown_seconds = (
+                    reset_seconds if reset_seconds is not None
+                    else (cooldown_hours * 3600.0 if cooldown_hours is not None else None)
+                )
+                if cooldown_seconds is not None:
+                    try:
+                        await breaker.open_for(cooldown_seconds)
+                    except Exception as cd_exc:  # B5 — must never mask the real error.
+                        log.engine.error(
+                            "[resilient_round] breaker.open_for raised — continuing to re-raise",
+                            exc_info=cd_exc,
+                            extra={"_fields": {"provider": provider}},
+                        )
         log.engine.debug(
             "[resilient_round] exit — round raised",
             extra={

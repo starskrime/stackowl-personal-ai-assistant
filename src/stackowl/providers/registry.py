@@ -53,6 +53,17 @@ def _inject_resilience(
         setter(breaker, limiter)
 
 
+def _inject_cooldown_hours(provider: object, cooldown_hours: float | None) -> None:
+    """Inject the registry-owned cooldown_hours into one provider, if it accepts it.
+
+    Mirrors ``_inject_resilience`` — duck-typed test fakes without
+    ``set_cooldown_hours`` opt out silently.
+    """
+    setter = getattr(provider, "set_cooldown_hours", None)
+    if callable(setter):
+        setter(cooldown_hours)
+
+
 def _build_provider(config: ProviderConfig, api_key: str) -> ModelProvider:
     """Construct the correct concrete provider for config.protocol."""
     if config.protocol == "anthropic":
@@ -185,6 +196,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # writes it (per-round, at its HTTP boundary). Without this every breaker
         # stays permanently CLOSED and the cascade can never skip a dead provider.
         _inject_resilience(provider, breakers[config.name], limiters[config.name])
+        _inject_cooldown_hours(provider, config.cooldown_hours)
         configs[config.name] = config
         # Remember the RESOLVED secret (value NEVER logged) so a later reload can
         # detect a rotated secret behind an unchanged yaml reference.
@@ -301,6 +313,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         # into the new provider, else a rotation silently resets it to
                         # a breaker-less state (asserted in the hot-reload test).
                         _inject_resilience(provider, self._breakers[name], self._limiters[name])
+                        _inject_cooldown_hours(provider, config.cooldown_hours)
                         new_configs[name] = config
                         new_resolved_keys[name] = new_key  # value NEVER logged
                         rotated.append(name)

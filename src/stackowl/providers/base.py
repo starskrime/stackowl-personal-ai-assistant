@@ -91,6 +91,10 @@ class ModelProvider(ABC):
     # per-round bracket is a byte-identical pass-through.
     _breaker: CircuitBreaker | None = None
     _limiter: RateLimiter | None = None
+    # F-quota — this provider's configured cooldown_hours (ProviderConfig),
+    # injected by ProviderRegistry alongside breaker/limiter. None (default)
+    # → the RATE_LIMIT branch in _resilient_round has no config fallback.
+    _cooldown_hours: float | None = None
 
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker (idempotent; ProviderRegistry calls this)."""
@@ -111,6 +115,10 @@ class ModelProvider(ABC):
         self._breaker = breaker
         self._limiter = limiter
 
+    def set_cooldown_hours(self, hours: float | None) -> None:
+        """Inject this provider's configured cooldown_hours (idempotent)."""
+        self._cooldown_hours = hours
+
     async def _resilient_round[T](
         self,
         do_round: Callable[[], Awaitable[T]],
@@ -118,14 +126,17 @@ class ModelProvider(ABC):
         """Run ONE remote round through the shared breaker+limiter site (SP-2).
 
         Thin instance bracket over :func:`providers._resilient_round.resilient_round`
-        binding this provider's injected breaker/limiter. Concrete providers wrap
-        EVERY remote round (each tool-loop ``create()``, the wrap-up round, the
-        ``complete()``/``stream()`` round) in this so breaker-record + limiter-acquire
-        share ONE audited site. Pass-through when nothing is injected.
+        binding this provider's injected breaker/limiter/cooldown_hours. Concrete
+        providers wrap EVERY remote round (each tool-loop ``create()``, the
+        wrap-up round, the ``complete()``/``stream()`` round) in this so
+        breaker-record + limiter-acquire + quota-cooldown share ONE audited site.
+        Pass-through when nothing is injected.
         """
         from stackowl.providers._resilient_round import resilient_round
 
-        return await resilient_round(self._breaker, self._limiter, do_round)
+        return await resilient_round(
+            self._breaker, self._limiter, do_round, cooldown_hours=self._cooldown_hours,
+        )
 
     async def _record_cost(
         self,
