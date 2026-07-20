@@ -189,6 +189,18 @@ class SsrfGuard:
 _DEFAULT_GUARD = SsrfGuard()
 
 
+def _path_only(url: str) -> str:
+    """Strip query/fragment for logging — mirrors tools/browser/_logging.py's
+    url_path_only (infra/ cannot import from tools/ without a layering cycle)."""
+    try:
+        p = urlsplit(url)
+    except ValueError:
+        return "<unparsable-url>"
+    if not p.scheme or not p.netloc:
+        return url.split("?", 1)[0].split("#", 1)[0]
+    return f"{p.scheme}://{p.netloc}{p.path}"
+
+
 async def guard_playwright_navigation(route: Any, *, guard: SsrfGuard | None = None) -> None:
     """Playwright route handler: re-validate every navigation/redirect hop.
 
@@ -211,7 +223,11 @@ async def guard_playwright_navigation(route: Any, *, guard: SsrfGuard | None = N
             if not ok:
                 log.tool.warning(
                     "[ssrf] guard_playwright_navigation: blocked navigation/redirect",
-                    extra={"_fields": {"url": request.url, "reason": reason}},
+                    # CLAUDE.md "Log URL path only" — strip query/fragment explicitly
+                    # here (defense in depth alongside observability.py's generic
+                    # filter, mirroring tools/browser/_logging.py's url_path_only,
+                    # which infra/ cannot import without a layering violation).
+                    extra={"_fields": {"url": _path_only(request.url), "reason": reason}},
                 )
                 await route.abort()
                 return

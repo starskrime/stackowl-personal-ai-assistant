@@ -44,7 +44,10 @@ _ENV_ASSIGN_RE = re.compile(
     r"((?:api[_-]?key|token|password|secret)\s*[=:]\s*)\S+", re.IGNORECASE,
 )
 _SECRET_SHAPE_PATTERNS = (
-    re.compile(r"bearer\s+[a-z0-9._-]+", re.IGNORECASE),   # Authorization: Bearer <token>
+    # {15,} on the token part — real bearer tokens are long (JWTs, opaque API
+    # tokens); without a length floor this also matched ordinary English like
+    # "the bearer of important news", redacting non-secret text.
+    re.compile(r"bearer\s+[a-z0-9._-]{15,}", re.IGNORECASE),  # Authorization: Bearer <token>
     re.compile(r"sk-[a-z0-9]{20,}", re.IGNORECASE),         # OpenAI/Anthropic-style secret keys
     re.compile(r"akia[0-9a-z]{16}", re.IGNORECASE),         # AWS access key id
     re.compile(r"gh[a-z]_[a-z0-9]{20,}", re.IGNORECASE),    # GitHub PAT (ghp_/gho_/ghu_/ghs_/ghr_)

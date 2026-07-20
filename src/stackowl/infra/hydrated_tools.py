@@ -28,12 +28,19 @@ _by_session: dict[str, OrderedDict[str, None]] = {}
 
 
 def record(session_id: str | None, names: list[str]) -> None:
-    """Record tools surfaced this turn; most-recently-seen evicts oldest."""
+    """Record tools surfaced this turn; most-recently-seen evicts oldest.
+
+    ``names`` is assumed best-match-first (tool_search's own ranking order).
+    Inserted in REVERSE so the top match lands at the protected "most recent"
+    end of the queue — inserting in given order would put the BEST match at
+    the front, which is exactly what ``popitem(last=False)`` evicts first when
+    a single call surfaces more than ``_MAX_PER_SESSION`` names.
+    """
     if not session_id or not names:
         return
     with _lock:
         bucket = _by_session.setdefault(session_id, OrderedDict())
-        for name in names:
+        for name in reversed(names):
             bucket.pop(name, None)
             bucket[name] = None
         while len(bucket) > _MAX_PER_SESSION:

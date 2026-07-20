@@ -59,6 +59,15 @@ def test_aws_and_github_token_shapes_redacted() -> None:
     )
 
 
+def test_bearer_regex_does_not_over_redact_ordinary_english() -> None:
+    """Regression: `bearer\\s+\\w+` with no length floor matched ordinary text
+    like "the bearer of important news", corrupting non-secret log lines."""
+    assert _redact_string("the bearer of important news") == "the bearer of important news"
+    assert _redact_string("the bearer bond matured yesterday") == (
+        "the bearer bond matured yesterday"
+    )
+
+
 def test_recurses_into_nested_dict_and_list_args() -> None:
     """FX-04 — nested structures (e.g. an argv list) must be scanned too, not
     just the top-level field value."""

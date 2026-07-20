@@ -20,9 +20,9 @@ pytestmark = pytest.mark.asyncio
 
 def _job() -> Job:
     return Job(
-        job_id="j1", handler_name="tool_revalidation", schedule="daily@05:30",
+        job_id="j1", handler_name="tool_revalidation", schedule="daily@06:00",
         idempotency_key="tool_revalidation:daily", last_run_at=None,
-        next_run_at="2026-01-01T05:30:00+00:00", status="pending",
+        next_run_at="2026-01-01T06:00:00+00:00", status="pending",
     )
 
 

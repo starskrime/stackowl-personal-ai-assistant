@@ -946,11 +946,17 @@ class SchedulerAssembly:
             db, handler_name="tool_outcome_miner",
             schedule="daily@05:00", next_hour=5,
         )
-        # Tool revalidation runs daily at 05:30 — deliberately after the 05:00
-        # outcome miner so it judges learned tools on the freshest trust counts.
+        # Tool revalidation runs daily at 06:00 — deliberately a full hour after
+        # tool_outcome_miner (05:00) so it judges learned tools on the freshest
+        # trust counts. NOTE: _next_local_hour_iso only supports whole hours (no
+        # minutes) — a ":30" offset from the SAME hour as another job (e.g.
+        # "05:30" here vs "05:00" above) would compute the identical 05:00
+        # first-run timestamp for both and not actually guarantee this runs
+        # second. Use a distinct hour, not a same-hour minute offset, for any
+        # job that needs to run strictly after another daily job below.
         await _seed_daily_schedule(
             db, handler_name="tool_revalidation",
-            schedule="daily@05:30", next_hour=5,
+            schedule="daily@06:00", next_hour=6,
         )
 
         log.scheduler.info("[scheduler] assembly.build: exit — all wired")

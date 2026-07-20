@@ -53,6 +53,9 @@ class _FakeContext:
     async def close(self) -> None:
         return None
 
+    async def route(self, pattern: str, handler: Any) -> None:
+        pass  # FX-05 follow-up — real BrowserContext.route(); not asserted here.
+
 
 class _FakeRuntime:
     """Minimal CamoufoxRuntime stand-in returning a scripted page body."""

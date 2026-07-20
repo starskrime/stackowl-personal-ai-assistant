@@ -33,23 +33,28 @@ def test_empty_names_is_a_noop() -> None:
     assert hydrated_tools.get("s1") == set()
 
 
-def test_bounded_per_session_evicts_oldest() -> None:
-    names = [f"tool{i}" for i in range(20)]
+def test_bounded_per_session_keeps_best_ranked_within_one_call() -> None:
+    """names arrives best-match-first (tool_search's own ranking); when one
+    call surfaces more than the cap, the WORST matches must be evicted first,
+    not the best ones."""
+    names = [f"tool{i}" for i in range(20)]  # tool0 = best match, tool19 = worst
     hydrated_tools.record("s1", names)
     result = hydrated_tools.get("s1")
     assert len(result) == 12  # _MAX_PER_SESSION
-    # The most recently added names survive; the earliest are evicted.
-    assert "tool19" in result
-    assert "tool0" not in result
+    assert "tool0" in result  # best match survives
+    assert "tool19" not in result  # worst match evicted first
 
 
 def test_re_recording_a_name_moves_it_to_most_recent() -> None:
-    hydrated_tools.record("s1", [f"tool{i}" for i in range(12)])
-    # Re-surface tool0 — it must not be the next one evicted.
-    hydrated_tools.record("s1", ["tool0", "tool12"])
+    hydrated_tools.record("s1", [f"tool{i}" for i in range(12)])  # fills to cap
+    # A later call re-surfaces the first call's WORST match (tool11) plus one
+    # brand-new name — tool11 must survive since it was just re-seen, even
+    # though it ranked worst in the first call.
+    hydrated_tools.record("s1", ["tool12", "tool11"])
     result = hydrated_tools.get("s1")
-    assert "tool0" in result
-    assert "tool1" not in result  # tool1 is now the oldest, evicted
+    assert "tool11" in result  # re-surfaced this call -> protected
+    assert "tool12" in result  # newly surfaced this call -> protected
+    assert "tool10" not in result  # never re-surfaced -> now the oldest, evicted
 
 
 def test_clear_drops_the_session() -> None:

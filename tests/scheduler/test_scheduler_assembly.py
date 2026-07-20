@@ -143,6 +143,28 @@ async def test_health_sweep_wired_with_live_db_and_provider_healers(
     assert "browser" not in healers  # flag OFF → browser not wired
 
 
+async def test_tool_revalidation_seeded_after_tool_outcome_miner_by_hour(
+    tmp_db: DbPool,
+) -> None:
+    """Regression: _next_local_hour_iso only supports whole hours (no minutes),
+    so seeding two jobs at the SAME hour with different ':MM' labels (e.g. both
+    at hour=5, one labeled "05:00" and the other "05:30") computes the IDENTICAL
+    first-run timestamp for both — the ":30" ordering claim would be false. The
+    two jobs must be seeded at genuinely distinct hours."""
+    await _build(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT handler_name, next_run_at FROM jobs "
+        "WHERE handler_name IN ('tool_outcome_miner', 'tool_revalidation')"
+    )
+    by_handler = {r["handler_name"]: r["next_run_at"] for r in rows}
+    assert "tool_outcome_miner" in by_handler
+    assert "tool_revalidation" in by_handler
+    assert by_handler["tool_revalidation"] > by_handler["tool_outcome_miner"], (
+        "tool_revalidation must be seeded to run strictly AFTER tool_outcome_miner "
+        f"(got {by_handler})"
+    )
+
+
 async def test_health_sweep_aggregator_includes_live_provider_registry(
     tmp_db: DbPool,
 ) -> None:

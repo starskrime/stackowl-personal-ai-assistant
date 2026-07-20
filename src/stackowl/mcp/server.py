@@ -130,30 +130,40 @@ class McpServer:
         )
         try:
             from mcp.server.sse import SseServerTransport  # type: ignore[import]
+            from starlette.responses import PlainTextResponse, Response
 
             sse_transport = SseServerTransport("/sse")
 
-            async def handle_sse(scope: Any, receive: Any, send: Any) -> None:
-                if not _sse_auth_ok(scope, self._settings.auth_token):
+            async def handle_sse(request: Any) -> Response:
+                # Starlette's Route wraps a plain function endpoint as
+                # func(request) -> Response (request_response()), NOT raw ASGI
+                # (scope, receive, send) — the mcp SDK's own sse.py docstring
+                # example uses this exact signature. The prior (scope, receive,
+                # send) signature here was silently dead: every request 500'd
+                # with a TypeError before this body ever ran, so the auth check
+                # below never executed either.
+                if not _sse_auth_ok(request.scope, self._settings.auth_token):
                     log.warning(
                         "mcp.server.start_sse: rejected SSE connection — missing/invalid bearer token",
                     )
-                    from starlette.responses import PlainTextResponse
-
-                    response = PlainTextResponse("Unauthorized", status_code=401)
-                    await response(scope, receive, send)
-                    return
-                async with sse_transport.connect_sse(scope, receive, send) as (r, w):
+                    return PlainTextResponse("Unauthorized", status_code=401)
+                async with sse_transport.connect_sse(
+                    request.scope, request.receive, request._send
+                ) as (r, w):
                     await self._mcp_server.run(
                         r, w, self._mcp_server.create_initialization_options()
                     )
+                # Per the mcp SDK's own sse.py docstring: must return a Response
+                # or the client-disconnect path raises "TypeError: 'NoneType'
+                # object is not callable".
+                return PlainTextResponse("")
 
             log.debug("mcp.server.start_sse: step — server bound", extra={"_fields": {"host": host, "port": port}})
             from starlette.applications import Starlette  # type: ignore[import]
             from starlette.routing import Route  # type: ignore[import]
             import uvicorn  # type: ignore[import]
 
-            app = Starlette(routes=[Route("/sse", handle_sse)])
+            app = Starlette(routes=[Route("/sse", handle_sse, methods=["GET"])])
             config = uvicorn.Config(app, host=host, port=port, log_level="warning")
             server = uvicorn.Server(config)
             await server.serve()

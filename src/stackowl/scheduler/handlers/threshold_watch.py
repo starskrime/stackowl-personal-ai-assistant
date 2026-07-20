@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
@@ -152,6 +153,9 @@ class ThresholdWatchHandler(JobHandler):
         try:
             await self._runtime.acquire_domain_slot(source)
             ctx = await self._runtime.open_context(owner_key="scheduler")
+            # FX-05 follow-up — bypasses BrowserSessionRegistry.open(), so the
+            # per-redirect-hop SSRF guard must be attached here directly.
+            await ctx.route("**/*", guard_playwright_navigation)
             page = await ctx.new_page()
             await page.goto(source, wait_until="domcontentloaded", timeout=30_000)
             await self._runtime.record_navigation()

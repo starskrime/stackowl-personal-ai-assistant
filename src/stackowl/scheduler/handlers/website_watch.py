@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
@@ -114,6 +115,11 @@ class WebsiteWatchHandler(JobHandler):
         try:
             await self._runtime.acquire_domain_slot(url)
             ctx = await self._runtime.open_context(owner_key="scheduler")
+            # FX-05 follow-up — this handler bypasses BrowserSessionRegistry.open()
+            # (no interactive session), so it must attach the same per-redirect-hop
+            # SSRF guard itself: a watched page can 302 to an internal address on a
+            # later poll, unattended, with no human watching the result.
+            await ctx.route("**/*", guard_playwright_navigation)
             page = await ctx.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
             await self._runtime.record_navigation()
