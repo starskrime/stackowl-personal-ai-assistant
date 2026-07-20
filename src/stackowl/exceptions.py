@@ -197,6 +197,16 @@ class ProviderError(InfrastructureError):
         super().__init__(f"Provider '{provider_name}' error: {cause}")
 
 
+class ModelDiscoveryError(DomainError):
+    """Raised when live model discovery (or the token validation it doubles
+    as) fails during the guided /provider add flow."""
+
+    def __init__(self, provider: str, reason: str) -> None:
+        self.provider = provider
+        self.reason = reason
+        super().__init__(f"Model discovery failed for '{provider}': {reason}")
+
+
 class StartupError(StackOwlError):
     """Raised by StartupOrchestrator when a phase fails."""
 
