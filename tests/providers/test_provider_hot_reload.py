@@ -59,12 +59,24 @@ def _provider(
 
 
 def _write_settings(cfg: Path, *providers: ProviderConfig) -> Settings:
-    """Write providers to the isolated yaml and return a freshly-loaded Settings."""
+    """Write providers to the isolated yaml and return a freshly-loaded Settings.
+
+    ``ProviderConfig.tiers`` (Task 1) is a Python ``tuple``; ``model_dump()``
+    returns it as-is. Plain ``yaml.dump`` serializes an unrecognized type
+    (tuple) as a ``!!python/tuple`` tag, which the REAL production read path
+    (``_YamlSource._load()``) uses ``yaml.safe_load()`` for and cannot parse —
+    raising ``ConfigurationError``. Convert tuple values to lists (YAML-safe)
+    before dumping so this test helper round-trips through the same
+    safe-load path production does.
+    """
     cfg.write_text(
         yaml.dump(
             {
                 "test_mode": True,
-                "providers": [p.model_dump(exclude_none=True) for p in providers],
+                "providers": [
+                    {k: (list(v) if isinstance(v, tuple) else v) for k, v in p.model_dump(exclude_none=True).items()}
+                    for p in providers
+                ],
             }
         ),
         encoding="utf-8",
@@ -86,7 +98,7 @@ def test_apply_settings_adds_new_provider(_isolated_config: Path) -> None:
 
     # get() works for the freshly-added provider.
     assert registry.get("b") is not None
-    assert registry._tiers["b"] == "standard"
+    assert registry._tiers["b"] == ("standard",)
 
 
 def test_apply_settings_removes_dropped_provider(_isolated_config: Path) -> None:
@@ -133,7 +145,7 @@ def test_apply_settings_changed_provider_rebuilds(_isolated_config: Path) -> Non
 
     assert registry._breakers["a"] is not old_breaker
     assert registry._providers["a"] is not old_provider
-    assert registry._tiers["a"] == "powerful"
+    assert registry._tiers["a"] == ("powerful",)
 
 
 def test_apply_settings_injects_cost_tracker_into_new_provider(_isolated_config: Path) -> None:

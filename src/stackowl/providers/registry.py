@@ -91,7 +91,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
     def __init__(self, *, clock: Clock = WallClock()) -> None:
         self._clock: Clock = clock
         self._providers: dict[str, ModelProvider] = {}
-        self._tiers: dict[str, str] = {}
+        self._tiers: dict[str, tuple[str, ...]] = {}
         # Locality (self-hosted vs cloud) is ORTHOGONAL to tier (a local Ollama is
         # tier ``fast``); computed from the base_url host so the vision selector can
         # prefer on-box backends without a config migration. Default False (cloud).
@@ -163,7 +163,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         *,
         clock: Clock,
         providers: dict[str, ModelProvider],
-        tiers: dict[str, str],
+        tiers: dict[str, tuple[str, ...]],
         local: dict[str, bool],
         breakers: dict[str, CircuitBreaker],
         limiters: dict[str, RateLimiter],
@@ -183,8 +183,8 @@ class ProviderRegistry(RegistryAccessorsMixin):
         provider = _build_provider(config, api_key)
         inject_cost_tracker(provider, self._cost_tracker)
         providers[config.name] = provider
-        if hasattr(config, "tier") and config.tier:
-            tiers[config.name] = config.tier
+        if config.tiers:
+            tiers[config.name] = config.tiers
         local[config.name] = is_local_url(config.base_url)
         breakers[config.name] = CircuitBreaker(provider_name=config.name, clock=clock)
         limiters[config.name] = RateLimiter.from_rpm(
@@ -235,7 +235,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         try:
             new_providers: dict[str, ModelProvider] = {}
-            new_tiers: dict[str, str] = {}
+            new_tiers: dict[str, tuple[str, ...]] = {}
             new_local: dict[str, bool] = {}
             new_breakers: dict[str, CircuitBreaker] = {}
             new_limiters: dict[str, RateLimiter] = {}
@@ -263,7 +263,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 except Exception as exc:
                     if name in self._providers:
                         new_providers[name] = self._providers[name]
-                        new_tiers[name] = self._tiers.get(name, config.tier)
+                        new_tiers[name] = self._tiers.get(name, config.tiers)
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
@@ -289,7 +289,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         # FULLY UNCHANGED — config AND resolved secret identical;
                         # preserve provider + runtime state (breaker/limiter).
                         new_providers[name] = self._providers[name]
-                        new_tiers[name] = self._tiers.get(name, config.tier)
+                        new_tiers[name] = self._tiers.get(name, config.tiers)
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
@@ -304,7 +304,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         provider = _build_provider(config, new_key)
                         inject_cost_tracker(provider, self._cost_tracker)
                         new_providers[name] = provider
-                        new_tiers[name] = self._tiers.get(name, config.tier)
+                        new_tiers[name] = self._tiers.get(name, config.tiers)
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
@@ -410,8 +410,8 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # (watcher thread) can't make us index a name absent from _providers.
         providers = self._providers
         tiers = self._tiers
-        for name, provider_tier in tiers.items():
-            if provider_tier == tier and name in providers:
+        for name, provider_tiers in tiers.items():
+            if tier in provider_tiers and name in providers:
                 return providers[name]
         if providers:
             fallback_name = next(iter(providers))
@@ -466,7 +466,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
             # bound (it's exactly the case the retry exists for), otherwise a
             # tier with one removed + one still-present provider could exhaust its
             # budget on the removed name alone and never reach the healthy one.
-            tier_names = [name for name, t in tiers.items() if t == tier]
+            tier_names = [name for name, t in tiers.items() if tier in t]
 
             chosen: str | None = None
             prov: ModelProvider | None = None
@@ -517,7 +517,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                     },
                 )
                 return prov
-            candidates = [name for name, t in tiers.items() if t == tier and name in providers]
+            candidates = [name for name, t in tiers.items() if tier in t and name in providers]
             if candidates:
                 open_names = [
                     name for name in candidates
@@ -564,8 +564,8 @@ class ProviderRegistry(RegistryAccessorsMixin):
         tiers = self._tiers
         breakers = self._breakers
         primary_name: str | None = None
-        for name, ptier in tiers.items():
-            if ptier == tier and name in providers:
+        for name, ptiers in tiers.items():
+            if tier in ptiers and name in providers:
                 primary_name = name
                 break
         if primary_name is None:
@@ -611,8 +611,8 @@ class ProviderRegistry(RegistryAccessorsMixin):
         tiers = self._tiers
 
         # Exact match first — byte-identical happy path to get_by_tier.
-        for name, provider_tier in tiers.items():
-            if provider_tier == tier and name in providers:
+        for name, provider_tiers in tiers.items():
+            if tier in provider_tiers and name in providers:
                 return providers[name], None
 
         # No exact provider: cascade by CAPABILITY (most-capable first), skipping the
@@ -620,8 +620,8 @@ class ProviderRegistry(RegistryAccessorsMixin):
         for cand_tier in _CAPABILITY_ORDER:
             if cand_tier == tier:
                 continue
-            for name, provider_tier in tiers.items():
-                if provider_tier == cand_tier and name in providers:
+            for name, provider_tiers in tiers.items():
+                if cand_tier in provider_tiers and name in providers:
                     log.engine.warning(
                         "[registry] resolve_capable_or_degrade: no provider for "
                         "requested tier — substituting the most-capable available "
@@ -696,7 +696,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         inferred exactly as production does; ``is_local`` overrides it explicitly.
         """
         self._providers[name] = mock
-        self._tiers[name] = tier
+        self._tiers[name] = (tier,)
         self._local[name] = is_local if is_local is not None else is_local_url(base_url)
         self._breakers[name] = CircuitBreaker(provider_name=name, clock=self._clock)
         self._limiters[name] = RateLimiter.from_rpm(name, None, clock=self._clock)

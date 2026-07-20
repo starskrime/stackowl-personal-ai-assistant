@@ -30,12 +30,12 @@ class TierSelector:
         self,
         tier: str,
         providers: dict[str, object],
-        tiers: dict[str, str],
+        tiers: dict[str, tuple[str, ...]],
         breakers: dict[str, CircuitBreaker],
     ) -> str | None:
         """Return the next healthy provider NAME for ``tier``, or None if empty/all-OPEN."""
         log.engine.debug("[tier_selector] select: entry", extra={"_fields": {"tier": tier}})
-        candidates = [name for name, t in tiers.items() if t == tier and name in providers]
+        candidates = [name for name, t in tiers.items() if tier in t and name in providers]
         healthy = [
             name for name in candidates
             if breakers.get(name) is None or breakers[name].state is not CircuitState.OPEN

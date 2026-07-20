@@ -26,7 +26,7 @@ class RegistryAccessorsMixin:
     """
 
     _providers: dict[str, ModelProvider]
-    _tiers: dict[str, str]
+    _tiers: dict[str, tuple[str, ...]]
     _local: dict[str, bool]
     _breakers: dict[str, CircuitBreaker]
 
@@ -38,9 +38,20 @@ class RegistryAccessorsMixin:
         return None
 
     def tier_of(self, provider: ModelProvider) -> str | None:
-        """The configured routing tier, or None if unknown."""
+        """The FIRST configured routing tier, or None if unknown.
+
+        F-multi-tier (Task 4): ``_tiers`` now stores a tuple of every tier a
+        provider belongs to, not a single tier. This accessor keeps its
+        existing single-string contract (first membership) so callers written
+        against the old one-tier-per-provider model stay byte-identical; a
+        multi-tier-aware ``tiers_of`` accessor returning the full tuple is a
+        separate, deliberately deferred follow-up.
+        """
         name = self._name_of(provider)
-        return self._tiers.get(name) if name is not None else None
+        if name is None:
+            return None
+        ptiers = self._tiers.get(name)
+        return ptiers[0] if ptiers else None
 
     def is_local(self, provider: ModelProvider) -> bool:
         """True iff a self-hosted (on-box) backend — derived from the base_url host,
