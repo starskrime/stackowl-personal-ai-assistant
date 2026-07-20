@@ -10,7 +10,7 @@ that proves the whole authored-anchor DNA loop closes end-to-end:
     (2) ANCHORED ENVELOPE — a REAL evolution batch (governor ``bound_dna``,
         persist, live-overlay all real; only the LLM is a MockProvider) lets an
         owl whose current ``challenge_level`` is ABOVE the old neutral ceiling
-        (0.85) evolve UP to ~0.90 and STAY there — impossible under the old
+        (0.85) evolve UP to 0.895 and STAY there — impossible under the old
         neutral envelope ([0.2, 0.8] would clamp it to 0.8). Proves the authored
         anchor (0.75 → band [0.45, 1.0]) is in effect through the whole pipeline.
 
@@ -200,7 +200,7 @@ async def test_dna_completion_full_loop(db: DbPool) -> None:
     # =====================================================================
     # (2) ANCHORED ENVELOPE — current 0.85 (ABOVE the old neutral ceiling
     #     0.8); a real batch proposing a further +challenge_level evolves it
-    #     UP to ~0.90 and it STAYS — only possible because the authored anchor
+    #     UP to 0.895 and it STAYS — only possible because the authored anchor
     #     (0.75 → band [0.45, 1.0]) is in effect end-to-end. Under the old
     #     neutral envelope ([0.2, 0.8]) the value would be clamped DOWN to 0.8.
     # =====================================================================
@@ -208,9 +208,11 @@ async def test_dna_completion_full_loop(db: DbPool) -> None:
     apply_dna_overlay(registry, owl, OwlDNA(challenge_level=0.85))
     assert registry.get(owl).dna.challenge_level == pytest.approx(0.85)
 
-    # LLM proposes a big +challenge_level. Validator clamps the delta to +0.1,
-    # mutate applies it (0.85 → 0.95), then the governor rate-caps to +0.05
-    # → 0.90, clamped into the AUTHORED band [0.45, 1.0] (i.e. NOT clamped).
+    # LLM proposes a big +challenge_level. Validator clamps the delta to +0.25
+    # (FR-1), mutate applies it clamped to [0, 1] (0.85 → 1.0), then the
+    # governor scales the effective +0.15 by the LLM_QUALITY signal (×0.3,
+    # Story 2.4) to +0.045 — under the +0.05 rate cap — → 0.895, inside the
+    # AUTHORED band [0.45, 1.0] (i.e. NOT range-clamped).
     await _run_batch(
         db,
         registry,
@@ -223,8 +225,8 @@ async def test_dna_completion_full_loop(db: DbPool) -> None:
     persisted_cl = (await _persisted_dna(db, owl))["challenge_level"]
     # The DISTINGUISHER: > 0.8 is impossible under the old neutral envelope.
     assert live_cl > 0.8, f"anchor not in effect — clamped to neutral ceiling: {live_cl}"
-    assert live_cl == pytest.approx(0.90)
-    assert persisted_cl == pytest.approx(0.90)  # DB == live (persist is source of truth)
+    assert live_cl == pytest.approx(0.895)
+    assert persisted_cl == pytest.approx(0.895)  # DB == live (persist is source of truth)
 
     # =====================================================================
     # (3) SCHMITT LATCH — the REAL injector emits / holds / drops the

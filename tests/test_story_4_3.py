@@ -249,9 +249,11 @@ class TestEvolutionCoordinator:
                 ("nora",),
             )
             assert len(rows) == 1
-            assert rows[0]["challenge_level"] == pytest.approx(0.55)
-            assert rows[0]["verbosity"] == pytest.approx(0.47)
-            assert rows[0]["precision"] == pytest.approx(0.52)
+            # LLM-fallback deltas are LLM_QUALITY signal (Story 2.4) — the
+            # governor scales them ×0.3 before applying: 0.5 + 0.05×0.3 etc.
+            assert rows[0]["challenge_level"] == pytest.approx(0.515)
+            assert rows[0]["verbosity"] == pytest.approx(0.491)
+            assert rows[0]["precision"] == pytest.approx(0.506)
 
             # A checkpoint should have been written — via the unified
             # LearningArtifactStore primitive (Story 2.3), not dna_checkpoints.
