@@ -60,10 +60,10 @@ def tmp_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return cfg
 
 
-def _make_cmd(bus: EventBus | None = None) -> Any:
+def _make_cmd(bus: EventBus | None = None, registry: Any = None) -> Any:
     from stackowl.commands.provider_command import ProviderCommand
 
-    return ProviderCommand(event_bus=bus)
+    return ProviderCommand(event_bus=bus, registry=registry)
 
 
 def _load(cfg: Path) -> dict[str, Any]:
@@ -115,6 +115,40 @@ class TestProviderList:
         # The REF may be shown; the raw secret must NEVER appear.
         assert "keychain:stackowl-provider-acme" in text
         assert RAW_TOKEN not in text
+
+    @pytest.mark.asyncio
+    async def test_list_shows_live_circuit_state(self, tmp_yaml: Path) -> None:
+        from stackowl.providers.mock_provider import MockProvider
+        from stackowl.providers.registry import ProviderRegistry
+
+        registry = ProviderRegistry()
+        registry.register_mock("myprov", MockProvider(name="myprov"), tier="fast")
+        cmd = _make_cmd(registry=registry)
+
+        data = _load(tmp_yaml)
+        data["providers"] = [
+            {
+                "name": "myprov",
+                "protocol": "openai",
+                "default_model": "m",
+                "tier": "fast",
+                "enabled": True,
+            }
+        ]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await cmd.handle("list", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "closed" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_list_without_registry_degrades_gracefully(self, tmp_yaml: Path) -> None:
+        """No registry wired (registry=None, the default) — list must still work,
+        just without a live-status badge."""
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("list", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "acme" in text
+        assert "closed" not in text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +532,98 @@ class TestProviderMenu:
     async def test_menu_no_name_usage(self, tmp_yaml: Path) -> None:
         out = await _make_cmd().handle("menu", _state())
         assert "Usage" in out or "usage" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_menu_shows_live_circuit_state(self, tmp_yaml: Path) -> None:
+        from stackowl.providers.mock_provider import MockProvider
+        from stackowl.providers.registry import ProviderRegistry
+
+        registry = ProviderRegistry()
+        registry.register_mock("myprov", MockProvider(name="myprov"), tier="fast")
+        cmd = _make_cmd(registry=registry)
+
+        data = _load(tmp_yaml)
+        data["providers"] = [
+            {
+                "name": "myprov",
+                "protocol": "openai",
+                "default_model": "m",
+                "tier": "fast",
+                "enabled": True,
+            }
+        ]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await cmd.handle("menu myprov", _state())
+        assert "closed" in out.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_menu_without_registry_degrades_gracefully(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("menu acme", _state())
+        assert "closed" not in out.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# status <tier>
+# ---------------------------------------------------------------------------
+
+
+class TestProviderStatus:
+    @pytest.mark.asyncio
+    async def test_status_subcommand_shows_all_providers_in_tier(self, tmp_yaml: Path) -> None:
+        from stackowl.providers.mock_provider import MockProvider
+        from stackowl.providers.registry import ProviderRegistry
+
+        registry = ProviderRegistry()
+        registry.register_mock("a", MockProvider(name="a"), tier="fast")
+        registry.register_mock("b", MockProvider(name="b"), tier="fast")
+        cmd = _make_cmd(registry=registry)
+
+        data = _load(tmp_yaml)
+        data["providers"] = [
+            {"name": "a", "protocol": "openai", "default_model": "m", "tier": "fast", "enabled": True},
+            {"name": "b", "protocol": "openai", "default_model": "m", "tier": "fast", "enabled": True},
+        ]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await cmd.handle("status fast", _state())
+        text = reply.text if hasattr(reply, "text") else reply
+        assert "a" in text
+        assert "b" in text
+        assert "closed" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_status_no_registry_reports_not_wired(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("status fast", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "not wired" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_status_missing_tier_shows_usage(self, tmp_yaml: Path) -> None:
+        from stackowl.providers.registry import ProviderRegistry
+
+        cmd = _make_cmd(registry=ProviderRegistry())
+        out = await cmd.handle("status", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "usage" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_status_invalid_tier_shows_usage(self, tmp_yaml: Path) -> None:
+        from stackowl.providers.registry import ProviderRegistry
+
+        cmd = _make_cmd(registry=ProviderRegistry())
+        out = await cmd.handle("status nonsense-tier", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "usage" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_status_no_providers_configured_for_tier(self, tmp_yaml: Path) -> None:
+        from stackowl.providers.registry import ProviderRegistry
+
+        cmd = _make_cmd(registry=ProviderRegistry())
+        out = await cmd.handle("status fast", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "no providers configured" in text.lower()
 
 
 # ---------------------------------------------------------------------------

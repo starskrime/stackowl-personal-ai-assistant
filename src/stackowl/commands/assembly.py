@@ -345,9 +345,15 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.config_command import ConfigCommand
     _safe_register(registry, "config", lambda: ConfigCommand(event_bus=deps.event_bus))
 
-    # /provider — moved from Pattern-A to DI so the live event_bus is wired (C1)
+    # /provider — moved from Pattern-A to DI so the live event_bus is wired (C1).
+    # registry= wires the SAME live ProviderRegistry the rest of the pipeline
+    # uses (deps.provider_registry — see orchestrator.py) so /provider list|menu|
+    # status can read real CircuitBreaker state, not a fresh/empty instance.
     from stackowl.commands.provider_command import ProviderCommand
-    _safe_register(registry, "provider", lambda: ProviderCommand(event_bus=deps.event_bus))
+    _safe_register(registry, "provider", lambda: ProviderCommand(
+        event_bus=deps.event_bus,
+        registry=cast("ProviderRegistry | None", deps.provider_registry),
+    ))
 
     # /bye — graceful server shutdown via the orchestrator's stop_event
     from stackowl.commands.bye_command import ByeCommand

@@ -17,7 +17,7 @@ emit — see stackowl/startup/provider_reload.py for the consumer.
 from __future__ import annotations
 
 import typing
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.config_helpers import config_path, load_yaml, save_yaml
@@ -29,6 +29,9 @@ from stackowl.config.settings import Settings
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
+
+if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime import cycle
+    from stackowl.providers.registry import ProviderRegistry
 
 _TOKEN_PREFIX = "token="
 
@@ -42,7 +45,7 @@ _VALID_TIERS: tuple[str, ...] = typing.get_args(
 )
 
 _USAGE = (
-    "Usage: /provider <list|add|remove|set-tier|edit|enable|disable|set-token|rename> [args]\n"
+    "Usage: /provider <list|add|remove|set-tier|edit|enable|disable|set-token|rename|status> [args]\n"
     "  /provider list\n"
     "  /provider add <name> <protocol> <default_model> <tier> "
     "[base_url] [token=<RAW_TOKEN>]\n"
@@ -53,6 +56,7 @@ _USAGE = (
     "  /provider disable <name>\n"
     "  /provider set-token <name> <RAW_TOKEN>\n"
     "  /provider rename <old_name> <new_name>\n"
+    "  /provider status <tier>\n"
     f"  protocols: {', '.join(_VALID_PROTOCOLS)}\n"
     f"  tiers: {', '.join(_VALID_TIERS)}"
 )
@@ -171,6 +175,17 @@ _PROVIDER_META = CommandMeta(
             ),
             examples=(Example(invocation="/provider rename openai openai-primary"),),
         ),
+        SubCommand(
+            name="status",
+            summary="Show live circuit-breaker state for every provider in a tier",
+            description=(
+                "You see, per provider in the given tier, whether its circuit "
+                "breaker is closed, half-open, or open (with retry countdown). "
+                "Requires the live provider registry to be wired."
+            ),
+            args=(Arg(name="tier", summary="routing tier", choices=_VALID_TIERS),),
+            examples=(Example(invocation="/provider status fast"),),
+        ),
     ),
 )
 
@@ -178,8 +193,13 @@ _PROVIDER_META = CommandMeta(
 class ProviderCommand(SlashCommand):
     """Implements /provider list|add|remove|set-tier."""
 
-    def __init__(self, event_bus: EventBus | None = None) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus | None = None,
+        registry: ProviderRegistry | None = None,
+    ) -> None:
         self._bus = event_bus
+        self._registry = registry
 
     @property
     def command(self) -> str:
@@ -235,6 +255,8 @@ class ProviderCommand(SlashCommand):
                 result = self._rename(rest)
             elif sub == "menu":
                 result = self._menu(rest)
+            elif sub == "status":
+                result = self._status(rest)
             else:
                 log.config.debug(
                     "[commands] provider.handle: unknown subcommand",
@@ -285,6 +307,70 @@ class ProviderCommand(SlashCommand):
         reloaded = load_yaml(path)
         return any(p.get("name") == name for p in self._providers(reloaded))
 
+    # -- live status (circuit-breaker state) ------------------------------------
+
+    def _live_status_badge(self, name: str) -> str:
+        """Return a trailing ` [state]` badge for *name*, or "" when no live
+        registry is wired (degrades gracefully — never crashes list/menu)."""
+        log.config.debug(
+            "[commands] provider.live_status_badge: entry", extra={"_fields": {"name": name}}
+        )
+        if self._registry is None:
+            return ""
+        breaker = self._registry.get_circuit_breaker(name)
+        if breaker is None:
+            log.config.debug(
+                "[commands] provider.live_status_badge: exit — no breaker",
+                extra={"_fields": {"name": name}},
+            )
+            return " [no breaker]"
+        from stackowl.providers.circuit_breaker import CircuitState
+
+        state = breaker.state
+        if state is CircuitState.CLOSED:
+            badge = " [closed]"
+        elif state is CircuitState.HALF_OPEN:
+            badge = " [half-open]"
+        else:
+            badge = f" [open, retry in {breaker.retry_after_seconds:.0f}s]"
+        log.config.debug(
+            "[commands] provider.live_status_badge: exit",
+            extra={"_fields": {"name": name, "state": state.value}},
+        )
+        return badge
+
+    def _status(self, raw: str) -> str | CommandResponse:
+        log.config.debug("[commands] provider.status: entry", extra={"_fields": {"raw_len": len(raw)}})
+        if self._registry is None:
+            log.config.debug("[commands] provider.status: exit — no registry wired")
+            return "✗ Provider registry not wired for this command instance."
+        tier = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        if not tier or tier not in _VALID_TIERS:
+            log.config.debug(
+                "[commands] provider.status: exit — usage", extra={"_fields": {"tier": tier}}
+            )
+            return f"Usage: /provider status <tier>\n  tiers: {', '.join(_VALID_TIERS)}"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        names = [
+            str(p.get("name"))
+            for p in self._providers(data)
+            if p.get("tier") == tier and p.get("name")
+        ]
+        if not names:
+            log.config.debug(
+                "[commands] provider.status: exit — no providers for tier",
+                extra={"_fields": {"tier": tier}},
+            )
+            return f"No providers configured for tier '{tier}'."
+        lines = [f"{name}{self._live_status_badge(name)}" for name in names]
+        log.config.debug(
+            "[commands] provider.status: exit", extra={"_fields": {"tier": tier, "count": len(names)}}
+        )
+        return f"Tier '{tier}':\n" + "\n".join(lines)
+
     # -- list ------------------------------------------------------------------
 
     def _list(self) -> str | CommandResponse:
@@ -314,7 +400,7 @@ class ProviderCommand(SlashCommand):
             key_disp = key_ref if key_ref else "(none)"
             lines.append(
                 f"{name} | {protocol} | {model} | {tier} | "
-                f"enabled={enabled} | api_key={key_disp}"
+                f"enabled={enabled} | api_key={key_disp}{self._live_status_badge(name)}"
             )
             actions.append(
                 Action(label=name, command=f"/provider menu {name}", destructive=False)
@@ -344,7 +430,7 @@ class ProviderCommand(SlashCommand):
         model = target.get("default_model", "?")
         tier = target.get("tier", "?")
         enabled = target.get("enabled", True)
-        text = f"{name} | {protocol} | {model} | {tier} | enabled={enabled}"
+        text = f"{name} | {protocol} | {model} | {tier} | enabled={enabled}{self._live_status_badge(name)}"
         toggle_verb = "disable" if enabled else "enable"
         actions = (
             tuple(
