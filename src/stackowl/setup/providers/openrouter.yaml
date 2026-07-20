@@ -2,14 +2,12 @@ name: openrouter
 label: OpenRouter
 protocol: openai
 base_url: https://openrouter.ai/api/v1
-default_model: anthropic/claude-sonnet-4-6
+default_model: meta-llama/llama-3.3-70b-instruct:free
 models:
-  - anthropic/claude-sonnet-4-6
-  - openai/gpt-4o
-  - google/gemini-2.5-pro
-  - meta-llama/llama-3.3-70b-instruct
-  - deepseek/deepseek-r1
-  - qwen/qwen-2.5-72b-instruct
-tier: powerful
+  - meta-llama/llama-3.3-70b-instruct:free
+  - google/gemini-2.0-flash-exp:free
+  - mistralai/mistral-small-24b-instruct-2501:free
+tier: standard
 needs_api_key: true
-key_url: https://openrouter.ai/settings/keys
+category: [free-tier, aggregator]
+key_url: https://openrouter.ai/keys

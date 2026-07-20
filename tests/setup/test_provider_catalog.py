@@ -12,7 +12,7 @@ from stackowl.setup.provider_catalog import PROTOCOLS, ProviderCatalog, Provider
 
 def test_catalog_loads_all_bundled_yaml_files() -> None:
     entries = ProviderCatalog.load()
-    assert len(entries) == 15, f"Expected 15 bundled providers, got {len(entries)}: {[e.name for e in entries]}"
+    assert len(entries) == 17, f"Expected 17 bundled providers, got {len(entries)}: {[e.name for e in entries]}"
 
 
 def test_catalog_protocols_are_one_of_four() -> None:
@@ -64,8 +64,8 @@ def test_user_override_replaces_bundled_entry_by_name(
     assert openai_entry.label == "OpenAI (custom override)"
     assert openai_entry.base_url == "https://custom.openai.example.com/v1"
     assert openai_entry.tier == "fast"
-    # Count must remain 15 (override, not addition)
-    assert len(entries) == 15
+    # Count must remain 17 (override, not addition)
+    assert len(entries) == 17
 
 
 def test_user_can_add_new_provider_beyond_bundled(
@@ -94,7 +94,7 @@ def test_user_can_add_new_provider_beyond_bundled(
     )
 
     entries = ProviderCatalog.load()
-    assert len(entries) == 16
+    assert len(entries) == 18
     names = [e.name for e in entries]
     assert "mycompany" in names
 

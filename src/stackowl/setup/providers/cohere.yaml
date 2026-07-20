@@ -1,0 +1,12 @@
+name: cohere
+label: Cohere
+protocol: openai
+base_url: https://api.cohere.ai/compatibility/v1
+default_model: command-r-plus
+models:
+  - command-r-plus
+  - command-r
+tier: standard
+needs_api_key: true
+category: [free-tier]
+key_url: https://dashboard.cohere.com/api-keys
