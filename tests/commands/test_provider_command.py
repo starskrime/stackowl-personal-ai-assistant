@@ -682,8 +682,16 @@ class TestProviderEdit:
         assert "✗" in out or "not found" in out.lower()
 
     @pytest.mark.asyncio
-    async def test_edit_field_shows_current_value_and_usage(self, tmp_yaml: Path) -> None:
+    async def test_edit_field_shows_current_value_and_usage(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stackowl.exceptions import ModelDiscoveryError
+
         await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        monkeypatch.setattr(
+            "stackowl.providers.model_discovery.list_models",
+            AsyncMock(side_effect=ModelDiscoveryError("openai", "401 Unauthorized")),
+        )
         out = await _make_cmd().handle("edit-field acme default_model", _state())
         assert "gpt-x" in out.text
         assert "/provider edit acme default_model" in out.text
