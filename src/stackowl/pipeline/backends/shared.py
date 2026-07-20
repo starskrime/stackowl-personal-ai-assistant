@@ -196,7 +196,9 @@ async def _derive_turn_acceptance(
         return None
     from stackowl.pipeline.acceptance_llm import LlmAcceptanceDeriver
 
-    response_text = "\n".join(c.content for c in state.responses if c.content)
+    # "".join, not "\n".join (retry_actuator.py rule): streamed = one chunk per
+    # token; a newline join hands the deriver a corrupted one-word-per-line draft.
+    response_text = "".join(c.content for c in state.responses if c.content)
     if not response_text.strip():
         return None
     deriver = LlmAcceptanceDeriver(services.provider_registry, tier)
@@ -240,7 +242,10 @@ async def _capture_outcome(
     # 3. STEP — derive payload and persist
     try:
         store = TaskOutcomeStore(db)
-        response_text = "\n".join(c.content for c in state.responses if c.content)
+        # "".join (retry_actuator.py rule) — this row feeds the critic scorer,
+        # DNA attribution, and shadow-validator replays; a newline-per-token
+        # response_text corrupts every downstream learner.
+        response_text = "".join(c.content for c in state.responses if c.content)
         failure_class = classify_failure(state.errors)
         # B4b — make the LEARNER's signal trustworthy (verification arc). The
         # positive-only miner / critic scorer / reflection trigger all treat

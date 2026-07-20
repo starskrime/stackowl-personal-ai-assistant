@@ -124,7 +124,13 @@ async def persist_turn(state: PipelineState) -> None:
         )
         return
 
-    assistant_text = "\n".join(c.content for c in state.responses if c.content).strip()
+    # "".join, not "\n".join (same rule as retry_actuator.py): a STREAMED turn
+    # has one ResponseChunk per token, so a newline join persists
+    # "word\nword\nword" into memory/history — recalled into future context,
+    # the model then MIMICS the one-word-per-line format in live replies
+    # (confirmed production incident: telegram turns degenerated to
+    # newline-after-every-word until fresh context outweighed the poison).
+    assistant_text = "".join(c.content for c in state.responses if c.content).strip()
     if not state.input_text and not assistant_text:
         log.memory.debug(
             "[pipeline] persist_turn: empty turn — skipping",

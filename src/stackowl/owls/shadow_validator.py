@@ -284,7 +284,10 @@ class ShadowValidator:
         """Score one replay with the SAME critic prompt builder CriticScorerHandler
         uses — WITHOUT its DB-coupled execute(job) wrapper (this must not touch
         task_outcomes). Returns None on any provider/parse failure."""
-        response_text = "\n".join(c.content for c in result_state.responses if c.content)
+        # "".join, not "\n".join (retry_actuator.py rule): a streamed replay is
+        # one chunk per token — a newline join makes the critic score a
+        # corrupted one-word-per-line draft, skewing the shadow gate.
+        response_text = "".join(c.content for c in result_state.responses if c.content)
         replay_outcome = TaskOutcome(
             outcome_id=0,
             trace_id=result_state.trace_id,
