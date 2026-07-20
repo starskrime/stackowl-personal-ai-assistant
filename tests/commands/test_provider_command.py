@@ -196,6 +196,44 @@ class TestProviderAdd:
         assert sw.store_secret is not None
 
     @pytest.mark.asyncio
+    async def test_add_token_never_stored_when_validation_fails(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: ``_add`` must validate the entry via ``ProviderConfig``
+        BEFORE calling ``store_secret`` — "we never leave an orphan stored
+        secret behind a failed add". No real input can fail ``ProviderConfig``
+        today (protocol/tier are already Literal-checked upstream and
+        ``ProviderConfig`` has no other validators), so this proves the
+        ORDERING directly: monkeypatch ``ProviderConfig`` to raise, spy on
+        ``store_secret``, and confirm it is never called before the reject.
+        """
+        import stackowl.commands.provider_command as pc
+
+        store_secret_calls: list[str] = []
+        original_store_secret = pc.store_secret
+
+        def _spy_store_secret(service: str, secret: str) -> tuple[str, str]:
+            store_secret_calls.append(service)
+            return original_store_secret(service, secret)
+
+        monkeypatch.setattr(pc, "store_secret", _spy_store_secret)
+
+        class _RejectingProviderConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                raise ValueError("simulated schema rejection")
+
+        monkeypatch.setattr(pc, "ProviderConfig", _RejectingProviderConfig)
+
+        out = await _make_cmd().handle(
+            f"add acme openai gpt-x fast token={RAW_TOKEN}", _state()
+        )
+        assert isinstance(out, str)
+        assert "✗" in out
+        assert "Invalid provider config" in out
+        assert store_secret_calls == []  # secret storage never reached
+        assert _load(tmp_yaml)["providers"] == []
+
+    @pytest.mark.asyncio
     async def test_add_invalid_protocol(self, tmp_yaml: Path) -> None:
         out = await _make_cmd().handle("add acme telnet gpt-x fast", _state())
         assert "✗" in out or "error" in out.lower() or "invalid" in out.lower()

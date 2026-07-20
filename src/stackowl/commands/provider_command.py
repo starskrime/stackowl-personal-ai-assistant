@@ -931,12 +931,25 @@ class ProviderCommand(SlashCommand):
             "default_model": default_model,
             "tier": tier,
         }
-        # protocol/tier are already checked above against the same Literal
-        # choices ProviderConfig enforces, and name/default_model are non-empty
-        # (split() tokens) — so the schema can never reject this entry. The
-        # actual schema validation (and the write/persisted-check/emit that
-        # follows it) now lives once, in _persist_new_provider, shared with
-        # the guided add-flow's add-tier step.
+
+        # Validate the entry BEFORE storing any secret — we never leave an
+        # orphan stored secret (keyring/file) behind a failed add. protocol/
+        # tier are already checked above against the same Literal choices
+        # ProviderConfig enforces, so today no reachable input trips this —
+        # but that's coincidental to the current schema, not guaranteed by
+        # it, so this pre-check (not the Literal checks above) is the actual
+        # gate on store_secret below. _persist_new_provider re-validates the
+        # complete entry (incl. the api_key ref) again further down; that
+        # second check is cheap and idempotent, it just isn't early enough
+        # to protect store_secret on its own.
+        try:
+            ProviderConfig(**entry)
+        except Exception as exc:
+            log.config.warning(
+                "[commands] provider.add: schema validation failed — no secret stored",
+                extra={"_fields": {"name": name, "error": str(exc)}},
+            )
+            return f"✗ Invalid provider config: {exc}"
 
         # Store the secret (if any) and keep only the resolver REF — never the
         # raw token.
