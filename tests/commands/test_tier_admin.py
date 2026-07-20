@@ -15,7 +15,18 @@ import pytest
 import yaml
 
 from stackowl.commands.response import CommandResponse
+from stackowl.commands.tier_command import reset_session_tiers
 from stackowl.pipeline.state import PipelineState
+
+
+@pytest.fixture(autouse=True)
+def _reset_session_tier_cache() -> None:
+    """The preference job's in-memory cache is module-level global state,
+    keyed by session_id — without a reset, a preference set by one test
+    (e.g. "fast" for the shared _state() session id) leaks into every test
+    that runs after it in the same process, including the admin tests below
+    that don't touch preferences at all but share the same default session."""
+    reset_session_tiers()
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -270,6 +281,23 @@ class TestTierPreferenceStillWorksAfterMerge:
         assert isinstance(reply, str)
         assert "✗" in reply
         assert "Usage" in reply
+
+    @pytest.mark.asyncio
+    async def test_bare_tier_no_args_shows_preference_text_with_buttons(
+        self, tmp_yaml: Path
+    ) -> None:
+        """Regression guard for the reported gap: bare /tier used to be a
+        dead-end plain-text reply with zero buttons, undiscoverable from the
+        new admin dashboard. Text wording must stay unchanged; buttons are new."""
+        reply = await _make_cmd().handle("", _state())
+        assert isinstance(reply, CommandResponse)
+        assert reply.text == "Current tier preference: default\nValid tiers: fast, standard, powerful, local"
+        commands = [a.command for a in reply.actions]
+        assert "/tier fast" in commands
+        assert "/tier standard" in commands
+        assert "/tier powerful" in commands
+        assert "/tier local" in commands
+        assert "/tier list" in commands
 
 
 # ---------------------------------------------------------------------------

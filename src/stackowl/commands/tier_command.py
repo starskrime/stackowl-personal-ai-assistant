@@ -218,9 +218,14 @@ class TierCommand(SlashCommand):
         )
         return f"✗ Unknown tier: {first} — valid tiers: {', '.join(_VALID_TIERS)}\n\n{_USAGE}"
 
-    async def _handle_preference(self, tier: str, state: PipelineState) -> str:
-        """Show or set the session's preferred tier — byte-identical to the
-        original (pre-merge) /tier behaviour for this job."""
+    async def _handle_preference(self, tier: str, state: PipelineState) -> str | CommandResponse:
+        """Show or set the session's preferred tier. Text wording is
+        byte-identical to the original (pre-merge) /tier behaviour for both
+        branches; the "show current" branch now also carries buttons (quick
+        tier switch + a way into the admin dashboard) so the new list/menu/
+        add/remove features are discoverable from the single most obvious
+        command instead of being a dead end — the "set" branch is left as a
+        plain string, unchanged, since that wasn't the reported gap."""
         owner_key = _owner_key_for_state(state)
         store = get_services().preference_store
         if not tier:
@@ -229,7 +234,11 @@ class TierCommand(SlashCommand):
                 "[commands] tier.handle_preference: decision — show current",
                 extra={"_fields": {"session": state.session_id, "current": current}},
             )
-            return f"Current tier preference: {current}\nValid tiers: {', '.join(_VALID_TIERS)}"
+            text = f"Current tier preference: {current}\nValid tiers: {', '.join(_VALID_TIERS)}"
+            actions = tuple(
+                Action(label=f"Use {t}", command=f"/tier {t}", destructive=False) for t in _VALID_TIERS
+            ) + (Action(label="Manage tiers", command="/tier list", destructive=False),)
+            return CommandResponse(text=text, actions=actions)
         await _write_tier(store, owner_key, tier)
         log.engine.info(
             "[commands] tier.handle_preference: exit — preference stored",
