@@ -56,3 +56,18 @@ def test_tiers_rejects_unknown_value() -> None:
 def test_neither_tier_nor_tiers_given_is_required_error() -> None:
     with pytest.raises(ValidationError):
         ProviderConfig(name="x", protocol="openai", default_model="m")
+
+
+def test_legacy_tier_kwarg_accepts_a_non_string_sequence() -> None:
+    cfg = ProviderConfig(
+        name="x", protocol="openai", default_model="m", tier=["fast", "standard"],
+    )
+    assert cfg.tiers == ("fast", "standard")
+
+
+def test_tiers_wins_when_both_tier_and_tiers_are_passed() -> None:
+    cfg = ProviderConfig(
+        name="x", protocol="openai", default_model="m",
+        tier="fast", tiers=("standard", "powerful"),
+    )
+    assert cfg.tiers == ("standard", "powerful")
