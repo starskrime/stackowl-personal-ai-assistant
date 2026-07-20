@@ -37,3 +37,6 @@ graphify-out/
 
 # Local git worktrees (superpowers:using-git-worktrees)
 .worktrees/
+
+# Subagent-driven-development scratch (briefs, reports, diffs)
+.superpowers/
