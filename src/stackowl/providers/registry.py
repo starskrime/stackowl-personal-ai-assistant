@@ -447,14 +447,47 @@ class ProviderRegistry(RegistryAccessorsMixin):
 
         details: list[str] = []
         for tier in tier_walk:
-            # TierSelector.select's `providers` param is typed dict[str, object]
-            # (it never touches provider internals, only membership) — dict's
-            # invariance means dict[str, ModelProvider] needs an explicit cast.
-            chosen = self._tier_selector.select(tier, cast("dict[str, object]", providers), tiers, breakers)
-            if chosen is not None:
-                prov = providers.get(chosen)
-                if prov is None:
-                    continue  # removed by a concurrent reload — skip
+            # Every name TIERS assigns to this tier — deliberately NOT filtered by
+            # presence in `providers`. This bounds the retry loop below; a name
+            # concurrently removed from `providers` must still count toward the
+            # bound (it's exactly the case the retry exists for), otherwise a
+            # tier with one removed + one still-present provider could exhaust its
+            # budget on the removed name alone and never reach the healthy one.
+            tier_names = [name for name, t in tiers.items() if t == tier]
+
+            chosen: str | None = None
+            prov: ModelProvider | None = None
+            missing_this_tier: set[str] = set()
+            # Bounded by len(tier_names): a name select() returns that is missing
+            # from the snapshot (concurrent-removal race) means the round-robin
+            # cursor already advanced past it, so retrying WITHIN THE SAME TIER
+            # naturally tries the next healthy candidate instead of abandoning the
+            # rest of this tier's healthy providers by falling through to the next
+            # tier. Capped at len(tier_names) iterations so a fully-stale snapshot
+            # (or a single-name tier) can never spin.
+            for _ in range(len(tier_names) or 1):
+                # TierSelector.select's `providers` param is typed dict[str, object]
+                # (it never touches provider internals, only membership) — dict's
+                # invariance means dict[str, ModelProvider] needs an explicit cast.
+                candidate = self._tier_selector.select(tier, cast("dict[str, object]", providers), tiers, breakers)
+                if candidate is None:
+                    break
+                candidate_prov = providers.get(candidate)
+                if candidate_prov is None:
+                    missing_this_tier.add(candidate)
+                    log.engine.warning(
+                        "[cascade] selected provider missing from snapshot "
+                        "(concurrent removal) — retrying within the same tier",
+                        extra={"_fields": {"provider": candidate, "tier": tier}},
+                    )
+                    if len(missing_this_tier) >= len(tier_names):
+                        break
+                    continue
+                chosen = candidate
+                prov = candidate_prov
+                break
+
+            if chosen is not None and prov is not None:
                 breaker = breakers.get(chosen)
                 state = breaker.state if breaker is not None else None
                 log.engine.info(
