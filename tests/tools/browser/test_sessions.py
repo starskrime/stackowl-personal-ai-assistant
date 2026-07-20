@@ -28,6 +28,7 @@ class _FakeContext:
     def __init__(self) -> None:
         self.closed = False
         self._pages: list[_FakePage] = []
+        self.routes: list[Any] = []
 
     async def new_page(self) -> _FakePage:
         p = _FakePage()
@@ -36,6 +37,11 @@ class _FakeContext:
 
     async def close(self) -> None:
         self.closed = True
+
+    async def route(self, pattern: str, handler: Any) -> None:
+        # FX-05 — real BrowserContext.route(); recorded so a test can assert the
+        # SSRF guard was actually attached, matching Playwright's async signature.
+        self.routes.append((pattern, handler))
 
 
 class _FakeRuntime:
@@ -85,6 +91,20 @@ class TestOpenAndClose:
         reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
         await reg.open("alice", profile_name="gmail")
         assert runtime.opens[0]["profile_name"] == "gmail"
+
+    async def test_open_attaches_ssrf_route_guard(self, settings: BrowserSettings) -> None:
+        """FX-05 — every new session gets the shared SSRF navigation guard, not
+        just the hostname allowlist checked separately by browse.py."""
+        from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
+
+        runtime = _FakeRuntime()
+        reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
+        sid = await reg.open("alice")
+        ctx = reg._sessions[sid].context
+        assert ctx.routes, "no route handler attached to the new browser context"
+        pattern, handler = ctx.routes[0]
+        assert pattern == "**/*"
+        assert handler is guard_playwright_navigation
 
     async def test_close_removes_session(self, settings: BrowserSettings) -> None:
         runtime = _FakeRuntime()

@@ -184,6 +184,40 @@ class _BrokenManifestTool(Tool):
         return ToolResult(success=True, output="x", duration_ms=1.0)
 
 
+async def test_tool_search_hydrates_session_store_on_hit(trace_context: None) -> None:
+    """FX-07 — a successful search records its hits into the session-scoped
+    HydratedToolStore so they're promoted into the NEXT turn's presented
+    schema (see pipeline/steps/execute.py's build_tool_schemas)."""
+    from stackowl.infra import hydrated_tools
+    from stackowl.pipeline.services import StepServices, reset_services, set_services
+
+    reg = ToolRegistry()
+    reg.register(_StubTool("pdf", "extract text from a pdf"))
+    reg.register(ToolSearchTool())
+    token = set_services(StepServices(tool_registry=reg))
+    try:
+        result = await ToolSearchTool().execute(query="pdf")
+    finally:
+        reset_services(token)
+    assert result.success
+    assert hydrated_tools.get("test-session") == {"pdf"}
+
+
+async def test_tool_search_no_match_does_not_hydrate(trace_context: None) -> None:
+    from stackowl.infra import hydrated_tools
+    from stackowl.pipeline.services import StepServices, reset_services, set_services
+
+    reg = ToolRegistry()
+    reg.register(_StubTool("pdf", "extract text from a pdf"))
+    reg.register(ToolSearchTool())
+    token = set_services(StepServices(tool_registry=reg))
+    try:
+        await ToolSearchTool().execute(query="zzzznomatch")
+    finally:
+        reset_services(token)
+    assert hydrated_tools.get("test-session") == set()
+
+
 async def test_tool_search_skips_broken_manifest_not_crashes() -> None:
     from stackowl.pipeline.services import StepServices, reset_services, set_services
 

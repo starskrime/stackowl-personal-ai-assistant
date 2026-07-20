@@ -40,3 +40,16 @@ class McpServerSettings(BaseModel):
             "client is fully trusted to invoke consequential actions without consent."
         ),
     )
+    auth_token: str | None = Field(
+        default=None,
+        description=(
+            "FX-06 — shared-secret token required from SSE clients as "
+            "'Authorization: Bearer <token>'. The SSE transport binds to a real "
+            "network host:port with no other gate (no interactive consent channel "
+            "exists for an external client), so an unset token means ANY client "
+            "that can reach the port has the exposed tool surface. None (default) "
+            "leaves the transport unauthenticated for backward compatibility with "
+            "existing configs — a loud warning is logged on start_sse either way. "
+            "Sensitive: auto-redacted in logs by the *token key-pattern."
+        ),
+    )

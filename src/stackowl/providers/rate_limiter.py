@@ -9,6 +9,11 @@ from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 
 _SLOW_WAIT_THRESHOLD_SECONDS = 10.0
+#: FX-01 — a 429 means the server wants us slower NOW, not that it's dead; a
+#: temporary refill-rate cut paces future calls without waiting for the
+#: window-based circuit breaker to notice a pattern of them.
+_DEFAULT_PENALTY_FACTOR = 0.75
+_DEFAULT_PENALTY_SECONDS = 60.0
 
 
 class RateLimiter:
@@ -43,6 +48,9 @@ class RateLimiter:
         self._clock: Clock = clock
         self._tokens: float = float(capacity) if capacity is not None else 0.0
         self._last_refill: float = clock.monotonic()
+        # FX-01 — temporary refill-rate penalty window (see penalize()).
+        self._penalty_factor: float = 1.0
+        self._penalty_until: float = 0.0
         # F118 — per-instance lock guards refill+check+deduct as ONE critical
         # section so two concurrent acquirers cannot both pass the ``>=`` check on
         # the same tokens and over-draw the bucket. The sleep happens OUTSIDE the
@@ -95,6 +103,40 @@ class RateLimiter:
     @property
     def is_noop(self) -> bool:
         return self._capacity is None
+
+    def penalize(
+        self, *, factor: float = _DEFAULT_PENALTY_FACTOR, duration_seconds: float = _DEFAULT_PENALTY_SECONDS,
+    ) -> None:
+        """Shrink the effective refill rate for ``duration_seconds`` (FX-01).
+
+        Called on a classified RATE_LIMIT (429) failure: the server just told us
+        to slow down, which is a pacing problem, not an outage — this eases off
+        without touching the circuit breaker's outage-detection threshold. A
+        no-op on a no-op (uncapped) limiter. Sync and cheap; safe to call from
+        an exception handler.
+        """
+        if self._capacity is None:
+            return
+        # Floor the factor so a penalty can never zero out the effective rate
+        # (that's the fail-closed job of the base refill_rate check in acquire(),
+        # not a temporary pacing penalty) and cause a division by zero there.
+        self._penalty_factor = max(0.05, factor)
+        self._penalty_until = self._clock.monotonic() + duration_seconds
+        log.engine.warning(
+            "[rate_limiter] penalize: entry — shrinking refill rate",
+            extra={
+                "_fields": {
+                    "provider": self._provider_name,
+                    "factor": factor,
+                    "duration_seconds": duration_seconds,
+                }
+            },
+        )
+
+    def _effective_refill_rate(self) -> float:
+        if self._clock.monotonic() < self._penalty_until:
+            return self._refill_rate * self._penalty_factor
+        return self._refill_rate
 
     async def acquire(self, tokens: int = 1) -> None:
         """Wait until `tokens` are available, then deduct. Logs WARNING on long waits."""
@@ -168,7 +210,7 @@ class RateLimiter:
                     raise RateLimitError(self._provider_name, tokens, self._capacity)
 
                 deficit = tokens - self._tokens
-                sleep_seconds = max(deficit / self._refill_rate, 0.01)
+                sleep_seconds = max(deficit / self._effective_refill_rate(), 0.01)
             log.engine.debug(
                 "[rate_limiter] acquire: step — sleeping for tokens",
                 extra={
@@ -191,7 +233,7 @@ class RateLimiter:
         elapsed = now - self._last_refill
         if elapsed <= 0.0:
             return
-        added = elapsed * self._refill_rate
+        added = elapsed * self._effective_refill_rate()
         if added > 0.0:
             self._tokens = min(float(self._capacity), self._tokens + added)
         self._last_refill = now

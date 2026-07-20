@@ -12,7 +12,7 @@ import contextlib
 import time
 from typing import Any
 
-from stackowl.infra.net.ssrf_guard import SsrfGuard
+from stackowl.infra.net.ssrf_guard import SsrfGuard, guard_playwright_navigation
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -30,28 +30,11 @@ _SSRF_GUARD = SsrfGuard()
 async def _guard_navigation(route: Any) -> None:
     """Playwright route handler: re-validate every navigation/redirect hop.
 
-    A pre-flight check on the initial URL is not enough — a public page can
-    302 to ``http://169.254.169.254/`` and the browser would follow it. This
-    aborts any navigation (including redirect targets) whose URL fails the SSRF
-    policy; non-navigation subresources pass through. Fails closed on error.
+    Thin wrapper over the shared :func:`guard_playwright_navigation` (FX-05 —
+    also attached to interactive browser sessions in ``tools/browser/sessions.py``)
+    bound to this module's guard instance, so the two callers can never drift.
     """
-    request = route.request
-    try:
-        if request.is_navigation_request():
-            ok, reason = _SSRF_GUARD.is_allowed(request.url)
-            if not ok:
-                log.tool.warning(
-                    "web_fetch: blocked navigation/redirect by SSRF egress guard",
-                    extra={"_fields": {"url": url_path_only(request.url), "reason": reason}},
-                )
-                await route.abort()
-                return
-    except Exception as exc:
-        log.tool.warning("web_fetch: navigation guard error — aborting (fail closed)", exc_info=exc)
-        with contextlib.suppress(Exception):
-            await route.abort()
-        return
-    await route.continue_()
+    await guard_playwright_navigation(route, guard=_SSRF_GUARD)
 
 
 class WebFetchTool(Tool):

@@ -59,6 +59,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
         ToolOutcomeMinerHandler,
     )
     from stackowl.scheduler.handlers.tool_pruning import ToolPruningHandler
+    from stackowl.scheduler.handlers.tool_revalidation_handler import (
+        ToolRevalidationHandler,
+    )
     from stackowl.scheduler.scheduler import JobScheduler
     from stackowl.skills.assembly import SkillsComponents
     from stackowl.skills.synthesizer_handler import SkillSynthesizerHandler
@@ -98,6 +101,7 @@ class SchedulerComponents:
     reflection_writer_handler: ReflectionWriterHandler
     skill_synthesizer_handler: SkillSynthesizerHandler
     tool_outcome_miner_handler: ToolOutcomeMinerHandler
+    tool_revalidation_handler: ToolRevalidationHandler
     health_sweep_handler: HealthSweepHandler
     incident_escalation_handler: IncidentEscalationHandler
 
@@ -365,6 +369,18 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(tool_outcome_miner_handler)
 
+        # FX-09 — ToolRevalidationHandler quarantines learned tools with zero
+        # trustworthy successes. Previously invoked only from a manual CLI
+        # command (`stackowl db revalidate-tools`); a broken learned tool
+        # reloaded on every boot until an operator ran it by hand. Runs daily
+        # AFTER the outcome miner so it judges on the freshest trust counts.
+        from stackowl.scheduler.handlers.tool_revalidation_handler import (
+            ToolRevalidationHandler,
+        )
+
+        tool_revalidation_handler = ToolRevalidationHandler(db=db)
+        HandlerRegistry.instance().register(tool_revalidation_handler)
+
         # F-87 — periodic in-process HEALTH SWEEP. Health was detect-only / on
         # demand (only the out-of-process `stackowl health` CLI ran the
         # aggregator); nothing inside the running service ever noticed a subsystem
@@ -378,6 +394,7 @@ class SchedulerAssembly:
             memory_components.embedding_registry,
             memory_components.lancedb,
             memory_components.graph_health,
+            provider_registry,
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
@@ -929,6 +946,12 @@ class SchedulerAssembly:
             db, handler_name="tool_outcome_miner",
             schedule="daily@05:00", next_hour=5,
         )
+        # Tool revalidation runs daily at 05:30 — deliberately after the 05:00
+        # outcome miner so it judges learned tools on the freshest trust counts.
+        await _seed_daily_schedule(
+            db, handler_name="tool_revalidation",
+            schedule="daily@05:30", next_hour=5,
+        )
 
         log.scheduler.info("[scheduler] assembly.build: exit — all wired")
         return SchedulerComponents(
@@ -943,6 +966,7 @@ class SchedulerAssembly:
             reflection_writer_handler=reflection_writer_handler,
             skill_synthesizer_handler=skill_synthesizer_handler,
             tool_outcome_miner_handler=tool_outcome_miner_handler,
+            tool_revalidation_handler=tool_revalidation_handler,
             health_sweep_handler=health_sweep_handler,
             incident_escalation_handler=incident_escalation_handler,
         )
@@ -954,6 +978,7 @@ def _build_health_aggregator(
     embedding_registry: EmbeddingRegistry | None = None,
     lancedb_adapter: LanceDBAdapter | None = None,
     graph_contributor: GraphContributor | None = None,
+    provider_registry: ProviderRegistry | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -994,6 +1019,16 @@ def _build_health_aggregator(
     ``None`` falls back to the old import-only ``GraphContributor.probe()`` (no
     caller passes ``None`` today, but this keeps the function's own default
     behaviour self-contained).
+
+    ``provider_registry`` (FX-03) is the LIVE, in-process :class:`ProviderRegistry`
+    — unlike the per-provider ``ProviderContributor`` above (a synthetic
+    connectivity probe against a possibly-different endpoint), this registry
+    already implements the contributor shape itself and its ``health_check``
+    reports "degraded" when a REAL circuit breaker is OPEN — the actual traffic
+    health signal FX-01's cause-aware recovery feeds, not a synthetic ping. Both
+    are registered; they check different things. ``None`` skips registration,
+    same pattern as ``embedding_registry``/``lancedb_adapter`` (no live registry
+    threaded through, e.g. an early-boot caller).
     """
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
@@ -1019,6 +1054,10 @@ def _build_health_aggregator(
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))
+    if provider_registry is not None:
+        # FX-03 — the live circuit-breaker signal (real traffic health),
+        # complementary to the synthetic per-provider probes just registered.
+        agg.register(provider_registry)
     # RC0 — telegram receive-loop liveness. Only registered when telegram is
     # configured, else it would falsely report "down" for a channel the operator
     # never enabled. Reads the cross-process channel_liveness row.

@@ -69,6 +69,9 @@ class CostTracker(OwnedRepository):
         daily_limit_usd: float | None = None,
         pricing: PricingLoader | None = None,
         owner_id: str = DEFAULT_PRINCIPAL_ID,
+        *,
+        notify_channel: str | None = None,
+        notify_target: str | int | None = None,
     ) -> None:
         log.engine.debug(
             "[cost_tracker] init: entry",
@@ -78,6 +81,15 @@ class CostTracker(OwnedRepository):
         self._bus: EventBus = event_bus
         self._daily_limit_usd: float | None = daily_limit_usd
         self._pricing: PricingLoader = pricing or PricingLoader()
+        # FX-10 — the owner's resolved durable recipient (see
+        # notifications.recipient.resolve_owner_addresses), pre-resolved ONCE by
+        # the caller. budget_exceeded/budget_80pct_alert are owner-GLOBAL alerts
+        # with no per-event recipient, so this is the one place to attach it.
+        # None (default) means unresolved — the event still emits (unchanged
+        # behavior) but carries no message/target, so EventDeliveryBridge's
+        # honest-recipient rail drops it rather than guessing.
+        self._notify_channel = notify_channel
+        self._notify_target = notify_target
         self._warned_dates: set[str] = set()
         self._exceeded_dates: set[str] = set()
         # E8-S0cost — BOUNDED in-memory per-trace running total (USD). Updated on
@@ -203,7 +215,13 @@ class CostTracker(OwnedRepository):
             return
         summary = await self.daily_total(date)
         ratio = summary.total_usd / limit if limit > 0 else 0.0
-        payload = {"current_usd": summary.total_usd, "limit_usd": limit}
+        payload: dict[str, object] = {"current_usd": summary.total_usd, "limit_usd": limit}
+        # FX-10 — attach message/channel/target when a recipient is resolved, so
+        # EventDeliveryBridge (event_bridge.py) can actually deliver this instead
+        # of dropping it at the honest-recipient rail.
+        if self._notify_channel is not None and self._notify_target is not None:
+            payload["channel"] = self._notify_channel
+            payload["target"] = self._notify_target
         if summary.total_usd >= limit and date not in self._exceeded_dates:
             self._exceeded_dates.add(date)
             log.engine.error(
@@ -216,7 +234,10 @@ class CostTracker(OwnedRepository):
                     }
                 },
             )
-            self._bus.emit("budget_exceeded", payload)
+            self._bus.emit("budget_exceeded", {
+                **payload,
+                "message": f"Daily LLM budget exceeded: ${summary.total_usd:.2f} / ${limit:.2f}",
+            })
         elif ratio >= _BUDGET_WARN_RATIO and date not in self._warned_dates:
             self._warned_dates.add(date)
             log.engine.warning(
@@ -231,7 +252,13 @@ class CostTracker(OwnedRepository):
                     }
                 },
             )
-            self._bus.emit("budget_80pct_alert", payload)
+            self._bus.emit("budget_80pct_alert", {
+                **payload,
+                "message": (
+                    f"Daily LLM budget at {ratio * 100:.0f}%: "
+                    f"${summary.total_usd:.2f} / ${limit:.2f}"
+                ),
+            })
 
     async def daily_total(self, date: str | None = None) -> DailySummary:
         """Aggregate cost_records for the given date (default: today UTC)."""

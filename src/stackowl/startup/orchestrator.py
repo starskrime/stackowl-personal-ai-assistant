@@ -1228,9 +1228,16 @@ class StartupOrchestrator:
         # per-turn budget. The daily hard cap stays on this same tracker. The guard
         # fails OPEN (never wedges a turn) and is interactive-only.
         from stackowl.interaction.cost_pause import CostPauseGuard
+        from stackowl.notifications.recipient import resolve_owner_addresses
         from stackowl.providers.cost_tracker import CostTracker
         from stackowl.providers.pricing.loader import PricingLoader
 
+        # FX-10 — resolve the owner's durable telegram recipient ONCE so
+        # budget_exceeded/budget_80pct_alert can actually reach them via
+        # EventDeliveryBridge instead of being dropped as unaddressed. Unresolved
+        # (no single allowed telegram user) leaves both None — byte-identical
+        # to today's behavior (events still emit, just carry no target).
+        _budget_addrs = resolve_owner_addresses(self._settings, ["telegram"])
         cost_tracker = CostTracker(
             db=db_pool,
             event_bus=event_bus,
@@ -1240,6 +1247,8 @@ class StartupOrchestrator:
             pricing=PricingLoader(
                 unknown_cloud_per_1m_usd=self._settings.budget.unknown_cloud_per_1m_usd,
             ),
+            notify_channel="telegram" if "telegram" in _budget_addrs else None,
+            notify_target=_budget_addrs.get("telegram"),
         )
         # E8-S0cost — make providers the SINGLE cost-recording site: inject the ONE
         # shared tracker into every provider so a turn's REAL main-pipeline spend

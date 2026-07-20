@@ -26,7 +26,12 @@ from stackowl.exceptions import (
     ProviderError,
     TurnStopped,
 )
-from stackowl.providers._resilient_round import is_provider_fault, resilient_round
+from stackowl.providers._resilient_round import (
+    FailureCause,
+    classify_failure_cause,
+    is_provider_fault,
+    resilient_round,
+)
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
 from stackowl.providers.rate_limiter import RateLimiter
 
@@ -117,6 +122,78 @@ async def test_is_provider_fault_wrapped_sdk_error() -> None:
     assert is_provider_fault(ProviderError("p", _Boom())) is True
     # ...but wrapping an empty-choices ValueError is NOT.
     assert is_provider_fault(ProviderError("p", ValueError("empty choices"))) is False
+
+
+# --------------------------------------------------------------------------- #
+# FX-01 — cause classification names WHY, not just whether it's a fault.
+# --------------------------------------------------------------------------- #
+
+
+async def test_classify_failure_cause_rate_limit() -> None:
+    class _TooManyRequests(Exception):
+        status_code = 429
+
+    assert classify_failure_cause(_TooManyRequests()) is FailureCause.RATE_LIMIT
+
+
+async def test_classify_failure_cause_server_5xx() -> None:
+    class _ServerError(Exception):
+        status_code = 503
+
+    assert classify_failure_cause(_ServerError()) is FailureCause.SERVER_5XX
+
+
+async def test_classify_failure_cause_transport() -> None:
+    assert classify_failure_cause(ConnectionError("dropped")) is FailureCause.TRANSPORT
+
+
+async def test_classify_failure_cause_auth_is_not_a_breaker_fault() -> None:
+    """A non-429 4xx from a real SDK error is AUTH — named, but still excluded
+    from is_provider_fault (retrying a bad credential/request can't self-heal)."""
+    import anthropic
+    import httpx
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    exc = anthropic.APIError("bad request", request, body=None)
+    exc.status_code = 401  # type: ignore[attr-defined]
+    assert classify_failure_cause(exc) is FailureCause.AUTH
+    assert is_provider_fault(exc) is False
+
+
+async def test_classify_failure_cause_not_a_fault_for_control_flow() -> None:
+    assert classify_failure_cause(TurnStopped("req-1")) is FailureCause.NOT_A_FAULT
+    assert classify_failure_cause(ValueError("malformed")) is FailureCause.NOT_A_FAULT
+
+
+async def test_resilient_round_penalizes_limiter_on_rate_limit() -> None:
+    """A classified RATE_LIMIT failure shrinks the limiter's effective rate."""
+
+    class _TooManyRequests(Exception):
+        status_code = 429
+
+    breaker = CircuitBreaker(provider_name="p", failure_threshold=3)
+    limiter = RateLimiter(provider_name="p", capacity=5, refill_rate=1.0)
+    assert limiter._penalty_until == 0.0
+
+    with pytest.raises(_TooManyRequests):
+        await resilient_round(breaker, limiter, _raiser(_TooManyRequests()))
+
+    assert limiter._penalty_until > 0.0, "RATE_LIMIT failure did not penalize the limiter"
+
+
+async def test_resilient_round_does_not_penalize_limiter_on_server_error() -> None:
+    """A SERVER_5XX (real outage) failure must NOT trigger the pacing penalty."""
+
+    class _ServerError(Exception):
+        status_code = 503
+
+    breaker = CircuitBreaker(provider_name="p", failure_threshold=3)
+    limiter = RateLimiter(provider_name="p", capacity=5, refill_rate=1.0)
+
+    with pytest.raises(_ServerError):
+        await resilient_round(breaker, limiter, _raiser(_ServerError()))
+
+    assert limiter._penalty_until == 0.0
 
 
 # --------------------------------------------------------------------------- #

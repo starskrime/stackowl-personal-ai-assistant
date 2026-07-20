@@ -17,7 +17,9 @@ import re
 import time
 from dataclasses import dataclass
 
+from stackowl.infra import hydrated_tools
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolResult
 
@@ -153,6 +155,10 @@ class ToolSearchTool(Tool):
         if ranked:
             lines = [f"- {e.name}: {e.description.splitlines()[0] if e.description else ''}" for e in ranked]
             output = "\n".join(lines)
+            # FX-07 — promote these hits into the NEXT turn's presented schema
+            # (see pipeline/steps/execute.py's build_tool_schemas) instead of
+            # making the model re-discover the same tool every turn.
+            hydrated_tools.record(TraceContext.get()["session_id"], [e.name for e in ranked])
         else:
             # Distinguish "catalog empty" from "catalog had tools but none matched"
             # so a debugging operator can tell a wiring gap from a genuine miss.

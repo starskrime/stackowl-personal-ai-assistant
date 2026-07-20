@@ -50,6 +50,9 @@ class _FakeContext:
     async def close(self) -> None:
         pass
 
+    async def route(self, pattern: str, handler: Any) -> None:
+        pass  # FX-05 — real BrowserContext.route(); this suite doesn't assert wiring.
+
 
 class _FakeRuntime:
     available = True

@@ -14,6 +14,13 @@ from stackowl.infra.observability import log
 
 T = TypeVar("T")
 
+# FX-02 — a stuck-OPEN provider was probed on a fixed 30s metronome forever,
+# hammering a still-dead endpoint at the same rate whether it's been down 30s
+# or 30 minutes. Doubling the window on each failed HALF_OPEN probe (reset to
+# base on the next success) spaces probes out for a genuinely prolonged outage
+# without touching the CLOSED->OPEN threshold logic below.
+_HALF_OPEN_BACKOFF_CAP_SECONDS = 900.0
+
 
 class CircuitState(enum.Enum):
     """Three-state circuit breaker state."""
@@ -56,6 +63,9 @@ class CircuitBreaker:
         self._failure_threshold = failure_threshold
         self._window_seconds = float(window_seconds)
         self._half_open_seconds = float(half_open_seconds)
+        # Mutable current backoff window (FX-02) — starts at the base and grows
+        # on repeated failed probes; _half_open_seconds itself stays the base/floor.
+        self._current_half_open_seconds = self._half_open_seconds
         self._clock: Clock = clock
         self._state: CircuitState = CircuitState.CLOSED
         self._failures: deque[float] = deque()
@@ -87,7 +97,7 @@ class CircuitBreaker:
         if self._state is not CircuitState.OPEN or self._opened_at is None:
             return 0.0
         elapsed = self._clock.monotonic() - self._opened_at
-        remaining = self._half_open_seconds - elapsed
+        remaining = self._current_half_open_seconds - elapsed
         return max(0.0, remaining)
 
     async def call(self, coro: Awaitable[T]) -> T:
@@ -198,7 +208,7 @@ class CircuitBreaker:
         if self._state is not CircuitState.OPEN or self._opened_at is None:
             return
         elapsed = self._clock.monotonic() - self._opened_at
-        if elapsed >= self._half_open_seconds:
+        if elapsed >= self._current_half_open_seconds:
             log.engine.warning(
                 "[circuit] state transition OPEN -> HALF_OPEN",
                 extra={
@@ -213,9 +223,20 @@ class CircuitBreaker:
     def _record_failure(self) -> None:
         now = self._clock.monotonic()
         if self._state is CircuitState.HALF_OPEN:
+            # FX-02 — a failed probe means the outage is still live; double the
+            # next cooldown (capped) instead of re-probing on the same fixed
+            # cadence forever.
+            self._current_half_open_seconds = min(
+                self._current_half_open_seconds * 2, _HALF_OPEN_BACKOFF_CAP_SECONDS,
+            )
             log.engine.warning(
                 "[circuit] state transition HALF_OPEN -> OPEN (probe failed)",
-                extra={"_fields": {"provider": self._provider_name}},
+                extra={
+                    "_fields": {
+                        "provider": self._provider_name,
+                        "next_half_open_seconds": self._current_half_open_seconds,
+                    }
+                },
             )
             self._state = CircuitState.OPEN
             self._opened_at = now
@@ -243,6 +264,10 @@ class CircuitBreaker:
 
     def _record_success(self, prior_state: CircuitState) -> None:
         if prior_state is CircuitState.HALF_OPEN:
+            # FX-02 — a healthy probe means the outage is over; reset the
+            # backoff window to base so the NEXT open (a fresh, unrelated
+            # incident) doesn't inherit this one's escalated cooldown.
+            self._current_half_open_seconds = self._half_open_seconds
             log.engine.warning(
                 "[circuit] state transition HALF_OPEN -> CLOSED (probe succeeded)",
                 extra={"_fields": {"provider": self._provider_name}},

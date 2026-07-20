@@ -33,38 +33,29 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # telemetry events (e.g. ``morning_brief_rendered``, ``settings_reloaded``) are
 # deliberately ABSENT — they must never drive a user-facing send.
 #
-# It is currently EMPTY — and this is an INTENTIONAL, REASONED deferral (F-78),
-# not an oversight:
 #   * ``website_watch.changed`` is delivered via the DURABLE exactly-once seam
 #     (the handler calls ``ProactiveJobDeliverer.deliver_for_job`` directly), not
 #     this unledgered bridge — so it is no longer routed here (WS-D).
 #   * ``perch.file_landed`` is dead v1 vocabulary — no module/emitter exists.
 #
-# WHY no other already-published event can be wired here WITHOUT a publisher
-# change: the deliver seam this bridge funnels through (see
-# :meth:`EventDeliveryBridge._build_notification`) requires every event payload
-# to carry a non-``message`` body AND an explicit channel-native ``target`` — the
-# "honest recipient" C1 invariant forbids guessing the recipient (no ``_last_*``
-# fallback). The genuinely-proactive events that ARE published today carry domain
-# payloads with NEITHER:
-#   * ``budget_exceeded`` / ``budget_80pct_alert`` (cost_tracker) — payload is
-#     ``{"current_usd": ..., "limit_usd": ...}`` (no message, no target). These
-#     have no bus subscriber at all, so a real proactive gap exists, BUT they are
-#     owner-GLOBAL alerts with no per-event recipient.
-#   * ``parliament.completed`` (orchestrator) — payload is a bare ``session_id``.
-# Routing any of these through this seam UNCHANGED would drop every event at the
-# recipient rail. The honest UNBLOCK contract: a publisher must include a
-# resolvable channel-native ``target`` (and a ``message``) in its payload — or
-# route via the durable exactly-once seam, as ``website_watch`` does. Until then
-# the bridge stays dormant (registers no subscriptions, logs a clean state) and
-# the machinery is kept intact + unit-tested for that future event.
-_ALLOWED_EVENTS: frozenset[str] = frozenset()
-# Concrete proactive-event candidates that exist today but CANNOT ride this seam
-# unchanged (see the rationale above). Tracked as a named constant so the
-# deferral is explicit + regression-pinned rather than an undocumented gap.
-_DEFERRED_PROACTIVE_CANDIDATES: frozenset[str] = frozenset(
-    {"budget_exceeded", "budget_80pct_alert", "parliament.completed"}
-)
+# FX-10 — ``budget_exceeded``/``budget_80pct_alert`` UNBLOCKED: CostTracker
+# (providers/cost_tracker.py) now accepts a pre-resolved owner recipient
+# (``notify_channel``/``notify_target``, wired at construction in
+# startup/orchestrator.py via ``resolve_owner_addresses``) and attaches
+# ``message``/``channel``/``target`` to the payload when one resolves — the
+# honest-recipient rail below still drops the event if it doesn't (e.g. no
+# single allowed telegram user configured), same as any other producer.
+_ALLOWED_EVENTS: frozenset[str] = frozenset({"budget_exceeded", "budget_80pct_alert"})
+# ``parliament.completed`` (orchestrator) stays DEFERRED — its payload is a bare
+# ``session_id`` (not a dict; _build_notification would drop it as malformed),
+# and unlike the budget alerts it has no obvious single recipient: a session
+# triggered by a live interactive turn already delivers its result through the
+# normal turn path, so ping-ing the owner again here would double-notify. Only
+# an autonomous/scheduled parliament session (no live turn watching) plausibly
+# wants this, which needs the orchestrator to know its own trigger kind before
+# emitting — a real design decision, not a mechanical unblock. Left for a
+# follow-up rather than guessed at here.
+_DEFERRED_PROACTIVE_CANDIDATES: frozenset[str] = frozenset({"parliament.completed"})
 _DEFAULT_CATEGORY = "proactive_event"
 # Bound concurrent event-driven sends so an event burst cannot fan out unbounded.
 _MAX_INFLIGHT = 16
@@ -86,9 +77,10 @@ class EventDeliveryBridge:
     def register(self, bus: EventBus) -> None:
         """Subscribe this bridge's async handler for every allow-listed event.
 
-        With an EMPTY allow-list (the current state — see ``_ALLOWED_EVENTS``) this
-        is a clean DORMANT no-op: nothing is subscribed and the log says so plainly
-        rather than claiming "subscribed N events".
+        An EMPTY allow-list (e.g. every candidate still deferred — see
+        ``_ALLOWED_EVENTS``/``_DEFERRED_PROACTIVE_CANDIDATES``) is a clean
+        DORMANT no-op: nothing is subscribed and the log says so plainly rather
+        than claiming "subscribed N events".
         """
         log.notifications.debug(
             "[notifications] event_bridge.register: entry",

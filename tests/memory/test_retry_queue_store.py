@@ -12,9 +12,19 @@ import asyncio
 import pytest
 
 from stackowl.db.pool import DbPool
-from stackowl.memory.retry_queue_store import RetryQueueStore
+from stackowl.memory.retry_queue_store import RetryQueueStore, _retry_delay_minutes
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_retry_delay_minutes_doubles_and_caps() -> None:
+    """FX-02: 1, 2, 4, 8 minutes, then held at the 10-minute cap."""
+    assert _retry_delay_minutes(1) == 1
+    assert _retry_delay_minutes(2) == 2
+    assert _retry_delay_minutes(3) == 4
+    assert _retry_delay_minutes(4) == 8
+    assert _retry_delay_minutes(5) == 10  # would be 16 uncapped
+    assert _retry_delay_minutes(20) == 10
 
 
 async def test_insert_pending_then_get_due_returns_deserialized_row(tmp_db: DbPool) -> None:
@@ -128,6 +138,33 @@ async def test_mark_attempt_failed_reaches_cap_at_three_attempts(tmp_db: DbPool)
     )
     assert row.status == "failed"
     assert row.attempt_count == 3
+
+
+async def test_mark_attempt_failed_next_retry_at_grows_with_attempt_count(
+    tmp_db: DbPool,
+) -> None:
+    """FX-02: the re-arm delay after the 2nd failure is longer than after the 1st."""
+    from datetime import UTC, datetime
+
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-backoff", session_id="sess-1", goal="do the thing",
+        banned_capabilities=[],
+    )
+
+    before_first = datetime.now(UTC)
+    row = await store.mark_attempt_failed(
+        retry_id=retry_id, newly_failed_capability="a", error="boom-1",
+    )
+    first_delay = datetime.fromisoformat(row.next_retry_at) - before_first
+
+    before_second = datetime.now(UTC)
+    row = await store.mark_attempt_failed(
+        retry_id=retry_id, newly_failed_capability="b", error="boom-2",
+    )
+    second_delay = datetime.fromisoformat(row.next_retry_at) - before_second
+
+    assert second_delay > first_delay
 
 
 async def test_mark_attempt_failed_missing_row_raises_value_error(tmp_db: DbPool) -> None:

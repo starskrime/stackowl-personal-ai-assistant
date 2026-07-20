@@ -24,7 +24,7 @@ from stackowl.exceptions import (
     ToolUseUnsupportedError,
     TurnStopped,
 )
-from stackowl.infra import recovery_context, tool_outcome_ledger
+from stackowl.infra import hydrated_tools, recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.reversibility_resolver import (
@@ -998,6 +998,11 @@ async def _run_with_tools(
     # envelope, restrict the presented set to plan ∪ discovery (drift
     # prevention). None envelope → restrict_to=None → byte-for-byte S2.
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
+    # FX-07 — tools surfaced by tool_search earlier this session get promoted
+    # into this turn's presented set instead of the model re-discovering the
+    # same tool by name every turn. Session-scoped, not turn-scoped (survives
+    # across turns) — see infra/hydrated_tools.py.
+    _hydrated = hydrated_tools.get(state.session_id)
     _fixed_cost = _est_tokens(state.system_prompt) + sum(
         _est_tokens(getattr(m, "content", "")) for m in state.history
     )
@@ -1026,11 +1031,12 @@ async def _run_with_tools(
         _window = await _resolve_execute_window(state, prov)
         if restrict_to is not None:
             schemas = tool_registry.to_provider_schema(
-                prov.protocol, profile=profile, pins=pins, restrict_to=restrict_to
+                prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
+                restrict_to=restrict_to,
             )
         else:
             schemas = tool_registry.to_provider_schema(
-                prov.protocol, profile=profile, pins=pins,
+                prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
                 request_text=state.input_text,
                 budget={
                     "window": _window,

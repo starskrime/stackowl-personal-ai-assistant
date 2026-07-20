@@ -16,16 +16,17 @@ resolver / proxy egress — a fast-follow for the fetch layer, not this guard.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import socket
 from collections.abc import Callable
-from typing import NoReturn
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 from stackowl.exceptions import StackOwlError
 from stackowl.infra.observability import log
 
-__all__ = ["SsrfBlockedError", "SsrfGuard"]
+__all__ = ["SsrfBlockedError", "SsrfGuard", "guard_playwright_navigation"]
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 # RFC 6598 carrier-grade NAT — NOT flagged by ipaddress.is_private on every
@@ -181,3 +182,45 @@ class SsrfGuard:
             "[ssrf] validate: BLOCKED", extra={"_fields": {"reason": reason}},
         )
         raise SsrfBlockedError(url, reason)
+
+
+#: FX-05 — shared default so every caller re-validates against the same policy
+#: unless it has a reason to inject its own (tests, a non-default allow_private).
+_DEFAULT_GUARD = SsrfGuard()
+
+
+async def guard_playwright_navigation(route: Any, *, guard: SsrfGuard | None = None) -> None:
+    """Playwright route handler: re-validate every navigation/redirect hop.
+
+    A pre-flight check on the initial URL is not enough — a public page can
+    302 to ``http://169.254.169.254/`` (or DNS-rebind an allowed hostname to an
+    internal IP) and the browser would follow it. Aborts any navigation
+    (including redirect targets) whose URL fails the SSRF policy;
+    non-navigation subresources pass through. Fails closed on error.
+
+    Originally ``web_fetch``-only (E0-S2); shared here (FX-05) so the
+    interactive ``browser_*`` session gets the same real IP-level defense
+    instead of relying solely on its hostname allowlist (``is_domain_allowed``),
+    which cannot see a redirect or DNS-rebind to an internal address.
+    """
+    g = guard or _DEFAULT_GUARD
+    request = route.request
+    try:
+        if request.is_navigation_request():
+            ok, reason = g.is_allowed(request.url)
+            if not ok:
+                log.tool.warning(
+                    "[ssrf] guard_playwright_navigation: blocked navigation/redirect",
+                    extra={"_fields": {"url": request.url, "reason": reason}},
+                )
+                await route.abort()
+                return
+    except Exception as exc:
+        log.tool.warning(
+            "[ssrf] guard_playwright_navigation: guard error — aborting (fail closed)",
+            exc_info=exc,
+        )
+        with contextlib.suppress(Exception):
+            await route.abort()
+        return
+    await route.continue_()

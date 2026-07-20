@@ -329,6 +329,40 @@ async def test_cost_tracker_emits_80pct_alert(tmp_db: DbPool) -> None:
     assert payload["current_usd"] > 0
 
 
+async def test_cost_tracker_budget_events_carry_no_recipient_by_default(
+    tmp_db: DbPool,
+) -> None:
+    """FX-10: without notify_channel/notify_target wired, the emitted payload
+    has no message/channel/target — unchanged, honest, un-guessed behavior."""
+    tracker, events = _make_tracker(tmp_db, limit=0.050)
+    await tracker.record("anth", "claude-opus-4-7", 1000, 1000, 1.0)
+    payload = next(p for k, p in events if k == "exceeded")
+    assert "channel" not in payload
+    assert "target" not in payload
+
+
+async def test_cost_tracker_budget_exceeded_carries_recipient_when_resolved(
+    tmp_db: DbPool,
+) -> None:
+    """FX-10: with notify_channel/notify_target wired, the payload carries a
+    message + the resolved channel/target — the shape EventDeliveryBridge needs
+    to actually deliver instead of dropping."""
+    bus = EventBus()
+    events: list[dict[str, Any]] = []
+    bus.subscribe("budget_exceeded", lambda p: events.append(p))
+    tracker = CostTracker(
+        db=tmp_db, event_bus=bus, daily_limit_usd=0.050,
+        notify_channel="telegram", notify_target=12345,
+    )
+    await tracker.record("anth", "claude-opus-4-7", 1000, 1000, 1.0)
+
+    assert len(events) == 1
+    assert events[0]["channel"] == "telegram"
+    assert events[0]["target"] == 12345
+    assert "12345" not in events[0]["message"]  # message is human text, not the id
+    assert "budget" in events[0]["message"].lower()
+
+
 async def test_cost_tracker_emits_exceeded_and_blocks_next(tmp_db: DbPool) -> None:
     tracker, events = _make_tracker(tmp_db, limit=0.050)
     # single call: 0.090 > 0.050 → exceeded

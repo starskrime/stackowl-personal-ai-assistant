@@ -106,8 +106,13 @@ async def test_probe_that_raises_releases_flag_no_permanent_wedge() -> None:
     assert breaker.state is CircuitState.OPEN
     assert breaker._probe_in_flight is False  # the wedge guard
 
-    # Re-enter HALF_OPEN; a fresh probe must again be admitted (no permanent wedge).
+    # FX-02: a failed probe doubles the next cooldown (30s -> 60s), so the old
+    # +31s isn't enough to re-enter HALF_OPEN this time.
     clock.advance(31.0)
+    assert breaker.state is CircuitState.OPEN
+    # Re-enter HALF_OPEN once the doubled window elapses; a fresh probe must
+    # again be admitted (no permanent wedge).
+    clock.advance(30.0)
     assert breaker.state is CircuitState.HALF_OPEN
 
     async def _ok() -> str:
@@ -115,3 +120,56 @@ async def test_probe_that_raises_releases_flag_no_permanent_wedge() -> None:
 
     assert await resilient_round(breaker, None, _ok, is_provider_fault=_fault) == "good"
     assert breaker.state is CircuitState.CLOSED
+
+
+async def test_half_open_backoff_doubles_on_repeated_probe_failures_and_caps() -> None:
+    """FX-02: each failed HALF_OPEN probe doubles the next cooldown, capped."""
+    clock = _ManualClock(0.0)
+    breaker = CircuitBreaker(
+        provider_name="p", failure_threshold=3, half_open_seconds=30, clock=clock
+    )
+    await _open(breaker)
+
+    # 1st probe fails: cooldown 30 -> 60.
+    clock.advance(31.0)
+    assert breaker.state is CircuitState.HALF_OPEN
+    await breaker.record(ok=False)
+    assert breaker.state is CircuitState.OPEN
+    assert breaker._current_half_open_seconds == 60.0
+
+    # 2nd probe fails: cooldown 60 -> 120.
+    clock.advance(61.0)
+    assert breaker.state is CircuitState.HALF_OPEN
+    await breaker.record(ok=False)
+    assert breaker._current_half_open_seconds == 120.0
+
+    # Repeated failures keep doubling but never exceed the cap.
+    for _ in range(10):
+        clock.advance(breaker._current_half_open_seconds + 1.0)
+        assert breaker.state is CircuitState.HALF_OPEN
+        await breaker.record(ok=False)
+    assert breaker._current_half_open_seconds == 900.0
+
+
+async def test_half_open_backoff_resets_to_base_after_success() -> None:
+    """FX-02: a successful probe resets the window so the NEXT incident starts fresh."""
+    clock = _ManualClock(0.0)
+    breaker = CircuitBreaker(
+        provider_name="p", failure_threshold=3, half_open_seconds=30, clock=clock
+    )
+    await _open(breaker)
+
+    clock.advance(31.0)
+    await breaker.record(ok=False)  # cooldown now 60s
+    assert breaker._current_half_open_seconds == 60.0
+
+    clock.advance(61.0)
+    await breaker.record(ok=True)  # probe succeeds -> CLOSED, window resets
+    assert breaker.state is CircuitState.CLOSED
+    assert breaker._current_half_open_seconds == 30.0
+
+    # A fresh, unrelated outage opens the breaker again and starts at base (30s),
+    # not the previous incident's escalated 60s.
+    await _open(breaker)
+    clock.advance(31.0)
+    assert breaker.state is CircuitState.HALF_OPEN

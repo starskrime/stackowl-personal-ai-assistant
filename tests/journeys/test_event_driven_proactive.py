@@ -7,10 +7,14 @@ never a parallel send path. The class is kept intact for future bus-native event
 WS-D update: ``website_watch.changed`` is now delivered via the DURABLE
 exactly-once seam (the handler calls ``ProactiveJobDeliverer.deliver_for_job``
 directly), NOT this unledgered bridge — so it is removed from the allow-list. The
-v1 ``perch.file_landed`` event has no emitter anywhere and is removed too. The
-allow-list is therefore EMPTY: the bridge registers no subscriptions and logs a
-clean dormant state (it must NOT claim to have subscribed N events). These tests
-pin that dormant-but-correct behaviour and the still-intact deliver mechanics.
+v1 ``perch.file_landed`` event has no emitter anywhere and is removed too.
+
+FX-10 update: ``budget_exceeded``/``budget_80pct_alert`` are UNBLOCKED —
+CostTracker now attaches ``message``/``channel``/``target`` to the payload when
+a recipient resolves (see providers/cost_tracker.py, startup/orchestrator.py),
+so they ride this seam for real. ``parliament.completed`` stays deferred (see
+``_DEFERRED_PROACTIVE_CANDIDATES``'s own comment for why). These tests pin the
+allow-list's exact membership and the still-intact deliver mechanics.
 """
 
 from __future__ import annotations
@@ -61,28 +65,26 @@ async def test_perch_file_landed_is_removed_dead_vocabulary() -> None:
 
 
 async def test_proactive_candidates_are_intentionally_deferred_not_subscribed() -> None:
-    """F-78: the genuinely-proactive events that ARE published today (budget
-    alerts, parliament.completed) are DELIBERATELY not on the allow-list.
-
-    They carry domain payloads with no ``message`` and no channel-native
-    ``target``, so routing them through the deliver seam unchanged would drop
-    every event at the bridge's honest-recipient rail. This pins that deferral as
-    an explicit, reasoned decision rather than an undocumented gap — the unblock
-    contract is documented at ``_ALLOWED_EVENTS``."""
+    """FX-10: ``parliament.completed`` stays DELIBERATELY off the allow-list —
+    its payload is a bare session_id (not a dict), and unlike the now-unblocked
+    budget alerts it has no single obvious recipient (see the deferral comment
+    at ``_DEFERRED_PROACTIVE_CANDIDATES``). This pins that as an explicit,
+    reasoned decision rather than an undocumented gap."""
     assert _DEFERRED_PROACTIVE_CANDIDATES, "the deferral rationale must name candidates"
     # None of the deferred candidates may be silently subscribed.
     assert _DEFERRED_PROACTIVE_CANDIDATES.isdisjoint(_ALLOWED_EVENTS)
 
 
-async def test_empty_allowlist_subscribes_nothing_and_does_not_crash() -> None:
-    """With an empty allow-list the bridge registers cleanly (dormant), no subs."""
+async def test_allowlist_subscribes_exactly_the_unblocked_budget_events() -> None:
+    """FX-10: budget_exceeded/budget_80pct_alert are the only production events
+    on the allow-list today; registering subscribes exactly those two."""
     bus = _RecordingBus()
     deliverer = _RecordingDeliverer()
     bridge = EventDeliveryBridge(deliverer=deliverer)  # type: ignore[arg-type]
 
     bridge.register(bus)  # must not raise
 
-    assert bus.subscribed_events == [], "no allow-listed events → no subscriptions"
+    assert set(bus.subscribed_events) == {"budget_exceeded", "budget_80pct_alert"}
 
 
 async def test_non_allowlisted_event_is_ignored() -> None:
@@ -121,6 +123,47 @@ async def test_bridge_deliver_mechanics_still_intact() -> None:
     assert getattr(notif, "message", None) == "hello"
     assert getattr(notif, "target", None) == 12345
     assert getattr(notif, "channel_name", None) == "telegram"
+
+
+async def test_budget_exceeded_delivers_when_recipient_resolved() -> None:
+    """FX-10 end-to-end: a budget_exceeded event WITH message/channel/target
+    (the shape CostTracker now emits when a recipient is resolved) actually
+    reaches the deliverer through the real allow-list + bridge, not a stub."""
+    bus = EventBus()
+    deliverer = _RecordingDeliverer()
+    bridge = EventDeliveryBridge(deliverer=deliverer)  # type: ignore[arg-type]
+    bridge.register(bus)
+
+    bus.emit(
+        "budget_exceeded",
+        {
+            "current_usd": 12.5, "limit_usd": 10.0,
+            "message": "Daily LLM budget exceeded: $12.50 / $10.00",
+            "channel": "telegram", "target": 12345,
+        },
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert len(deliverer.delivered) == 1
+    notif = deliverer.delivered[0]
+    assert getattr(notif, "target", None) == 12345
+    assert "12.50" in getattr(notif, "message", "")
+
+
+async def test_budget_exceeded_dropped_when_no_recipient_resolved() -> None:
+    """FX-10: the unchanged, unresolved-recipient case (no target) is still
+    honestly dropped, not guessed — CostTracker's own default when
+    resolve_owner_addresses finds no single owner."""
+    bus = EventBus()
+    deliverer = _RecordingDeliverer()
+    bridge = EventDeliveryBridge(deliverer=deliverer)  # type: ignore[arg-type]
+    bridge.register(bus)
+
+    bus.emit("budget_exceeded", {"current_usd": 12.5, "limit_usd": 10.0})
+    await asyncio.sleep(0)
+
+    assert deliverer.delivered == []
 
 
 async def test_sync_handler_still_runs_backcompat() -> None:

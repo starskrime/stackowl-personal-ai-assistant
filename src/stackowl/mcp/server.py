@@ -8,6 +8,7 @@ available to MCP clients (e.g. Claude Code).
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
@@ -111,9 +112,21 @@ class McpServer:
             return
         host = self._settings.host
         port = self._settings.port
+        if not self._settings.auth_token:
+            # FX-06 stage 1 — this transport has no interactive consent channel
+            # for an external client; an unset token means the exposed tool
+            # surface is reachable by anyone who can reach the port. Loud, not
+            # silent — existing unconfigured deployments still start (backward
+            # compatible), but the operator sees exactly why that's risky.
+            log.warning(
+                "mcp.server.start_sse: no auth_token configured — SSE transport "
+                "is UNAUTHENTICATED (any client reaching this host:port can call "
+                "exposed tools). Set mcp.auth_token to require Authorization: "
+                "Bearer <token>.",
+            )
         log.info(
             "mcp.server.start_sse: decision — binding SSE endpoint",
-            extra={"_fields": {"host": host, "port": port}},
+            extra={"_fields": {"host": host, "port": port, "authenticated": bool(self._settings.auth_token)}},
         )
         try:
             from mcp.server.sse import SseServerTransport  # type: ignore[import]
@@ -121,6 +134,15 @@ class McpServer:
             sse_transport = SseServerTransport("/sse")
 
             async def handle_sse(scope: Any, receive: Any, send: Any) -> None:
+                if not _sse_auth_ok(scope, self._settings.auth_token):
+                    log.warning(
+                        "mcp.server.start_sse: rejected SSE connection — missing/invalid bearer token",
+                    )
+                    from starlette.responses import PlainTextResponse
+
+                    response = PlainTextResponse("Unauthorized", status_code=401)
+                    await response(scope, receive, send)
+                    return
                 async with sse_transport.connect_sse(scope, receive, send) as (r, w):
                     await self._mcp_server.run(
                         r, w, self._mcp_server.create_initialization_options()
@@ -244,6 +266,27 @@ class McpServer:
             {"name": t.name, "description": t.description, "inputSchema": t.parameters}
             for t in self._exposure.filter_tools(self._registry.all())
         ]
+
+
+def _sse_auth_ok(scope: Any, expected_token: str | None) -> bool:
+    """Constant-time bearer-token check for the SSE transport (FX-06 stage 1).
+
+    ``expected_token`` is None when auth isn't configured — the caller
+    (``start_sse``) is responsible for the loud "unauthenticated" warning;
+    this returns True (byte-identical pass-through) so existing unconfigured
+    deployments keep working. Reads the raw ASGI ``scope["headers"]`` list
+    directly (bytes keys) rather than a framework Request object, since this
+    check runs before any request wrapper is constructed.
+    """
+    if not expected_token:
+        return True
+    headers = dict(scope.get("headers") or [])
+    raw = headers.get(b"authorization", b"").decode("latin-1")
+    prefix = "Bearer "
+    if not raw.startswith(prefix):
+        return False
+    presented = raw[len(prefix):]
+    return hmac.compare_digest(presented, expected_token)
 
 
 def _wire_handlers(

@@ -143,6 +143,21 @@ async def test_health_sweep_wired_with_live_db_and_provider_healers(
     assert "browser" not in healers  # flag OFF → browser not wired
 
 
+async def test_health_sweep_aggregator_includes_live_provider_registry(
+    tmp_db: DbPool,
+) -> None:
+    """FX-03 — the LIVE ProviderRegistry (real circuit-breaker state, distinct
+    from the synthetic per-provider ProviderContributor probes) must be
+    registered with the same aggregator the health sweep collects from, so a
+    persistently OPEN breaker reaches _alert_state and IncidentEscalationHandler."""
+    components = await _build(tmp_db, browser_runtime=_FakeBrowserRuntime())
+    names = [
+        c.contributor_name
+        for c in components.health_sweep_handler._aggregator._contributors
+    ]
+    assert "provider_registry" in names
+
+
 async def test_health_sweep_wires_embedding_registry_healer_and_contributor(
     tmp_db: DbPool,
 ) -> None:

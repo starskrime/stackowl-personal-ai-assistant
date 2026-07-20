@@ -14,6 +14,11 @@ from stackowl.tools.consent import ConsentPolicy, ConsentRequest, ConsentScope
 # it would declare itself dangerous yet skip the consent gate (E1-S4 / §17).
 _DANGEROUS_CONSENT_CATEGORIES = frozenset({"lock", "alarm", "destructive"})
 
+# FX-08 — below this many words, a description is thin enough that tool_search's
+# description-match term (weighted low relative to a name-match by explicit,
+# voted design) rarely fires. A lint threshold, not a hard requirement.
+_MIN_DESCRIPTION_WORDS = 15
+
 # Defensive cap on the summary shown in the consent prompt. A tool's
 # consent_summary() is supposed to be bounded already (E11 GAP-A), but the gate
 # truncates regardless so a buggy/hostile summary can never flood the prompt.
@@ -239,10 +244,40 @@ class ToolRegistry:
             self._tools[tool.name] = tool
             if source_name:
                 self._source_map.setdefault(source_name, []).append(tool.name)
+            self._lint_description(tool)
         log.tool.debug(
             "[tools] registry.register: tool registered",
             extra={"_fields": {"tool": tool.name, "source": source_name, "replace": replace}},
         )
+
+    def _lint_description(self, tool: Tool) -> None:
+        """FX-08 — warn (never reject) on a thin or duplicate tool description.
+
+        tool_search's lexical scorer weighs a description-match well below a
+        name-match (an explicit, voted-and-ported design — see
+        tools/meta/tool_search.py's field weights; NOT something this lint
+        second-guesses), so a tool with a short or copy-pasted description is
+        under-discoverable via tool_search. Surfacing that once, at
+        registration, is cheaper than debugging "the model never finds this
+        tool" later. Must be called under ``self._lock`` (reads ``self._tools``).
+        """
+        description = tool.description or ""
+        word_count = len(description.split())
+        if word_count < _MIN_DESCRIPTION_WORDS:
+            log.tool.warning(
+                "[tools] registry.register: thin tool description — "
+                "tool_search under-ranks short descriptions",
+                extra={"_fields": {"tool": tool.name, "word_count": word_count}},
+            )
+        if not description:
+            return
+        for existing_name, existing_tool in self._tools.items():
+            if existing_name != tool.name and existing_tool.description == description:
+                log.tool.warning(
+                    "[tools] registry.register: duplicate tool description",
+                    extra={"_fields": {"tool": tool.name, "duplicate_of": existing_name}},
+                )
+                break
 
     def unregister_by_source(self, source_name: str) -> int:
         """Remove all tools registered under source_name. Returns count removed."""

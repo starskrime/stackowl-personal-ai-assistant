@@ -9,8 +9,8 @@ from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any
 
-import yaml
 import pytest
+import yaml
 
 from stackowl.config.settings import Settings
 from stackowl.db.migrations.runner import MigrationRunner
@@ -38,6 +38,22 @@ def _restore_test_mode_guard() -> Generator[None, None, None]:
         yield
     finally:
         TestModeGuard._active = saved  # type: ignore[attr-defined]
+
+
+@pytest.fixture(autouse=True)
+def _reset_hydrated_tools() -> Generator[None]:
+    """Prevent the process-global HydratedToolStore (FX-07) from leaking a
+    session's hydrated tool names across tests — same rationale as
+    ``_restore_test_mode_guard``: many tests share ``session_id="test-session"``
+    via the ``trace_context`` fixture, and this store is keyed on that string.
+    """
+    from stackowl.infra import hydrated_tools
+
+    hydrated_tools._by_session.clear()
+    try:
+        yield
+    finally:
+        hydrated_tools._by_session.clear()
 
 
 @pytest.fixture()

@@ -7,6 +7,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -34,12 +35,54 @@ def _is_sensitive(key: str) -> bool:
     return any(fnmatch.fnmatch(k, p) for p in _SENSITIVE_PATTERNS)
 
 
+# FX-04 — the key-only check above misses a secret that's part of a VALUE under
+# an innocuous key: a rendered shell command logged as {"command": "curl -H
+# 'Authorization: Bearer sk-...'"} matches no sensitive key name at all. These
+# patterns catch the shape of the secret in the string content itself,
+# independent of what key it's filed under.
+_ENV_ASSIGN_RE = re.compile(
+    r"((?:api[_-]?key|token|password|secret)\s*[=:]\s*)\S+", re.IGNORECASE,
+)
+_SECRET_SHAPE_PATTERNS = (
+    re.compile(r"bearer\s+[a-z0-9._-]+", re.IGNORECASE),   # Authorization: Bearer <token>
+    re.compile(r"sk-[a-z0-9]{20,}", re.IGNORECASE),         # OpenAI/Anthropic-style secret keys
+    re.compile(r"akia[0-9a-z]{16}", re.IGNORECASE),         # AWS access key id
+    re.compile(r"gh[a-z]_[a-z0-9]{20,}", re.IGNORECASE),    # GitHub PAT (ghp_/gho_/ghu_/ghs_/ghr_)
+)
+#: Skip scanning short strings — no secret shape above is under this long, and
+#: it keeps the per-log-line cost negligible.
+_MIN_SCAN_LEN = 12
+
+
+def _redact_string(value: str) -> str:
+    if len(value) < _MIN_SCAN_LEN:
+        return value
+    redacted = _ENV_ASSIGN_RE.sub(r"\1***", value)
+    for pattern in _SECRET_SHAPE_PATTERNS:
+        redacted = pattern.sub("***", redacted)
+    return redacted
+
+
 def _clean_value(key: str, value: Any) -> Any:
     if _is_sensitive(key):
         return "***"
-    if isinstance(value, str) and value.startswith(("http://", "https://")):
-        p = urlparse(value)
-        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+    return _scan_value(value)
+
+
+def _scan_value(value: Any) -> Any:
+    """Recurse into nested dicts/lists and scan string content for secret-shaped
+    substrings (FX-04) — closes the gap where ``_clean_value``'s key-only check
+    can't see a secret hiding inside a value under an unrelated key.
+    """
+    if isinstance(value, dict):
+        return {k: _clean_value(k, v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scan_value(v) for v in value]
+    if isinstance(value, str):
+        if value.startswith(("http://", "https://")):
+            p = urlparse(value)
+            return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+        return _redact_string(value)
     return value
 
 

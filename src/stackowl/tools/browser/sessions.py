@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from stackowl.config.browser import BrowserSettings, ProxyConfig
+from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
 from stackowl.infra.observability import log
 from stackowl.tools.browser.runtime import CamoufoxRuntime
 
@@ -279,6 +280,16 @@ class BrowserSessionRegistry:
             ctx = await self._runtime.open_context(
                 owner_key=owner_key, profile_name=profile_name, proxy=proxy,
             )
+            # FX-05 — the hostname allowlist (is_domain_allowed, browse.py) only
+            # gates the URL the inner agent explicitly asked for; it can't see a
+            # same-domain redirect or DNS-rebind to an internal address. Every
+            # interactive session gets the same IP-level SSRF re-validation
+            # web_fetch already does per navigation/redirect hop. Deliberately
+            # NOT wrapped in a swallow: failing to attach a security guard must
+            # fail the session open, not silently hand back an unguarded context
+            # (same "fail closed, not fail silent" posture as open_context's own
+            # errors above, which already propagate through this try).
+            await ctx.route("**/*", guard_playwright_navigation)
             session_id = uuid.uuid4().hex
             sess = BrowserSession(
                 session_id=session_id,

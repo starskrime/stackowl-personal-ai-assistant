@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
 from unittest.mock import patch
 
+import pytest
+from pydantic import ValidationError
+
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
-from stackowl.mcp.server import McpServer
+from stackowl.mcp.server import McpServer, _sse_auth_ok
 from stackowl.mcp.server_settings import McpServerSettings
 from stackowl.tools.base import Tool, ToolResult
 from stackowl.tools.registry import ToolRegistry
@@ -117,3 +118,48 @@ def test_server_settings_default_enabled_is_false() -> None:
 def test_server_settings_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):
         McpServerSettings(unknown=True)  # type: ignore[call-arg]
+
+
+def test_server_settings_default_auth_token_is_none() -> None:
+    assert McpServerSettings().auth_token is None
+
+
+def test_server_settings_auth_token_key_matches_sensitive_redaction_pattern() -> None:
+    """FX-06 — auth_token must be caught by observability's *token redaction."""
+    from stackowl.infra.observability import _is_sensitive
+
+    assert _is_sensitive("auth_token") is True
+
+
+# --------------------------------------------------------------------------- #
+# FX-06 stage 1 — SSE bearer-token auth
+# --------------------------------------------------------------------------- #
+
+
+def test_sse_auth_ok_passes_through_when_no_token_configured() -> None:
+    assert _sse_auth_ok({"headers": []}, None) is True
+    assert _sse_auth_ok({"headers": []}, "") is True
+
+
+def test_sse_auth_ok_rejects_missing_header_when_token_configured() -> None:
+    assert _sse_auth_ok({"headers": []}, "secret") is False
+
+
+def test_sse_auth_ok_rejects_wrong_token() -> None:
+    scope = {"headers": [(b"authorization", b"Bearer wrong")]}
+    assert _sse_auth_ok(scope, "secret") is False
+
+
+def test_sse_auth_ok_accepts_correct_bearer_token() -> None:
+    scope = {"headers": [(b"authorization", b"Bearer secret")]}
+    assert _sse_auth_ok(scope, "secret") is True
+
+
+def test_sse_auth_ok_rejects_non_bearer_scheme() -> None:
+    scope = {"headers": [(b"authorization", b"Basic secret")]}
+    assert _sse_auth_ok(scope, "secret") is False
+
+
+def test_sse_auth_ok_rejects_empty_bearer_value() -> None:
+    scope = {"headers": [(b"authorization", b"Bearer ")]}
+    assert _sse_auth_ok(scope, "secret") is False

@@ -34,10 +34,21 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _MAX_ATTEMPTS = 3
 _RETRY_INTERVAL_MINUTES = 1
+#: FX-02 — a fixed 1-minute re-arm hammers a still-failing goal at the same
+#: cadence regardless of how many times it's already failed. Doubling per
+#: attempt (1, 2, 4, ... capped) spaces later attempts out without touching
+#: _MAX_ATTEMPTS itself.
+_RETRY_INTERVAL_CAP_MINUTES = 10
 #: Unbounded exception text must not bloat the row (Boundaries & Constraints).
 _LAST_ERROR_MAX_LEN = 2000
 #: Same concern as last_error — goal is free-text and must not bloat the row.
 _GOAL_MAX_LEN = 4000
+
+
+def _retry_delay_minutes(attempt_count: int) -> float:
+    """Exponential re-arm delay for the Nth failed attempt, capped."""
+    delay = float(_RETRY_INTERVAL_MINUTES) * (2.0 ** (attempt_count - 1))
+    return min(delay, float(_RETRY_INTERVAL_CAP_MINUTES))
 
 
 def _now_iso() -> str:
@@ -450,7 +461,8 @@ class RetryQueueStore(OwnedRepository):
                 # 2. DECISION — refuse to re-fail an already-terminal row (would
                 # otherwise increment attempt_count past _MAX_ATTEMPTS forever);
                 # dedup the newly-failed capability; cap at 'failed' once
-                # attempt_count reaches _MAX_ATTEMPTS, else re-arm 1 minute out.
+                # attempt_count reaches _MAX_ATTEMPTS, else re-arm on an
+                # exponential (capped) delay — see _retry_delay_minutes.
                 if current.status != "pending":
                     log.memory.error(
                         "retry_queue_store.mark_attempt_failed: row not pending",
@@ -466,7 +478,8 @@ class RetryQueueStore(OwnedRepository):
                 attempt_count = current.attempt_count + 1
                 status = "failed" if attempt_count >= _MAX_ATTEMPTS else "pending"
                 next_retry_at = (
-                    datetime.now(UTC) + timedelta(minutes=_RETRY_INTERVAL_MINUTES)
+                    datetime.now(UTC)
+                    + timedelta(minutes=_retry_delay_minutes(attempt_count))
                 ).isoformat()
                 now = _now_iso()
                 log.memory.debug(

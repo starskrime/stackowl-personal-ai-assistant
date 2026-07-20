@@ -26,6 +26,7 @@ Design (per the converged C2 spec, CONFLICT 1/2/3):
 
 from __future__ import annotations
 
+import enum
 from collections.abc import Awaitable, Callable
 
 from stackowl.exceptions import (
@@ -53,30 +54,50 @@ _NOT_PROVIDER_FAULTS: tuple[type[BaseException], ...] = (
 )
 
 
+class FailureCause(enum.Enum):
+    """FX-01 — WHY a round failed, not just whether it counts as a breaker fault.
+
+    ``is_provider_fault`` collapses this to a bool for the breaker; callers that
+    want to react differently per cause (route around a dead credential, ease
+    off pacing on a 429, back off harder on a real outage) use
+    :func:`classify_failure_cause` directly instead of re-deriving it.
+    """
+
+    NOT_A_FAULT = "not_a_fault"  # control-flow / our-bug / malformed args
+    AUTH = "auth"                # non-429 4xx from a known SDK error — bad credential/request
+    RATE_LIMIT = "rate_limit"    # 429 — back-pressure, not an outage
+    SERVER_5XX = "server_5xx"
+    TRANSPORT = "transport"      # connection/timeout, or a status-less SDK transport error
+
+
 def is_provider_fault(exc: BaseException) -> bool:
     """Classify whether ``exc`` is a real upstream provider fault (SP-3).
 
-    Structural classification (exception type / status code) — NO English-message
-    matching. Counts toward the breaker ONLY genuine upstream faults; never our
-    bugs, never user/budget control-flow signals.
-
-    Fault (record ok=False): SDK transport errors (``APIError``/``APIConnectionError``/
-    ``APITimeoutError`` for anthropic/openai/gemini), a 5xx/429 status, a raw
-    connection/timeout error. A :class:`ProviderError` wrapping such a cause is a
-    fault UNLESS its cause is an empty-choices ``ValueError`` (a protocol oddity,
-    not an upstream outage) or one of the non-fault control-flow signals.
+    Thin boolean view over :func:`classify_failure_cause` (RATE_LIMIT/SERVER_5XX/
+    TRANSPORT all count; AUTH and NOT_A_FAULT don't) — kept as the stable public
+    name the breaker write-seam calls.
 
     NOT a fault: ``TurnStopped`` / ``BudgetBreach`` / ``DurableReplayUncertain`` /
     ``ResumeTranscriptError`` / ``CancelledError`` / a malformed-args parse
-    ``ValueError`` / an empty-choices ``ProviderError``.
+    ``ValueError`` / an empty-choices ``ProviderError`` / a non-429 4xx (AUTH).
+    """
+    return classify_failure_cause(exc) in (
+        FailureCause.RATE_LIMIT, FailureCause.SERVER_5XX, FailureCause.TRANSPORT,
+    )
+
+
+def classify_failure_cause(exc: BaseException) -> FailureCause:
+    """Structural classification (exception type / status code) — NO English-message
+    matching. Same control-flow tree ``is_provider_fault`` always used; now names
+    the specific cause instead of collapsing straight to a bool.
     """
     import asyncio
 
     # Control-flow + our-own-bug signals never count, even if wrapped.
     if isinstance(exc, asyncio.CancelledError):
-        return False
+        return FailureCause.NOT_A_FAULT
     if isinstance(exc, _NOT_PROVIDER_FAULTS):
-        return False
+        return FailureCause.NOT_A_FAULT
 
     # A ProviderError wraps an underlying cause — classify by the cause so an
     # empty-choices ValueError (protocol oddity) is NOT a fault but a wrapped SDK
@@ -84,44 +105,57 @@ def is_provider_fault(exc: BaseException) -> bool:
     if isinstance(exc, ProviderError):
         cause = exc.cause
         if isinstance(cause, (*_NOT_PROVIDER_FAULTS, asyncio.CancelledError)):
-            return False
+            return FailureCause.NOT_A_FAULT
         if isinstance(cause, ValueError):
             # empty-choices / parse oddity surfaced as ProviderError — not an outage.
-            return False
-        return _is_transport_error(cause)
+            return FailureCause.NOT_A_FAULT
+        return _classify_transport_cause(cause)
 
     # A bare ValueError (malformed args / parse) is our handling, not an outage.
     if isinstance(exc, ValueError):
-        return False
+        return FailureCause.NOT_A_FAULT
 
-    return _is_transport_error(exc)
+    return _classify_transport_cause(exc)
 
 
-def _is_transport_error(exc: BaseException) -> bool:
-    """True when ``exc`` is an SDK/HTTP transport fault (5xx/429/connection/timeout).
+def _cause_for_status(status: object) -> FailureCause:
+    """Map an HTTP-ish status to a cause. Status-less (connection/timeout SDK
+    errors) falls through to TRANSPORT — matches the pre-FX-01 behavior of
+    treating a status-less SDK transport error as an outage, not our payload.
+    """
+    if isinstance(status, int):
+        if status == 429:
+            return FailureCause.RATE_LIMIT
+        if 500 <= status <= 599:
+            return FailureCause.SERVER_5XX
+        if 400 <= status <= 499:
+            return FailureCause.AUTH
+    return FailureCause.TRANSPORT
+
+
+def _classify_transport_cause(exc: BaseException) -> FailureCause:
+    """SDK/HTTP transport classification (5xx/429/connection/timeout/4xx-auth).
 
     Probes the three SDK error hierarchies by import (lazy — providers may not all
-    be installed) plus a structural ``status_code`` check (5xx/429) and the stdlib
-    connection/timeout types. Unknown exception types default to NOT a fault so an
-    unexpected internal bug never silently trips the breaker.
+    be installed) plus a structural ``status_code`` check. Unknown exception types
+    default to NOT_A_FAULT so an unexpected internal bug never silently trips the
+    breaker.
     """
     # stdlib transport faults
     if isinstance(exc, (ConnectionError, TimeoutError)):
-        return True
+        return FailureCause.TRANSPORT
 
     # Structural HTTP status check (works across SDKs that expose ``status_code``).
     status = getattr(exc, "status_code", None)
     if isinstance(status, int) and (status == 429 or 500 <= status <= 599):
-        return True
+        return _cause_for_status(status)
 
     # SDK error hierarchies — lazy-imported so a missing optional dep never crashes.
     try:
         import openai
 
         if isinstance(exc, (openai.APIError, openai.APIConnectionError, openai.APITimeoutError)):
-            # A 4xx other than 429 is a request error (our payload), not an outage;
-            # the 429 + 5xx + status-less connection/timeout cases ARE outages.
-            return not _is_request_error_4xx(status)
+            return _cause_for_status(status)
     except Exception:  # noqa: BLE001 — optional dep / import race; never crash classification
         pass
 
@@ -129,7 +163,7 @@ def _is_transport_error(exc: BaseException) -> bool:
         import anthropic
 
         if isinstance(exc, anthropic.APIError):
-            return not _is_request_error_4xx(status)
+            return _cause_for_status(status)
     except Exception:  # noqa: BLE001
         pass
 
@@ -138,20 +172,23 @@ def _is_transport_error(exc: BaseException) -> bool:
 
         if isinstance(exc, genai_errors.APIError):
             code = getattr(exc, "code", None)
-            return not _is_request_error_4xx(code)
+            return _cause_for_status(code)
     except Exception:  # noqa: BLE001
         pass
 
-    return False
+    return FailureCause.NOT_A_FAULT
 
 
-def _is_request_error_4xx(status: object) -> bool:
-    """True for a non-429 4xx status (a request error / our payload, NOT an outage).
+def _is_transport_error(exc: BaseException) -> bool:
+    """True when ``exc`` is an SDK/HTTP transport fault (5xx/429/connection/timeout).
 
-    A status-less error (connection/timeout) returns False so it is treated as an
-    outage by the callers; 429 is excluded (it IS an outage / back-pressure).
+    Kept as the stable name ``anthropic_provider.py``/``gemini_provider.py`` import;
+    re-implemented over :func:`_classify_transport_cause` so the truth table can't
+    drift from ``classify_failure_cause``'s.
     """
-    return isinstance(status, int) and 400 <= status <= 499 and status != 429
+    return _classify_transport_cause(exc) in (
+        FailureCause.RATE_LIMIT, FailureCause.SERVER_5XX, FailureCause.TRANSPORT,
+    )
 
 
 async def resilient_round[T](
@@ -244,12 +281,32 @@ async def resilient_round[T](
                     exc_info=rec_exc,
                     extra={"_fields": {"provider": provider}},
                 )
+        # FX-01 — cause-aware side effects, independent of the (possibly injected,
+        # e.g. test-only) ``is_provider_fault`` used for the breaker above. Both are
+        # best-effort: an error here must never mask the real exception being raised.
+        cause = classify_failure_cause(exc)
+        if cause is FailureCause.AUTH:
+            log.engine.error(
+                "[resilient_round] provider request/credential failure (non-429 4xx) — "
+                "blind retry will not self-heal this",
+                extra={"_fields": {"provider": provider, "exc_type": type(exc).__name__}},
+            )
+        elif cause is FailureCause.RATE_LIMIT and limiter is not None:
+            try:
+                limiter.penalize()
+            except Exception as pen_exc:  # B5 — must never mask the real error.
+                log.engine.error(
+                    "[resilient_round] limiter.penalize raised — continuing to re-raise",
+                    exc_info=pen_exc,
+                    extra={"_fields": {"provider": provider}},
+                )
         log.engine.debug(
             "[resilient_round] exit — round raised",
             extra={
                 "_fields": {
                     "provider": provider,
                     "classified_fault": recorded,
+                    "cause": cause.value,
                     "exc_type": type(exc).__name__,
                 }
             },
