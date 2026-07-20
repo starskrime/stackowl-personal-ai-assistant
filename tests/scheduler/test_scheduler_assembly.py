@@ -180,6 +180,22 @@ async def test_health_sweep_aggregator_includes_live_provider_registry(
     assert "provider_registry" in names
 
 
+async def test_health_sweep_aggregator_includes_owl_rating_contributor(
+    tmp_db: DbPool,
+) -> None:
+    """Owl health was completely invisible to this aggregator before — no
+    contributor here was keyed on an owl at all. owl_registry + a
+    TaskOutcomeStore built from the same live db must register
+    OwlRatingHealthContributor unconditionally, same as the other
+    no-live-runtime-needed contributors."""
+    components = await _build(tmp_db, browser_runtime=_FakeBrowserRuntime())
+    names = [
+        c.contributor_name
+        for c in components.health_sweep_handler._aggregator._contributors
+    ]
+    assert "owl_ratings" in names
+
+
 async def test_health_sweep_wires_embedding_registry_healer_and_contributor(
     tmp_db: DbPool,
 ) -> None:

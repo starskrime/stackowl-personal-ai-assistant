@@ -202,6 +202,21 @@ class EvolutionCoordinator(JobHandler):
         # trait state. None (no graph wired) degrades to exactly today's
         # behavior; a Kuzu failure at sync time never affects the durable persist.
         self._kuzu = kuzu
+        # Race guard — the nightly batch (_evolve_one) and the inline evolve_now
+        # tool both read-modify-write the SAME owl's DNA through
+        # _checkpoint_validate_and_promote with no lock and no version column
+        # (upsert_owl_dna does a plain ON CONFLICT overwrite). Without
+        # serialization, a batch cycle and an inline evolve_now landing on the
+        # same owl at once is a lost-update: whichever promotes last silently
+        # discards the other's mutation, and a rejected-gate restore can even
+        # revert the OTHER call's already-promoted change back to a stale
+        # snapshot. One lock per owl name, created lazily (safe under asyncio's
+        # single-threaded cooperative scheduling — no await between the
+        # dict lookup and insert).
+        self._owl_locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, owl_name: str) -> asyncio.Lock:
+        return self._owl_locks.setdefault(owl_name, asyncio.Lock())
 
     @property
     def handler_name(self) -> str:
@@ -280,6 +295,18 @@ class EvolutionCoordinator(JobHandler):
         )
 
     async def _evolve_one(self, manifest: OwlAgentManifest) -> bool:
+        """Serialize this owl's evolution against any concurrent evolve_now call.
+
+        Re-fetches the manifest AFTER acquiring the lock — if a concurrent
+        mutation landed while this call was waiting, the batch's checkpoint/
+        clamp/persist must start from the live post-mutation state, not the
+        stale snapshot ``execute()`` captured before the wait.
+        """
+        async with self._lock_for(manifest.name):
+            manifest = self._owl_registry.get(manifest.name)
+            return await self._evolve_one_locked(manifest)
+
+    async def _evolve_one_locked(self, manifest: OwlAgentManifest) -> bool:
         """Evolve a single owl. Returns ``True`` if any mutation was applied.
 
         Two-stage decision per Learning Commit 4 (operator vote):
@@ -469,6 +496,10 @@ class EvolutionCoordinator(JobHandler):
     async def evolve_one_owl_now(self, owl_name: str) -> bool:
         """On-demand, single-task evolution trigger (Story 3.1, FR-12/FR-13/AD-5).
 
+        Serialized against a concurrent nightly-batch cycle on the SAME owl
+        via ``self._lock_for`` — see :meth:`_evolve_one` for why (lost-update
+        on the shared DNA row otherwise).
+
         A GENUINELY SEPARATE code path from :meth:`_evolve_one`'s attribution-
         first branch — it never calls ``self._try_attribution``/``self._attributor``,
         not even via a flag that happens to skip it today. DnaAttributor's
@@ -485,6 +516,10 @@ class EvolutionCoordinator(JobHandler):
         deltas were proposed (not enough conversation material yet) or the
         shadow gate rejected the mutation (both normal, non-error outcomes).
         """
+        async with self._lock_for(owl_name):
+            return await self._evolve_one_owl_now_locked(owl_name)
+
+    async def _evolve_one_owl_now_locked(self, owl_name: str) -> bool:
         # 1. ENTRY
         log.owls.debug(
             "[dna] coordinator.evolve_one_owl_now: entry",
@@ -492,7 +527,8 @@ class EvolutionCoordinator(JobHandler):
         )
         # manifest lookup raises OwlNotFoundError on an unknown owl — let it
         # propagate (matches this codebase's existing convention, e.g.
-        # commands/owls_command.py's `_dna_restore`).
+        # commands/owls_command.py's `_dna_restore`). Fetched AFTER acquiring
+        # the lock so a concurrent batch mutation that just landed is visible.
         manifest = self._owl_registry.get(owl_name)
 
         # 2. DECISION — force the LLM-fallback path unconditionally. This

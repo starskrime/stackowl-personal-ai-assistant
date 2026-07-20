@@ -255,6 +255,48 @@ class TaskOutcomeStore(OwnedRepository):
         )
         return updated
 
+    async def count_approach_ratings_for_owl(
+        self, owl_name: str, *, since_epoch: float = 0.0,
+    ) -> tuple[int, int]:
+        """Return ``(positive_count, negative_count)`` of Like/Dislike votes for an owl.
+
+        Unlike :meth:`list_scored_for_owl`, this does NOT filter on
+        ``quality_score IS NOT NULL`` — a user's like/dislike vote is
+        independent of whether the critic has scored the turn, and most turns
+        never get critic-scored at all. Used by the owl-layer health
+        contributor to surface a persistently-disliked owl to the existing
+        health-aggregator/incident-escalation pipeline, which previously had
+        zero owl-level signal.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] count_approach_ratings_for_owl: entry",
+            extra={"_fields": {"owl_name": owl_name, "since_epoch": since_epoch}},
+        )
+        rows = await self._db.fetch_all(
+            """SELECT approach_rating, COUNT(*) AS n
+               FROM task_outcomes
+               WHERE owner_id = ?
+                 AND owl_name = ?
+                 AND captured_at >= ?
+                 AND approach_rating IN ('positive', 'negative')
+               GROUP BY approach_rating""",
+            (self._owner_id, owl_name, since_epoch),
+        )
+        positive = 0
+        negative = 0
+        for row in rows:
+            if row["approach_rating"] == "positive":
+                positive = int(row["n"])
+            elif row["approach_rating"] == "negative":
+                negative = int(row["n"])
+        # 4. EXIT
+        log.memory.debug(
+            "[outcomes] count_approach_ratings_for_owl: exit",
+            extra={"_fields": {"owl_name": owl_name, "positive": positive, "negative": negative}},
+        )
+        return positive, negative
+
     async def list_scored_for_owl_global(
         self, *, since_epoch: float = 0.0, limit: int = 2000,
     ) -> list[TaskOutcome]:

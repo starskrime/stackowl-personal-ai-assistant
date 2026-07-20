@@ -40,6 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.infra.resilience import HealableResource
     from stackowl.memory.assembly import MemoryComponents
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
+    from stackowl.memory.outcome_store import TaskOutcomeStore
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.objectives.driver import ObjectiveDriverHandler
@@ -388,6 +389,8 @@ class SchedulerAssembly:
         # contributors (db / filesystem / graph / enabled providers — the same set
         # the CLI uses, minus Browser/Resilience which need live-runtime refs) and
         # register a handler that collects on a cadence and alerts on down/degraded.
+        from stackowl.memory.outcome_store import TaskOutcomeStore
+
         health_aggregator = _build_health_aggregator(
             settings,
             liveness_store,
@@ -395,6 +398,8 @@ class SchedulerAssembly:
             memory_components.lancedb,
             memory_components.graph_health,
             provider_registry,
+            owl_registry,
+            TaskOutcomeStore(db),
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
@@ -985,6 +990,8 @@ def _build_health_aggregator(
     lancedb_adapter: LanceDBAdapter | None = None,
     graph_contributor: GraphContributor | None = None,
     provider_registry: ProviderRegistry | None = None,
+    owl_registry: OwlRegistry | None = None,
+    outcome_store: TaskOutcomeStore | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -1035,6 +1042,14 @@ def _build_health_aggregator(
     are registered; they check different things. ``None`` skips registration,
     same pattern as ``embedding_registry``/``lancedb_adapter`` (no live registry
     threaded through, e.g. an early-boot caller).
+
+    ``owl_registry``/``outcome_store`` register :class:`OwlRatingHealthContributor`
+    — before this, owl health was completely invisible to this aggregator (and
+    thus to the health sweep / incident escalation it feeds): no contributor
+    here was keyed on an owl at all. Both must be non-None to register (an
+    owl-rating check needs both the owl list and the vote store); either
+    missing skips registration, same "no live handle threaded through" pattern
+    as the other optional contributors.
     """
     from stackowl.db.pool import default_db_path
     from stackowl.health.aggregator import HealthAggregator
@@ -1044,6 +1059,7 @@ def _build_health_aggregator(
         FilesystemContributor,
         GraphContributor,
         LanceDBHealthContributor,
+        OwlRatingHealthContributor,
         ProviderContributor,
     )
     from stackowl.infra.clock import WallClock
@@ -1060,6 +1076,8 @@ def _build_health_aggregator(
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))
+    if owl_registry is not None and outcome_store is not None:
+        agg.register(OwlRatingHealthContributor(outcome_store, owl_registry))
     if provider_registry is not None:
         # FX-03 — the live circuit-breaker signal (real traffic health),
         # complementary to the synthetic per-provider probes just registered.

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from stackowl.infra.clock import Clock
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
+    from stackowl.memory.outcome_store import TaskOutcomeStore
+    from stackowl.owls.registry import OwlRegistry
 
 log = logging.getLogger("stackowl.health")
 
@@ -519,5 +521,87 @@ class ResilienceContributor:
             name="resilience",
             status="degraded" if any_unavailable else "ok",
             message=" ".join(parts) if parts else "no healable resources registered",
+            latency_ms=latency_ms,
+        )
+
+
+# Minimum rated turns before a dislike rate is trusted — a single early
+# dislike out of 1-2 votes must not flag an owl as degraded.
+_OWL_RATING_MIN_SAMPLES = 10
+# Dislike-rate threshold for "degraded". Chosen conservative (well above normal
+# noise) since this feeds the same incident-escalation pipeline as provider
+# outages — a false "degraded" here would train the operator to ignore it.
+_OWL_RATING_DEGRADED_THRESHOLD = 0.4
+_OWL_RATING_WINDOW_SECONDS = 7 * 24 * 3600.0
+
+
+class OwlRatingHealthContributor:
+    """Health contributor: per-owl Like/Dislike vote signal (approach_rating).
+
+    Before this, a dislike vote only suppressed DNA-attribution reinforcement
+    for the trait band that produced it (dna_attribution.py) — it never
+    aggregated into any per-owl health/trust signal, and owl health was
+    completely invisible to the health-aggregator/incident-escalation
+    pipeline that already exists for providers, tools, and channels. This
+    closes that gap: an owl whose recent dislike rate crosses the threshold
+    (with enough votes to be meaningful, not just one early dislike) reports
+    degraded, same shape as every other contributor here.
+    """
+
+    def __init__(
+        self,
+        outcome_store: TaskOutcomeStore,
+        owl_registry: OwlRegistry,
+        *,
+        min_samples: int = _OWL_RATING_MIN_SAMPLES,
+        degraded_threshold: float = _OWL_RATING_DEGRADED_THRESHOLD,
+        window_seconds: float = _OWL_RATING_WINDOW_SECONDS,
+    ) -> None:
+        self._store = outcome_store
+        self._registry = owl_registry
+        self._min_samples = min_samples
+        self._degraded_threshold = degraded_threshold
+        self._window_seconds = window_seconds
+
+    @property
+    def contributor_name(self) -> str:
+        return "owl_ratings"
+
+    async def health_check(self) -> HealthStatus:
+        log.debug("[health] owl_rating_contributor: entry")
+        t0 = time.monotonic()
+        since_epoch = time.time() - self._window_seconds
+        degraded: list[str] = []
+        n_checked = 0
+        for manifest in self._registry.list():
+            try:
+                positive, negative = await self._store.count_approach_ratings_for_owl(
+                    manifest.name, since_epoch=since_epoch,
+                )
+            except Exception as exc:  # B5 — one owl's query failure never sinks the check
+                log.warning(
+                    "[health] owl_rating_contributor: query failed for owl=%s",
+                    manifest.name, exc_info=exc,
+                )
+                continue
+            total = positive + negative
+            if total < self._min_samples:
+                continue
+            n_checked += 1
+            rate = negative / total
+            if rate >= self._degraded_threshold:
+                degraded.append(f"{manifest.name} ({negative}/{total} disliked)")
+        latency_ms = (time.monotonic() - t0) * 1000
+        log.debug(
+            "[health] owl_rating_contributor: exit — degraded=%d checked=%d",
+            len(degraded), n_checked,
+        )
+        return HealthStatus(
+            name=self.contributor_name,
+            status="degraded" if degraded else "ok",
+            message=(
+                ", ".join(degraded) if degraded
+                else f"no owl over dislike threshold ({n_checked} owl(s) with enough votes)"
+            ),
             latency_ms=latency_ms,
         )
