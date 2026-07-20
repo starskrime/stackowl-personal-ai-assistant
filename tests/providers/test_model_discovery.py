@@ -70,7 +70,27 @@ async def test_failure_raises_model_discovery_error_with_provider_and_reason() -
     fake_client = SimpleNamespace(
         models=SimpleNamespace(list=AsyncMock(side_effect=ConnectionError("refused")))
     )
-    with patch("openai.AsyncOpenAI", return_value=fake_client):
-        with pytest.raises(ModelDiscoveryError) as exc_info:
-            await list_models("openai", "https://bad.example.com/v1", "sk-test")
+    with patch("openai.AsyncOpenAI", return_value=fake_client), pytest.raises(ModelDiscoveryError) as exc_info:
+        await list_models("openai", "https://bad.example.com/v1", "sk-test")
     assert "refused" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_failure_redacts_raw_api_key_from_error_message() -> None:
+    """A bad/mistyped key is the PRIMARY failure path here (this call doubles as
+    token validation) — the raw key must never leak through str(exc), e.g. via a
+    Gemini-style ``?key=<api_key>`` URL embedded in a connection error."""
+    secret_key = "sk-test-SECRET-VALUE-123"
+    fake_client = SimpleNamespace(
+        models=SimpleNamespace(
+            list=AsyncMock(
+                side_effect=ConnectionError(
+                    f"failed to connect to https://api.example.com/v1?key={secret_key}"
+                )
+            )
+        )
+    )
+    with patch("openai.AsyncOpenAI", return_value=fake_client), pytest.raises(ModelDiscoveryError) as exc_info:
+        await list_models("openai", "https://api.example.com/v1", secret_key)
+    assert secret_key not in str(exc_info.value)
+    assert "***REDACTED***" in str(exc_info.value)
