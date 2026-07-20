@@ -51,7 +51,7 @@ _USAGE = (
     "[base_url] [token=<RAW_TOKEN>]\n"
     "  /provider remove <name>\n"
     "  /provider set-tier <name> <tier>\n"
-    "  /provider edit <name> <protocol|default_model|base_url> <value>\n"
+    "  /provider edit <name> <protocol|default_model|base_url|cooldown_hours> <value>\n"
     "  /provider enable <name>\n"
     "  /provider disable <name>\n"
     "  /provider set-token <name> <RAW_TOKEN>\n"
@@ -135,7 +135,7 @@ _PROVIDER_META = CommandMeta(
                 Arg(
                     name="field",
                     summary="field to change",
-                    choices=("protocol", "default_model", "base_url"),
+                    choices=("protocol", "default_model", "base_url", "cooldown_hours"),
                 ),
                 Arg(name="value", summary="new value"),
             ),
@@ -248,7 +248,7 @@ class ProviderCommand(SlashCommand):
             elif sub == "edit-menu":
                 result = self._edit_menu(rest)
             elif sub == "edit-field":
-                result = self._edit_field(rest)
+                result = await self._edit_field(rest)
             elif sub == "set-token":
                 result = self._set_token(rest)
             elif sub == "rename":
@@ -459,11 +459,17 @@ class ProviderCommand(SlashCommand):
 
     # -- edit-menu / edit-field (drill-down for Edit button) ---------------------
 
-    _EDIT_FIELDS: typing.ClassVar[tuple[str, ...]] = ("protocol", "default_model", "base_url")
+    _EDIT_FIELDS: typing.ClassVar[tuple[str, ...]] = (
+        "protocol",
+        "default_model",
+        "base_url",
+        "cooldown_hours",
+    )
     _EDIT_FIELD_LABELS: typing.ClassVar[dict[str, str]] = {
         "protocol": "Edit protocol",
         "default_model": "Edit default_model",
         "base_url": "Edit base_url",
+        "cooldown_hours": "Edit cooldown_hours",
         "api_key": "Set token",
         "name": "Rename",
     }
@@ -489,7 +495,7 @@ class ProviderCommand(SlashCommand):
         ) + (Action(label="Back", command=f"/provider menu {name}", destructive=False),)
         return CommandResponse(text=f"Edit which field on '{name}'?", actions=actions)
 
-    def _edit_field(self, raw: str) -> str | CommandResponse:
+    async def _edit_field(self, raw: str) -> str | CommandResponse:
         log.config.debug(
             "[commands] provider.edit_field: entry", extra={"_fields": {"raw_len": len(raw)}}
         )
@@ -515,6 +521,22 @@ class ProviderCommand(SlashCommand):
         if field == "name":
             text = f"Reply with: /provider rename {name} <new_name>"
             return CommandResponse(text=text, actions=back)
+        if field == "default_model":
+            models = await self._discover_models_for_edit(name, target)
+            if models:
+                actions = tuple(
+                    Action(
+                        label=m,
+                        command=f"/provider edit {name} default_model {m}",
+                        destructive=False,
+                    )
+                    for m in models[:30]
+                ) + back
+                return CommandResponse(
+                    text=f"Current default_model: {target.get('default_model', '?')}\n"
+                    "Pick a live model:",
+                    actions=actions,
+                )
         current = target.get(field, "?")
         text = (
             f"Current {field}: {current}\n"
@@ -524,6 +546,53 @@ class ProviderCommand(SlashCommand):
             text=text,
             actions=(Action(label="Back", command=f"/provider menu {name}", destructive=False),),
         )
+
+    async def _discover_models_for_edit(self, name: str, target: dict[str, Any]) -> list[str]:
+        """Best-effort live model list for the ``default_model`` edit-field
+        picker. Resolves the provider's stored ``api_key`` ref first; on ANY
+        failure (missing/bad key, unreachable, resolver error) this degrades
+        to an empty list so the caller falls back to the plain text-hint
+        prompt — it must never raise or crash the edit-field flow."""
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.discover_models_for_edit: entry",
+            extra={"_fields": {"name": name}},
+        )
+        from stackowl.exceptions import ModelDiscoveryError
+        from stackowl.providers.model_discovery import list_models
+
+        protocol = target.get("protocol", "openai")
+        base_url = target.get("base_url") or None
+        api_key_ref = target.get("api_key")
+        resolved_key = ""
+        try:
+            if api_key_ref:
+                from stackowl.config.secret_resolver import SecretResolver
+
+                resolved_key = SecretResolver.resolve(api_key_ref)
+            # 2. STEP — live call; also doubles as token validation
+            models = await list_models(protocol, base_url, resolved_key)
+        except ModelDiscoveryError as exc:
+            log.config.debug(
+                "[commands] provider.discover_models_for_edit: discovery failed — "
+                "falling back to text hint",
+                extra={"_fields": {"name": name, "protocol": protocol, "reason": exc.reason}},
+            )
+            return []
+        except Exception as exc:
+            log.config.warning(
+                "[commands] provider.discover_models_for_edit: unexpected failure — "
+                "falling back to text hint",
+                exc_info=exc,
+                extra={"_fields": {"name": name, "protocol": protocol}},
+            )
+            return []
+        # 3. EXIT
+        log.config.debug(
+            "[commands] provider.discover_models_for_edit: exit",
+            extra={"_fields": {"name": name, "model_count": len(models)}},
+        )
+        return models
 
     # -- set-token -----------------------------------------------------------------
 
@@ -620,12 +689,12 @@ class ProviderCommand(SlashCommand):
         log.config.debug("[commands] provider.edit: entry", extra={"_fields": {"raw_len": len(raw)}})
         bits = raw.split(maxsplit=2)
         if len(bits) < 3:
-            return "Usage: /provider edit <name> <protocol|default_model|base_url> <value>"
+            return "Usage: /provider edit <name> <protocol|default_model|base_url|cooldown_hours> <value>"
         name, field, value = bits
-        if field not in ("protocol", "default_model", "base_url"):
+        if field not in ("protocol", "default_model", "base_url", "cooldown_hours"):
             return (
-                f"✗ Unknown field '{field}' — use protocol, default_model, or base_url "
-                "(tier: /provider set-tier, enabled: /provider enable|disable)"
+                f"✗ Unknown field '{field}' — use protocol, default_model, base_url, "
+                "or cooldown_hours (tier: /provider set-tier, enabled: /provider enable|disable)"
             )
         if field == "protocol" and value not in _VALID_PROTOCOLS:
             return f"✗ Invalid protocol '{value}' — valid: {', '.join(_VALID_PROTOCOLS)}"

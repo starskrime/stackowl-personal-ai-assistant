@@ -693,6 +693,55 @@ class TestProviderEdit:
         out = await _make_cmd().handle("edit-field ghost default_model", _state())
         assert "✗" in out or "not found" in out.lower()
 
+    @pytest.mark.asyncio
+    async def test_edit_menu_offers_cooldown_hours(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        out = await _make_cmd().handle("edit-menu myprov", _state())
+        assert any(
+            a.command == "/provider edit-field myprov cooldown_hours" for a in out.actions
+        )
+
+    @pytest.mark.asyncio
+    async def test_edit_field_default_model_offers_live_model_picker(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        monkeypatch.setattr(
+            "stackowl.providers.model_discovery.list_models",
+            AsyncMock(return_value=["gpt-4o", "gpt-4o-mini"]),
+        )
+        out = await _make_cmd().handle("edit-field myprov default_model", _state())
+        assert isinstance(out, CommandResponse)
+        assert any("gpt-4o" in a.command for a in out.actions)
+
+    @pytest.mark.asyncio
+    async def test_edit_field_default_model_falls_back_on_discovery_failure(
+        self, tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Discovery failure (bad key / unreachable) must degrade to the old
+        text hint, never crash or surface a raw stack trace."""
+        from stackowl.exceptions import ModelDiscoveryError
+
+        await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        monkeypatch.setattr(
+            "stackowl.providers.model_discovery.list_models",
+            AsyncMock(side_effect=ModelDiscoveryError("openai", "401 Unauthorized")),
+        )
+        out = await _make_cmd().handle("edit-field myprov default_model", _state())
+        assert isinstance(out, CommandResponse)
+        assert "gpt-4o" in out.text
+        assert "/provider edit myprov default_model" in out.text
+
+    @pytest.mark.asyncio
+    async def test_edit_cooldown_hours_persists(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        out = await _make_cmd().handle("edit myprov cooldown_hours 12", _state())
+        assert "✓" in out
+        assert "cooldown_hours" in out
+        data = _load(tmp_yaml)
+        saved = next(p for p in data["providers"] if p["name"] == "myprov")
+        assert float(saved["cooldown_hours"]) == 12.0
+
 
 class TestProviderSetTokenRename:
     @pytest.mark.asyncio
