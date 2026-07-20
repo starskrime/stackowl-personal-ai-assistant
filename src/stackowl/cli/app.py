@@ -303,8 +303,10 @@ def health(
         DbContributor,
         FilesystemContributor,
         GraphContributor,
+        McpHealthContributor,
         ProviderContributor,
     )
+    from stackowl.mcp.probe import McpLivenessProbe
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     settings = Settings()
@@ -321,6 +323,18 @@ def health(
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))
+    # MCP liveness — McpLivenessProbe is a fresh, dependency-free HTTP/filesystem
+    # check per config (same synthetic-probe shape as ProviderContributor above),
+    # unlike ResilienceContributor below it needs no live in-process state, so it
+    # was a pure gap, not a deliberate CLI/serve split: `stackowl health` reported
+    # nothing for MCP servers even when they were configured and down.
+    if settings.mcp_client.servers:
+        agg.register(
+            McpHealthContributor(
+                probe=McpLivenessProbe(),
+                configs=list(settings.mcp_client.servers),
+            )
+        )
     # ResilienceContributor needs live HealableResource refs from inside
     # `stackowl serve` (browser runtime, db pool, providers, etc.) — the
     # out-of-process CLI doesn't have those. It's available for use by a
