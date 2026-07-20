@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from stackowl.exceptions import AllProvidersUnavailableError, ProviderNotFoundError
 from stackowl.health.status import HealthStatus
@@ -15,6 +15,7 @@ from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
 from stackowl.providers.cost_tracker_helpers import inject_cost_tracker
 from stackowl.providers.rate_limiter import RateLimiter
 from stackowl.providers.registry_accessors import RegistryAccessorsMixin
+from stackowl.providers.tier_selector import TierSelector
 
 if TYPE_CHECKING:
     from stackowl.config.provider import ProviderConfig
@@ -98,6 +99,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # E8-S0cost — the ONE shared CostTracker; remembered so providers registered
         # later (mocks, hot additions) still inherit it (single recording site).
         self._cost_tracker: CostTracker | None = None
+        # F-multi-tier — round-robin selector for the "which of N healthy
+        # providers in this tier" decision (get_with_cascade delegates to it).
+        self._tier_selector = TierSelector()
 
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker into every provider (the SINGLE recording
@@ -443,28 +447,37 @@ class ProviderRegistry(RegistryAccessorsMixin):
 
         details: list[str] = []
         for tier in tier_walk:
-            for name, provider_tier in tiers.items():
-                if provider_tier != tier:
-                    continue
-                prov = providers.get(name)
+            # TierSelector.select's `providers` param is typed dict[str, object]
+            # (it never touches provider internals, only membership) — dict's
+            # invariance means dict[str, ModelProvider] needs an explicit cast.
+            chosen = self._tier_selector.select(tier, cast("dict[str, object]", providers), tiers, breakers)
+            if chosen is not None:
+                prov = providers.get(chosen)
                 if prov is None:
                     continue  # removed by a concurrent reload — skip
-                breaker = breakers.get(name)
-                if breaker is None:
-                    log.engine.debug(
-                        "[cascade] %s: selected (no breaker)",
-                        name,
-                        extra={"_fields": {"provider": name, "tier": tier}},
-                    )
-                    log.engine.info(
-                        "[cascade] selected '%s' (tier=%s)",
-                        name,
-                        tier,
-                        extra={"_fields": {"provider": name, "tier": tier}},
-                    )
-                    return prov
-                state = breaker.state
-                if state is CircuitState.OPEN:
+                breaker = breakers.get(chosen)
+                state = breaker.state if breaker is not None else None
+                log.engine.info(
+                    "[cascade] selected '%s' (tier=%s, state=%s)",
+                    chosen,
+                    tier,
+                    state.value if state is not None else "no-breaker",
+                    extra={
+                        "_fields": {
+                            "provider": chosen,
+                            "tier": tier,
+                            "circuit_state": state.value if state is not None else None,
+                        }
+                    },
+                )
+                return prov
+            candidates = [name for name, t in tiers.items() if t == tier and name in providers]
+            if candidates:
+                open_names = [
+                    name for name in candidates
+                    if breakers.get(name) is not None and breakers[name].state is CircuitState.OPEN
+                ]
+                for name in open_names:
                     msg = f"{name}: skipped (circuit open)"
                     log.engine.info(
                         "[cascade] %s: skipped (circuit open)",
@@ -473,26 +486,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
                             "_fields": {
                                 "provider": name,
                                 "tier": tier,
-                                "retry_after_seconds": breaker.retry_after_seconds,
+                                "retry_after_seconds": breakers[name].retry_after_seconds,
                             }
                         },
                     )
                     details.append(msg)
-                    continue
-                log.engine.info(
-                    "[cascade] selected '%s' (tier=%s, state=%s)",
-                    name,
-                    tier,
-                    state.value,
-                    extra={
-                        "_fields": {
-                            "provider": name,
-                            "tier": tier,
-                            "circuit_state": state.value,
-                        }
-                    },
-                )
-                return prov
 
         log.engine.error(
             "[registry] get_with_cascade: exit — all providers unavailable",
