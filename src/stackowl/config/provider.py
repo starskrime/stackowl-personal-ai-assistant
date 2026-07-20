@@ -52,3 +52,9 @@ class ProviderConfig(BaseModel):
     # text-protocol parser still runs as a fallback if a native call is ever absent.
     # Set False only for a legacy endpoint that genuinely lacks native tool-calling.
     supports_native_tools: bool = True
+    # F-quota — hours to keep this provider's circuit OPEN after a quota/rate
+    # failure with NO parseable reset signal from the provider's own response
+    # (e.g. "I know this free tier resets daily"). None (default): no change
+    # from today's generic failure-threshold breaker behavior. See
+    # providers/_resilient_round.py's RATE_LIMIT branch for how this is used.
+    cooldown_hours: float | None = None
