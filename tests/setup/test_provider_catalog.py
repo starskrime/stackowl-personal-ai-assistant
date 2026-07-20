@@ -108,3 +108,53 @@ def test_provider_entry_rejects_unknown_protocol() -> None:
             base_url="https://example.com/v1",
             default_model="model-x",
         )
+
+
+def test_provider_entry_category_defaults_empty() -> None:
+    entry = ProviderEntry(
+        name="x", label="X", protocol="openai",
+        base_url="https://x.example.com/v1", default_model="m",
+    )
+    assert entry.category == ()
+
+
+def test_search_matches_name_label_or_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    from stackowl.setup import provider_catalog as mod
+
+    fake = [
+        ProviderEntry(
+            name="groq", label="Groq", protocol="openai",
+            base_url="https://api.groq.com/openai/v1", default_model="llama-3.3-70b-versatile",
+            category=("free-tier", "fast-inference"),
+        ),
+        ProviderEntry(
+            name="openai", label="OpenAI", protocol="openai",
+            base_url="https://api.openai.com/v1", default_model="gpt-4o",
+        ),
+    ]
+    monkeypatch.setattr(mod.ProviderCatalog, "load", classmethod(lambda cls: fake))
+
+    assert [e.name for e in mod.ProviderCatalog.search("groq")] == ["groq"]
+    assert [e.name for e in mod.ProviderCatalog.search("free")] == ["groq"]
+    assert [e.name for e in mod.ProviderCatalog.search("GROQ")] == ["groq"]
+    assert mod.ProviderCatalog.search("nonexistent-xyz") == []
+
+
+def test_browse_filters_by_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    from stackowl.setup import provider_catalog as mod
+
+    fake = [
+        ProviderEntry(
+            name="groq", label="Groq", protocol="openai",
+            base_url="https://api.groq.com/openai/v1", default_model="llama-3.3-70b-versatile",
+            category=("free-tier",),
+        ),
+        ProviderEntry(
+            name="openai", label="OpenAI", protocol="openai",
+            base_url="https://api.openai.com/v1", default_model="gpt-4o",
+        ),
+    ]
+    monkeypatch.setattr(mod.ProviderCatalog, "load", classmethod(lambda cls: fake))
+
+    assert [e.name for e in mod.ProviderCatalog.browse("free-tier")] == ["groq"]
+    assert len(mod.ProviderCatalog.browse(None)) == 2

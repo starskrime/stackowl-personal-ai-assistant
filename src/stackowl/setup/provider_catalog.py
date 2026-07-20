@@ -52,6 +52,9 @@ class ProviderEntry:
     needs_api_key: bool = True
     is_local: bool = False
     key_url: str | None = None
+    # NEW — optional tags for browse/search filtering (add/tier UX). Empty
+    # default means every existing bundled YAML file parses unchanged.
+    category: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.protocol not in PROTOCOLS:
@@ -62,6 +65,7 @@ class ProviderEntry:
         # Coerce list → tuple so the dataclass stays frozen/hashable
         object.__setattr__(self, "models", tuple(self.models))
         object.__setattr__(self, "vision_models", tuple(self.vision_models))
+        object.__setattr__(self, "category", tuple(self.category))
 
 
 class ProviderCatalog:
@@ -108,6 +112,71 @@ class ProviderCatalog:
         log.setup.debug(
             "[provider_catalog] ProviderCatalog.load: exit",
             extra={"_fields": {"count": len(result)}},
+        )
+        return result
+
+    @classmethod
+    def search(cls, query: str) -> list[ProviderEntry]:
+        """Case-insensitive substring match against name/label/category."""
+        # 1. ENTRY
+        log.setup.debug(
+            "[provider_catalog] ProviderCatalog.search: entry",
+            extra={"_fields": {"query_len": len(query)}},
+        )
+
+        # 2. DECISION
+        needle = query.strip().casefold()
+        if not needle:
+            # 3. STEP — empty query returns all
+            result = cls.load()
+            log.setup.debug(
+                "[provider_catalog] ProviderCatalog.search: empty query, returning all",
+                extra={"_fields": {"matches": len(result)}},
+            )
+            return result
+
+        # 3. STEP — perform substring match
+        result = [
+            e for e in cls.load()
+            if needle in e.name.casefold()
+            or needle in e.label.casefold()
+            or any(needle in c.casefold() for c in e.category)
+        ]
+
+        # 4. EXIT
+        log.setup.debug(
+            "[provider_catalog] ProviderCatalog.search: exit",
+            extra={"_fields": {"matches": len(result)}},
+        )
+        return result
+
+    @classmethod
+    def browse(cls, category: str | None = None) -> list[ProviderEntry]:
+        """Return the catalog, optionally filtered to one category tag."""
+        # 1. ENTRY
+        log.setup.debug(
+            "[provider_catalog] ProviderCatalog.browse: entry",
+            extra={"_fields": {"category": category}},
+        )
+
+        # 2. DECISION
+        entries = cls.load()
+        if category is None:
+            # 3. STEP — no filter, return all
+            log.setup.debug(
+                "[provider_catalog] ProviderCatalog.browse: no filter, returning all",
+                extra={"_fields": {"matches": len(entries)}},
+            )
+            return entries
+
+        # 3. STEP — filter by exact category match (case-insensitive)
+        needle = category.casefold()
+        result = [e for e in entries if any(c.casefold() == needle for c in e.category)]
+
+        # 4. EXIT
+        log.setup.debug(
+            "[provider_catalog] ProviderCatalog.browse: exit",
+            extra={"_fields": {"matches": len(result)}},
         )
         return result
 
