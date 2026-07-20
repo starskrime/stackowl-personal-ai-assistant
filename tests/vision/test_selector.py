@@ -89,7 +89,7 @@ def test_default_ollama_config_shape_classifies_local() -> None:
     assert sel.is_local is True
     # And the registry classifies it local directly, despite tier == "fast".
     assert reg.is_local(reg.get("ollama")) is True
-    assert reg.tier_of(reg.get("ollama")) == "fast"
+    assert reg.tiers_of(reg.get("ollama")) == ("fast",)
 
 
 def test_private_ip_base_url_classifies_local() -> None:

@@ -3,7 +3,7 @@
 Extracted from :class:`stackowl.providers.registry.ProviderRegistry` so registry.py
 stays under the B2 line cap. These read-only accessors resolve a ``ModelProvider``
 to its registered name (identity match) and look up the per-provider maps the
-registry owns. The vision selector (E10-S1) uses ``tier_of`` / ``is_local`` /
+registry owns. The vision selector (E10-S1) uses ``tiers_of`` / ``is_local`` /
 ``is_open`` to prefer healthy, self-hosted vision backends.
 """
 
@@ -37,21 +37,17 @@ class RegistryAccessorsMixin:
                 return name
         return None
 
-    def tier_of(self, provider: ModelProvider) -> str | None:
-        """The FIRST configured routing tier, or None if unknown.
+    def tiers_of(self, provider: ModelProvider) -> tuple[str, ...] | None:
+        """All configured routing tiers for this provider, or None if unknown.
 
-        F-multi-tier (Task 4): ``_tiers`` now stores a tuple of every tier a
-        provider belongs to, not a single tier. This accessor keeps its
-        existing single-string contract (first membership) so callers written
-        against the old one-tier-per-provider model stay byte-identical; a
-        multi-tier-aware ``tiers_of`` accessor returning the full tuple is a
-        separate, deliberately deferred follow-up.
+        Returns the full tuple of tier memberships; for a provider in multiple
+        tiers, the order reflects the config order (e.g. ``("fast", "powerful")``).
         """
         name = self._name_of(provider)
         if name is None:
             return None
         ptiers = self._tiers.get(name)
-        return ptiers[0] if ptiers else None
+        return ptiers
 
     def is_local(self, provider: ModelProvider) -> bool:
         """True iff a self-hosted (on-box) backend — derived from the base_url host,
