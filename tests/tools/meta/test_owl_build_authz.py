@@ -80,6 +80,39 @@ def test_build_with_explicit_shell_drops_it_under_unbounded_creator() -> None:
     assert "shell" in dropped
 
 
+def test_build_agent_manifest_drops_hallucinated_tool_name_when_catalog_given() -> None:
+    """Regression: the ONE production caller never passed valid_tools, so a
+    misspelled/hallucinated tool name sailed through SpecialistOwlBuilder's
+    fail-open validation branch untouched — only the ceiling clamp (an
+    AUTHORIZATION check, not an existence check) narrowed it, and a bogus
+    name inside an otherwise-permitted category would never be caught at all."""
+    reg = _reg_with("secretary", None)
+    spec = OwlBuildSpec(
+        action="create", name="coder",
+        explicit_tools=["read_file", "totally_made_up_tool"], specialty="builds",
+    )
+    manifest, dropped = build_agent_manifest(
+        spec, creator="secretary", parent_ceiling=None, registry=reg,
+        valid_tools=frozenset({"read_file", "web_fetch"}),
+    )
+    assert "totally_made_up_tool" not in (manifest.bounds.tools or frozenset())
+    assert "read_file" in (manifest.bounds.tools or frozenset())
+
+
+def test_build_agent_manifest_valid_tools_none_keeps_fail_open_default() -> None:
+    """Byte-identical to every existing call site that doesn't pass valid_tools
+    (default None) — must not silently start rejecting tools for callers with
+    no catalog to check against."""
+    reg = _reg_with("secretary", None)
+    spec = OwlBuildSpec(
+        action="create", name="coder", explicit_tools=["read_file"], specialty="builds",
+    )
+    manifest, _ = build_agent_manifest(
+        spec, creator="secretary", parent_ceiling=None, registry=reg,
+    )
+    assert "read_file" in (manifest.bounds.tools or frozenset())
+
+
 def test_build_agent_manifest_carries_boundaries_and_strategy() -> None:
     reg = _reg_with("secretary", None)
     spec = OwlBuildSpec(

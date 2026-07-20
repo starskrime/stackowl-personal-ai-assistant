@@ -160,8 +160,19 @@ class NotificationRouter:
         now = self._clock()
         quiet = in_quiet_hours(self._settings.notifications.quiet_hours, now)
 
-        # 2. DECISION — table-driven routing
-        decision = self._decide(notification.urgency, quiet, self._focus_mode)
+        # 2. DECISION — per-category opt-out wins outright (an explicit operator
+        # choice to mute a category), THEN the urgency/quiet/focus table.
+        # `subscriptions` was defined and documented ("Per-category opt-in map")
+        # but never read anywhere — every operator setting it had zero effect.
+        # Missing/True = unchanged default behavior (byte-identical for anyone
+        # who has never touched this setting); only an explicit False mutes.
+        subscribed = self._settings.notifications.subscriptions.get(
+            notification.category, True
+        )
+        if not subscribed:
+            decision: RouterDecision = "suppressed"
+        else:
+            decision = self._decide(notification.urgency, quiet, self._focus_mode)
         log.notifications.debug(
             "[notifications] router.deliver: routing decision",
             extra={
@@ -170,6 +181,7 @@ class NotificationRouter:
                     "urgency": notification.urgency,
                     "quiet_hours": quiet,
                     "focus_mode": self._focus_mode,
+                    "subscribed": subscribed,
                 }
             },
         )

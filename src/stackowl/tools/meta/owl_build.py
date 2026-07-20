@@ -149,6 +149,21 @@ def can_rename(manifest: object, *, caller: str, target_name: str) -> str | None
     return None
 
 
+def _valid_tool_names(svc: object) -> frozenset[str] | None:
+    """The live ToolRegistry's tool-name catalog, or None if unwired.
+
+    Feeds build_agent_manifest's valid_tools so SpecialistOwlBuilder._validate
+    actually checks requested tool names against real registered tools instead
+    of always taking its fail-open branch (no production caller passed this
+    before) — the ceiling clamp downstream narrows by AUTHORIZATION, not by
+    whether a name exists at all, so those are two genuinely different checks.
+    """
+    registry = getattr(svc, "tool_registry", None)
+    if registry is None:
+        return None
+    return frozenset(t.name for t in registry.all())
+
+
 def can_edit(manifest: object, *, caller: str, target_name: str) -> str | None:
     """Edit's own gate — looser than can_modify for origin in {'builtin','human'}.
     Those owls were never creator/ceiling-bound (operator-configured, not
@@ -785,6 +800,7 @@ class OwlBuildTool(Tool):
             creator=creator,
             parent_ceiling=TraceContext.creation_ceiling(),
             registry=registry,
+            valid_tools=_valid_tool_names(svc),
         )
 
         # 6. Consent — the real clamp. Surface tools, drops and the existing roster.
@@ -1087,6 +1103,7 @@ class OwlBuildTool(Tool):
             creator=creator,
             parent_ceiling=TraceContext.creation_ceiling(),
             registry=registry,
+            valid_tools=_valid_tool_names(svc),
         )
 
         # 4. MONOTONE RATCHET — re-clamp against the owl's ORIGINAL creation_ceiling so an

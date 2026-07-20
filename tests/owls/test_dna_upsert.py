@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_storage import upsert_owl_dna
 
@@ -36,3 +37,19 @@ async def test_upsert_is_idempotent(tmp_db):
 async def test_upsert_rejects_unknown_table(tmp_db):
     with pytest.raises(ValueError):
         await upsert_owl_dna(tmp_db, "scout", OwlDNA(), table="evil; DROP TABLE owl_dna")
+
+
+@pytest.mark.asyncio
+async def test_upsert_stamps_owner_id_explicitly(tmp_db):
+    """Regression: owner_id must be written on INSERT, not left to the SQL
+    column DEFAULT — the read side (dna_hydrator.py) scopes every query with
+    WHERE owner_id = ?, so an explicit write is the only thing that keeps
+    reads and writes from silently drifting apart if either default ever
+    changes independently."""
+    await upsert_owl_dna(tmp_db, "scout", OwlDNA(), table="owl_dna")
+    rows = await tmp_db.fetch_all("SELECT owner_id FROM owl_dna WHERE owl_name = ?", ("scout",))
+    assert rows[0]["owner_id"] == "principal-default"
+
+    await upsert_owl_dna(tmp_db, "sage", OwlDNA(), table="owl_dna", owner_id="other-tenant")
+    rows = await tmp_db.fetch_all("SELECT owner_id FROM owl_dna WHERE owl_name = ?", ("sage",))
+    assert rows[0]["owner_id"] == "other-tenant"

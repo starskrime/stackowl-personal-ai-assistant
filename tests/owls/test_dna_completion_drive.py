@@ -81,11 +81,15 @@ async def test_completion_drive_round_trips_authored(tmp_db) -> None:
 
 @pytest.mark.asyncio
 async def test_completion_drive_round_trips_checkpoint(tmp_db) -> None:
-    from stackowl.owls.dna_storage import DNACheckpointer
+    # LearningArtifactStore (Story 2.3) is the production checkpoint/restore
+    # path DNA evolution actually uses — DNACheckpointer (dna_storage.py) was
+    # its superseded predecessor, unreferenced by any production code.
+    from stackowl.owls.learning_artifact_store import LearningArtifactStore
 
-    cp = DNACheckpointer(tmp_db)
-    cid = await cp.checkpoint("scout", OwlDNA(completion_drive=0.83))
-    restored = await cp.restore("scout", cid)
+    store = LearningArtifactStore(tmp_db)
+    dna = OwlDNA(completion_drive=0.83)
+    cid = await store.checkpoint("dna", "scout", dna.model_dump())
+    restored = OwlDNA.model_validate(await store.restore("dna", "scout", cid))
     assert restored.completion_drive == 0.83
 
 

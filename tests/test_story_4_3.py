@@ -9,10 +9,8 @@ import pytest
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
-from stackowl.exceptions import ManifestValidationError
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_injector import DNAPromptInjector
-from stackowl.owls.dna_storage import DNACheckpointer
 from stackowl.owls.evolution import DeltaValidator, EvolutionCoordinator
 from stackowl.owls.evolution_prompt import EvolutionPromptBuilder
 from stackowl.owls.manifest import OwlAgentManifest
@@ -141,77 +139,6 @@ class TestEvolutionPromptBuilder:
         messages = builder.build("miko", _manifest("miko"), [])
         body = "\n".join(m.content for m in messages)
         assert "no recent conversation excerpts" in body
-
-
-# ---------------------------------------------------------------------------
-# DNACheckpointer (DB-backed)
-# ---------------------------------------------------------------------------
-
-
-class TestDNACheckpointer:
-    async def test_checkpoint_returns_uuid_and_inserts_row(self, tmp_db: DbPool) -> None:
-        checkpointer = DNACheckpointer(tmp_db)
-        dna = OwlDNA(challenge_level=0.7, verbosity=0.3)
-        checkpoint_id = await checkpointer.checkpoint("miko", dna, reason="test")
-        assert isinstance(checkpoint_id, str)
-        # Should be UUID4 hex (32 chars)
-        uuid.UUID(checkpoint_id)
-        rows = await tmp_db.fetch_all(
-            "SELECT owl_name, reason FROM dna_checkpoints WHERE checkpoint_id = ?",
-            (checkpoint_id,),
-        )
-        assert len(rows) == 1
-        assert rows[0]["owl_name"] == "miko"
-        assert rows[0]["reason"] == "test"
-
-    async def test_restore_returns_dna(self, tmp_db: DbPool) -> None:
-        checkpointer = DNACheckpointer(tmp_db)
-        original = OwlDNA(
-            challenge_level=0.42,
-            verbosity=0.18,
-            curiosity=0.91,
-            formality=0.33,
-            creativity=0.66,
-            precision=0.77,
-        )
-        checkpoint_id = await checkpointer.checkpoint("miko", original)
-        restored = await checkpointer.restore("miko", checkpoint_id)
-        assert restored.challenge_level == pytest.approx(0.42)
-        assert restored.verbosity == pytest.approx(0.18)
-        assert restored.curiosity == pytest.approx(0.91)
-        assert restored.formality == pytest.approx(0.33)
-        assert restored.creativity == pytest.approx(0.66)
-        assert restored.precision == pytest.approx(0.77)
-
-    async def test_restore_unknown_raises(self, tmp_db: DbPool) -> None:
-        checkpointer = DNACheckpointer(tmp_db)
-        with pytest.raises(ManifestValidationError):
-            await checkpointer.restore("miko", "deadbeef")
-
-    async def test_list_returns_most_recent_first(self, tmp_db: DbPool) -> None:
-        checkpointer = DNACheckpointer(tmp_db)
-        ids: list[str] = []
-        for i in range(3):
-            cid = await checkpointer.checkpoint(
-                "miko",
-                OwlDNA(challenge_level=0.5 + i * 0.05),
-                reason=f"r{i}",
-            )
-            ids.append(cid)
-            # Tiny gap so created_at values can differ
-            await _tick()
-        listed = await checkpointer.list_checkpoints("miko", limit=10)
-        assert len(listed) == 3
-        # Most recent first → last inserted (r2) should lead
-        assert listed[0]["reason"] == "r2"
-        assert listed[-1]["reason"] == "r0"
-
-
-async def _tick() -> None:
-    """Yield long enough for ISO-8601 timestamps to diverge."""
-    import asyncio
-
-    await asyncio.sleep(0.005)
 
 
 # ---------------------------------------------------------------------------

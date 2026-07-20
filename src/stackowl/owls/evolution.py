@@ -1,9 +1,10 @@
 """DNA evolution — coordinator and delta validator (Story 4.3).
 
-The ``EvolutionPromptBuilder`` lives in ``evolution_prompt.py`` and
-``DNACheckpointer`` in ``dna_storage.py`` to keep this module within the
-300-line cap. The trio of classes still forms the LLM-driven mutation
-pipeline, re-exported here for caller convenience::
+The ``EvolutionPromptBuilder`` lives in ``evolution_prompt.py`` to keep this
+module within the 300-line cap. Checkpoint/restore for promotion goes through
+``LearningArtifactStore`` (learning_artifact_store.py, Story 2.3) — the trio
+below still forms the LLM-driven mutation pipeline, re-exported here for
+caller convenience::
 
     EvolutionPromptBuilder → ModelProvider → DeltaValidator → mutate
 """

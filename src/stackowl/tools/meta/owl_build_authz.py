@@ -86,11 +86,22 @@ def build_agent_manifest(
     creator: str,
     parent_ceiling: BoundsSpec | None,
     registry: OwlRegistry,
+    valid_tools: frozenset[str] | None = None,
 ) -> tuple[OwlAgentManifest, frozenset[str]]:
     """Build via :class:`SpecialistOwlBuilder`, then FORCE authority + clamp bounds.
 
     Returns ``(manifest, dropped_tools)``. Authority fields (origin/created_by/
     creation_ceiling) are stamped here, never read from the spec.
+
+    ``valid_tools`` is the live ToolRegistry's tool-name catalog (the caller's
+    job to compute — this module stays pure/no-I/O). The ONE production
+    caller never passed this, so ``SpecialistOwlBuilder._validate`` always
+    took its fail-open branch: a hallucinated/misspelled tool name in an
+    agent-built owl's requested tools sailed through unvalidated, the ceiling
+    clamp below narrows by AUTHORIZATION (what this creator may grant), not
+    by whether the name is a real registered tool at all. ``None`` still
+    degrades to the builder's existing fail-open warning (unchanged
+    behavior for any caller that genuinely has no catalog to check against).
     """
     log.engine.debug(
         "[owl_build] authz.build: entry",
@@ -104,6 +115,7 @@ def build_agent_manifest(
         preset=spec.preset,
         explicit_tools=tuple(spec.explicit_tools) if spec.explicit_tools else (),
         specialty=specialty,
+        valid_tools=valid_tools,
     )
     built = SpecialistOwlBuilder().build(owl_spec)
 
