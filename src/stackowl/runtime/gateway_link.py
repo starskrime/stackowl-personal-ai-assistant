@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, cast
 
 from stackowl.gateway.scanner import IngressMessage
@@ -242,8 +242,56 @@ class GatewayLink:
             adapter.send(cast("AsyncIterator[ResponseChunk]", reader))
         )
         self._send_tasks.add(task)
-        task.add_done_callback(self._send_tasks.discard)
+        task.add_done_callback(self._make_send_cleanup(msg))
         await self._conn.send(ingress_to_frame(msg))
+
+    def _make_send_cleanup(
+        self, msg: IngressMessage,
+    ) -> Callable[[asyncio.Task[None]], None]:
+        """Build the done-callback for a spawned ``adapter.send`` task.
+
+        Mirrors ``ClarifyPump._cleanup`` on the core side: the gateway is the
+        ONLY place that sees a real channel-delivery failure (a flood-control
+        ban, a network error) — the core's own send task is just forwarding
+        ChunkFrames over the socket and completes as soon as the local sentinel
+        is consumed, oblivious to what happens downstream. Before this, a bare
+        ``task.add_done_callback(self._send_tasks.discard)`` dropped the task
+        reference without ever inspecting ``task.exception()``, so a real
+        delivery failure (e.g. Telegram's ``RetryAfter``) was never logged and
+        never reached the recovery authority — the turn's computed answer was
+        silently lost with no trace beyond the adapter's own low-level warning.
+        """
+        def _cleanup(task: asyncio.Task[None]) -> None:
+            self._send_tasks.discard(task)
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is None:
+                return
+            log.gateway.error(
+                "[ipc] gateway link: adapter.send failed — response was not "
+                "delivered to the user",
+                exc_info=exc,
+                extra={"_fields": {
+                    "request_id": msg.trace_id, "channel": msg.channel,
+                    "session_id": msg.session_id,
+                }},
+            )
+            from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
+
+            if self._recovery is None:
+                self._recovery = RecoveryActuator()
+            failure = Failure(
+                name="gateway_link.send_task",
+                kind="send_task",
+                consequential=True,
+                error=str(exc),
+            )
+            recovery_task = asyncio.create_task(self._recovery.recover(failure))  # type: ignore[attr-defined]
+            self._aux_tasks.add(recovery_task)
+            recovery_task.add_done_callback(self._aux_tasks.discard)
+
+        return _cleanup
 
     async def _flush_pending(self) -> None:
         """Replay buffered messages once a fresh, ready core is connected.
