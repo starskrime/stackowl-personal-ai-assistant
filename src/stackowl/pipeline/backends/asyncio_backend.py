@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from stackowl.infra import decision_ledger, recovery_context, tool_outcome_ledger
@@ -20,6 +21,8 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.pipeline.state import PipelineState, StepError
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
+from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.pipeline.supervisor import synthesize_floor
 
 
 class AsyncioBackend(OrchestratorBackend):
@@ -32,6 +35,62 @@ class AsyncioBackend(OrchestratorBackend):
 
     def __init__(self, *, services: StepServices | None = None) -> None:
         self._services = services or StepServices()
+
+    async def _run_steps(
+        self, current: PipelineState, step_durations: list[tuple[str, float]]
+    ) -> PipelineState:
+        """The registered step loop, extracted so run() can bound it with a deadline.
+
+        Cancellation-safe: holds no cross-turn resources of its own — governor
+        slots and trace spans are `async with`/finally-released inside the steps,
+        and every context binding lives in run()'s try/finally, outside this
+        coroutine.
+        """
+        for step_name, step_fn in PIPELINE_STEPS:
+            current = current.evolve(pipeline_step=step_name)
+            step_t0 = time.monotonic()
+            try:
+                async with TraceContext.span(f"step.{step_name}"):
+                    current = await step_fn(current)
+                duration_ms = (time.monotonic() - step_t0) * 1000
+                step_durations.append((step_name, duration_ms))
+                log.engine.info(
+                    "[asyncio_backend] run: step ok",
+                    extra={"_fields": {"step": step_name, "trace_id": current.trace_id, "duration_ms": duration_ms}},
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - step_t0) * 1000
+                step_durations.append((step_name, duration_ms))
+                error_msg = format_step_error(step_name, exc)
+                log.engine.error(
+                    "[asyncio_backend] run: step failed — %s",
+                    error_msg,
+                    exc_info=True,
+                    extra={"_fields": {"step": step_name, "trace_id": current.trace_id, "duration_ms": duration_ms}},
+                )
+                # REACT-7/F092 — write the structured record in lockstep with the
+                # human string so the critical-failure honesty surface reads typed
+                # fields, not a re-parsed (drift-prone) string.
+                current = current.evolve(
+                    errors=(*current.errors, error_msg),
+                    step_errors=(*current.step_errors,
+                                 StepError(step=step_name, exc_type=type(exc).__name__, message=str(exc))),
+                )
+
+            # C1 fix (final whole-branch review) — Task 7's manual "do it
+            # again" hook (triage.run) already dispatched+delivered a retry
+            # via RetryActuator.attempt_retry (which itself edits/sends the
+            # answer). Running the REMAINING pipeline steps plus the delivery
+            # gate + deliver.run on the raw "do it again" text would produce
+            # a SECOND response to the user. Short-circuit the instant a step
+            # sets it (only triage ever does, so this fires right after it).
+            if current.retry_dispatched:
+                log.engine.info(
+                    "[asyncio_backend] run: retry_dispatched — short-circuiting remaining pipeline",
+                    extra={"_fields": {"trace_id": current.trace_id, "step": step_name}},
+                )
+                break
+        return current
 
     async def run(self, state: PipelineState) -> PipelineState:
         log.engine.info(
@@ -95,50 +154,62 @@ class AsyncioBackend(OrchestratorBackend):
         progress_token = bind_progress_callback(_progress_cb)
         await emit_progress_start(_progress_cb)
         try:
-            for step_name, step_fn in PIPELINE_STEPS:
-                current = current.evolve(pipeline_step=step_name)
-                step_t0 = time.monotonic()
+            # Global interactive turn deadline (2026-07 incident: a telegram turn
+            # hung 1670+s — lower-level timeouts like resilient_round don't cover
+            # every hang, e.g. a wedged tool call). Interactive turns only; the
+            # long-running non-interactive paths (goal_execution, parliament,
+            # delegation children, evolution) carry their own budgets and must
+            # never be cut by this.
+            # getattr-guarded: unit tests hand StepServices duck-typed settings
+            # stubs without a `system` section — those (and settings=None) mean
+            # "deadline disabled", never a crash.
+            deadline_s: float = (
+                getattr(getattr(_settings, "system", None),
+                        "interactive_turn_timeout_s", 0.0)
+                if state.interactive
+                else 0.0
+            )
+            if deadline_s > 0:
                 try:
-                    async with TraceContext.span(f"step.{step_name}"):
-                        current = await step_fn(current)
-                    duration_ms = (time.monotonic() - step_t0) * 1000
-                    step_durations.append((step_name, duration_ms))
-                    log.engine.info(
-                        "[asyncio_backend] run: step ok",
-                        extra={"_fields": {"step": step_name, "trace_id": state.trace_id, "duration_ms": duration_ms}},
+                    current = await asyncio.wait_for(
+                        self._run_steps(current, step_durations), timeout=deadline_s
                     )
-                except Exception as exc:
-                    duration_ms = (time.monotonic() - step_t0) * 1000
-                    step_durations.append((step_name, duration_ms))
-                    error_msg = format_step_error(step_name, exc)
+                except TimeoutError:
+                    # Intermediate step state died with the cancelled task; the
+                    # pre-steps state + this error is everything that survives.
+                    error_msg = (
+                        f"deadline: TimeoutError: interactive turn exceeded "
+                        f"{deadline_s:.0f}s deadline"
+                    )
                     log.engine.error(
-                        "[asyncio_backend] run: step failed — %s",
-                        error_msg,
-                        exc_info=True,
-                        extra={"_fields": {"step": step_name, "trace_id": state.trace_id, "duration_ms": duration_ms}},
+                        "[asyncio_backend] run: interactive turn deadline exceeded — cancelled",
+                        extra={"_fields": {"trace_id": state.trace_id, "deadline_s": deadline_s}},
                     )
-                    # REACT-7/F092 — write the structured record in lockstep with the
-                    # human string so the critical-failure honesty surface reads typed
-                    # fields, not a re-parsed (drift-prone) string.
+                    # Responses-only invariant: the floor ADDS an honest chunk;
+                    # the error STAYS in errors so task_outcomes records a real
+                    # failure (classify_failure → "TimeoutError").
+                    floor_chunk = ResponseChunk(
+                        content=synthesize_floor(
+                            goal=state.input_text,
+                            error=f"turn cancelled after {deadline_s:.0f}s deadline",
+                            attempts=[],
+                            partial="",
+                        ),
+                        is_final=False,
+                        chunk_index=0,
+                        trace_id=state.trace_id,
+                        owl_name=state.owl_name,
+                        is_floor=True,
+                    )
                     current = current.evolve(
+                        responses=(*current.responses, floor_chunk),
                         errors=(*current.errors, error_msg),
                         step_errors=(*current.step_errors,
-                                     StepError(step=step_name, exc_type=type(exc).__name__, message=str(exc))),
+                                     StepError(step="deadline", exc_type="TimeoutError",
+                                               message=f"interactive turn exceeded {deadline_s:.0f}s deadline")),
                     )
-
-                # C1 fix (final whole-branch review) — Task 7's manual "do it
-                # again" hook (triage.run) already dispatched+delivered a retry
-                # via RetryActuator.attempt_retry (which itself edits/sends the
-                # answer). Running the REMAINING pipeline steps plus the delivery
-                # gate + deliver.run on the raw "do it again" text would produce
-                # a SECOND response to the user. Short-circuit the instant a step
-                # sets it (only triage ever does, so this fires right after it).
-                if current.retry_dispatched:
-                    log.engine.info(
-                        "[asyncio_backend] run: retry_dispatched — short-circuiting remaining pipeline",
-                        extra={"_fields": {"trace_id": state.trace_id, "step": step_name}},
-                    )
-                    break
+            else:
+                current = await self._run_steps(current, step_durations)
 
             if current.retry_dispatched:
                 log.engine.debug(
