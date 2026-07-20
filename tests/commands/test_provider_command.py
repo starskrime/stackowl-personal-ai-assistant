@@ -477,6 +477,29 @@ class TestProviderAddModelTier:
         saved = next(p for p in data["providers"] if p["name"] == "groq")
         assert saved["api_key"] == "my-key"
 
+    def test_add_tier_with_spaced_api_key_ref(self, tmp_yaml: Path) -> None:
+        """A file: secret ref rooted under a home dir with a space in it
+        (e.g. Mac '/Users/First Last/...' or Windows 'C:\\Users\\First Last\\
+        ...') must survive add-model -> add-tier's button-command threading
+        intact — not get truncated/mangled, and not bounce with a Usage
+        error after the secret was already stored (orphaning it)."""
+        spaced_ref = "file:/home/Test User/.stackowl/secrets/foo"
+        cmd = _make_cmd()
+        model_reply = cmd._add_model(f"groq llama-3.3-70b-versatile {spaced_ref}")
+        assert isinstance(model_reply, CommandResponse)
+        tier_action = next(
+            a for a in model_reply.actions if a.command.startswith("/provider add-tier ")
+        )
+        # Drive it exactly the way the button would: strip the leading
+        # "/provider add-tier " prefix and hand the rest to _add_tier, same
+        # as handle()'s "add-tier" branch does.
+        tier_args = tier_action.command.removeprefix("/provider add-tier ")
+        reply = cmd._add_tier(tier_args)
+        assert reply.startswith("✓ Provider 'groq' added")
+        data = _load(tmp_yaml)
+        saved = next(p for p in data["providers"] if p["name"] == "groq")
+        assert saved["api_key"] == spaced_ref
+
 
 # ---------------------------------------------------------------------------
 # remove
@@ -749,6 +772,34 @@ class TestProviderEdit:
         data = _load(tmp_yaml)
         saved = next(p for p in data["providers"] if p["name"] == "myprov")
         assert float(saved["cooldown_hours"]) == 12.0
+
+    @pytest.mark.asyncio
+    async def test_edit_cooldown_hours_rejects_non_numeric(self, tmp_yaml: Path) -> None:
+        """A non-numeric cooldown_hours must be rejected BEFORE any write —
+        the old free-text _edit path wrote the literal string and reported a
+        false '✓ ... applied immediately', poisoning stackowl.yaml for the
+        next boot (Settings() re-validation fails, silently, on reload)."""
+        await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        out = await _make_cmd().handle("edit myprov cooldown_hours soon", _state())
+        assert isinstance(out, str)
+        assert "✗" in out
+        assert "✓" not in out
+        data = _load(tmp_yaml)
+        saved = next(p for p in data["providers"] if p["name"] == "myprov")
+        assert saved.get("cooldown_hours") is None
+
+    @pytest.mark.asyncio
+    async def test_edit_cooldown_hours_rejects_negative(self, tmp_yaml: Path) -> None:
+        """A negative cooldown_hours must never be written — at the breaker
+        layer it would silently collapse to a ~0s cooldown."""
+        await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        out = await _make_cmd().handle("edit myprov cooldown_hours -1", _state())
+        assert isinstance(out, str)
+        assert "✗" in out
+        assert "✓" not in out
+        data = _load(tmp_yaml)
+        saved = next(p for p in data["providers"] if p["name"] == "myprov")
+        assert saved.get("cooldown_hours") is None
 
 
 class TestProviderSetTokenRename:

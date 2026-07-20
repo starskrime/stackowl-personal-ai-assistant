@@ -16,6 +16,7 @@ emit — see stackowl/startup/provider_reload.py for the consumer.
 
 from __future__ import annotations
 
+import math
 import typing
 from typing import TYPE_CHECKING, Any
 
@@ -698,6 +699,22 @@ class ProviderCommand(SlashCommand):
             )
         if field == "protocol" and value not in _VALID_PROTOCOLS:
             return f"✗ Invalid protocol '{value}' — valid: {', '.join(_VALID_PROTOCOLS)}"
+        # cooldown_hours is the first NUMERIC field this otherwise free-text
+        # path handles — parse + validate BEFORE any write, so a bad value
+        # (non-numeric, inf/nan, negative) never reaches the YAML. Writing it
+        # first would both poison the file for the next boot AND make
+        # _emit_reloaded's Settings() re-validation fail silently while this
+        # method still reported a false "✓ ... applied immediately".
+        parsed_cooldown: float | None = None
+        if field == "cooldown_hours":
+            try:
+                parsed_cooldown = float(value)
+            except ValueError:
+                return f"✗ Invalid cooldown_hours '{value}' — must be a number"
+            if not math.isfinite(parsed_cooldown):
+                return f"✗ Invalid cooldown_hours '{value}' — must be a finite number"
+            if parsed_cooldown < 0:
+                return f"✗ Invalid cooldown_hours '{value}' — must not be negative"
         path = config_path()
         if not path.exists():
             return _NO_FILE
@@ -709,7 +726,7 @@ class ProviderCommand(SlashCommand):
                 "[commands] provider.edit: not found", extra={"_fields": {"name": name}}
             )
             return f"✗ Provider '{name}' not found"
-        target[field] = value
+        target[field] = parsed_cooldown if field == "cooldown_hours" else value
         save_yaml(path, data)
         self._emit_reloaded(name)
         log.config.info(
@@ -927,14 +944,24 @@ class ProviderCommand(SlashCommand):
         log.config.debug(
             "[commands] provider.add_tier: entry", extra={"_fields": {"raw_len": len(raw)}}
         )
-        bits = raw.split()
-        if len(bits) != 4:
+        # catalog_name and model are always space-free (catalog names / model
+        # ids), so peel them off the front with a bounded split — mirroring
+        # _add_model's own parsing. What's left is "<api_key_ref> <tier>",
+        # where api_key_ref may itself contain spaces (e.g. a file: secret
+        # ref under a home directory with a space in it, common on Mac/
+        # Windows). tier is always a single trailing token from _VALID_TIERS,
+        # so peel IT off the back with rsplit — whatever remains in the
+        # middle is the ref, spaces and all.
+        front = raw.split(maxsplit=2)
+        tail = front[2].rsplit(maxsplit=1) if len(front) == 3 else []
+        if len(front) != 3 or len(tail) != 2:
             log.config.debug(
                 "[commands] provider.add_tier: exit — usage",
                 extra={"_fields": {"raw_len": len(raw)}},
             )
             return "Usage: /provider add-tier <catalog_name> <model> <api_key_ref_or_dash> <tier>"
-        catalog_name, model, api_key_ref, tier = bits
+        catalog_name, model = front[0], front[1]
+        api_key_ref, tier = tail
         # 2. DECISION — validate tier and resolve the catalog entry
         if tier not in _VALID_TIERS:
             log.config.warning(
