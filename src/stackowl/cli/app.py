@@ -1043,7 +1043,7 @@ def integrations_health() -> None:
 
     # 2. DECISION — check each adapter's health
     async def _check() -> list[tuple[str, str, str | None]]:
-        results = []
+        results: list[tuple[str, str, str | None]] = []
         for adapter in adapters:
             try:
                 status = await adapter.health_check()
