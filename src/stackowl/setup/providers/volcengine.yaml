@@ -1,0 +1,14 @@
+name: volcengine
+label: Volcengine (ByteDance Doubao)
+protocol: openai
+base_url: https://ark.cn-beijing.volces.com/api/v3
+default_model: doubao-seed-1-6-250615
+models:
+  - doubao-seed-1-6-250615
+  - doubao-seed-1-6-flash-250615
+  - doubao-seed-1-6-thinking-250615
+  - doubao-1-5-pro-32k-250115
+tier: powerful
+needs_api_key: true
+category: [open-source]
+key_url: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey

@@ -1,0 +1,18 @@
+# Base URL/model confirmed via third-party integration docs (LangChain, LobeHub,
+# Dify, Baichuan's own GitHub OpenAI-compat example) rather than a directly
+# rendered primary docs page (JS-rendered, could not fetch) — corroborated
+# across 4 independent sources, but flagged here for an eventual spot-check.
+name: baichuan
+label: Baichuan AI
+protocol: openai
+base_url: https://api.baichuan-ai.com/v1
+default_model: Baichuan4
+models:
+  - Baichuan4
+  - Baichuan3-Turbo
+  - Baichuan3-Turbo-128k
+  - Baichuan2-Turbo-192k
+tier: standard
+needs_api_key: true
+category: [open-source]
+key_url: https://platform.baichuan-ai.com

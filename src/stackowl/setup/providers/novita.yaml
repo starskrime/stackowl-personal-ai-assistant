@@ -1,0 +1,15 @@
+name: novita
+label: Novita AI
+protocol: openai
+base_url: https://api.novita.ai/openai/v1
+default_model: deepseek/deepseek-v3-0324
+models:
+  - deepseek/deepseek-v3-0324
+  - deepseek/deepseek-r1-turbo
+  - meta-llama/llama-3.3-70b-instruct
+  - qwen/qwen3-235b-a22b-fp8
+  - google/gemma-3-27b-it
+tier: standard
+needs_api_key: true
+category: [open-source, aggregator]
+key_url: https://novita.ai/settings/key-management

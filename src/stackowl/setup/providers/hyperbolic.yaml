@@ -1,0 +1,14 @@
+name: hyperbolic
+label: Hyperbolic
+protocol: openai
+base_url: https://api.hyperbolic.xyz/v1
+default_model: deepseek-ai/DeepSeek-V3
+models:
+  - deepseek-ai/DeepSeek-V3
+  - deepseek-ai/DeepSeek-R1
+  - meta-llama/Llama-3.3-70B-Instruct
+  - Qwen/Qwen2.5-Coder-32B-Instruct
+tier: standard
+needs_api_key: true
+category: [open-source]
+key_url: https://app.hyperbolic.ai/settings/api-keys

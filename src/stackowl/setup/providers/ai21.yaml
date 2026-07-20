@@ -1,0 +1,12 @@
+name: ai21
+label: AI21 Labs
+protocol: openai
+base_url: https://api.ai21.com/studio/v1
+default_model: jamba-large
+models:
+  - jamba-large
+  - jamba-mini
+tier: powerful
+needs_api_key: true
+category: [enterprise, long-context]
+key_url: https://studio.ai21.com/sign-up

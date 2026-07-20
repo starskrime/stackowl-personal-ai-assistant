@@ -1,0 +1,14 @@
+name: martian
+label: Martian Model Router
+protocol: openai
+base_url: https://api.withmartian.com/v1
+default_model: openai/gpt-4.1-nano
+models:
+  - openai/gpt-4.1-nano
+  - anthropic/claude-sonnet-4-20250514
+  - google/gemini-2.5-flash
+  - meta-llama/llama-3.3-70b-instruct
+tier: standard
+needs_api_key: true
+category: [aggregator]
+key_url: https://app.withmartian.com/

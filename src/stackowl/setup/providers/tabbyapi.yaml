@@ -1,0 +1,13 @@
+name: tabbyapi
+label: TabbyAPI (ExLlamaV2)
+protocol: openai
+base_url: http://127.0.0.1:5000/v1
+default_model: turboderp/Llama2-7B-exl2
+models:
+  - turboderp/Llama2-7B-exl2
+  - turboderp/Mistral-7B-instruct-exl2
+  - turboderp/Mixtral-8x7B-instruct-exl2
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

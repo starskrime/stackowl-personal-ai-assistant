@@ -1,0 +1,13 @@
+name: unify
+label: Unify AI
+protocol: openai
+base_url: https://api.unify.ai/v0
+default_model: mistral-large@mistral-ai
+models:
+  - mistral-large@mistral-ai
+  - claude-3-haiku@anthropic
+  - llama-3-70b-chat@groq
+tier: standard
+needs_api_key: true
+category: [aggregator]
+key_url: https://console.unify.ai

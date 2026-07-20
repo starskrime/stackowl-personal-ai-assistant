@@ -1,0 +1,16 @@
+# The GPT4All desktop app's Local API Server is OFF by default and must be
+# enabled manually (Settings > Application > Advanced) before this endpoint
+# exists — worth surfacing in any onboarding copy that consumes this entry.
+name: gpt4all
+label: GPT4All (local server)
+protocol: openai
+base_url: http://localhost:4891/v1
+default_model: Phi-3 Mini Instruct
+models:
+  - Phi-3 Mini Instruct
+  - Llama 3 8B Instruct
+  - Mistral Instruct
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

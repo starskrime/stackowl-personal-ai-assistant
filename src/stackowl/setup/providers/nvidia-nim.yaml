@@ -1,0 +1,15 @@
+name: nvidia-nim
+label: NVIDIA NIM
+protocol: openai
+base_url: https://integrate.api.nvidia.com/v1
+default_model: meta/llama-3.3-70b-instruct
+models:
+  - meta/llama-3.3-70b-instruct
+  - meta/llama-4-maverick-17b-128e-instruct
+  - nvidia/llama-3.3-nemotron-super-49b-v1.5
+  - deepseek-ai/deepseek-v4-pro
+  - mistralai/mistral-large-3-675b-instruct-2512
+tier: powerful
+needs_api_key: true
+category: [aggregator, open-source, free-tier]
+key_url: https://build.nvidia.com

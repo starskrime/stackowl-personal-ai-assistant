@@ -1,0 +1,13 @@
+name: baseten
+label: Baseten
+protocol: openai
+base_url: https://inference.baseten.co/v1
+default_model: openai/gpt-oss-120b
+models:
+  - openai/gpt-oss-120b
+  - openai/gpt-oss-20b
+  - deepseek-ai/DeepSeek-V4-Pro
+tier: powerful
+needs_api_key: true
+category: [aggregator, open-source]
+key_url: https://app.baseten.co/settings/api_keys

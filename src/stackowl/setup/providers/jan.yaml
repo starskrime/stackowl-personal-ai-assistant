@@ -1,0 +1,16 @@
+# default local port is Jan's DESKTOP APP server (1337) — the separate Jan
+# CLI defaults to a different port (6767); do not conflate the two.
+name: jan
+label: Jan (local server)
+protocol: openai
+base_url: http://127.0.0.1:1337/v1
+default_model: llama3.2-3b-instruct
+models:
+  - llama3.2-3b-instruct
+  - qwen2.5-7b-instruct
+  - mistral-7b-instruct
+  - phi-3-mini-instruct
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

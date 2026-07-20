@@ -1,0 +1,13 @@
+name: glama
+label: Glama AI Gateway
+protocol: openai
+base_url: https://gateway.glama.ai/v1
+default_model: openai/gpt-4o-2024-11-20
+models:
+  - openai/gpt-4o-2024-11-20
+  - anthropic/claude-sonnet-4-5-20250929
+  - anthropic/claude-haiku-4-5-20251001
+tier: standard
+needs_api_key: true
+category: [aggregator]
+key_url: https://glama.ai/settings/gateway/api-keys

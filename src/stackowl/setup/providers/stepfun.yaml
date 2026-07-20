@@ -1,0 +1,13 @@
+name: stepfun
+label: StepFun
+protocol: openai
+base_url: https://api.stepfun.ai/v1
+default_model: step-3.5-flash
+models:
+  - step-3.7-flash
+  - step-3.5-flash
+  - step-1-32k
+tier: standard
+needs_api_key: true
+category: [open-source]
+key_url: https://platform.stepfun.ai/interface-key

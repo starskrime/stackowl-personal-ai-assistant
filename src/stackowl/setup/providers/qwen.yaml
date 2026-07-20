@@ -1,0 +1,15 @@
+name: qwen
+label: Alibaba Qwen (DashScope)
+protocol: openai
+base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+default_model: qwen-plus
+models:
+  - qwen-max
+  - qwen-plus
+  - qwen-turbo
+  - qwen3.7-max
+  - qwen3.7-plus
+tier: powerful
+needs_api_key: true
+category: [open-source]
+key_url: https://dashscope.console.aliyun.com/apiKey

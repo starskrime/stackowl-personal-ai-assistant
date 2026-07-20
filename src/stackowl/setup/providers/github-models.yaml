@@ -1,0 +1,19 @@
+# NOTE: "needs_api_key: true" here means a GitHub Personal Access Token
+# (with the 'models' scope) used as the bearer token, not a vendor API key —
+# key_url points at GitHub token settings, not a vendor console.
+name: github-models
+label: GitHub Models
+protocol: openai
+base_url: https://models.github.ai/inference
+default_model: openai/gpt-4o
+models:
+  - openai/gpt-4o
+  - openai/gpt-4.1
+  - deepseek/deepseek-r1
+  - meta/llama-3.3-70b-instruct
+  - mistral-ai/mistral-medium-2505
+  - microsoft/phi-4
+tier: powerful
+needs_api_key: true
+category: [free-tier, aggregator]
+key_url: https://github.com/settings/tokens

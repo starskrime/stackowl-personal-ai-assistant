@@ -1,0 +1,15 @@
+name: sambanova
+label: SambaNova Cloud
+protocol: openai
+base_url: https://api.sambanova.ai/v1
+default_model: Meta-Llama-3.3-70B-Instruct
+models:
+  - Meta-Llama-3.3-70B-Instruct
+  - DeepSeek-V3.1
+  - DeepSeek-V3.2
+  - MiniMax-M2.7
+  - gpt-oss-120b
+tier: fast
+needs_api_key: true
+category: [free-tier, fast-inference]
+key_url: https://cloud.sambanova.ai/apis

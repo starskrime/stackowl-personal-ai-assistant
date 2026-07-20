@@ -1,0 +1,13 @@
+name: zhipu
+label: Zhipu AI (GLM / Z.ai)
+protocol: openai
+base_url: https://api.z.ai/api/paas/v4
+default_model: glm-4.6
+models:
+  - glm-5.2
+  - glm-5v-turbo
+  - glm-4.6
+tier: powerful
+needs_api_key: true
+category: [open-source]
+key_url: https://z.ai/manage-apikey/apikey-list

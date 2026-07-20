@@ -1,0 +1,14 @@
+name: deepinfra
+label: DeepInfra
+protocol: openai
+base_url: https://api.deepinfra.com/v1/openai
+default_model: deepseek-ai/DeepSeek-V3.2
+models:
+  - deepseek-ai/DeepSeek-V3.2
+  - meta-llama/Llama-3.3-70B-Instruct
+  - Qwen/Qwen3-Max
+  - zai-org/GLM-5.2
+tier: standard
+needs_api_key: true
+category: [open-source, aggregator]
+key_url: https://deepinfra.com/dash/api_keys

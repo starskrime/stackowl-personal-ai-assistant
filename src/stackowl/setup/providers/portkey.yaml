@@ -1,0 +1,17 @@
+# NOTE: Portkey routes via a "Model Catalog" where the @provider-slug prefix
+# is a name the USER assigns to their own provider integration in Portkey's
+# dashboard, not a universal global slug. Example models below are Portkey's
+# own documented sample slugs — illustrative of the pattern, not fixed ids.
+name: portkey
+label: Portkey AI Gateway
+protocol: openai
+base_url: https://api.portkey.ai/v1
+default_model: "@openai-prod/gpt-4o"
+models:
+  - "@openai-prod/gpt-4o"
+  - "@anthropic-prod/claude-sonnet-4"
+  - "@google-prod/gemini-2.0-flash"
+tier: standard
+needs_api_key: true
+category: [aggregator]
+key_url: https://app.portkey.ai/api-keys

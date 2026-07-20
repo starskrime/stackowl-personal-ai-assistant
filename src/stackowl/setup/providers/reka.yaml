@@ -1,0 +1,13 @@
+name: reka
+label: Reka AI
+protocol: openai
+base_url: https://api.reka.ai/v1
+default_model: reka-flash
+models:
+  - reka-flash
+  - reka-edge
+  - reka-flash-3.1
+tier: powerful
+needs_api_key: true
+category: [multimodal]
+key_url: https://platform.reka.ai

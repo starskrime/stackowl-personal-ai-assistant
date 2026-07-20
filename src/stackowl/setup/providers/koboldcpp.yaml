@@ -1,0 +1,15 @@
+# KoboldCpp is single-model-per-process (loads one GGUF at launch), so
+# default_model is a placeholder rather than something the server reports.
+name: koboldcpp
+label: KoboldCpp
+protocol: openai
+base_url: http://localhost:5001/v1
+default_model: koboldcpp
+models:
+  - Qwen3-VL-8B
+  - L3-8B-Stheno-v3.2
+  - Gemma-3-27B
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

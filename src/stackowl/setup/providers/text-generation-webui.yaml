@@ -1,0 +1,12 @@
+name: text-generation-webui
+label: text-generation-webui (oobabooga)
+protocol: openai
+base_url: http://127.0.0.1:5000/v1
+default_model: TheBloke/Llama-2-7B-Chat-GGUF
+models:
+  - TheBloke/Llama-2-7B-Chat-GGUF
+  - TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

@@ -1,0 +1,15 @@
+name: siliconflow
+label: SiliconFlow
+protocol: openai
+base_url: https://api.siliconflow.com/v1
+default_model: deepseek-ai/DeepSeek-V3
+models:
+  - deepseek-ai/DeepSeek-V3
+  - deepseek-ai/DeepSeek-R1
+  - Qwen/Qwen3-8B
+  - Qwen/Qwen3-Coder-30B-A3B-Instruct
+  - zai-org/GLM-4.6
+tier: standard
+needs_api_key: true
+category: [aggregator, open-source]
+key_url: https://cloud.siliconflow.com/account/ak

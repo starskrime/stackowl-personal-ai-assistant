@@ -1,0 +1,13 @@
+name: requesty
+label: Requesty AI Gateway
+protocol: openai
+base_url: https://router.requesty.ai/v1
+default_model: openai/gpt-4.1
+models:
+  - openai/gpt-4.1
+  - anthropic/claude-sonnet-4-5-20250929
+  - google/gemini-2.5-pro
+tier: standard
+needs_api_key: true
+category: [aggregator]
+key_url: https://app.requesty.ai/sign-up

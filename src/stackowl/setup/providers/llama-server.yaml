@@ -1,0 +1,13 @@
+name: llama-server
+label: llama.cpp server
+protocol: openai
+base_url: http://127.0.0.1:8080/v1
+default_model: ggml-org/gemma-3-1b-it-GGUF
+models:
+  - ggml-org/gemma-3-1b-it-GGUF
+  - bartowski/Meta-Llama-3.1-8B-Instruct-GGUF
+  - Qwen/Qwen2.5-7B-Instruct-GGUF
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

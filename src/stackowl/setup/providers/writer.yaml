@@ -1,0 +1,12 @@
+name: writer
+label: Writer
+protocol: openai
+base_url: https://api.writer.com/v1
+default_model: palmyra-x5
+models:
+  - palmyra-x5
+  - palmyra-x4
+tier: powerful
+needs_api_key: true
+category: [enterprise, long-context]
+key_url: https://app.writer.com

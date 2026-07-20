@@ -1,0 +1,15 @@
+name: aimlapi
+label: AI/ML API
+protocol: openai
+base_url: https://api.aimlapi.com/v1
+default_model: gpt-4o-2024-08-06
+models:
+  - gpt-4o-2024-08-06
+  - claude-sonnet-4-5-20250929
+  - claude-haiku-4-5-20251001
+  - meta-llama/Llama-3.3-70B-Instruct-Turbo
+  - deepseek/deepseek-v3
+tier: standard
+needs_api_key: true
+category: [aggregator]
+key_url: https://aimlapi.com/app/keys

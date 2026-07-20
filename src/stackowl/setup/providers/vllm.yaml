@@ -1,0 +1,14 @@
+name: vllm
+label: vLLM (local)
+protocol: openai
+base_url: http://localhost:8000/v1
+default_model: Qwen/Qwen2.5-1.5B-Instruct
+models:
+  - Qwen/Qwen2.5-1.5B-Instruct
+  - meta-llama/Llama-3.1-8B-Instruct
+  - mistralai/Mistral-7B-Instruct-v0.3
+  - Qwen/Qwen3-8B
+tier: local
+needs_api_key: false
+is_local: true
+category: [local, open-source]

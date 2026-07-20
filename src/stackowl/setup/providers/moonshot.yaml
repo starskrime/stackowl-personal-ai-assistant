@@ -1,0 +1,14 @@
+name: moonshot
+label: Moonshot AI (Kimi)
+protocol: openai
+base_url: https://api.moonshot.ai/v1
+default_model: kimi-k2.6
+models:
+  - kimi-k3
+  - kimi-k2.7-code
+  - kimi-k2.6
+  - kimi-k2.5
+tier: powerful
+needs_api_key: true
+category: [open-source]
+key_url: https://platform.kimi.ai
