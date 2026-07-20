@@ -671,3 +671,96 @@ async def test_consumption_hook_failures_never_block_dedup_or_next_tick() -> Non
     assert ("web_fetch", "ToolExecutionError") in handler.verdicts
     # Dedup still closed the incident despite every hook exploding.
     assert len(handler._open_incidents) == 1
+
+
+class _RecordingBridge:
+    """Fake MemoryBridge — records every staged fact."""
+
+    def __init__(self) -> None:
+        self.staged: list[object] = []
+
+    async def stage(self, fact: object) -> None:
+        self.staged.append(fact)
+
+
+@pytest.mark.asyncio
+async def test_verified_verdict_stages_a_memory_fact() -> None:
+    bridge = _RecordingBridge()
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        memory_bridge=bridge,  # type: ignore[arg-type]
+    )
+
+    await handler.execute(_job())
+
+    assert len(bridge.staged) == 1
+    fact = bridge.staged[0]
+    assert fact.source_type == "agent_self"
+    assert fact.trust == "self"
+    assert "web_fetch" in fact.content
+    assert "ToolExecutionError" in fact.content
+
+
+@pytest.mark.asyncio
+async def test_unverified_verdict_does_not_stage_a_memory_fact() -> None:
+    """Unverified is exactly the noise operators asked NOT to see (mirrors the
+    alert-suppression behavior right above it) — no memory fact either."""
+    class _UnverifiedRca:
+        async def analyze(self, evidence: RcaEvidence) -> RcaVerdict:
+            return RcaVerdict(
+                capability_class=evidence.capability_class,
+                failure_class=evidence.failure_class,
+                skill_name="learned_fix", description="d", when_to_use="w",
+                root_cause="rc", fix_pattern="fx", verified=False,
+            )
+
+    bridge = _RecordingBridge()
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_UnverifiedRca(),  # type: ignore[arg-type]
+        memory_bridge=bridge,  # type: ignore[arg-type]
+    )
+
+    await handler.execute(_job())
+
+    assert bridge.staged == []
+
+
+@pytest.mark.asyncio
+async def test_memory_bridge_stage_failure_never_blocks_dedup_or_next_tick() -> None:
+    class _BoomingBridge:
+        async def stage(self, fact: object) -> None:
+            raise RuntimeError("bridge exploded")
+
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        memory_bridge=_BoomingBridge(),  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(_job())  # must not raise
+
+    assert result.success is True
+    assert len(handler._open_incidents) == 1

@@ -347,6 +347,39 @@ async def _capture_outcome(
         await _update_skill_success_rates(
             services, state, success=trustworthy_success,
         )
+        # Single-failure learning — a novel failure otherwise gets ZERO learning
+        # signal until IncidentEscalationHandler clusters >= 3 occurrences of the
+        # SAME (capability_class, failure_class) within its 10-minute sweep
+        # window (see that handler's memory-write for the cluster-verified,
+        # higher-confidence counterpart). This is the cheap, immediate half:
+        # one LOW-TRUST staged fact per single failure, gated on the SAME
+        # health_loop switch, so recall (classify.py's lesson_context) can
+        # weight it below an RCA-verified skill lesson.
+        if failure_class is not None and services.memory_bridge is not None:
+            try:
+                from stackowl.config.settings import Settings
+
+                if Settings().health_loop:
+                    from stackowl.memory.models import StagedFact
+
+                    await services.memory_bridge.stage(StagedFact(
+                        content=(
+                            f"Attempted {state.input_text[:200]!r} via "
+                            f"{state.owl_name}, failed: {failure_class}"
+                        ),
+                        source_type="agent_self",
+                        source_ref=state.trace_id,
+                        confidence=0.3,
+                        trust="untrusted",
+                    ))
+            except Exception as exc:  # B5 — single-failure learning must not block capture
+                log.engine.debug(
+                    "[outcomes] capture: single-failure memory stage failed",
+                    exc_info=exc,
+                    extra={"_fields": {
+                        "trace_id": state.trace_id, "failure_class": failure_class,
+                    }},
+                )
     except Exception as exc:  # B5 — log, never raise from telemetry
         log.engine.warning(
             "[outcomes] capture: write failed — telemetry lost for this turn",

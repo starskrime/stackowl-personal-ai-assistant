@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
 
+import stackowl.config.settings as settings_mod
 from stackowl.db.pool import DbPool
 from stackowl.memory.critic_prompt import CriticScorerPromptBuilder, parse_critic_response
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore, classify_failure
@@ -277,6 +279,99 @@ async def test_capture_outcome_is_noop_when_no_db_pool() -> None:
     )
     # Must not raise.
     await _capture_outcome(state, total_ms=10.0, services=services)
+
+
+# --- single-failure memory learning (D.2) ------------------------------------
+
+class _RecordingBridge:
+    def __init__(self) -> None:
+        self.staged: list[Any] = []
+
+    async def stage(self, fact: Any) -> None:  # noqa: ANN401
+        self.staged.append(fact)
+
+
+async def test_failed_outcome_stages_a_low_trust_memory_fact_when_health_loop_on(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_mod, "Settings", lambda: SimpleNamespace(health_loop=True))
+    bridge = _RecordingBridge()
+    services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
+    state = PipelineState(
+        trace_id="t-single-fail", session_id="s-fail", input_text="do the thing",
+        channel="cli", owl_name="secretary", pipeline_step="deliver",
+        errors=("execute: OwlTimeoutError: deadline exceeded",),
+    )
+
+    await _capture_outcome(state, total_ms=15000.0, services=services)
+
+    assert len(bridge.staged) == 1
+    fact = bridge.staged[0]
+    assert fact.source_type == "agent_self"
+    assert fact.trust == "untrusted"
+    assert fact.confidence == pytest.approx(0.3)
+    assert "OwlTimeoutError" in fact.content
+    assert "secretary" in fact.content
+
+
+async def test_failed_outcome_skips_memory_stage_when_health_loop_off(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_mod, "Settings", lambda: SimpleNamespace(health_loop=False))
+    bridge = _RecordingBridge()
+    services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
+    state = PipelineState(
+        trace_id="t-single-fail-off", session_id="s-fail", input_text="do the thing",
+        channel="cli", owl_name="secretary", pipeline_step="deliver",
+        errors=("execute: OwlTimeoutError: deadline exceeded",),
+    )
+
+    await _capture_outcome(state, total_ms=15000.0, services=services)
+
+    assert bridge.staged == []
+
+
+async def test_successful_outcome_does_not_stage_a_memory_fact(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_mod, "Settings", lambda: SimpleNamespace(health_loop=True))
+    bridge = _RecordingBridge()
+    services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
+    state = PipelineState(
+        trace_id="t-clean", session_id="s-clean", input_text="hi",
+        channel="cli", owl_name="secretary", pipeline_step="deliver",
+        responses=(
+            ResponseChunk(content="hello", is_final=True, chunk_index=0,
+                          trace_id="t-clean", owl_name="secretary"),
+        ),
+    )
+
+    await _capture_outcome(state, total_ms=10.0, services=services)
+
+    assert bridge.staged == []
+
+
+async def test_failed_outcome_stage_failure_never_blocks_outcome_capture(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_mod, "Settings", lambda: SimpleNamespace(health_loop=True))
+
+    class _BoomingBridge:
+        async def stage(self, fact: Any) -> None:  # noqa: ANN401
+            raise RuntimeError("bridge exploded")
+
+    services = StepServices(db_pool=tmp_db, memory_bridge=_BoomingBridge())  # type: ignore[arg-type]
+    state = PipelineState(
+        trace_id="t-fail-boom", session_id="s-fail", input_text="do the thing",
+        channel="cli", owl_name="secretary", pipeline_step="deliver",
+        errors=("execute: OwlTimeoutError: deadline exceeded",),
+    )
+
+    await _capture_outcome(state, total_ms=15000.0, services=services)  # must not raise
+
+    out = await TaskOutcomeStore(tmp_db).get_by_trace_id("t-fail-boom")
+    assert out is not None
+    assert out.failure_class == "OwlTimeoutError"
 
 
 async def test_backend_run_populates_step_durations_on_state(tmp_db: DbPool) -> None:

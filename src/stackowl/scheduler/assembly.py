@@ -727,6 +727,9 @@ class SchedulerAssembly:
             # SAME alert sink health_sweep already uses — an incident verdict
             # rides the existing operator-alert channel, not a new one.
             alert=health_alert,
+            # "Update memory depending on the reason" — the SAME bridge live
+            # conversation turns stage facts through (memory_components.bridge).
+            memory_bridge=memory_components.bridge,
         )
         HandlerRegistry.instance().register(incident_escalation_handler)
 

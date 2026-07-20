@@ -77,6 +77,7 @@ from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
+    from stackowl.memory.message_ledger_store import MessageLedgerRow
     from stackowl.pipeline.backends.base import OrchestratorBackend
 
 #: Reconstruction fallbacks for LEGACY rows only — a task created before
@@ -497,6 +498,171 @@ async def recover_durable_tasks(
     launched = await recoverer.recover()
     log.tasks.info(
         "[tasks] recovery: launched durable-task recoveries in background",
+        extra={"_fields": {"owner_id": owner_id, "launched": launched}},
+    )
+    return recoverer
+
+
+class MessageLedgerRecoverer:
+    """Redrives orphaned pending message_ledger rows for one owner.
+
+    A pending row means the message ARRIVED but its turn never reached
+    persist_turn's terminal flip — the prior process died mid-turn. At
+    STARTUP that process is dead, so every pending row is an orphan (same
+    reasoning :class:`DurableTaskRecoverer` uses for ``running``/``recovering``
+    durable-task rows — see that class's docstring). Unlike durable-task
+    recovery there is no separate claim state to CAS through: this recoverer
+    is the only caller of :meth:`MessageLedgerStore.get_pending` at boot (one
+    core process, one startup pass), and the redrive itself is what performs
+    the terminal flip (via persist_turn's own ``WHERE status='pending'`` CAS),
+    so a second accidental call would simply find nothing left to redrive.
+
+    No overlap with durable-task recovery: a message_ledger row is keyed by
+    the inbound turn's ``trace_id``; a durable_tasks row is keyed by an
+    unrelated app-minted ``task_id`` with no ``trace_id`` column — the two
+    tables track orthogonal things (did this turn's own reply go out vs. is
+    this specific longer-running goal still executing) and redriving both
+    independently drives no overlapping work.
+    """
+
+    def __init__(
+        self,
+        db: DbPool,
+        backend: OrchestratorBackend,
+        *,
+        owner_id: str = DEFAULT_PRINCIPAL_ID,
+    ) -> None:
+        from stackowl.memory.message_ledger_store import MessageLedgerStore
+
+        self._backend = backend
+        self._owner_id = owner_id
+        self._store = MessageLedgerStore(db, owner_id=owner_id)
+        #: STRONG references to in-flight background redrives (see
+        #: DurableTaskRecoverer._drives for why this is required).
+        self._drives: set[asyncio.Task[None]] = set()
+        self._launched = 0
+
+    @property
+    def launched(self) -> int:
+        """Number of background redrives the last :meth:`recover` LAUNCHED."""
+        return self._launched
+
+    async def recover(self) -> int:
+        """List every pending row for this owner and LAUNCH its redrive.
+
+        Fail-open per row: a bad row (backend error at launch time) is
+        logged and the sweep continues to the next. Returns the count
+        launched.
+        """
+        # 1. ENTRY
+        log.tasks.info(
+            "[tasks] message_recovery.recover: entry — scanning for pending messages",
+            extra={"_fields": {"owner_id": self._owner_id}},
+        )
+        try:
+            pending = await self._store.get_pending()
+        except Exception as exc:  # noqa: BLE001 — fail-open, logged
+            log.tasks.error(
+                "[tasks] message_recovery.recover: get_pending failed — skipping",
+                exc_info=exc,
+                extra={"_fields": {"owner_id": self._owner_id}},
+            )
+            return 0
+        # 2. DECISION + 3. STEP — launch one background redrive per row.
+        launched = 0
+        for row in pending:
+            try:
+                self._launch_drive(row)
+                launched += 1
+            except Exception as exc:  # noqa: BLE001 — fail-open per row (logged)
+                log.tasks.error(
+                    "[tasks] message_recovery.recover: launch failed — continuing",
+                    exc_info=exc,
+                    extra={"_fields": {"trace_id": row.trace_id, "owner_id": self._owner_id}},
+                )
+        self._launched = launched
+        # 4. EXIT
+        log.tasks.info(
+            "[tasks] message_recovery.recover: exit — launched background redrives",
+            extra={"_fields": {
+                "owner_id": self._owner_id, "pending_seen": len(pending), "launched": launched,
+            }},
+        )
+        return launched
+
+    async def drain(self) -> None:
+        """Await every in-flight background redrive (tests / clean shutdown)."""
+        if not self._drives:
+            return
+        await asyncio.gather(*tuple(self._drives), return_exceptions=True)
+
+    def _launch_drive(self, row: MessageLedgerRow) -> None:
+        state = PipelineState(
+            trace_id=row.trace_id,
+            session_id=row.session_id,
+            input_text=row.input_text,
+            channel=row.channel,
+            owl_name=_DEFAULT_OWL,
+            pipeline_step="start",
+            interactive=True,
+            reply_target=row.chat_id,
+        )
+        drive = asyncio.create_task(
+            self._drive_one(row.trace_id, state), name=f"message-recover-{row.trace_id[:12]}"
+        )
+        self._drives.add(drive)
+        drive.add_done_callback(self._on_drive_done)
+        log.tasks.info(
+            "[tasks] message_recovery: launched background redrive",
+            extra={"_fields": {"trace_id": row.trace_id, "owner_id": self._owner_id}},
+        )
+
+    async def _drive_one(self, trace_id: str, state: PipelineState) -> None:
+        """Redrive one pending message to a terminal outcome — fail-open background body."""
+        try:
+            await self._backend.run(state)
+            log.tasks.info(
+                "[tasks] message_recovery: background redrive completed",
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open background drive (logged)
+            log.tasks.error(
+                "[tasks] message_recovery: background redrive failed — "
+                "row left pending for the next boot",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": trace_id, "owner_id": self._owner_id}},
+            )
+
+    def _on_drive_done(self, drive: asyncio.Task[None]) -> None:
+        self._drives.discard(drive)
+        if drive.cancelled():
+            return
+        exc = drive.exception()
+        if exc is not None:
+            log.tasks.error(
+                "[tasks] message_recovery: background redrive raised past its fail-open guard",
+                exc_info=exc,
+                extra={"_fields": {"task": drive.get_name(), "owner_id": self._owner_id}},
+            )
+
+
+async def recover_pending_messages(
+    db: DbPool,
+    backend: OrchestratorBackend,
+    *,
+    owner_id: str = DEFAULT_PRINCIPAL_ID,
+) -> MessageLedgerRecoverer:
+    """List every pending message_ledger row and LAUNCH its redrive in the background.
+
+    The message-ledger startup entry-point (sibling to :func:`recover_durable_tasks`,
+    same fail-open-per-row / background-drive / strong-ref shape). Wired at boot
+    immediately after ``recover_durable_tasks`` in ``startup/orchestrator.py``,
+    same ``role != "gateway"`` guard.
+    """
+    recoverer = MessageLedgerRecoverer(db, backend, owner_id=owner_id)
+    launched = await recoverer.recover()
+    log.tasks.info(
+        "[tasks] message_recovery: launched pending-message recoveries in background",
         extra={"_fields": {"owner_id": owner_id, "launched": launched}},
     )
     return recoverer

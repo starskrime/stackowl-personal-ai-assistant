@@ -81,6 +81,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
         CapabilityTagLookup,
         FailureOutcomeMiner,
     )
+    from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
     from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
@@ -205,6 +206,7 @@ class IncidentEscalationHandler(JobHandler):
         verdict_router: VerdictRouter | None = None,
         miner: FailureOutcomeMiner | None = None,
         alert: AlertSink | None = None,
+        memory_bridge: MemoryBridge | None = None,
     ) -> None:
         self._health = health_sweep
         self._outcomes = outcome_store
@@ -216,6 +218,12 @@ class IncidentEscalationHandler(JobHandler):
         self._verdict_router = verdict_router
         self._miner = miner
         self._alert = alert
+        # "Update memory depending on the reason" — a verified verdict stages a
+        # short recall-able fact via the SAME memory bridge conversation turns
+        # use, closing the gap where the RCA->skill pipeline authored a
+        # learned/*/SKILL.md but never told the memory bridge WHY a capability
+        # failed. None -> byte-identical no-op (feature absent).
+        self._memory_bridge = memory_bridge
         # Dedupe: signature -> minted incident_id. A signature already here is an
         # OPEN incident (its RCA already ran); later ticks skip it. Cleared when
         # the signature is no longer active so it can re-open later.
@@ -585,6 +593,27 @@ class IncidentEscalationHandler(JobHandler):
             except Exception as exc:  # B5 — a mining failure must not wedge the tick
                 log.scheduler.error(
                     "[scheduler] incident_escalation: miner.mine failed",
+                    exc_info=exc, extra={"_fields": {"signature": inc.signature}},
+                )
+        if self._memory_bridge is not None and verdict.verified:
+            try:
+                from stackowl.memory.models import StagedFact
+
+                await self._memory_bridge.stage(StagedFact(
+                    content=(
+                        f"Incident: {inc.capability_class} failed with "
+                        f"{inc.failure_class} — {verdict.root_cause} "
+                        f"Fix/avoidance: {verdict.fix_pattern} "
+                        f"(learned skill: {verdict.skill_name})"
+                    ),
+                    source_type="agent_self",
+                    source_ref=inc.signature,
+                    confidence=verdict.confidence if verdict.confidence is not None else 0.7,
+                    trust="self",
+                ))
+            except Exception as exc:  # B5 — a memory-write failure must not wedge the tick
+                log.scheduler.error(
+                    "[scheduler] incident_escalation: memory_bridge.stage failed",
                     exc_info=exc, extra={"_fields": {"signature": inc.signature}},
                 )
 

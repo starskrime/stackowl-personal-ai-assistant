@@ -56,6 +56,21 @@ def _turn_floored(state: PipelineState) -> bool:
     return bool(_critical_failure_classes(state))
 
 
+def _floor_reason(state: PipelineState) -> str:
+    """Best-effort human-readable reason a floored turn's message_ledger row failed.
+
+    Prefers the structured critical-step failure classes (same source
+    ``_turn_floored`` itself reads); falls back to the other two floor
+    signals so a row is never left with an empty reason.
+    """
+    classes = _critical_failure_classes(state)
+    if classes:
+        return ",".join(classes)
+    if is_consequential_giveup_now():
+        return "consequential_giveup"
+    return "floor_response"
+
+
 async def persist_turn(state: PipelineState) -> None:
     """Persist the POST-floor turn as a staged conversation fact (best-effort).
 
@@ -115,6 +130,24 @@ async def persist_turn(state: PipelineState) -> None:
                     exc_info=exc,
                     extra={"_fields": {"trace_id": state.trace_id}},
                 )
+
+    # Message-ledger terminal flip — reuses the SAME `floored` signal computed
+    # above, no new failure-detection logic. Independent of the memory-bridge
+    # availability check below (losing the memory bridge must not also lose
+    # the message-ledger signal).
+    ledger = getattr(services, "message_ledger_store", None)
+    if ledger is not None:
+        try:
+            if floored:
+                await ledger.mark_failed(state.trace_id, reason=_floor_reason(state))
+            else:
+                await ledger.mark_completed(state.trace_id)
+        except Exception as exc:  # B5 — ledger bookkeeping must never block delivery
+            log.scheduler.error(
+                "[pipeline] persist_turn: message_ledger flip failed",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id, "floored": floored}},
+            )
 
     bridge = services.memory_bridge
     if bridge is None:

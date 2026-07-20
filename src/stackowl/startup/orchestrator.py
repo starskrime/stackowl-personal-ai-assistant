@@ -1319,6 +1319,14 @@ class StartupOrchestrator:
 
         retry_queue_store = RetryQueueStore(db_pool)
 
+        # Universal per-message status lifecycle (pending/completed/failed/
+        # absorbed) — migration 0089. _handle_ingress inserts the pending row
+        # at intake (before the message touches any in-memory-only gateway
+        # structure); persist_turn flips it alongside retry_queue at turn end.
+        from stackowl.memory.message_ledger_store import MessageLedgerStore
+
+        message_ledger_store = MessageLedgerStore(db_pool)
+
         # Approach-rating like/dislike votes — DB-backed (migration 0084), NOT an
         # in-memory singleton: this codebase runs a genuine two-process split
         # (runtime.split_process) and this same _phase_gateway function runs in
@@ -1347,6 +1355,7 @@ class StartupOrchestrator:
             audit_logger=audit_logger,
             preference_store=preference_store,
             retry_queue_store=retry_queue_store,
+            message_ledger_store=message_ledger_store,
             approach_rating_tracker=approach_rating_tracker,
             notification_router=notification_router,
             proactive_deliverer=proactive_deliverer,
@@ -1917,6 +1926,30 @@ class StartupOrchestrator:
                 )
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)
+
+            # Message-ledger safety net for routes that never reach persist_turn
+            # (no-provider-notice/parliament/command — only the owl route above
+            # calls backend.run, which is the only path persist_turn sits on).
+            # CAS-guarded (mark_completed/mark_failed only flip a still-'pending'
+            # row), so on the owl route this is a harmless no-op — persist_turn
+            # already flipped it; it only actually fires for the other three.
+            def _finalize_message_ledger(
+                p: asyncio.Task[object], tid: str = msg.trace_id,
+            ) -> None:
+                ledger = services.message_ledger_store
+                if ledger is None or p.cancelled():
+                    return
+                exc = p.exception()
+                finalize_task = asyncio.create_task(
+                    ledger.mark_failed(tid, reason=str(exc))
+                    if exc is not None
+                    else ledger.mark_completed(tid)
+                )
+                _drain_tasks.add(finalize_task)
+                finalize_task.add_done_callback(_drain_tasks.discard)
+                finalize_task.add_done_callback(_log_pipeline_crash)
+
+            producer.add_done_callback(_finalize_message_ledger)
             # The registry only ever .done()/.cancelled()-inspects the task, so a
             # Task[object] producer (backend.run returns the state; the deliver
             # stubs return None) is safe under the Task[None] slot.
@@ -2364,6 +2397,29 @@ class StartupOrchestrator:
                                     }},
                                 )
 
+            # Message-ledger terminal flip for the paths that never reach
+            # persist_turn: overflow (dropped, never dispatched), STEER (folded
+            # into another turn's mailbox — never gets its own PipelineState),
+            # STOP (an explicit synchronous ack IS its reply). "busy"/"queued"
+            # stay pending (legitimately still waiting); "dispatched" flows
+            # through the normal pipeline, where persist_turn (B2) flips it.
+            if message_ledger_store is not None and ack_kind in ("overflow", "steered"):
+                try:
+                    if ack_kind == "overflow":
+                        await message_ledger_store.mark_failed(
+                            msg.trace_id, reason="queue_overflow"
+                        )
+                    elif routed_signal is ExplicitSignal.STOP:
+                        await message_ledger_store.mark_completed(msg.trace_id)
+                    else:
+                        await message_ledger_store.mark_absorbed(msg.trace_id)
+                except Exception as exc:  # B5 — ledger bookkeeping must never block the ack
+                    log.error(
+                        "[startup] gateway: message_ledger flip failed",
+                        exc_info=exc,
+                        extra={"_fields": {"trace_id": msg.trace_id, "ack_kind": ack_kind}},
+                    )
+
             # Ack/notice OUTSIDE the lock — the network send must not hold the
             # intake critical section (and a slow send must never block drain/intake).
             if ack_kind == "overflow":
@@ -2395,6 +2451,23 @@ class StartupOrchestrator:
             ``msg.channel`` (the SocketTurnClient will instead serialise the
             message to an IngressFrame for a core process to run this body).
             """
+            # Message-ledger: a pending row is inserted BEFORE the message touches
+            # any in-memory-only structure below (turn_registry queues, parked
+            # intakes, a2a mailboxes) — this is what makes a message durable at
+            # arrival instead of only once it reaches a retry_queue/durable-task
+            # row. Best-effort: never blocks intake.
+            if message_ledger_store is not None:
+                try:
+                    await message_ledger_store.insert_pending(
+                        trace_id=msg.trace_id, session_id=msg.session_id,
+                        channel=msg.channel, input_text=msg.text, chat_id=msg.chat_id,
+                    )
+                except Exception as exc:  # B5 — ledger bookkeeping must never block intake
+                    log.error(
+                        "[startup] gateway: message_ledger insert_pending failed",
+                        exc_info=exc,
+                        extra={"_fields": {"trace_id": msg.trace_id}},
+                    )
             decision = scanner.scan(msg)
             input_text = (
                 decision.stripped_text if decision.stripped_text is not None else msg.text
@@ -3483,6 +3556,28 @@ class StartupOrchestrator:
                     exc_info=exc,
                     extra={"_fields": {}},
                 )
+        # Message-ledger recovery — a pending message_ledger row means the prior
+        # process died before the turn reached persist_turn's terminal flip.
+        # Runs AFTER durable-task recovery (unrelated tables, no shared identity —
+        # see MessageLedgerRecoverer's docstring), same role guard, same
+        # fail-open-per-row / background-drive / held-strong-ref shape.
+        message_recoverer = None
+        if self._role != "gateway":
+            try:
+                from stackowl.pipeline.durable.recovery import recover_pending_messages
+
+                message_recoverer = await recover_pending_messages(db_pool, backend)
+                log.info(
+                    "[startup] gateway: launched %d pending-message recoveries in background",
+                    message_recoverer.launched,
+                    extra={"_fields": {"launched": message_recoverer.launched}},
+                )
+            except Exception as exc:
+                log.error(
+                    "[startup] gateway: message-ledger recovery failed — starting anyway",
+                    exc_info=exc,
+                    extra={"_fields": {}},
+                )
         # F145 — the webhook HTTP receiver was a fully-built SupervisedTask with
         # no caller anywhere in the codebase: registered-but-unreachable (the
         # listener never bound, regardless of `webhook.enabled`). Wired into the
@@ -3844,6 +3939,9 @@ class StartupOrchestrator:
             if durable_recoverer is not None:
                 with contextlib.suppress(Exception):
                     await durable_recoverer.drain()
+            if message_recoverer is not None:
+                with contextlib.suppress(Exception):
+                    await message_recoverer.drain()
             # F067 — shut the dedicated Kuzu worker thread down cleanly so no
             # thread outlives the gateway (guarded; teardown never raises).
             # DUR-5 / F069 — kuzu_adapter is None when the graph layer degraded.
