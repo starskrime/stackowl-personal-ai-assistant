@@ -686,8 +686,10 @@ class StartupOrchestrator:
         from stackowl.ipc.server import IpcServer
         from stackowl.ipc.stream_bridge import SocketStreamRegistry
         from stackowl.owls.registry import OwlRegistry
+        from stackowl.parliament.convergence import ConvergenceDetector
         from stackowl.parliament.orchestrator import ParliamentOrchestrator
         from stackowl.parliament.session_store import SessionStore
+        from stackowl.parliament.synthesizer import ParliamentSynthesizer
         from stackowl.pipeline.backends.factory import create_backend
         from stackowl.pipeline.services import StepServices, resolve_identity_key, set_services
         from stackowl.pipeline.state import PipelineState
@@ -1424,10 +1426,23 @@ class StartupOrchestrator:
         services.retry_actuator = retry_actuator
 
         parliament_session_store = SessionStore(db_pool)
+        # Previously never passed: every real /parliament session ended with
+        # synthesis=None (no synthesizer to run) and convergence permanently
+        # False (ConvergenceDetector() with no embedding registry) — synthesis,
+        # knowledge-pellet staging, and convergence early-exit were all dead in
+        # production despite being fully implemented. One shared detector
+        # instance so the "no embedding registry" degrade warning logs once,
+        # not twice, across the orchestrator's round-check and the synthesizer.
+        parliament_convergence = ConvergenceDetector(
+            embedding_registry=memory_components.embedding_registry
+        )
         parliament = ParliamentOrchestrator(
             backend=backend,
             session_store=parliament_session_store,
             delegation_governor=delegation_governor,
+            convergence_detector=parliament_convergence,
+            synthesizer=ParliamentSynthesizer(provider_registry, parliament_convergence),
+            memory_bridge=memory_bridge,
         )
         scanner = GatewayScanner(owl_registry=owl_registry)
 

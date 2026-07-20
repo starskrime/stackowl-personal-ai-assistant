@@ -51,7 +51,7 @@ class CrossExaminationPromptBuilder:
             parts.append("\n---\nPrior round responses from other participants:")
             for rnd in prior_rounds:
                 parts.append(f"\n[Round {rnd.round_number}]")
-                for other_name, response in rnd.responses.items():
+                for other_name, response in rnd.genuine_responses().items():
                     if other_name == owl_name:
                         continue
                     parts.append(f"[{other_name}]: {response}")
