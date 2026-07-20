@@ -331,6 +331,20 @@ class TestProviderAdd:
         assert any("groq" in a.command for a in reply.actions)
 
     @pytest.mark.asyncio
+    async def test_add_browse_shows_every_catalog_entry_not_just_first_30(
+        self, tmp_yaml: Path
+    ) -> None:
+        from stackowl.setup.provider_catalog import ProviderCatalog
+
+        total = len(ProviderCatalog.load())
+        assert total > 30, "this test needs a bundled catalog larger than 30 to be meaningful"
+
+        reply = await _make_cmd().handle("add", _state())
+        assert isinstance(reply, CommandResponse)
+        assert len(reply.actions) == total
+        assert "showing first 30" not in reply.text
+
+    @pytest.mark.asyncio
     async def test_add_with_full_positional_args_still_works_directly(
         self, tmp_yaml: Path
     ) -> None:

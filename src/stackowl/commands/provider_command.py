@@ -763,24 +763,24 @@ class ProviderCommand(SlashCommand):
                 text=f"No catalog providers match '{query}'." if query else "Catalog is empty."
             )
 
-        # 3. STEP — build one action per catalog entry (capped at 30)
-        shown = entries[:30]
+        # 3. STEP — build one action per catalog entry (no cap: Telegram's
+        # button-stash mechanism already handles arbitrarily long command
+        # strings, and a plain inline keyboard comfortably holds far more
+        # than the catalog's size — no reason to truncate the list).
         actions = tuple(
             Action(label=entry.label, command=f"/provider add-pick {entry.name}", destructive=False)
-            for entry in shown
+            for entry in entries
         )
         text = (
             f"Found {len(entries)} provider(s) matching '{query}':"
             if query
             else f"Browse {len(entries)} catalog providers:"
         )
-        if len(entries) > 30:
-            text += "\n(showing first 30 — refine with /provider add <search term>)"
 
         # 4. EXIT
         log.config.debug(
             "[commands] provider.add_browse: exit",
-            extra={"_fields": {"matches": len(entries), "shown": len(shown)}},
+            extra={"_fields": {"matches": len(entries), "shown": len(entries)}},
         )
         return CommandResponse(text=text, actions=actions)
 
