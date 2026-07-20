@@ -224,6 +224,32 @@ async def test_command_reply_actions_render_as_buttons_in_transcript() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_add_browse_actions_render_through_tui_button_row() -> None:
+    """TUI parity check (Task 17): the guided `/provider add` flow's REAL
+    ``CommandResponse`` — produced by ``ProviderCommand._add_browse("")``,
+    the exact same call Telegram's ``/provider add`` browse step drives —
+    renders through the TUI's ``ActionButtonRow`` with no special-casing.
+
+    Proves no Telegram-specific assumption leaked into ``provider_command.py``:
+    the catalog's full bundled entry set (well under the shared 30-action cap)
+    round-trips into one real Textual ``Button`` per catalog entry, with the
+    exact labels/commands ``provider_command.py`` produced.
+    """
+    from stackowl.commands.provider_command import ProviderCommand
+
+    response = ProviderCommand()._add_browse("")
+    assert response.actions, "bundled catalog must be non-empty for this to be a real check"
+
+    app = _Harness(response.actions)
+    async with app.run_test():
+        widget = app.query_one(ActionButtonRow)
+        buttons = list(widget.query(_ActionButton))
+        assert len(buttons) == len(response.actions)
+        assert [b.label for b in buttons] == [a.label for a in response.actions]
+        assert [b.action_data.command for b in buttons] == [a.command for a in response.actions]
+
+
+@pytest.mark.asyncio
 async def test_tapping_replayed_button_echoes_command_into_transcript() -> None:
     """Pressing a rendered button replays through the SAME path a typed
     command uses: ComposeSubmittedMessage -> StackOwlApp -> echoed as a
