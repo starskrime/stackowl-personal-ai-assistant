@@ -211,6 +211,10 @@ class ProviderCommand(SlashCommand):
                 result = await self._add_pick(rest)
             elif sub == "add-token":
                 result = await self._add_token(rest)
+            elif sub == "add-model":
+                result = self._add_model(rest)
+            elif sub == "add-tier":
+                result = self._add_tier(rest)
             elif sub == "remove":
                 result = self._remove(rest)
             elif sub == "set-tier":
@@ -726,6 +730,155 @@ class ProviderCommand(SlashCommand):
         )
         return CommandResponse(text=f"{entry.label} — pick a model:", actions=actions)
 
+    # -- add-model / add-tier (final two steps of the guided catalog flow) ------
+
+    def _add_model(self, raw: str) -> CommandResponse:
+        """Model was picked (via ``add-model`` from :meth:`_add_discover`'s
+        action, or a manual reply): show one tier-pick button per valid tier."""
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.add_model: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        bits = raw.split(maxsplit=2)
+        if len(bits) < 3:
+            log.config.debug(
+                "[commands] provider.add_model: exit — usage",
+                extra={"_fields": {"raw_len": len(raw)}},
+            )
+            return CommandResponse(
+                text="Usage: /provider add-model <catalog_name> <model> <api_key_ref_or_dash>"
+            )
+        catalog_name, model, api_key_ref = bits
+        # 3. STEP — one action per valid tier
+        actions = tuple(
+            Action(
+                label=tier,
+                command=f"/provider add-tier {catalog_name} {model} {api_key_ref} {tier}",
+                destructive=False,
+            )
+            for tier in _VALID_TIERS
+        )
+        # 4. EXIT
+        log.config.debug(
+            "[commands] provider.add_model: exit",
+            extra={"_fields": {"catalog": catalog_name, "model": model}},
+        )
+        return CommandResponse(text=f"Pick a tier for {catalog_name} / {model}:", actions=actions)
+
+    def _add_tier(self, raw: str) -> str:
+        """Tier was picked: this is the LAST step of the guided flow — build
+        the provider entry and hand off to the shared persist helper."""
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.add_tier: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        bits = raw.split()
+        if len(bits) != 4:
+            log.config.debug(
+                "[commands] provider.add_tier: exit — usage",
+                extra={"_fields": {"raw_len": len(raw)}},
+            )
+            return "Usage: /provider add-tier <catalog_name> <model> <api_key_ref_or_dash> <tier>"
+        catalog_name, model, api_key_ref, tier = bits
+        # 2. DECISION — validate tier and resolve the catalog entry
+        if tier not in _VALID_TIERS:
+            log.config.warning(
+                "[commands] provider.add_tier: invalid tier",
+                extra={"_fields": {"tier": tier}},
+            )
+            return f"✗ Invalid tier '{tier}' — valid: {', '.join(_VALID_TIERS)}"
+        entry = self._catalog_entry(catalog_name)
+        if entry is None:
+            log.config.debug(
+                "[commands] provider.add_tier: exit — unknown catalog entry",
+                extra={"_fields": {"catalog": catalog_name}},
+            )
+            return f"✗ Unknown catalog provider '{catalog_name}' — run /provider add to browse"
+
+        # 3. STEP — auto-suffix the name (groq, groq-2, ...) instead of
+        # rejecting: adding the SAME catalog provider twice (e.g. two
+        # free-tier keys for round-robin) is the actual point of this flow.
+        path = config_path()
+        data = load_yaml(path)
+        existing_names = [p.get("name") for p in self._providers(data)]
+        name = self._unique_provider_name(catalog_name, existing_names)
+
+        provider_entry: dict[str, Any] = {
+            "name": name,
+            "protocol": entry.protocol,
+            "enabled": True,
+            "api_key": None if api_key_ref == "-" else api_key_ref,
+            "base_url": entry.base_url or None,
+            "default_model": model,
+            "tier": tier,
+        }
+        result = self._persist_new_provider(provider_entry)
+        # 4. EXIT
+        log.config.debug(
+            "[commands] provider.add_tier: exit", extra={"_fields": {"name": name}}
+        )
+        return result
+
+    @staticmethod
+    def _unique_provider_name(base: str, existing: list[Any]) -> str:
+        """Auto-suffix (groq, groq-2, groq-3, ...) so adding the SAME catalog
+        provider twice — e.g. two free-tier keys for round-robin — never
+        collides on name."""
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base}-{suffix}" in existing:
+            suffix += 1
+        return f"{base}-{suffix}"
+
+    def _persist_new_provider(self, entry: dict[str, Any]) -> str:
+        """Validate + save a new provider entry. Shared by the positional
+        ``_add`` and the guided add-flow's final ``_add_tier`` step (DRY) —
+        both need the same schema-validation/write/persisted-check/reload
+        sequence, only how the entry dict gets built differs."""
+        # 1. ENTRY
+        name = entry["name"]
+        log.config.debug(
+            "[commands] provider.persist_new_provider: entry", extra={"_fields": {"name": name}}
+        )
+        # 2. DECISION — validate via the real schema BEFORE writing, so a bad
+        # value is rejected with a clear message and we never leave an orphan
+        # write behind a failed add.
+        try:
+            ProviderConfig(**entry)
+        except Exception as exc:
+            log.config.warning(
+                "[commands] provider.persist_new_provider: schema validation failed",
+                extra={"_fields": {"name": name, "error": str(exc)}},
+            )
+            return f"✗ Invalid provider config: {exc}"
+
+        # 3. STEP — write, then re-read to confirm the mutation actually
+        # persisted (F-81: save_yaml is otherwise fire-and-forget).
+        path = config_path()
+        data = load_yaml(path)
+        providers = self._providers(data)
+        providers.append(entry)
+        save_yaml(path, data)
+        if not self._persisted(path, name):
+            log.config.error(
+                "[commands] provider.persist_new_provider: write did not persist",
+                extra={"_fields": {"name": name}},
+            )
+            return (
+                f"✗ Provider '{name}' was not saved — the config file did not "
+                "reflect the change (check file permissions/disk). Nothing was "
+                "added."
+            )
+        self._emit_reloaded(name)
+        # 4. EXIT
+        log.config.info(
+            "[commands] provider.persist_new_provider: exit — added",
+            extra={"_fields": {"name": name, "protocol": entry.get("protocol"), "tier": entry.get("tier")}},
+        )
+        key_note = f" (api_key ref: {entry['api_key']})" if entry.get("api_key") else ""
+        return f"✓ Provider '{name}' added{key_note} — applied immediately"
+
     # -- add -------------------------------------------------------------------
 
     def _add(self, raw: str) -> str:
@@ -778,21 +931,15 @@ class ProviderCommand(SlashCommand):
             "default_model": default_model,
             "tier": tier,
         }
-        # Validate via the real schema BEFORE storing the secret or writing, so a
-        # bad value is rejected with a clear message — and we never leave an
-        # orphan stored secret behind a failed add.
-        try:
-            ProviderConfig(**entry)
-        except Exception as exc:
-            log.config.warning(
-                "[commands] provider.add: schema validation failed",
-                extra={"_fields": {"name": name, "error": str(exc)}},
-            )
-            return f"✗ Invalid provider config: {exc}"
+        # protocol/tier are already checked above against the same Literal
+        # choices ProviderConfig enforces, and name/default_model are non-empty
+        # (split() tokens) — so the schema can never reject this entry. The
+        # actual schema validation (and the write/persisted-check/emit that
+        # follows it) now lives once, in _persist_new_provider, shared with
+        # the guided add-flow's add-tier step.
 
-        # Only after the entry validates: store the secret (if any) and keep
-        # only the resolver REF — never the raw token.
-        api_key_ref: str | None = None
+        # Store the secret (if any) and keep only the resolver REF — never the
+        # raw token.
         if token:
             log.config.debug(
                 "[commands] provider.add: storing secret",
@@ -801,30 +948,11 @@ class ProviderCommand(SlashCommand):
             _description, api_key_ref = store_secret(f"stackowl-provider-{name}", token)
             entry["api_key"] = api_key_ref
 
-        providers.append(entry)
-        save_yaml(path, data)
-        # F-81: save_yaml is otherwise fire-and-forget. Re-read the file and
-        # confirm the new provider actually persisted + parses before claiming
-        # success — a partial/permission-failed write must not print the ✓.
-        if not self._persisted(path, name):
-            log.config.error(
-                "[commands] provider.add: write did not persist",
-                extra={"_fields": {"name": name}},
-            )
-            return (
-                f"✗ Provider '{name}' was not saved — the config file did not "
-                "reflect the change (check file permissions/disk). Nothing was "
-                "added."
-            )
-        self._emit_reloaded(name)
-        log.config.info(
-            "[commands] provider.add: exit — added",
+        log.config.debug(
+            "[commands] provider.add: exit — handing off to persist",
             extra={"_fields": {"name": name, "protocol": protocol, "tier": tier}},
         )
-        key_note = f" (api_key ref: {api_key_ref})" if api_key_ref else ""
-        return (
-            f"✓ Provider '{name}' added{key_note} — applied immediately"
-        )
+        return self._persist_new_provider(entry)
 
     # -- remove ----------------------------------------------------------------
 

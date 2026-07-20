@@ -345,6 +345,68 @@ class TestProviderAddPickToken:
 
 
 # ---------------------------------------------------------------------------
+# add-model / add-tier (Task 11: last two steps of the guided add-flow)
+# ---------------------------------------------------------------------------
+
+
+class TestProviderAddModelTier:
+    def test_add_model_shows_tier_picker(self, tmp_yaml: Path) -> None:
+        cmd = _make_cmd()
+        reply = cmd._add_model("groq llama-3.3-70b-versatile -")
+        assert isinstance(reply, CommandResponse)
+        assert any(
+            "add-tier groq llama-3.3-70b-versatile - fast" in a.command for a in reply.actions
+        )
+        assert any(
+            "add-tier groq llama-3.3-70b-versatile - powerful" in a.command
+            for a in reply.actions
+        )
+
+    def test_add_tier_persists_provider_with_catalog_name(self, tmp_yaml: Path) -> None:
+        cmd = _make_cmd()
+        reply = cmd._add_tier("groq llama-3.3-70b-versatile - fast")
+        assert reply.startswith("✓ Provider 'groq' added")
+        data = _load(tmp_yaml)
+        saved = next(p for p in data["providers"] if p["name"] == "groq")
+        assert saved["protocol"] == "openai"
+        assert saved["default_model"] == "llama-3.3-70b-versatile"
+        assert saved["tier"] == "fast"
+        assert saved["api_key"] is None  # "-" sentinel means keyless
+
+    def test_add_tier_auto_suffixes_name_on_collision(self, tmp_yaml: Path) -> None:
+        """Adding the SAME catalog provider twice (e.g. two free-tier keys) must
+        not collide — this is the actual point of multi-provider-per-tier."""
+        cmd = _make_cmd()
+        cmd._add_tier("groq llama-3.3-70b-versatile - fast")
+        reply2 = cmd._add_tier("groq llama-3.3-70b-versatile - fast")
+        assert reply2.startswith("✓ Provider 'groq-2' added")
+        data = _load(tmp_yaml)
+        names = [p["name"] for p in data["providers"]]
+        assert names == ["groq", "groq-2"]
+
+    def test_add_tier_invalid_tier(self, tmp_yaml: Path) -> None:
+        cmd = _make_cmd()
+        reply = cmd._add_tier("groq llama-3.3-70b-versatile - turbo")
+        assert "✗" in reply
+        assert "Invalid tier" in reply
+        assert _load(tmp_yaml)["providers"] == []
+
+    def test_add_tier_unknown_catalog_provider(self, tmp_yaml: Path) -> None:
+        cmd = _make_cmd()
+        reply = cmd._add_tier("nonexistent-provider some-model - fast")
+        assert "✗" in reply
+        assert "Unknown catalog provider" in reply
+
+    def test_add_tier_with_explicit_api_key_ref(self, tmp_yaml: Path) -> None:
+        cmd = _make_cmd()
+        reply = cmd._add_tier("groq llama-3.3-70b-versatile my-key fast")
+        assert reply.startswith("✓ Provider 'groq' added")
+        data = _load(tmp_yaml)
+        saved = next(p for p in data["providers"] if p["name"] == "groq")
+        assert saved["api_key"] == "my-key"
+
+
+# ---------------------------------------------------------------------------
 # remove
 # ---------------------------------------------------------------------------
 
