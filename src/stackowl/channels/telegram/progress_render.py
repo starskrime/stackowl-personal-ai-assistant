@@ -139,6 +139,27 @@ class TelegramProgressView:
                 exc_info=exc, extra={"_fields": {"chat_id": self._chat_id}},
             )
 
+    async def abort(self) -> None:
+        """Stop the ticker and mark the status honestly FAILED.
+
+        For a turn that raised or whose stream ended without an answer:
+        settle()'s "✓ done" would be a lie, and doing nothing leaves the
+        status stuck on "Still working on this… (Ns)" forever (confirmed
+        production incident — an orphaned status ticked to 1670s in chat).
+        """
+        await self.stop()
+        if self._status_message_id is None:
+            return  # nothing was ever shown — leave the chat clean
+        try:
+            elapsed = int(round(self._clock() - self._started_at))
+            footer = vocabulary.abort_footer(elapsed, self._lang)
+            await self._edit_status(self._chat_id, self._status_message_id, footer)
+        except Exception as exc:  # noqa: BLE001
+            log.telegram.warning(
+                "[telegram] progress.abort: footer edit failed — continuing",
+                exc_info=exc, extra={"_fields": {"chat_id": self._chat_id}},
+            )
+
     # -- ticker -------------------------------------------------------------- #
 
     async def _ticker_loop(self) -> None:

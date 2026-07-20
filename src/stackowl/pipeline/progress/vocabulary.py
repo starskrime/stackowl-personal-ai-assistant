@@ -105,6 +105,21 @@ def register_done_footer(lang: str, template: str) -> None:
     _DONE_FOOTER[lang] = template
 
 
+# Honest failure footer — a turn that raised/hung must NOT leave the live
+# status stuck on "Still working on this… (1670s)" forever (confirmed
+# production incident), and must NOT lie with "✓ done" either.
+_ABORT_FOOTER: dict[str, str] = {"en": "✗ stopped after {seconds}s — the turn didn't finish"}
+
+
+def abort_footer(elapsed_s: int, lang: str = "en") -> str:
+    """Render the honest 'stopped after Ns' footer for a failed turn. Never raises."""
+    template = _ABORT_FOOTER.get(_norm_lang(lang), _ABORT_FOOTER["en"])
+    try:
+        return template.format(seconds=max(0, int(elapsed_s)))
+    except (KeyError, IndexError, ValueError):
+        return f"✗ stopped after {max(0, int(elapsed_s))}s — the turn didn't finish"
+
+
 def elapsed_suffix(elapsed_s: int, lang: str = "en") -> str:
     """Render the compact elapsed suffix appended during long waits — ``(23s)``.
 

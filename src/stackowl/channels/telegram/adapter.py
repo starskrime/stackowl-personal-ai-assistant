@@ -360,6 +360,7 @@ class TelegramChannelAdapter(ChannelAdapter):
         display_suffix: str | None = None
         view: TelegramProgressView | None = None
         answer_started = False
+        settled = False
         # Tracked across the chunk stream to backfill the retry_queue row for a
         # floored turn once the message is actually sent (below) — every chunk
         # in one turn shares the same trace_id, so any chunk's is enough.
@@ -433,14 +434,22 @@ class TelegramChannelAdapter(ChannelAdapter):
                 message = await self.send_text_or_actions(outbound_text, actions, chat_id=target)
             if view is not None:
                 await view.settle()  # collapse the status to a "✓ done in Ns" footer
+            settled = True
             if any_floor and message is not None and trace_id is not None and target is not None:
                 await self._backfill_floor_retry_row(trace_id, target, message.message_id)
             if raw_keyboard is not None and message is not None and trace_id is not None and target is not None:
                 await self._backfill_approach_rating(trace_id, target, message.message_id)
         finally:
-            # Safety net: never leak the ticker task if the loop raised mid-turn.
+            # Safety net: never leak the ticker task if the loop raised mid-turn —
+            # AND never leave the status message stuck on "Still working on this…"
+            # for a turn that died before delivering (confirmed production
+            # incident: an orphaned status sat in chat ticking to 1670s). A turn
+            # that never reached settle() gets the honest "✗ stopped after Ns"
+            # footer, never a fake "✓ done".
             if view is not None:
                 await view.stop()
+                if not settled:
+                    await view.abort()
         log.telegram.info(
             "[telegram] adapter.send: exit",
             extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None,

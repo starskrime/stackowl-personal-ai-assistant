@@ -101,6 +101,29 @@ async def test_settle_collapses_to_done_footer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_abort_marks_status_honestly_failed_not_done() -> None:
+    """A turn that dies before delivering must not leave "Still working on
+    this… (Ns)" stuck in chat forever (production incident: orphaned status
+    ticked to 1670s) — and must not lie with "✓ done" either."""
+    rec, clock = _Recorder(), _Clock()
+    view = _view(rec, clock)
+    clock.t = 1.0
+    await view.on_progress("🔎 Searching…")  # status sent (id 101)
+    clock.t = 30.0
+    await view.abort()
+    assert rec.edits[-1][2] == "✗ stopped after 30s — the turn didn't finish"
+
+
+@pytest.mark.asyncio
+async def test_abort_with_no_status_shown_is_clean_noop() -> None:
+    rec, clock = _Recorder(), _Clock()
+    view = _view(rec, clock)
+    await view.abort()  # nothing was ever sent — chat stays clean
+    assert rec.sent == []
+    assert rec.edits == []
+
+
+@pytest.mark.asyncio
 async def test_typing_reissued_after_interval() -> None:
     rec, clock = _Recorder(), _Clock()
     view = _view(rec, clock)
