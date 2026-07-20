@@ -166,8 +166,15 @@ class TelegramConsentPrompter:
         )
         return scope
 
-    async def handle_callback(self, callback_id: str, callback_data: str) -> None:
-        """Resolve the pending Future for ``consent:{rid}:{scope}`` callbacks."""
+    async def handle_callback(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
+        """Resolve the pending Future for ``consent:{rid}:{scope}`` callbacks.
+
+        ``chat_id`` is accepted for signature parity with the router's
+        handler contract (the pending entry already carries its own
+        authoritative chat_id) and is not otherwise needed here.
+        """
         log.telegram.debug(
             "[telegram] consent.handle_callback: entry",
             extra={"_fields": {"data_prefix": callback_data[:16]}},

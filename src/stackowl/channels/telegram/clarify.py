@@ -45,7 +45,9 @@ class TelegramClarifyResolver:
     def __init__(self, clarify_gateway: ClarifyGateway) -> None:
         self._gateway = clarify_gateway
 
-    async def handle_callback(self, callback_id: str, callback_data: str) -> None:
+    async def handle_callback(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
         """Resolve the parked clarify for a ``clarify:{clarify_id}:{idx}`` tap.
 
         Parses the callback, maps ``idx`` to the entry's choice text via
@@ -54,8 +56,9 @@ class TelegramClarifyResolver:
         ``clarify_id``) to wake the parked turn. Idempotent and fail-safe: a malformed payload, a
         stale/superseded ``clarify_id`` (peek → ``None``), or an out-of-range
         index is logged and ignored. Never raises (the router catches, but this
-        stays clean). ``callback_id`` is accepted for signature parity with the
-        router's handler contract and is not otherwise needed here.
+        stays clean). ``callback_id`` and ``chat_id`` are accepted for
+        signature parity with the router's handler contract and are not
+        otherwise needed here.
         """
         log.telegram.debug(
             "[telegram] clarify.handle_callback: entry",

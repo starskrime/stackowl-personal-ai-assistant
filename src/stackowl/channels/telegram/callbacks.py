@@ -26,7 +26,7 @@ __all__ = [
     "CallbackRouter",
 ]
 
-_Handler = Callable[[str, str], Awaitable[None]]
+_Handler = Callable[[str, str, "int | None"], Awaitable[None]]
 
 
 class CallbackIdempotencyStore:
@@ -135,7 +135,9 @@ class CallbackRouter:
 
         Args:
             prefix: Exact prefix string to match at the start of callback_data.
-            handler: Async callable ``(callback_id, callback_data) -> None``.
+            handler: Async callable ``(callback_id, callback_data, chat_id) -> None``.
+                ``chat_id`` is a best-effort extraction from the callback query
+                (``None`` if unavailable) — most handlers ignore it.
         """
         log.telegram.debug(
             "[telegram] callbacks.router.register: entry",
@@ -170,6 +172,21 @@ class CallbackRouter:
 
         callback_id: str = cq.id
         callback_data: str = cq.data or ""
+
+        # Best-effort chat_id extraction — never raises even if from_user is
+        # missing/None (e.g. duck-typed test doubles, or a malformed update).
+        chat_id: int | None = None
+        try:
+            from_user = getattr(cq, "from_user", None)
+            if from_user is not None:
+                chat_id = getattr(from_user, "id", None)
+        except Exception as exc:
+            log.telegram.error(
+                "[telegram] callbacks.router.route: chat_id extraction failed — falling back to None",
+                exc,
+                extra={"_fields": {}},
+            )
+            chat_id = None
 
         log.telegram.debug(
             "[telegram] callbacks.router.route: decision check_idempotency",
@@ -221,7 +238,7 @@ class CallbackRouter:
             )
         else:
             try:
-                await handler(callback_id, callback_data)
+                await handler(callback_id, callback_data, chat_id)
             except Exception as exc:
                 log.telegram.error(
                     "[telegram] callbacks.router.route: handler raised",

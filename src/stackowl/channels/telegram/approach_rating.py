@@ -236,7 +236,12 @@ class ApproachRatingCallbackHandler:
         self._outcome_store = outcome_store
         self._adapter = adapter
 
-    async def handle(self, callback_id: str, callback_data: str) -> None:
+    async def handle(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
+        # ``chat_id`` is accepted for signature parity with the router's
+        # handler contract (the DB-backed tracker already carries its own
+        # authoritative chat_id) and is not otherwise needed here.
         # 1. ENTRY
         log.telegram.debug(
             "approach_rating.handle: entry",

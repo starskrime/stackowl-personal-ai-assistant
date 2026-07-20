@@ -43,9 +43,20 @@ async def db_pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     await pool.close()
 
 
-def _make_callback_update(callback_id: str, callback_data: str) -> Any:
-    """Build a duck-typed Update object with a callback_query."""
-    cq = types.SimpleNamespace(id=callback_id, data=callback_data)
+def _make_callback_update(
+    callback_id: str, callback_data: str, from_user_id: int | None = None
+) -> Any:
+    """Build a duck-typed Update object with a callback_query.
+
+    ``from_user_id`` is omitted by default (no ``from_user`` attribute at
+    all) to exercise the router's fall-back-to-None extraction path; pass it
+    to exercise the successful-extraction path.
+    """
+    if from_user_id is None:
+        cq = types.SimpleNamespace(id=callback_id, data=callback_data)
+    else:
+        from_user = types.SimpleNamespace(id=from_user_id)
+        cq = types.SimpleNamespace(id=callback_id, data=callback_data, from_user=from_user)
     return types.SimpleNamespace(callback_query=cq)
 
 
@@ -152,7 +163,54 @@ async def test_route_calls_handler_for_matching_prefix(db_pool: DbPool) -> None:
     update = _make_callback_update("cb-fresh", "mem:approve:fact123")
     await router.route(update, None)
 
-    handler.assert_called_once_with("cb-fresh", "mem:approve:fact123")
+    # Duck-typed update's callback_query carries no from_user, so chat_id
+    # extraction falls back to None — still passed through positionally.
+    handler.assert_called_once_with("cb-fresh", "mem:approve:fact123", None)
+
+
+# ---------------------------------------------------------------------------
+# 5b. CallbackRouter.route extracts chat_id from callback_query.from_user.id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_route_extracts_chat_id_from_callback_query(db_pool: DbPool) -> None:
+    adapter = _make_adapter()
+    router = CallbackRouter(db_pool=db_pool, adapter=adapter)
+    await router._store.ensure_table()
+
+    handler = AsyncMock()
+    router.register("mem:approve:", handler)
+
+    update = _make_callback_update("cb-with-user", "mem:approve:fact456", from_user_id=98765)
+    await router.route(update, None)
+
+    handler.assert_called_once_with("cb-with-user", "mem:approve:fact456", 98765)
+
+
+# ---------------------------------------------------------------------------
+# 5c. CallbackRouter.route never raises when from_user is present but malformed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_route_falls_back_to_none_when_from_user_has_no_id(db_pool: DbPool) -> None:
+    """A ``from_user`` object present but missing/None ``id`` must never crash
+    chat_id extraction — falls back to None (see callbacks.py route())."""
+    adapter = _make_adapter()
+    router = CallbackRouter(db_pool=db_pool, adapter=adapter)
+    await router._store.ensure_table()
+
+    handler = AsyncMock()
+    router.register("mem:approve:", handler)
+
+    cq = types.SimpleNamespace(
+        id="cb-malformed", data="mem:approve:fact789", from_user=object()
+    )
+    update = types.SimpleNamespace(callback_query=cq)
+    await router.route(update, None)
+
+    handler.assert_called_once_with("cb-malformed", "mem:approve:fact789", None)
 
 
 # ---------------------------------------------------------------------------

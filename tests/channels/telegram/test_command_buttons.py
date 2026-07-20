@@ -310,6 +310,9 @@ async def test_single_action_group_has_no_siblings():
 
 
 def test_expired_or_unknown_button_is_ignored():
+    """No chat_id available (default) — stays a true silent no-op, mirroring
+    TelegramClarifyResolver's stale-tap handling."""
+
     class _FakeAdapter:
         pass
 
@@ -317,5 +320,31 @@ def test_expired_or_unknown_button_is_ignored():
     import asyncio
 
     asyncio.run(resolver.handle_callback("cbid5", "cmd:doesnotexist"))
-    # No assertion beyond "did not raise" — an unknown/expired short_id is a
-    # silent no-op (mirrors TelegramClarifyResolver's stale-tap handling).
+    # No assertion beyond "did not raise" — an unknown/expired short_id with
+    # no chat_id is a silent no-op (mirrors TelegramClarifyResolver's
+    # stale-tap handling).
+
+
+async def test_expired_button_sends_user_facing_message() -> None:
+    """Task 14: a tap resolving to nothing (expired TTL or unknown short_id),
+    when the router DID manage to extract a chat_id, must tell the user
+    instead of silently swallowing the tap — see the ``entry is None`` branch
+    in ``TelegramCommandButtonResolver.handle_callback``."""
+    adapter = _FakeAdapter()
+    resolver = TelegramCommandButtonResolver(adapter=adapter, registry=None)
+
+    await resolver.handle_callback("cb-1", "cmd:doesnotexist", chat_id=12345)
+
+    assert adapter.sent_text == [(12345, "This step expired — run /provider add to start again.")]
+
+
+async def test_expired_button_without_chat_id_is_silent_noop() -> None:
+    """When the router could NOT extract a chat_id (chat_id=None, the
+    parameter's default), the expired-button message must not be attempted —
+    there is nowhere to send it."""
+    adapter = _FakeAdapter()
+    resolver = TelegramCommandButtonResolver(adapter=adapter, registry=None)
+
+    await resolver.handle_callback("cb-2", "cmd:doesnotexist")
+
+    assert adapter.sent_text == []

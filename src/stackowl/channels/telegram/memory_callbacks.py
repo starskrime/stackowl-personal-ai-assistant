@@ -44,7 +44,9 @@ class MemoryCallbackHandler:
         self._adapter = adapter
         log.telegram.debug("[telegram] memory_callbacks.handler.init: entry")
 
-    async def handle_approve(self, callback_id: str, callback_data: str) -> None:
+    async def handle_approve(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
         """Handle a ``mem:approve:<fact_id>`` callback.
 
         Promotes the staged fact by calling :meth:`MemoryBridge.stage` with
@@ -56,6 +58,8 @@ class MemoryCallbackHandler:
         Args:
             callback_id: Telegram callback query ID (for acknowledgement).
             callback_data: Full callback_data string, e.g. ``mem:approve:abc123``.
+            chat_id: Accepted for signature parity with the router's handler
+                contract; not otherwise needed here.
         """
         log.telegram.debug(
             "[telegram] memory_callbacks.handler.handle_approve: entry",
@@ -114,7 +118,9 @@ class MemoryCallbackHandler:
             extra={"_fields": {"fact_id": fact_id}},
         )
 
-    async def handle_reject(self, callback_id: str, callback_data: str) -> None:
+    async def handle_reject(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
         """Handle a ``mem:reject:<fact_id>`` callback.
 
         Deletes the staged fact from the memory bridge, then acknowledges the
@@ -125,6 +131,8 @@ class MemoryCallbackHandler:
         Args:
             callback_id: Telegram callback query ID (for acknowledgement).
             callback_data: Full callback_data string, e.g. ``mem:reject:abc123``.
+            chat_id: Accepted for signature parity with the router's handler
+                contract; not otherwise needed here.
         """
         log.telegram.debug(
             "[telegram] memory_callbacks.handler.handle_reject: entry",

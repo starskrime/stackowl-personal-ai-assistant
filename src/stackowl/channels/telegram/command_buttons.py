@@ -13,8 +13,10 @@ resolvers make the same assumption) — no separate session lookup is needed.
 callback_data is ALWAYS routed through the short-id map below, even when a
 command string would fit under Telegram's 64-byte limit directly — the map is
 also how chat_id (and later, message_id) travel with the tap: the router's
-handler signature is ``(callback_id, callback_data)`` only, it does not carry
-the originating chat or message.
+``chat_id`` parameter is a best-effort extraction from the callback query
+(used here only for the expired/unknown-button message below), not a
+substitute for the map — actions and message identity still travel with the
+tap through ``_button_map``.
 """
 
 from __future__ import annotations
@@ -170,12 +172,20 @@ class TelegramCommandButtonResolver:
         self._adapter = adapter
         self._registry = registry
 
-    async def handle_callback(self, callback_id: str, callback_data: str) -> None:
+    async def handle_callback(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
         """Resolve a ``cmd:{short_id}`` tap: cancel, confirm-prompt, or dispatch.
 
         ``callback_id`` is accepted for signature parity with the router's
         handler contract (mirrors :class:`TelegramClarifyResolver`) and is not
         otherwise needed here — the router already acks the tap.
+
+        ``chat_id`` is the router's best-effort extraction from the callback
+        query, used ONLY to tell the user their tap resolved to nothing (see
+        the ``entry is None`` branch below) — every other decision in this
+        method still uses the chat_id carried in the ``_button_map`` entry
+        itself, which is authoritative.
         """
         log.telegram.debug(
             "[telegram] command_buttons.handle_callback: entry",
@@ -190,6 +200,18 @@ class TelegramCommandButtonResolver:
                 "[telegram] command_buttons.handle_callback: expired or unknown button",
                 extra={"_fields": {"short_id": short_id}},
             )
+            if chat_id is not None:
+                try:
+                    await self._adapter.send_text(
+                        "This step expired — run /provider add to start again.",
+                        chat_id=chat_id,
+                    )
+                except Exception as exc:
+                    log.telegram.error(
+                        "[telegram] command_buttons.handle_callback: expired-message send failed",
+                        exc,
+                        extra={"_fields": {"short_id": short_id}},
+                    )
             return
         chat_id, action = entry.chat_id, entry.action
         if entry.sibling_ids:

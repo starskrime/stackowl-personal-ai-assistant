@@ -90,8 +90,14 @@ class VoiceConfirmHandler:
         self._pending = pending_store
         log.telegram.debug("[telegram] voice_confirm.init: entry")
 
-    async def handle_callback(self, callback_id: str, callback_data: str) -> None:
+    async def handle_callback(
+        self, callback_id: str, callback_data: str, chat_id: int | None = None
+    ) -> None:
         """Resolve a ``vtx:{action}:{id}`` callback. Never acks (the router does).
+
+        ``chat_id`` is accepted for signature parity with the router's
+        handler contract (the pending entry already carries its own
+        authoritative chat_id) and is not otherwise needed here.
 
         4-point logging: entry / decision / step / exit.
         """
