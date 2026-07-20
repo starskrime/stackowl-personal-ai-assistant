@@ -671,6 +671,18 @@ class SystemSettings(BaseModel):
         description="IANA timezone identifier used for user-facing timestamps.",
         json_schema_extra={"hot_reload": True},
     )
+    interactive_turn_timeout_s: float = Field(
+        default=600.0,
+        ge=0.0,
+        description=(
+            "Hard wall-clock deadline (seconds) for ONE interactive turn "
+            "(state.interactive=True). On expiry the turn's step loop is "
+            "cancelled and an honest floor message is delivered instead of the "
+            "turn hanging forever. 0 disables. Non-interactive runs (scheduler, "
+            "parliament, delegation children, evolution) are never affected — "
+            "they carry their own budgets."
+        ),
+    )
 
 
 class IdentitySettings(BaseModel):
