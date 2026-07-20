@@ -13,12 +13,13 @@ This is materially closer to the goal than it first appears:
 - Per-provider `CircuitBreaker` (3-state, adaptive half-open backoff capped at 900s) and `RateLimiter` (token bucket, 429-aware penalty) already exist. Config hot-reload (`apply_settings`) is already wired — `/provider` changes apply without a restart.
 - `/provider` already supports `list/add/remove/set-tier/edit/enable/disable/set-token/rename`, rendered as buttons via `CommandResponse`/`Action` on both Telegram and TUI.
 - `channels/telegram/command_buttons.py` already solves Telegram's 64-byte `callback_data` limit generically: every `Action`'s full command string — however long — is stashed under a random short id, and only `cmd:{short_id}` crosses the wire. **A live-queried model id or search result embedded in a button command needs no new plumbing.**
+- **A provider catalog already exists**: `stackowl.setup.provider_catalog.ProviderCatalog`/`ProviderEntry`, used today by `stackowl setup --minimal`. 15 bundled entries live as one YAML file each under `src/stackowl/setup/providers/*.yaml` (name/label/protocol/base_url/default_model/models/tier/needs_api_key/is_local/key_url), merged with user overrides from `~/.stackowl/providers/*.yaml`. This is the same shape this design needs — it gets *extended*, not duplicated.
 
 ## Architecture & data flow
 
-Three small new modules sit alongside the existing `providers/` and `commands/` code:
+Two small new modules, plus an extension of the existing catalog, sit alongside the existing `providers/`/`commands/`/`setup/` code:
 
-- **`ProviderCatalog`** (`providers/catalog.py`) — loads a bundled `providers/catalog_data.yaml`, exposes `search(query)` and `browse(category=None)`.
+- **`ProviderCatalog` (extended, `setup/provider_catalog.py`)** — gains an optional `category: tuple[str, ...] = ()` field on `ProviderEntry` (default empty, so all 15 existing bundled YAML files parse unchanged) and two new methods, `search(query)` and `browse(category=None)`, operating over `cls.load()`. The bundled YAML directory (`setup/providers/*.yaml`, one file per provider) is where the research pass adds more of the ~100-provider market — same file-per-provider convention, not a new consolidated file. `commands/provider_command.py` imports this catalog directly (no new dependency direction: `setup/provider_catalog.py` has no import back on `commands/`).
 - **`ModelDiscovery`** (`providers/model_discovery.py`) — `list_models(protocol, base_url, api_key) -> list[str]`, dispatching by protocol the same way `_build_provider` already does. This same call doubles as token validation.
 - **`TierSelector`** (`providers/tier_selector.py`) — `select(tier, providers, tiers, breakers) -> str | None`, a round-robin cursor per tier. `ProviderRegistry.get_with_cascade` delegates to this instead of its current inline first-match loop; a single-provider tier's behavior is unchanged.
 
@@ -47,16 +48,17 @@ Three small new modules sit alongside the existing `providers/` and `commands/` 
 cooldown_hours: float | None = None
 ```
 
-New catalog entry shape (`providers/catalog_data.yaml`, populated and refreshed via a research pass, not hand-typed):
+New/changed catalog entry shape (`setup/provider_catalog.py::ProviderEntry`, one bundled YAML file per provider under `setup/providers/`, populated and refreshed via a research pass, not hand-typed):
 
 ```yaml
-- id: groq
-  display_name: Groq
-  protocol: openai          # openai | anthropic | gemini | grok
-  base_url: https://api.groq.com/openai/v1
-  key_required: true
-  category: [free-tier, fast-inference]
-  notes: "Free tier, generous RPM, OpenAI-compatible"
+name: groq
+label: Groq
+protocol: openai          # anthropic | openai | gemini | grok
+base_url: https://api.groq.com/openai/v1
+default_model: llama-3.3-70b-versatile
+needs_api_key: true
+category: [free-tier, fast-inference]   # NEW optional field
+key_url: https://console.groq.com/keys
 ```
 
 `CircuitBreaker` gains an `open_for(seconds)` entry point (distinct from the existing failure-counted path) — used when a quota/rate response carries a parseable reset time, or when a provider has no reset signal but has `cooldown_hours` configured. Absent both, behavior is byte-identical to today. The reset-header parsing and the decision to call `open_for()` vs. the default failure path live at the same call site that already classifies a RATE_LIMIT failure and calls `RateLimiter.penalize()` today (the provider round's exception handling) — not inside `CircuitBreaker`/`RateLimiter` themselves, which stay generic.
