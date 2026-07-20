@@ -34,3 +34,6 @@ logs/
 
 # graphify — regenerated locally via post-commit/post-checkout hooks (graphify hook install)
 graphify-out/
+
+# Local git worktrees (superpowers:using-git-worktrees)
+.worktrees/
