@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
 from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS
 
@@ -21,7 +21,14 @@ class ProviderConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     default_model: str
-    tier: Literal["fast", "standard", "powerful", "local"]
+    # F-multi-tier — a provider can belong to more than one routing tier at
+    # once (e.g. the same key serving both "fast" and "standard"). At least
+    # one entry, no duplicates (enforced below). The legacy singular `tier`
+    # constructor kwarg is still accepted (see the validator below) so the
+    # ~50 existing call sites across this codebase that build
+    # ProviderConfig(tier="fast", ...) keep working unchanged — none of them
+    # read the removed `.tier` attribute back, only `.tiers`.
+    tiers: tuple[Literal["fast", "standard", "powerful", "local"], ...]
     max_retries: int = 3
     timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
@@ -58,3 +65,29 @@ class ProviderConfig(BaseModel):
     # from today's generic failure-threshold breaker behavior. See
     # providers/_resilient_round.py's RATE_LIMIT branch for how this is used.
     cooldown_hours: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_tier(cls, data: object) -> object:
+        """Accept a legacy singular ``tier=<str>`` constructor kwarg (or dict
+        key) as an alias for ``tiers=(<str>,)``. Runs BEFORE field validation,
+        so a caller that still passes ``tier="fast"`` — whether constructing
+        ProviderConfig directly in Python or via a raw YAML/dict that hasn't
+        been through the on-disk migration yet — is normalized here rather
+        than rejected. ``tiers`` wins if both are somehow present."""
+        if not isinstance(data, dict) or "tiers" in data or "tier" not in data:
+            return data
+        legacy = data.pop("tier")
+        data["tiers"] = (legacy,) if isinstance(legacy, str) else tuple(legacy)
+        return data
+
+    @field_validator("tiers")
+    @classmethod
+    def _validate_tiers(
+        cls, value: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("tiers must contain at least one entry")
+        if len(set(value)) != len(value):
+            raise ValueError(f"tiers must not contain duplicates: {value}")
+        return value
