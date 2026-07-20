@@ -205,7 +205,8 @@ class ProviderCommand(SlashCommand):
             if sub == "list":
                 result = self._list()
             elif sub == "add":
-                result = self._add(rest)
+                add_tokens = rest.split()
+                result = self._add(rest) if len(add_tokens) >= 4 else self._add_browse(rest.strip())
             elif sub == "remove":
                 result = self._remove(rest)
             elif sub == "set-tier":
@@ -553,6 +554,55 @@ class ProviderCommand(SlashCommand):
             extra={"_fields": {"name": name, "field": field}},
         )
         return f"✓ Provider '{name}' {field} set to '{value}' — applied immediately"
+
+    # -- add-browse / add-pick (guided catalog flow) ----------------------------
+
+    def _add_browse(self, query: str) -> CommandResponse:
+        """Catalog search (query given) or full browse (empty query).
+
+        Reached from ``handle()`` when ``/provider add`` is called with fewer
+        than 4 whitespace-separated tokens — i.e. not the full positional
+        ``<name> <protocol> <default_model> <tier>`` form, which still goes
+        straight to :meth:`_add` unchanged.
+        """
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.add_browse: entry",
+            extra={"_fields": {"query_len": len(query)}},
+        )
+        from stackowl.setup.provider_catalog import ProviderCatalog
+
+        # 2. DECISION — search vs full browse
+        entries = ProviderCatalog.search(query) if query else ProviderCatalog.browse()
+        if not entries:
+            log.config.debug(
+                "[commands] provider.add_browse: exit — no matches",
+                extra={"_fields": {"query_len": len(query)}},
+            )
+            return CommandResponse(
+                text=f"No catalog providers match '{query}'." if query else "Catalog is empty."
+            )
+
+        # 3. STEP — build one action per catalog entry (capped at 30)
+        shown = entries[:30]
+        actions = tuple(
+            Action(label=entry.label, command=f"/provider add-pick {entry.name}", destructive=False)
+            for entry in shown
+        )
+        text = (
+            f"Found {len(entries)} provider(s) matching '{query}':"
+            if query
+            else f"Browse {len(entries)} catalog providers:"
+        )
+        if len(entries) > 30:
+            text += "\n(showing first 30 — refine with /provider add <search term>)"
+
+        # 4. EXIT
+        log.config.debug(
+            "[commands] provider.add_browse: exit",
+            extra={"_fields": {"matches": len(entries), "shown": len(shown)}},
+        )
+        return CommandResponse(text=text, actions=actions)
 
     # -- add -------------------------------------------------------------------
 

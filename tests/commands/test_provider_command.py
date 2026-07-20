@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 import yaml
 
+from stackowl.commands.response import CommandResponse
 from stackowl.events.bus import EventBus
 from stackowl.pipeline.state import PipelineState
 
@@ -217,9 +218,13 @@ class TestProviderAdd:
         assert acmes[0]["protocol"] == "openai"
 
     @pytest.mark.asyncio
-    async def test_add_missing_args_returns_usage(self, tmp_yaml: Path) -> None:
+    async def test_add_missing_args_routes_to_catalog_browse(self, tmp_yaml: Path) -> None:
+        # Task 9: an incomplete positional call (< 4 tokens) is no longer a
+        # usage error — it's treated as a catalog search query (here, one
+        # that matches nothing) and returns a CommandResponse, not a str.
         out = await _make_cmd().handle("add acme openai", _state())
-        assert "Usage" in out or "usage" in out.lower()
+        assert isinstance(out, CommandResponse)
+        assert "no catalog providers match" in out.text.lower()
 
     @pytest.mark.asyncio
     async def test_add_honest_error_when_write_does_not_persist(
@@ -237,6 +242,29 @@ class TestProviderAdd:
         # Nothing persisted; no spurious reload event.
         assert _load(tmp_yaml)["providers"] == []
         assert not any(e == "settings_reloaded" for e, _ in bus.events)
+
+    # -- add browse/search entry point (Task 9) ---------------------------------
+
+    @pytest.mark.asyncio
+    async def test_add_with_no_args_shows_catalog_browse(self, tmp_yaml: Path) -> None:
+        reply = await _make_cmd().handle("add", _state())
+        assert isinstance(reply, CommandResponse)
+        assert any("add-pick" in a.command for a in reply.actions)
+
+    @pytest.mark.asyncio
+    async def test_add_with_search_query_filters_catalog(self, tmp_yaml: Path) -> None:
+        reply = await _make_cmd().handle("add groq", _state())
+        assert isinstance(reply, CommandResponse)
+        assert any("groq" in a.command for a in reply.actions)
+
+    @pytest.mark.asyncio
+    async def test_add_with_full_positional_args_still_works_directly(
+        self, tmp_yaml: Path
+    ) -> None:
+        """Regression: the existing positional add form (4+ tokens) is untouched."""
+        reply = await _make_cmd().handle("add myprov openai gpt-4o fast", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓ Provider 'myprov' added")
 
 
 # ---------------------------------------------------------------------------
