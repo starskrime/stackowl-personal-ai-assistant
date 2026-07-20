@@ -943,6 +943,30 @@ def reset_ledger_for_tier_escalation(from_tier: str, to_tier: str, *, trace_id: 
         )
 
 
+def _tool_call_from_record(rc: dict[str, Any], *, duration_ms: float = 0.0) -> ToolCall:
+    """Build a typed ToolCall from a provider's raw record dict.
+
+    Both anthropic_provider.py and openai_provider.py already compute and store
+    a real ``"failed"`` flag on every record (``TOOL_FAILED_MARKER in
+    result_text``) — this reads it into ``ToolCall.error`` instead of hardcoding
+    None. consolidate.py's F095 merge filter (``tc.error is None`` as the
+    "only successful tool output may become the answer" gate) depends on this
+    field actually reflecting reality; hardcoding None made that filter a
+    no-op, letting a failed tool's raw error text ship to the user as if it
+    were the answer whenever a turn ended with tool_calls but no model-composed
+    response.
+    """
+    result = str(rc.get("result", ""))
+    failed = bool(rc.get("failed"))
+    return ToolCall(
+        tool_name=str(rc.get("name", "")),
+        args=dict(rc.get("args") or {}),
+        result=result,
+        error=result if failed else None,
+        duration_ms=duration_ms,
+    )
+
+
 async def _run_with_tools(
     state: PipelineState,
     choice: ToolProviderChoice | ModelProvider,
@@ -2074,16 +2098,7 @@ async def _run_with_tools(
             trace_id=state.trace_id, owl_name=state.owl_name,
         ),)
         _stopped_raw: list[dict[str, Any]] = exc.tool_call_records
-        _stopped_tool_records = tuple(
-            ToolCall(
-                tool_name=str(rc.get("name", "")),
-                args=dict(rc.get("args") or {}),
-                result=str(rc.get("result", "")),
-                error=None,
-                duration_ms=0.0,
-            )
-            for rc in _stopped_raw
-        )
+        _stopped_tool_records = tuple(_tool_call_from_record(rc) for rc in _stopped_raw)
         return _stamp_progress(state.evolve(
             responses=(*state.responses, *_stopped_chunks),
             tool_calls=(*state.tool_calls, *_stopped_tool_records),
@@ -2096,16 +2111,7 @@ async def _run_with_tools(
                                "cap": exc.cap, "limit": exc.limit, "actual": exc.actual}},
         )
         _breach_raw: list[dict[str, Any]] = exc.tool_call_records
-        _breach_tool_records = tuple(
-            ToolCall(
-                tool_name=str(rc.get("name", "")),
-                args=dict(rc.get("args") or {}),
-                result=str(rc.get("result", "")),
-                error=None,
-                duration_ms=0.0,
-            )
-            for rc in _breach_raw
-        )
+        _breach_tool_records = tuple(_tool_call_from_record(rc) for rc in _breach_raw)
         marker = f"budget:stop:{exc.cap}:limit={exc.limit}:actual={exc.actual}"
         if _default_backstop:
             # Default safety backstop: deliver clean best-available partial with no
@@ -2199,16 +2205,7 @@ async def _run_with_tools(
         ))
 
     duration_ms = (time.monotonic() - t0) * 1000
-    tool_records = tuple(
-        ToolCall(
-            tool_name=str(rc.get("name", "")),
-            args=dict(rc.get("args") or {}),
-            result=str(rc.get("result", "")),
-            error=None,
-            duration_ms=0.0,
-        )
-        for rc in raw_calls
-    )
+    tool_records = tuple(_tool_call_from_record(rc) for rc in raw_calls)
     chunks: tuple[ResponseChunk, ...] = ()
     if final_text:
         chunks = (ResponseChunk(

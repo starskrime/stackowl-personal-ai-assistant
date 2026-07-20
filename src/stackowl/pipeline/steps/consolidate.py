@@ -90,7 +90,12 @@ async def run(state: PipelineState) -> PipelineState:
         # answer. ``tc.error is None`` is the ONLY typed success signal at the
         # pipeline layer (ToolCall has no `failed` bool; the TOOL_FAILED_MARKER is
         # stripped at the provider seam before results land here). A failed tool's
-        # non-empty error body must NEVER be delivered as the answer.
+        # non-empty error body must NEVER be delivered as the answer. This filter
+        # is only real because execute.py's _tool_call_from_record() populates
+        # ``error`` from the provider's own computed failure flag — previously
+        # every ToolCall construction site hardcoded error=None, making this
+        # filter a silent no-op that let failed tool output through as "the
+        # answer" whenever this merge branch fired.
         combined = "\n\n".join(
             tc.result for tc in state.tool_calls if tc.result and tc.error is None
         )
