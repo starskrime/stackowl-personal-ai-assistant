@@ -542,6 +542,50 @@ def _schedule_commit_floor_chunk(state: PipelineState) -> ResponseChunk:
     )
 
 
+async def _try_corrective_rerun(
+    state: PipelineState, correction: str
+) -> tuple[ResponseChunk, ...] | None:
+    """One bounded agentic self-correction: re-run the pipeline with the gate's
+    rejection reason fed back to the model, and adopt the corrected answer.
+
+    Returns the corrected turn's answer chunks (re-stamped onto THIS turn's
+    trace) when the corrective child cleared its own gates, else ``None`` (the
+    caller keeps its honest floor). Bounded by ``state.corrective_replay`` — a
+    correction is never corrected again. Skipped for write-effect culprits by
+    the callers (side-effect safety mirrors delegate_task's "a write-capable
+    failure is halted, not retried"). Never raises.
+    """
+    if state.corrective_replay:
+        return None
+    try:
+        actuator = get_services().retry_actuator
+        if actuator is None:
+            return None
+        corrected = await actuator.run_corrective(original=state, correction=correction)
+        if corrected is None:
+            return None
+        # "".join — streamed child responses are one chunk per token (see
+        # retry_actuator.attempt_retry's identical join and its comment).
+        answer_text = "".join(c.content for c in corrected.responses if c.content).strip()
+        if not answer_text:
+            return None
+        return (
+            ResponseChunk(
+                content=answer_text,
+                is_final=False,
+                chunk_index=0,
+                trace_id=state.trace_id,
+                owl_name=state.owl_name,
+            ),
+        )
+    except Exception as exc:  # no-hidden-errors: keep the floor, loudly
+        log.engine.error(
+            "[delivery_gate] corrective rerun failed — keeping floor",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+
+
 async def _try_fulfill_schedule_commit(state: PipelineState) -> str | None:
     """Attempt to ACTUALLY create the promised job; receipt line or ``None``.
 
@@ -631,6 +675,23 @@ async def surface_grounding_gate(state: PipelineState) -> PipelineState:
                     "trace_id": state.trace_id, "retrieval_ran": retrieval_ran,
                 }},
             )
+            # Agentic self-correction: cited sources with nothing retrieved —
+            # re-run once with the rejection fed back so the model can fetch
+            # REAL sources; accepted only if the child's own gates clear it.
+            # Retrieval is read-only ⇒ no double-side-effect risk.
+            corrected = await _try_corrective_rerun(
+                state,
+                "it cited sources/URLs but NO source was actually retrieved "
+                "this turn — the citations are fabricated. Retrieve real "
+                "sources with web_search/web_fetch, or answer without "
+                "external claims.",
+            )
+            if corrected is not None:
+                log.engine.info(
+                    "grounding.corrected",
+                    extra={"_fields": {"trace_id": state.trace_id}},
+                )
+                return state.evolve(responses=corrected)
             return state.evolve(
                 responses=(_grounding_floor_chunk(state),), overclaim_blocked=True
             )
@@ -902,6 +963,25 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
                 }
             },
         )
+        if culprit == _RETRIEVAL_CULPRIT:
+            # Agentic self-correction: the draft answered from stale internal
+            # knowledge when the request needed a live lookup. Instead of only
+            # confessing "I didn't actually look this up", re-run the turn ONCE
+            # with the rejection fed back — the corrective child can call the
+            # retrieval tools for real, and is accepted only if its own gates
+            # clear it. Read-only tools ⇒ no double-side-effect risk. Failure ⇒
+            # the existing honest floor, unchanged.
+            corrected = await _try_corrective_rerun(
+                state,
+                "it answered from memory when the request required a LIVE web "
+                "lookup, and no retrieval tool was called.",
+            )
+            if corrected is not None:
+                log.engine.info(
+                    "overclaim.corrected",
+                    extra={"_fields": {"trace_id": state.trace_id, "culprit": culprit}},
+                )
+                return state.evolve(responses=corrected)
         if culprit == _SCHEDULE_CULPRIT:
             # Do-the-action upgrade: before confessing "I didn't actually
             # schedule anything", TRY to actually schedule it — extract the

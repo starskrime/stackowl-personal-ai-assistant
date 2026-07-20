@@ -81,6 +81,74 @@ class RetryActuator:
         self._channel_registry = channel_registry
         self._retry_store = retry_store
 
+    async def run_corrective(
+        self, *, original: PipelineState, correction: str
+    ) -> PipelineState | None:
+        """One bounded in-turn corrective re-run of a gate-rejected draft.
+
+        The agentic upgrade the delivery gates lacked: instead of replacing a
+        rejected draft with an honest floor and stopping, feed the REJECTION
+        REASON back to the model and run the full pipeline once more (tools
+        included — a "you never actually looked this up" correction needs a
+        real ``web_search``, not a re-wording). Mirrors ``attempt_retry``'s
+        synthetic-replay construction: ``defer_delivery=True`` (the parent
+        turn owns delivery), ``retry_replay=True`` (no retry-queue row
+        minting), plus ``corrective_replay=True`` so the child's OWN delivery
+        gates never spawn a grandchild (strict one-round bound). The child
+        runs the same gate cascade internally, so a returned state is one
+        whose corrected draft already CLEARED the gates that rejected the
+        parent's — the platform never lowers the bar, it re-asks the model to
+        meet it.
+
+        Returns the child's final state on a gate-clean corrected answer, or
+        ``None`` (caller keeps its existing floor) when the child floored,
+        produced nothing, or raised. Never raises.
+        """
+        log.engine.info(
+            "retry_actuator.run_corrective: entry",
+            extra={"_fields": {
+                "trace_id": original.trace_id,
+                "correction": correction[:120],
+            }},
+        )
+        state = PipelineState(
+            trace_id=f"{original.trace_id}-fix",
+            session_id=original.session_id,
+            input_text=(
+                f"{original.input_text}\n\n"
+                f"[Your previous draft was rejected before delivery: {correction} "
+                "Produce a corrected answer now — use your tools where needed.]"
+            ),
+            channel=original.channel,
+            owl_name=original.owl_name,
+            pipeline_step="",
+            interactive=False,
+            defer_delivery=True,
+            retry_replay=True,
+            corrective_replay=True,
+        )
+        try:
+            final_state = await self._backend.run(state)
+        except Exception as exc:  # never raise into the delivery gate
+            log.engine.error(
+                "retry_actuator.run_corrective: corrective pipeline raised — keeping floor",
+                exc_info=exc, extra={"_fields": {"trace_id": original.trace_id}},
+            )
+            return None
+        floored = (
+            not final_state.responses
+            or any(c.is_floor for c in final_state.responses)
+            or final_state.overclaim_blocked
+            or final_state.budget_capped
+        )
+        log.engine.info(
+            "retry_actuator.run_corrective: exit",
+            extra={"_fields": {
+                "trace_id": original.trace_id, "corrected": not floored,
+            }},
+        )
+        return None if floored else final_state
+
     async def attempt_retry(self, row: RetryQueueRow) -> RetryOutcome:
         # 1. ENTRY
         log.scheduler.info(

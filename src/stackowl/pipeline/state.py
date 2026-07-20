@@ -119,6 +119,12 @@ class PipelineState(BaseModel, frozen=True):
     # _MAX_ATTEMPTS circuit breaker and compounding into an unbounded retry loop.
     # Default False = every non-replay turn (live user, scheduled job) unchanged.
     retry_replay: bool = False
+    # True when this turn IS a delivery-gate corrective re-run (one bounded
+    # in-turn "your draft was rejected — fix it" replay spawned by
+    # RetryActuator.run_corrective). The gates read this to never correct a
+    # correction (a rejected corrective replay floors normally — no recursion).
+    # Default False = every normal turn unchanged.
+    corrective_replay: bool = False
     # LS4 — set True by the ``feedback`` step when it captured a reaction to the
     # last render into the durable ``output_style`` preference and stamped a
     # plain-language confirmation onto ``responses``. ``execute`` reads this and
