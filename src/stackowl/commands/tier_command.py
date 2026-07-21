@@ -430,20 +430,54 @@ class TierCommand(SlashCommand):
                 )
                 return f"✗ Model '{model_name}' not found under provider '{name}'"
             model_tiers = model_entry.get("tiers") or []
+            was_disabled = model_entry.get("enabled", True) is False
             if tier in model_tiers:
-                log.engine.debug(
-                    "[commands] tier.add_execute: exit — model already in tier",
+                if not was_disabled:
+                    log.engine.debug(
+                        "[commands] tier.add_execute: exit — model already in tier",
+                        extra={"_fields": {"name": name, "model_name": model_name, "tier": tier}},
+                    )
+                    return f"✓ Model '{model_name}' is already in tier '{tier}'"
+                # Model already has this tier but is disabled — this is the
+                # obvious retry after /tier remove disabled it via last-tier
+                # removal (tiers are left intact by design, see
+                # _remove_execute). Re-activate it so the "reversible,
+                # always routable-or-explicitly-off" invariant actually has
+                # a reverse path; a bare no-op here would be a dead end.
+                model_entry["enabled"] = True
+                save_yaml(path, data)
+                self._emit_reloaded(name)
+                log.engine.info(
+                    "[commands] tier.add_execute: exit — model re-activated",
                     extra={"_fields": {"name": name, "model_name": model_name, "tier": tier}},
                 )
-                return f"✓ Model '{model_name}' is already in tier '{tier}'"
+                return (
+                    f"✓ Model '{model_name}' re-activated — was disabled, now enabled in tier "
+                    f"'{tier}' — applied immediately"
+                )
             model_entry["tiers"] = [*model_tiers, tier]
+            # A model gaining an active tier must always end up routable —
+            # otherwise a model disabled by /tier remove's last-tier-removal
+            # branch (tiers preserved, enabled=False) that gets a NEW tier
+            # here would still be skipped by ProviderRegistry's `if m.enabled`
+            # filter despite now having an active tier. Unconditional: this is
+            # a no-op for the common case (already-enabled model).
+            model_entry["enabled"] = True
             save_yaml(path, data)
             self._emit_reloaded(name)
             log.engine.info(
                 "[commands] tier.add_execute: exit — model updated",
-                extra={"_fields": {"name": name, "model_name": model_name, "tier": tier}},
+                extra={
+                    "_fields": {
+                        "name": name,
+                        "model_name": model_name,
+                        "tier": tier,
+                        "re_enabled": was_disabled,
+                    }
+                },
             )
-            return f"✓ Model '{model_name}' added to tier '{tier}' — applied immediately"
+            suffix = " (re-enabled)" if was_disabled else ""
+            return f"✓ Model '{model_name}' added to tier '{tier}'{suffix} — applied immediately"
 
         current_tiers = target.get("tiers") or []
         if tier in current_tiers:

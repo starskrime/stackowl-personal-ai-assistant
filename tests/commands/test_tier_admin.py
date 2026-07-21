@@ -387,6 +387,78 @@ class TestTierAddRemoveModelAware:
         assert model_entry["tiers"] == ["fast"]  # unchanged, not duplicated
 
     @pytest.mark.asyncio
+    async def test_add_three_arg_same_tier_reactivates_a_disabled_model(
+        self, tmp_yaml: Path
+    ) -> None:
+        """Reproduces the exact retry an operator would try after /tier
+        remove's last-tier-removal branch disabled a model entry: the model
+        still HAS the tier (tiers are preserved, not emptied, per that
+        branch's design), so hitting the "already in tier" path must not be
+        a silent no-op — it must flip enabled back to True or there is no
+        path back to routable."""
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["standard"], "enabled": False}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("add standard groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        assert "re-activated" in reply
+
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert model_entry["enabled"] is True
+        assert model_entry["tiers"] == ["standard"]  # unchanged, not duplicated
+
+    @pytest.mark.asyncio
+    async def test_add_three_arg_different_tier_also_reactivates_a_disabled_model(
+        self, tmp_yaml: Path
+    ) -> None:
+        """A model disabled by last-tier removal, given a NEW (different)
+        tier, must also end up enabled — otherwise it has an active tier but
+        ProviderRegistry's `if m.enabled` filter still skips it at every
+        route-building site, leaving it configured-but-unroutable."""
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["standard"], "enabled": False}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("add powerful groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert model_entry["enabled"] is True
+        assert set(model_entry["tiers"]) == {"standard", "powerful"}
+
+    @pytest.mark.asyncio
+    async def test_add_three_arg_already_enabled_model_stays_enabled_on_new_tier(
+        self, tmp_yaml: Path
+    ) -> None:
+        """No regression on the common case: a model that was never disabled
+        just gains the new tier and remains enabled — the unconditional
+        `enabled = True` write is a no-op here, not a surprise flip."""
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["fast"], "enabled": True}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("add powerful groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        assert "re-enabled" not in reply
+
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert model_entry["enabled"] is True
+        assert set(model_entry["tiers"]) == {"fast", "powerful"}
+
+    @pytest.mark.asyncio
     async def test_add_three_arg_model_not_found_rejected(self, tmp_yaml: Path) -> None:
         reply = await _make_cmd().handle("add powerful groq ghost-model", _state())
         assert isinstance(reply, str)
