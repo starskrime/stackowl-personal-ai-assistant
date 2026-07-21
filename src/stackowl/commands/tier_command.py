@@ -275,14 +275,21 @@ class TierCommand(SlashCommand):
         lines: list[str] = ["Tiers:"]
         actions: list[Action] = []
         for tier in _VALID_TIERS:
-            members = [p for p in providers if tier in (p.get("tiers") or [])]
+            # A disabled provider is excluded from the live registry's tier pools
+            # (ProviderRegistry only builds _tiers for enabled configs) — display
+            # must agree, or a provider whose only tier was just removed (which
+            # disables it rather than emptying `tiers`) still shows here and reads
+            # as "remove didn't work". Re-enabling stays available via
+            # /provider menu, which lists ALL providers regardless of `enabled`.
+            members = [
+                p for p in providers if tier in (p.get("tiers") or []) and p.get("enabled", True)
+            ]
             lines.append(f"\n{tier}:")
             if not members:
                 lines.append("  (none)")
             for p in members:
                 name = p.get("name", "?")
-                status = "" if p.get("enabled", True) else " (disabled)"
-                lines.append(f"  {name}{status}{live_status_badge(self._registry, name)}")
+                lines.append(f"  {name}{live_status_badge(self._registry, name)}")
             actions.append(Action(label=f"Manage {tier}", command=f"/tier menu {tier}", destructive=False))
         log.engine.debug(
             "[commands] tier.list: exit", extra={"_fields": {"provider_count": len(providers)}}
@@ -302,15 +309,18 @@ class TierCommand(SlashCommand):
             return NO_STACKOWL_YAML
         data = load_yaml(path)
         providers = providers_list(data)
-        members = [p for p in providers if tier in (p.get("tiers") or [])]
+        # See _list's comment: membership display must agree with the live
+        # registry, which excludes disabled providers from every tier pool.
+        members = [
+            p for p in providers if tier in (p.get("tiers") or []) and p.get("enabled", True)
+        ]
         lines = [f"Tier '{tier}':"]
         actions: list[Action] = []
         if not members:
             lines.append("(no providers)")
         for p in members:
             name = p.get("name", "?")
-            status = "" if p.get("enabled", True) else " (disabled)"
-            lines.append(f"  {name}{status}{live_status_badge(self._registry, name)}")
+            lines.append(f"  {name}{live_status_badge(self._registry, name)}")
             actions.append(
                 Action(label=f"Remove {name}", command=f"/tier remove {tier} {name}", destructive=False)
             )

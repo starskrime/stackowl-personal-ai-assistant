@@ -42,6 +42,16 @@ _INSERT_JOB_RESULT_SQL = (
 )
 _DELETE_JOB_SQL = "DELETE FROM jobs WHERE job_id = ?"
 
+# A goal's own text can instruct the model to stay silent under some condition
+# (e.g. "only notify if the price moved >2%; otherwise stay silent"). Free-text
+# output has no reliable way to signal that decision back to this handler — a
+# non-empty reply is delivered unconditionally regardless of what it says about
+# itself, so a "should not send" analysis got sent anyway. This sentinel gives
+# the model one deterministic, language-independent way to say "condition not
+# met" that the handler can act on, reusing the existing empty-response path
+# (see test_empty_response_skips_delivery) rather than parsing natural language.
+_NO_NOTIFY_SENTINEL = "NO_NOTIFY_NEEDED"
+
 
 class GoalExecutionHandler(JobHandler):
     """Runs ``job.params['goal']`` through the pipeline and persists the result."""
@@ -159,7 +169,12 @@ class GoalExecutionHandler(JobHandler):
             f"Today's date is {datetime.now(UTC).strftime('%Y-%m-%d')}. This is a "
             f"recurring scheduled check running right now — fetch current, "
             f"up-to-date information; do not answer from memory or reuse a "
-            f"previous run's result for this same goal.\n\n{goal}"
+            f"previous run's result for this same goal.\n\n"
+            f"If the goal below tells you to stay silent, take no action, or not "
+            f"notify under some condition, and that condition is met right now: "
+            f"your entire reply must be exactly the single word "
+            f"{_NO_NOTIFY_SENTINEL} and nothing else — no punctuation, no "
+            f"explanation. Otherwise, answer normally.\n\n{goal}"
         )
         state = PipelineState(
             trace_id=trace_id,
@@ -235,6 +250,13 @@ class GoalExecutionHandler(JobHandler):
 
         duration_ms = (time.monotonic() - t0) * 1000
         response_text = "".join(c.content for c in final_state.responses)
+        if response_text.strip() == _NO_NOTIFY_SENTINEL:
+            log.scheduler.info(
+                "[scheduler] goal_execution.execute: goal signaled no-notify — "
+                "condition not met, suppressing delivery",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            response_text = ""
         success = not bool(final_state.errors)
         # A durable PARK is NOT a plain failure: the side effect was refused
         # (replay-uncertain), the task awaits a resume. Surface it distinctly so

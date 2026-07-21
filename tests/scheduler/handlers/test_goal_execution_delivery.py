@@ -277,3 +277,46 @@ class TestGoalExecutionDelivery:
         await handler.execute(_targeted_job())
         # Nothing produced → nothing delivered.
         assert deliverer.calls == []
+
+    async def test_no_notify_sentinel_skips_delivery(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A goal whose own instructions say "stay silent unless X" and the
+        # model determined X isn't met must not be delivered — reproduces the
+        # reported bug where a "should not send" analysis got sent anyway.
+        disable_guard(monkeypatch)
+        backend = StubBackend(response_text="NO_NOTIFY_NEEDED")
+        db = RecordingDb()
+        deliverer = FakeJobDeliverer()
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+
+        result = await handler.execute(_targeted_job())
+        assert deliverer.calls == []
+        assert _status_of(db) == "completed"
+        assert result.success is True
+
+    async def test_no_notify_sentinel_tolerates_surrounding_whitespace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        disable_guard(monkeypatch)
+        backend = StubBackend(response_text="  NO_NOTIFY_NEEDED\n")
+        db = RecordingDb()
+        deliverer = FakeJobDeliverer()
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+
+        await handler.execute(_targeted_job())
+        assert deliverer.calls == []
+
+    async def test_text_merely_containing_the_sentinel_word_still_delivers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The sentinel must be an exact, whole-message match — a real answer
+        # that happens to mention the word must still be delivered normally.
+        disable_guard(monkeypatch)
+        backend = StubBackend(response_text="NO_NOTIFY_NEEDED is not a real ticker symbol.")
+        db = RecordingDb()
+        deliverer = FakeJobDeliverer()
+        handler = GoalExecutionHandler(backend=backend, db=db, job_deliverer=deliverer)  # type: ignore[arg-type]
+
+        await handler.execute(_targeted_job())
+        assert len(deliverer.calls) == 1

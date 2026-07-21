@@ -104,8 +104,11 @@ class TestTierAdminList:
         assert isinstance(reply, CommandResponse)
         assert "groq" in reply.text
         assert "openai" in reply.text
-        assert "disabled-one" in reply.text
-        assert "(disabled)" in reply.text
+        # A disabled provider is excluded from tier membership display — it is
+        # not in the live registry's tier pools either, so showing it here would
+        # read as "still in this tier" when it is not. Manageable via
+        # /provider menu instead.
+        assert "disabled-one" not in reply.text
         # One "Manage <tier>" button per tier (4 tiers).
         manage_commands = [a.command for a in reply.actions if a.command.startswith("/tier menu")]
         assert len(manage_commands) == 4
@@ -147,7 +150,8 @@ class TestTierAdminMenu:
         reply = await _make_cmd().handle("menu fast", _state())
         assert isinstance(reply, CommandResponse)
         assert "groq" in reply.text
-        assert "disabled-one" in reply.text
+        # Excluded — disabled, matching the live registry's tier membership.
+        assert "disabled-one" not in reply.text
         assert any(a.command == "/tier remove fast groq" for a in reply.actions)
         assert any(a.command == "/tier add fast" for a in reply.actions)
         assert any(a.command == "/tier list" for a in reply.actions)
