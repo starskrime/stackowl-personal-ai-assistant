@@ -1,7 +1,7 @@
 """SkillSynthesizerHandler — per-model provider config threading.
 
 Task 18 of the per-model provider config plan: ``execute()`` resolves a
-provider + model via ``get_with_cascade_and_model`` (replacing the old
+provider + model via ``get_with_cascade`` (replacing the old
 ``get_with_cascade`` wrapper, which silently discarded the model) and threads
 ``model=`` into the :class:`SkillSynthesizer` it constructs. This proves the
 resolved model string reaches ``SkillSynthesizer``'s internal discover-phase
@@ -99,7 +99,7 @@ async def test_handler_threads_resolved_model_into_synthesizer(
     tmp_db: DbPool, tmp_path: Path,
 ) -> None:
     """SkillSynthesizerHandler.execute() must resolve (provider, model) via
-    get_with_cascade_and_model and thread that exact model string into the
+    get_with_cascade and thread that exact model string into the
     SkillSynthesizer it constructs — proving it reaches SkillSynthesizer's
     internal discover-phase provider.complete() call end to end.
 
@@ -131,7 +131,7 @@ async def test_handler_threads_resolved_model_into_synthesizer(
 
     assert result.success is True
     # The load-bearing assertion: the discover phase's provider.complete()
-    # call received the SAME resolved model string get_with_cascade_and_model
+    # call received the SAME resolved model string get_with_cascade
     # returned — not the hardcoded empty default.
     assert provider.seen_models == [_RESOLVED_MODEL], (
         f"expected provider.complete to receive the resolved model, got: {provider.seen_models!r}"

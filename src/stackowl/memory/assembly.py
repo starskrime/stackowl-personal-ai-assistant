@@ -245,7 +245,7 @@ class MemoryAssembly:
         resolver = identity_resolver if identity_resolver is not None else load_identity_resolver()
         extraction_provider: ModelProvider
         extraction_model: str
-        extraction_provider, extraction_model = provider_registry.get_with_cascade_and_model("standard")
+        extraction_provider, extraction_model = provider_registry.get_with_cascade("standard")
         fact_extractor = FactExtractor(
             provider=extraction_provider,
             model=extraction_model,

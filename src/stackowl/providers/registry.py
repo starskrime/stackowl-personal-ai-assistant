@@ -438,11 +438,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
             raise ProviderNotFoundError(name)
         return providers[name]
 
-    def get_by_tier_and_model(self, tier: str) -> tuple[ModelProvider, str]:
+    def get_by_tier(self, tier: str) -> tuple[ModelProvider, str]:
         """Return (provider, model) for the first match matching the given
         tier (config order). Falls back to the first available provider's
         first route when no exact match exists. Use
-        get_with_cascade_and_model() for circuit-aware tier traversal.
+        get_with_cascade() for circuit-aware tier traversal.
         """
         # Snapshot both dict refs together so a concurrent apply_settings() swap
         # (watcher thread) can't make us index a name absent from _providers.
@@ -472,14 +472,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
             return providers[fallback_name], fallback_model
         raise ProviderNotFoundError(f"tier:{tier}")
 
-    def get_by_tier(self, tier: str) -> ModelProvider:
-        """Back-compat wrapper — TEMPORARY, removed once every call site
-        migrates to get_by_tier_and_model (tracked in the per-model provider
-        config plan's final cleanup task). Returns just the provider,
-        byte-identical to this method's pre-migration contract."""
-        return self.get_by_tier_and_model(tier)[0]
-
-    def get_with_cascade_and_model(self, preferred_tier: str) -> tuple[ModelProvider, str]:
+    def get_with_cascade(self, preferred_tier: str) -> tuple[ModelProvider, str]:
         """Return (first non-OPEN provider, its matched model) starting at
         preferred_tier. Walks tiers in order fast → standard → powerful →
         local, starting at `preferred_tier` and wrapping. Skips providers
@@ -603,16 +596,12 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         raise AllProvidersUnavailableError(details)
 
-    def get_with_cascade(self, preferred_tier: str) -> ModelProvider:
-        """Back-compat wrapper — TEMPORARY, removed in the final cleanup task."""
-        return self.get_with_cascade_and_model(preferred_tier)[0]
-
-    def resolve_tier_with_fallback_and_model(
+    def resolve_tier_with_fallback(
         self, tier: str,
     ) -> tuple[ModelProvider, str, str | None]:
         """Tier resolution that is circuit-aware ONLY when the chosen provider
         is OPEN. Returns (provider, model, degraded_from). Happy path (chosen
-        provider healthy) is byte-identical to get_by_tier_and_model; the
+        provider healthy) is byte-identical to get_by_tier; the
         cascade is only invoked when the chosen provider's circuit is OPEN.
         """
         log.engine.debug(
@@ -636,7 +625,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 "[registry] resolve_tier_with_fallback: no tier match — config degrade",
                 extra={"_fields": {"tier": tier}},
             )
-            provider, model = self.get_by_tier_and_model(tier)
+            provider, model = self.get_by_tier(tier)
             return provider, model, None
         breaker = breakers.get(primary_name)
         if breaker is None or breaker.state is not CircuitState.OPEN:
@@ -649,15 +638,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
             "[registry] resolve_tier_with_fallback: primary circuit OPEN — cascading",
             extra={"_fields": {"tier": tier, "degraded_from": primary_name}},
         )
-        healthy, healthy_model = self.get_with_cascade_and_model(tier)
+        healthy, healthy_model = self.get_with_cascade(tier)
         return healthy, healthy_model, primary_name
 
-    def resolve_tier_with_fallback(self, tier: str) -> tuple[ModelProvider, str | None]:
-        """Back-compat wrapper — TEMPORARY, removed in the final cleanup task."""
-        provider, _model, degraded = self.resolve_tier_with_fallback_and_model(tier)
-        return provider, degraded
-
-    def resolve_capable_or_degrade_and_model(
+    def resolve_capable_or_degrade(
         self, tier: str,
     ) -> tuple[ModelProvider, str, str | None]:
         """Resolve a CAPABLE tier, cascading to the most-capable available
@@ -670,7 +654,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         providers = self._providers
         tiers = self._tiers
 
-        # Exact match first — byte-identical happy path to get_by_tier_and_model.
+        # Exact match first — byte-identical happy path to get_by_tier.
         for name, routes in tiers.items():
             if name not in providers:
                 continue
@@ -703,11 +687,6 @@ class ProviderRegistry(RegistryAccessorsMixin):
             extra={"_fields": {"tier": tier}},
         )
         raise ProviderNotFoundError(f"tier:{tier}")
-
-    def resolve_capable_or_degrade(self, tier: str) -> tuple[ModelProvider, str | None]:
-        """Back-compat wrapper — TEMPORARY, removed in the final cleanup task."""
-        provider, _model, degraded = self.resolve_capable_or_degrade_and_model(tier)
-        return provider, degraded
 
     def healthy_distinct(self, limit: int | None = None) -> list[ModelProvider]:
         """Return providers whose CircuitBreaker is NOT OPEN, distinct underlying.

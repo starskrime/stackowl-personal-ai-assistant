@@ -102,7 +102,7 @@ class ParliamentSynthesizer:
         # F125 — most-capable available substitute (not config-order first), and
         # SURFACE the degrade so a weak-model synthesis is never shown as a clean
         # powerful verdict.
-        provider, model, degraded_from = self._providers.resolve_capable_or_degrade_and_model(
+        provider, model, degraded_from = self._providers.resolve_capable_or_degrade(
             "powerful"
         )
         log.parliament.debug(

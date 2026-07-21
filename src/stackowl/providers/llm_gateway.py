@@ -8,7 +8,7 @@ in-band ``ESCALATE`` sentinel.
 
 This adds **complexity-based** escalation. The registry's existing
 **failure-based** fallback (skip a provider whose circuit is OPEN) still runs
-UNDERNEATH via ``resolve_tier_with_fallback_and_model`` — the two compose: escalation picks
+UNDERNEATH via ``resolve_tier_with_fallback`` — the two compose: escalation picks
 the target tier, failure-fallback finds a live provider for it.
 
 Meta-calls that must not recurse (the intent router, the give-up judges) pin
@@ -158,7 +158,7 @@ class LLMGateway:
         retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
-            provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)
+            provider, model, degraded = self._registry.resolve_tier_with_fallback(tier)
             msgs = _augment_messages(messages, can_escalate)
             try:
                 result = await provider.complete(msgs, model=model, **kwargs)
@@ -271,7 +271,7 @@ class LLMGateway:
         retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
-            provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)
+            provider, model, degraded = self._registry.resolve_tier_with_fallback(tier)
             # Rebuild schemas for THIS tier's provider (protocol + window differ per
             # tier); reuse the passed-in list when no builder is supplied.
             if build_tool_schemas is not None:

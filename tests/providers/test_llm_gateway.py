@@ -97,7 +97,7 @@ class _FakeRegistry:
         self._by_tier = by_tier
         self._models = models or {}
 
-    def resolve_tier_with_fallback_and_model(self, tier: str):
+    def resolve_tier_with_fallback(self, tier: str):
         return self._by_tier[tier], self._models.get(tier, f"model-{tier}"), None
 
 
@@ -420,7 +420,7 @@ class _DegradedRegistry(_FakeRegistry):
         super().__init__(by_tier)
         self._degraded = degraded
 
-    def resolve_tier_with_fallback_and_model(self, tier: str):
+    def resolve_tier_with_fallback(self, tier: str):
         return self._by_tier[tier], self._models.get(tier, f"model-{tier}"), self._degraded.get(tier)
 
 
@@ -529,7 +529,7 @@ def test_flag_off_is_single_attempt_then_cascade(monkeypatch: Any) -> None:
 
 
 def test_complete_threads_resolved_model_to_main_attempt() -> None:
-    # resolve_tier_with_fallback_and_model's resolved model string must reach the
+    # resolve_tier_with_fallback's resolved model string must reach the
     # provider's complete() call — not a generic "was called" check, the EXACT value.
     fast = _FakeProvider("fast", reply="answer")
     gw = LLMGateway(_FakeRegistry({"fast": fast}, models={"fast": "fast-model-v7"}))

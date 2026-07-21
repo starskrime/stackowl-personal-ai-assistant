@@ -60,7 +60,7 @@ async def complete_synthesis_with_retry(
     session degraded; pellet generator skips staging) still fire — this only adds the
     bounded retry, it never weakens those gates. Provider exceptions propagate to the
     caller (surfaced, never masked). ``model`` is the tier-resolved model string
-    (Task 5's ``resolve_capable_or_degrade_and_model``); default ``""`` preserves the
+    (Task 5's ``resolve_capable_or_degrade``); default ``""`` preserves the
     provider's own default_model for any caller not yet migrated.
     """
     completion = await provider.complete(messages, model=model)
@@ -141,7 +141,7 @@ async def synthesize_positions(
     # F125 — prefer the most-capable AVAILABLE substitute (not config-order first)
     # and SURFACE the degrade so the user is never shown a fake "powerful" consensus
     # silently synthesized by a weak model.
-    provider, model, degraded_from = providers.resolve_capable_or_degrade_and_model("powerful")
+    provider, model, degraded_from = providers.resolve_capable_or_degrade("powerful")
     log.parliament.debug(
         "[parliament] synthesize_positions: provider selected",
         extra={"_fields": {

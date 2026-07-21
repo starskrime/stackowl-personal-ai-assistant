@@ -282,7 +282,7 @@ class _ModelCapturingDecomposerProvider(ModelProvider):
 @pytest.mark.asyncio
 async def test_decompose_specs_threads_resolved_standard_model_to_complete() -> None:
     """``decompose_specs`` resolves the "standard"-tier provider+model via
-    ``get_with_cascade_and_model("standard")`` and threads the RESOLVED model
+    ``get_with_cascade("standard")`` and threads the RESOLVED model
     into its ``provider.complete()`` call.
 
     Genuinely discriminating: if ``decompose_specs`` still called the old

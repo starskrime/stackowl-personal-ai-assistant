@@ -106,7 +106,7 @@ def _set_session_tier(session_id: str, tier: str) -> None:
 class TestGetByTierWarningOnFallback:
     def test_returns_fallback_when_tier_missing(self) -> None:
         reg = _make_registry(("only-provider", "fast"))
-        provider = reg.get_by_tier("standard")  # "standard" unregistered
+        provider, _model = reg.get_by_tier("standard")  # "standard" unregistered
         assert provider is reg.get("only-provider")  # fallback returned unchanged
 
     def test_logs_warning_on_tier_fallback(self, caplog: pytest.LogCaptureFixture) -> None:

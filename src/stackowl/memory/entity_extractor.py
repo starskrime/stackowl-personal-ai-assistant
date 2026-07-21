@@ -156,7 +156,7 @@ class EntityExtractor:
 
     def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
         try:
-            return self._registry.get_with_cascade_and_model(self._preferred_tier)
+            return self._registry.get_with_cascade(self._preferred_tier)
         except Exception as exc:
             # B5 — any provider lookup failure degrades to []
             log.memory.warning(

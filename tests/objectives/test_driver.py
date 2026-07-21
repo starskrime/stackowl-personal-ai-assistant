@@ -757,7 +757,7 @@ async def test_completion_threads_resolved_powerful_model_to_complete(
     pool: DbPool,
 ) -> None:
     """``_synthesize_completion`` resolves via
-    ``resolve_capable_or_degrade_and_model("powerful")`` and threads the
+    ``resolve_capable_or_degrade("powerful")`` and threads the
     RESOLVED model into its ``provider.complete()`` call on the happy
     (exact-tier-match, non-degraded) path.
 
@@ -793,7 +793,7 @@ async def test_completion_degraded_threads_resolved_substitute_model_to_complete
     pool: DbPool,
 ) -> None:
     """Same model-threading contract on the DEGRADED path: when no 'powerful'
-    provider exists, resolve_capable_or_degrade_and_model substitutes the
+    provider exists, resolve_capable_or_degrade substitutes the
     most-capable available tier's OWN resolved model — not "" and not the
     absent powerful tier's model — and that substitute's model still reaches
     ``provider.complete()``."""

@@ -37,7 +37,7 @@ class _FakeRegistry:
         self._provider = provider
         self._model = model
 
-    def get_by_tier_and_model(self, tier: str) -> Any:
+    def get_by_tier(self, tier: str) -> Any:
         if self._provider is None:
             raise RuntimeError("no fast provider")
         return self._provider, self._model
@@ -137,7 +137,7 @@ def test_parse_accepts_fenced_json_anywhere_in_text() -> None:
 
 @pytest.mark.asyncio
 async def test_resolved_model_reaches_provider_complete() -> None:
-    """The (provider, model) pair resolved from get_by_tier_and_model must be
+    """The (provider, model) pair resolved from get_by_tier must be
     threaded into provider.complete(..., model=...) — not hardcoded to ""."""
     provider = _FakeProvider('{"goal": "check GOOGL news and report", "schedule": "in 2h"}')
     fulfiller = ScheduleCommitFulfiller(

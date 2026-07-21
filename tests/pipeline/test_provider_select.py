@@ -251,7 +251,7 @@ def test_choice_floor_tier_tracks_intent_when_enabled() -> None:
 
 class TestToolProviderChoiceModel:
     """ToolProviderChoice.model — the resolved model name threaded through from
-    the registry's *_and_model resolvers (per-model provider config, Task 8)."""
+    the registry's tier resolvers (per-model provider config, Task 8)."""
 
     def test_owl_named_pin_has_empty_model(self) -> None:
         """An owl-named provider pin has no tier context — model stays "" (use

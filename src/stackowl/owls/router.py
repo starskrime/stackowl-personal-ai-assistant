@@ -342,7 +342,7 @@ class SecretaryRouter:
         messages = [Message(role="user", content=prompt)]
 
         try:
-            provider, model = self._provider_registry.get_with_cascade_and_model(_FAST_TIER)
+            provider, model = self._provider_registry.get_with_cascade(_FAST_TIER)
         except Exception as exc:  # noqa: BLE001 — defensive: never block routing
             log.engine.error(
                 "[router] route: provider cascade failed — falling back to secretary",

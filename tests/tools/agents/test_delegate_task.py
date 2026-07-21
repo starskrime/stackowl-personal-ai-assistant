@@ -967,7 +967,7 @@ class _FakeProviderRegistry:
     def get_with_cascade(self, tier: str) -> object:
         return self._provider
 
-    def get_with_cascade_and_model(self, tier: str) -> tuple[object, str]:
+    def get_with_cascade(self, tier: str) -> tuple[object, str]:
         return self._provider, self._model
 
 
@@ -1142,7 +1142,7 @@ async def test_run_delegation_threads_resolved_fast_model_to_relevance_judge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """End-to-end: ``_run_delegation`` resolves the fast provider+model via
-    ``get_with_cascade_and_model`` and threads the RESOLVED model all the way
+    ``get_with_cascade`` and threads the RESOLVED model all the way
     through ``_relevance_gate`` -> ``judge_relevance`` -> ``provider.complete``.
 
     Genuinely discriminating: if ``_run_delegation`` still called the old

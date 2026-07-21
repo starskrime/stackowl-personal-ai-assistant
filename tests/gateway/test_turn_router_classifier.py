@@ -81,7 +81,7 @@ class _FakeProvider(ModelProvider):
 
 
 class _FakeRegistry:
-    """Minimal registry: get_by_tier_and_model returns a provided (provider,
+    """Minimal registry: get_by_tier returns a provided (provider,
     model) pair (or raises)."""
 
     def __init__(
@@ -94,7 +94,7 @@ class _FakeRegistry:
         self._raise = raise_on_get
         self.tiers_requested: list[str] = []
 
-    def get_by_tier_and_model(self, tier: str) -> tuple[ModelProvider, str]:
+    def get_by_tier(self, tier: str) -> tuple[ModelProvider, str]:
         self.tiers_requested.append(tier)
         if self._raise is not None:
             raise self._raise

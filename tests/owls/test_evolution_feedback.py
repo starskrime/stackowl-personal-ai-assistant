@@ -421,7 +421,7 @@ async def test_llm_fallback_threads_resolved_fast_model_to_provider_complete(
     tmp_db: DbPool,
 ) -> None:
     """``_llm_fallback`` resolves the "fast"-tier provider+model via
-    ``get_by_tier_and_model("fast")`` and threads the RESOLVED model into its
+    ``get_by_tier("fast")`` and threads the RESOLVED model into its
     ``provider.complete()`` call.
 
     Genuinely discriminating: if ``_llm_fallback`` still called the old

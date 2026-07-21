@@ -867,7 +867,7 @@ class ObjectiveDriverHandler(JobHandler):
             # so a weak-model recombination is never presented as a clean
             # powerful-tier one.
             provider, model, degraded_from = (
-                self._provider_registry.resolve_capable_or_degrade_and_model(
+                self._provider_registry.resolve_capable_or_degrade(
                     _RECOMBINATION_TIER
                 )
             )

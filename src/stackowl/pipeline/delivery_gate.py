@@ -1215,7 +1215,7 @@ async def _generate_localized_apology(
     tried: set[int] = set()
     for tier in tier_walk:
         try:
-            provider, model = registry.get_with_cascade_and_model(tier)
+            provider, model = registry.get_with_cascade(tier)
         except Exception as exc:  # AllProvidersUnavailableError or any lookup failure
             log.engine.warning(
                 "[critical_failure] apology: cascade found no provider for tier — advancing",

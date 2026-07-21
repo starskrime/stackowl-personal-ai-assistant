@@ -78,7 +78,7 @@ class ToolProposer:
             Message(role="user", content=f"GOAL:\n{goal}\n\nTOOLS:\n{listing}"),
         ]
         try:
-            provider, model = self._providers.get_with_cascade_and_model("fast")
+            provider, model = self._providers.get_with_cascade("fast")
             result = await provider.complete(messages, model=model)
         except Exception as exc:  # noqa: BLE001 — fail-open; planner decides
             log.engine.warning(

@@ -505,7 +505,7 @@ class DelegateTaskTool(Tool):
         fast_provider: object = None
         fast_model = ""
         try:
-            fast_provider, fast_model = get_services().provider_registry.get_with_cascade_and_model("fast")  # type: ignore[union-attr]
+            fast_provider, fast_model = get_services().provider_registry.get_with_cascade("fast")  # type: ignore[union-attr]
         except Exception as exc:  # noqa: BLE001 — fail-open is intentional: provider/registry errors
             # (incl. an unwired None registry) must degrade to structural-only relevance, never crash
             # the delegation ladder. Drops the misleading redundant `(AllProvidersUnavailableError, Exception)`.

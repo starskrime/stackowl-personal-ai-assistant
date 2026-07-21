@@ -255,7 +255,7 @@ class _ModelCapturingEntityProvider(ModelProvider):
 async def test_entity_extractor_threads_resolved_second_tier_model() -> None:
     """A provider registered with TWO models on different tiers must resolve
     the model belonging to the tier EntityExtractor actually requests — proving
-    ``_resolve_provider()`` threads ``get_with_cascade_and_model()``'s (provider,
+    ``_resolve_provider()`` threads ``get_with_cascade()``'s (provider,
     model) tuple through to ``provider.complete()`` rather than dropping the
     model half of the tuple (the old ``get_with_cascade()`` behaviour) or always
     reaching for the first-registered route.

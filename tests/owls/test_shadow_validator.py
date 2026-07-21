@@ -103,7 +103,7 @@ def _build_registry_provider(stream_texts: list[str], critic_scores: list[float]
     provider = _ScriptedProvider(stream_texts, critic_scores)
     # Owl-named binding wins provider_select's precedence (Step 0) — covers the
     # replay's own turn (stream()). Also registered under "fast" tier for the
-    # critic call (ShadowValidator.get_with_cascade_and_model("fast")), with an
+    # critic call (ShadowValidator.get_with_cascade("fast")), with an
     # explicit non-empty model string so tests can prove the RESOLVED model
     # (not the provider's own default) reaches provider.complete().
     preg.register_mock(_OWL_NAME, provider, tier="standard")
@@ -230,7 +230,7 @@ async def test_isolation_live_registry_untouched(tmp_db: DbPool) -> None:
 
 async def test_score_replay_threads_resolved_critic_model(tmp_db: DbPool) -> None:
     """Task 13 — ``validate()`` resolves the critic provider+model via
-    ``get_with_cascade_and_model("fast")`` and threads the RESOLVED model all
+    ``get_with_cascade("fast")`` and threads the RESOLVED model all
     the way into every ``_score_replay`` -> ``provider.complete()`` call.
 
     Genuinely discriminating: if ``validate()`` still called the old

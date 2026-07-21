@@ -1,7 +1,7 @@
 """Model-threading regression for the inner browse loop (per-model provider config).
 
 ``BrowserBrowseTool.execute`` resolves the inner-LLM provider ONCE before the
-per-step loop via ``provider_registry.get_by_tier_and_model(tier)`` (Task 5),
+per-step loop via ``provider_registry.get_by_tier(tier)`` (Task 5),
 which returns the concrete model string configured for that tier/provider —
 not just the provider object. Every ``inner_provider.complete(...)`` call
 inside the ``for step_idx in range(max_steps)`` loop must be passed that
@@ -94,7 +94,7 @@ class _ScriptedModelCapturingProvider:
 
 
 class _FakeProviderRegistry:
-    """Registry-shaped fake matching the ``get_by_tier_and_model`` contract
+    """Registry-shaped fake matching the ``get_by_tier`` contract
     (Task 5): returns ``(provider, model)``, not just the provider.
     """
 
@@ -103,7 +103,7 @@ class _FakeProviderRegistry:
         self._model = model
         self.tiers_requested: list[str] = []
 
-    def get_by_tier_and_model(
+    def get_by_tier(
         self, tier: str
     ) -> tuple[_ScriptedModelCapturingProvider, str]:
         self.tiers_requested.append(tier)
@@ -168,7 +168,7 @@ async def test_resolved_model_reaches_every_step_of_the_loop(
     # not just the first call).
     assert provider.calls == 4, provider.calls
     # EVERY call — across every loop iteration — carried the SAME resolved
-    # model string threaded from get_by_tier_and_model(), never the old
+    # model string threaded from get_by_tier(), never the old
     # hardcoded model="".
     assert provider.seen_models == [_RESOLVED_MODEL] * 4, provider.seen_models
 

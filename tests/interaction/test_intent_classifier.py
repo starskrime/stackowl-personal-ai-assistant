@@ -85,7 +85,7 @@ class _FakeProvider(ModelProvider):
 
 
 class _FakeRegistry:
-    """Minimal registry: get_by_tier_and_model returns a provided (provider,
+    """Minimal registry: get_by_tier returns a provided (provider,
     model) pair (or raises)."""
 
     def __init__(
@@ -100,7 +100,7 @@ class _FakeRegistry:
         self._raise = raise_on_get
         self.tiers_requested: list[str] = []
 
-    def get_by_tier_and_model(self, tier: str) -> tuple[ModelProvider, str]:
+    def get_by_tier(self, tier: str) -> tuple[ModelProvider, str]:
         self.tiers_requested.append(tier)
         if self._raise is not None:
             raise self._raise
@@ -456,7 +456,7 @@ async def test_cancellation_propagates_through_is_answer() -> None:
 
 @pytest.mark.asyncio
 async def test_is_answer_uses_the_resolved_model_in_the_provider_call() -> None:
-    """The (provider, model) pair resolved from get_by_tier_and_model must be
+    """The (provider, model) pair resolved from get_by_tier must be
     threaded into provider.complete(..., model=...) for is_answer/explain_answer
     — not hardcoded to ""."""
     provider = _FakeProvider("ANSWER")

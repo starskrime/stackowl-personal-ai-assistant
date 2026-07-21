@@ -111,7 +111,7 @@ class CriticScorerHandler(JobHandler):
 
         # 3. STEP — score each pending outcome
         try:
-            provider, model = self._providers.get_with_cascade_and_model(self._critic_tier)
+            provider, model = self._providers.get_with_cascade(self._critic_tier)
         except Exception as exc:  # B5
             log.memory.error(
                 "[critic] execute: no provider available for critic",

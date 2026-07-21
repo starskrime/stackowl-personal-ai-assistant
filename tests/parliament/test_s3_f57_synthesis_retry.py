@@ -161,7 +161,7 @@ async def test_synthesize_persistent_failure_stays_degraded_bounded_to_one_retry
 @pytest.mark.asyncio
 async def test_synthesize_forwards_resolved_model_to_provider() -> None:
     # Task 12 — ParliamentSynthesizer.synthesize resolves via
-    # resolve_capable_or_degrade_and_model, which must thread its resolved
+    # resolve_capable_or_degrade, which must thread its resolved
     # model string all the way into complete_synthesis_with_retry's internal
     # provider.complete(...) call rather than the hardcoded model="".
     provider = _ScriptedSynthProvider([_GOOD])
@@ -234,7 +234,7 @@ async def test_synthesize_positions_persistent_failure_stays_degraded() -> None:
 @pytest.mark.asyncio
 async def test_synthesize_positions_forwards_resolved_model_to_provider() -> None:
     # Task 12 — synthesize_positions (MoA entry point) resolves via
-    # resolve_capable_or_degrade_and_model too; its complete_synthesis_with_retry
+    # resolve_capable_or_degrade too; its complete_synthesis_with_retry
     # call must thread the resolved model, not hardcode model="".
     provider = _ScriptedSynthProvider([_GOOD])
     result = await synthesize_positions(

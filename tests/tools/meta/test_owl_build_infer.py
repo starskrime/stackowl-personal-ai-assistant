@@ -45,7 +45,7 @@ class _Provider:
     def get(self, name: str) -> _Provider:
         return self
 
-    def get_by_tier_and_model(self, tier: str) -> tuple[_Provider, str]:
+    def get_by_tier(self, tier: str) -> tuple[_Provider, str]:
         return self, self._model
 
     async def complete(self, messages: object, model: str = "", **k: object) -> object:
@@ -73,7 +73,7 @@ async def test_b_infer_capability_failopen_on_junk() -> None:
 
 
 async def test_infer_capability_threads_resolved_model_to_provider_complete() -> None:
-    """_complete() must resolve (provider, model) via get_by_tier_and_model and
+    """_complete() must resolve (provider, model) via get_by_tier and
     pass the SPECIFIC resolved model string into provider.complete(), not the
     old hardcoded model="".
     """
@@ -104,7 +104,7 @@ async def test_d_suggest_display_name_reroll_excludes_avoided() -> None:
 
 async def test_suggest_display_name_threads_resolved_model_to_provider_complete() -> None:
     """Same _complete() helper, second entrypoint: the resolved model string
-    from get_by_tier_and_model must reach provider.complete() here too.
+    from get_by_tier must reach provider.complete() here too.
     """
     prov = _Provider("Tony", model="vendor/fast-tier-model-v3")
     name = await suggest_display_name("watch my tax deadlines", prov)  # type: ignore[arg-type]

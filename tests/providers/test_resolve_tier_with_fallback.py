@@ -37,8 +37,8 @@ def test_healthy_primary_matches_get_by_tier():
     reg = ProviderRegistry()
     reg.register_mock("powerful_a", MockProvider(name="powerful_a"), tier="powerful")
     reg.register_mock("fast_b", MockProvider(name="fast_b"), tier="fast")
-    provider, degraded_from = reg.resolve_tier_with_fallback("powerful")
-    assert provider is reg.get_by_tier("powerful")
+    provider, _model, degraded_from = reg.resolve_tier_with_fallback("powerful")
+    assert provider is reg.get_by_tier("powerful")[0]
     assert degraded_from is None
 
 
@@ -47,7 +47,7 @@ def test_open_primary_falls_back_to_healthy_and_reports_name():
     reg.register_mock("powerful_a", MockProvider(name="powerful_a"), tier="powerful")
     reg.register_mock("fast_b", MockProvider(name="fast_b"), tier="fast")
     _open_breaker(reg, "powerful_a")
-    provider, degraded_from = reg.resolve_tier_with_fallback("powerful")
+    provider, _model, degraded_from = reg.resolve_tier_with_fallback("powerful")
     assert provider.name == "fast_b"
     assert degraded_from == "powerful_a"
 
@@ -65,7 +65,7 @@ def test_all_open_raises():
 def test_no_tier_match_degrades_like_get_by_tier():
     reg = ProviderRegistry()
     reg.register_mock("only_fast", MockProvider(name="only_fast"), tier="fast")
-    provider, degraded_from = reg.resolve_tier_with_fallback("powerful")
+    provider, _model, degraded_from = reg.resolve_tier_with_fallback("powerful")
     assert provider.name == "only_fast"
     assert degraded_from is None
 
@@ -90,6 +90,6 @@ def test_half_open_primary_is_used_not_fallen_back():
     clock.advance(31.0)
     assert breaker.state is CircuitState.HALF_OPEN  # promoted on read — not still OPEN
 
-    provider, degraded_from = reg.resolve_tier_with_fallback("powerful")
+    provider, _model, degraded_from = reg.resolve_tier_with_fallback("powerful")
     assert provider.name == "powerful_a"  # HALF_OPEN is usable — primary returned
     assert degraded_from is None

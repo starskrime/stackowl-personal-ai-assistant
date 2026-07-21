@@ -23,11 +23,11 @@ class _StubProvider:
 
 class _StubProviderRegistry:
     def __init__(self, provider): self._p = provider
-    def get_with_cascade_and_model(self, tier): return self._p, ""
+    def get_with_cascade(self, tier): return self._p, ""
 
 
 class _PerNameProviderRegistry:
-    """Routes ``get_with_cascade_and_model`` calls to the next queued behavior —
+    """Routes ``get_with_cascade`` calls to the next queued behavior —
     used to build a mix of failed/empty/summarized skills in one
     ``_summarize_missing`` pass for the count-logging test below."""
 
@@ -35,7 +35,7 @@ class _PerNameProviderRegistry:
         self._providers = list(providers_by_call)
         self._i = 0
 
-    def get_with_cascade_and_model(self, tier):
+    def get_with_cascade(self, tier):
         p = self._providers[self._i]
         self._i += 1
         return p, ""
@@ -68,7 +68,7 @@ class _OkProvider:
 class _ModelCapturingProvider:
     """Records the ``model`` kwarg passed to every ``complete()`` call — proves
     ``_summarize_missing`` forwards the model resolved by
-    ``get_with_cascade_and_model`` into its per-iteration ``provider.complete()``
+    ``get_with_cascade`` into its per-iteration ``provider.complete()``
     call, not the hardcoded ``model=""`` it used before Task 18."""
 
     out: str = "Do X. Then Y."
@@ -90,7 +90,7 @@ class _ModelCapturingProviderRegistry:
         self._p = provider
         self._model = model
 
-    def get_with_cascade_and_model(self, tier):
+    def get_with_cascade(self, tier):
         return self._p, self._model
 
 
@@ -215,7 +215,7 @@ async def test_summarize_threads_resolved_model_to_provider_complete(
     tmp_db, tmp_path: Path,
 ) -> None:
     """``_summarize_missing`` must forward the model resolved by
-    ``get_with_cascade_and_model("fast")`` into ``provider.complete()``, not
+    ``get_with_cascade("fast")`` into ``provider.complete()``, not
     the hardcoded ``model=""`` it used before Task 18.
 
     Genuinely discriminating: if the call site kept hardcoding ``model=""``,

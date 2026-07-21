@@ -854,7 +854,7 @@ class EvolutionCoordinator(JobHandler):
         )
         TestModeGuard.assert_not_test_mode(f"evolution.complete[{manifest.name}]")
         try:
-            provider, model = self._provider_registry.get_by_tier_and_model("fast")
+            provider, model = self._provider_registry.get_by_tier("fast")
             # disable_thinking: a JSON-deltas verdict needs no chain-of-thought;
             # a reasoning-capable provider otherwise burns the whole max_tokens
             # budget on <think> and never emits the deltas (same empty-reply

@@ -1,7 +1,7 @@
 """CriticScorerHandler — per-model provider config threading.
 
 Task 17 of the per-model provider config plan: ``execute()`` resolves a
-provider ONCE per call via ``get_with_cascade_and_model`` and reuses it
+provider ONCE per call via ``get_with_cascade`` and reuses it
 across a batch loop of ``_score_one`` calls. This must prove the resolved
 MODEL STRING reaches every row's ``provider.complete(...)`` call, not just
 the first — a per-row hardcoded ``model=""`` would silently ignore

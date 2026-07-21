@@ -228,7 +228,7 @@ class BrowserBrowseTool(Tool):
             }},
         )
         try:
-            inner_provider, inner_model = providers.get_by_tier_and_model(s.inner_browse_model_tier)
+            inner_provider, inner_model = providers.get_by_tier(s.inner_browse_model_tier)
         except Exception as exc:
             return _err(f"No provider available for tier {s.inner_browse_model_tier}: {exc}", t0)
 

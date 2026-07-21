@@ -78,7 +78,7 @@ class StubProvider:
 
 class StubRegistry:
     """Provider registry stub exposing ``get_with_cascade`` /
-    ``get_with_cascade_and_model``."""
+    ``get_with_cascade``."""
 
     def __init__(self, provider: StubProvider | None) -> None:
         self._provider = provider
@@ -88,7 +88,7 @@ class StubRegistry:
             raise RuntimeError("no provider")
         return self._provider
 
-    def get_with_cascade_and_model(self, preferred_tier: str) -> Any:
+    def get_with_cascade(self, preferred_tier: str) -> Any:
         """Task 16 — EntityExtractor._resolve_provider() now calls this instead
         of get_with_cascade(). Byte-identical model="" default (matches every
         existing Story 6.5 test's expectations, none of which pin a model)."""

@@ -21,7 +21,7 @@ Wiring strategy
   rendered ``state_text`` is byte-identical every iteration.
 - ``browser_runtime`` is a stub carrying only ``.settings`` (the only attribute
   ``execute`` touches on the no-seed-url, no-navigate path).
-- ``provider_registry.get_by_tier_and_model`` returns a counting fake provider whose
+- ``provider_registry.get_by_tier`` returns a counting fake provider whose
   ``.complete`` always returns the SAME ``{"action":"scroll",...}`` JSON — not
   ``done`` and a no-op against the faked page — so the (state_text, action)
   signature is identical on every step.
@@ -118,7 +118,7 @@ class _FakeProviderRegistry:
         self._provider = provider
         self.tiers_requested: list[str] = []
 
-    def get_by_tier_and_model(self, tier: str) -> tuple[_CountingProvider, str]:
+    def get_by_tier(self, tier: str) -> tuple[_CountingProvider, str]:
         self.tiers_requested.append(tier)
         return self._provider, ""
 

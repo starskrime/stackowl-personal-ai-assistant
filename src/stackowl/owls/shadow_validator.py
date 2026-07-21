@@ -196,7 +196,7 @@ class ShadowValidator:
             provider_registry=self._providers,
             owl_registry=scratch_registry,
         )
-        critic_provider, critic_model = self._providers.get_with_cascade_and_model(_CRITIC_TIER)
+        critic_provider, critic_model = self._providers.get_with_cascade(_CRITIC_TIER)
 
         consecutive = 0
         n_replayed = 0

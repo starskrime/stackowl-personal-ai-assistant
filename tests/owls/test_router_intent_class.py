@@ -158,7 +158,7 @@ class _ModelCapturingRouteProvider(ModelProvider):
 @pytest.mark.asyncio
 async def test_route_threads_resolved_fast_model_to_provider_complete() -> None:
     """``route()`` resolves the "fast"-tier provider+model via
-    ``get_with_cascade_and_model("fast")`` and threads the RESOLVED model into
+    ``get_with_cascade("fast")`` and threads the RESOLVED model into
     its ``provider.complete()`` call.
 
     Genuinely discriminating: if ``route()`` still called the old

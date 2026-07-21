@@ -166,7 +166,7 @@ class ScheduleCommitFulfiller:
 
     def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
         try:
-            return self._registry.get_by_tier_and_model("fast")
+            return self._registry.get_by_tier("fast")
         except Exception as exc:
             log.engine.warning(
                 "schedule_commit_fulfiller._resolve_provider: get_by_tier failed",

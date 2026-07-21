@@ -507,13 +507,13 @@ class ClarifyIntentClassifier:
     def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
         """Resolve the fast-tier (provider, model), or ``None`` on any registry error.
 
-        Lazy + defensive: ``get_by_tier_and_model`` raising (no providers at all) or
+        Lazy + defensive: ``get_by_tier`` raising (no providers at all) or
         any other registry failure degrades to ``None`` so :meth:`is_answer`,
         :meth:`is_steer`, and :meth:`is_steer_incoherent` (all three callers of this
         helper) fail-safe.
         """
         try:
-            return self._registry.get_by_tier_and_model("fast")
+            return self._registry.get_by_tier("fast")
         except Exception as exc:  # self-healing — missing provider must not raise
             log.gateway.warning(
                 "intent_classifier._resolve_provider: get_by_tier failed",

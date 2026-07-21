@@ -49,10 +49,10 @@ def _stub_provider_registry() -> ProviderRegistry:
 
 
 class _SpyProviderRegistry(ProviderRegistry):
-    """ProviderRegistry that records every tier passed to get_with_cascade_and_model.
+    """ProviderRegistry that records every tier passed to get_with_cascade.
 
     Task 16 — assembly.py's fact_extractor/entity_extractor wiring now calls
-    get_with_cascade_and_model() (not get_with_cascade()) to also thread the
+    get_with_cascade() (not get_with_cascade()) to also thread the
     resolved model, so the spy overrides that method instead.
     """
 
@@ -63,9 +63,9 @@ class _SpyProviderRegistry(ProviderRegistry):
         self.register_mock("stub-std", _StubProvider(), tier="standard")
         self.register_mock("stub-fast", _StubProvider(), tier="fast")
 
-    def get_with_cascade_and_model(self, preferred_tier: str) -> Any:  # type: ignore[override]
+    def get_with_cascade(self, preferred_tier: str) -> Any:  # type: ignore[override]
         self.cascade_tiers.append(preferred_tier)
-        return super().get_with_cascade_and_model(preferred_tier)
+        return super().get_with_cascade(preferred_tier)
 
 
 @pytest.fixture(autouse=True)
@@ -225,7 +225,7 @@ async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
 
 async def test_fact_extractor_receives_the_cascade_resolved_model(tmp_db: DbPool) -> None:
     """Task 16 — assembly.py must resolve (provider, model) via
-    get_with_cascade_and_model("standard") and thread the model into
+    get_with_cascade("standard") and thread the model into
     FactExtractor(model=...), not just the provider.
 
     Genuinely discriminating: if assembly.py kept calling get_with_cascade()

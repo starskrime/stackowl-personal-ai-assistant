@@ -198,7 +198,7 @@ def build_persistence_check(
             if primary is not None:
                 judge = primary
             elif preg is not None:
-                judge, judge_model = preg.get_with_cascade_and_model(_judge_tier)
+                judge, judge_model = preg.get_with_cascade(_judge_tier)
             else:
                 judge = None
             if judge is None:  # no registry → cannot judge (fail open)
@@ -227,7 +227,7 @@ def build_persistence_check(
                 if fallback is not None:
                     fb = fallback
                 elif preg is not None:
-                    fb, fb_model = preg.get_with_cascade_and_model("local")
+                    fb, fb_model = preg.get_with_cascade("local")
                 else:
                     fb = None
                 if fb is None:  # no fallback available — fail open

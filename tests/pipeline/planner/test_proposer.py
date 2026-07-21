@@ -30,7 +30,7 @@ class _FakeRegistry:
         self._p = provider
         self._model = model
 
-    def get_with_cascade_and_model(self, tier):
+    def get_with_cascade(self, tier):
         return self._p, self._model
 
 
@@ -71,7 +71,7 @@ async def test_empty_catalog_returns_empty() -> None:
 
 async def test_propose_threads_resolved_fast_model_to_complete() -> None:
     """``propose()`` resolves the "fast"-tier provider+model via
-    ``get_with_cascade_and_model("fast")`` and forwards the RESOLVED model into
+    ``get_with_cascade("fast")`` and forwards the RESOLVED model into
     ``provider.complete()``.
 
     Genuinely discriminating: if ``propose()`` still called the old

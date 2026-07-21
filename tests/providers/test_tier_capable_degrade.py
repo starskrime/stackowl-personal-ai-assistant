@@ -18,7 +18,7 @@ def test_capable_degrade_prefers_most_capable_available_not_config_order() -> No
     reg.register_mock("weak", MockProvider(), tier="fast")
     reg.register_mock("mid", MockProvider(), tier="standard")
 
-    provider, degraded_from = reg.resolve_capable_or_degrade("powerful")
+    provider, _model, degraded_from = reg.resolve_capable_or_degrade("powerful")
     assert provider is reg.get("mid"), "must pick the most-capable available tier"
     assert degraded_from == "powerful"
 
@@ -26,7 +26,7 @@ def test_capable_degrade_prefers_most_capable_available_not_config_order() -> No
 def test_capable_degrade_exact_match_not_degraded() -> None:
     reg = ProviderRegistry()
     reg.register_mock("big", MockProvider(), tier="powerful")
-    provider, degraded_from = reg.resolve_capable_or_degrade("powerful")
+    provider, _model, degraded_from = reg.resolve_capable_or_degrade("powerful")
     assert provider is reg.get("big")
     assert degraded_from is None
 
@@ -34,7 +34,7 @@ def test_capable_degrade_exact_match_not_degraded() -> None:
 def test_capable_degrade_only_local_weak_is_still_surfaced() -> None:
     reg = ProviderRegistry()
     reg.register_mock("ollama", MockProvider(), tier="local", is_local=True)
-    provider, degraded_from = reg.resolve_capable_or_degrade("powerful")
+    provider, _model, degraded_from = reg.resolve_capable_or_degrade("powerful")
     assert provider is reg.get("ollama")
     # The only option is a weak local model — caller MUST be told it's degraded.
     assert degraded_from == "powerful"

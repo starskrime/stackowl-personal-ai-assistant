@@ -99,7 +99,7 @@ class LlmAcceptanceDeriver:
             return None
         messages = [Message(role="user", content=self._build_prompt(intent, draft))]
         try:
-            provider, model = self._provider_registry.get_with_cascade_and_model(self._tier)
+            provider, model = self._provider_registry.get_with_cascade(self._tier)
             result = await provider.complete(
                 messages, model=model,
                 max_tokens=_DERIVE_MAX_TOKENS, temperature=_DERIVE_TEMPERATURE,

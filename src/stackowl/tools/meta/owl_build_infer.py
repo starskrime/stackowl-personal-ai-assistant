@@ -44,7 +44,7 @@ async def _complete(providers: ProviderRegistry | None, prompt: str) -> str | No
         log.tool.debug("owl_build.infer: no provider registry — skip (ask instead)")
         return None
     try:
-        provider, model = reg.get_by_tier_and_model(_FAST_TIER)
+        provider, model = reg.get_by_tier(_FAST_TIER)
         result = await provider.complete([Message(role="user", content=prompt)], model=model)
     except Exception as exc:  # fail-open — caller falls back to asking
         log.tool.warning("owl_build.infer: provider call failed — ask instead", exc_info=exc)
@@ -160,7 +160,7 @@ if __name__ == "__main__":  # pragma: no cover — runnable self-check
         def __init__(self, reply: str) -> None:
             self._reply = reply
 
-        def get_by_tier_and_model(self, tier: str) -> tuple[_FakeProvider, str]:
+        def get_by_tier(self, tier: str) -> tuple[_FakeProvider, str]:
             return self, ""
 
         async def complete(self, messages: list[Message], model: str) -> object:

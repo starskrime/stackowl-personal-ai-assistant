@@ -246,7 +246,7 @@ class FeedbackClassifier:
     def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
         """Resolve the fast-tier (provider, model), or ``None`` on any registry error."""
         try:
-            return self._registry.get_by_tier_and_model("fast")
+            return self._registry.get_by_tier("fast")
         except Exception as exc:  # self-healing — missing provider must not raise
             log.gateway.warning(
                 "feedback_classifier._resolve_provider: get_by_tier failed",

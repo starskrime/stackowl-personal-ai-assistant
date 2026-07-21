@@ -42,7 +42,7 @@ class _FakeSelector:
 
 def test_multiple_providers_same_tier_round_robin() -> None:
     registry = _registry_with(("a", "fast"), ("b", "fast"))
-    picks = [registry.get_with_cascade("fast").name for _ in range(4)]
+    picks = [registry.get_with_cascade("fast")[0].name for _ in range(4)]
     assert picks == ["a", "b", "a", "b"]
 
 
@@ -50,7 +50,7 @@ def test_single_provider_per_tier_unchanged() -> None:
     """Regression: existing single-provider-per-tier behavior stays identical."""
     registry = _registry_with(("only", "fast"))
     for _ in range(3):
-        assert registry.get_with_cascade("fast").name == "only"
+        assert registry.get_with_cascade("fast")[0].name == "only"
 
 
 def test_concurrent_removal_retries_within_tier_not_next_tier() -> None:
@@ -72,7 +72,7 @@ def test_concurrent_removal_retries_within_tier_not_next_tier() -> None:
 
     result = registry.get_with_cascade("fast")
 
-    assert result.name == "b"
+    assert result[0].name == "b"
 
 
 def test_concurrent_removal_retry_is_bounded_not_infinite() -> None:

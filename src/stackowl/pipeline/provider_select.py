@@ -95,7 +95,7 @@ def _ensure_tool_capable(
     seen: set[int] = set()
     for tier in _TOOL_CAPABLE_TIER_WALK:
         try:
-            candidate, candidate_model, _degraded = registry.resolve_tier_with_fallback_and_model(tier)
+            candidate, candidate_model, _degraded = registry.resolve_tier_with_fallback(tier)
         except AllProvidersUnavailableError:
             continue
         if id(candidate) in seen:
@@ -335,7 +335,7 @@ def select_tool_provider_plan(
 
     # --- Step 4: Resolve by tier — circuit-aware (falls back if the tier provider's
     # circuit is OPEN; the pins above are honored as-is). ---
-    provider, resolved_model, degraded_from = registry.resolve_tier_with_fallback_and_model(desired)
+    provider, resolved_model, degraded_from = registry.resolve_tier_with_fallback(desired)
     # record_recovery gates the user-visible fallback event: a side-effect-free
     # window-probe selection (assemble) must NOT record it, else the same
     # provider_fallback is surfaced twice (assemble + execute) on one turn.

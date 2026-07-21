@@ -86,7 +86,7 @@ class _ModelCapturingProvider(ModelProvider):
 @pytest.mark.asyncio
 async def test_derive_threads_resolved_tier_model_to_complete() -> None:
     """``derive()`` resolves the configured tier's provider+model via
-    ``get_with_cascade_and_model(self._tier)`` and forwards the RESOLVED model
+    ``get_with_cascade(self._tier)`` and forwards the RESOLVED model
     into ``provider.complete()``.
 
     Genuinely discriminating: if ``derive()`` still called the old

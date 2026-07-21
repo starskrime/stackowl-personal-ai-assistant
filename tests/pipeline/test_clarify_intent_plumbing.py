@@ -40,6 +40,9 @@ def test_ensure_tool_capable_passes_through_for_clarify():
     # A clarify turn needs no tools; an incapable provider must pass through
     # untouched (no raise), exactly like conversational.
     p = _NoToolsProvider()
-    out = _ensure_tool_capable(p, registry=None, state=_state(intent_class="clarify"),
-                               log_selection=False)
-    assert out is p
+    out_provider, out_model = _ensure_tool_capable(
+        p, "", registry=None, state=_state(intent_class="clarify"),
+        log_selection=False,
+    )
+    assert out_provider is p
+    assert out_model == ""

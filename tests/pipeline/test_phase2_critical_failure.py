@@ -410,7 +410,7 @@ async def test_apology_falls_back_to_neutral_when_cascade_also_fails(tmp_db: DbP
 
 async def test_apology_threads_resolved_tier_model_to_complete() -> None:
     """Single healthy tier: ``_generate_localized_apology`` resolves the "fast"
-    tier's provider+model via ``get_with_cascade_and_model`` and forwards the
+    tier's provider+model via ``get_with_cascade`` and forwards the
     RESOLVED model into ``provider.complete()``.
 
     Genuinely discriminating: if the helper still hardcoded ``model=""``,
