@@ -125,8 +125,8 @@ _TIER_META = CommandMeta(
                 "argument (model_name), this targets one of the provider's "
                 "models[] entries instead: its tier membership is trimmed, "
                 "or — if that was its last tier — the models[] entry itself "
-                "is removed (models[] entries have no enabled flag, so this "
-                "mirrors /provider remove-model rather than disabling)."
+                "is disabled (same non-destructive convention as the "
+                "provider-level case, at model granularity)."
             ),
             args=(
                 Arg(name="tier", summary="tier to remove from", choices=_VALID_TIERS),
@@ -519,16 +519,16 @@ class TierCommand(SlashCommand):
             return f"✗ Provider '{name}' not found"
 
         if len(bits) >= 3:
-            # 3-arg form — same subtract-or-remove logic, scoped to one
-            # models[] entry instead of the provider dict itself. Unlike
-            # ProviderConfig, ModelOverride has no `enabled` flag and its
-            # schema (extra="forbid") rejects unknown keys — so there is no
-            # schema-valid way to "disable but keep configured" a model the
-            # way a provider can. When a model's LAST tier is removed here,
-            # its models[] entry is deleted outright instead, mirroring the
-            # established /provider remove-model convention (task 25) rather
-            # than writing a field the config loader would reject on the very
-            # next reload.
+            # 3-arg form — same subtract-or-disable logic as the provider
+            # case below, scoped to one models[] entry instead of the
+            # provider dict itself. ModelOverride now carries its own
+            # `enabled` flag (mirroring ProviderConfig.enabled) precisely so
+            # that removing a model's LAST tier here can DISABLE the models[]
+            # entry (tiers left intact) instead of deleting it — the same
+            # "always routable-or-explicitly-off" invariant a disabled
+            # provider already gets, at model granularity. This is distinct
+            # from /provider remove-model (task 25), which is an intentional,
+            # explicit full-deletion operation and is untouched by this path.
             model_name = bits[2]
             existing_models = target.get("models") or []
             model_entry = next((m for m in existing_models if m.get("name") == model_name), None)
@@ -554,7 +554,12 @@ class TierCommand(SlashCommand):
                 return f"✗ Model '{model_name}' is not in tier '{tier}' (it's in {model_tiers})"
             was_only_model_tier = len(model_tiers) == 1
             if was_only_model_tier:
-                target["models"] = [m for m in existing_models if m.get("name") != model_name]
+                # This was the model's ONLY tier — disable rather than write
+                # an empty tiers list, mirroring the provider-level case
+                # below: `tiers` stays intact so `enabled=True` (or removing
+                # this branch's disable) brings it right back with no loss
+                # of configuration.
+                model_entry["enabled"] = False
             else:
                 model_entry["tiers"] = [t for t in model_tiers if t != tier]
             save_yaml(path, data)
@@ -566,11 +571,11 @@ class TierCommand(SlashCommand):
                         "name": name,
                         "model_name": model_name,
                         "tier": tier,
-                        "entry_removed": was_only_model_tier,
+                        "disabled": was_only_model_tier,
                     }
                 },
             )
-            suffix = " (model entry removed — no tiers left)" if was_only_model_tier else ""
+            suffix = " (disabled)" if was_only_model_tier else ""
             return f"✓ Model '{model_name}' removed from tier '{tier}'{suffix} — applied immediately"
 
         current_tiers = target.get("tiers") or []

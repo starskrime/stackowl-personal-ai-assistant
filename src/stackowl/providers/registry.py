@@ -201,8 +201,12 @@ class ProviderRegistry(RegistryAccessorsMixin):
         providers[config.name] = provider
         if config.tiers:
             routes = [ModelRoute(model=config.default_model, tiers=config.tiers)]
+            # A disabled model entry (ModelOverride.enabled=False) gets NO
+            # ModelRoute at all — exactly like a disabled PROVIDER getting no
+            # entry in `tiers` at all above — so it is simply unroutable for
+            # any tier, the model-granularity mirror of that invariant.
             routes.extend(
-                ModelRoute(model=m.name, tiers=m.tiers) for m in config.models
+                ModelRoute(model=m.name, tiers=m.tiers) for m in config.models if m.enabled
             )
             tiers[config.name] = tuple(routes)
         local[config.name] = is_local_url(config.base_url)
@@ -287,7 +291,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
                             name,
                             (
                                 ModelRoute(model=config.default_model, tiers=config.tiers),
-                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models),
+                                # Skip disabled model entries — same invariant as the
+                                # from_settings/_build_into path above.
+                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models if m.enabled),
                             ),
                         )
                         new_local[name] = self._local[name]
@@ -319,7 +325,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
                             name,
                             (
                                 ModelRoute(model=config.default_model, tiers=config.tiers),
-                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models),
+                                # Skip disabled model entries — same invariant as the
+                                # from_settings/_build_into path above.
+                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models if m.enabled),
                             ),
                         )
                         new_local[name] = self._local[name]
@@ -340,7 +348,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
                             name,
                             (
                                 ModelRoute(model=config.default_model, tiers=config.tiers),
-                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models),
+                                # Skip disabled model entries — same invariant as the
+                                # from_settings/_build_into path above.
+                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models if m.enabled),
                             ),
                         )
                         new_local[name] = self._local[name]

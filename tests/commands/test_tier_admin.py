@@ -321,11 +321,13 @@ class TestTierAddRemoveModelAware:
     (model_name) redirects the SAME add/remove logic onto one of that
     provider's `models[]` entries instead — never both at once.
 
-    Note: unlike ProviderConfig, ModelOverride has no `enabled` flag (and its
-    schema forbids unknown keys), so removing a model's LAST tier deletes the
-    models[] entry outright rather than "disabling" it — mirroring the
-    established `/provider remove-model` convention instead of writing a
-    field the config loader would reject on the next reload.
+    ModelOverride carries its own `enabled` flag (mirroring
+    ProviderConfig.enabled), so removing a model's LAST tier DISABLES the
+    models[] entry (tiers left intact) rather than deleting it — the same
+    non-destructive "always routable-or-explicitly-off" convention the
+    provider-level case already uses, at model granularity. This is
+    distinct from `/provider remove-model` (task 25), an intentional,
+    explicit full-deletion operation left untouched by this behavior.
     """
 
     @pytest.mark.asyncio
@@ -406,7 +408,7 @@ class TestTierAddRemoveModelAware:
         assert "Invalid tier" in reply
 
     @pytest.mark.asyncio
-    async def test_remove_three_arg_on_models_only_tier_removes_the_model_entry(
+    async def test_remove_three_arg_on_models_only_tier_disables_that_model_entry(
         self, tmp_yaml: Path
     ) -> None:
         data = _load(tmp_yaml)
@@ -419,13 +421,47 @@ class TestTierAddRemoveModelAware:
         assert reply.startswith("✓")
         persisted = _load(tmp_yaml)
         groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
-        # The model's only tier was removed — since ModelOverride has no
-        # `enabled` flag, the models[] entry is deleted outright (matching
-        # /provider remove-model), not "disabled".
-        assert groq2.get("models", []) == []
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        # The model's only tier was removed — DISABLE the models[] entry
+        # (mirroring the provider-level convention), tiers preserved intact.
+        assert model_entry.get("enabled") is False
+        assert model_entry["tiers"] == ["standard"]  # preserved, per the provider-level convention
         # The provider itself is untouched — this was a MODEL-scoped removal.
         assert groq2["enabled"] is True
         assert groq2["tiers"] == ["fast"]
+
+    @pytest.mark.asyncio
+    async def test_remove_three_arg_on_models_only_tier_disabled_model_unroutable(
+        self, tmp_yaml: Path
+    ) -> None:
+        """Routability enforcement itself lives in ProviderRegistry (see
+        tests/providers/test_provider_registry_multi_tier_membership.py's
+        test_from_settings_skips_a_disabled_model_entry_route_entirely) —
+        tier_command.py only edits stackowl.yaml and never consults the
+        registry. This test proves the two layers agree: the exact on-disk
+        shape _remove_execute produces here (enabled=False, tiers preserved)
+        is the same shape that registry test feeds through ProviderConfig/
+        ModelOverride and asserts is unroutable."""
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["standard"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        await _make_cmd().handle("remove standard groq groq-mini", _state())
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+
+        from stackowl.config.provider import ProviderConfig
+        from stackowl.config.settings import Settings
+        from stackowl.providers.registry import ModelRoute, ProviderRegistry
+
+        cfg = ProviderConfig.model_validate(groq2)
+        settings = Settings.model_construct(providers=[cfg])
+        registry = ProviderRegistry.from_settings(settings)
+        routes = registry._tiers["groq"]  # noqa: SLF001 — internal-shape assertion
+        assert routes == (ModelRoute(model="llama-3.3-70b-versatile", tiers=("fast",)),)
+        provider, model = registry.get_by_tier("standard")
+        assert model != "groq-mini"  # the disabled model never resolves
 
     @pytest.mark.asyncio
     async def test_remove_three_arg_on_one_of_several_model_tiers_keeps_the_entry(

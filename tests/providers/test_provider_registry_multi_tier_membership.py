@@ -106,6 +106,47 @@ class TestModelRouteStorage:
             ModelRoute(model="acme-v1-mini", tiers=("standard",)),
         )
 
+    def test_from_settings_skips_a_disabled_model_entry_route_entirely(self) -> None:
+        """ModelOverride.enabled=False mirrors the provider-level `enabled`
+        invariant at model granularity: the disabled model's tier gets NO
+        ModelRoute at all — same as a disabled PROVIDER contributing no
+        entry to `_tiers`/`_providers` above. Its own default_model's tier
+        must still resolve normally (enable/disable is per-model, not
+        provider-wide)."""
+        from stackowl.config.provider import ModelOverride, ProviderConfig
+        from stackowl.config.settings import Settings
+
+        settings = Settings.model_construct(
+            providers=[
+                ProviderConfig(
+                    name="acme", protocol="openai", default_model="acme-v1",
+                    tiers=("fast",), api_key=None,
+                    models=(
+                        ModelOverride(name="acme-v1-mini", tiers=("standard",), enabled=False),
+                    ),
+                )
+            ]
+        )
+        registry = ProviderRegistry.from_settings(settings)
+
+        # Internal shape: the disabled model contributes NO route at all.
+        routes = registry._tiers["acme"]  # noqa: SLF001
+        assert routes == (ModelRoute(model="acme-v1", tiers=("fast",)),)
+
+        # The enabled default_model's own tier still resolves normally.
+        provider, model = registry.get_by_tier("fast")
+        assert provider.name == "acme"
+        assert model == "acme-v1"
+
+        # The disabled model's tier is NOT resolvable via get_by_tier — no
+        # provider serves "standard" (the only route contributing to it was
+        # excluded), so it falls through to the existing no-match degrade:
+        # the first registered provider's first route, NOT the disabled
+        # model's own model string.
+        provider2, model2 = registry.get_by_tier("standard")
+        assert provider2.name == "acme"
+        assert model2 == "acme-v1"  # the fallback route, never "acme-v1-mini"
+
 
 def test_tiers_of_flattens_across_model_routes() -> None:
     """A provider with 2 models in DIFFERENT tiers must report BOTH tiers via

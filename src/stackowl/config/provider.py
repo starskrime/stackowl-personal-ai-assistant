@@ -19,6 +19,13 @@ class ModelOverride(BaseModel):
 
     name: str
     tiers: tuple[Literal["fast", "standard", "powerful", "local"], ...]
+    # Mirrors ProviderConfig.enabled — disabling this model entry leaves its
+    # `tiers` intact but makes it unroutable (ProviderRegistry skips it when
+    # building ModelRoutes), the SAME "always routable-or-explicitly-off"
+    # invariant a disabled provider already gets, at model granularity. This
+    # is what lets `/tier remove`'s model-scoped 3-arg form DISABLE a model's
+    # last remaining tier instead of deleting the models[] entry outright.
+    enabled: bool = True
     # None = inherit the parent ProviderConfig's own value for this field.
     max_output_tokens: int | None = None
     context_chars: int | None = None

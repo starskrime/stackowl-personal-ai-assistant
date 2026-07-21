@@ -102,6 +102,21 @@ class TestModelOverride:
         assert m.max_output_tokens == 50000
         assert m.context_chars == 80000
 
+    def test_enabled_defaults_true(self) -> None:
+        from stackowl.config.provider import ModelOverride
+        m = ModelOverride(name="acme-v1-mini", tiers=("standard",))
+        assert m.enabled is True
+
+    def test_enabled_explicit_false_is_preserved(self) -> None:
+        from stackowl.config.provider import ModelOverride
+        m = ModelOverride(name="acme-v1-mini", tiers=("standard",), enabled=False)
+        assert m.enabled is False
+
+    def test_enabled_explicit_true_is_preserved(self) -> None:
+        from stackowl.config.provider import ModelOverride
+        m = ModelOverride(name="acme-v1-mini", tiers=("standard",), enabled=True)
+        assert m.enabled is True
+
     def test_rejects_empty_tiers(self) -> None:
         from stackowl.config.provider import ModelOverride
         with pytest.raises(ValidationError):
