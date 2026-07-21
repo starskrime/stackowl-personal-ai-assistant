@@ -225,7 +225,7 @@ class ReflectionWriterHandler(JobHandler):
 
         # 4. STEP — pick a provider, reflect on each pending row
         try:
-            provider: ModelProvider = self._providers.get_with_cascade(self._critic_tier)
+            provider, model = self._providers.get_with_cascade_and_model(self._critic_tier)
         except Exception as exc:  # B5
             log.memory.error(
                 "[reflection] execute: no provider for reflection",
@@ -259,7 +259,7 @@ class ReflectionWriterHandler(JobHandler):
             chunk = pending[chunk_start:chunk_start + CHUNK_SIZE]
             prepared: list[_PreparedReflection] = []
             for outcome in chunk:
-                p = await self._compute_reflection(outcome, provider)
+                p = await self._compute_reflection(outcome, provider, model)
                 if p is not None:
                     prepared.append(p)
             if not prepared:
@@ -337,7 +337,7 @@ class ReflectionWriterHandler(JobHandler):
         )
 
     async def _compute_reflection(
-        self, outcome: TaskOutcome, provider: ModelProvider,
+        self, outcome: TaskOutcome, provider: ModelProvider, model: str,
     ) -> _PreparedReflection | None:
         """Run one reflection's LLM completion + embedding (no DB write).
 
@@ -360,7 +360,7 @@ class ReflectionWriterHandler(JobHandler):
         messages = self._prompt_builder.build(outcome)
         # 3. STEP — provider call
         try:
-            result = await provider.complete(messages, model="")
+            result = await provider.complete(messages, model=model)
         except Exception as exc:  # B5
             log.memory.warning(
                 "[reflection] compute_reflection: provider.complete failed — skipping",

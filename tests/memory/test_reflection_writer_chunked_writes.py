@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,7 @@ from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.memory.reflection_store import ReflectionStore
 from stackowl.memory.reflection_writer_handler import CHUNK_SIZE, ReflectionWriterHandler
 from stackowl.providers.base import CompletionResult, Message
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.scheduler.job import Job
 
 pytestmark = pytest.mark.asyncio
@@ -158,6 +158,69 @@ async def test_all_rows_persisted_across_chunk_boundary(db: DbPool) -> None:
         ref = await rstore.get_by_trace_id(f"chunk-{i}")
         assert ref is not None
         assert ref.summary == "ok"
+
+
+@dataclass
+class _ModelCapturingProvider:
+    """Records the ``model`` kwarg passed to every ``complete()`` call —
+    lets a test pin down that the SAME resolved model reaches EVERY row's
+    ``_compute_reflection`` call in a multi-row batch, not just the first."""
+
+    captured_models: list[str] = field(default_factory=list)
+    model_name: str = "stub-fast"
+
+    @property
+    def name(self) -> str:
+        return "stub-fast"
+
+    @property
+    def protocol(self) -> Any:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str = "", **kwargs: object
+    ) -> CompletionResult:
+        self.captured_models.append(model)
+        return CompletionResult(
+            content=json.dumps({"summary": "ok", "suggested_strategy": "n/a"}),
+            model=self.model_name, provider_name="stub",
+            input_tokens=0, output_tokens=0, duration_ms=1.0,
+        )
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+
+_RESOLVED_MODEL = "reflection-tier-fast-v3"
+
+
+async def test_resolved_model_reaches_every_row_in_a_multirow_batch(db: DbPool) -> None:
+    """3 pre-scored rows, ONE provider resolution per execute() — the SAME
+    resolved model string must reach ALL THREE rows' _compute_reflection ->
+    provider.complete() calls, proving the batch loop threads it past row 0."""
+    n = 3
+    await _seed_pre_scored_outcomes(db, n)
+
+    provider = _ModelCapturingProvider()
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "reflection-provider", provider,
+        models=(ModelRoute(model=_RESOLVED_MODEL, tiers=("fast",)),),
+    )
+    critic = _NoOpCritic()
+
+    handler = ReflectionWriterHandler(
+        db=db, provider_registry=registry, embedding_registry=EmbeddingRegistry(),
+        batch_limit=n, critic=critic,
+    )
+    result = await handler.execute(_job())
+
+    assert result.success is True
+    assert result.metadata["written"] == n
+
+    # The load-bearing assertion: every row's complete() call carried the
+    # SAME specific resolved model string — not "" and not just row 0.
+    assert provider.captured_models == [_RESOLVED_MODEL] * n
 
 
 class _NoOpCritic:

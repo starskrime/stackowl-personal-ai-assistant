@@ -111,7 +111,7 @@ class CriticScorerHandler(JobHandler):
 
         # 3. STEP — score each pending outcome
         try:
-            provider: ModelProvider = self._providers.get_with_cascade(self._critic_tier)
+            provider, model = self._providers.get_with_cascade_and_model(self._critic_tier)
         except Exception as exc:  # B5
             log.memory.error(
                 "[critic] execute: no provider available for critic",
@@ -129,7 +129,7 @@ class CriticScorerHandler(JobHandler):
 
         scored = 0
         for outcome in pending:
-            score = await self._score_one(outcome, provider)
+            score = await self._score_one(outcome, provider, model)
             if score is not None:
                 try:
                     await self._store.set_quality_score(outcome.outcome_id, score)
@@ -160,7 +160,7 @@ class CriticScorerHandler(JobHandler):
         )
 
     async def _score_one(
-        self, outcome: TaskOutcome, provider: ModelProvider,
+        self, outcome: TaskOutcome, provider: ModelProvider, model: str,
     ) -> float | None:
         """Run one critic call. Returns the parsed score or None on any failure."""
         # 1. ENTRY
@@ -180,7 +180,7 @@ class CriticScorerHandler(JobHandler):
             # thought; a reasoning-capable provider otherwise burns the whole
             # max_tokens budget on <think> and never emits the score (same
             # empty-reply failure mode fixed in owls/router.py).
-            result = await provider.complete(messages, model="", disable_thinking=True)
+            result = await provider.complete(messages, model=model, disable_thinking=True)
         except Exception as exc:  # B5
             log.memory.warning(
                 "[critic] score_one: provider.complete failed — skipping",
