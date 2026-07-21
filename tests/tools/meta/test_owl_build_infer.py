@@ -45,9 +45,6 @@ class _Provider:
     def get(self, name: str) -> _Provider:
         return self
 
-    def get_by_tier(self, tier: str) -> _Provider:
-        return self
-
     def get_by_tier_and_model(self, tier: str) -> tuple[_Provider, str]:
         return self, self._model
 
