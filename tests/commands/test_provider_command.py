@@ -516,6 +516,351 @@ class TestProviderAddModelTier:
 
 
 # ---------------------------------------------------------------------------
+# models / model-add / remove-model / set-model-tokens / set-model-context
+# (Task 25 — per-model provider config command surface)
+#
+# NOTE: the plan's original task brief speculated the guided add-flow's
+# subcommand names would be "add-model"/"add-model-execute". The LIVE file
+# already uses those exact strings for an unrelated existing step (picking
+# the model when adding a brand-new provider via the catalog flow —
+# ProviderCommand._add_model / the "add-model" branch in handle()). Reusing
+# them here would silently shadow that dead branch (duplicate `elif sub ==
+# "add-model"`, the first match always wins) rather than raise an error, so
+# these tests exercise the actually-implemented, non-colliding names:
+# "model-add" / "model-add-execute".
+# ---------------------------------------------------------------------------
+
+
+class TestProviderModels:
+    @pytest.mark.asyncio
+    async def test_models_lists_default_and_extra_models(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("models acme", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "acme-v1" in text
+        assert "acme-v1-mini" in text
+        assert "standard" in text
+
+    @pytest.mark.asyncio
+    async def test_models_no_name_shows_usage(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("models", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "usage" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_models_missing_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("models ghost", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_model_add_shows_provider_buttons_when_no_name_given(
+        self, tmp_yaml: Path
+    ) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("model-add", _state())
+        assert isinstance(out, CommandResponse)
+        assert any("acme" in a.command for a in out.actions)
+        assert any(a.command == "/provider model-add acme" for a in out.actions)
+
+    @pytest.mark.asyncio
+    async def test_model_add_no_providers_configured(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("model-add", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "no providers" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_model_add_with_name_prompts_for_model_name(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("model-add acme", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "model-add-execute acme" in text
+
+    @pytest.mark.asyncio
+    async def test_model_add_unknown_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("model-add ghost", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_model_add_execute_two_tokens_shows_tier_picker(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("model-add-execute acme acme-v1-mini", _state())
+        assert isinstance(out, CommandResponse)
+        assert any(
+            "model-add-execute acme acme-v1-mini standard" in a.command for a in out.actions
+        )
+
+    @pytest.mark.asyncio
+    async def test_model_add_execute_writes_new_models_entry(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        bus = _SpyBus()
+        out = await _make_cmd(bus).handle(
+            "model-add-execute acme acme-v1-mini standard", _state()
+        )
+        text = out.text if hasattr(out, "text") else out
+        assert "✓" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme["models"] == [{"name": "acme-v1-mini", "tiers": ["standard"]}]
+        assert any(e == "settings_reloaded" for e, _ in bus.events)
+
+    @pytest.mark.asyncio
+    async def test_model_add_execute_rejects_name_colliding_with_default_model(
+        self, tmp_yaml: Path
+    ) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("model-add-execute acme acme-v1 standard", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme.get("models", []) == []
+
+    @pytest.mark.asyncio
+    async def test_model_add_execute_rejects_duplicate_model_name(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle(
+            "model-add-execute acme acme-v1-mini standard", _state()
+        )
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme["models"] == [{"name": "acme-v1-mini", "tiers": ["standard"]}]
+
+    @pytest.mark.asyncio
+    async def test_model_add_execute_invalid_tier(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("model-add-execute acme acme-v1-mini turbo", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "Invalid tier" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme.get("models", []) == []
+
+    @pytest.mark.asyncio
+    async def test_model_add_execute_unknown_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle(
+            "model-add-execute ghost some-model standard", _state()
+        )
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_remove_model_deletes_the_entry(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        bus = _SpyBus()
+        out = await _make_cmd(bus).handle("remove-model acme acme-v1-mini", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✓" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme.get("models", []) == []
+        assert any(e == "settings_reloaded" for e, _ in bus.events)
+
+    @pytest.mark.asyncio
+    async def test_remove_model_unknown_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("remove-model ghost acme-v1-mini", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_remove_model_unknown_model(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("remove-model acme ghost-model", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_set_model_tokens_sets_override(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        bus = _SpyBus()
+        out = await _make_cmd(bus).handle("set-model-tokens acme acme-v1-mini 50000", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✓" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme["models"][0]["max_output_tokens"] == 50000
+        assert any(e == "settings_reloaded" for e, _ in bus.events)
+
+    @pytest.mark.asyncio
+    async def test_set_model_tokens_inherit_clears_override(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"], "max_output_tokens": 50000}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("set-model-tokens acme acme-v1-mini inherit", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✓" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert "max_output_tokens" not in acme["models"][0]
+
+    @pytest.mark.asyncio
+    async def test_set_model_tokens_invalid_integer(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("set-model-tokens acme acme-v1-mini not-a-number", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert "max_output_tokens" not in acme["models"][0]
+
+    @pytest.mark.asyncio
+    async def test_set_model_tokens_unknown_model(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("set-model-tokens acme ghost-model 50000", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_set_model_tokens_unknown_provider(self, tmp_yaml: Path) -> None:
+        out = await _make_cmd().handle("set-model-tokens ghost acme-v1-mini 50000", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_set_model_context_sets_override(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("set-model-context acme acme-v1-mini 80000", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✓" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert acme["models"][0]["context_chars"] == 80000
+
+    @pytest.mark.asyncio
+    async def test_set_model_context_inherit_clears_override(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"], "context_chars": 80000}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("set-model-context acme acme-v1-mini inherit", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✓" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert "context_chars" not in acme["models"][0]
+
+    @pytest.mark.asyncio
+    async def test_set_model_context_invalid_integer(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        data["providers"] = [{
+            "name": "acme", "protocol": "openai", "default_model": "acme-v1",
+            "tiers": ["fast"], "enabled": True,
+            "models": [{"name": "acme-v1-mini", "tiers": ["standard"]}],
+        }]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+        out = await _make_cmd().handle("set-model-context acme acme-v1-mini nope", _state())
+        text = out.text if hasattr(out, "text") else out
+        assert "✗" in text
+        persisted = _load(tmp_yaml)
+        acme = next(p for p in persisted["providers"] if p["name"] == "acme")
+        assert "context_chars" not in acme["models"][0]
+
+    @pytest.mark.asyncio
+    async def test_models_documented_in_provider_meta(self) -> None:
+        """The 5 user-facing subcommands are discoverable via /help; the
+        internal guided-flow terminal step (model-add-execute) is not."""
+        from stackowl.commands.provider_command import _PROVIDER_META
+
+        names = {s.name for s in _PROVIDER_META.subcommands}
+        assert {"models", "model-add", "remove-model", "set-model-tokens", "set-model-context"} <= names
+        assert "model-add-execute" not in names
+
+
+# ---------------------------------------------------------------------------
 # remove
 # ---------------------------------------------------------------------------
 

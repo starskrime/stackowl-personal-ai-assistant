@@ -44,7 +44,13 @@ class ToolsCommand(SlashCommand):
         for t in sorted(tools, key=lambda x: x.name):
             try:
                 severity = t.manifest.action_severity
-            except Exception:
+            except Exception as exc:
+                log.gateway.warning(
+                    "[commands] tools.handle: manifest.action_severity read failed — "
+                    "defaulting to 'read' (least-privilege fallback)",
+                    exc_info=exc,
+                    extra={"_fields": {"tool": t.name}},
+                )
                 severity = "read"
             glyph = _SEVERITY_GLYPH.get(severity, "?")
             short_desc = t.description.split("\n", 1)[0]

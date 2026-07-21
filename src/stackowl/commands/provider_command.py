@@ -189,6 +189,69 @@ _PROVIDER_META = CommandMeta(
             args=(Arg(name="tier", summary="routing tier", choices=_VALID_TIERS),),
             examples=(Example(invocation="/provider status fast"),),
         ),
+        SubCommand(
+            name="models",
+            summary="List a provider's models (default + extras) and their tiers/overrides",
+            description=(
+                "You see every model a provider serves — its own default_model "
+                "plus any models[] entries — with each one's tiers and any "
+                "context/output-token overrides (inherited values marked as such)."
+            ),
+            args=(Arg(name="name", summary="provider name"),),
+            examples=(Example(invocation="/provider models acme"),),
+        ),
+        SubCommand(
+            name="model-add",
+            summary="Add an additional model to an existing provider (guided)",
+            description=(
+                "You add a second (or third...) model under a provider's "
+                "existing connection — same api_key/base_url, a new model name "
+                "and starting tier — without duplicating the whole provider "
+                "block. Guided: pick the provider, then the model name, then "
+                "the tier."
+            ),
+            args=(Arg(name="name", summary="provider name", required=False),),
+            examples=(Example(invocation="/provider model-add"),),
+        ),
+        SubCommand(
+            name="remove-model",
+            summary="Remove an additional model from a provider",
+            description=(
+                "You remove one models[] entry. The provider's own "
+                "default_model is not removable this way — edit it via "
+                "/provider edit-menu instead."
+            ),
+            args=(
+                Arg(name="name", summary="provider name"),
+                Arg(name="model_name", summary="the model to remove"),
+            ),
+            examples=(Example(invocation="/provider remove-model acme acme-v1-mini"),),
+        ),
+        SubCommand(
+            name="set-model-tokens",
+            summary="Override (or clear) one model's max_output_tokens",
+            description=(
+                "You set a per-model output-token ceiling, or pass 'inherit' "
+                "to clear the override back to the provider's own value."
+            ),
+            args=(
+                Arg(name="name", summary="provider name"),
+                Arg(name="model_name", summary="the model to configure"),
+                Arg(name="value", summary="an integer, or 'inherit'"),
+            ),
+            examples=(Example(invocation="/provider set-model-tokens acme acme-v1-mini 50000"),),
+        ),
+        SubCommand(
+            name="set-model-context",
+            summary="Override (or clear) one model's context_chars",
+            description="Same as set-model-tokens, for the context_chars field.",
+            args=(
+                Arg(name="name", summary="provider name"),
+                Arg(name="model_name", summary="the model to configure"),
+                Arg(name="value", summary="an integer, or 'inherit'"),
+            ),
+            examples=(Example(invocation="/provider set-model-context acme acme-v1-mini 80000"),),
+        ),
     ),
 )
 
@@ -238,6 +301,18 @@ class ProviderCommand(SlashCommand):
                 result = self._add_model(rest)
             elif sub == "add-tier":
                 result = self._add_tier(rest)
+            elif sub == "models":
+                result = self._models(rest)
+            elif sub == "model-add":
+                result = self._model_add_browse(rest)
+            elif sub == "model-add-execute":
+                result = self._model_add_execute(rest)
+            elif sub == "remove-model":
+                result = self._remove_model(rest)
+            elif sub == "set-model-tokens":
+                result = self._set_model_field(rest, field="max_output_tokens")
+            elif sub == "set-model-context":
+                result = self._set_model_field(rest, field="context_chars")
             elif sub == "remove":
                 result = self._remove(rest)
             elif sub == "set-tier":
@@ -1034,6 +1109,263 @@ class ProviderCommand(SlashCommand):
         )
         key_note = f" (api_key ref: {entry['api_key']})" if entry.get("api_key") else ""
         return f"✓ Provider '{name}' added{key_note} — applied immediately"
+
+    # -- models / model-add / remove-model / set-model-tokens / set-model-context
+    # (per-model provider config — Task 25) ------------------------------------
+
+    def _models(self, raw: str) -> str | CommandResponse:
+        log.config.debug("[commands] provider.models: entry", extra={"_fields": {"raw_len": len(raw)}})
+        name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        if not name:
+            return "Usage: /provider models <name>"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        target = next((p for p in self._providers(data) if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.models: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        default_model = target.get("default_model", "?")
+        lines = [
+            f"{name}:",
+            f"  {default_model} (default) | tiers: {', '.join(target.get('tiers') or [])}",
+        ]
+        existing_models = target.get("models") or []
+        for m in existing_models:
+            mt = m.get("max_output_tokens")
+            mc = m.get("context_chars")
+            mt_disp = f"max_output_tokens={mt}" if mt is not None else "max_output_tokens=(inherited)"
+            mc_disp = f"context_chars={mc}" if mc is not None else "context_chars=(inherited)"
+            lines.append(
+                f"  {m.get('name', '?')} | tiers: {', '.join(m.get('tiers') or [])} | {mt_disp} {mc_disp}"
+            )
+        log.config.debug(
+            "[commands] provider.models: exit",
+            extra={"_fields": {"name": name, "n_models": len(existing_models)}},
+        )
+        return "\n".join(lines)
+
+    def _model_add_browse(self, raw: str) -> str | CommandResponse:
+        """Entry point for the guided model-add flow: pick a provider (button),
+        then reply with the new model's name as free text, which re-invokes
+        with a second token and hands off to :meth:`_model_add_execute` —
+        mirroring the ``add-pick`` → free-text-reply → ``add-tier`` shape of
+        the sibling new-provider guided flow (``_add_pick``/``_edit_field``
+        use the same "reply with: /provider <cmd> ..." free-text-prompt
+        convention elsewhere in this file)."""
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.model_add_browse: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        name = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        # 2. DECISION — no provider named yet: offer a button per provider
+        if not name:
+            if not providers:
+                log.config.debug("[commands] provider.model_add_browse: exit — no providers")
+                return "No providers configured — add one first with /provider add."
+            actions = tuple(
+                Action(
+                    label=p.get("name", "?"),
+                    command=f"/provider model-add {p.get('name', '?')}",
+                    destructive=False,
+                )
+                for p in providers
+            )
+            log.config.debug(
+                "[commands] provider.model_add_browse: exit — provider picker",
+                extra={"_fields": {"n_providers": len(providers)}},
+            )
+            return CommandResponse(text="Add a model to which provider?", actions=actions)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.debug(
+                "[commands] provider.model_add_browse: exit — not found",
+                extra={"_fields": {"name": name}},
+            )
+            return f"✗ Provider '{name}' not found"
+        # 4. EXIT — free-text prompt for the model name (next hop:
+        # /provider model-add-execute <name> <model_name>).
+        log.config.debug(
+            "[commands] provider.model_add_browse: exit — awaiting model name",
+            extra={"_fields": {"name": name}},
+        )
+        return (
+            f"Provider '{name}' — reply with the new model's name "
+            f"(e.g. `/provider model-add-execute {name} <model_name>`)."
+        )
+
+    def _model_add_execute(self, raw: str) -> str | CommandResponse:
+        """Terminal step of the guided model-add flow: with 2 tokens (name,
+        model_name) shows a tier-pick button row, mirroring ``_add_model``'s
+        own tier-pick step; with 3 tokens (name, model_name, tier) persists —
+        mirroring ``_add_tier``'s own terminal-persist step. Deliberately NOT
+        listed in ``_PROVIDER_META.subcommands`` — this file's convention for
+        an internal/guided-flow-only step (there is no ``hidden`` flag on
+        ``SubCommand``; ``add-pick``/``add-token``/``add-model``/``add-tier``/
+        ``menu``/``edit-menu``/``edit-field`` are all likewise omitted from
+        the metadata tuple and reachable only via generated button commands or
+        documented free-text "reply with" hints)."""
+        # 1. ENTRY
+        log.config.debug(
+            "[commands] provider.model_add_execute: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        bits = raw.split()
+        if len(bits) < 2:
+            return "Usage: /provider model-add-execute <name> <model_name> [tier]"
+        name, model_name = bits[0], bits[1]
+        if len(bits) < 3:
+            # 2. DECISION — guided tier-pick step, mirroring _add_model's button row.
+            actions = tuple(
+                Action(
+                    label=t,
+                    command=f"/provider model-add-execute {name} {model_name} {t}",
+                    destructive=False,
+                )
+                for t in _VALID_TIERS
+            )
+            log.config.debug(
+                "[commands] provider.model_add_execute: exit — tier picker",
+                extra={"_fields": {"name": name, "model_name": model_name}},
+            )
+            return CommandResponse(text=f"Add '{model_name}' to which tier?", actions=actions)
+        tier = bits[2]
+        if tier not in _VALID_TIERS:
+            log.config.warning(
+                "[commands] provider.model_add_execute: invalid tier",
+                extra={"_fields": {"tier": tier}},
+            )
+            return f"✗ Invalid tier '{tier}' — valid: {', '.join(_VALID_TIERS)}"
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.model_add_execute: not found",
+                extra={"_fields": {"name": name}},
+            )
+            return f"✗ Provider '{name}' not found"
+        if model_name == target.get("default_model"):
+            return f"✗ '{model_name}' is already this provider's default_model"
+        existing_models = target.get("models") or []
+        if any(m.get("name") == model_name for m in existing_models):
+            return f"✗ Model '{model_name}' already exists under '{name}'"
+        new_models = [*existing_models, {"name": model_name, "tiers": [tier]}]
+        # 3. STEP — validate the FULL provider (incl. the new models entry)
+        # against the real schema before writing, same
+        # validate-before-write discipline as _persist_new_provider/_edit.
+        try:
+            ProviderConfig(**{**target, "models": new_models})
+        except Exception as exc:
+            log.config.warning(
+                "[commands] provider.model_add_execute: schema validation failed",
+                extra={"_fields": {"name": name, "model_name": model_name, "error": str(exc)}},
+            )
+            return f"✗ Invalid model config: {exc}"
+        target["models"] = new_models
+        save_yaml(path, data)
+        self._emit_reloaded(name)
+        # 4. EXIT
+        log.config.info(
+            "[commands] provider.model_add_execute: exit — added",
+            extra={"_fields": {"name": name, "model_name": model_name, "tier": tier}},
+        )
+        return f"✓ Model '{model_name}' added to provider '{name}' in tier '{tier}' — applied immediately"
+
+    def _remove_model(self, raw: str) -> str:
+        log.config.debug(
+            "[commands] provider.remove_model: entry", extra={"_fields": {"raw_len": len(raw)}}
+        )
+        bits = raw.split()
+        if len(bits) < 2:
+            return "Usage: /provider remove-model <name> <model_name>"
+        name, model_name = bits[0], bits[1]
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.remove_model: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        existing_models = target.get("models") or []
+        if not any(m.get("name") == model_name for m in existing_models):
+            log.config.warning(
+                "[commands] provider.remove_model: model not found",
+                extra={"_fields": {"name": name, "model_name": model_name}},
+            )
+            return f"✗ Model '{model_name}' not found under '{name}'"
+        target["models"] = [m for m in existing_models if m.get("name") != model_name]
+        save_yaml(path, data)
+        self._emit_reloaded(name)
+        log.config.info(
+            "[commands] provider.remove_model: exit — removed",
+            extra={"_fields": {"name": name, "model_name": model_name}},
+        )
+        return f"✓ Model '{model_name}' removed from provider '{name}' — applied immediately"
+
+    def _set_model_field(self, raw: str, *, field: str) -> str:
+        log.config.debug(
+            "[commands] provider.set_model_field: entry",
+            extra={"_fields": {"raw_len": len(raw), "field": field}},
+        )
+        usage_verb = "tokens" if field == "max_output_tokens" else "context"
+        bits = raw.split()
+        if len(bits) < 3:
+            return f"Usage: /provider set-model-{usage_verb} <name> <model_name> <value|inherit>"
+        name, model_name, value_raw = bits[0], bits[1], bits[2]
+        path = config_path()
+        if not path.exists():
+            return _NO_FILE
+        data = load_yaml(path)
+        providers = self._providers(data)
+        target = next((p for p in providers if p.get("name") == name), None)
+        if target is None:
+            log.config.warning(
+                "[commands] provider.set_model_field: not found", extra={"_fields": {"name": name}}
+            )
+            return f"✗ Provider '{name}' not found"
+        existing_models = target.get("models") or []
+        model_entry = next((m for m in existing_models if m.get("name") == model_name), None)
+        if model_entry is None:
+            log.config.warning(
+                "[commands] provider.set_model_field: model not found",
+                extra={"_fields": {"name": name, "model_name": model_name}},
+            )
+            return f"✗ Model '{model_name}' not found under '{name}'"
+        if value_raw.strip().lower() == "inherit":
+            model_entry.pop(field, None)
+        else:
+            try:
+                model_entry[field] = int(value_raw)
+            except ValueError:
+                log.config.warning(
+                    "[commands] provider.set_model_field: invalid integer",
+                    extra={"_fields": {"name": name, "model_name": model_name, "value": value_raw}},
+                )
+                return f"✗ '{value_raw}' is not a valid integer (or 'inherit')"
+        save_yaml(path, data)
+        self._emit_reloaded(name)
+        log.config.info(
+            "[commands] provider.set_model_field: exit — updated",
+            extra={
+                "_fields": {"name": name, "model_name": model_name, "field": field, "value": value_raw}
+            },
+        )
+        return f"✓ '{model_name}' {field} set to {value_raw} — applied immediately"
 
     # -- add -------------------------------------------------------------------
 

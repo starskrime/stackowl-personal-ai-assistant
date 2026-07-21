@@ -238,7 +238,13 @@ class AuditCommand(SlashCommand):
             try:
                 details_obj = json.loads(str(details_raw))
                 details_summary = json.dumps(details_obj)[:80]
-            except Exception:
+            except Exception as exc:
+                log.gateway.debug(
+                    "[commands] audit.format_table: details not valid JSON — "
+                    "falling back to raw string",
+                    exc_info=exc,
+                    extra={"_fields": {"audit_id": r.get("audit_id")}},
+                )
                 details_summary = str(details_raw)[:80]
             line = (
                 f"{str(r.get('audit_id', '')):<8} "
