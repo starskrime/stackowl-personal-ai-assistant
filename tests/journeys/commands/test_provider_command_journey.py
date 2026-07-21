@@ -269,3 +269,34 @@ async def test_provider_guided_add_flow_full_journey(
     live_provider = live_registry.get(catalog_name)
     assert live_provider.name == catalog_name
     assert live_registry.get_by_tier(tier).name == catalog_name
+
+
+async def test_provider_added_to_two_tiers_via_tier_add_is_routable_from_both(
+    tmp_yaml: Path,
+) -> None:
+    """End-to-end proof of the core new capability: a provider configured
+    once, added to a SECOND tier via /tier add, ends up in BOTH tiers' live
+    routing pools — not just persisted twice under two different names."""
+    from stackowl.config.settings import Settings
+    from stackowl.providers.registry import ProviderRegistry
+
+    deps = CommandDeps(event_bus=MagicMock())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+    registry = CommandRegistry.instance()
+
+    add_reply = await registry.dispatch(
+        "provider", "add multiprov openai gpt-4o fast", make_state()
+    )
+    assert "✓" in add_reply.text
+
+    tier_reply = await registry.dispatch("tier", "add standard multiprov", make_state())
+    assert "✓" in tier_reply.text
+    assert "standard" in tier_reply.text
+
+    data = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
+    persisted = next(p for p in data["providers"] if p["name"] == "multiprov")
+    assert persisted["tiers"] == ["fast", "standard"]
+
+    live_registry = ProviderRegistry.from_settings(Settings())
+    assert live_registry.get_with_cascade("fast").name == "multiprov"
+    assert live_registry.get_with_cascade("standard").name == "multiprov"
