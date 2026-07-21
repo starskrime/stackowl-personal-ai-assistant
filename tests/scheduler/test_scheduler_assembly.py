@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+import yaml
 
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.channels.telegram.settings import TelegramSettings
@@ -18,7 +19,13 @@ from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.router import NotificationRouter
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.registry import ProviderRegistry
-from stackowl.scheduler.assembly import SchedulerAssembly, SchedulerComponents, _build_health_alert_sink
+from stackowl.scheduler import assembly as assembly_module
+from stackowl.scheduler.assembly import (
+    SchedulerAssembly,
+    SchedulerComponents,
+    _build_health_alert_sink,
+    _maybe_notify_unset_timezone,
+)
 from stackowl.scheduler.base import HandlerRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -52,6 +59,17 @@ def _reset_registry() -> Any:
     yield
     HandlerRegistry.reset()
     ChannelRegistry.instance().reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_background_tasks() -> Any:
+    """assembly._background_tasks is process-wide (every SchedulerAssembly.build()
+    call shares it, unlike JobScheduler.run()'s own per-instance ``inflight``
+    set) — clear it around each test so a task left over from one test can
+    never be mistaken by _drain_background_task() for a different test's task."""
+    assembly_module._background_tasks.clear()
+    yield
+    assembly_module._background_tasks.clear()
 
 
 def _registry() -> ProviderRegistry:
@@ -458,3 +476,150 @@ async def test_health_alert_sink_delivers_critical_alert_with_default_brief_sett
         "the default BriefSettings().channels must resolve to a registered, "
         "deliverable channel — not the structurally-dead 'cli' default"
     )
+
+
+# ---------------------------------------------------------------------------
+# _maybe_notify_unset_timezone — best-effort, non-blocking, notify-not-write
+# ---------------------------------------------------------------------------
+
+
+async def _drain_background_task() -> None:
+    """Await the single fire-and-forget task _maybe_notify_unset_timezone just
+    scheduled, so its (mocked-network) body finishes before assertions run."""
+    assert len(assembly_module._background_tasks) == 1
+    task = next(iter(assembly_module._background_tasks))
+    await task
+
+
+def _isolated_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, timezone: str | None = None
+) -> Settings:
+    """Build a Settings() sourced entirely from an isolated temp YAML file.
+
+    NOTE: Settings(telegram_channel=TelegramSettings(...)) style constructor
+    kwargs do NOT override the env/YAML sources in this codebase's
+    settings_customise_sources (init_settings is not in the returned source
+    tuple — a separate, pre-existing, out-of-scope finding). Every field this
+    test needs must therefore come from the YAML file itself, exactly like
+    the tmp_yaml-fixture pattern used across the rest of this test suite —
+    not from constructor kwargs, which are silently discarded.
+    """
+    # NOT test_mode: True — these tests exercise the real (fake-adapter-backed)
+    # delivery path, and TestModeGuard blocks notifications.router.deliver.
+    data: dict[str, Any] = {
+        "telegram_channel": {"allowed_user_ids": [12345]},
+    }
+    if timezone is not None:
+        data["system"] = {"timezone": timezone}
+    cfg = tmp_path / "test_stackowl.yaml"
+    cfg.write_text(yaml.dump(data), encoding="utf-8")
+    monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(cfg))
+    return Settings()
+
+
+async def test_notify_unset_timezone_detects_and_notifies_without_writing(
+    tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_detect() -> str:
+        return "America/Chicago"
+
+    monkeypatch.setattr(
+        "stackowl.infra.net.timezone_detect.detect_timezone_from_ip", _fake_detect
+    )
+    adapter = _FakeTelegramAdapter()
+    ChannelRegistry.instance().register(adapter)  # type: ignore[arg-type]
+    settings = _isolated_settings(tmp_path, monkeypatch)
+    assert settings.system.timezone == "UTC"
+    router = NotificationRouter(db=tmp_db, settings=settings)
+    deliverer = ProactiveDeliverer(
+        router=router, registry=ChannelRegistry.instance(), settings=settings
+    )
+
+    _maybe_notify_unset_timezone(tmp_db, settings, deliverer)
+    await _drain_background_task()
+
+    assert len(adapter.sends) == 1
+    assert "America/Chicago" in adapter.sends[0]
+    assert "/config detect-timezone" in adapter.sends[0]
+    # Detection only NOTIFIES — it must never write system.timezone itself.
+    assert settings.system.timezone == "UTC"
+
+
+async def test_notify_unset_timezone_detection_failure_suggests_manual_set(
+    tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_detect_fails() -> None:
+        return None
+
+    monkeypatch.setattr(
+        "stackowl.infra.net.timezone_detect.detect_timezone_from_ip", _fake_detect_fails
+    )
+    adapter = _FakeTelegramAdapter()
+    ChannelRegistry.instance().register(adapter)  # type: ignore[arg-type]
+    settings = _isolated_settings(tmp_path, monkeypatch)
+    router = NotificationRouter(db=tmp_db, settings=settings)
+    deliverer = ProactiveDeliverer(
+        router=router, registry=ChannelRegistry.instance(), settings=settings
+    )
+
+    _maybe_notify_unset_timezone(tmp_db, settings, deliverer)
+    await _drain_background_task()
+
+    assert len(adapter.sends) == 1
+    assert "/config set system.timezone" in adapter.sends[0]
+
+
+async def test_notify_unset_timezone_skips_entirely_when_already_configured(
+    tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-default system.timezone must never trigger a network call or send."""
+    called = False
+
+    async def _fake_detect() -> str:
+        nonlocal called
+        called = True
+        return "America/Chicago"
+
+    monkeypatch.setattr(
+        "stackowl.infra.net.timezone_detect.detect_timezone_from_ip", _fake_detect
+    )
+    adapter = _FakeTelegramAdapter()
+    ChannelRegistry.instance().register(adapter)  # type: ignore[arg-type]
+    settings = _isolated_settings(tmp_path, monkeypatch, timezone="America/New_York")
+    router = NotificationRouter(db=tmp_db, settings=settings)
+    deliverer = ProactiveDeliverer(
+        router=router, registry=ChannelRegistry.instance(), settings=settings
+    )
+
+    _maybe_notify_unset_timezone(tmp_db, settings, deliverer)
+
+    assert len(assembly_module._background_tasks) == 0
+    assert called is False
+    assert adapter.sends == []
+
+
+async def test_notify_unset_timezone_only_notifies_once_per_install(
+    tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_detect() -> str:
+        return "America/Chicago"
+
+    monkeypatch.setattr(
+        "stackowl.infra.net.timezone_detect.detect_timezone_from_ip", _fake_detect
+    )
+    adapter = _FakeTelegramAdapter()
+    ChannelRegistry.instance().register(adapter)  # type: ignore[arg-type]
+    settings = _isolated_settings(tmp_path, monkeypatch)
+    router = NotificationRouter(db=tmp_db, settings=settings)
+    deliverer = ProactiveDeliverer(
+        router=router, registry=ChannelRegistry.instance(), settings=settings
+    )
+
+    _maybe_notify_unset_timezone(tmp_db, settings, deliverer)
+    await _drain_background_task()
+    assert len(adapter.sends) == 1
+
+    # A second boot (still UTC — the notify never wrote it) must not re-notify.
+    _maybe_notify_unset_timezone(tmp_db, settings, deliverer)
+    await _drain_background_task()
+    assert len(adapter.sends) == 1, "must notify at most once per install"

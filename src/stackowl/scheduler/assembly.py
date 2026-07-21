@@ -21,6 +21,7 @@ Per the wiring plan (gleaming-finding-puppy.md, Commit E):
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -69,6 +70,12 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.supervisor.supervisor import Supervisor
     from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
+
+# Holds references to fire-and-forget background tasks spawned during build()
+# (e.g. _maybe_notify_unset_timezone) — asyncio only weakly tracks a task
+# created via create_task(); with no other reference held, it can be
+# garbage-collected mid-execution. Self-discards via add_done_callback.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 _INSERT_JOB_SQL = """
 INSERT INTO jobs
@@ -967,6 +974,10 @@ class SchedulerAssembly:
             schedule="daily@06:00", next_hour=6,
         )
 
+        # Best-effort, non-blocking: notify (never silently auto-write) if the
+        # owner's timezone is still the untouched UTC default.
+        _maybe_notify_unset_timezone(db, settings, proactive_deliverer)
+
         log.scheduler.info("[scheduler] assembly.build: exit — all wired")
         return SchedulerComponents(
             scheduler=scheduler,
@@ -1140,6 +1151,93 @@ def _build_health_alert_sink(
         await proactive_deliverer.deliver(note)
 
     return _alert
+
+
+_TIMEZONE_UNSET_NOTIFY_EVENT = "timezone_autodetect_notified"
+
+
+def _maybe_notify_unset_timezone(
+    db: DbPool, settings: Settings, proactive_deliverer: ProactiveDeliverer | None
+) -> None:
+    """Fire-and-forget: once per install, if ``system.timezone`` is still the
+    ``"UTC"`` default, best-effort auto-detect a timezone from this network's
+    public IP and TELL the owner what was found — never auto-write it (a wrong
+    guess, e.g. a VPN/hosted box, would silently mis-schedule every daily@ job
+    worse than a visibly-default UTC does). Never blocks boot: scheduled as a
+    background task, and the one-time event is recorded on EITHER outcome
+    (detected or not) so an unreachable network doesn't retry-notify on every
+    future boot — the owner can always run /config detect-timezone by hand.
+    """
+    if settings.system.timezone != "UTC" or proactive_deliverer is None:
+        return
+    brief_channels = list(settings.brief.channels)
+    channel = brief_channels[0] if brief_channels else None
+    if channel is None:
+        return
+    target = _resolve_owner_addresses(settings, [channel]).get(channel)
+    if target is None:
+        return
+
+    async def _check_and_notify() -> None:
+        from stackowl.setup.onboarding_table import OnboardingTable
+
+        try:
+            already_notified = await OnboardingTable.has_event(
+                db, _TIMEZONE_UNSET_NOTIFY_EVENT
+            )
+        except Exception as exc:  # noqa: BLE001 — a bookkeeping read must never crash boot
+            log.scheduler.warning(
+                "[scheduler] assembly.timezone_notify: has_event check failed", exc_info=exc
+            )
+            return
+        if already_notified:
+            log.scheduler.debug(
+                "[scheduler] assembly.timezone_notify: already notified — skipping"
+            )
+            return
+        from stackowl.infra.net.timezone_detect import detect_timezone_from_ip
+        from stackowl.notifications.router import Notification
+
+        detected = await detect_timezone_from_ip()
+        if detected is not None:
+            message = (
+                "Your system timezone is unset (defaulting to UTC), so "
+                "daily-scheduled jobs run in UTC, not your local time. I "
+                f"detected {detected} from this network's public IP — reply "
+                "/config detect-timezone to apply it, or /config set "
+                "system.timezone <IANA name> for a different zone."
+            )
+        else:
+            message = (
+                "Your system timezone is unset (defaulting to UTC), so "
+                "daily-scheduled jobs run in UTC, not your local time. I "
+                "could not auto-detect it — set yours with /config set "
+                "system.timezone <IANA name> (e.g. Europe/Istanbul)."
+            )
+        try:
+            note = Notification(
+                message=message,
+                urgency="normal",
+                category="system_config",
+                channel_name=channel,
+                target=target,
+                ephemeral=False,
+            )
+            await proactive_deliverer.deliver(note)
+        except Exception as exc:  # noqa: BLE001 — best-effort notice, never crash boot
+            log.scheduler.warning(
+                "[scheduler] assembly.timezone_notify: delivery failed", exc_info=exc
+            )
+        try:
+            await OnboardingTable.record_event(db, _TIMEZONE_UNSET_NOTIFY_EVENT)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping must never crash boot
+            log.scheduler.warning(
+                "[scheduler] assembly.timezone_notify: record_event failed", exc_info=exc
+            )
+
+    task = asyncio.create_task(_check_and_notify())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 def _resolve_owner_addresses(
