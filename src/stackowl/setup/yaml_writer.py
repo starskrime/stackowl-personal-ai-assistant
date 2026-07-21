@@ -58,7 +58,7 @@ def write_provider_config(
         new_entry["base_url"] = base_url
     if default_model:
         new_entry["default_model"] = default_model
-    new_entry["tier"] = entry.tier
+    new_entry["tiers"] = [entry.tier]
 
     providers_list: list[Any] = data.get("providers") or []
     if not isinstance(providers_list, list):

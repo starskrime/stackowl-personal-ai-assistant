@@ -103,10 +103,10 @@ def providers_list(ctx: typer.Context) -> None:
     if not settings.providers:
         typer.echo("No providers configured.")
         return
-    typer.echo(f"  {'NAME':<20} {'PROTOCOL':<12} {'TIER':<12} STATUS")
+    typer.echo(f"  {'NAME':<20} {'PROTOCOL':<12} {'TIERS':<20} STATUS")
     for prov in settings.providers:
         status = "enabled" if prov.enabled else "disabled"
-        typer.echo(f"  {prov.name:<20} {prov.protocol:<12} {prov.tier:<12} {status}")
+        typer.echo(f"  {prov.name:<20} {prov.protocol:<12} {','.join(prov.tiers):<20} {status}")
     log.cli.debug(
         "[cli] providers_list: exit",
         extra={"_fields": {"count": len(settings.providers)}},
@@ -247,7 +247,7 @@ def providers_add() -> None:
                           base_url_override=base_url_override,
                           default_model_override=model_override)
     if tier != entry.tier:
-        update_provider_field(config_path, entry.name, "tier", tier)
+        update_provider_field(config_path, entry.name, "tiers", [tier])
     typer.echo(f"  ✓ Provider '{entry.name}' written to config")
 
     # 5. Connection test
@@ -276,7 +276,7 @@ def providers_remove(
         typer.echo(f"✗ Provider not found: {name}", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"  {name}  tier={raw.get('tier', '?')}  base_url={raw.get('base_url', '?')}")
+    typer.echo(f"  {name}  tiers={raw.get('tiers', ['?'])}  base_url={raw.get('base_url', '?')}")
     if not typer.confirm(f"Remove provider '{name}'?", default=False):
         typer.echo("  Aborted.")
         raise typer.Exit(0)
@@ -315,11 +315,12 @@ def providers_edit(
         typer.echo(f"✗ Provider not found: {name}", err=True)
         raise typer.Exit(1)
 
+    current_tier = prov.tiers[0]
     typer.echo(f"\n  Editing: {name}")
-    typer.echo(f"  tier={prov.tier}  base_url={prov.base_url or '(none)'}  "
+    typer.echo(f"  tiers={list(prov.tiers)}  base_url={prov.base_url or '(none)'}  "
                f"model={prov.default_model}  rate_limit={prov.rate_limit_rpm or 'unlimited'}")
 
-    new_tier = _choose_tier(default=prov.tier)
+    new_tier = _choose_tier(default=current_tier)
     new_base_url = typer.prompt("Base URL", default=prov.base_url or "").strip()
     new_model = typer.prompt("Default model", default=prov.default_model).strip()
     raw_limit = typer.prompt(
@@ -331,9 +332,9 @@ def providers_edit(
         new_rate_limit = prov.rate_limit_rpm
 
     changed: list[str] = []
-    if new_tier != prov.tier:
-        update_provider_field(config_path, name, "tier", new_tier)
-        changed.append("tier")
+    if new_tier != current_tier:
+        update_provider_field(config_path, name, "tiers", [new_tier])
+        changed.append("tiers")
     if new_base_url != (prov.base_url or ""):
         update_provider_field(config_path, name, "base_url", new_base_url or None)
         changed.append("base_url")
@@ -388,7 +389,7 @@ def providers_test(
         base_url=prov.base_url or "",
         default_model=prov.default_model,
         models=(),
-        tier=prov.tier,
+        tier=prov.tiers[0],
         needs_api_key=bool(prov.api_key),
         is_local=not bool(prov.api_key),
     )

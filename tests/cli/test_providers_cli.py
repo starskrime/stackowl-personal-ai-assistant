@@ -236,7 +236,7 @@ def test_providers_edit_changes_tier(
     assert result.exit_code == 0, result.output
     data = _read_yaml(StackowlHome.config_file())
     ollama = next(e for e in data["providers"] if e["name"] == "ollama")
-    assert ollama["tier"] == "standard"
+    assert ollama["tiers"] == ["standard"]
     assert ollama["base_url"] == "http://192.168.1.100:11434/v1"  # unchanged
 
 
