@@ -28,8 +28,9 @@ from stackowl.objectives.model import Objective, SubgoalSpec
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.mock_provider import MockProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.scheduler.job import Job
 
 
@@ -715,6 +716,110 @@ async def test_completion_falls_back_when_no_provider_registry(pool: DbPool) -> 
 
     _job, message, _category = deliverer.calls[-1]
     assert "the real output" in message  # a real sub-goal result, not just the intent
+
+
+# ------------------------------ Task 15: recombination threads resolved model
+
+
+class _ModelCapturingSynthProvider(ModelProvider):
+    """Records the ``model`` kwarg its ``complete()`` was called with — proves
+    ``_synthesize_completion`` forwards the RESOLVED model rather than
+    hardcoding ``model=""``. Returns a fixed canned reply."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.seen_model: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-synth"
+
+    @property
+    def protocol(self) -> str:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_model = model
+        return CompletionResult(
+            content=self._raw, input_tokens=1, output_tokens=1,
+            model="model-capturing-synth", provider_name=self.name, duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+async def test_completion_threads_resolved_powerful_model_to_complete(
+    pool: DbPool,
+) -> None:
+    """``_synthesize_completion`` resolves via
+    ``resolve_capable_or_degrade_and_model("powerful")`` and threads the
+    RESOLVED model into its ``provider.complete()`` call on the happy
+    (exact-tier-match, non-degraded) path.
+
+    Genuinely discriminating: if the driver still called the old
+    ``resolve_capable_or_degrade`` (dropping the model) or hardcoded
+    ``model=""``, ``seen_model`` would stay "" instead of the sentinel
+    resolved model, and this assertion would fail.
+    """
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["gather prices", "compare options"])
+    backend = _FakeBackend(text="step result")
+    deliverer = _FakeDeliverer()
+    capturing_provider = _ModelCapturingSynthProvider("The cheapest option is Plan B.")
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "mock-powerful", capturing_provider,
+        models=(ModelRoute(model="synth-powerful-resolved", tiers=("powerful",)),),
+    )
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, job_deliverer=deliverer, provider_registry=registry,
+    )
+
+    await handler.execute(_driver_job())  # step 1
+    await handler.execute(_driver_job())  # step 2
+    await handler.execute(_driver_job())  # completion tick
+
+    assert capturing_provider.seen_model == "synth-powerful-resolved"
+    _job, message, _category = deliverer.calls[-1]
+    assert "The cheapest option is Plan B." in message
+
+
+async def test_completion_degraded_threads_resolved_substitute_model_to_complete(
+    pool: DbPool,
+) -> None:
+    """Same model-threading contract on the DEGRADED path: when no 'powerful'
+    provider exists, resolve_capable_or_degrade_and_model substitutes the
+    most-capable available tier's OWN resolved model — not "" and not the
+    absent powerful tier's model — and that substitute's model still reaches
+    ``provider.complete()``."""
+    store = ObjectiveStore(pool, "principal-default")
+    await _make_objective(store, ["gather prices", "compare options"])
+    backend = _FakeBackend(text="step result")
+    deliverer = _FakeDeliverer()
+    capturing_provider = _ModelCapturingSynthProvider("Plan B wins on price.")
+    # Only a 'standard'-tier mock is registered — no 'powerful' provider exists,
+    # so resolving 'powerful' must degrade to this substitute's own model.
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "mock-standard", capturing_provider,
+        models=(ModelRoute(model="synth-standard-substitute-resolved", tiers=("standard",)),),
+    )
+    handler = ObjectiveDriverHandler(
+        db=pool, backend=backend, job_deliverer=deliverer, provider_registry=registry,
+    )
+
+    await handler.execute(_driver_job())  # step 1
+    await handler.execute(_driver_job())  # step 2
+    await handler.execute(_driver_job())  # completion tick
+
+    assert capturing_provider.seen_model == "synth-standard-substitute-resolved"
+    _job, message, _category = deliverer.calls[-1]
+    assert "Plan B wins on price." in message
 
 
 # ------------------------------------------------- Task 8: epic branch -----

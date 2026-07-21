@@ -866,8 +866,10 @@ class ObjectiveDriverHandler(JobHandler):
             # and SURFACE the degrade (mirrors ParliamentSynthesizer.synthesize)
             # so a weak-model recombination is never presented as a clean
             # powerful-tier one.
-            provider, degraded_from = self._provider_registry.resolve_capable_or_degrade(
-                _RECOMBINATION_TIER
+            provider, model, degraded_from = (
+                self._provider_registry.resolve_capable_or_degrade_and_model(
+                    _RECOMBINATION_TIER
+                )
             )
             if degraded_from is not None:
                 log.scheduler.warning(
@@ -876,12 +878,13 @@ class ObjectiveDriverHandler(JobHandler):
                     "substitute (DEGRADED)",
                     extra={"_fields": {
                         "objective_id": objective.objective_id,
-                        "provider_name": provider.name, "degraded_from": degraded_from,
+                        "provider_name": provider.name, "model": model,
+                        "degraded_from": degraded_from,
                     }},
                 )
             result = await provider.complete(
                 messages,
-                model="",
+                model=model,
                 max_tokens=_RECOMBINATION_MAX_TOKENS,
                 temperature=_RECOMBINATION_TEMPERATURE,
             )

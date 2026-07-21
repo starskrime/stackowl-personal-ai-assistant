@@ -14,8 +14,9 @@ from stackowl.objectives.decomposer import (
     _MAX_SUBGOALS,
     ObjectiveDecomposer,
 )
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.mock_provider import MockProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 
 def _registry(mock: MockProvider) -> ProviderRegistry:
@@ -241,3 +242,81 @@ async def test_decompose_epic_provider_failure_falls_back_single_step() -> None:
     specs = await d.decompose_epic_specs("build a feature")
     assert len(specs) == 1
     assert specs[0].depends_on == []
+
+
+# --------------------------------------------------- resolved-model threading
+
+
+class _ModelCapturingDecomposerProvider(ModelProvider):
+    """Records the ``model`` kwarg its ``complete()`` was called with — proves
+    the decomposer forwards the RESOLVED "standard"-tier model rather than
+    hardcoding ``model=""``. Returns a fixed canned reply."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.seen_model: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-decomposer"
+
+    @property
+    def protocol(self) -> str:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_model = model
+        return CompletionResult(
+            content=self._raw, input_tokens=1, output_tokens=1,
+            model="model-capturing-decomposer", provider_name=self.name, duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+@pytest.mark.asyncio
+async def test_decompose_specs_threads_resolved_standard_model_to_complete() -> None:
+    """``decompose_specs`` resolves the "standard"-tier provider+model via
+    ``get_with_cascade_and_model("standard")`` and threads the RESOLVED model
+    into its ``provider.complete()`` call.
+
+    Genuinely discriminating: if ``decompose_specs`` still called the old
+    ``get_with_cascade`` (dropping the model) or hardcoded ``model=""``,
+    ``seen_model`` would stay "" instead of the sentinel resolved model, and
+    this assertion would fail.
+    """
+    capturing_provider = _ModelCapturingDecomposerProvider("fetch\nsummarize")
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "mock-standard", capturing_provider,
+        models=(ModelRoute(model="decomp-standard-resolved", tiers=("standard",)),),
+    )
+    d = ObjectiveDecomposer(provider_registry=registry)
+
+    specs = await d.decompose_specs("watch the page and report changes")
+
+    assert capturing_provider.seen_model == "decomp-standard-resolved"
+    assert [s.description for s in specs] == ["fetch", "summarize"]
+
+
+@pytest.mark.asyncio
+async def test_decompose_epic_specs_threads_resolved_standard_model_to_complete() -> None:
+    """Same model-threading contract as decompose_specs, for the separate
+    decompose_epic_specs call site (Task #4's graph-aware decomposition)."""
+    capturing_provider = _ModelCapturingDecomposerProvider("set up schema\nwrite endpoint")
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "mock-standard", capturing_provider,
+        models=(ModelRoute(model="decomp-epic-standard-resolved", tiers=("standard",)),),
+    )
+    d = ObjectiveDecomposer(provider_registry=registry)
+
+    specs = await d.decompose_epic_specs("build a feature")
+
+    assert capturing_provider.seen_model == "decomp-epic-standard-resolved"
+    assert [s.description for s in specs] == ["set up schema", "write endpoint"]

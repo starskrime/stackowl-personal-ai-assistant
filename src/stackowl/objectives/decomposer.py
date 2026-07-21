@@ -163,10 +163,10 @@ class ObjectiveDecomposer:
         messages = [Message(role="user", content=prompt)]
         t0 = time.monotonic()
         try:
-            provider = self._provider_registry.get_with_cascade(_DECOMP_TIER)
+            provider, model = self._provider_registry.get_with_cascade_and_model(_DECOMP_TIER)
             result = await provider.complete(
                 messages,
-                model="",
+                model=model,
                 max_tokens=_DECOMP_MAX_TOKENS,
                 temperature=_DECOMP_TEMPERATURE,
             )
@@ -228,10 +228,10 @@ class ObjectiveDecomposer:
         messages = [Message(role="user", content=prompt)]
         t0 = time.monotonic()
         try:
-            provider = self._provider_registry.get_with_cascade(_DECOMP_TIER)
+            provider, model = self._provider_registry.get_with_cascade_and_model(_DECOMP_TIER)
             result = await provider.complete(
                 messages,
-                model="",
+                model=model,
                 max_tokens=_DECOMP_MAX_TOKENS,
                 temperature=_DECOMP_TEMPERATURE,
             )
