@@ -1180,21 +1180,8 @@ class ProviderCommand(SlashCommand):
                 extra={"_fields": {"name": name}},
             )
             return f"✗ Provider '{name}' not found"
-        # Migrate-on-touch: an entry written before this provider adopted
-        # multi-tier membership (or before Task 9 lands) may still carry the
-        # legacy singular `tier` scalar instead of `tiers`. Fold it in here so
-        # `_set_tier` stays additive/idempotent regardless of which shape the
-        # on-disk entry is currently in — mirrors ProviderConfig's own
-        # legacy-`tier` acceptance (config/provider.py).
-        current_tiers = list(target.get("tiers") or [])
-        legacy_tier = target.pop("tier", None)
-        migrated_legacy = legacy_tier is not None and legacy_tier not in current_tiers
-        if migrated_legacy:
-            current_tiers.append(legacy_tier)
+        current_tiers = target.get("tiers") or []
         if tier in current_tiers:
-            if migrated_legacy:
-                target["tiers"] = current_tiers
-                save_yaml(path, data)
             log.config.debug(
                 "[commands] provider.set_tier: exit — already in tier",
                 extra={"_fields": {"name": name, "tier": tier}},
