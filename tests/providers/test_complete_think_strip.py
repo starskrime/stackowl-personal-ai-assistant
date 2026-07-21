@@ -414,7 +414,8 @@ async def test_complete_does_not_send_fixed_4096_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The artificial 4096 output cap is gone: with a resolved window the call's
-    max_tokens reflects the window, not the flat default."""
+    max_tokens reflects the window (minus the input-headroom reserve), not the
+    flat default."""
     from stackowl.providers import model_window
 
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
@@ -425,7 +426,9 @@ async def test_complete_does_not_send_fixed_4096_cap(
 
     await provider.complete([Message(role="user", content="hi")], model="")
 
-    assert completions.calls[0]["max_tokens"] == 32768  # window-derived, not 4096
+    # window (32768) minus "hi"'s ~1 estimated token minus the 2000-token
+    # input-headroom safety margin — window-derived, not 4096.
+    assert completions.calls[0]["max_tokens"] == 30767
 
 
 @pytest.mark.asyncio
@@ -451,6 +454,53 @@ async def test_complete_caps_output_at_max_output_tokens_not_the_whole_window(
 
 
 @pytest.mark.asyncio
+async def test_complete_reserves_headroom_for_a_large_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live incident 2026-07-21: max_output_tokens (250000) sitting close to a
+    large resolved window (262144) leaves only ~12144 tokens of headroom for
+    the PROMPT — a real ~12145-token prompt then makes input + output exceed
+    the window, a 400 on every call (this is NeraAiRaw's actual reported
+    numbers). _output_cap must reserve real headroom for the estimated input
+    size, shrinking max_tokens instead of always requesting the flat
+    max_output_tokens ceiling regardless of prompt size."""
+    from stackowl.providers import model_window
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "qwen3.5:2b"), 262144)
+    completions = _ScriptedCompletions(["an answer"])
+    provider = _make_provider(_FakeClient(completions))
+
+    big_prompt = "x" * (12145 * 4)  # estimate_tokens() ⇒ ~12145 tokens (one word run)
+    await provider.complete([Message(role="user", content=big_prompt)], model="")
+
+    max_tokens = completions.calls[0]["max_tokens"]
+    # The old behavior (min(window, max_output_tokens) alone) always requested
+    # 250000 here — reproducing the live 400. The fix must leave real room.
+    assert max_tokens < 250000
+    assert 12145 + max_tokens < 262144
+
+
+@pytest.mark.asyncio
+async def test_complete_floors_output_when_prompt_leaves_almost_no_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prompt large enough to leave near-zero headroom must floor to the
+    minimum usable output budget, never a zero/negative max_tokens."""
+    from stackowl.providers import model_window
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "qwen3.5:2b"), 32768)
+    completions = _ScriptedCompletions(["an answer"])
+    provider = _make_provider(_FakeClient(completions))
+
+    huge_prompt = "x" * (32000 * 4)  # ~32000 tokens — nearly the whole 32768 window
+    await provider.complete([Message(role="user", content=huge_prompt)], model="")
+
+    assert completions.calls[0]["max_tokens"] == 256  # floored, matches _MIN_OUTPUT_TOKENS
+
+
+@pytest.mark.asyncio
 async def test_stream_does_not_send_fixed_max_output_tokens_when_window_resolves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -469,7 +519,9 @@ async def test_stream_does_not_send_fixed_max_output_tokens_when_window_resolves
     async for _ in provider.stream([Message(role="user", content="hi")], model=""):
         pass
 
-    assert completions.calls[0]["max_tokens"] == 32768  # window-derived, not the flat config value
+    # window (32768) minus "hi"'s ~1 estimated token minus the 2000-token
+    # input-headroom safety margin — window-derived, not the flat config value.
+    assert completions.calls[0]["max_tokens"] == 30767
 
 
 @pytest.mark.asyncio
@@ -636,6 +688,40 @@ async def test_complete_with_tools_threads_model_to_every_call_site(
 
 
 @pytest.mark.asyncio
+async def test_complete_with_tools_wrapup_round_is_window_aware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live incident 2026-07-21 follow-up: the terminal wrap-up round used to
+    request the FLAT ``self._config.max_output_tokens`` unconditionally — the
+    one internal call site that never went through ``_output_cap`` at all, so
+    it never respected the model's resolved window (or the input-headroom fix)
+    even after the in-loop round did. With a small resolved window, the
+    wrap-up round's max_tokens must reflect that window, not the flat
+    (much larger) config ceiling."""
+    from stackowl.providers import model_window
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "qwen3.5:2b"), 5000)
+    completions = _ToolThenWrapupCompletions()
+    provider = _make_provider(_FakeClient(completions))
+
+    async def _dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "ok"
+
+    await provider.complete_with_tools(
+        user_text="hi",
+        system_text=None,
+        tool_schemas=[{"type": "function", "function": {"name": "noop_tool", "parameters": {}}}],
+        tool_dispatcher=_dispatcher,
+        max_iterations=1,
+    )
+
+    wrapup_max_tokens = completions.calls[1]["max_tokens"]
+    assert wrapup_max_tokens < 250000  # not the flat config default
+    assert wrapup_max_tokens <= 5000  # bounded by the resolved window, not blowing past it
+
+
+@pytest.mark.asyncio
 async def test_output_cap_uses_per_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
     from stackowl.providers import model_window
 
@@ -649,5 +735,5 @@ async def test_output_cap_uses_per_model_override(monkeypatch: pytest.MonkeyPatc
         ),
     )
     provider = OpenAIProvider(config, api_key="")
-    assert provider._output_cap("acme-v1-mini") == 9000  # noqa: SLF001
-    assert provider._output_cap("qwen3.5:2b") == 250000  # noqa: SLF001 — default_model, unaffected
+    assert provider._output_cap("acme-v1-mini", []) == 9000  # noqa: SLF001
+    assert provider._output_cap("qwen3.5:2b", []) == 250000  # noqa: SLF001 — default_model, unaffected (no window)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 import openai
@@ -181,6 +181,38 @@ class _ThinkStreamFilter:
 # BudgetGovernor) supplies one; this fallback covers a non-budgeted caller.
 _ROUND_DEADLINE_FALLBACK_S = 120.0
 
+# _output_cap()'s input-headroom guard (live incident 2026-07-21): estimate_tokens()
+# is an approximation, not the provider's real tokenizer count, and chat templates
+# add per-message structural overhead the heuristic can't see — reserve extra room
+# rather than cutting headroom exactly at the estimate.
+_INPUT_TOKEN_SAFETY_MARGIN = 2000
+# Never request less than this as an output budget — a smaller cap isn't a usable
+# answer size. Flooring here (with a loud warning) beats requesting a tiny/negative
+# max_tokens the provider would reject anyway.
+_MIN_OUTPUT_TOKENS = 256
+
+
+def _message_content_text(message: object) -> str:
+    """Extract the plain-text content of a ``Message`` or an OpenAI-shaped dict.
+
+    ``_output_cap`` sees both shapes: ``list[Message]`` from ``stream()``/
+    ``complete()``, and ``list[dict[str, Any]]`` from ``complete_with_tools``'s
+    already-trimmed history. Anthropic-style list content blocks (rare here,
+    more common in tool-result histories) are flattened to their text parts.
+    """
+    content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return " ".join(parts)
+    return ""
+
 
 class OpenAIProvider(ModelProvider):
     """OpenAI-compatible provider — one class handles all OpenAI-protocol endpoints."""
@@ -255,7 +287,7 @@ class OpenAIProvider(ModelProvider):
                 # window-derived) capped value is inconsistent with the other two
                 # call paths for no reason. Route through the same helper so all
                 # three call paths agree.
-                max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
+                max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model, messages)),
                 stream=True,
                 stream_options={"include_usage": True},
                 **self._ollama_extra_body(resolved_model),
@@ -540,7 +572,7 @@ class OpenAIProvider(ModelProvider):
                 return await self._client.chat.completions.create(
                     model=resolved_model,
                     messages=_msgs,  # type: ignore[arg-type]
-                    max_tokens=self._output_cap(resolved_model),
+                    max_tokens=self._output_cap(resolved_model, _msgs),
                     tools=tool_schemas,  # type: ignore[arg-type]
                     **self._ollama_extra_body(resolved_model),
                 )
@@ -850,7 +882,7 @@ class OpenAIProvider(ModelProvider):
                 return await self._client.chat.completions.create(
                     model=resolved_model,
                     messages=messages,  # type: ignore[arg-type]
-                    max_tokens=self._config.max_output_tokens,
+                    max_tokens=self._output_cap(resolved_model, messages),
                     **self._ollama_extra_body(resolved_model),
                 )
 
@@ -977,7 +1009,7 @@ class OpenAIProvider(ModelProvider):
             body["chat_template_kwargs"] = {"enable_thinking": False}
         return {"extra_body": body} if body else {}
 
-    def _output_cap(self, resolved_model: str) -> int:
+    def _output_cap(self, resolved_model: str, messages: Sequence[object]) -> int:
         """Output-token budget for a generation — as much as the model's window
         allows, never a small fixed cap, but NEVER the whole window either.
 
@@ -995,11 +1027,24 @@ class OpenAIProvider(ModelProvider):
         unaffected (``min`` picks the window) while capping a huge window to a
         response size that safely coexists with real prompt sizes.
 
+        That alone is NOT sufficient (live incident 2026-07-21): a generous
+        ``max_output_tokens`` (e.g. 250000) sitting close to the window (262144)
+        leaves only ~12000 tokens of headroom for the PROMPT — any real prompt
+        near or above that blows the window the same way, since ``max_output_tokens``
+        bounds output in isolation with no idea how big the prompt actually is.
+        Fixed by reserving real headroom for the estimated input size
+        (script-aware ``estimate_tokens`` — no hardcoded English, see
+        ``parliament/token_estimate.py``) plus ``_INPUT_TOKEN_SAFETY_MARGIN``.
+        Bounded below by ``_MIN_OUTPUT_TOKENS`` so a huge prompt degrades to the
+        smallest usable answer size rather than a zero/negative token request —
+        logged loudly, since that means the prompt itself may need trimming.
+
         Bounded by the RESOLVED model's own max_output_tokens (per-model
         override if ``resolved_model`` matches a ProviderConfig.models entry
         with one set, else the provider's own value) — see
         providers/model_config.py's resolve_model_override.
         """
+        from stackowl.parliament.token_estimate import estimate_tokens
         from stackowl.providers.model_config import resolve_model_override
         from stackowl.providers.model_window import cached_window
 
@@ -1009,7 +1054,23 @@ class OpenAIProvider(ModelProvider):
         window = cached_window(self._name, resolved_model)
         if window is None:
             return effective_max_output_tokens
-        return min(window, effective_max_output_tokens)
+
+        input_tokens = sum(estimate_tokens(_message_content_text(m)) for m in messages)
+        headroom = window - input_tokens - _INPUT_TOKEN_SAFETY_MARGIN
+        if headroom < _MIN_OUTPUT_TOKENS:
+            log.engine.warning(
+                "[openai] _output_cap: prompt leaves little/no headroom for output — "
+                "flooring to the minimum usable output budget",
+                extra={"_fields": {
+                    "provider": self._name,
+                    "model": resolved_model,
+                    "window": window,
+                    "input_tokens": input_tokens,
+                    "headroom": headroom,
+                }},
+            )
+            return _MIN_OUTPUT_TOKENS
+        return min(effective_max_output_tokens, headroom)
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("openai.complete")
@@ -1036,7 +1097,7 @@ class OpenAIProvider(ModelProvider):
             return await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
+                max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model, oai_msgs)),
                 **extra_body,
             )
 
@@ -1088,7 +1149,7 @@ class OpenAIProvider(ModelProvider):
                 return await self._client.chat.completions.create(
                     model=resolved_model,
                     messages=retry_msgs,  # type: ignore[arg-type]
-                    max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
+                    max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model, retry_msgs)),
                     **extra_body,
                 )
 
