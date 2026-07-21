@@ -25,7 +25,7 @@ from stackowl.parliament.positions_synthesis import synthesize_positions
 from stackowl.parliament.synthesis_parser import SynthesisParser
 from stackowl.parliament.synthesizer import ParliamentSynthesizer
 from stackowl.providers.base import CompletionResult, Message
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 _GOOD = "CONSENSUS: we agree on X\nRECOMMENDATION: ship it\n◆"
 _BAD = "uh, the models just kind of rambled without any structure here"
@@ -54,6 +54,7 @@ class _ScriptedSynthProvider:
     def __init__(self, outputs: list[str]) -> None:
         self._outputs = outputs
         self.calls = 0
+        self.seen_models: list[str] = []
 
     @property
     def name(self) -> str:
@@ -63,6 +64,7 @@ class _ScriptedSynthProvider:
         idx = min(self.calls, len(self._outputs) - 1)
         content = self._outputs[idx]
         self.calls += 1
+        self.seen_models.append(model)
         return CompletionResult(
             content=content,
             input_tokens=8,
@@ -80,6 +82,20 @@ class _ScriptedSynthProvider:
 def _registry(provider: _ScriptedSynthProvider) -> ProviderRegistry:
     registry = ProviderRegistry()
     registry.register_mock("synth", provider, tier="powerful")  # type: ignore[arg-type]
+    return registry
+
+
+def _registry_with_model(provider: _ScriptedSynthProvider, model: str) -> ProviderRegistry:
+    """Register ``provider`` on the "powerful" tier under an explicit model
+    route, so resolution returns a non-default ``model`` string (Task 12 —
+    proving the RESOLVED model reaches the provider's ``.complete(...)`` call,
+    not just that a call happened)."""
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "synth",
+        provider,  # type: ignore[arg-type]
+        models=(ModelRoute(model=model, tiers=("powerful",)),),
+    )
     return registry
 
 
@@ -142,6 +158,22 @@ async def test_synthesize_persistent_failure_stays_degraded_bounded_to_one_retry
     assert result.parse_ok is False, "persistently-unparseable synthesis stays degraded"
 
 
+@pytest.mark.asyncio
+async def test_synthesize_forwards_resolved_model_to_provider() -> None:
+    # Task 12 — ParliamentSynthesizer.synthesize resolves via
+    # resolve_capable_or_degrade_and_model, which must thread its resolved
+    # model string all the way into complete_synthesis_with_retry's internal
+    # provider.complete(...) call rather than the hardcoded model="".
+    provider = _ScriptedSynthProvider([_GOOD])
+    synth = ParliamentSynthesizer(
+        _registry_with_model(provider, "claude-opus-4-synthesis"), _ZeroConvergence()
+    )
+
+    await synth.synthesize(_session())
+
+    assert provider.seen_models == ["claude-opus-4-synthesis"]
+
+
 # ---------------------------------------------------------------------------
 # synthesize_positions (MoA entry point — shares the synthesis path)
 # ---------------------------------------------------------------------------
@@ -176,3 +208,21 @@ async def test_synthesize_positions_persistent_failure_stays_degraded() -> None:
 
     assert provider.calls == 2
     assert result.parse_ok is False
+
+
+@pytest.mark.asyncio
+async def test_synthesize_positions_forwards_resolved_model_to_provider() -> None:
+    # Task 12 — synthesize_positions (MoA entry point) resolves via
+    # resolve_capable_or_degrade_and_model too; its complete_synthesis_with_retry
+    # call must thread the resolved model, not hardcode model="".
+    provider = _ScriptedSynthProvider([_GOOD])
+    result = await synthesize_positions(
+        providers=_registry_with_model(provider, "gpt-5.1-synthesis"),
+        parser=SynthesisParser(),
+        system_prompt="You are a synthesis engine. Use CONSENSUS:/RECOMMENDATION:/DISAGREEMENT:.",
+        question="kuzu or lancedb?",
+        positions=["go kuzu", "keep lancedb"],
+    )
+
+    assert provider.seen_models == ["gpt-5.1-synthesis"]
+    assert result.parse_ok is True

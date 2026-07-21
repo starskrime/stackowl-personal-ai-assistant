@@ -102,13 +102,16 @@ class ParliamentSynthesizer:
         # F125 — most-capable available substitute (not config-order first), and
         # SURFACE the degrade so a weak-model synthesis is never shown as a clean
         # powerful verdict.
-        provider, degraded_from = self._providers.resolve_capable_or_degrade("powerful")
+        provider, model, degraded_from = self._providers.resolve_capable_or_degrade_and_model(
+            "powerful"
+        )
         log.parliament.debug(
             "[parliament] synthesizer.synthesize: provider selected",
             extra={
                 "_fields": {
                     "provider_name": provider.name,
                     "tier": "powerful",
+                    "model": model,
                     "tier_degraded": degraded_from is not None,
                     "session_id": session.session_id,
                 }
@@ -135,6 +138,7 @@ class ParliamentSynthesizer:
                 parser=self._parser,
                 messages=messages,
                 correlation_id=session.session_id,
+                model=model,
             )
         except Exception as exc:
             # No-hidden-errors: a synthesis-provider failure must NOT be masked as a

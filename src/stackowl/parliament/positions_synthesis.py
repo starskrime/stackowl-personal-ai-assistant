@@ -46,6 +46,7 @@ async def complete_synthesis_with_retry(
     parser: SynthesisParser,
     messages: list[Message],
     correlation_id: str,
+    model: str = "",
 ) -> tuple[str, SynthesisResult]:
     """Complete a synthesis and parse it; re-prompt ONCE if the parse degrades.
 
@@ -58,9 +59,11 @@ async def complete_synthesis_with_retry(
     returned with ``parse_ok=False`` so the existing S2 gates (orchestrator marks the
     session degraded; pellet generator skips staging) still fire — this only adds the
     bounded retry, it never weakens those gates. Provider exceptions propagate to the
-    caller (surfaced, never masked).
+    caller (surfaced, never masked). ``model`` is the tier-resolved model string
+    (Task 5's ``resolve_capable_or_degrade_and_model``); default ``""`` preserves the
+    provider's own default_model for any caller not yet migrated.
     """
-    completion = await provider.complete(messages, model="")
+    completion = await provider.complete(messages, model=model)
     raw_text = completion.content
     parsed = parser.parse(raw_text, correlation_id)
     if parsed.parse_ok:
@@ -71,7 +74,7 @@ async def complete_synthesis_with_retry(
         extra={"_fields": {"correlation_id": correlation_id, "raw_len": len(raw_text)}},
     )
     retry_messages = [*messages, Message(role="user", content=_STRICT_RETRY_INSTRUCTION)]
-    retry_completion = await provider.complete(retry_messages, model="")
+    retry_completion = await provider.complete(retry_messages, model=model)
     retry_text = retry_completion.content
     retry_parsed = parser.parse(retry_text, correlation_id)
     if retry_parsed.parse_ok:
@@ -138,11 +141,11 @@ async def synthesize_positions(
     # F125 — prefer the most-capable AVAILABLE substitute (not config-order first)
     # and SURFACE the degrade so the user is never shown a fake "powerful" consensus
     # silently synthesized by a weak model.
-    provider, degraded_from = providers.resolve_capable_or_degrade("powerful")
+    provider, model, degraded_from = providers.resolve_capable_or_degrade_and_model("powerful")
     log.parliament.debug(
         "[parliament] synthesize_positions: provider selected",
         extra={"_fields": {
-            "provider_name": provider.name, "tier": "powerful",
+            "provider_name": provider.name, "tier": "powerful", "model": model,
             "tier_degraded": degraded_from is not None,
         }},
     )
@@ -161,6 +164,7 @@ async def synthesize_positions(
             parser=parser,
             messages=messages,
             correlation_id="moa",
+            model=model,
         )
     except Exception as exc:
         # No-hidden-errors: a synthesis-provider failure must NOT be masked as a
