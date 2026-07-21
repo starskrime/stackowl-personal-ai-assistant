@@ -227,6 +227,7 @@ class AnthropicProvider(ModelProvider):
             "[anthropic] complete_with_tools: entry",
             extra={"_fields": {
                 "provider": self._name,
+                "model": resolved_model,
                 "tool_count": len(tool_schemas),
                 "max_iterations": resolved_iterations,
                 "resuming": resume_messages is not None,

@@ -382,11 +382,17 @@ class OpenAIProvider(ModelProvider):
 
         TestModeGuard.assert_not_test_mode("openai.complete_with_tools")
         resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
+        # Task 22 review gap: resolved here (moved up from below the resume/history
+        # branch, which never reads or affects it) so the entry log can carry it —
+        # mirrors the anthropic sibling's complete_with_tools() and this file's own
+        # complete()/stream(), which all include the resolved model in their entry log.
+        resolved_model = model or self._config.default_model
         log.engine.debug(
             "[openai] complete_with_tools: entry",
             extra={
                 "_fields": {
                     "provider": self._name,
+                    "model": resolved_model,
                     "tool_count": len(tool_schemas),
                     "max_iterations": resolved_iterations,
                     "resuming": resume_messages is not None,
@@ -437,7 +443,6 @@ class OpenAIProvider(ModelProvider):
                 messages.append({"role": "system", "content": system_text})
             messages.extend(history_dicts)
             messages.append({"role": "user", "content": user_text})
-        resolved_model = model or self._config.default_model
         # B1 hardening — seed all_calls from the prior tool history on resume so the
         # returned records, the persistence give-up judge, and the iteration
         # callback all see prior+new work (not just post-resume calls).  Default
