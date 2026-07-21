@@ -353,7 +353,7 @@ class SecretaryRouter:
 
         log.engine.debug(
             "[router] route: provider selected",
-            extra={"_fields": {"provider": provider.name}},
+            extra={"_fields": {"provider": provider.name, "model": model}},
         )
 
         t0 = time.monotonic()
