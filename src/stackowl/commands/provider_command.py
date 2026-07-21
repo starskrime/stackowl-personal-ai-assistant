@@ -113,14 +113,15 @@ _PROVIDER_META = CommandMeta(
         ),
         SubCommand(
             name="set-tier",
-            summary="Change a provider's routing tier",
+            summary="Add a tier to a provider's routing membership",
             description=(
-                "You re-tier an existing provider so the model router selects it "
-                "differently. The change applies immediately."
+                "You add this tier to the provider's tier list (it keeps any "
+                "tiers it already had — this never replaces). The change "
+                "applies immediately."
             ),
             args=(
-                Arg(name="name", summary="provider to re-tier"),
-                Arg(name="tier", summary="new routing tier", choices=_VALID_TIERS),
+                Arg(name="name", summary="provider to add a tier to"),
+                Arg(name="tier", summary="tier to add", choices=_VALID_TIERS),
             ),
             examples=(Example(invocation="/provider set-tier openai powerful"),),
         ),
@@ -1179,14 +1180,34 @@ class ProviderCommand(SlashCommand):
                 extra={"_fields": {"name": name}},
             )
             return f"✗ Provider '{name}' not found"
-        target["tier"] = tier
+        # Migrate-on-touch: an entry written before this provider adopted
+        # multi-tier membership (or before Task 9 lands) may still carry the
+        # legacy singular `tier` scalar instead of `tiers`. Fold it in here so
+        # `_set_tier` stays additive/idempotent regardless of which shape the
+        # on-disk entry is currently in — mirrors ProviderConfig's own
+        # legacy-`tier` acceptance (config/provider.py).
+        current_tiers = list(target.get("tiers") or [])
+        legacy_tier = target.pop("tier", None)
+        migrated_legacy = legacy_tier is not None and legacy_tier not in current_tiers
+        if migrated_legacy:
+            current_tiers.append(legacy_tier)
+        if tier in current_tiers:
+            if migrated_legacy:
+                target["tiers"] = current_tiers
+                save_yaml(path, data)
+            log.config.debug(
+                "[commands] provider.set_tier: exit — already in tier",
+                extra={"_fields": {"name": name, "tier": tier}},
+            )
+            return f"✓ Provider '{name}' is already in tier '{tier}'"
+        target["tiers"] = [*current_tiers, tier]
         save_yaml(path, data)
         self._emit_reloaded(name)
         log.config.info(
             "[commands] provider.set_tier: exit — updated",
-            extra={"_fields": {"name": name, "tier": tier}},
+            extra={"_fields": {"name": name, "tier": tier, "tiers": target["tiers"]}},
         )
-        return f"✓ Provider '{name}' tier set to {tier} — applied immediately"
+        return f"✓ Provider '{name}' added to tier '{tier}' — applied immediately"
 
 
 # Pattern-A self-registration removed (Epic C1): ProviderCommand is now a DI

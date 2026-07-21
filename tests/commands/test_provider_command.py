@@ -914,8 +914,16 @@ class TestProviderSetTier:
         out = await _make_cmd(bus).handle("set-tier acme powerful", _state())
         assert "✓" in out or "powerful" in out
         entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
-        assert entry["tier"] == "powerful"
+        assert entry["tiers"] == ["fast", "powerful"]
         assert any(e == "settings_reloaded" for e, _ in bus.events)
+
+    @pytest.mark.asyncio
+    async def test_set_tier_is_idempotent_on_an_already_assigned_tier(self, tmp_yaml: Path) -> None:
+        await _make_cmd().handle("add acme openai gpt-x fast", _state())
+        out = await _make_cmd().handle("set-tier acme fast", _state())
+        assert "already" in out.lower()
+        entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
+        assert entry["tiers"] == ["fast"]
 
     @pytest.mark.asyncio
     async def test_set_tier_invalid(self, tmp_yaml: Path) -> None:
@@ -923,7 +931,12 @@ class TestProviderSetTier:
         out = await _make_cmd().handle("set-tier acme turbo", _state())
         assert "✗" in out or "invalid" in out.lower()
         entry = next(p for p in _load(tmp_yaml)["providers"] if p["name"] == "acme")
-        assert entry["tier"] == "fast"
+        # An invalid tier must be a true no-op — assert unchanged membership
+        # tolerant of on-disk shape (legacy singular `tier` vs. `tiers`; the
+        # `add` write path's own migration to `tiers` is Task 9's job, not
+        # this test's concern).
+        tiers = entry.get("tiers") or ([entry["tier"]] if "tier" in entry else [])
+        assert tiers == ["fast"]
 
     @pytest.mark.asyncio
     async def test_set_tier_missing_provider(self, tmp_yaml: Path) -> None:
