@@ -257,6 +257,7 @@ class ModelProvider(ABC):
         system_text: str | None,
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
+        model: str = "",
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
@@ -319,6 +320,13 @@ class ModelProvider(ABC):
         instead of only the post-resume calls.  Pass it together with
         ``resume_messages`` on resume.
 
+        ``model`` (Task 22) is the resolved per-model override the caller (tier
+        resolution / ``LLMGateway``) wants THIS call to run on — mirrors the
+        same ``model or self._config.default_model`` fallback already used by
+        ``complete()``/``stream()``. Default ``""`` (falsy) preserves today's
+        exact behavior: every call site the base default forwards it to falls
+        back to the provider's ``default_model`` unchanged.
+
         Default: falls back to a single complete() ignoring tools.
         Providers that support tool use override this method.
         """
@@ -340,7 +348,7 @@ class ModelProvider(ABC):
             msgs.append(Message(role="system", content=system_text))
         msgs.extend(history or [])
         msgs.append(Message(role="user", content=user_text))
-        result = await self.complete(msgs, model="")
+        result = await self.complete(msgs, model=model)
         return result.content, []
 
     # ---- HealableResource protocol --------------------------------------

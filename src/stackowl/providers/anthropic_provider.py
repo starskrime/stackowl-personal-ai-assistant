@@ -195,6 +195,7 @@ class AnthropicProvider(ModelProvider):
         system_text: str | None,
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
+        model: str = "",
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
@@ -210,8 +211,17 @@ class AnthropicProvider(ModelProvider):
         openai provider: when the model persistently emits an unparseable tool call
         as TEXT (a leak) this loop returns the ESCALATE sentinel so the gateway
         re-runs on a stronger tier — instead of leaking the raw tool-call text or
-        flooring. Default False ⇒ unchanged behaviour (honest floor)."""
+        flooring. Default False ⇒ unchanged behaviour (honest floor).
+
+        ``model`` (Task 22): resolved per-model override for THIS call — same
+        ``model or self._config.default_model`` fallback as ``complete()``/
+        ``stream()``. Unlike the OpenAI sibling this loop has TWO independent
+        API call sites (the in-loop tool round and the terminal wrap-up round),
+        each of which previously hardcoded ``self._config.default_model`` on
+        its own — both are resolved from the SAME ``resolved_model`` local so
+        neither can drift from the other."""
         TestModeGuard.assert_not_test_mode("anthropic.complete_with_tools")
+        resolved_model = model or self._config.default_model
         resolved_iterations = max_iterations if max_iterations != 8 else self._config.tool_max_iterations
         log.engine.debug(
             "[anthropic] complete_with_tools: entry",
@@ -340,7 +350,7 @@ class AnthropicProvider(ModelProvider):
 
             async def _round(_msgs: list[dict[str, Any]] = messages) -> Any:
                 return await self._client.messages.create(
-                    model=self._config.default_model,
+                    model=resolved_model,
                     messages=_msgs,  # type: ignore[arg-type]
                     max_tokens=self._config.max_output_tokens,
                     tools=tool_schemas,  # type: ignore[arg-type]
@@ -580,7 +590,7 @@ class AnthropicProvider(ModelProvider):
 
             async def _wrap_round() -> Any:
                 return await self._client.messages.create(
-                    model=self._config.default_model,
+                    model=resolved_model,
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=self._config.max_output_tokens,
                     **system_kwargs,

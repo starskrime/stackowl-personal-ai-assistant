@@ -186,3 +186,102 @@ async def test_stream_uses_per_model_override_max_tokens(
         pass
 
     assert messages.calls[0]["max_tokens"] == 9000
+
+
+# --------------------------------------------------------------------------- #
+# Task 22 — complete_with_tools() routes an explicit `model` to EVERY internal
+# API call site (the agentic tool-loop path gets per-model routing).
+# --------------------------------------------------------------------------- #
+
+
+class _ToolUseBlock:
+    def __init__(self, id: str, name: str, input: dict[str, Any]) -> None:
+        self.type = "tool_use"
+        self.id = id
+        self.name = name
+        self.input = input
+
+
+class _ToolAwareResp:
+    def __init__(self, content: list[Any], stop_reason: str, model: str) -> None:
+        self.content = content
+        self.usage = _Usage()
+        self.model = model
+        self.stop_reason = stop_reason
+
+
+class _ToolThenWrapupMessages:
+    """1st call (carries ``tools=``) returns a native tool_use block; the 2nd
+    call (the tool-free wrap-up round, forced by ``max_iterations=1``) returns a
+    final text answer. Records every call's kwargs so a test can assert the
+    explicit ``model`` reaches BOTH internal API call sites in
+    ``complete_with_tools`` — the in-loop tool round AND the terminal wrap-up
+    round — not just whichever one a trivial single-round scenario exercises.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> _ToolAwareResp:
+        self.calls.append(kwargs)
+        model = str(kwargs.get("model", ""))
+        if kwargs.get("tools"):
+            block = _ToolUseBlock("call_1", "noop_tool", {})
+            return _ToolAwareResp([block], "tool_use", model)
+        return _ToolAwareResp([_Block("final wrap-up answer")], "end_turn", model)
+
+
+async def test_complete_with_tools_uses_explicit_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """complete_with_tools() must route an explicit ``model=`` kwarg to the
+    outbound API call instead of always using the provider's ``default_model``
+    (the agentic tool-loop path gap Task 22 closes)."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    messages = _ScriptedMessages()
+    provider = AnthropicProvider(_config_with_override(), api_key="k")
+    provider._client = _FakeClient(messages)  # type: ignore[assignment]
+
+    async def _dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "ok"
+
+    await provider.complete_with_tools(
+        user_text="hi",
+        system_text=None,
+        tool_schemas=[],
+        tool_dispatcher=_dispatcher,
+        model="claude-mini",
+    )
+
+    assert messages.calls[0]["model"] == "claude-mini"  # not the provider's default_model
+
+
+async def test_complete_with_tools_threads_model_to_every_call_site(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SAME explicit ``model`` must reach EVERY internal API call site that
+    can fire during a real multi-turn loop, not just the first one a trivial
+    single-round scenario would exercise. Forces exactly two rounds via
+    ``max_iterations=1`` with a tool call in round 1: the in-loop tool round
+    (``tools=`` present) and the terminal wrap-up round (``tools=`` absent)."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolThenWrapupMessages()
+    provider = AnthropicProvider(_config_with_override(), api_key="k")
+    provider._client = _FakeClient(completions)  # type: ignore[assignment]
+
+    async def _dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "ok"
+
+    text, _calls = await provider.complete_with_tools(
+        user_text="hi",
+        system_text=None,
+        tool_schemas=[{"name": "noop_tool", "description": "d", "input_schema": {"type": "object"}}],
+        tool_dispatcher=_dispatcher,
+        max_iterations=1,
+        model="claude-mini",
+    )
+
+    assert len(completions.calls) == 2  # in-loop tool round + terminal wrap-up round
+    assert completions.calls[0]["model"] == "claude-mini"  # call site 1: the loop round
+    assert completions.calls[1]["model"] == "claude-mini"  # call site 2: the wrap-up round
+    assert text  # never empty

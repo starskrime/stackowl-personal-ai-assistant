@@ -355,6 +355,7 @@ class OpenAIProvider(ModelProvider):
         system_text: str | None,
         tool_schemas: list[dict[str, Any]],
         tool_dispatcher: Callable[[str, dict[str, Any]], Awaitable[str]],
+        model: str = "",
         max_iterations: int = 8,
         history: list[Message] | None = None,
         persistence_check: Callable[[str, list[str]], Awaitable[str | None]] | None = None,
@@ -365,6 +366,12 @@ class OpenAIProvider(ModelProvider):
         can_escalate: bool = False,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop.
+
+        ``model`` (Task 22): resolved per-model override for THIS call — same
+        ``model or self._config.default_model`` fallback as ``complete()``/
+        ``stream()``. Feeds ``resolved_model`` below, which both the in-loop
+        tool round and the terminal wrap-up round read — so setting it once
+        here routes EVERY internal API call in this method to the right model.
 
         ``can_escalate`` (set ONLY by LLMGateway below the ceiling tier): when the
         model persistently emits an unparseable tool call (a leak) or spins on
@@ -430,7 +437,7 @@ class OpenAIProvider(ModelProvider):
                 messages.append({"role": "system", "content": system_text})
             messages.extend(history_dicts)
             messages.append({"role": "user", "content": user_text})
-        resolved_model = self._config.default_model
+        resolved_model = model or self._config.default_model
         # B1 hardening — seed all_calls from the prior tool history on resume so the
         # returned records, the persistence give-up judge, and the iteration
         # callback all see prior+new work (not just post-resume calls).  Default

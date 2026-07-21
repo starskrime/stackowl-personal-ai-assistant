@@ -529,6 +529,112 @@ class TestResolveModelOverride:
         assert context_chars is None
 
 
+class _FakeToolFunction:
+    def __init__(self, name: str, arguments: str) -> None:
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeToolCall:
+    def __init__(self, id: str, name: str, arguments: str) -> None:
+        self.id = id
+        self.type = "function"
+        self.function = _FakeToolFunction(name, arguments)
+
+
+class _FakeToolMessage:
+    def __init__(self, content: str | None, tool_calls: list[_FakeToolCall] | None) -> None:
+        self.content = content
+        self.tool_calls = tool_calls
+
+
+class _FakeToolChoice:
+    def __init__(self, message: _FakeToolMessage) -> None:
+        self.message = message
+
+
+class _FakeToolResponse:
+    def __init__(self, message: _FakeToolMessage) -> None:
+        self.choices = [_FakeToolChoice(message)]
+        self.model = "acme-v1-mini"
+        self.usage = None
+
+
+class _ToolThenWrapupCompletions:
+    """1st call (carries ``tools=``) returns a native tool_use call; the 2nd call
+    (the tool-free wrap-up round, forced by ``max_iterations=1``) returns a final
+    answer. Records every call's kwargs so a test can assert the explicit
+    ``model`` reaches BOTH internal API call sites in ``complete_with_tools``
+    (Task 22) — the in-loop tool round AND the terminal wrap-up round — not just
+    whichever one a trivial no-tool-call scenario happens to exercise."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> _FakeToolResponse:
+        self.calls.append(kwargs)
+        if kwargs.get("tools"):
+            tc = _FakeToolCall("call_1", "noop_tool", "{}")
+            return _FakeToolResponse(_FakeToolMessage(content=None, tool_calls=[tc]))
+        return _FakeToolResponse(_FakeToolMessage(content="final wrap-up answer", tool_calls=None))
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_uses_explicit_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 22 — complete_with_tools() must route an explicit ``model=`` kwarg
+    to the outbound API call instead of always using the provider's
+    ``default_model`` (the agentic tool-loop path gap this task closes)."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ScriptedCompletions(["an answer"])
+    provider = _make_provider(_FakeClient(completions))
+
+    async def _dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "ok"
+
+    await provider.complete_with_tools(
+        user_text="hi",
+        system_text=None,
+        tool_schemas=[],
+        tool_dispatcher=_dispatcher,
+        model="acme-v1-mini",
+    )
+
+    assert completions.calls[0]["model"] == "acme-v1-mini"  # not the provider's default_model
+
+
+@pytest.mark.asyncio
+async def test_complete_with_tools_threads_model_to_every_call_site(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 22 — the SAME explicit ``model`` must reach EVERY internal API call
+    site that can fire during a real multi-turn loop, not just the first one a
+    trivial single-round scenario would exercise. Forces exactly two rounds via
+    ``max_iterations=1`` with a tool call in round 1: the in-loop tool round
+    (``tools=`` present) and the terminal wrap-up round (``tools=`` absent)."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolThenWrapupCompletions()
+    provider = _make_provider(_FakeClient(completions))
+
+    async def _dispatcher(name: str, args: dict[str, Any]) -> str:
+        return "ok"
+
+    text, _calls = await provider.complete_with_tools(
+        user_text="hi",
+        system_text=None,
+        tool_schemas=[{"type": "function", "function": {"name": "noop_tool", "parameters": {}}}],
+        tool_dispatcher=_dispatcher,
+        max_iterations=1,
+        model="acme-v1-mini",
+    )
+
+    assert len(completions.calls) == 2  # in-loop tool round + terminal wrap-up round
+    assert completions.calls[0]["model"] == "acme-v1-mini"  # call site 1: the loop round
+    assert completions.calls[1]["model"] == "acme-v1-mini"  # call site 2: the wrap-up round
+    assert text  # never empty
+
+
 @pytest.mark.asyncio
 async def test_output_cap_uses_per_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
     from stackowl.providers import model_window
