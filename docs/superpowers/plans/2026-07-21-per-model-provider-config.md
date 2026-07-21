@@ -11,11 +11,11 @@
 ## Global Constraints
 
 - **Additive only, zero migration:** `ProviderConfig.models` defaults to `()`. Every existing YAML config (only `default_model`/`tiers`, no `models` key) must load and behave byte-for-byte identically to before this plan, at every single task boundary — never only at the end.
-- **Never break an existing call site mid-migration:** `get_by_tier`, `get_with_cascade`, `resolve_tier_with_fallback`, `resolve_capable_or_degrade` keep their EXACT current signatures and return types until the final cleanup task (Task 23). Every task from Task 5 through Task 22 must leave `uv run pytest` green across the whole repo's provider/pipeline/owls/memory/skills/interaction/objectives suites — never just the task's own new test file.
+- **Never break an existing call site mid-migration:** `get_by_tier`, `get_with_cascade`, `resolve_tier_with_fallback`, `resolve_capable_or_degrade` keep their EXACT current signatures and return types until the final cleanup task (Task 24). Every task from Task 5 through Task 23 must leave `uv run pytest` green across the whole repo's provider/pipeline/owls/memory/skills/interaction/objectives suites — never just the task's own new test file.
 - **4-point logging** on every new/modified `execute()`-style method (entry/decision/step/exit), per `CLAUDE.md`.
 - **Minimal diff per task** — change only the exact lines the task specifies; do not opportunistically refactor adjacent code.
 - **Never hardcode English/keyword-based logic** — not applicable to this plan's surface (no user-facing NLP), noted for completeness.
-- **Test-run discipline:** never run the full repo `pytest` in one command (documented hang risk) — every task specifies its own scoped test command(s); the final task (Task 27) runs an explicit, still-scoped combined list, not a bare `pytest`.
+- **Test-run discipline:** never run the full repo `pytest` in one command (documented hang risk) — every task specifies its own scoped test command(s); the final task (Task 28) runs an explicit, still-scoped combined list, not a bare `pytest`.
 - **Circuit breakers, cost tracking, and secret resolution stay keyed by provider NAME**, never per-model — a model-routing failure still counts against the same provider-level circuit breaker (one connection, shared health). This invariant must not regress in any task.
 
 ---
@@ -1056,6 +1056,187 @@ Apply the same pattern to `resolve_capable_or_degrade`:
         return provider, degraded
 ```
 
+- [ ] **Step 3b: Same-tier multi-model round-robin**
+
+Every "first matching route wins" loop above always picks a provider's FIRST model when it has two+ in the same tier — no round-robin between them (unlike TierSelector's already-existing round-robin ACROSS different providers, unaffected). Add a small, self-contained fix: a per-`(provider_name, tier)` cursor, consulted only when a provider genuinely has more than one matching route for that tier (the overwhelmingly common single-route case is unaffected, zero cursor bookkeeping).
+
+Write the failing test first — add to `tests/providers/test_provider_registry_multi_tier_membership.py`:
+
+```python
+class TestSameTierMultiModelRoundRobin:
+    def test_round_robins_between_two_models_of_one_provider_in_the_same_tier(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(
+                ModelRoute(model="acme-v1", tiers=("fast",)),
+                ModelRoute(model="acme-v1-fast2", tiers=("fast",)),
+            ),
+        )
+        first = registry.get_by_tier_and_model("fast")[1]
+        second = registry.get_by_tier_and_model("fast")[1]
+        third = registry.get_by_tier_and_model("fast")[1]
+        assert {first, second} == {"acme-v1", "acme-v1-fast2"}
+        assert first != second
+        assert third == first  # cursor wraps after 2
+
+    def test_single_matching_route_is_unaffected_no_cursor_bookkeeping(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(ModelRoute(model="acme-v1", tiers=("fast",)),),
+        )
+        assert registry.get_by_tier_and_model("fast")[1] == "acme-v1"
+        assert registry.get_by_tier_and_model("fast")[1] == "acme-v1"
+```
+
+Run to verify it fails (both calls return `"acme-v1"` every time — no round-robin yet).
+
+In `ProviderRegistry.__init__`, add a new field (alongside the existing `self._tier_selector = TierSelector()` line):
+```python
+        # Round-robin cursor for picking among a SINGLE provider's multiple
+        # models that serve the SAME tier — a smaller, separate concern from
+        # self._tier_selector's round-robin ACROSS different providers.
+        self._model_cursor: dict[tuple[str, str], int] = {}
+```
+
+Add a new private helper method (place it right after `register_mock`, before `all()`):
+```python
+    def _pick_route(self, name: str, tier: str, routes: tuple[ModelRoute, ...]) -> ModelRoute:
+        """Round-robin among ONE provider's routes that serve ``tier``.
+
+        Exactly one matching route (the overwhelmingly common case) returns
+        immediately with no cursor bookkeeping.
+        """
+        matching = [r for r in routes if tier in r.tiers]
+        if len(matching) <= 1:
+            return matching[0]
+        key = (name, tier)
+        idx = self._model_cursor.get(key, 0) % len(matching)
+        self._model_cursor[key] = (idx + 1) % len(matching)
+        return matching[idx]
+```
+
+Now replace each method's manual first-match loop with a call to `self._pick_route(...)`. In `get_by_tier_and_model`, change:
+```python
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            for route in routes:
+                if tier in route.tiers:
+                    return providers[name], route.model
+```
+to:
+```python
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            if any(tier in route.tiers for route in routes):
+                return providers[name], self._pick_route(name, tier, routes).model
+```
+
+In `get_with_cascade_and_model`, change:
+```python
+                chosen_model = ""
+                for route in tiers.get(chosen, ()):
+                    if tier in route.tiers:
+                        chosen_model = route.model
+                        break
+                return prov, chosen_model
+```
+to:
+```python
+                chosen_routes = tiers.get(chosen, ())
+                chosen_model = self._pick_route(chosen, tier, chosen_routes).model if chosen_routes else ""
+                return prov, chosen_model
+```
+
+In `resolve_tier_with_fallback_and_model`, change:
+```python
+        primary_name: str | None = None
+        primary_model: str = ""
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            for route in routes:
+                if tier in route.tiers:
+                    primary_name = name
+                    primary_model = route.model
+                    break
+            if primary_name is not None:
+                break
+```
+to:
+```python
+        primary_name: str | None = None
+        primary_model: str = ""
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            if any(tier in route.tiers for route in routes):
+                primary_name = name
+                primary_model = self._pick_route(name, tier, routes).model
+                break
+```
+
+In `resolve_capable_or_degrade_and_model`, change its FIRST loop:
+```python
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            for route in routes:
+                if tier in route.tiers:
+                    return providers[name], route.model, None
+```
+to:
+```python
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            if any(tier in route.tiers for route in routes):
+                return providers[name], self._pick_route(name, tier, routes).model, None
+```
+and its SECOND loop (the capability-order substitution):
+```python
+            for name, routes in tiers.items():
+                if name not in providers:
+                    continue
+                for route in routes:
+                    if cand_tier in route.tiers:
+                        log.engine.warning(
+                            "[registry] resolve_capable_or_degrade: no provider for "
+                            "requested tier — substituting the most-capable available "
+                            "tier (DEGRADED); add/relabel a provider to fix routing",
+                            extra={"_fields": {
+                                "requested_tier": tier,
+                                "substitute_tier": cand_tier,
+                                "substitute": name,
+                            }},
+                        )
+                        return providers[name], route.model, tier
+```
+to:
+```python
+            for name, routes in tiers.items():
+                if name not in providers:
+                    continue
+                if any(cand_tier in route.tiers for route in routes):
+                    log.engine.warning(
+                        "[registry] resolve_capable_or_degrade: no provider for "
+                        "requested tier — substituting the most-capable available "
+                        "tier (DEGRADED); add/relabel a provider to fix routing",
+                        extra={"_fields": {
+                            "requested_tier": tier,
+                            "substitute_tier": cand_tier,
+                            "substitute": name,
+                        }},
+                    )
+                    return providers[name], self._pick_route(name, cand_tier, routes).model, tier
+```
+
+Run the round-robin tests to verify they now pass:
+Run: `uv run pytest tests/providers/test_provider_registry_multi_tier_membership.py -v -k TestSameTierMultiModelRoundRobin`
+
 - [ ] **Step 4: Run to verify ALL tests pass — this is the most important regression gate in the whole plan**
 
 Run: `uv run pytest tests/providers/test_provider_registry_multi_tier.py tests/providers/test_provider_registry_multi_tier_membership.py tests/providers/test_provider_registry_health.py tests/providers/test_provider_hot_reload.py tests/providers/test_tier_selector.py -v`
@@ -1273,7 +1454,7 @@ Both files define their OWN local `_max_tokens(kwargs, default=4096)` helper (NO
 
 Confirmed call sites:
 - `anthropic_provider.py:122` (inside `stream()`, `resolved_model` assigned at line 115) and `anthropic_provider.py:690` (inside `complete()`, `resolved_model` assigned at line 681) — both `max_tokens=_max_tokens(kwargs)`.
-- `anthropic_provider.py:336` and `:576` (both inside `complete_with_tools()`, which has NO `model` parameter in its signature at all — always implicitly targets `self._config.default_model`) — `max_tokens=self._config.max_output_tokens`, direct read, no `_max_tokens()` wrapper. **Leave these two sites untouched in this task** — `complete_with_tools` has no per-call model to key an override off of (Task 22 separately flags whether `complete_with_tools` should gain a `model` parameter at the `ModelProvider` ABC level; that is out of this task's scope).
+- `anthropic_provider.py:336` and `:576` (both inside `complete_with_tools()`, which — AT THE TIME OF THIS TASK — has no `model` parameter in its signature yet, always implicitly targets `self._config.default_model`) — `max_tokens=self._config.max_output_tokens`, direct read, no `_max_tokens()` wrapper. **Leave these two sites untouched in this task** — Task 22 (later in this plan) adds a `model` parameter to `complete_with_tools`'s ABC + this file's implementation; wiring per-model token overrides into THOSE two sites is that task's job, not this one's.
 - `gemini_provider.py:136` (inside `stream()`, `resolved_model` assigned at line 133) and `gemini_provider.py:223` (inside `complete()`, `resolved_model` assigned at line 220) — both `max_output_tokens=_max_tokens(kwargs)`. Gemini has no `complete_with_tools` method at all.
 
 - [ ] **Step 2: Write a failing test per provider**, matching whatever test file(s) you find at `tests/providers/test_anthropic_provider.py` / `tests/providers/test_gemini_provider.py` (search `tests/providers/` first — extend if either exists, create following `tests/providers/test_complete_think_strip.py`'s established fixture style if neither does). Mirror Task 6's `test_output_cap_uses_per_model_override` shape: construct a `ProviderConfig` with one `ModelOverride` entry carrying a distinctive `max_output_tokens` value, construct the provider, and assert the outbound `max_tokens`/`max_output_tokens` request parameter differs correctly between `default_model` and the overridden model — you will need a scripted/fake client recording the kwargs passed to `self._client.messages.stream(...)`/`.create(...)` (Anthropic) or the Gemini SDK's equivalent call, matching whatever mocking convention this codebase's existing Anthropic/Gemini tests already use (search for one before inventing a new pattern).
@@ -1299,6 +1480,18 @@ to:
             max_output_tokens=_max_tokens(kwargs, default=resolve_model_override(self._config, resolved_model)[0]),
 ```
 (add the same import). Apply the identical change to line 223 (inside `complete()`), using that method's own `resolved_model` local (assigned at line 220).
+
+**Known accepted risk (explicit operator decision, not a plan defect):** unlike OpenAI, `AnthropicProvider`/`GeminiProvider` have no window-bounding (`_output_cap`-equivalent) — this task deliberately keeps that out of scope. `ProviderConfig.max_output_tokens` defaults to 250000; Anthropic's real API rejects any `max_tokens` above a model's actual per-model ceiling (8192–64000 depending on model). This box currently only runs an `openai`-protocol provider, so this is dormant risk, not a live regression. Add a comment at each of the four edited call sites:
+```python
+                # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
+                # per-model ceilings (8192-64000) — safe today (no Anthropic
+                # provider configured), but the FIRST Anthropic provider added
+                # must set an explicit models[].max_output_tokens (or a smaller
+                # provider-level max_output_tokens) or its first real request
+                # fails with a 400. No window-bounding exists for this
+                # provider (unlike OpenAI's _output_cap) — deliberately out of
+                # scope for this plan.
+```
 
 - [ ] **Step 4: Run the tests you wrote in Step 2, verify pass.**
 
@@ -2359,24 +2552,66 @@ git commit -m "feat(interaction): thread the resolved model through feedback/ret
 
 ---
 
-## Task 22: `providers/llm_gateway.py`
+## Task 22: `ModelProvider.complete_with_tools` — add `model` parameter to the ABC + `OpenAIProvider`/`AnthropicProvider`
+
+**Files:**
+- Modify: `src/stackowl/providers/base.py`, `src/stackowl/providers/openai_provider.py`, `src/stackowl/providers/anthropic_provider.py`
+- Test: `tests/providers/test_complete_think_strip.py` (OpenAI) and whichever file covers Anthropic's tool loop (search `tests/providers/` — extend both)
+
+**Interfaces:**
+- Produces: `ModelProvider.complete_with_tools(..., model: str = "", ...)` — new keyword parameter, default `""` preserves today's exact behavior (every existing caller keeps working unmodified). `GeminiProvider` has no `complete_with_tools` override (confirmed — it inherits the base's tool-incapable default, which raises `ToolUseUnsupportedError` when `tool_schemas` is non-empty) — no change needed there.
+
+This is the agentic tool-loop path — the primary path for tool-using turns. Without this task, a turn routed to a provider's SECOND model via tier resolution would still run its tool loop on `default_model`. This task closes that gap for MODEL ROUTING. It does NOT wire per-model `max_output_tokens` overrides into `complete_with_tools`'s own token-budget computation (`anthropic_provider.py:336,576`'s `max_tokens=self._config.max_output_tokens` — flagged, untouched, in Task 7) — that is a distinct, smaller follow-up (mirror Task 6/7's `resolve_model_override` wiring at those two sites) left for a future task if it turns out to matter; this task's scope is strictly "the tool loop calls the right MODEL," not "the tool loop's own token budget is also per-model-aware."
+
+- [ ] **Step 1: Read `ModelProvider.complete_with_tools`'s full base-class body in `src/stackowl/providers/base.py`** (signature confirmed at line 254, default-tool-incapable body starting ~line 322 — read the WHOLE method, including where it constructs `Message`/calls `self.complete(...)` internally for its ignore-tools fallback path). Read `OpenAIProvider.complete_with_tools` (signature confirmed at line 352) and `AnthropicProvider.complete_with_tools` (signature confirmed at line 183) in full — each is a substantial multi-turn ReAct loop; you need to find EVERY place inside each method where the outbound model string is resolved for an actual API call (mirror the SAME `resolved_model = model or self._config.default_model` pattern already used in this exact file's own `stream()`/`complete()` methods, which you already have exact code for from Task 6/Task 7 — that pattern is your template).
+
+- [ ] **Step 2: Write the failing tests**
+
+For OpenAI (`tests/providers/test_complete_think_strip.py`, following its established `_ScriptedCompletions`/`_make_provider` fixture pattern): construct a provider, call `complete_with_tools(user_text="hi", system_text=None, tool_schemas=[], tool_dispatcher=<a no-op async callable>, model="acme-v1-mini")`, assert the SCRIPTED client records `model="acme-v1-mini"` in its call kwargs (not the provider's `default_model`).
+
+For Anthropic, mirror the same shape using whatever fixture pattern the Anthropic test file you find/create in Task 7 already established.
+
+- [ ] **Step 2b: Run to verify they fail** (`TypeError: complete_with_tools() got an unexpected keyword argument 'model'`).
+
+- [ ] **Step 3: Add `model: str = ""` to all three signatures (base, OpenAI, Anthropic)**
+
+In `src/stackowl/providers/base.py`, change the `complete_with_tools` signature to add `model: str = "",` (place it as the first keyword-only-by-convention parameter, immediately after `tool_dispatcher`, matching where `model` appears relative to other params in `complete()`/`stream()`'s own signatures in this same file). In the base default's ignore-tools fallback body, thread `model` into whatever `self.complete(...)` call it makes internally (found in your Step 1 read) — change that call's own `model=` argument (likely currently hardcoded or using `self._config.default_model`) to `model=model`.
+
+Apply the identical signature change to `OpenAIProvider.complete_with_tools` and `AnthropicProvider.complete_with_tools`. Inside EACH method's body, at every site your Step 1 read found that resolves the outbound model string for an API call, change it to use `model or self._config.default_model` (the SAME fallback expression already used in `stream()`/`complete()` in the same file) instead of unconditionally reading `self._config.default_model`.
+
+- [ ] **Step 4: Run to verify pass; run each file's full existing test suite; lint + types.**
+
+Run: `uv run pytest tests/providers/test_complete_think_strip.py -v` plus whichever Anthropic test file you used.
+Run: `uv run ruff check src/stackowl/providers/base.py src/stackowl/providers/openai_provider.py src/stackowl/providers/anthropic_provider.py`
+Run: `uv run mypy src/stackowl/providers/base.py src/stackowl/providers/openai_provider.py src/stackowl/providers/anthropic_provider.py`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/stackowl/providers/base.py src/stackowl/providers/openai_provider.py src/stackowl/providers/anthropic_provider.py <test files>
+git commit -m "feat(providers): complete_with_tools accepts a model parameter (agentic tool-loop path gets per-model routing)"
+```
+
+---
+
+## Task 23: `providers/llm_gateway.py`
 
 **Files:**
 - Modify: `src/stackowl/providers/llm_gateway.py`
 - Test: `tests/providers/` — find existing coverage for `LLMGateway`, extend.
 
 **Interfaces:**
-- Consumes: `resolve_tier_with_fallback_and_model` (Task 5).
+- Consumes: `resolve_tier_with_fallback_and_model` (Task 5), `ModelProvider.complete_with_tools`'s new `model` parameter (Task 22).
 
 - [ ] **Step 1: Read `LLMGateway.complete` and `LLMGateway.complete_with_tools` in full** (confirmed in prior research, lines ~141-202 and ~227-310+ respectively — re-read the live file first, especially past line 310 which prior research did not capture in full).
 
-- [ ] **Step 2: Write failing tests** — `complete()`: model reaches BOTH the main attempt and the same-tier retry `partial(provider.complete, ...)`. `complete_with_tools()`: **this is the one call site in the whole codebase that never passed `model=` at all** — the test must prove `provider.complete_with_tools(...)` now RECEIVES the resolved model, a genuinely new wire, not a rewire.
+- [ ] **Step 2: Write failing tests** — `complete()`: model reaches BOTH the main attempt and the same-tier retry `partial(provider.complete, ...)`. `complete_with_tools()`: prior to Task 22 this was the one call site in the whole codebase that never passed `model=` at all — the test must prove `provider.complete_with_tools(...)` now RECEIVES the resolved model (Task 22 added the parameter; this task is what actually starts passing a real value).
 
 - [ ] **Step 2b: Run to verify they fail.**
 
 - [ ] **Step 3a: `complete()`** — change `provider, degraded = self._registry.resolve_tier_with_fallback(tier)` to `provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)`. Change both `result = await provider.complete(msgs, model="", **kwargs)` and `partial(provider.complete, msgs, model="", **kwargs)` to use `model=model`.
 
-- [ ] **Step 3b: `complete_with_tools()`** — change `provider, degraded = self._registry.resolve_tier_with_fallback(tier)` to `provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)`. Read `ModelProvider.complete_with_tools`'s actual signature in `src/stackowl/providers/base.py` before editing — confirm whether it accepts a `model` parameter at all (prior research flagged this as unconfirmed). If it does not, this is a NEW parameter to add to the ABC and every concrete implementation (`OpenAIProvider`, `AnthropicProvider`, `GeminiProvider`) — if that is the case, STOP and report NEEDS_CONTEXT rather than guessing at a wider ABC change; this task's scope is `llm_gateway.py` only. If `complete_with_tools` DOES already accept `model` (e.g. via `**kwargs`), add `model=model` to both the main call (`await provider.complete_with_tools(user_text=..., system_text=sys, tool_schemas=schemas, tool_dispatcher=tool_dispatcher, can_escalate=can_escalate, model=model, **attempt_kwargs)`) and its retry `partial(...)`.
+- [ ] **Step 3b: `complete_with_tools()`** — change `provider, degraded = self._registry.resolve_tier_with_fallback(tier)` to `provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)`. Add `model=model` to both the main call (`await provider.complete_with_tools(user_text=..., system_text=sys, tool_schemas=schemas, tool_dispatcher=tool_dispatcher, can_escalate=can_escalate, model=model, **attempt_kwargs)`) and its retry `partial(provider.complete_with_tools, user_text=..., system_text=sys, tool_schemas=schemas, tool_dispatcher=tool_dispatcher, can_escalate=can_escalate, model=model, **attempt_kwargs)`.
 
 - [ ] **Step 4: Run to verify pass; run the full existing test suite for this file; lint + types.**
 
@@ -2389,10 +2624,10 @@ git commit -m "feat(providers): LLMGateway threads the resolved model through co
 
 ---
 
-## Task 23: Final cleanup — remove temporary wrappers, rename `*_and_model` back to plain names
+## Task 24: Final cleanup — remove temporary wrappers, rename `*_and_model` back to plain names
 
 **Files:**
-- Modify: `src/stackowl/providers/registry.py` and EVERY file touched by Tasks 8-22 (a purely mechanical identifier rename — no logic changes)
+- Modify: `src/stackowl/providers/registry.py` and EVERY file touched by Tasks 8-23 (a purely mechanical identifier rename — no logic changes)
 - Test: full regression (see Step 4)
 
 **Interfaces:**
@@ -2404,7 +2639,7 @@ Run:
 ```bash
 grep -rn "\.get_by_tier(\|\.get_with_cascade(\|\.resolve_tier_with_fallback(\|\.resolve_capable_or_degrade(" src/stackowl/ | grep -v __pycache__
 ```
-Expected: the ONLY matches remaining are inside `src/stackowl/providers/registry.py` itself (the temporary wrapper method bodies defined in Task 5 calling their own `*_and_model` siblings). If ANY other file still shows a match, STOP — a call site was missed in Tasks 8-22; go fix that file's task retroactively (re-open that task's file, apply its established migration pattern) before proceeding with this task.
+Expected: the ONLY matches remaining are inside `src/stackowl/providers/registry.py` itself (the temporary wrapper method bodies defined in Task 5 calling their own `*_and_model` siblings). If ANY other file still shows a match, STOP — a call site was missed in Tasks 8-23; go fix that file's task retroactively (re-open that task's file, apply its established migration pattern) before proceeding with this task.
 
 - [ ] **Step 2: Remove the temporary wrapper methods, rename `*_and_model` to the plain names**
 
@@ -2467,7 +2702,7 @@ git commit -m "refactor(providers): drop temporary *_and_model names — get_by_
 
 ---
 
-## Task 24: `/provider` model-management commands
+## Task 25: `/provider` model-management commands
 
 **Files:**
 - Modify: `src/stackowl/commands/provider_command.py`
@@ -2835,7 +3070,7 @@ git commit -m "feat(commands): /provider model-management subcommands (models/ad
 
 ---
 
-## Task 25: `/tier add`/`/tier remove` — optional `model_name` argument
+## Task 26: `/tier add`/`/tier remove` — optional `model_name` argument
 
 **Files:**
 - Modify: `src/stackowl/commands/tier_command.py`
@@ -2933,7 +3168,7 @@ git commit -m "feat(commands): /tier add|remove accept an optional model_name fo
 
 ---
 
-## Task 26: End-to-end integration test
+## Task 27: End-to-end integration test
 
 **Files:**
 - Modify: `tests/journeys/commands/test_provider_command_journey.py` (add one new test, following this file's existing conventions from earlier this session's multi-tier work)
@@ -3013,7 +3248,7 @@ git commit -m "test: end-to-end proof — one provider, two models, independentl
 
 ---
 
-## Task 27: Final full regression pass
+## Task 28: Final full regression pass
 
 **Files:**
 - None modified — verification only.
@@ -3049,7 +3284,7 @@ Expected: no errors NEWLY introduced by this plan (this repo has confirmed, pre-
 ```bash
 grep -rn "_and_model" src/stackowl/ tests/ | grep -v __pycache__
 ```
-Expected: no output (Task 23 already confirmed this — re-confirm here as the plan's final gate, since intervening tasks 24-26 touched files that could theoretically have reintroduced a stale reference).
+Expected: no output (Task 24 already confirmed this — re-confirm here as the plan's final gate, since intervening tasks 25-27 touched files that could theoretically have reintroduced a stale reference).
 
 - [ ] **Step 4: Manual smoke check of the live platform (if running)**
 
