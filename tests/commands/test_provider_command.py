@@ -185,7 +185,7 @@ class TestProviderAdd:
         entry = next(p for p in data["providers"] if p["name"] == "acme")
         assert entry["protocol"] == "openai"
         assert entry["default_model"] == "gpt-x"
-        assert entry["tier"] == "fast"
+        assert entry["tiers"] == ["fast"]
         assert entry.get("api_key") in (None, "")
         reload_events = [p for e, p in bus.events if e == "settings_reloaded"]
         assert any(isinstance(p, Settings) for p in reload_events)
@@ -456,7 +456,7 @@ class TestProviderAddModelTier:
         saved = next(p for p in data["providers"] if p["name"] == "groq")
         assert saved["protocol"] == "openai"
         assert saved["default_model"] == "llama-3.3-70b-versatile"
-        assert saved["tier"] == "fast"
+        assert saved["tiers"] == ["fast"]
         assert saved["api_key"] is None  # "-" sentinel means keyless
 
     def test_add_tier_auto_suffixes_name_on_collision(self, tmp_yaml: Path) -> None:
@@ -553,9 +553,9 @@ class TestProviderMenu:
         out = await _make_cmd().handle("menu acme", _state())
         assert "acme" in out.text
         labels = [a.label for a in out.actions]
-        assert "Set tier: standard" in labels
-        assert "Set tier: powerful" in labels
-        assert "Set tier: fast" not in labels  # already the current tier
+        assert "Add tier: standard" in labels
+        assert "Add tier: powerful" in labels
+        assert "Add tier: fast" not in labels  # already the current tier
         assert out.actions[-1].label == "Remove acme"
         assert out.actions[-1].command == "/provider remove acme"
         assert out.actions[-1].destructive is True

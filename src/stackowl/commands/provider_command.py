@@ -966,7 +966,7 @@ class ProviderCommand(SlashCommand):
             "api_key": None if api_key_ref == "-" else api_key_ref,
             "base_url": entry.base_url or None,
             "default_model": model,
-            "tier": tier,
+            "tiers": [tier],
         }
         result = self._persist_new_provider(provider_entry)
         # 4. EXIT
@@ -1030,7 +1030,7 @@ class ProviderCommand(SlashCommand):
         # 4. EXIT
         log.config.info(
             "[commands] provider.persist_new_provider: exit — added",
-            extra={"_fields": {"name": name, "protocol": entry.get("protocol"), "tier": entry.get("tier")}},
+            extra={"_fields": {"name": name, "protocol": entry.get("protocol"), "tiers": entry.get("tiers")}},
         )
         key_note = f" (api_key ref: {entry['api_key']})" if entry.get("api_key") else ""
         return f"✓ Provider '{name}' added{key_note} — applied immediately"
@@ -1085,7 +1085,7 @@ class ProviderCommand(SlashCommand):
             "api_key": None,
             "base_url": base_url,
             "default_model": default_model,
-            "tier": tier,
+            "tiers": [tier],
         }
 
         # Validate the entry BEFORE storing any secret — we never leave an
