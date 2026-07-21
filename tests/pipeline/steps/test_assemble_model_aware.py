@@ -183,3 +183,66 @@ async def test_provider_selection_failure_falls_back_to_full() -> None:
     assert result.model_window is None, (
         f"model_window should be None on provider-selection failure, got {result.model_window}"
     )
+
+
+@pytest.mark.asyncio
+async def test_tier_resolved_model_used_in_window_probe() -> None:
+    """Task 10: Tier resolution picks a NON-default model → window probe uses THAT model, not default_model.
+
+    Register two providers under different names to simulate tier-specific routing:
+      - 'fast-provider' tier='fast' (context_chars=8000 → window 2000, lean charter)
+      - 'powerful-provider' tier='powerful' (context_chars=320000 → window 16384, full charter)
+
+    An owl without an explicit provider pin but with model_tier='powerful' should trigger
+    tier resolution to pick 'powerful-provider' instead of the default.
+
+    The test verifies that select_tool_provider_plan resolves to the right provider
+    based on tier, and assemble's window probe uses the resolved provider's config.
+    """
+    mw._WINDOW_CACHE.clear()
+
+    # Two separate providers for two different tiers
+    provider_registry = ProviderRegistry()
+    fast_provider = _FakeProvider(context_chars=8000)
+    powerful_provider = _FakeProvider(context_chars=320_000)
+
+    provider_registry.register_mock("fast-provider", fast_provider, tier="fast")
+    provider_registry.register_mock("powerful-provider", powerful_provider, tier="powerful")
+
+    # Owl with model_tier='powerful' so tier resolution prefers 'powerful-provider'
+    owl_registry = OwlRegistry()
+    owl_registry.register(OwlAgentManifest(
+        name="powerful_owl",
+        role="assistant",
+        system_prompt="Test persona.",
+        model_tier="powerful",  # Desired tier - should match powerful-provider
+    ))
+
+    token = set_services(StepServices(
+        owl_registry=owl_registry,
+        provider_registry=provider_registry,
+    ))
+    try:
+        from stackowl.pipeline.steps import assemble
+        result = await assemble.run(_make_state(owl_name="powerful_owl"))
+    finally:
+        reset_services(token)
+
+    # With the fix, the window probe should resolve to 'powerful-provider' (via tier resolution),
+    # which has context_chars=320_000 → window clamped to 16384 (full charter).
+    # Without the fix (using select_tool_provider), it would fall back incorrectly and
+    # possibly use a different provider configuration.
+    assert result.model_window is not None, "model_window must be resolved"
+    assert result.model_window >= 16384, (
+        f"Expected large window ≥ 16384 (powerful-provider's 320_000 chars), "
+        f"but got {result.model_window}. This suggests the window probe is not using "
+        f"the tier-resolved provider."
+    )
+    # System prompt should use full charter (not lean) for large window.
+    sp = result.system_prompt or ""
+    full_text = behavioral_charter()
+    assert full_text in sp, (
+        f"Expected full charter in system_prompt for large window ({result.model_window}), "
+        f"but found lean charter instead. This indicates tier resolution is not working "
+        f"in the window probe.\nFirst 300 chars: {sp[:300]!r}"
+    )

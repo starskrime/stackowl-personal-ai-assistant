@@ -67,19 +67,21 @@ async def run(state: PipelineState) -> PipelineState:
     try:
         if services.provider_registry is not None:
             from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
-            from stackowl.pipeline.provider_select import select_tool_provider
+            from stackowl.pipeline.provider_select import select_tool_provider_plan
             from stackowl.providers.model_window import resolve_window
             # Quiet, side-effect-free window probe: no INFO log AND no recovery
             # event (execute's real selection records the provider_fallback once).
-            _p = select_tool_provider(
+            _choice = select_tool_provider_plan(
                 services.provider_registry, services, state,
                 log_selection=False, record_recovery=False,
             )
+            _p = _choice.provider
             _pc = getattr(_p, "_config", None)
+            _resolved_model = _choice.model or (_pc.default_model if _pc is not None else "") or ""
             model_window = await resolve_window(
                 provider_name=getattr(_p, "name", "") or "",
                 base_url=_pc.base_url if _pc is not None else None,
-                model=(_pc.default_model if _pc is not None else "") or "",
+                model=_resolved_model,
                 context_chars=(_pc.context_chars if _pc is not None else None),
                 protocol=getattr(_p, "protocol", "") or "",
                 api_key=_safe_resolve_api_key(_pc),
