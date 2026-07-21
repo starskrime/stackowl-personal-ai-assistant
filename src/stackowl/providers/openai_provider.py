@@ -246,7 +246,16 @@ class OpenAIProvider(ModelProvider):
             stream_resp = await self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=resolved_model,
                 messages=oai_msgs,
-                max_tokens=_max_tokens(kwargs, default=self._config.max_output_tokens),
+                # F125-parity: complete()/complete_with_tools() already size max_tokens
+                # from the model's resolved window via _output_cap() (min(window,
+                # max_output_tokens) — "generous but never the whole window"). stream()
+                # was the one path still using the raw max_output_tokens default
+                # unconditionally — harmless when no window resolves, but once one
+                # does, using the flat config value instead of the (usually smaller,
+                # window-derived) capped value is inconsistent with the other two
+                # call paths for no reason. Route through the same helper so all
+                # three call paths agree.
+                max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model)),
                 stream=True,
                 stream_options={"include_usage": True},
                 **self._ollama_extra_body(resolved_model),

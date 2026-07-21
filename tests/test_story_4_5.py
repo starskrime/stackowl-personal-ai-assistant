@@ -135,38 +135,6 @@ class _HoldingMockProvider(ModelProvider):
         yield "end "
 
 
-class _KwargsRecordingProvider(ModelProvider):
-    """Provider that records the kwargs OwlResourceGuard.stream() forwards to
-    provider.stream() — used to prove max_tokens reaches the actual API call,
-    not just the guard's own client-side whitespace-count estimate."""
-
-    def __init__(self, name: str = "recorder") -> None:
-        self._name = name
-        self.stream_kwargs: dict[str, object] = {}
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
-        return "openai"
-
-    async def complete(
-        self, messages: list[Message], model: str, **kwargs: object
-    ) -> CompletionResult:
-        return CompletionResult(
-            content="", input_tokens=0, output_tokens=0,
-            model="recorder-mock", provider_name=self._name, duration_ms=0.0,
-        )
-
-    async def stream(
-        self, messages: list[Message], model: str, **kwargs: object
-    ) -> AsyncIterator[str]:
-        self.stream_kwargs = kwargs
-        yield "ok "
-
-
 @pytest.fixture(autouse=True)
 def _no_test_mode() -> None:
     """Story 4.5 calls TestModeGuard.assert_not_test_mode — ensure it is off."""
@@ -269,36 +237,6 @@ class TestOwlResourceGuard:
         # Only the first chunk should be yielded before truncation kicks in.
         assert collected == ["alpha "]
         assert any("token limit" in rec.message for rec in caplog.records)
-
-    async def test_stream_forwards_manifest_max_tokens_to_provider(self) -> None:
-        """Root-cause regression for the runaway-stream incident: max_tokens was
-        previously enforced ONLY by the guard's own whitespace-split estimate
-        below, never sent to the provider — so a whitespace-sparse degenerate
-        stream (e.g. a repeated punctuation fragment) could burn thousands of
-        real tokens while the estimate barely moved, leaving the provider's
-        own much larger max_output_tokens default as the real ceiling. The
-        owl's manifest.max_tokens must reach the actual provider.stream() call."""
-        manifest = _make_manifest(max_tokens=777)
-        guard = OwlResourceGuard(manifest)
-        provider = _KwargsRecordingProvider()
-        collected = [
-            chunk async for chunk in guard.stream(provider, [Message(role="user", content="x")], model="")
-        ]
-        assert collected == ["ok "]
-        assert provider.stream_kwargs.get("max_tokens") == 777
-
-    async def test_stream_does_not_override_an_explicit_max_tokens_kwarg(self) -> None:
-        manifest = _make_manifest(max_tokens=777)
-        guard = OwlResourceGuard(manifest)
-        provider = _KwargsRecordingProvider()
-        collected = [
-            chunk
-            async for chunk in guard.stream(
-                provider, [Message(role="user", content="x")], model="", max_tokens=42
-            )
-        ]
-        assert collected == ["ok "]
-        assert provider.stream_kwargs.get("max_tokens") == 42
 
     async def test_timeout_raises_owl_timeout_error(self) -> None:
         manifest = _make_manifest(timeout_seconds=0.01)

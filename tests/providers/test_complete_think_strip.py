@@ -447,3 +447,46 @@ async def test_complete_caps_output_at_max_output_tokens_not_the_whole_window(
     await provider.complete([Message(role="user", content="hi")], model="")
 
     assert completions.calls[0]["max_tokens"] == 131072  # capped, not the raw 262144 window
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_send_fixed_max_output_tokens_when_window_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stream() was the one call path still using the raw max_output_tokens
+    config value unconditionally instead of _output_cap()'s window-derived
+    (usually smaller) budget — complete()/complete_with_tools() already did
+    this. With a resolved window smaller than max_output_tokens, stream()'s
+    request must reflect the window, matching test_complete_does_not_send_fixed_4096_cap."""
+    from stackowl.providers import model_window
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "qwen3.5:2b"), 32768)
+    completions = _ScriptedStreamCompletions(["an answer"])
+    provider = _make_provider(_FakeClient(completions))  # type: ignore[arg-type]
+
+    async for _ in provider.stream([Message(role="user", content="hi")], model=""):
+        pass
+
+    assert completions.calls[0]["max_tokens"] == 32768  # window-derived, not the flat config value
+
+
+@pytest.mark.asyncio
+async def test_stream_caps_output_at_max_output_tokens_not_the_whole_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirrors test_complete_caps_output_at_max_output_tokens_not_the_whole_window
+    for stream() — a large resolved window (262144) must still be bounded by
+    max_output_tokens (131072), not requested whole (which would leave zero
+    room for the prompt itself)."""
+    from stackowl.providers import model_window
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "qwen3.5:2b"), 262144)
+    completions = _ScriptedStreamCompletions(["an answer"])
+    provider = _make_provider(_FakeClient(completions))  # type: ignore[arg-type]
+
+    async for _ in provider.stream([Message(role="user", content="hi")], model=""):
+        pass
+
+    assert completions.calls[0]["max_tokens"] == 131072  # capped, not the raw 262144 window
