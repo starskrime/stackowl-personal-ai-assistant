@@ -187,6 +187,18 @@ class OwlResourceGuard:
 
         token_count = 0
         t0 = time.monotonic()
+        # Root cause of the "runaway stream" incident: this manifest.max_tokens
+        # budget was previously enforced ONLY by the whitespace-split estimate
+        # below — never sent to the provider itself. A raw/base model producing
+        # whitespace-sparse degenerate output (e.g. a repeated punctuation
+        # fragment) could blow through thousands of real tokens while the
+        # whitespace-word count barely moved, leaving the provider's own
+        # (much larger, context-window-sized) max_output_tokens default as the
+        # actual API-level ceiling — so nothing stopped it short of the blunt
+        # per-item stream timeout. Passing max_tokens through here caps
+        # generation at the SOURCE, at the owl's real intended budget; an
+        # explicit caller-supplied max_tokens in kwargs is never overridden.
+        kwargs.setdefault("max_tokens", self._manifest.max_tokens)
         stream_iter = provider.stream(messages, model, **kwargs)
         try:
             while True:
