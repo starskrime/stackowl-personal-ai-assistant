@@ -105,3 +105,32 @@ class TestModelRouteStorage:
             ModelRoute(model="acme-v1", tiers=("fast",)),
             ModelRoute(model="acme-v1-mini", tiers=("standard",)),
         )
+
+
+def test_tiers_of_flattens_across_model_routes() -> None:
+    """A provider with 2 models in DIFFERENT tiers must report BOTH tiers via
+    tiers_of — the vision selector's contract is provider-level membership,
+    regardless of which model serves which tier."""
+    registry = ProviderRegistry()
+    mock = MockProvider(name="acme")
+    registry.register_mock(
+        "acme", mock,
+        models=(
+            ModelRoute(model="acme-v1", tiers=("fast",)),
+            ModelRoute(model="acme-v1-mini", tiers=("standard",)),
+        ),
+    )
+    assert registry.tiers_of(mock) == ("fast", "standard")
+
+
+def test_tiers_of_dedupes_a_tier_served_by_two_models() -> None:
+    registry = ProviderRegistry()
+    mock = MockProvider(name="acme")
+    registry.register_mock(
+        "acme", mock,
+        models=(
+            ModelRoute(model="acme-v1", tiers=("fast",)),
+            ModelRoute(model="acme-v1-mini", tiers=("fast", "standard")),
+        ),
+    )
+    assert registry.tiers_of(mock) == ("fast", "standard")

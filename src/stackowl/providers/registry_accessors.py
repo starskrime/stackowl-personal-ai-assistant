@@ -41,12 +41,10 @@ class RegistryAccessorsMixin:
     def tiers_of(self, provider: ModelProvider) -> tuple[str, ...] | None:
         """All configured routing tiers for this provider, or None if unknown.
 
-        Returns the full tuple of tier memberships; for a provider in multiple
-        tiers, the order reflects the config order (e.g. ``("fast", "powerful")``).
-        Internally ``_tiers`` stores per-model ``ModelRoute`` entries (one
-        provider connection can route different models to different tiers) —
-        this flattens across all of a provider's routes so the PUBLIC shape
-        stays byte-identical to before that restructure.
+        Flattens across every ModelRoute this provider serves (order-preserving,
+        de-duplicated) — the contract is PROVIDER-level tier membership regardless
+        of which specific model serves which tier; callers (e.g. the vision
+        selector) never needed model granularity here.
         """
         name = self._name_of(provider)
         if name is None:
@@ -54,7 +52,12 @@ class RegistryAccessorsMixin:
         routes = self._tiers.get(name)
         if routes is None:
             return None
-        return tuple(t for route in routes for t in route.tiers)
+        seen: list[str] = []
+        for route in routes:
+            for t in route.tiers:
+                if t not in seen:
+                    seen.append(t)
+        return tuple(seen)
 
     def is_local(self, provider: ModelProvider) -> bool:
         """True iff a self-hosted (on-box) backend — derived from the base_url host,
