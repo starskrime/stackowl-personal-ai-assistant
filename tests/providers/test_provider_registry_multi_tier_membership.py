@@ -134,3 +134,123 @@ def test_tiers_of_dedupes_a_tier_served_by_two_models() -> None:
         ),
     )
     assert registry.tiers_of(mock) == ("fast", "standard")
+
+
+class TestAndModelResolution:
+    def test_get_by_tier_and_model_returns_default_model_route(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(ModelRoute(model="acme-v1", tiers=("fast",)),),
+        )
+        provider, model = registry.get_by_tier_and_model("fast")
+        assert provider.name == "acme"
+        assert model == "acme-v1"
+
+    def test_get_by_tier_and_model_picks_correct_model_among_several(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(
+                ModelRoute(model="acme-v1", tiers=("fast",)),
+                ModelRoute(model="acme-v1-mini", tiers=("standard",)),
+            ),
+        )
+        provider, model = registry.get_by_tier_and_model("standard")
+        assert provider.name == "acme"
+        assert model == "acme-v1-mini"
+
+    def test_get_with_cascade_and_model_returns_model(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(ModelRoute(model="acme-v1", tiers=("fast",)),),
+        )
+        provider, model = registry.get_with_cascade_and_model("fast")
+        assert provider.name == "acme"
+        assert model == "acme-v1"
+
+    def test_resolve_tier_with_fallback_and_model_returns_three_tuple(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(ModelRoute(model="acme-v1", tiers=("fast",)),),
+        )
+        provider, model, degraded = registry.resolve_tier_with_fallback_and_model("fast")
+        assert provider.name == "acme"
+        assert model == "acme-v1"
+        assert degraded is None
+
+    def test_resolve_capable_or_degrade_and_model_returns_three_tuple(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(ModelRoute(model="acme-v1", tiers=("powerful",)),),
+        )
+        provider, model, degraded = registry.resolve_capable_or_degrade_and_model("powerful")
+        assert provider.name == "acme"
+        assert model == "acme-v1"
+        assert degraded is None
+
+
+class TestOldMethodsUnchangedDuringMigration:
+    """Task 5's core safety invariant: every OLD method keeps its exact
+    pre-Task-5 contract — a bare provider (or 2-tuple) — for the whole
+    migration. These tests exist so the migration cannot silently regress
+    an already-shipped caller before its own task lands."""
+
+    def test_get_by_tier_still_returns_bare_provider(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock("acme", MockProvider(name="acme"), tier="fast")
+        result = registry.get_by_tier("fast")
+        assert not isinstance(result, tuple)
+        assert result.name == "acme"
+
+    def test_get_with_cascade_still_returns_bare_provider(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock("acme", MockProvider(name="acme"), tier="fast")
+        result = registry.get_with_cascade("fast")
+        assert not isinstance(result, tuple)
+        assert result.name == "acme"
+
+    def test_resolve_tier_with_fallback_still_returns_two_tuple(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock("acme", MockProvider(name="acme"), tier="fast")
+        result = registry.resolve_tier_with_fallback("fast")
+        assert len(result) == 2
+        provider, degraded = result
+        assert provider.name == "acme"
+        assert degraded is None
+
+    def test_resolve_capable_or_degrade_still_returns_two_tuple(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock("acme", MockProvider(name="acme"), tier="powerful")
+        result = registry.resolve_capable_or_degrade("powerful")
+        assert len(result) == 2
+
+
+class TestSameTierMultiModelRoundRobin:
+    def test_round_robins_between_two_models_of_one_provider_in_the_same_tier(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(
+                ModelRoute(model="acme-v1", tiers=("fast",)),
+                ModelRoute(model="acme-v1-fast2", tiers=("fast",)),
+            ),
+        )
+        first = registry.get_by_tier_and_model("fast")[1]
+        second = registry.get_by_tier_and_model("fast")[1]
+        third = registry.get_by_tier_and_model("fast")[1]
+        assert {first, second} == {"acme-v1", "acme-v1-fast2"}
+        assert first != second
+        assert third == first  # cursor wraps after 2
+
+    def test_single_matching_route_is_unaffected_no_cursor_bookkeeping(self) -> None:
+        registry = ProviderRegistry()
+        registry.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(ModelRoute(model="acme-v1", tiers=("fast",)),),
+        )
+        assert registry.get_by_tier_and_model("fast")[1] == "acme-v1"
+        assert registry.get_by_tier_and_model("fast")[1] == "acme-v1"

@@ -47,19 +47,6 @@ class ModelRoute(NamedTuple):
     tiers: tuple[str, ...]
 
 
-def _flatten_routes(tiers: dict[str, tuple[ModelRoute, ...]]) -> dict[str, tuple[str, ...]]:
-    """Flatten each provider's ``ModelRoute`` tuple to a plain tier-name tuple.
-
-    Tier-SELECTION logic (``get_by_tier`` / ``get_with_cascade`` / ``TierSelector``
-    / ``resolve_tier_with_fallback`` / ``resolve_capable_or_degrade``) only needs
-    to know WHICH TIERS a provider serves across ALL its routes, not which model
-    serves which tier — per-model dispatch wiring is a later task in this plan.
-    This keeps every one of those call sites byte-identical to the
-    pre-``ModelRoute`` behavior on top of the new storage shape.
-    """
-    return {name: tuple(t for route in routes for t in route.tiers) for name, routes in tiers.items()}
-
-
 def _inject_resilience(
     provider: object,
     breaker: CircuitBreaker | None,
@@ -138,6 +125,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # F-multi-tier — round-robin selector for the "which of N healthy
         # providers in this tier" decision (get_with_cascade delegates to it).
         self._tier_selector = TierSelector()
+        # Round-robin cursor for picking among a SINGLE provider's multiple
+        # models that serve the SAME tier — a smaller, separate concern from
+        # self._tier_selector's round-robin ACROSS different providers.
+        self._model_cursor: dict[tuple[str, str], int] = {}
 
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker into every provider (the SINGLE recording
@@ -447,21 +438,27 @@ class ProviderRegistry(RegistryAccessorsMixin):
             raise ProviderNotFoundError(name)
         return providers[name]
 
-    def get_by_tier(self, tier: str) -> ModelProvider:
-        """Return the first provider matching the given tier (config order).
-
-        Falls back to the first available provider when no exact match exists.
-        Use get_with_cascade() for circuit-aware tier traversal.
+    def get_by_tier_and_model(self, tier: str) -> tuple[ModelProvider, str]:
+        """Return (provider, model) for the first match matching the given
+        tier (config order). Falls back to the first available provider's
+        first route when no exact match exists. Use
+        get_with_cascade_and_model() for circuit-aware tier traversal.
         """
         # Snapshot both dict refs together so a concurrent apply_settings() swap
         # (watcher thread) can't make us index a name absent from _providers.
         providers = self._providers
-        tiers = _flatten_routes(self._tiers)
-        for name, provider_tiers in tiers.items():
-            if tier in provider_tiers and name in providers:
-                return providers[name]
+        tiers = self._tiers
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            if any(tier in route.tiers for route in routes):
+                return providers[name], self._pick_route(name, tier, routes).model
         if providers:
             fallback_name = next(iter(providers))
+            fallback_model = ""
+            fallback_routes = tiers.get(fallback_name)
+            if fallback_routes:
+                fallback_model = fallback_routes[0].model
             # Loud, actionable degrade: a requested tier with no provider means
             # the roster is incomplete (e.g. no capable model configured). Never
             # silently substitute — surface it so the operator can add/relabel
@@ -472,15 +469,22 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 "a provider for this tier to fix routing",
                 extra={"_fields": {"requested_tier": tier, "returned": fallback_name}},
             )
-            return providers[fallback_name]
+            return providers[fallback_name], fallback_model
         raise ProviderNotFoundError(f"tier:{tier}")
 
-    def get_with_cascade(self, preferred_tier: str) -> ModelProvider:
-        """Return first non-OPEN provider starting at preferred_tier.
+    def get_by_tier(self, tier: str) -> ModelProvider:
+        """Back-compat wrapper — TEMPORARY, removed once every call site
+        migrates to get_by_tier_and_model (tracked in the per-model provider
+        config plan's final cleanup task). Returns just the provider,
+        byte-identical to this method's pre-migration contract."""
+        return self.get_by_tier_and_model(tier)[0]
 
-        Walks tiers in order fast → standard → powerful → local, starting at
-        `preferred_tier` and wrapping. Skips providers whose CircuitBreaker is
-        OPEN. Raises AllProvidersUnavailableError if every provider is OPEN.
+    def get_with_cascade_and_model(self, preferred_tier: str) -> tuple[ModelProvider, str]:
+        """Return (first non-OPEN provider, its matched model) starting at
+        preferred_tier. Walks tiers in order fast → standard → powerful →
+        local, starting at `preferred_tier` and wrapping. Skips providers
+        whose CircuitBreaker is OPEN. Raises AllProvidersUnavailableError if
+        every provider is OPEN.
         """
         log.engine.debug(
             "[registry] get_with_cascade: entry",
@@ -566,7 +570,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         }
                     },
                 )
-                return prov
+                chosen_routes = tiers.get(chosen, ())
+                chosen_model = self._pick_route(chosen, tier, chosen_routes).model if chosen_routes else ""
+                return prov, chosen_model
             candidates = [
                 name for name, routes in tiers.items()
                 if any(tier in route.tiers for route in routes) and name in providers
@@ -597,84 +603,89 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         raise AllProvidersUnavailableError(details)
 
-    def resolve_tier_with_fallback(
-        self, tier: str,
-    ) -> tuple[ModelProvider, str | None]:
-        """Tier resolution that is circuit-aware ONLY when the chosen provider is OPEN.
+    def get_with_cascade(self, preferred_tier: str) -> ModelProvider:
+        """Back-compat wrapper — TEMPORARY, removed in the final cleanup task."""
+        return self.get_with_cascade_and_model(preferred_tier)[0]
 
-        Returns ``(provider, degraded_from)``. ``degraded_from`` is the name of the
-        provider we fell back FROM (its circuit was OPEN), or ``None`` when no
-        fallback occurred. Happy path (chosen provider healthy) is byte-identical
-        to :meth:`get_by_tier`; the cascade is only invoked when the chosen
-        provider's circuit is OPEN. Raises :class:`AllProvidersUnavailableError`
-        if every provider is OPEN (caller floors).
+    def resolve_tier_with_fallback_and_model(
+        self, tier: str,
+    ) -> tuple[ModelProvider, str, str | None]:
+        """Tier resolution that is circuit-aware ONLY when the chosen provider
+        is OPEN. Returns (provider, model, degraded_from). Happy path (chosen
+        provider healthy) is byte-identical to get_by_tier_and_model; the
+        cascade is only invoked when the chosen provider's circuit is OPEN.
         """
         log.engine.debug(
             "[registry] resolve_tier_with_fallback: entry",
             extra={"_fields": {"tier": tier}},
         )
         providers = self._providers
-        tiers = _flatten_routes(self._tiers)
+        tiers = self._tiers
         breakers = self._breakers
         primary_name: str | None = None
-        for name, ptiers in tiers.items():
-            if tier in ptiers and name in providers:
+        primary_model: str = ""
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            if any(tier in route.tiers for route in routes):
                 primary_name = name
+                primary_model = self._pick_route(name, tier, routes).model
                 break
         if primary_name is None:
             log.engine.debug(
                 "[registry] resolve_tier_with_fallback: no tier match — config degrade",
                 extra={"_fields": {"tier": tier}},
             )
-            return self.get_by_tier(tier), None
+            provider, model = self.get_by_tier_and_model(tier)
+            return provider, model, None
         breaker = breakers.get(primary_name)
         if breaker is None or breaker.state is not CircuitState.OPEN:
             log.engine.debug(
                 "[registry] resolve_tier_with_fallback: exit — healthy primary",
                 extra={"_fields": {"tier": tier, "primary": primary_name}},
             )
-            return providers[primary_name], None
+            return providers[primary_name], primary_model, None
         log.engine.info(
             "[registry] resolve_tier_with_fallback: primary circuit OPEN — cascading",
             extra={"_fields": {"tier": tier, "degraded_from": primary_name}},
         )
-        healthy = self.get_with_cascade(tier)
-        return healthy, primary_name
+        healthy, healthy_model = self.get_with_cascade_and_model(tier)
+        return healthy, healthy_model, primary_name
 
-    def resolve_capable_or_degrade(
+    def resolve_tier_with_fallback(self, tier: str) -> tuple[ModelProvider, str | None]:
+        """Back-compat wrapper — TEMPORARY, removed in the final cleanup task."""
+        provider, _model, degraded = self.resolve_tier_with_fallback_and_model(tier)
+        return provider, degraded
+
+    def resolve_capable_or_degrade_and_model(
         self, tier: str,
-    ) -> tuple[ModelProvider, str | None]:
-        """Resolve a CAPABLE tier, cascading to the most-capable available substitute.
-
-        Returns ``(provider, degraded_from)``. On an exact match ``degraded_from``
-        is ``None``. When no provider serves ``tier``, this prefers the next
-        MOST-CAPABLE available tier (``_CAPABILITY_ORDER``) and returns
-        ``degraded_from=tier`` so the caller can SURFACE the substitution — never a
-        silent arbitrary (possibly weak-local) provider as :meth:`get_by_tier` did
-        (F125). Used by parliament synthesis, which depends on actually getting a
-        powerful model. Raises :class:`ProviderNotFoundError` when the roster is
-        empty (no honest substitute exists).
-        """
+    ) -> tuple[ModelProvider, str, str | None]:
+        """Resolve a CAPABLE tier, cascading to the most-capable available
+        substitute. Returns (provider, model, degraded_from)."""
         log.engine.debug(
             "[registry] resolve_capable_or_degrade: entry",
             extra={"_fields": {"tier": tier}},
         )
         # Snapshot together: a concurrent apply_settings() swaps both atomically.
         providers = self._providers
-        tiers = _flatten_routes(self._tiers)
+        tiers = self._tiers
 
-        # Exact match first — byte-identical happy path to get_by_tier.
-        for name, provider_tiers in tiers.items():
-            if tier in provider_tiers and name in providers:
-                return providers[name], None
+        # Exact match first — byte-identical happy path to get_by_tier_and_model.
+        for name, routes in tiers.items():
+            if name not in providers:
+                continue
+            if any(tier in route.tiers for route in routes):
+                return providers[name], self._pick_route(name, tier, routes).model, None
 
         # No exact provider: cascade by CAPABILITY (most-capable first), skipping the
         # requested tier itself (already known absent). Returns degraded_from=tier.
         for cand_tier in _CAPABILITY_ORDER:
             if cand_tier == tier:
                 continue
-            for name, provider_tiers in tiers.items():
-                if cand_tier in provider_tiers and name in providers:
+            for name, routes in tiers.items():
+                if name not in providers:
+                    continue
+                if any(cand_tier in route.tiers for route in routes):
                     log.engine.warning(
                         "[registry] resolve_capable_or_degrade: no provider for "
                         "requested tier — substituting the most-capable available "
@@ -685,13 +696,18 @@ class ProviderRegistry(RegistryAccessorsMixin):
                             "substitute": name,
                         }},
                     )
-                    return providers[name], tier
+                    return providers[name], self._pick_route(name, cand_tier, routes).model, tier
 
         log.engine.error(
             "[registry] resolve_capable_or_degrade: no providers registered",
             extra={"_fields": {"tier": tier}},
         )
         raise ProviderNotFoundError(f"tier:{tier}")
+
+    def resolve_capable_or_degrade(self, tier: str) -> tuple[ModelProvider, str | None]:
+        """Back-compat wrapper — TEMPORARY, removed in the final cleanup task."""
+        provider, _model, degraded = self.resolve_capable_or_degrade_and_model(tier)
+        return provider, degraded
 
     def healthy_distinct(self, limit: int | None = None) -> list[ModelProvider]:
         """Return providers whose CircuitBreaker is NOT OPEN, distinct underlying.
@@ -766,6 +782,20 @@ class ProviderRegistry(RegistryAccessorsMixin):
             "[registry] mock registered",
             extra={"_fields": {"name": name, "tier": tier, "models": len(self._tiers[name])}},
         )
+
+    def _pick_route(self, name: str, tier: str, routes: tuple[ModelRoute, ...]) -> ModelRoute:
+        """Round-robin among ONE provider's routes that serve ``tier``.
+
+        Exactly one matching route (the overwhelmingly common case) returns
+        immediately with no cursor bookkeeping.
+        """
+        matching = [r for r in routes if tier in r.tiers]
+        if len(matching) <= 1:
+            return matching[0]
+        key = (name, tier)
+        idx = self._model_cursor.get(key, 0) % len(matching)
+        self._model_cursor[key] = (idx + 1) % len(matching)
+        return matching[idx]
 
     def all(self) -> list[ModelProvider]:
         return list(self._providers.values())
