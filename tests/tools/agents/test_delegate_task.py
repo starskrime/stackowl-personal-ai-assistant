@@ -626,7 +626,9 @@ async def test_write_capable_off_topic_halts_no_redelegation(
     """
     import stackowl.tools.agents.delegate_task as dt
 
-    async def _fake_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _fake_judge(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         return (False, "off topic: did not address the request")
 
     monkeypatch.setattr(dt, "judge_relevance", _fake_judge)
@@ -668,7 +670,9 @@ async def test_readonly_off_topic_routes_to_fallback(
     """
     import stackowl.tools.agents.delegate_task as dt
 
-    async def _selective_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _selective_judge(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         # The analyst's off-topic answer fails; the secretary's relevant answer passes.
         return ("relevant answer" in content, "judge verdict")
 
@@ -706,7 +710,9 @@ async def test_readonly_all_off_topic_honest_irrelevant(
     """
     import stackowl.tools.agents.delegate_task as dt
 
-    async def _always_offtopic(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _always_offtopic(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         return (False, "off topic")
 
     monkeypatch.setattr(dt, "judge_relevance", _always_offtopic)
@@ -954,11 +960,15 @@ async def test_dedup_memo_hit_within_ladder_does_not_charge_attempt() -> None:
 class _FakeProviderRegistry:
     """Minimal fake ProviderRegistry that returns a sentinel provider from get_with_cascade."""
 
-    def __init__(self, provider: object = None) -> None:
+    def __init__(self, provider: object = None, model: str = "") -> None:
         self._provider = provider or object()
+        self._model = model
 
     def get_with_cascade(self, tier: str) -> object:
         return self._provider
+
+    def get_with_cascade_and_model(self, tier: str) -> tuple[object, str]:
+        return self._provider, self._model
 
 
 def _services_with_provider(
@@ -986,7 +996,9 @@ async def test_relevance_gate_demotes_off_topic_via_judge(monkeypatch: pytest.Mo
     """
     import stackowl.tools.agents.delegate_task as dt
 
-    async def _fake_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _fake_judge(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         return (False, "off topic: unrelated answer")
 
     monkeypatch.setattr(dt, "judge_relevance", _fake_judge)
@@ -1024,7 +1036,9 @@ async def test_structural_prefilter_demotes_without_calling_judge(monkeypatch: p
 
     called: dict[str, bool] = {"judge": False}
 
-    async def _spy_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _spy_judge(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         called["judge"] = True
         return (True, "")
 
@@ -1055,7 +1069,9 @@ async def test_relevance_gate_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
     """D3 unit: _relevance_gate directly — demotes an ok result when judge says off-topic."""
     import stackowl.tools.agents.delegate_task as dt
 
-    async def _fake_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _fake_judge(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         return (False, "wrong topic")
 
     monkeypatch.setattr(dt, "judge_relevance", _fake_judge)
@@ -1073,7 +1089,9 @@ async def test_relevance_gate_passes_through_when_judge_says_relevant(monkeypatc
     """D3 unit: _relevance_gate returns the original result unchanged when relevant."""
     import stackowl.tools.agents.delegate_task as dt
 
-    async def _relevant_judge(provider: object, ask: str, content: str) -> tuple[bool, str]:
+    async def _relevant_judge(
+        provider: object, ask: str, content: str, *, model: str = ""
+    ) -> tuple[bool, str]:
         return (True, "on topic")
 
     monkeypatch.setattr(dt, "judge_relevance", _relevant_judge)
@@ -1095,3 +1113,65 @@ async def test_relevance_gate_failopen_when_no_provider() -> None:
 
     assert result.status == "ok"
     assert result is original
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_forwards_model_to_judge_relevance() -> None:
+    """D3 unit: ``_relevance_gate`` forwards an explicit ``model`` through to
+    ``judge_relevance`` -> ``provider.complete``, rather than hardcoding "" —
+    same pattern as Task 9's ``judge_delivery`` model threading. Uses the REAL
+    (unmocked) ``judge_relevance`` + a model-capturing provider so this fails if
+    the ``model`` kwarg is dropped anywhere on the path.
+    """
+    import stackowl.tools.agents.delegate_task as dt
+    from tests.pipeline.test_phaseD_persistence import _ModelCapturingJudgeProvider
+
+    provider = _ModelCapturingJudgeProvider('{"relevant": true, "reason": "on topic"}')
+    original = A2AResult(status="ok", content="x" * 60, resolved_owl="scout")
+
+    result = await dt._relevance_gate(
+        original, "scout", "find X", provider, model="delegate-fast-v9",
+    )
+
+    assert provider.seen_model == "delegate-fast-v9"
+    assert result.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_run_delegation_threads_resolved_fast_model_to_relevance_judge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: ``_run_delegation`` resolves the fast provider+model via
+    ``get_with_cascade_and_model`` and threads the RESOLVED model all the way
+    through ``_relevance_gate`` -> ``judge_relevance`` -> ``provider.complete``.
+
+    Genuinely discriminating: if ``_run_delegation`` still called the old
+    ``get_with_cascade`` (dropping the model) or ``_relevance_gate``/
+    ``judge_relevance`` hardcoded ``model=""``, ``seen_model`` would stay ""
+    instead of the sentinel resolved model, and this assertion would fail.
+    """
+    import stackowl.tools.agents.delegate_task as dt
+    from tests.pipeline.test_phaseD_persistence import _ModelCapturingJudgeProvider
+
+    capturing_provider = _ModelCapturingJudgeProvider(
+        '{"relevant": true, "reason": "on topic"}'
+    )
+    fake = _FakeDelegator(
+        A2AResult(status="ok", content="x" * 60, resolved_owl="scout")
+    )
+    token = set_services(
+        _services_with_provider(
+            fake,
+            _registry_with_specialist(),
+            _FakeProviderRegistry(capturing_provider, model="delegate-fast-resolved"),
+        )
+    )
+    trace = TraceContext.start("s", trace_id="tr-d3-model-thread", channel="cli")
+    try:
+        res = await dt.DelegateTaskTool().execute(goal="find X", to_owl="scout")
+    finally:
+        TraceContext.reset(trace)
+        reset_services(token)
+
+    assert res.success is True
+    assert capturing_provider.seen_model == "delegate-fast-resolved"

@@ -166,11 +166,16 @@ async def judge_relevance(
     provider: ModelProvider,
     parent_ask: str,
     child_content: str,
+    *,
+    model: str = "",
 ) -> tuple[bool, str]:
     """Judge whether ``child_content`` is on-topic for ``parent_ask``.
 
     Two-stage: a cheap structural pre-filter (:func:`_structurally_irrelevant`)
     short-circuits obvious junk before the LLM judge is invoked.
+
+    ``model`` is the resolved model name to send to ``provider`` (defaults to ``""``,
+    byte-identical to pre-per-model-config behavior — the provider's own default).
 
     Returns ``(relevant, reason)``.  ``relevant`` is False ONLY when the judge
     explicitly rules off-topic.  Fails OPEN on any error (provider failure,
@@ -185,6 +190,7 @@ async def judge_relevance(
         extra={"_fields": {
             "ask_len": len(parent_ask),
             "content_len": len(child_content),
+            "model": model,
         }},
     )
 
@@ -218,7 +224,7 @@ async def judge_relevance(
     # strips the <think> trace and the output budget is window-sized, so a
     # reasoning model reasons then emits the verdict JSON (no mid-think truncation).
     try:
-        result = await provider.complete(messages, model="")
+        result = await provider.complete(messages, model=model)
     except Exception as exc:
         _JUDGE_ERRORS["count"] += 1
         log.engine.warning(

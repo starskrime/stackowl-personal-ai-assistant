@@ -220,6 +220,7 @@ async def _relevance_gate(
     to_owl: str,
     sub_task: str,
     fast_provider: object,
+    model: str = "",
 ) -> A2AResult:
     """Two-stage relevance gate: structural pre-filter (always) → LLM judge (if substantive + provider).
 
@@ -228,6 +229,9 @@ async def _relevance_gate(
     unchanged.  The structural stage always runs regardless of provider availability.
     References the module-level ``judge_relevance`` symbol so monkeypatching via
     ``dt.judge_relevance`` works in tests.
+
+    ``model`` is the resolved model name for ``fast_provider`` (defaults to ``""``,
+    byte-identical to pre-per-model-config behavior — the provider's own default).
     """
     if _structurally_irrelevant(res.content):
         log.tool.info(
@@ -237,7 +241,7 @@ async def _relevance_gate(
         return res.model_copy(update={"status": "off_topic", "child_detail": "structural"})
     if fast_provider is None:
         return res
-    relevant, reason = await judge_relevance(fast_provider, sub_task, res.content)  # type: ignore[arg-type]
+    relevant, reason = await judge_relevance(fast_provider, sub_task, res.content, model=model)  # type: ignore[arg-type]
     if not relevant:
         log.tool.warning(
             "delegate: ok judged off-topic -> demote",
@@ -499,8 +503,9 @@ class DelegateTaskTool(Tool):
         sub_task = compose_sub_task(args.goal, args.context)
         # D3 — resolve the fast provider ONCE per ladder; fail-open if roster is dead.
         fast_provider: object = None
+        fast_model = ""
         try:
-            fast_provider = get_services().provider_registry.get_with_cascade("fast")  # type: ignore[union-attr]
+            fast_provider, fast_model = get_services().provider_registry.get_with_cascade_and_model("fast")  # type: ignore[union-attr]
         except Exception as exc:  # noqa: BLE001 — fail-open is intentional: provider/registry errors
             # (incl. an unwired None registry) must degrade to structural-only relevance, never crash
             # the delegation ladder. Drops the misleading redundant `(AllProvidersUnavailableError, Exception)`.
@@ -584,7 +589,7 @@ class DelegateTaskTool(Tool):
                                  child_detail="non-A2AResult return")
             # D3 — relevance gate: structural pre-filter → LLM judge → demote if off-topic.
             if res.status == "ok":
-                res = await _relevance_gate(res, to_owl, sub_task, fast_provider)
+                res = await _relevance_gate(res, to_owl, sub_task, fast_provider, fast_model)
             memo[key] = res  # D2: store result; future same-key ok hits will use this.
             return res
 
