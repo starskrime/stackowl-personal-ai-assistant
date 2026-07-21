@@ -14,6 +14,7 @@ from stackowl.commands.provider_command import ProviderCommand
 _EXPECTED = {
     "list", "add", "remove", "set-tier", "edit", "enable", "disable", "set-token",
     "rename", "status",
+    "models", "model-add", "remove-model", "set-model-tokens", "set-model-context",
 }
 
 
