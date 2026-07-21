@@ -29,6 +29,7 @@ from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.escalation_signal import escalation_requested
 from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
+from stackowl.providers.model_config import resolve_model_override
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
 from stackowl.providers.vision_models import is_vision_model
@@ -119,7 +120,15 @@ class AnthropicProvider(ModelProvider):
             async with self._client.messages.stream(
                 model=resolved_model,
                 messages=chat_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs),
+                # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
+                # per-model ceilings (8192-64000) — safe today (no Anthropic
+                # provider configured), but the FIRST Anthropic provider added
+                # must set an explicit models[].max_output_tokens (or a smaller
+                # provider-level max_output_tokens) or its first real request
+                # fails with a 400. No window-bounding exists for this
+                # provider (unlike OpenAI's _output_cap) — deliberately out of
+                # scope for this plan.
+                max_tokens=_max_tokens(kwargs, default=resolve_model_override(self._config, resolved_model)[0]),
                 **stream_kwargs,  # type: ignore[arg-type]
             ) as stream:
                 try:
@@ -687,7 +696,15 @@ class AnthropicProvider(ModelProvider):
             return await self._client.messages.create(
                 model=resolved_model,
                 messages=chat_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs),
+                # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
+                # per-model ceilings (8192-64000) — safe today (no Anthropic
+                # provider configured), but the FIRST Anthropic provider added
+                # must set an explicit models[].max_output_tokens (or a smaller
+                # provider-level max_output_tokens) or its first real request
+                # fails with a 400. No window-bounding exists for this
+                # provider (unlike OpenAI's _output_cap) — deliberately out of
+                # scope for this plan.
+                max_tokens=_max_tokens(kwargs, default=resolve_model_override(self._config, resolved_model)[0]),
                 **sys_kwargs,
             )
 
