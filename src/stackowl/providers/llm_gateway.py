@@ -8,7 +8,7 @@ in-band ``ESCALATE`` sentinel.
 
 This adds **complexity-based** escalation. The registry's existing
 **failure-based** fallback (skip a provider whose circuit is OPEN) still runs
-UNDERNEATH via ``resolve_tier_with_fallback`` — the two compose: escalation picks
+UNDERNEATH via ``resolve_tier_with_fallback_and_model`` — the two compose: escalation picks
 the target tier, failure-fallback finds a live provider for it.
 
 Meta-calls that must not recurse (the intent router, the give-up judges) pin
@@ -158,10 +158,10 @@ class LLMGateway:
         retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
-            provider, degraded = self._registry.resolve_tier_with_fallback(tier)
+            provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)
             msgs = _augment_messages(messages, can_escalate)
             try:
-                result = await provider.complete(msgs, model="", **kwargs)
+                result = await provider.complete(msgs, model=model, **kwargs)
             except BaseException as exc:
                 # ADR-2 — same-tier retry-once on a TRANSIENT fault, via the RecoveryActuator,
                 # BEFORE cascading (flagged provider_retry_same_tier_once). A recovered retry
@@ -174,7 +174,7 @@ class LLMGateway:
                 ):
                     retried_tiers.add(tier)
                     retried = await self._retry_same_tier_once(
-                        partial(provider.complete, msgs, model="", **kwargs),
+                        partial(provider.complete, msgs, model=model, **kwargs),
                         tier, purpose,
                     )
                     # success on same-tier retry → result set; flow to the escalate-check.
@@ -195,6 +195,7 @@ class LLMGateway:
                             log.engine.warning(
                                 "[llm_gateway] complete: provider fault not recoverable — re-raising",
                                 extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                                   "model": model,
                                                    "exc_type": type(exc).__name__,
                                                    "degraded_from": degraded,
                                                    "at_ceiling": not can_escalate}},
@@ -203,7 +204,7 @@ class LLMGateway:
                     log.engine.warning(
                         "[llm_gateway] complete: tier failed — falling back",
                         extra={"_fields": {"purpose": purpose, "from_tier": tier,
-                                           "to_tier": tiers[idx + 1],
+                                           "to_tier": tiers[idx + 1], "model": model,
                                            "exc_type": type(exc).__name__,
                                            "degraded_from": degraded}},
                     )
@@ -213,7 +214,7 @@ class LLMGateway:
             if can_escalate and is_escalate_signal(result.content):
                 log.engine.info(
                     "[llm_gateway] complete: model escalated — stepping up tier",
-                    extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                    extra={"_fields": {"purpose": purpose, "from_tier": tier, "model": model,
                                        "to_tier": tiers[idx + 1]}},
                 )
                 continue
@@ -270,7 +271,7 @@ class LLMGateway:
         retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
             can_escalate = idx < len(tiers) - 1
-            provider, degraded = self._registry.resolve_tier_with_fallback(tier)
+            provider, model, degraded = self._registry.resolve_tier_with_fallback_and_model(tier)
             # Rebuild schemas for THIS tier's provider (protocol + window differ per
             # tier); reuse the passed-in list when no builder is supplied.
             if build_tool_schemas is not None:
@@ -283,7 +284,7 @@ class LLMGateway:
                 # Can't run the loop on this tier — climb to a tool-capable one.
                 log.engine.info(
                     "[llm_gateway] tools: tier not tool-capable — stepping up",
-                    extra={"_fields": {"purpose": purpose, "skip_tier": tier}},
+                    extra={"_fields": {"purpose": purpose, "skip_tier": tier, "model": model}},
                 )
                 continue
             sys = _augment_system(system_text, can_escalate)
@@ -294,7 +295,7 @@ class LLMGateway:
                 final_text, calls = await provider.complete_with_tools(
                     user_text=user_text, system_text=sys, tool_schemas=schemas,
                     tool_dispatcher=tool_dispatcher, can_escalate=can_escalate,
-                    **attempt_kwargs,
+                    model=model, **attempt_kwargs,
                 )
             except BaseException as exc:
                 # ADR-2 — same-tier retry-once on a TRANSIENT fault, via the RecoveryActuator,
@@ -312,7 +313,7 @@ class LLMGateway:
                             provider.complete_with_tools,
                             user_text=user_text, system_text=sys, tool_schemas=schemas,
                             tool_dispatcher=tool_dispatcher, can_escalate=can_escalate,
-                            **attempt_kwargs,
+                            model=model, **attempt_kwargs,
                         ),
                         tier, purpose,
                     )
@@ -332,6 +333,7 @@ class LLMGateway:
                             log.engine.warning(
                                 "[llm_gateway] tools: provider fault not recoverable — re-raising",
                                 extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                                                   "model": model,
                                                    "exc_type": type(exc).__name__,
                                                    "degraded_from": degraded,
                                                    "at_ceiling": not can_escalate}},
@@ -340,7 +342,7 @@ class LLMGateway:
                     log.engine.warning(
                         "[llm_gateway] tools: tier failed — falling back",
                         extra={"_fields": {"purpose": purpose, "from_tier": tier,
-                                           "to_tier": tiers[idx + 1],
+                                           "to_tier": tiers[idx + 1], "model": model,
                                            "exc_type": type(exc).__name__,
                                            "degraded_from": degraded}},
                     )
@@ -350,7 +352,7 @@ class LLMGateway:
             if can_escalate and is_escalate_signal(final_text):
                 log.engine.info(
                     "[llm_gateway] tools: model escalated mid-loop — discard + step up",
-                    extra={"_fields": {"purpose": purpose, "from_tier": tier,
+                    extra={"_fields": {"purpose": purpose, "from_tier": tier, "model": model,
                                        "to_tier": tiers[idx + 1], "tool_calls": len(calls)}},
                 )
                 if on_escalate is not None:

@@ -23,14 +23,17 @@ class _FakeProvider:
         self._reply = reply
         self.supports_tools = supports_tools
         self.complete_calls: list[list[Message]] = []
+        self.complete_model_calls: list[str] = []  # `model=` received by complete()
         self.tool_calls: list[str | None] = []
         # What the gateway handed complete_with_tools (escalation-wiring assertions).
         self.tool_schemas_seen: list[Any] = []
         self.can_escalate_seen: list[bool] = []
         self.wrapup_seen: list[Any] = []
+        self.tool_model_seen: list[Any] = []  # `model=` received by complete_with_tools()
 
     async def complete(self, messages: list[Message], model: str, **kwargs: Any) -> CompletionResult:
         self.complete_calls.append(messages)
+        self.complete_model_calls.append(model)
         return CompletionResult(
             content=self._reply, input_tokens=1, output_tokens=1, model=self.name,
             provider_name=self.name, duration_ms=1.0,
@@ -42,6 +45,7 @@ class _FakeProvider:
         self.tool_schemas_seen.append(tool_schemas)
         self.can_escalate_seen.append(kwargs.get("can_escalate"))
         self.wrapup_seen.append(kwargs.get("wrapup_deadline_s"))
+        self.tool_model_seen.append(kwargs.get("model"))
         return self._reply, [{"name": "t", "failed": False}]
 
 
@@ -54,20 +58,47 @@ class _FaultyProvider(_FakeProvider):
 
     async def complete(self, messages: list[Message], model: str, **kwargs: Any) -> CompletionResult:
         self.complete_calls.append(messages)
+        self.complete_model_calls.append(model)
         raise self._fault
 
     async def complete_with_tools(self, *, user_text: str, system_text: str | None,
                                   tool_schemas: list, tool_dispatcher: Any, **kwargs: Any):
         self.tool_calls.append(system_text)
+        self.tool_model_seen.append(kwargs.get("model"))
         raise self._fault
 
 
-class _FakeRegistry:
-    def __init__(self, by_tier: dict[str, _FakeProvider]) -> None:
-        self._by_tier = by_tier
+class _FlakyToolsProvider(_FakeProvider):
+    """Raises a classified fault on the first ``fail_times`` complete_with_tools calls,
+    then answers — the tool-loop twin of ``_FlakyProvider`` below, used to prove the
+    ``model`` kwarg reaches the same-tier RETRY partial() for complete_with_tools()."""
 
-    def resolve_tier_with_fallback(self, tier: str):
-        return self._by_tier[tier], None
+    def __init__(self, name: str, *, fail_times: int, reply: str) -> None:
+        super().__init__(name, reply=reply)
+        self._left = fail_times
+
+    async def complete_with_tools(self, *, user_text: str, system_text: str | None,
+                                  tool_schemas: list, tool_dispatcher: Any, **kwargs: Any):
+        if self._left > 0:
+            self._left -= 1
+            self.tool_model_seen.append(kwargs.get("model"))
+            raise CircuitOpenError(self.name, 30.0)
+        # Base class records tool_model_seen on the success path — don't double-append.
+        return await super().complete_with_tools(
+            user_text=user_text, system_text=system_text, tool_schemas=tool_schemas,
+            tool_dispatcher=tool_dispatcher, **kwargs,
+        )
+
+
+class _FakeRegistry:
+    def __init__(
+        self, by_tier: dict[str, _FakeProvider], models: dict[str, str] | None = None,
+    ) -> None:
+        self._by_tier = by_tier
+        self._models = models or {}
+
+    def resolve_tier_with_fallback_and_model(self, tier: str):
+        return self._by_tier[tier], self._models.get(tier, f"model-{tier}"), None
 
 
 def _sys(content: str) -> Message:
@@ -389,8 +420,8 @@ class _DegradedRegistry(_FakeRegistry):
         super().__init__(by_tier)
         self._degraded = degraded
 
-    def resolve_tier_with_fallback(self, tier: str):
-        return self._by_tier[tier], self._degraded.get(tier)
+    def resolve_tier_with_fallback_and_model(self, tier: str):
+        return self._by_tier[tier], self._models.get(tier, f"model-{tier}"), self._degraded.get(tier)
 
 
 def test_complete_terminal_fault_logs_before_reraise(
@@ -462,6 +493,7 @@ class _FlakyProvider(_FakeProvider):
         if self._left > 0:
             self._left -= 1
             self.complete_calls.append(messages)
+            self.complete_model_calls.append(model)
             raise CircuitOpenError(self.name, 30.0)
         return await super().complete(messages, model, **kwargs)
 
@@ -490,6 +522,63 @@ def test_flag_off_is_single_attempt_then_cascade(monkeypatch: Any) -> None:
     out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
     assert out.content == "recovered answer"
     assert len(fast.complete_calls) == 1  # flag OFF ⇒ no retry ⇒ immediate cascade (pre-ADR)
+
+
+# --- Task 23: resolved model threaded to BOTH the main attempt and the
+# --- same-tier retry, for BOTH complete() and complete_with_tools() ------------
+
+
+def test_complete_threads_resolved_model_to_main_attempt() -> None:
+    # resolve_tier_with_fallback_and_model's resolved model string must reach the
+    # provider's complete() call — not a generic "was called" check, the EXACT value.
+    fast = _FakeProvider("fast", reply="answer")
+    gw = LLMGateway(_FakeRegistry({"fast": fast}, models={"fast": "fast-model-v7"}))
+    asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="fast"))
+    assert fast.complete_model_calls == ["fast-model-v7"]
+
+
+def test_complete_threads_resolved_model_through_same_tier_retry(monkeypatch: Any) -> None:
+    # Genuinely exercises the RETRY path (partial(provider.complete, ...)): the
+    # first (faulting) call AND the recovered retry call must both carry the
+    # resolved model — proving the retry partial() was built with model=model too.
+    from stackowl.providers import llm_gateway as _gw
+
+    monkeypatch.setattr(_gw, "_retry_same_tier_enabled", lambda: True)
+    fast = _FlakyProvider("fast", fail_times=1, reply="recovered same tier")
+    gw = LLMGateway(_FakeRegistry({"fast": fast}, models={"fast": "fast-model-retry-x"}))
+    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="fast"))
+    assert out.content == "recovered same tier"
+    # Both the faulting initial attempt AND the recovered same-tier retry saw it.
+    assert fast.complete_model_calls == ["fast-model-retry-x", "fast-model-retry-x"]
+
+
+def test_tools_threads_resolved_model_to_main_attempt() -> None:
+    # complete_with_tools() never received `model=` at all before this task (Task 22
+    # only added the parameter). Prove a real resolved value now reaches it.
+    fast = _FakeProvider("fast", reply="done")
+    gw = LLMGateway(_FakeRegistry({"fast": fast}, models={"fast": "tools-model-v3"}))
+    asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+        tool_dispatcher=None, floor="fast", ceiling="fast",
+    ))
+    assert fast.tool_model_seen == ["tools-model-v3"]
+
+
+def test_tools_threads_resolved_model_through_same_tier_retry(monkeypatch: Any) -> None:
+    # Genuinely exercises the RETRY path for complete_with_tools()'s
+    # partial(provider.complete_with_tools, ...): both the faulting initial attempt
+    # and the recovered retry attempt must carry the resolved model.
+    from stackowl.providers import llm_gateway as _gw
+
+    monkeypatch.setattr(_gw, "_retry_same_tier_enabled", lambda: True)
+    fast = _FlakyToolsProvider("fast", fail_times=1, reply="recovered tools same tier")
+    gw = LLMGateway(_FakeRegistry({"fast": fast}, models={"fast": "tools-model-retry-y"}))
+    text, _ = asyncio.run(gw.complete_with_tools(
+        user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
+        tool_dispatcher=None, floor="fast", ceiling="fast",
+    ))
+    assert text == "recovered tools same tier"
+    assert fast.tool_model_seen == ["tools-model-retry-y", "tools-model-retry-y"]
 
 
 def test_same_tier_retry_at_ceiling_recovers(monkeypatch: Any) -> None:
