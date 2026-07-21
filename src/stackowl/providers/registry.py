@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from stackowl.exceptions import AllProvidersUnavailableError, ProviderNotFoundError
 from stackowl.health.status import HealthStatus
@@ -33,6 +33,31 @@ _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "powerful", "local")
 #: backend is the weakest synthesis substitute and must never win over a cloud
 #: standard/fast provider.
 _CAPABILITY_ORDER: tuple[str, ...] = ("powerful", "standard", "fast", "local")
+
+
+class ModelRoute(NamedTuple):
+    """One routable (model, tiers) pair under a single provider connection.
+
+    ``model`` is the literal model string to pass as ``ModelProvider.stream(
+    ..., model=...)``/``.complete(..., model=...)`` — empty string means "use
+    the provider's own default_model" (today's byte-identical behavior).
+    """
+
+    model: str
+    tiers: tuple[str, ...]
+
+
+def _flatten_routes(tiers: dict[str, tuple[ModelRoute, ...]]) -> dict[str, tuple[str, ...]]:
+    """Flatten each provider's ``ModelRoute`` tuple to a plain tier-name tuple.
+
+    Tier-SELECTION logic (``get_by_tier`` / ``get_with_cascade`` / ``TierSelector``
+    / ``resolve_tier_with_fallback`` / ``resolve_capable_or_degrade``) only needs
+    to know WHICH TIERS a provider serves across ALL its routes, not which model
+    serves which tier — per-model dispatch wiring is a later task in this plan.
+    This keeps every one of those call sites byte-identical to the
+    pre-``ModelRoute`` behavior on top of the new storage shape.
+    """
+    return {name: tuple(t for route in routes for t in route.tiers) for name, routes in tiers.items()}
 
 
 def _inject_resilience(
@@ -91,7 +116,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
     def __init__(self, *, clock: Clock = WallClock()) -> None:
         self._clock: Clock = clock
         self._providers: dict[str, ModelProvider] = {}
-        self._tiers: dict[str, tuple[str, ...]] = {}
+        self._tiers: dict[str, tuple[ModelRoute, ...]] = {}
         # Locality (self-hosted vs cloud) is ORTHOGONAL to tier (a local Ollama is
         # tier ``fast``); computed from the base_url host so the vision selector can
         # prefer on-box backends without a config migration. Default False (cloud).
@@ -163,7 +188,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         *,
         clock: Clock,
         providers: dict[str, ModelProvider],
-        tiers: dict[str, tuple[str, ...]],
+        tiers: dict[str, tuple[ModelRoute, ...]],
         local: dict[str, bool],
         breakers: dict[str, CircuitBreaker],
         limiters: dict[str, RateLimiter],
@@ -184,7 +209,11 @@ class ProviderRegistry(RegistryAccessorsMixin):
         inject_cost_tracker(provider, self._cost_tracker)
         providers[config.name] = provider
         if config.tiers:
-            tiers[config.name] = config.tiers
+            routes = [ModelRoute(model=config.default_model, tiers=config.tiers)]
+            routes.extend(
+                ModelRoute(model=m.name, tiers=m.tiers) for m in config.models
+            )
+            tiers[config.name] = tuple(routes)
         local[config.name] = is_local_url(config.base_url)
         breakers[config.name] = CircuitBreaker(provider_name=config.name, clock=clock)
         limiters[config.name] = RateLimiter.from_rpm(
@@ -235,7 +264,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         try:
             new_providers: dict[str, ModelProvider] = {}
-            new_tiers: dict[str, tuple[str, ...]] = {}
+            new_tiers: dict[str, tuple[ModelRoute, ...]] = {}
             new_local: dict[str, bool] = {}
             new_breakers: dict[str, CircuitBreaker] = {}
             new_limiters: dict[str, RateLimiter] = {}
@@ -263,7 +292,13 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 except Exception as exc:
                     if name in self._providers:
                         new_providers[name] = self._providers[name]
-                        new_tiers[name] = self._tiers.get(name, config.tiers)
+                        new_tiers[name] = self._tiers.get(
+                            name,
+                            (
+                                ModelRoute(model=config.default_model, tiers=config.tiers),
+                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models),
+                            ),
+                        )
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
@@ -289,7 +324,13 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         # FULLY UNCHANGED — config AND resolved secret identical;
                         # preserve provider + runtime state (breaker/limiter).
                         new_providers[name] = self._providers[name]
-                        new_tiers[name] = self._tiers.get(name, config.tiers)
+                        new_tiers[name] = self._tiers.get(
+                            name,
+                            (
+                                ModelRoute(model=config.default_model, tiers=config.tiers),
+                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models),
+                            ),
+                        )
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
@@ -304,7 +345,13 @@ class ProviderRegistry(RegistryAccessorsMixin):
                         provider = _build_provider(config, new_key)
                         inject_cost_tracker(provider, self._cost_tracker)
                         new_providers[name] = provider
-                        new_tiers[name] = self._tiers.get(name, config.tiers)
+                        new_tiers[name] = self._tiers.get(
+                            name,
+                            (
+                                ModelRoute(model=config.default_model, tiers=config.tiers),
+                                *(ModelRoute(model=m.name, tiers=m.tiers) for m in config.models),
+                            ),
+                        )
                         new_local[name] = self._local[name]
                         new_breakers[name] = self._breakers[name]
                         new_limiters[name] = self._limiters[name]
@@ -409,7 +456,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # Snapshot both dict refs together so a concurrent apply_settings() swap
         # (watcher thread) can't make us index a name absent from _providers.
         providers = self._providers
-        tiers = self._tiers
+        tiers = _flatten_routes(self._tiers)
         for name, provider_tiers in tiers.items():
             if tier in provider_tiers and name in providers:
                 return providers[name]
@@ -455,7 +502,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # from a stale _tiers can never KeyError against a freshly-swapped
         # _providers (the provider is simply skipped if it was removed).
         providers = self._providers
-        tiers = self._tiers
+        tiers = _flatten_routes(self._tiers)
         breakers = self._breakers
 
         details: list[str] = []
@@ -561,7 +608,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
             extra={"_fields": {"tier": tier}},
         )
         providers = self._providers
-        tiers = self._tiers
+        tiers = _flatten_routes(self._tiers)
         breakers = self._breakers
         primary_name: str | None = None
         for name, ptiers in tiers.items():
@@ -608,7 +655,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         )
         # Snapshot together: a concurrent apply_settings() swaps both atomically.
         providers = self._providers
-        tiers = self._tiers
+        tiers = _flatten_routes(self._tiers)
 
         # Exact match first — byte-identical happy path to get_by_tier.
         for name, provider_tiers in tiers.items():
@@ -689,14 +736,19 @@ class ProviderRegistry(RegistryAccessorsMixin):
         tier: str = "fast",
         base_url: str | None = None,
         is_local: bool | None = None,
+        models: tuple[ModelRoute, ...] | None = None,
     ) -> None:
         """Register a mock provider — for tests only. Bypasses config lookup.
 
         ``base_url`` lets a test mirror the shipped config shape so locality is
         inferred exactly as production does; ``is_local`` overrides it explicitly.
+        ``models`` lets a test register MULTIPLE (model, tiers) routes under one
+        mock provider (per-model provider config testing); when omitted (the
+        default, and every existing call site), behaves byte-identically to
+        today: one route, model="" (the provider's own default), tier=``tier``.
         """
         self._providers[name] = mock
-        self._tiers[name] = (tier,)
+        self._tiers[name] = models if models is not None else (ModelRoute(model="", tiers=(tier,)),)
         self._local[name] = is_local if is_local is not None else is_local_url(base_url)
         self._breakers[name] = CircuitBreaker(provider_name=name, clock=self._clock)
         self._limiters[name] = RateLimiter.from_rpm(name, None, clock=self._clock)
@@ -706,7 +758,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         _inject_resilience(mock, self._breakers[name], self._limiters[name])
         log.engine.debug(
             "[registry] mock registered",
-            extra={"_fields": {"name": name, "tier": tier}},
+            extra={"_fields": {"name": name, "tier": tier, "models": len(self._tiers[name])}},
         )
 
     def all(self) -> list[ModelProvider]:

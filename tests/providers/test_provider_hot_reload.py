@@ -21,7 +21,7 @@ from stackowl.config.settings import Settings
 from stackowl.config.watcher import ConfigWatcher
 from stackowl.events.bus import EventBus
 from stackowl.providers.cost_tracker import CostTracker
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.startup.provider_reload import make_settings_reload_handler
 
 
@@ -98,7 +98,7 @@ def test_apply_settings_adds_new_provider(_isolated_config: Path) -> None:
 
     # get() works for the freshly-added provider.
     assert registry.get("b") is not None
-    assert registry._tiers["b"] == ("standard",)
+    assert registry._tiers["b"] == (ModelRoute(model="m1", tiers=("standard",)),)
 
 
 def test_apply_settings_removes_dropped_provider(_isolated_config: Path) -> None:
@@ -145,7 +145,7 @@ def test_apply_settings_changed_provider_rebuilds(_isolated_config: Path) -> Non
 
     assert registry._breakers["a"] is not old_breaker
     assert registry._providers["a"] is not old_provider
-    assert registry._tiers["a"] == ("powerful",)
+    assert registry._tiers["a"] == (ModelRoute(model="m2", tiers=("powerful",)),)
 
 
 def test_apply_settings_injects_cost_tracker_into_new_provider(_isolated_config: Path) -> None:

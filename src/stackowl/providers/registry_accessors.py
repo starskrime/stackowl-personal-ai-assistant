@@ -16,6 +16,7 @@ from stackowl.providers.circuit_breaker import CircuitState
 if TYPE_CHECKING:
     from stackowl.providers.base import ModelProvider
     from stackowl.providers.circuit_breaker import CircuitBreaker
+    from stackowl.providers.registry import ModelRoute
 
 
 class RegistryAccessorsMixin:
@@ -26,7 +27,7 @@ class RegistryAccessorsMixin:
     """
 
     _providers: dict[str, ModelProvider]
-    _tiers: dict[str, tuple[str, ...]]
+    _tiers: dict[str, tuple[ModelRoute, ...]]
     _local: dict[str, bool]
     _breakers: dict[str, CircuitBreaker]
 
@@ -42,12 +43,18 @@ class RegistryAccessorsMixin:
 
         Returns the full tuple of tier memberships; for a provider in multiple
         tiers, the order reflects the config order (e.g. ``("fast", "powerful")``).
+        Internally ``_tiers`` stores per-model ``ModelRoute`` entries (one
+        provider connection can route different models to different tiers) —
+        this flattens across all of a provider's routes so the PUBLIC shape
+        stays byte-identical to before that restructure.
         """
         name = self._name_of(provider)
         if name is None:
             return None
-        ptiers = self._tiers.get(name)
-        return ptiers
+        routes = self._tiers.get(name)
+        if routes is None:
+            return None
+        return tuple(t for route in routes for t in route.tiers)
 
     def is_local(self, provider: ModelProvider) -> bool:
         """True iff a self-hosted (on-box) backend — derived from the base_url host,
