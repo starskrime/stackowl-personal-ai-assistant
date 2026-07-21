@@ -174,6 +174,27 @@ async def test_synthesize_forwards_resolved_model_to_provider() -> None:
     assert provider.seen_models == ["claude-opus-4-synthesis"]
 
 
+@pytest.mark.asyncio
+async def test_synthesize_forwards_resolved_model_to_provider_on_retry() -> None:
+    # Task 12 review gap — the first-attempt regression above never exercises the
+    # F-57 retry branch (line ~77's provider.complete(retry_messages, model=model)),
+    # since it only ever queues a single GOOD output. Force the retry by queuing
+    # BAD then GOOD, and assert the resolved model was threaded into BOTH calls.
+    provider = _ScriptedSynthProvider([_BAD, _GOOD])
+    synth = ParliamentSynthesizer(
+        _registry_with_model(provider, "claude-opus-4-synthesis"), _ZeroConvergence()
+    )
+
+    result = await synth.synthesize(_session())
+
+    assert provider.calls == 2, "expected exactly one re-prompt after a degraded parse"
+    assert provider.seen_models == ["claude-opus-4-synthesis", "claude-opus-4-synthesis"], (
+        "the resolved model must be threaded into both the first attempt AND the "
+        "F-57 retry call, not just the first"
+    )
+    assert result.parse_ok is True
+
+
 # ---------------------------------------------------------------------------
 # synthesize_positions (MoA entry point — shares the synthesis path)
 # ---------------------------------------------------------------------------
@@ -225,4 +246,26 @@ async def test_synthesize_positions_forwards_resolved_model_to_provider() -> Non
     )
 
     assert provider.seen_models == ["gpt-5.1-synthesis"]
+    assert result.parse_ok is True
+
+
+@pytest.mark.asyncio
+async def test_synthesize_positions_forwards_resolved_model_to_provider_on_retry() -> None:
+    # Task 12 review gap — same retry-branch gap as
+    # test_synthesize_forwards_resolved_model_to_provider_on_retry, but for the
+    # MoA entry point which shares complete_synthesis_with_retry.
+    provider = _ScriptedSynthProvider([_BAD, _GOOD])
+    result = await synthesize_positions(
+        providers=_registry_with_model(provider, "gpt-5.1-synthesis"),
+        parser=SynthesisParser(),
+        system_prompt="You are a synthesis engine. Use CONSENSUS:/RECOMMENDATION:/DISAGREEMENT:.",
+        question="kuzu or lancedb?",
+        positions=["go kuzu", "keep lancedb"],
+    )
+
+    assert provider.calls == 2
+    assert provider.seen_models == ["gpt-5.1-synthesis", "gpt-5.1-synthesis"], (
+        "the resolved model must be threaded into both the first attempt AND the "
+        "F-57 retry call"
+    )
     assert result.parse_ok is True
