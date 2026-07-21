@@ -435,7 +435,7 @@ async def test_complete_caps_output_at_max_output_tokens_not_the_whole_window(
     used WHOLE as max_tokens leaves zero room for the prompt itself and 400s
     on every real call (ContextWindowExceededError) since the window is a
     TOTAL input+output ceiling, not an output-only budget. max_tokens must be
-    bounded by the provider's max_output_tokens ceiling (default 131072,
+    bounded by the provider's max_output_tokens ceiling (default 250000,
     already documented as "generous") whenever the window exceeds it."""
     from stackowl.providers import model_window
 
@@ -446,7 +446,7 @@ async def test_complete_caps_output_at_max_output_tokens_not_the_whole_window(
 
     await provider.complete([Message(role="user", content="hi")], model="")
 
-    assert completions.calls[0]["max_tokens"] == 131072  # capped, not the raw 262144 window
+    assert completions.calls[0]["max_tokens"] == 250000  # capped, not the raw 262144 window
 
 
 @pytest.mark.asyncio
@@ -477,7 +477,7 @@ async def test_stream_caps_output_at_max_output_tokens_not_the_whole_window(
 ) -> None:
     """Mirrors test_complete_caps_output_at_max_output_tokens_not_the_whole_window
     for stream() — a large resolved window (262144) must still be bounded by
-    max_output_tokens (131072), not requested whole (which would leave zero
+    max_output_tokens (250000), not requested whole (which would leave zero
     room for the prompt itself)."""
     from stackowl.providers import model_window
 
@@ -489,4 +489,4 @@ async def test_stream_caps_output_at_max_output_tokens_not_the_whole_window(
     async for _ in provider.stream([Message(role="user", content="hi")], model=""):
         pass
 
-    assert completions.calls[0]["max_tokens"] == 131072  # capped, not the raw 262144 window
+    assert completions.calls[0]["max_tokens"] == 250000  # capped, not the raw 262144 window

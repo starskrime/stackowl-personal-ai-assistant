@@ -32,12 +32,18 @@ class ProviderConfig(BaseModel):
     max_retries: int = 3
     timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
-    # Generous fallback output budget used only when the model's real context
-    # window isn't resolved (the primary path sizes output from the live window).
-    # NOT a small cap: a reasoning model (thinking always on) must have room to
-    # think AND emit its answer/JSON — a tight cap truncated the judge mid-thought,
-    # producing empty verdicts. Output is free on a local model.
-    max_output_tokens: int = 131072
+    # Generous output budget — this is also the ceiling _output_cap() applies
+    # against a resolved window (min(window, max_output_tokens)), not only the
+    # fallback for an unresolved one. NOT a small cap: a reasoning model
+    # (thinking always on) must have room to think AND emit its answer/JSON —
+    # a tight cap truncated the judge mid-thought, producing empty verdicts.
+    # 250000 (raised from 131072, 2026-07-21, explicit operator request): the
+    # old value capped output at exactly half of a 262144-context model's
+    # window even though real prompts run far smaller (~12K tokens observed),
+    # needlessly leaving output room on the table. Output is free on a local
+    # model — the remaining ~12K-token headroom below the window still covers
+    # observed prompt sizes.
+    max_output_tokens: int = 250000
     # F028/REACT-2 — the provider's own tool-loop ceiling. Derived from the default
     # per-turn step backstop (authz/bounds.DEFAULT_TURN_MAX_STEPS) so the two bounds
     # AGREE by construction: on the no-explicit-caps path the BudgetGovernor cuts at
