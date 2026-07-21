@@ -77,8 +77,7 @@ class StubProvider:
 
 
 class StubRegistry:
-    """Provider registry stub exposing ``get_with_cascade`` /
-    ``get_with_cascade``."""
+    """Provider registry stub exposing ``get_with_cascade``."""
 
     def __init__(self, provider: StubProvider | None) -> None:
         self._provider = provider
