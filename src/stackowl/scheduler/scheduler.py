@@ -832,7 +832,7 @@ class JobScheduler(SupervisedTask):
             "[scheduler] recover: entry",
             extra={"_fields": {"window_hours": replay_window_hours}},
         )
-        await reap_stale_running(self._db)
+        await reap_stale_running(self._db, tz=self._tz)
         now = datetime.now(UTC)
         sql = "SELECT * FROM jobs WHERE status = 'pending' AND next_run_at <= ?"
         rows = await self._db.fetch_all(sql, (now.isoformat(),))
@@ -941,8 +941,10 @@ class JobScheduler(SupervisedTask):
         params: dict[str, object] | None = None,
     ) -> Job | None:
         """Update a job in place — thin delegate to ``scheduler_mutations`` (B2)."""
-        return await update_job(self._db, job_id, schedule=schedule, goal=goal, params=params)
+        return await update_job(
+            self._db, job_id, schedule=schedule, goal=goal, params=params, tz=self._tz
+        )
 
     async def run_now(self, job_id: str) -> JobResult | None:
         """Run one job out of band — thin delegate; mirrors the poller's CAS (B2)."""
-        return await run_now(self._db, self._clock, self._registry, job_id)
+        return await run_now(self._db, self._clock, self._registry, job_id, tz=self._tz)

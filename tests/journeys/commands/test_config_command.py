@@ -219,3 +219,51 @@ async def test_config_get_works_via_dispatch(tmp_yaml: Path) -> None:
         await CommandRegistry.instance().dispatch("config", "get test_mode", make_state())
     ).text
     assert "test_mode" in result
+
+
+# ---------------------------------------------------------------------------
+# detect-timezone — auto-detect system.timezone from the box's public IP
+# ---------------------------------------------------------------------------
+
+
+async def test_config_detect_timezone_writes_detected_value(
+    tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_detect() -> str:
+        return "America/New_York"
+
+    monkeypatch.setattr(
+        "stackowl.infra.net.timezone_detect.detect_timezone_from_ip", _fake_detect
+    )
+    deps = CommandDeps()
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = (
+        await CommandRegistry.instance().dispatch("config", "detect-timezone", make_state())
+    ).text
+
+    assert "America/New_York" in result
+    assert "✓" in result
+    assert _load(tmp_yaml)["system"]["timezone"] == "America/New_York"
+
+
+async def test_config_detect_timezone_failure_suggests_manual_set(
+    tmp_yaml: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_detect_fails() -> None:
+        return None
+
+    monkeypatch.setattr(
+        "stackowl.infra.net.timezone_detect.detect_timezone_from_ip", _fake_detect_fails
+    )
+    deps = CommandDeps()
+    register_all_commands(deps, registry=CommandRegistry.instance())
+
+    result = (
+        await CommandRegistry.instance().dispatch("config", "detect-timezone", make_state())
+    ).text
+
+    assert "✗" in result
+    assert "/config set system.timezone" in result
+    # Nothing written on a failed detection.
+    assert "system" not in _load(tmp_yaml)

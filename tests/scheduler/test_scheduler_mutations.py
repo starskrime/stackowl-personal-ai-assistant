@@ -11,7 +11,9 @@ ownership tags via the params merge (NIT-2).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -22,6 +24,9 @@ from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler import JobScheduler
 
 pytestmark = pytest.mark.asyncio
+
+# America/New_York — any non-UTC zone works; picked to match test_daily_tz.py.
+_NY = "America/New_York"
 
 
 @pytest.fixture()
@@ -178,6 +183,55 @@ async def test_recover_reap_is_idempotent_on_clean_db(migrated_db: DbPool) -> No
 
 
 # --------------------------------------------------------------------------- NIT-2
+
+
+# --------------------------------------------------------------------------- tz propagation
+# The bug: update_job / run_now's restore / recover's reap each called
+# compute_next_run without the scheduler's configured tz, silently re-arming a
+# daily@HH:MM job in UTC. JobScheduler.update_job/run_now are thin delegates
+# that now thread self._tz through — these prove the delegate, not
+# compute_next_run's own tz arithmetic (already covered by test_daily_tz.py).
+
+
+async def test_update_job_recomputes_next_run_in_configured_tz(migrated_db: DbPool) -> None:
+    job_id = await _seed_job(migrated_db, schedule="daily@08:00")
+    sched = JobScheduler(db=migrated_db, tz=_NY)
+
+    updated = await sched.update_job(job_id, schedule="daily@09:00")
+
+    assert updated is not None
+    local = datetime.fromisoformat(updated.next_run_at).astimezone(ZoneInfo(_NY))
+    assert (local.hour, local.minute) == (9, 0)
+
+
+async def test_run_now_restores_next_run_in_configured_tz(migrated_db: DbPool) -> None:
+    handler = _CountingHandler()
+    HandlerRegistry.instance().register(handler)
+    job_id = await _seed_job(migrated_db, schedule="daily@08:00", status="pending")
+    sched = JobScheduler(db=migrated_db, tz=_NY)
+
+    await sched.run_now(job_id)
+
+    rows = await migrated_db.fetch_all(
+        "SELECT next_run_at FROM jobs WHERE job_id = ?", (job_id,)
+    )
+    local = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone(ZoneInfo(_NY))
+    assert (local.hour, local.minute) == (8, 0)
+
+
+async def test_recover_reaps_stale_running_in_configured_tz(migrated_db: DbPool) -> None:
+    handler = _CountingHandler()
+    HandlerRegistry.instance().register(handler)
+    job_id = await _seed_job(migrated_db, schedule="daily@08:00", status="running")
+    sched = JobScheduler(db=migrated_db, tz=_NY)
+
+    await sched.recover()
+
+    rows = await migrated_db.fetch_all(
+        "SELECT next_run_at FROM jobs WHERE job_id = ?", (job_id,)
+    )
+    local = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone(ZoneInfo(_NY))
+    assert (local.hour, local.minute) == (8, 0)
 
 
 async def test_update_job_cannot_rewrite_ownership_tags(migrated_db: DbPool) -> None:

@@ -76,6 +76,17 @@ _CONFIG_META = CommandMeta(
             description="You print the raw stackowl.yaml contents.",
             examples=(Example(invocation="/config export"),),
         ),
+        SubCommand(
+            name="detect-timezone",
+            summary="Auto-detect system.timezone from this network's public IP",
+            description=(
+                "You geolocate the box's public IP to an IANA timezone and write "
+                "it to system.timezone — every daily@HH:MM scheduled job re-arms "
+                "at that local time instead of UTC. Falls back to a manual /config "
+                "set system.timezone <IANA name> suggestion if detection fails."
+            ),
+            examples=(Example(invocation="/config detect-timezone"),),
+        ),
     ),
 )
 
@@ -120,6 +131,8 @@ class ConfigCommand(SlashCommand):
                 result = self._reset(rest)
             elif sub == "export":
                 result = self._export()
+            elif sub == "detect-timezone":
+                result = await self._detect_timezone()
             else:
                 log.config.debug(
                     "[commands] config.handle: unknown subcommand",
@@ -284,6 +297,28 @@ class ConfigCommand(SlashCommand):
                 )
         log.config.info("[commands] config.reset: exit", extra={"_fields": {"key": key}})
         return f"✓ {key} reverted to default"
+
+    async def _detect_timezone(self) -> str:
+        log.config.debug("[commands] config.detect_timezone: entry")
+        from stackowl.infra.net.timezone_detect import detect_timezone_from_ip
+
+        detected = await detect_timezone_from_ip()
+        if detected is None:
+            log.config.info("[commands] config.detect_timezone: exit — detection failed")
+            return (
+                "✗ Could not auto-detect a timezone from this network's public IP. "
+                "Set it manually: /config set system.timezone <IANA name> "
+                "(e.g. Europe/Istanbul, America/New_York)."
+            )
+        # Reuse _set's own validated write + verify-persisted + hot-reload-emit
+        # path rather than duplicating it — the detected value goes through the
+        # exact same guarantees a manual /config set gets.
+        result = self._set(f"system.timezone {detected}")
+        log.config.info(
+            "[commands] config.detect_timezone: exit",
+            extra={"_fields": {"detected": detected}},
+        )
+        return f"Detected timezone: {detected}\n{result}"
 
     def _export(self) -> str:
         log.config.debug("[commands] config.export: entry")

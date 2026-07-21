@@ -681,6 +681,23 @@ class SystemSettings(BaseModel):
         description="IANA timezone identifier used for user-facing timestamps.",
         json_schema_extra={"hot_reload": True},
     )
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: str) -> str:
+        """Reject an unresolvable IANA zone at config-load (fail loud, not at
+        each scheduler tick) — compute_next_run's own zone lookup already fails
+        open to UTC on a bad value, but surfacing it here means a typo (manual
+        edit or a bad /config detect-timezone result) is caught immediately
+        instead of silently degrading every daily@ job to UTC."""
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"not a valid IANA timezone: {value!r}") from exc
+        return value
+
     interactive_turn_timeout_s: float = Field(
         default=600.0,
         ge=0.0,

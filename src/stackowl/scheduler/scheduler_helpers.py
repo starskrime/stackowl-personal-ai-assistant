@@ -231,19 +231,21 @@ def compute_next_run(
         return (datetime.now(UTC) + timedelta(days=1)).isoformat()
 
 
-async def reap_stale_running(db: DbPool) -> int:
+async def reap_stale_running(db: DbPool, *, tz: str = "UTC") -> int:
     """Reset jobs stuck in ``status='running'`` back to a runnable state.
 
     Runs at startup (from ``recover()``): the process that set a job ``running``
     is, by definition, gone, so ANY ``running`` row is stale. Recurring jobs get
     a freshly-recomputed ``next_run_at``; one-shots are left due (their stored
     ``next_run_at`` is already in the past). Idempotent — a clean DB reaps 0.
-    Returns the number of jobs reaped.
+    ``tz`` is the user IANA timezone (``settings.system.timezone``) — without it
+    a ``daily@HH:MM`` job reaped after a crash silently re-arms in UTC instead
+    of its configured local time. Returns the number of jobs reaped.
     """
     log.scheduler.debug("[scheduler] reap_stale_running: entry")
     rows = await db.fetch_all("SELECT job_id, schedule FROM jobs WHERE status = 'running'")
     for row in rows:
-        next_run = compute_next_run(str(row["schedule"]))
+        next_run = compute_next_run(str(row["schedule"]), tz=tz)
         await db.execute(
             "UPDATE jobs SET status = 'pending', next_run_at = ? WHERE job_id = ?",
             (next_run, row["job_id"]),

@@ -38,13 +38,17 @@ async def update_job(
     schedule: str | None = None,
     goal: str | None = None,
     params: dict[str, object] | None = None,
+    tz: str = "UTC",
 ) -> Job | None:
     """Update a job's schedule/goal/params in place.
 
     Recomputes ``next_run_at`` only when ``schedule`` changes (B9: the scheduler
-    owns the next-run arithmetic). Ownership tags (``owl``/``created_by``) are
-    stripped from ``params`` before the merge so they can never be overwritten.
-    Returns the reloaded :class:`Job`, or ``None`` when ``job_id`` is unknown.
+    owns the next-run arithmetic), using ``tz`` (the user IANA timezone,
+    ``settings.system.timezone``) — without it a ``daily@HH:MM`` edit silently
+    re-arms in UTC instead of local time. Ownership tags (``owl``/``created_by``)
+    are stripped from ``params`` before the merge so they can never be
+    overwritten. Returns the reloaded :class:`Job`, or ``None`` when ``job_id``
+    is unknown.
     """
     log.scheduler.debug(
         "[scheduler] update_job: entry",
@@ -70,7 +74,9 @@ async def update_job(
         merged_params.update(safe)
     if goal is not None:
         merged_params["goal"] = goal
-    next_run = compute_next_run(new_schedule) if schedule is not None else current.next_run_at
+    next_run = (
+        compute_next_run(new_schedule, tz=tz) if schedule is not None else current.next_run_at
+    )
     await db.execute(
         "UPDATE jobs SET schedule = ?, next_run_at = ?, params = ? WHERE job_id = ?",
         (
@@ -94,14 +100,19 @@ async def run_now(
     clock: Clock,
     registry: HandlerRegistry,
     job_id: str,
+    *,
+    tz: str = "UTC",
 ) -> JobResult | None:
     """Execute a single job's handler immediately, out of band.
 
     Refuses disabled/paused jobs, wins-or-loses the same ``pending → running``
     in-flight transition the poller uses (so the poll loop and run-now can never
     double-dispatch), runs the handler, then restores the job to its proper next
-    state. Returns ``None`` when ``job_id`` is unknown; a :class:`JobResult` with
-    ``success=False`` and a structured ``error`` when the run is rejected.
+    state — using ``tz`` (the user IANA timezone) so a recurring job's NEXT
+    occurrence, recomputed after this out-of-band run, stays on its configured
+    local time instead of silently drifting to UTC. Returns ``None`` when
+    ``job_id`` is unknown; a :class:`JobResult` with ``success=False`` and a
+    structured ``error`` when the run is rejected.
     """
     log.scheduler.debug("[scheduler] run_now: entry", extra={"_fields": {"job_id": job_id}})
     rows = await db.fetch_all("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
@@ -142,7 +153,7 @@ async def run_now(
             "[scheduler] run_now: unknown handler",
             extra={"_fields": {"job_id": job_id, "handler": job.handler_name}},
         )
-        await _restore_after_run(db, job_id, job.schedule)
+        await _restore_after_run(db, job_id, job.schedule, tz=tz)
         return _rejected(job_id, f"no handler registered for '{job.handler_name}'")
 
     t0 = clock.monotonic()
@@ -160,7 +171,7 @@ async def run_now(
         )
 
     await _record_run(db, job, result, (clock.monotonic() - t0) * 1000)
-    await _restore_after_run(db, job_id, job.schedule)
+    await _restore_after_run(db, job_id, job.schedule, tz=tz)
     await write_audit(db, "job_run_now", job_id, details={"success": result.success})
     log.scheduler.info(
         "[scheduler] run_now: exit",
@@ -216,17 +227,22 @@ async def _record_run(db: DbPool, job: Job, result: JobResult, duration_ms: floa
     )
 
 
-async def _restore_after_run(db: DbPool, job_id: str, schedule: str) -> None:
+async def _restore_after_run(
+    db: DbPool, job_id: str, schedule: str, *, tz: str = "UTC"
+) -> None:
     """Return a still-present recurring job to ``pending`` + next slot.
 
     A ``run_once`` handler deletes its own row; if the row is gone we leave that
-    stand. Otherwise recompute ``next_run_at`` and set ``status='pending'`` so
-    the poller picks it up at its proper next slot (mirrors ``_mark_completed``).
+    stand. Otherwise recompute ``next_run_at`` (using ``tz``, the user IANA
+    timezone, so a ``daily@HH:MM`` job's next occurrence stays on its
+    configured local time rather than silently re-arming in UTC) and set
+    ``status='pending'`` so the poller picks it up at its proper next slot
+    (mirrors ``_mark_completed``).
     """
     rows = await db.fetch_all("SELECT job_id FROM jobs WHERE job_id = ?", (job_id,))
     if not rows:
         return
-    next_run = compute_next_run(schedule)
+    next_run = compute_next_run(schedule, tz=tz)
     now_iso = datetime.now(UTC).isoformat()
     await db.execute(
         "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ? WHERE job_id = ?",
