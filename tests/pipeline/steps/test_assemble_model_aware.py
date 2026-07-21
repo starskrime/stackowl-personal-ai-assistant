@@ -26,7 +26,7 @@ from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 # ---------------------------------------------------------------------------
 # Minimal fake provider — carries _config with context_chars
@@ -186,36 +186,72 @@ async def test_provider_selection_failure_falls_back_to_full() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tier_resolved_model_used_in_window_probe() -> None:
-    """Task 10: Tier resolution picks a NON-default model → window probe uses THAT model, not default_model.
+async def test_tier_resolved_model_used_in_window_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 10: the window probe must use the TIER-RESOLVED model, not ``default_model``.
 
-    Register two providers under different names to simulate tier-specific routing:
-      - 'fast-provider' tier='fast' (context_chars=8000 → window 2000, lean charter)
-      - 'powerful-provider' tier='powerful' (context_chars=320000 → window 16384, full charter)
+    A single provider ('acme') exposes two DIFFERENTLY-NAMED models routed to two
+    different tiers (mirrors the fixture shape proven in
+    tests/providers/test_provider_registry_multi_tier_membership.py):
+      - 'acme-fast-model' serves tier='fast'
+      - 'acme-powerful-model' serves tier='powerful'
+    The provider's own ``_config.default_model`` is set to a THIRD, distinct string
+    ('acme-unused-default') that matches neither routed model — so if the window
+    probe fell back to ``default_model`` instead of the tier-resolved model, the
+    captured value below would equal 'acme-unused-default', not 'acme-powerful-model'.
 
-    An owl without an explicit provider pin but with model_tier='powerful' should trigger
-    tier resolution to pick 'powerful-provider' instead of the default.
+    The test owl has no owl-named/manifest provider pin, only ``model_tier='powerful'``,
+    so ``select_tool_provider_plan`` must resolve via tier walking and hand back
+    ``ToolProviderChoice(model='acme-powerful-model', ...)``.
 
-    The test verifies that select_tool_provider_plan resolves to the right provider
-    based on tier, and assemble's window probe uses the resolved provider's config.
+    We monkeypatch ``resolve_window`` (via the ``stackowl.providers.model_window``
+    module that assemble.py locally imports from at call time) to capture the exact
+    ``model=`` keyword argument it receives — the most direct proof of what
+    assemble.py actually threaded through. Pre-fix, assemble.py always passed
+    ``_pc.default_model`` ('acme-unused-default'); post-fix it passes
+    ``_choice.model`` ('acme-powerful-model'). This makes the assertion fail on the
+    pre-fix code and pass on the current code (verified via git stash of the
+    assemble.py fix with this test in place).
     """
     mw._WINDOW_CACHE.clear()
 
-    # Two separate providers for two different tiers
+    captured: dict[str, Any] = {}
+
+    async def _spy_resolve_window(
+        *,
+        provider_name: str,
+        base_url: str | None,
+        model: str,
+        context_chars: int | None,
+        protocol: str,
+        api_key: str | None = None,
+    ) -> int:
+        captured["model"] = model
+        return 16384
+
+    monkeypatch.setattr(mw, "resolve_window", _spy_resolve_window)
+
+    # ONE provider, TWO differently-named models routed to two different tiers.
     provider_registry = ProviderRegistry()
-    fast_provider = _FakeProvider(context_chars=8000)
-    powerful_provider = _FakeProvider(context_chars=320_000)
+    acme_provider = _FakeProvider(context_chars=320_000)
+    acme_provider._config.default_model = "acme-unused-default"
+    provider_registry.register_mock(
+        "acme", acme_provider,
+        models=(
+            ModelRoute(model="acme-fast-model", tiers=("fast",)),
+            ModelRoute(model="acme-powerful-model", tiers=("powerful",)),
+        ),
+    )
 
-    provider_registry.register_mock("fast-provider", fast_provider, tier="fast")
-    provider_registry.register_mock("powerful-provider", powerful_provider, tier="powerful")
-
-    # Owl with model_tier='powerful' so tier resolution prefers 'powerful-provider'
+    # Owl with model_tier='powerful' and no provider pin — tier resolution must
+    # land on the 'powerful' ModelRoute, i.e. 'acme-powerful-model'.
     owl_registry = OwlRegistry()
     owl_registry.register(OwlAgentManifest(
         name="powerful_owl",
         role="assistant",
         system_prompt="Test persona.",
-        model_tier="powerful",  # Desired tier - should match powerful-provider
+        model_tier="powerful",
     ))
 
     token = set_services(StepServices(
@@ -224,25 +260,16 @@ async def test_tier_resolved_model_used_in_window_probe() -> None:
     ))
     try:
         from stackowl.pipeline.steps import assemble
-        result = await assemble.run(_make_state(owl_name="powerful_owl"))
+        await assemble.run(_make_state(owl_name="powerful_owl"))
     finally:
         reset_services(token)
 
-    # With the fix, the window probe should resolve to 'powerful-provider' (via tier resolution),
-    # which has context_chars=320_000 → window clamped to 16384 (full charter).
-    # Without the fix (using select_tool_provider), it would fall back incorrectly and
-    # possibly use a different provider configuration.
-    assert result.model_window is not None, "model_window must be resolved"
-    assert result.model_window >= 16384, (
-        f"Expected large window ≥ 16384 (powerful-provider's 320_000 chars), "
-        f"but got {result.model_window}. This suggests the window probe is not using "
-        f"the tier-resolved provider."
+    assert "model" in captured, "resolve_window was never called"
+    assert captured["model"] == "acme-powerful-model", (
+        f"Expected the window probe to use the tier-resolved model "
+        f"'acme-powerful-model', but resolve_window was called with "
+        f"model={captured['model']!r}. This means assemble.py fell back to "
+        f"the provider's default_model instead of threading the tier-resolved "
+        f"model from select_tool_provider_plan's ToolProviderChoice."
     )
-    # System prompt should use full charter (not lean) for large window.
-    sp = result.system_prompt or ""
-    full_text = behavioral_charter()
-    assert full_text in sp, (
-        f"Expected full charter in system_prompt for large window ({result.model_window}), "
-        f"but found lean charter instead. This indicates tier resolution is not working "
-        f"in the window probe.\nFirst 300 chars: {sp[:300]!r}"
-    )
+    assert captured["model"] != "acme-unused-default"
