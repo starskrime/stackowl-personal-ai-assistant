@@ -84,15 +84,12 @@ class StubRegistry:
         self._provider = provider
 
     def get_with_cascade(self, preferred_tier: str) -> Any:
+        """Task 16 — EntityExtractor._resolve_provider() calls this. Byte-identical
+        model="" default (matches every existing Story 6.5 test's expectations,
+        none of which pin a model)."""
         if self._provider is None:
             raise RuntimeError("no provider")
-        return self._provider
-
-    def get_with_cascade(self, preferred_tier: str) -> Any:
-        """Task 16 — EntityExtractor._resolve_provider() now calls this instead
-        of get_with_cascade(). Byte-identical model="" default (matches every
-        existing Story 6.5 test's expectations, none of which pin a model)."""
-        return self.get_with_cascade(preferred_tier), ""
+        return self._provider, ""
 
 
 class RaisingConn:

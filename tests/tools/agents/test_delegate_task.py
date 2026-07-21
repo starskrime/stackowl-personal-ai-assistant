@@ -964,9 +964,6 @@ class _FakeProviderRegistry:
         self._provider = provider or object()
         self._model = model
 
-    def get_with_cascade(self, tier: str) -> object:
-        return self._provider
-
     def get_with_cascade(self, tier: str) -> tuple[object, str]:
         return self._provider, self._model
 
