@@ -21,7 +21,7 @@ from stackowl.pipeline.provider_select import (
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.mock_provider import MockProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 
 class _FakeManifest:
@@ -247,6 +247,50 @@ def test_choice_floor_tier_tracks_intent_when_enabled() -> None:
         assert choice_conv.floor_tier == "fast"
     finally:
         rc.reset(token)
+
+
+class TestToolProviderChoiceModel:
+    """ToolProviderChoice.model — the resolved model name threaded through from
+    the registry's *_and_model resolvers (per-model provider config, Task 8)."""
+
+    def test_owl_named_pin_has_empty_model(self) -> None:
+        """An owl-named provider pin has no tier context — model stays "" (use
+        the provider's own default_model), byte-identical to pre-refactor behavior."""
+        reg, services, state = _make_reg_services_state()
+        reg.register_mock("some_owl", MockProvider(name="owl_bound"), tier="standard")
+        token = rc.bind()
+        try:
+            choice = select_tool_provider_plan(reg, services, state)
+            assert choice.model == ""
+        finally:
+            rc.reset(token)
+
+    def test_tier_resolved_choice_carries_the_resolved_model(self) -> None:
+        """A provider with 2 models in different tiers: select_tool_provider_plan
+        for the SECOND tier must return that model's name, not the provider's
+        default_model."""
+        reg = ProviderRegistry()
+        reg.register_mock(
+            "acme", MockProvider(name="acme"),
+            models=(
+                ModelRoute(model="acme-v1", tiers=("fast",)),
+                ModelRoute(model="acme-v1-mini", tiers=("standard",)),
+            ),
+        )
+        services = StepServices(
+            provider_registry=reg,
+            owl_registry=_FakeOwlReg(_FakeManifest(model_tier="standard")),
+        )
+        state = PipelineState(
+            trace_id="t", session_id="s1", input_text="hi", channel="cli",
+            owl_name="some_owl", pipeline_step="execute",
+        )
+        token = rc.bind()
+        try:
+            choice = select_tool_provider_plan(reg, services, state)
+            assert choice.model == "acme-v1-mini"
+        finally:
+            rc.reset(token)
 
 
 def test_choice_floor_tier_is_fast_when_flag_off() -> None:

@@ -58,11 +58,12 @@ def answer_floor_for_intent(intent_class: str, *, ceiling: str, enabled: bool) -
 
 def _ensure_tool_capable(
     provider: ModelProvider,
+    model: str,
     registry: ProviderRegistry,
     state: PipelineState,
     *,
     log_selection: bool,
-) -> ModelProvider:
+) -> tuple[ModelProvider, str]:
     """F120 capability gate: for an AGENTIC turn, never return a provider that can't
     act (``supports_tools is False``).
 
@@ -74,13 +75,13 @@ def _ensure_tool_capable(
     tool-free reply.
     """
     if state.intent_class in TOOL_FREE_CLASSES:
-        return provider
+        return provider, model
     # Duck-typed test fakes (not ModelProvider subclasses) may lack supports_tools —
     # default True (tool-capable) so they pass through byte-identically, mirroring
     # the getattr-guarded cost-tracker/resilience injection. Only a provider that
     # EXPLICITLY declares supports_tools=False is gated.
     if getattr(provider, "supports_tools", True):
-        return provider
+        return provider, model
 
     log.engine.warning(
         "[pipeline] execute: selected provider cannot call tools on an agentic turn — "
@@ -94,7 +95,7 @@ def _ensure_tool_capable(
     seen: set[int] = set()
     for tier in _TOOL_CAPABLE_TIER_WALK:
         try:
-            candidate, _degraded = registry.resolve_tier_with_fallback(tier)
+            candidate, candidate_model, _degraded = registry.resolve_tier_with_fallback_and_model(tier)
         except AllProvidersUnavailableError:
             continue
         if id(candidate) in seen:
@@ -110,7 +111,7 @@ def _ensure_tool_capable(
                         "source": "tool_capability_route_away",
                     }},
                 )
-            return candidate
+            return candidate, candidate_model
 
     # No tool-capable provider anywhere → floor honestly (caller catches and surfaces).
     log.engine.error(
@@ -166,6 +167,7 @@ class ToolProviderChoice:
     """
 
     provider: ModelProvider
+    model: str
     ceiling_tier: str
     pinned: bool
     floor_tier: str = "fast"
@@ -249,8 +251,13 @@ def select_tool_provider_plan(
                 }},
             )
         # An owl-named provider is a deliberate per-owl binding → PINNED, no escalation.
+        # No tier context here — model stays "" (use the provider's own default_model).
+        capable_provider, capable_model = _ensure_tool_capable(
+            provider, "", registry, state, log_selection=log_selection
+        )
         return ToolProviderChoice(
-            provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
+            provider=capable_provider,
+            model=capable_model,
             ceiling_tier="powerful",
             pinned=True,
             floor_tier="fast",
@@ -290,8 +297,13 @@ def select_tool_provider_plan(
                     }},
                 )
             # An explicit manifest provider pin is deliberate → PINNED, no escalation.
+            # No tier context here — model stays "" (use the provider's own default_model).
+            capable_provider, capable_model = _ensure_tool_capable(
+                provider, "", registry, state, log_selection=log_selection
+            )
             return ToolProviderChoice(
-                provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
+                provider=capable_provider,
+                model=capable_model,
                 ceiling_tier=manifest.model_tier or "powerful",
                 pinned=True,
                 floor_tier="fast",
@@ -323,7 +335,7 @@ def select_tool_provider_plan(
 
     # --- Step 4: Resolve by tier — circuit-aware (falls back if the tier provider's
     # circuit is OPEN; the pins above are honored as-is). ---
-    provider, degraded_from = registry.resolve_tier_with_fallback(desired)
+    provider, resolved_model, degraded_from = registry.resolve_tier_with_fallback_and_model(desired)
     # record_recovery gates the user-visible fallback event: a side-effect-free
     # window-probe selection (assemble) must NOT record it, else the same
     # provider_fallback is surfaced twice (assemble + execute) on one turn.
@@ -357,8 +369,12 @@ def select_tool_provider_plan(
         floor_tier = answer_floor_for_intent(
             state.intent_class, ceiling=desired, enabled=_enabled
         )
+    capable_provider, capable_model = _ensure_tool_capable(
+        provider, resolved_model, registry, state, log_selection=log_selection
+    )
     return ToolProviderChoice(
-        provider=_ensure_tool_capable(provider, registry, state, log_selection=log_selection),
+        provider=capable_provider,
+        model=capable_model,
         ceiling_tier=desired,
         pinned=pinned,
         floor_tier=floor_tier,

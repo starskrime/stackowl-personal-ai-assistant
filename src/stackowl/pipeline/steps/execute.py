@@ -986,7 +986,9 @@ async def _run_with_tools(
     escalation, byte-identical to the prior behaviour.
     """
     if not isinstance(choice, ToolProviderChoice):
-        choice = ToolProviderChoice(provider=choice, ceiling_tier="powerful", pinned=True)
+        # No tier context on this back-compat adapter path — model stays "" (use
+        # the provider's own default_model), byte-identical to prior behaviour.
+        choice = ToolProviderChoice(provider=choice, model="", ceiling_tier="powerful", pinned=True)
     provider = choice.provider
     # E1-S4 — DNA-gated presented set: an owl with a non-empty capability_profile
     # sees base ∪ its groups ∪ pins ∪ tool_search (capped); overflow via tool_search.
