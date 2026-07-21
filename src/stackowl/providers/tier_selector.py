@@ -18,6 +18,7 @@ from stackowl.providers.circuit_breaker import CircuitState
 
 if TYPE_CHECKING:
     from stackowl.providers.circuit_breaker import CircuitBreaker
+    from stackowl.providers.registry import ModelRoute
 
 
 class TierSelector:
@@ -30,12 +31,21 @@ class TierSelector:
         self,
         tier: str,
         providers: dict[str, object],
-        tiers: dict[str, tuple[str, ...]],
+        tiers: dict[str, tuple[ModelRoute, ...]],
         breakers: dict[str, CircuitBreaker],
     ) -> str | None:
-        """Return the next healthy provider NAME for ``tier``, or None if empty/all-OPEN."""
+        """Return the next healthy provider NAME for ``tier``, or None if empty/all-OPEN.
+
+        A provider matches if ANY of its ModelRoute entries serves ``tier`` —
+        which specific model within that provider will be used is decided by
+        the caller (ProviderRegistry), not here; this method's contract stays
+        "which PROVIDER" only, unchanged.
+        """
         log.engine.debug("[tier_selector] select: entry", extra={"_fields": {"tier": tier}})
-        candidates = [name for name, t in tiers.items() if tier in t and name in providers]
+        candidates = [
+            name for name, routes in tiers.items()
+            if any(tier in route.tiers for route in routes) and name in providers
+        ]
         healthy = [
             name for name in candidates
             if breakers.get(name) is None or breakers[name].state is not CircuitState.OPEN

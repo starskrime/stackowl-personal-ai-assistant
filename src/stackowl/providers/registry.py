@@ -502,7 +502,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # from a stale _tiers can never KeyError against a freshly-swapped
         # _providers (the provider is simply skipped if it was removed).
         providers = self._providers
-        tiers = _flatten_routes(self._tiers)
+        tiers = self._tiers
         breakers = self._breakers
 
         details: list[str] = []
@@ -513,7 +513,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
             # bound (it's exactly the case the retry exists for), otherwise a
             # tier with one removed + one still-present provider could exhaust its
             # budget on the removed name alone and never reach the healthy one.
-            tier_names = [name for name, t in tiers.items() if tier in t]
+            tier_names = [
+                name for name, routes in tiers.items()
+                if any(tier in route.tiers for route in routes)
+            ]
 
             chosen: str | None = None
             prov: ModelProvider | None = None
@@ -564,7 +567,10 @@ class ProviderRegistry(RegistryAccessorsMixin):
                     },
                 )
                 return prov
-            candidates = [name for name, t in tiers.items() if tier in t and name in providers]
+            candidates = [
+                name for name, routes in tiers.items()
+                if any(tier in route.tiers for route in routes) and name in providers
+            ]
             if candidates:
                 open_names = [
                     name for name in candidates
