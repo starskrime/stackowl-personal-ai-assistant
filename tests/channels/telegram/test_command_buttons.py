@@ -491,7 +491,7 @@ async def test_provider_guided_add_flow_via_real_button_taps(
     data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
     persisted = next(p for p in data["providers"] if p["name"] == catalog_name)
     assert persisted["default_model"] == model
-    assert persisted["tier"] == tier
+    assert persisted["tiers"] == [tier]
     assert persisted["api_key"] == api_key_ref
     assert persisted["enabled"] is True
 

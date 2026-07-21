@@ -257,7 +257,7 @@ async def test_provider_guided_add_flow_full_journey(
     persisted = next(p for p in data["providers"] if p["name"] == catalog_name)
     assert persisted["protocol"] == "openai"
     assert persisted["default_model"] == model
-    assert persisted["tier"] == tier
+    assert persisted["tiers"] == [tier]
     assert persisted["api_key"] == api_key_ref
     assert persisted["enabled"] is True
     assert persisted["base_url"] == "https://api.groq.com/openai/v1"
