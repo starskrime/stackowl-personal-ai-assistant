@@ -83,8 +83,8 @@ class _FastRegistry:
     def __init__(self, p: _FastProvider) -> None:
         self._p = p
 
-    def get_by_tier(self, tier: str) -> _FastProvider:
-        return self._p
+    def get_by_tier_and_model(self, tier: str) -> tuple[_FastProvider, str]:
+        return self._p, "fake-fast-model"
 
 
 def _park_a_clarify_turn(owl: _OwlProvider, gateway: ClarifyGateway) -> tuple[AsyncioBackend, StreamRegistry]:

@@ -230,13 +230,14 @@ class ClarifyIntentClassifier:
             )
             return self._low_confidence_answer("empty_message")
 
-        provider = self._resolve_provider()
-        if provider is None:
+        resolved = self._resolve_provider()
+        if resolved is None:
             log.gateway.warning(
                 "intent_classifier.is_answer: no fast provider — fail-safe to answer",
                 extra={"_fields": {"classified": True}},
             )
             return self._low_confidence_answer("no_provider")
+        provider, model = resolved
 
         try:
             user_text = self._build_user_text(question, choices, message)
@@ -250,7 +251,7 @@ class ClarifyIntentClassifier:
                             Message(role="system", content=_SYSTEM_PROMPT),
                             Message(role="user", content=user_text),
                         ],
-                        model="",
+                        model=model,
                         max_tokens=4,
                         disable_thinking=True,
                     ),
@@ -348,13 +349,14 @@ class ClarifyIntentClassifier:
             )
             return False
 
-        provider = self._resolve_provider()
-        if provider is None:
+        resolved = self._resolve_provider()
+        if resolved is None:
             log.gateway.warning(
                 "intent_classifier.is_steer: no fast provider — fail-safe to new",
                 extra={"_fields": {"steer": False}},
             )
             return False
+        provider, model = resolved
 
         try:
             user_text = self._build_steer_user_text(running_ask, message)
@@ -368,7 +370,7 @@ class ClarifyIntentClassifier:
                             Message(role="system", content=_STEER_SYSTEM_PROMPT),
                             Message(role="user", content=user_text),
                         ],
-                        model="",
+                        model=model,
                         max_tokens=4,
                         disable_thinking=True,
                     ),
@@ -444,13 +446,14 @@ class ClarifyIntentClassifier:
             )
             return True
 
-        provider = self._resolve_provider()
-        if provider is None:
+        resolved = self._resolve_provider()
+        if resolved is None:
             log.gateway.warning(
                 "intent_classifier.is_steer_incoherent: no fast provider — fail-safe to veto",
                 extra={"_fields": {"veto": True}},
             )
             return True
+        provider, model = resolved
 
         try:
             user_text = self._build_coherence_user_text(running_ask, message)
@@ -464,7 +467,7 @@ class ClarifyIntentClassifier:
                             Message(role="system", content=_COHERENCE_SYSTEM_PROMPT),
                             Message(role="user", content=user_text),
                         ],
-                        model="",
+                        model=model,
                         max_tokens=4,
                         disable_thinking=True,
                     ),
@@ -501,14 +504,16 @@ class ClarifyIntentClassifier:
 
     # ------------------------------------------------------------------ helpers
 
-    def _resolve_provider(self) -> ModelProvider | None:
-        """Resolve the fast-tier provider, or ``None`` on any registry error.
+    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
+        """Resolve the fast-tier (provider, model), or ``None`` on any registry error.
 
-        Lazy + defensive: ``get_by_tier`` raising (no providers at all) or any other
-        registry failure degrades to ``None`` so :meth:`is_answer` fail-safes.
+        Lazy + defensive: ``get_by_tier_and_model`` raising (no providers at all) or
+        any other registry failure degrades to ``None`` so :meth:`is_answer`,
+        :meth:`is_steer`, and :meth:`is_steer_incoherent` (all three callers of this
+        helper) fail-safe.
         """
         try:
-            return self._registry.get_by_tier("fast")
+            return self._registry.get_by_tier_and_model("fast")
         except Exception as exc:  # self-healing — missing provider must not raise
             log.gateway.warning(
                 "intent_classifier._resolve_provider: get_by_tier failed",

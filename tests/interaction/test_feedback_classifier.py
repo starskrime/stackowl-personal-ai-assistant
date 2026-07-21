@@ -48,6 +48,7 @@ class _FakeProvider(ModelProvider):
         self._raise = raise_on_complete
         self._hang_seconds = hang_seconds
         self.calls: list[list[Message]] = []
+        self.models: list[str] = []
 
     @property
     def name(self) -> str:
@@ -61,6 +62,7 @@ class _FakeProvider(ModelProvider):
         self, messages: list[Message], model: str, **kwargs: object,
     ) -> CompletionResult:
         self.calls.append(list(messages))
+        self.models.append(model)
         if self._hang_seconds is not None:
             await asyncio.sleep(self._hang_seconds)
         if self._raise is not None:
@@ -81,24 +83,27 @@ class _FakeProvider(ModelProvider):
 
 
 class _FakeRegistry:
-    """Minimal registry: get_by_tier returns the provider (or raises)."""
+    """Minimal registry: get_by_tier_and_model returns a provided (provider,
+    model) pair (or raises)."""
 
     def __init__(
         self,
         provider: ModelProvider | None = None,
         *,
+        model: str = "fake-fast-model",
         raise_on_get: Exception | None = None,
     ) -> None:
         self._provider = provider
+        self._model = model
         self._raise = raise_on_get
         self.tiers_requested: list[str] = []
 
-    def get_by_tier(self, tier: str) -> ModelProvider:
+    def get_by_tier_and_model(self, tier: str) -> tuple[ModelProvider, str]:
         self.tiers_requested.append(tier)
         if self._raise is not None:
             raise self._raise
         assert self._provider is not None  # test wiring guarantee
-        return self._provider
+        return self._provider, self._model
 
 
 def _verdict(signals: list[dict[str, object]], referent: str = "last") -> str:
@@ -108,11 +113,12 @@ def _verdict(signals: list[dict[str, object]], referent: str = "last") -> str:
 def _make(
     provider: ModelProvider | None = None,
     *,
+    model: str = "fake-fast-model",
     raise_on_get: Exception | None = None,
     abstain_threshold: float = 0.5,
     timeout_s: float = 4.0,
 ) -> tuple[FeedbackClassifier, _FakeRegistry]:
-    registry = _FakeRegistry(provider, raise_on_get=raise_on_get)
+    registry = _FakeRegistry(provider, model=model, raise_on_get=raise_on_get)
     classifier = FeedbackClassifier(
         registry,  # type: ignore[arg-type]
         timeout_s=timeout_s,
@@ -273,3 +279,17 @@ async def test_all_invalid_signals_abstain() -> None:
     out = await _classify(classifier, "whatever")
     assert out.abstain is True
     assert out.reason == "no_valid_signal"
+
+
+# --------------------------------------------- resolved model threaded through
+
+
+@pytest.mark.asyncio
+async def test_resolved_model_reaches_provider_complete() -> None:
+    """The (provider, model) pair resolved from get_by_tier_and_model must be
+    threaded into provider.complete(..., model=...) — not hardcoded to ""."""
+    verdict = _verdict([{"polarity": "positive", "aspect": "overall", "confidence": 0.95}])
+    provider = _FakeProvider(verdict)
+    classifier, _ = _make(provider, model="qwen-feedback-v3")
+    await _classify(classifier, "I like this, keep it")
+    assert provider.models == ["qwen-feedback-v3"]
