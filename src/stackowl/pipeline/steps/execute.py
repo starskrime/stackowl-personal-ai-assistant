@@ -194,14 +194,18 @@ def build_persistence_check(
         _settings = getattr(services, "settings", None)
         _judge_tier = getattr(_settings, "judge_tier", "standard") or "standard"
         try:
-            judge = primary if primary is not None else (
-                preg.get_with_cascade(_judge_tier) if preg is not None else None
-            )
+            judge_model = ""
+            if primary is not None:
+                judge = primary
+            elif preg is not None:
+                judge, judge_model = preg.get_with_cascade_and_model(_judge_tier)
+            else:
+                judge = None
             if judge is None:  # no registry → cannot judge (fail open)
                 delivered, reason = True, JUDGE_ERROR_REASON
             else:
                 delivered, reason = await judge_delivery(
-                    judge, state.input_text, draft, tools_tried
+                    judge, state.input_text, draft, tools_tried, model=judge_model
                 )
         except Exception as exc:  # primary provider lookup raised
             log.engine.warning(
@@ -219,14 +223,18 @@ def build_persistence_check(
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
             try:
-                fb = fallback if fallback is not None else (
-                    preg.get_with_cascade("local") if preg is not None else None
-                )
+                fb_model = ""
+                if fallback is not None:
+                    fb = fallback
+                elif preg is not None:
+                    fb, fb_model = preg.get_with_cascade_and_model("local")
+                else:
+                    fb = None
                 if fb is None:  # no fallback available — fail open
                     delivered, reason = True, JUDGE_ERROR_REASON
                 else:
                     delivered, reason = await judge_delivery(
-                        fb, state.input_text, draft, tools_tried
+                        fb, state.input_text, draft, tools_tried, model=fb_model
                     )
             except Exception as exc2:  # fallback lookup also raised — final fail OPEN
                 log.engine.error(
@@ -2283,11 +2291,12 @@ def _open_stream(
     provider: ModelProvider,
     manifest: OwlAgentManifest | None,
     messages: list[Message],
+    model: str = "",
 ) -> AsyncIterator[str]:
     """Return a guarded stream — every plain-stream call goes through
     OwlResourceGuard, even with no owl manifest."""
     guard = OwlResourceGuard(manifest if manifest is not None else _default_stream_manifest())
-    return guard.stream(provider, messages, model="")
+    return guard.stream(provider, messages, model=model)
 
 
 def _clarify_resolvable_from_context(state: PipelineState) -> bool:
@@ -2616,7 +2625,7 @@ async def run(state: PipelineState) -> PipelineState:
         messages = [Message(role="system", content=state.system_prompt), *messages]
 
     manifest = _resolve_manifest(state.owl_name)
-    stream_iter = _open_stream(provider, manifest, messages)
+    stream_iter = _open_stream(provider, manifest, messages, choice.model)
 
     t0 = time.monotonic()
     chunks: list[ResponseChunk] = []

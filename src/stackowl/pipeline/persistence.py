@@ -375,13 +375,13 @@ def _build_messages(
 
 
 async def _judge_once(
-    provider: ModelProvider, messages: list[Message],
+    provider: ModelProvider, messages: list[Message], model: str = "",
 ) -> tuple[bool, str] | None:
     """Run ONE judge attempt. Returns ``(delivered, reason)`` on a clean verdict, or
     ``None`` when the judge could NOT vet (provider error / unparseable / wrong type).
     Never raises — the unvettable cases are folded into the ``None`` return."""
     try:
-        result = await provider.complete(messages, model="")
+        result = await provider.complete(messages, model=model)
     except Exception as exc:  # could-not-vet — caller decides fallback / fail-open
         log.engine.error(
             "[persistence] judge_delivery: provider.complete failed",
@@ -412,6 +412,7 @@ async def judge_delivery(
     draft_answer: str,
     tools_tried: list[str],
     *,
+    model: str = "",
     fallback_provider: ModelProvider | None = None,
     consequential: bool = False,
 ) -> tuple[bool, str]:
@@ -421,6 +422,9 @@ async def judge_delivery(
     derived from each call's result via :func:`summarize_tool_outcomes`, so the
     judge can tell a failed action from a successful one. A bare name list (no
     ``(failed)``) still works — it simply reads as no-tool-failed.
+
+    ``model`` is the resolved model name to send to ``provider`` (defaults to ``""``,
+    byte-identical to pre-per-model-config behavior — the provider's own default).
 
     Returns ``(delivered, reason)``. ``delivered`` is False ONLY when a judge
     explicitly rules a give-up — OR (F-15) when the turn is ``consequential`` and no
@@ -444,12 +448,13 @@ async def judge_delivery(
             "tools_tried": tools_tried[:_TOOLS_CAP],
             "has_fallback": fallback_provider is not None,
             "consequential": consequential,
+            "model": model,
         }},
     )
     messages = _build_messages(user_request, draft_answer, tools_tried)
 
     # 3. STEP — primary judge, then ONE fallback retry if it could not vet.
-    verdict = await _judge_once(provider, messages)
+    verdict = await _judge_once(provider, messages, model)
     if verdict is None and fallback_provider is not None:
         log.engine.warning(
             "[persistence] judge_delivery: primary unvettable — retrying fallback",

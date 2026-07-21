@@ -129,6 +129,59 @@ async def test_judge_fails_open_on_provider_error() -> None:
     assert reason == "judge-error"
 
 
+class _ModelCapturingJudgeProvider(ModelProvider):
+    """Records the ``model`` kwarg its ``complete()`` was called with — proves
+    ``judge_delivery`` forwards an explicit ``model`` argument through to the
+    provider call rather than hardcoding ``model=""``."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.seen_model: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-judge"
+
+    @property
+    def protocol(self) -> Any:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_model = model
+        return CompletionResult(
+            content=self._raw,
+            input_tokens=1,
+            output_tokens=1,
+            model="model-capturing-judge",
+            provider_name="model-capturing-judge",
+            duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+@pytest.mark.asyncio
+async def test_judge_delivery_forwards_explicit_model_to_provider() -> None:
+    provider = _ModelCapturingJudgeProvider('{"delivered": true, "reason": "ok"}')
+    await judge_delivery(
+        provider, "req", "ans", [], model="gpt-5.1-instant",
+    )
+    assert provider.seen_model == "gpt-5.1-instant"
+
+
+@pytest.mark.asyncio
+async def test_judge_delivery_default_model_is_empty_string() -> None:
+    """Byte-identical to pre-refactor behavior when no caller passes ``model``."""
+    provider = _ModelCapturingJudgeProvider('{"delivered": true, "reason": "ok"}')
+    await judge_delivery(provider, "req", "ans", [])
+    assert provider.seen_model == ""
+
+
 @pytest.mark.asyncio
 async def test_judge_clarifying_question_is_not_giveup() -> None:
     """A draft that poses ONE necessary clarifying question must be delivered=True.

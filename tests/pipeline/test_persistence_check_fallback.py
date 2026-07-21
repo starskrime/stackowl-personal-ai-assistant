@@ -209,15 +209,16 @@ async def test_genuine_delivered_after_giveup_is_accepted(
 
 
 class _RecordingRegistry:
-    """Provider registry that records every tier requested via get_with_cascade."""
+    """Provider registry that records every tier requested via
+    get_with_cascade_and_model (execute.py's judge-tier resolution path)."""
 
     def __init__(self, judge: object) -> None:
         self.tiers: list[str] = []
         self._judge = judge
 
-    def get_with_cascade(self, tier: str) -> object:
+    def get_with_cascade_and_model(self, tier: str) -> tuple[object, str]:
         self.tiers.append(tier)
-        return self._judge
+        return self._judge, ""
 
 
 class _SettingsStub:
