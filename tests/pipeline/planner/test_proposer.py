@@ -9,8 +9,10 @@ from stackowl.providers.base import CompletionResult
 class _FakeProvider:
     def __init__(self, content):  # str | Exception
         self._content = content
+        self.seen_model = None
 
     async def complete(self, messages, model="", **kw):
+        self.seen_model = model
         if isinstance(self._content, Exception):
             raise self._content
         return CompletionResult(
@@ -24,11 +26,12 @@ class _FakeProvider:
 
 
 class _FakeRegistry:
-    def __init__(self, provider):
+    def __init__(self, provider, model=""):
         self._p = provider
+        self._model = model
 
-    def get_with_cascade(self, tier):
-        return self._p
+    def get_with_cascade_and_model(self, tier):
+        return self._p, self._model
 
 
 CATALOG = [("note_search", "Search notes"), ("summarize_text", "Summarize"), ("shell", "Run shell")]
@@ -58,3 +61,26 @@ async def test_no_registry_returns_empty() -> None:
 async def test_empty_catalog_returns_empty() -> None:
     p = ToolProposer(_FakeRegistry(_FakeProvider('{"tools": ["anything"]}')))
     assert await p.propose("x", []) == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — propose() threads the "fast"-tier RESOLVED model into
+# provider.complete(), instead of hardcoding model="".
+# ---------------------------------------------------------------------------
+
+
+async def test_propose_threads_resolved_fast_model_to_complete() -> None:
+    """``propose()`` resolves the "fast"-tier provider+model via
+    ``get_with_cascade_and_model("fast")`` and forwards the RESOLVED model into
+    ``provider.complete()``.
+
+    Genuinely discriminating: if ``propose()`` still called the old
+    ``get_with_cascade`` (dropping the model) or hardcoded ``model=""``,
+    ``seen_model`` would stay "" instead of the sentinel resolved model.
+    """
+    provider = _FakeProvider('{"tools": ["shell"]}')
+    p = ToolProposer(_FakeRegistry(provider, model="proposer-fast-resolved"))
+    await p.propose("run a command", CATALOG)
+    assert provider.seen_model == "proposer-fast-resolved", (
+        f"expected the resolved fast-tier model to reach complete(); got {provider.seen_model!r}"
+    )

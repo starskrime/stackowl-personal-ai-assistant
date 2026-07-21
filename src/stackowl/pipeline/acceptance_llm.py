@@ -99,9 +99,9 @@ class LlmAcceptanceDeriver:
             return None
         messages = [Message(role="user", content=self._build_prompt(intent, draft))]
         try:
-            provider = self._provider_registry.get_with_cascade(self._tier)
+            provider, model = self._provider_registry.get_with_cascade_and_model(self._tier)
             result = await provider.complete(
-                messages, model="",
+                messages, model=model,
                 max_tokens=_DERIVE_MAX_TOKENS, temperature=_DERIVE_TEMPERATURE,
             )
         except Exception as exc:  # noqa: BLE001 — fail-closed: no expectation, never raise

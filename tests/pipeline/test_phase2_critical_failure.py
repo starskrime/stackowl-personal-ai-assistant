@@ -23,7 +23,7 @@ from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.tools.registry import ToolRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -80,6 +80,7 @@ class _ApologyProvider(ModelProvider):
         self._reply = reply
         self.complete_calls = 0
         self.last_user_text: str | None = None
+        self.seen_model: str | None = None
 
     @property
     def name(self) -> str:
@@ -91,6 +92,7 @@ class _ApologyProvider(ModelProvider):
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         self.complete_calls += 1
+        self.seen_model = model
         for m in messages:
             if m.role == "user":
                 self.last_user_text = m.content
@@ -398,3 +400,68 @@ async def test_apology_falls_back_to_neutral_when_cascade_also_fails(tmp_db: DbP
     assert "⚠" not in delivered, f"floor supersedes the neutral marker; got {delivered!r}"
     # Durable invariant: the execute failure stays recorded (errors non-empty).
     assert any(e.startswith("execute: ") for e in final.errors)
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — the apology cascade threads the RESOLVED per-tier model into
+# provider.complete(), instead of hardcoding model="".
+# ---------------------------------------------------------------------------
+
+
+async def test_apology_threads_resolved_tier_model_to_complete() -> None:
+    """Single healthy tier: ``_generate_localized_apology`` resolves the "fast"
+    tier's provider+model via ``get_with_cascade_and_model`` and forwards the
+    RESOLVED model into ``provider.complete()``.
+
+    Genuinely discriminating: if the helper still hardcoded ``model=""``,
+    ``seen_model`` would be "" instead of the sentinel resolved model below.
+    """
+    from stackowl.pipeline.delivery_gate import _generate_localized_apology
+
+    apology = _ApologyProvider(reply="Lo siento.")
+    preg = ProviderRegistry()
+    preg.register_mock(
+        "apology", apology,
+        models=(ModelRoute(model="apology-fast-resolved", tiers=("fast",)),),
+    )
+    services = StepServices(provider_registry=preg)
+    state = _state(session="sess-model-thread")
+
+    text = await _generate_localized_apology(state, services)
+
+    assert text == "Lo siento."
+    assert apology.seen_model == "apology-fast-resolved", (
+        f"expected the resolved fast-tier model to reach complete(); got {apology.seen_model!r}"
+    )
+
+
+async def test_apology_advance_threads_resolved_model_of_healthy_tier() -> None:
+    """F-8 retry/advance path: when the first tier's provider fails, the cascade
+    ADVANCES to the next tier — and the model threaded into that healthy
+    provider's ``complete()`` must be ITS OWN resolved model (not the failed
+    tier's, not "").
+    """
+    from stackowl.pipeline.delivery_gate import _generate_localized_apology
+
+    failing_fast = _FailingExecuteProvider()  # complete() raises
+    healthy = _ApologyProvider(reply="Lo siento mucho.")
+
+    preg = ProviderRegistry()
+    preg.register_mock(
+        "fast-down", failing_fast,
+        models=(ModelRoute(model="fast-down-model", tiers=("fast",)),),
+    )
+    preg.register_mock(
+        "standard-up", healthy,
+        models=(ModelRoute(model="standard-up-resolved", tiers=("standard",)),),
+    )
+    services = StepServices(provider_registry=preg)
+    state = _state(session="sess-advance-model")
+
+    text = await _generate_localized_apology(state, services)
+
+    assert text == "Lo siento mucho."
+    assert healthy.seen_model == "standard-up-resolved", (
+        f"expected the healthy next-tier's OWN resolved model to reach complete(); "
+        f"got {healthy.seen_model!r}"
+    )

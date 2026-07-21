@@ -1215,7 +1215,7 @@ async def _generate_localized_apology(
     tried: set[int] = set()
     for tier in tier_walk:
         try:
-            provider = registry.get_with_cascade(tier)
+            provider, model = registry.get_with_cascade_and_model(tier)
         except Exception as exc:  # AllProvidersUnavailableError or any lookup failure
             log.engine.warning(
                 "[critical_failure] apology: cascade found no provider for tier — advancing",
@@ -1232,7 +1232,7 @@ async def _generate_localized_apology(
             # budget on <think> and never emits the sentence (same empty-reply
             # failure mode fixed in owls/router.py).
             result = await provider.complete(
-                messages, model="", max_tokens=_APOLOGY_MAX_TOKENS,
+                messages, model=model, max_tokens=_APOLOGY_MAX_TOKENS,
                 disable_thinking=True,
             )
         except Exception as exc:  # provider call itself failed (outage mid-cascade)
@@ -1251,7 +1251,7 @@ async def _generate_localized_apology(
             continue
         log.engine.info(
             "[critical_failure] apology: localized message generated",
-            extra={"_fields": {"trace_id": state.trace_id, "tier": tier, "len": len(text)}},
+            extra={"_fields": {"trace_id": state.trace_id, "tier": tier, "model": model, "len": len(text)}},
         )
         return text
 
