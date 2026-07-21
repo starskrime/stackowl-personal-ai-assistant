@@ -21,8 +21,9 @@ from stackowl.owls.evolution import EvolutionCoordinator
 from stackowl.owls.evolution_limits import MAX_DELTA
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.mock_provider import MockProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.scheduler.job import Job
 from stackowl.skills.loader import LoadedSkill
 from stackowl.skills.manifest import SkillManifest
@@ -375,6 +376,94 @@ async def test_owl_skill_success_rate_mixed_averages_excluding_none(tmp_db: DbPo
     )
     rate = await coordinator._owl_skill_success_rate(manifest)
     assert rate == pytest.approx(0.6)  # (0.8 + 0.4) / 2, gamma's None excluded
+
+
+# ---------------------------------------------------------------------------
+# Task 13 — _llm_fallback threads the resolved "fast"-tier model through to
+# provider.complete(), instead of hardcoding model="".
+# ---------------------------------------------------------------------------
+
+
+class _ModelCapturingDeltaProvider(ModelProvider):
+    """Records the ``model`` kwarg its ``complete()`` was called with — proves
+    ``_llm_fallback`` forwards the RESOLVED model rather than hardcoding
+    ``model=""``. Returns a fixed, valid deltas JSON payload."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.seen_model: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-delta"
+
+    @property
+    def protocol(self) -> str:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_model = model
+        return CompletionResult(
+            content=self._raw, input_tokens=1, output_tokens=1,
+            model="model-capturing-delta", provider_name=self.name, duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_threads_resolved_fast_model_to_provider_complete(
+    tmp_db: DbPool,
+) -> None:
+    """``_llm_fallback`` resolves the "fast"-tier provider+model via
+    ``get_by_tier_and_model("fast")`` and threads the RESOLVED model into its
+    ``provider.complete()`` call.
+
+    Genuinely discriminating: if ``_llm_fallback`` still called the old
+    ``get_by_tier`` (dropping the model) or hardcoded ``model=""``,
+    ``seen_model`` would stay "" instead of the sentinel resolved model, and
+    this assertion would fail.
+    """
+    was_active = TestModeGuard.is_active()
+    TestModeGuard.deactivate()
+    try:
+        provider_registry = ProviderRegistry()
+        capturing_provider = _ModelCapturingDeltaProvider(
+            '{"challenge_level": 0.0, "verbosity": 0.0, "curiosity": 0.02, '
+            '"formality": 0.0, "creativity": 0.0, "precision": 0.0}'
+        )
+        provider_registry.register_mock(
+            "mock-fast", capturing_provider,
+            models=(ModelRoute(model="evo-fast-resolved", tiers=("fast",)),),
+        )
+
+        manifest = OwlAgentManifest(
+            name="modelthread", role="analyst", system_prompt="Be helpful.",
+            model_tier="fast", dna=OwlDNA(curiosity=0.50),
+        )
+        coordinator = EvolutionCoordinator(
+            tmp_db, provider_registry, OwlRegistry(), evolution_batch_size=1,
+        )
+        # n_scored_outcomes != 0 skips the "too little material" excerpt gate
+        # without needing to seed conversation messages.
+        attribution = AttributionReport(
+            owl_name="modelthread", n_scored_outcomes=1,
+            deltas={}, per_trait=(), explore_fired=False,
+            explore_trait=None, fallback_reason=None,
+        )
+
+        deltas = await coordinator._llm_fallback(manifest, attribution)
+
+        assert capturing_provider.seen_model == "evo-fast-resolved"
+        assert deltas["curiosity"] == pytest.approx(0.02)
+    finally:
+        if was_active:
+            TestModeGuard.activate()
 
 
 @pytest.mark.asyncio

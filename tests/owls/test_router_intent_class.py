@@ -20,8 +20,9 @@ from stackowl.owls.router import (
     SecretaryRouter,
 )
 from stackowl.pipeline.state import PipelineState
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.mock_provider import MockProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 # ---------------------------------------------------------------------------
 # Fixture helpers — mirror test_story_4_2.py exactly so fakes are reused
@@ -114,6 +115,78 @@ async def test_owl_selection_unchanged_with_class_line(router_env: _RouterEnv) -
     router_env.set_reply("research_owl\nstandard")
     res = await router_env.router.route(router_env.state("research X"))
     assert res.owl_name == "research_owl"
+
+
+# ---------------------------------------------------------------------------
+# Task 13 — route() threads the resolved "fast"-tier model through to
+# provider.complete(), instead of hardcoding model="".
+# ---------------------------------------------------------------------------
+
+
+class _ModelCapturingRouteProvider(ModelProvider):
+    """Records the ``model`` kwarg its ``complete()`` was called with — proves
+    ``route()`` forwards the RESOLVED model rather than hardcoding
+    ``model=""``. Returns a fixed, valid "owl_name\\nintent_class" reply."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.seen_model: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-router"
+
+    @property
+    def protocol(self) -> str:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_model = model
+        return CompletionResult(
+            content=self._raw, input_tokens=1, output_tokens=1,
+            model="model-capturing-router", provider_name=self.name, duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        yield self._raw
+
+
+@pytest.mark.asyncio
+async def test_route_threads_resolved_fast_model_to_provider_complete() -> None:
+    """``route()`` resolves the "fast"-tier provider+model via
+    ``get_with_cascade_and_model("fast")`` and threads the RESOLVED model into
+    its ``provider.complete()`` call.
+
+    Genuinely discriminating: if ``route()`` still called the old
+    ``get_with_cascade`` (dropping the model) or hardcoded ``model=""``,
+    ``seen_model`` would stay "" instead of the sentinel resolved model, and
+    this assertion would fail.
+    """
+    capturing_provider = _ModelCapturingRouteProvider("secretary\nstandard")
+    providers = ProviderRegistry()
+    providers.register_mock(
+        "mock-fast", capturing_provider,
+        models=(ModelRoute(model="router-fast-resolved", tiers=("fast",)),),
+    )
+    registry = _make_registry(["research_owl"])
+    router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
+    state = PipelineState(
+        trace_id="trace-model-thread",
+        session_id="session-model-thread",
+        input_text="do a task",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="triage",
+    )
+
+    res = await router.route(state)
+
+    assert capturing_provider.seen_model == "router-fast-resolved"
+    assert res.owl_name == "secretary"
 
 
 # ---------------------------------------------------------------------------

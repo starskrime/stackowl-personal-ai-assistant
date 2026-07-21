@@ -20,11 +20,12 @@ from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.owls.shadow_validator import ShadowValidator
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 pytestmark = pytest.mark.asyncio
 
 _OWL_NAME = "shadow_test_owl"
+_CRITIC_MODEL = "critic-model-x"
 
 
 # ---- Fake provider — scripted per-call responses ----------------------------
@@ -45,6 +46,10 @@ class _ScriptedProvider(ModelProvider):
         self._critic_scores = critic_scores
         self.stream_calls = 0
         self.complete_calls = 0
+        # Task 13 — every model= a complete() call was actually made with, in
+        # call order, so a test can pin the RESOLVED critic model reached each
+        # replay's provider.complete(), not just that some call happened.
+        self.seen_models: list[str] = []
 
     @property
     def name(self) -> str:
@@ -59,6 +64,7 @@ class _ScriptedProvider(ModelProvider):
     ) -> CompletionResult:
         idx = self.complete_calls
         self.complete_calls += 1
+        self.seen_models.append(model)
         score = self._critic_scores[idx] if idx < len(self._critic_scores) else 0.9
         return CompletionResult(
             content=json.dumps({"score": score, "reason": "stub"}),
@@ -97,9 +103,14 @@ def _build_registry_provider(stream_texts: list[str], critic_scores: list[float]
     provider = _ScriptedProvider(stream_texts, critic_scores)
     # Owl-named binding wins provider_select's precedence (Step 0) — covers the
     # replay's own turn (stream()). Also registered under "fast" tier for the
-    # critic call (ShadowValidator.get_with_cascade("fast")).
+    # critic call (ShadowValidator.get_with_cascade_and_model("fast")), with an
+    # explicit non-empty model string so tests can prove the RESOLVED model
+    # (not the provider's own default) reaches provider.complete().
     preg.register_mock(_OWL_NAME, provider, tier="standard")
-    preg.register_mock("fast", provider, tier="fast")
+    preg.register_mock(
+        "fast", provider,
+        models=(ModelRoute(model=_CRITIC_MODEL, tiers=("fast",)),),
+    )
     return live_registry, preg, provider
 
 
@@ -215,3 +226,28 @@ async def test_isolation_live_registry_untouched(tmp_db: DbPool) -> None:
     await validator.validate(_OWL_NAME, live_registry.get(_OWL_NAME), proposed_dna)
 
     assert live_registry.get(_OWL_NAME).dna == original_dna
+
+
+async def test_score_replay_threads_resolved_critic_model(tmp_db: DbPool) -> None:
+    """Task 13 — ``validate()`` resolves the critic provider+model via
+    ``get_with_cascade_and_model("fast")`` and threads the RESOLVED model all
+    the way into every ``_score_replay`` -> ``provider.complete()`` call.
+
+    Genuinely discriminating: if ``validate()`` still called the old
+    ``get_with_cascade`` (dropping the model) or ``_score_replay`` hardcoded
+    ``model=""``, every entry in ``provider.seen_models`` would be "" instead
+    of the sentinel resolved model, and this assertion would fail.
+    """
+    await _seed_outcomes(tmp_db, n=5)
+    _live_registry, preg, provider = _build_registry_provider(
+        stream_texts=["great answer"] * 5,
+        critic_scores=[0.9, 0.9, 0.9, 0.9, 0.9],
+    )
+    validator = ShadowValidator(tmp_db, preg)
+
+    result = await validator.validate(_OWL_NAME, _manifest(), OwlDNA())
+
+    assert result.passed is True
+    # 3 replays -> 3 critic complete() calls, EACH carrying the resolved model.
+    assert provider.complete_calls == 3
+    assert provider.seen_models == [_CRITIC_MODEL] * 3

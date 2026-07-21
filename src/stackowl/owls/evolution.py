@@ -854,14 +854,14 @@ class EvolutionCoordinator(JobHandler):
         )
         TestModeGuard.assert_not_test_mode(f"evolution.complete[{manifest.name}]")
         try:
-            provider = self._provider_registry.get_by_tier("fast")
+            provider, model = self._provider_registry.get_by_tier_and_model("fast")
             # disable_thinking: a JSON-deltas verdict needs no chain-of-thought;
             # a reasoning-capable provider otherwise burns the whole max_tokens
             # budget on <think> and never emits the deltas (same empty-reply
             # failure mode fixed in owls/router.py and every interaction/
             # *_classifier.py caller via this same flag).
             result = await provider.complete(
-                messages, model="", max_tokens=512, disable_thinking=True,
+                messages, model=model, max_tokens=512, disable_thinking=True,
             )
         except Exception as exc:  # B5
             log.engine.warning(

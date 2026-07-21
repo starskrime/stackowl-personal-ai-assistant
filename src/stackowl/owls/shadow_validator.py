@@ -196,7 +196,7 @@ class ShadowValidator:
             provider_registry=self._providers,
             owl_registry=scratch_registry,
         )
-        critic_provider = self._providers.get_with_cascade(_CRITIC_TIER)
+        critic_provider, critic_model = self._providers.get_with_cascade_and_model(_CRITIC_TIER)
 
         consecutive = 0
         n_replayed = 0
@@ -205,7 +205,7 @@ class ShadowValidator:
         for outcome in held_out:
             n_replayed += 1
             result_state = await self._replay_one(outcome, owl_name, scratch_services)
-            quality = await self._score_replay(outcome, result_state, critic_provider)
+            quality = await self._score_replay(outcome, result_state, critic_provider, critic_model)
             success = not result_state.errors
             # Quality-score proxy for `verified` (AC #2) — this story has no live
             # ToolResult.verified signal for a replay (no tool_registry is ever
@@ -279,7 +279,7 @@ class ShadowValidator:
         return await backend.run(state)
 
     async def _score_replay(
-        self, outcome: TaskOutcome, result_state: PipelineState, provider: ModelProvider,
+        self, outcome: TaskOutcome, result_state: PipelineState, provider: ModelProvider, model: str,
     ) -> float | None:
         """Score one replay with the SAME critic prompt builder CriticScorerHandler
         uses — WITHOUT its DB-coupled execute(job) wrapper (this must not touch
@@ -307,7 +307,7 @@ class ShadowValidator:
         )
         messages = self._prompt_builder.build(replay_outcome)
         try:
-            result = await provider.complete(messages, model="")
+            result = await provider.complete(messages, model=model)
         except Exception as exc:  # B5 — never let a critic-call failure crash validate()
             log.owls.warning(
                 "[shadow] score_replay: critic provider.complete failed — treating as unscored",
