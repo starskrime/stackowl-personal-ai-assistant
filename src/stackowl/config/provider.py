@@ -2,9 +2,35 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
 from stackowl.authz.bounds import DEFAULT_TURN_MAX_STEPS
+
+
+class ModelOverride(BaseModel):
+    """An additional model served by the SAME provider connection (api_key/
+    base_url/protocol) as its parent ``ProviderConfig`` — lets one connection
+    host multiple models, each independently tier-routable and independently
+    able to override its context/output-token budget, without duplicating
+    the whole provider block for a second model.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    tiers: tuple[Literal["fast", "standard", "powerful", "local"], ...]
+    # None = inherit the parent ProviderConfig's own value for this field.
+    max_output_tokens: int | None = None
+    context_chars: int | None = None
+
+    @field_validator("tiers")
+    @classmethod
+    def _validate_tiers(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("a model's tiers must contain at least one entry")
+        if len(set(value)) != len(value):
+            raise ValueError(f"a model's tiers must not contain duplicates: {value}")
+        return value
 
 
 class ProviderConfig(BaseModel):
@@ -29,6 +55,11 @@ class ProviderConfig(BaseModel):
     # ProviderConfig(tier="fast", ...) keep working unchanged — none of them
     # read the removed `.tier` attribute back, only `.tiers`.
     tiers: tuple[Literal["fast", "standard", "powerful", "local"], ...]
+    # Additional models sharing THIS provider's connection (api_key/base_url/
+    # protocol) — each independently tier-routable, each able to override its
+    # own context/output-token budget. Empty by default: every existing
+    # single-model config is completely unaffected.
+    models: tuple[ModelOverride, ...] = ()
     max_retries: int = 3
     timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
@@ -96,4 +127,17 @@ class ProviderConfig(BaseModel):
             raise ValueError("tiers must contain at least one entry")
         if len(set(value)) != len(value):
             raise ValueError(f"tiers must not contain duplicates: {value}")
+        return value
+
+    @field_validator("models")
+    @classmethod
+    def _validate_models(
+        cls, value: tuple[ModelOverride, ...], info: ValidationInfo
+    ) -> tuple[ModelOverride, ...]:
+        names = [m.name for m in value]
+        default = info.data.get("default_model")
+        if default is not None and default in names:
+            raise ValueError(f"model name '{default}' collides with default_model")
+        if len(set(names)) != len(names):
+            raise ValueError(f"models must not contain duplicate names: {names}")
         return value
