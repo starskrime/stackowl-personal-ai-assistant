@@ -63,8 +63,8 @@ _USAGE = (
     "  /tier                      (show your current preference)\n"
     "  /tier list\n"
     "  /tier menu <tier>\n"
-    "  /tier add <tier> [name]\n"
-    "  /tier remove <tier> [name]\n"
+    "  /tier add <tier> [name] [model_name]\n"
+    "  /tier remove <tier> [name] [model_name]\n"
     f"  tiers: {', '.join(_VALID_TIERS)}"
 )
 
@@ -93,13 +93,27 @@ _TIER_META = CommandMeta(
             description=(
                 "You move an EXISTING configured provider into this tier "
                 "(same effect as /provider set-tier). To add a brand-new "
-                "provider from the catalog, use /provider add instead."
+                "provider from the catalog, use /provider add instead. "
+                "With an optional 3rd argument (model_name), this targets "
+                "one of the provider's models[] entries instead of the "
+                "provider's own tiers."
             ),
             args=(
                 Arg(name="tier", summary="target tier", choices=_VALID_TIERS),
                 Arg(name="name", required=False, summary="configured provider name"),
+                Arg(
+                    name="model_name",
+                    required=False,
+                    summary="a specific models[] entry to target, instead of the provider itself",
+                ),
             ),
-            examples=(Example(invocation="/tier add fast groq"),),
+            examples=(
+                Example(invocation="/tier add fast groq"),
+                Example(
+                    invocation="/tier add fast groq groq-mini",
+                    note="Add a specific model of groq's to the tier, not groq itself",
+                ),
+            ),
         ),
         SubCommand(
             name="remove",
@@ -107,13 +121,29 @@ _TIER_META = CommandMeta(
             description=(
                 "You take a provider out of active routing for this tier by "
                 "disabling it — its configuration and tier are kept, so "
-                "/provider enable brings it right back."
+                "/provider enable brings it right back. With an optional 3rd "
+                "argument (model_name), this targets one of the provider's "
+                "models[] entries instead: its tier membership is trimmed, "
+                "or — if that was its last tier — the models[] entry itself "
+                "is removed (models[] entries have no enabled flag, so this "
+                "mirrors /provider remove-model rather than disabling)."
             ),
             args=(
                 Arg(name="tier", summary="tier to remove from", choices=_VALID_TIERS),
                 Arg(name="name", required=False, summary="configured provider name"),
+                Arg(
+                    name="model_name",
+                    required=False,
+                    summary="a specific models[] entry to target, instead of the provider itself",
+                ),
             ),
-            examples=(Example(invocation="/tier remove fast groq"),),
+            examples=(
+                Example(invocation="/tier remove fast groq"),
+                Example(
+                    invocation="/tier remove fast groq groq-mini",
+                    note="Remove a specific model of groq's from the tier, not groq itself",
+                ),
+            ),
         ),
     ),
     examples=(
@@ -370,7 +400,7 @@ class TierCommand(SlashCommand):
         log.engine.debug("[commands] tier.add_execute: entry", extra={"_fields": {"raw_len": len(raw)}})
         bits = raw.split()
         if len(bits) < 2:
-            return "Usage: /tier add <tier> <name>"
+            return "Usage: /tier add <tier> <name> [model_name]"
         tier, name = bits[0], bits[1]
         if tier not in _VALID_TIERS:
             log.engine.warning(
@@ -386,6 +416,35 @@ class TierCommand(SlashCommand):
         if target is None:
             log.engine.warning("[commands] tier.add_execute: not found", extra={"_fields": {"name": name}})
             return f"✗ Provider '{name}' not found"
+
+        if len(bits) >= 3:
+            # 3-arg form — same add logic, scoped to one models[] entry
+            # instead of the provider dict itself (see module/SubCommand docs).
+            model_name = bits[2]
+            existing_models = target.get("models") or []
+            model_entry = next((m for m in existing_models if m.get("name") == model_name), None)
+            if model_entry is None:
+                log.engine.warning(
+                    "[commands] tier.add_execute: model not found",
+                    extra={"_fields": {"name": name, "model_name": model_name}},
+                )
+                return f"✗ Model '{model_name}' not found under provider '{name}'"
+            model_tiers = model_entry.get("tiers") or []
+            if tier in model_tiers:
+                log.engine.debug(
+                    "[commands] tier.add_execute: exit — model already in tier",
+                    extra={"_fields": {"name": name, "model_name": model_name, "tier": tier}},
+                )
+                return f"✓ Model '{model_name}' is already in tier '{tier}'"
+            model_entry["tiers"] = [*model_tiers, tier]
+            save_yaml(path, data)
+            self._emit_reloaded(name)
+            log.engine.info(
+                "[commands] tier.add_execute: exit — model updated",
+                extra={"_fields": {"name": name, "model_name": model_name, "tier": tier}},
+            )
+            return f"✓ Model '{model_name}' added to tier '{tier}' — applied immediately"
+
         current_tiers = target.get("tiers") or []
         if tier in current_tiers:
             log.engine.debug(
@@ -440,7 +499,7 @@ class TierCommand(SlashCommand):
         log.engine.debug("[commands] tier.remove_execute: entry", extra={"_fields": {"raw_len": len(raw)}})
         bits = raw.split()
         if len(bits) < 2:
-            return "Usage: /tier remove <tier> <name>"
+            return "Usage: /tier remove <tier> <name> [model_name]"
         tier, name = bits[0], bits[1]
         if tier not in _VALID_TIERS:
             log.engine.warning(
@@ -458,6 +517,62 @@ class TierCommand(SlashCommand):
                 "[commands] tier.remove_execute: not found", extra={"_fields": {"name": name}}
             )
             return f"✗ Provider '{name}' not found"
+
+        if len(bits) >= 3:
+            # 3-arg form — same subtract-or-remove logic, scoped to one
+            # models[] entry instead of the provider dict itself. Unlike
+            # ProviderConfig, ModelOverride has no `enabled` flag and its
+            # schema (extra="forbid") rejects unknown keys — so there is no
+            # schema-valid way to "disable but keep configured" a model the
+            # way a provider can. When a model's LAST tier is removed here,
+            # its models[] entry is deleted outright instead, mirroring the
+            # established /provider remove-model convention (task 25) rather
+            # than writing a field the config loader would reject on the very
+            # next reload.
+            model_name = bits[2]
+            existing_models = target.get("models") or []
+            model_entry = next((m for m in existing_models if m.get("name") == model_name), None)
+            if model_entry is None:
+                log.engine.warning(
+                    "[commands] tier.remove_execute: model not found",
+                    extra={"_fields": {"name": name, "model_name": model_name}},
+                )
+                return f"✗ Model '{model_name}' not found under provider '{name}'"
+            model_tiers = model_entry.get("tiers") or []
+            if tier not in model_tiers:
+                log.engine.debug(
+                    "[commands] tier.remove_execute: exit — model not in this tier",
+                    extra={
+                        "_fields": {
+                            "name": name,
+                            "model_name": model_name,
+                            "tier": tier,
+                            "current_tiers": model_tiers,
+                        }
+                    },
+                )
+                return f"✗ Model '{model_name}' is not in tier '{tier}' (it's in {model_tiers})"
+            was_only_model_tier = len(model_tiers) == 1
+            if was_only_model_tier:
+                target["models"] = [m for m in existing_models if m.get("name") != model_name]
+            else:
+                model_entry["tiers"] = [t for t in model_tiers if t != tier]
+            save_yaml(path, data)
+            self._emit_reloaded(name)
+            log.engine.info(
+                "[commands] tier.remove_execute: exit — model updated",
+                extra={
+                    "_fields": {
+                        "name": name,
+                        "model_name": model_name,
+                        "tier": tier,
+                        "entry_removed": was_only_model_tier,
+                    }
+                },
+            )
+            suffix = " (model entry removed — no tiers left)" if was_only_model_tier else ""
+            return f"✓ Model '{model_name}' removed from tier '{tier}'{suffix} — applied immediately"
+
         current_tiers = target.get("tiers") or []
         if tier not in current_tiers:
             log.engine.debug(

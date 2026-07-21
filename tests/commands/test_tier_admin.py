@@ -311,6 +311,170 @@ class TestTierAdminRemove:
 
 
 # ---------------------------------------------------------------------------
+# add/remove — optional 3rd arg (model_name) targets a models[] entry
+# ---------------------------------------------------------------------------
+
+
+class TestTierAddRemoveModelAware:
+    """The 2-arg form (`/tier add|remove <tier> <name>`) must keep operating
+    on the PROVIDER's own tiers byte-identically. An optional 3rd argument
+    (model_name) redirects the SAME add/remove logic onto one of that
+    provider's `models[]` entries instead — never both at once.
+
+    Note: unlike ProviderConfig, ModelOverride has no `enabled` flag (and its
+    schema forbids unknown keys), so removing a model's LAST tier deletes the
+    models[] entry outright rather than "disabling" it — mirroring the
+    established `/provider remove-model` convention instead of writing a
+    field the config loader would reject on the next reload.
+    """
+
+    @pytest.mark.asyncio
+    async def test_add_two_arg_unchanged_operates_on_default_model(self, tmp_yaml: Path) -> None:
+        """Byte-compat: the existing 2-arg form still edits the provider's OWN
+        tiers, never touching models[]."""
+        reply = await _make_cmd().handle("add powerful groq", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        assert "powerful" in groq["tiers"]
+        assert not groq.get("models")
+
+    @pytest.mark.asyncio
+    async def test_remove_two_arg_unchanged_no_models_side_effects(self, tmp_yaml: Path) -> None:
+        """Byte-compat: the existing 2-arg remove form still edits the
+        provider's OWN tiers/enabled flag, never touching models[]."""
+        reply = await _make_cmd().handle("remove fast groq", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        assert groq["enabled"] is False
+        assert not groq.get("models")
+
+    @pytest.mark.asyncio
+    async def test_add_three_arg_targets_a_specific_model(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["fast"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("add powerful groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert "powerful" in model_entry["tiers"]
+        assert "powerful" not in groq2["tiers"]  # provider's own tiers untouched
+        assert groq2["tiers"] == ["fast"]  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_add_three_arg_already_in_tier_is_a_noop(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["fast"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("add fast groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert "already in tier" in reply
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert model_entry["tiers"] == ["fast"]  # unchanged, not duplicated
+
+    @pytest.mark.asyncio
+    async def test_add_three_arg_model_not_found_rejected(self, tmp_yaml: Path) -> None:
+        reply = await _make_cmd().handle("add powerful groq ghost-model", _state())
+        assert isinstance(reply, str)
+        assert "✗" in reply
+        assert "not found" in reply
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        assert "powerful" not in groq["tiers"]  # provider untouched
+
+    @pytest.mark.asyncio
+    async def test_add_three_arg_invalid_tier_rejected(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["fast"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("add nonexistent groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert "Invalid tier" in reply
+
+    @pytest.mark.asyncio
+    async def test_remove_three_arg_on_models_only_tier_removes_the_model_entry(
+        self, tmp_yaml: Path
+    ) -> None:
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["standard"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("remove standard groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        # The model's only tier was removed — since ModelOverride has no
+        # `enabled` flag, the models[] entry is deleted outright (matching
+        # /provider remove-model), not "disabled".
+        assert groq2.get("models", []) == []
+        # The provider itself is untouched — this was a MODEL-scoped removal.
+        assert groq2["enabled"] is True
+        assert groq2["tiers"] == ["fast"]
+
+    @pytest.mark.asyncio
+    async def test_remove_three_arg_on_one_of_several_model_tiers_keeps_the_entry(
+        self, tmp_yaml: Path
+    ) -> None:
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["standard", "fast"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("remove standard groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        # Entry was NOT deleted (it still has another tier) — message must not
+        # claim the models[] entry was removed.
+        assert "entry removed" not in reply
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert model_entry["tiers"] == ["fast"]  # "standard" removed, entry kept
+
+    @pytest.mark.asyncio
+    async def test_remove_three_arg_model_not_found_rejected(self, tmp_yaml: Path) -> None:
+        reply = await _make_cmd().handle("remove fast groq ghost-model", _state())
+        assert isinstance(reply, str)
+        assert "✗" in reply
+        assert "not found" in reply
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        assert groq["enabled"] is True  # provider untouched
+
+    @pytest.mark.asyncio
+    async def test_remove_three_arg_wrong_tier_rejected(self, tmp_yaml: Path) -> None:
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        groq["models"] = [{"name": "groq-mini", "tiers": ["standard"]}]
+        tmp_yaml.write_text(yaml.dump(data), encoding="utf-8")
+
+        reply = await _make_cmd().handle("remove fast groq groq-mini", _state())
+        assert isinstance(reply, str)
+        assert "✗" in reply
+        assert "not in tier" in reply
+        persisted = _load(tmp_yaml)
+        groq2 = next(p for p in persisted["providers"] if p["name"] == "groq")
+        model_entry = next(m for m in groq2["models"] if m["name"] == "groq-mini")
+        assert model_entry["tiers"] == ["standard"]  # untouched
+
+
+# ---------------------------------------------------------------------------
 # preference job still works after the merge (regression guard)
 # ---------------------------------------------------------------------------
 
