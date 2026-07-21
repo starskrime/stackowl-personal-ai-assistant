@@ -19,9 +19,10 @@ from typing import Any
 
 import pytest
 
-from stackowl.config.provider import ProviderConfig
+from stackowl.config.provider import ModelOverride, ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.providers.base import Message
+from stackowl.providers.model_config import resolve_model_override
 from stackowl.providers.openai_provider import OpenAIProvider, _ThinkStreamFilter, strip_think
 
 
@@ -490,3 +491,57 @@ async def test_stream_caps_output_at_max_output_tokens_not_the_whole_window(
         pass
 
     assert completions.calls[0]["max_tokens"] == 250000  # capped, not the raw 262144 window
+
+
+class TestResolveModelOverride:
+    def test_falls_back_to_provider_value_when_model_not_in_models_list(self) -> None:
+        config = ProviderConfig(
+            name="acme", protocol="openai", default_model="acme-v1",
+            tiers=("fast",), max_output_tokens=250000, context_chars=None,
+        )
+        max_tokens, context_chars = resolve_model_override(config, "acme-v1")
+        assert max_tokens == 250000
+        assert context_chars is None
+
+    def test_uses_model_override_when_set(self) -> None:
+        config = ProviderConfig(
+            name="acme", protocol="openai", default_model="acme-v1",
+            tiers=("fast",), max_output_tokens=250000,
+            models=(
+                ModelOverride(
+                    name="acme-v1-mini", tiers=("standard",),
+                    max_output_tokens=50000, context_chars=80000,
+                ),
+            ),
+        )
+        max_tokens, context_chars = resolve_model_override(config, "acme-v1-mini")
+        assert max_tokens == 50000
+        assert context_chars == 80000
+
+    def test_model_in_list_but_override_none_falls_back_to_provider_value(self) -> None:
+        config = ProviderConfig(
+            name="acme", protocol="openai", default_model="acme-v1",
+            tiers=("fast",), max_output_tokens=250000,
+            models=(ModelOverride(name="acme-v1-mini", tiers=("standard",)),),
+        )
+        max_tokens, context_chars = resolve_model_override(config, "acme-v1-mini")
+        assert max_tokens == 250000
+        assert context_chars is None
+
+
+@pytest.mark.asyncio
+async def test_output_cap_uses_per_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from stackowl.providers import model_window
+
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    monkeypatch.setitem(model_window._WINDOW_CACHE, ("ollama", "acme-v1-mini"), 262144)
+    config = ProviderConfig(
+        name="ollama", protocol="openai", base_url="http://localhost:11434/v1",
+        default_model="qwen3.5:2b", tiers=("fast",), max_output_tokens=250000,
+        models=(
+            ModelOverride(name="acme-v1-mini", tiers=("standard",), max_output_tokens=9000),
+        ),
+    )
+    provider = OpenAIProvider(config, api_key="")
+    assert provider._output_cap("acme-v1-mini") == 9000  # noqa: SLF001
+    assert provider._output_cap("qwen3.5:2b") == 250000  # noqa: SLF001 — default_model, unaffected

@@ -982,13 +982,22 @@ class OpenAIProvider(ModelProvider):
         "generous", not "small") keeps a genuinely small/unknown window
         unaffected (``min`` picks the window) while capping a huge window to a
         response size that safely coexists with real prompt sizes.
+
+        Bounded by the RESOLVED model's own max_output_tokens (per-model
+        override if ``resolved_model`` matches a ProviderConfig.models entry
+        with one set, else the provider's own value) — see
+        providers/model_config.py's resolve_model_override.
         """
+        from stackowl.providers.model_config import resolve_model_override
         from stackowl.providers.model_window import cached_window
 
+        effective_max_output_tokens, _effective_context_chars = resolve_model_override(
+            self._config, resolved_model
+        )
         window = cached_window(self._name, resolved_model)
         if window is None:
-            return self._config.max_output_tokens
-        return min(window, self._config.max_output_tokens)
+            return effective_max_output_tokens
+        return min(window, effective_max_output_tokens)
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("openai.complete")
