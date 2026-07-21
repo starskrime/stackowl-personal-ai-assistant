@@ -121,12 +121,13 @@ class ScheduleCommitFulfiller:
 
     async def _extract(self, response: str, request: str) -> tuple[str, str] | None:
         """One bounded fast-tier call → validated ``(goal, schedule)`` or ``None``."""
-        provider = self._resolve_provider()
-        if provider is None:
+        resolved = self._resolve_provider()
+        if resolved is None:
             log.engine.warning(
                 "schedule_commit_fulfiller._extract: no fast provider — fallback to floor",
             )
             return None
+        provider, model = resolved
         user_text = "\n".join(
             [
                 f"USER ASKED: {request[:_MAX_TEXT_CHARS]}",
@@ -143,7 +144,7 @@ class ScheduleCommitFulfiller:
                             Message(role="system", content=_SYSTEM_PROMPT),
                             Message(role="user", content=user_text),
                         ],
-                        model="",
+                        model=model,
                         max_tokens=_MAX_TOKENS,
                         disable_thinking=True,
                     ),
@@ -163,9 +164,9 @@ class ScheduleCommitFulfiller:
             return None
         return self._parse(result.content or "")
 
-    def _resolve_provider(self) -> ModelProvider | None:
+    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
         try:
-            return self._registry.get_by_tier("fast")
+            return self._registry.get_by_tier_and_model("fast")
         except Exception as exc:
             log.engine.warning(
                 "schedule_commit_fulfiller._resolve_provider: get_by_tier failed",

@@ -25,11 +25,11 @@ def _completion(content: str) -> CompletionResult:
     )
 
 
-def _registry_with(raw_response: str) -> MagicMock:
+def _registry_with(raw_response: str, *, model: str = "fake-fast-model") -> MagicMock:
     provider_registry = MagicMock()
     fake_provider = MagicMock()
     fake_provider.complete = AsyncMock(return_value=_completion(raw_response))
-    provider_registry.get_by_tier = MagicMock(return_value=fake_provider)
+    provider_registry.get_by_tier_and_model = MagicMock(return_value=(fake_provider, model))
     return provider_registry
 
 
@@ -43,7 +43,7 @@ async def test_classify_retry_phrase_returns_true():
     )
 
     assert result is True
-    provider_registry.get_by_tier.assert_called_once_with("fast")
+    provider_registry.get_by_tier_and_model.assert_called_once_with("fast")
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_classify_provider_error_fails_open_to_false():
     provider_registry = MagicMock()
     fake_provider = MagicMock()
     fake_provider.complete = AsyncMock(side_effect=RuntimeError("boom"))
-    provider_registry.get_by_tier = MagicMock(return_value=fake_provider)
+    provider_registry.get_by_tier_and_model = MagicMock(return_value=(fake_provider, "fake-fast-model"))
 
     classifier = RetryIntentClassifier(provider_registry)
     result = await classifier.classify(
@@ -98,9 +98,26 @@ async def test_classify_provider_error_fails_open_to_false():
 
 
 @pytest.mark.asyncio
+async def test_classify_uses_the_resolved_model_in_the_provider_call():
+    """The (provider, model) pair resolved from get_by_tier_and_model must be
+    threaded into provider.complete(..., model=...) — not hardcoded to ""."""
+    provider_registry = _registry_with(
+        '{"is_retry": true, "confidence": 0.9}', model="qwen-retry-intent-v1",
+    )
+    fake_provider = provider_registry.get_by_tier_and_model.return_value[0]
+
+    classifier = RetryIntentClassifier(provider_registry)
+    await classifier.classify(
+        user_message="do it again", prior_goal="prepare me for the interview",
+    )
+
+    assert fake_provider.complete.call_args.kwargs["model"] == "qwen-retry-intent-v1"
+
+
+@pytest.mark.asyncio
 async def test_classify_no_provider_fails_open_to_false():
     provider_registry = MagicMock()
-    provider_registry.get_by_tier = MagicMock(side_effect=RuntimeError("no fast provider"))
+    provider_registry.get_by_tier_and_model = MagicMock(side_effect=RuntimeError("no fast provider"))
 
     classifier = RetryIntentClassifier(provider_registry)
     result = await classifier.classify(

@@ -104,13 +104,14 @@ class ScheduleCommitClassifier:
             )
             return False
 
-        provider = self._resolve_provider()
-        if provider is None:
+        resolved = self._resolve_provider()
+        if resolved is None:
             log.engine.warning(
                 "schedule_commit_classifier.commits_to_future_schedule: no fast provider — fail-safe to none",
                 extra={"_fields": {"commits": False}},
             )
             return False
+        provider, model = resolved
 
         try:
             user_text = self._build_user_text(response)
@@ -125,7 +126,7 @@ class ScheduleCommitClassifier:
                             Message(role="system", content=_SYSTEM_PROMPT),
                             Message(role="user", content=user_text),
                         ],
-                        model="",
+                        model=model,
                         max_tokens=_MAX_TOKENS,
                         disable_thinking=True,
                     ),
@@ -162,10 +163,10 @@ class ScheduleCommitClassifier:
 
     # ------------------------------------------------------------------ helpers
 
-    def _resolve_provider(self) -> ModelProvider | None:
-        """Resolve the fast-tier provider, or ``None`` on any registry error."""
+    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
+        """Resolve the fast-tier (provider, model), or ``None`` on any registry error."""
         try:
-            return self._registry.get_by_tier("fast")
+            return self._registry.get_by_tier_and_model("fast")
         except Exception as exc:  # self-healing — missing provider must not raise
             log.engine.warning(
                 "schedule_commit_classifier._resolve_provider: get_by_tier failed",

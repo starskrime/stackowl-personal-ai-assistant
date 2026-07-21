@@ -21,9 +21,11 @@ class _FakeProvider:
     def __init__(self, canned: str) -> None:
         self._canned = canned
         self.calls = 0
+        self.models: list[str] = []
 
     async def complete(self, messages: Any, model: str, **kwargs: Any) -> CompletionResult:
         self.calls += 1
+        self.models.append(model)
         return CompletionResult(
             content=self._canned, input_tokens=1, output_tokens=1,
             model="fast", provider_name="fake", duration_ms=1.0,
@@ -31,13 +33,14 @@ class _FakeProvider:
 
 
 class _FakeRegistry:
-    def __init__(self, provider: _FakeProvider | None) -> None:
+    def __init__(self, provider: _FakeProvider | None, *, model: str = "fake-fast-model") -> None:
         self._provider = provider
+        self._model = model
 
-    def get_by_tier(self, tier: str) -> Any:
+    def get_by_tier_and_model(self, tier: str) -> Any:
         if self._provider is None:
             raise RuntimeError("no fast provider")
-        return self._provider
+        return self._provider, self._model
 
 
 class _FakeCronjobTool:
@@ -130,3 +133,20 @@ def test_parse_accepts_fenced_json_anywhere_in_text() -> None:
         'Here you go:\n{"goal": "remind about standup", "schedule": "daily@09:00"}'
     )
     assert goal_schedule == ("remind about standup", "daily@09:00")
+
+
+@pytest.mark.asyncio
+async def test_resolved_model_reaches_provider_complete() -> None:
+    """The (provider, model) pair resolved from get_by_tier_and_model must be
+    threaded into provider.complete(..., model=...) — not hardcoded to ""."""
+    provider = _FakeProvider('{"goal": "check GOOGL news and report", "schedule": "in 2h"}')
+    fulfiller = ScheduleCommitFulfiller(
+        _FakeRegistry(provider, model="qwen-fulfiller-v3")  # type: ignore[arg-type]
+    )
+
+    await fulfiller.fulfill(
+        response="Sure — I'll check GOOGL news in 2 hours and report back!",
+        request="watch googl news for me",
+    )
+
+    assert provider.models == ["qwen-fulfiller-v3"]
