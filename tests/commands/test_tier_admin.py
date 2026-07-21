@@ -2,8 +2,8 @@
 
 The session-preference job (bare tier name) is covered by
 tests/journeys/commands/test_tier_command.py and is untouched by this file —
-these tests are scoped to the NEW admin subcommands merged in alongside it
-(see tier_command.py's module docstring for why the two share one command).
+these tests are scoped to the admin subcommands merged in alongside it (see
+tier_command.py's module docstring for why the two share one command).
 """
 
 from __future__ import annotations
@@ -56,21 +56,21 @@ def tmp_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                         "name": "groq",
                         "protocol": "openai",
                         "default_model": "llama-3.3-70b-versatile",
-                        "tier": "fast",
+                        "tiers": ["fast"],
                         "enabled": True,
                     },
                     {
                         "name": "openai",
                         "protocol": "openai",
                         "default_model": "gpt-4o",
-                        "tier": "powerful",
+                        "tiers": ["powerful"],
                         "enabled": True,
                     },
                     {
                         "name": "disabled-one",
                         "protocol": "openai",
                         "default_model": "m",
-                        "tier": "fast",
+                        "tiers": ["fast"],
                         "enabled": False,
                     },
                 ],
@@ -117,6 +117,24 @@ class TestTierAdminList:
         assert isinstance(reply, str)
         assert "No stackowl.yaml" in reply
 
+    @pytest.mark.asyncio
+    async def test_list_shows_a_provider_under_every_tier_it_belongs_to(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "stackowl.yaml"
+        cfg.write_text(
+            yaml.dump({"test_mode": True, "providers": [
+                {"name": "multi", "protocol": "openai", "default_model": "m",
+                 "tiers": ["fast", "standard"], "enabled": True},
+            ]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("STACKOWL_CONFIG_FILE", str(cfg))
+        reply = await _make_cmd().handle("list", _state())
+        assert isinstance(reply, CommandResponse)
+        # "multi" appears once under "fast:" and once under "standard:".
+        assert reply.text.count("multi") == 2
+
 
 # ---------------------------------------------------------------------------
 # menu — per-tier drill-down
@@ -160,28 +178,31 @@ class TestTierAdminMenu:
 
 class TestTierAdminAdd:
     @pytest.mark.asyncio
-    async def test_add_browse_shows_candidates_from_other_tiers(self, tmp_yaml: Path) -> None:
+    async def test_add_browse_shows_candidates_not_already_in_this_tier(self, tmp_yaml: Path) -> None:
         reply = await _make_cmd().handle("add powerful", _state())
         assert isinstance(reply, CommandResponse)
         # groq (fast) and disabled-one (fast) are candidates; openai is already powerful.
         assert any(a.command == "/tier add powerful groq" for a in reply.actions)
-        assert not any("openai" in a.command for a in reply.actions)
+        assert not any("/tier add powerful openai" == a.command for a in reply.actions)
 
     @pytest.mark.asyncio
-    async def test_add_execute_moves_provider_to_tier(self, tmp_yaml: Path) -> None:
+    async def test_add_execute_appends_tier_without_removing_existing_ones(self, tmp_yaml: Path) -> None:
         reply = await _make_cmd().handle("add powerful groq", _state())
         assert isinstance(reply, str)
         assert reply.startswith("✓")
         assert "powerful" in reply
         data = _load(tmp_yaml)
         groq = next(p for p in data["providers"] if p["name"] == "groq")
-        assert groq["tier"] == "powerful"
+        assert groq["tiers"] == ["fast", "powerful"]
 
     @pytest.mark.asyncio
     async def test_add_execute_already_in_tier(self, tmp_yaml: Path) -> None:
         reply = await _make_cmd().handle("add fast groq", _state())
         assert isinstance(reply, str)
         assert "already in tier" in reply
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        assert groq["tiers"] == ["fast"]  # unchanged, not duplicated
 
     @pytest.mark.asyncio
     async def test_add_execute_provider_not_found(self, tmp_yaml: Path) -> None:
@@ -203,7 +224,8 @@ class TestTierAdminAdd:
         cfg = tmp_path / "stackowl.yaml"
         cfg.write_text(
             yaml.dump({"test_mode": True, "providers": [
-                {"name": "solo", "protocol": "openai", "default_model": "m", "tier": "fast", "enabled": True},
+                {"name": "solo", "protocol": "openai", "default_model": "m",
+                 "tiers": ["fast"], "enabled": True},
             ]}),
             encoding="utf-8",
         )
@@ -229,7 +251,9 @@ class TestTierAdminRemove:
         assert "/tier remove fast disabled-one" not in commands
 
     @pytest.mark.asyncio
-    async def test_remove_execute_disables_provider(self, tmp_yaml: Path) -> None:
+    async def test_remove_execute_on_a_providers_only_tier_disables_without_emptying_tiers(
+        self, tmp_yaml: Path
+    ) -> None:
         reply = await _make_cmd().handle("remove fast groq", _state())
         assert isinstance(reply, str)
         assert reply.startswith("✓")
@@ -237,8 +261,23 @@ class TestTierAdminRemove:
         data = _load(tmp_yaml)
         groq = next(p for p in data["providers"] if p["name"] == "groq")
         assert groq["enabled"] is False
-        # Tier is preserved (reversible via /provider enable).
-        assert groq["tier"] == "fast"
+        # groq's ONLY tier was "fast" — never write an empty tiers list.
+        assert groq["tiers"] == ["fast"]
+
+    @pytest.mark.asyncio
+    async def test_remove_execute_on_one_of_several_tiers_leaves_provider_enabled(
+        self, tmp_yaml: Path
+    ) -> None:
+        # Give groq a second tier first.
+        await _make_cmd().handle("add powerful groq", _state())
+        reply = await _make_cmd().handle("remove fast groq", _state())
+        assert isinstance(reply, str)
+        assert reply.startswith("✓")
+        data = _load(tmp_yaml)
+        groq = next(p for p in data["providers"] if p["name"] == "groq")
+        # Still enabled — "powerful" remains, "fast" was removed (not disabled).
+        assert groq["enabled"] is True
+        assert groq["tiers"] == ["powerful"]
 
     @pytest.mark.asyncio
     async def test_remove_execute_wrong_tier_rejected(self, tmp_yaml: Path) -> None:
@@ -288,7 +327,7 @@ class TestTierPreferenceStillWorksAfterMerge:
     ) -> None:
         """Regression guard for the reported gap: bare /tier used to be a
         dead-end plain-text reply with zero buttons, undiscoverable from the
-        new admin dashboard. Text wording must stay unchanged; buttons are new."""
+        admin dashboard. Text wording must stay unchanged; buttons are new."""
         reply = await _make_cmd().handle("", _state())
         assert isinstance(reply, CommandResponse)
         assert reply.text == "Current tier preference: default\nValid tiers: fast, standard, powerful, local"

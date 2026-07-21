@@ -50,7 +50,7 @@ _PREF_KEY = "provider_tier"
 # Single source of truth for valid tiers — derived from the schema, so a
 # schema change never drifts between /tier and /provider.
 _VALID_TIERS: tuple[str, ...] = typing.get_args(
-    ProviderConfig.model_fields["tier"].annotation
+    typing.get_args(ProviderConfig.model_fields["tiers"].annotation)[0]
 )
 # Admin subcommand names — disjoint from _VALID_TIERS by construction, which
 # is what makes the merge unambiguous (see module docstring).
@@ -275,7 +275,7 @@ class TierCommand(SlashCommand):
         lines: list[str] = ["Tiers:"]
         actions: list[Action] = []
         for tier in _VALID_TIERS:
-            members = [p for p in providers if p.get("tier") == tier]
+            members = [p for p in providers if tier in (p.get("tiers") or [])]
             lines.append(f"\n{tier}:")
             if not members:
                 lines.append("  (none)")
@@ -302,7 +302,7 @@ class TierCommand(SlashCommand):
             return NO_STACKOWL_YAML
         data = load_yaml(path)
         providers = providers_list(data)
-        members = [p for p in providers if p.get("tier") == tier]
+        members = [p for p in providers if tier in (p.get("tiers") or [])]
         lines = [f"Tier '{tier}':"]
         actions: list[Action] = []
         if not members:
@@ -333,7 +333,7 @@ class TierCommand(SlashCommand):
             return NO_STACKOWL_YAML
         data = load_yaml(path)
         providers = providers_list(data)
-        candidates = [p for p in providers if p.get("tier") != tier]
+        candidates = [p for p in providers if tier not in (p.get("tiers") or [])]
         if not candidates:
             log.engine.debug(
                 "[commands] tier.add_browse: exit — no candidates", extra={"_fields": {"tier": tier}}
@@ -344,7 +344,7 @@ class TierCommand(SlashCommand):
             )
         actions = tuple(
             Action(
-                label=f"{p.get('name', '?')} (from {p.get('tier', '?')})",
+                label=f"{p.get('name', '?')} (currently: {', '.join(p.get('tiers') or [])})",
                 command=f"/tier add {tier} {p.get('name', '?')}",
                 destructive=False,
             )
@@ -376,13 +376,14 @@ class TierCommand(SlashCommand):
         if target is None:
             log.engine.warning("[commands] tier.add_execute: not found", extra={"_fields": {"name": name}})
             return f"✗ Provider '{name}' not found"
-        if target.get("tier") == tier:
+        current_tiers = target.get("tiers") or []
+        if tier in current_tiers:
             log.engine.debug(
                 "[commands] tier.add_execute: exit — already in tier",
                 extra={"_fields": {"name": name, "tier": tier}},
             )
             return f"✓ Provider '{name}' is already in tier '{tier}'"
-        target["tier"] = tier
+        target["tiers"] = [*current_tiers, tier]
         save_yaml(path, data)
         self._emit_reloaded(name)
         log.engine.info(
@@ -402,7 +403,10 @@ class TierCommand(SlashCommand):
             return NO_STACKOWL_YAML
         data = load_yaml(path)
         providers = providers_list(data)
-        candidates = [p for p in providers if p.get("tier") == tier and p.get("enabled", True)]
+        candidates = [
+            p for p in providers
+            if tier in (p.get("tiers") or []) and p.get("enabled", True)
+        ]
         if not candidates:
             log.engine.debug(
                 "[commands] tier.remove_browse: exit — no candidates", extra={"_fields": {"tier": tier}}
@@ -444,18 +448,25 @@ class TierCommand(SlashCommand):
                 "[commands] tier.remove_execute: not found", extra={"_fields": {"name": name}}
             )
             return f"✗ Provider '{name}' not found"
-        if target.get("tier") != tier:
+        current_tiers = target.get("tiers") or []
+        if tier not in current_tiers:
             log.engine.debug(
                 "[commands] tier.remove_execute: exit — not in this tier",
-                extra={"_fields": {"name": name, "tier": tier, "actual_tier": target.get("tier")}},
+                extra={"_fields": {"name": name, "tier": tier, "current_tiers": current_tiers}},
             )
-            return f"✗ Provider '{name}' is not in tier '{tier}' (it's in '{target.get('tier', '?')}')"
-        target["enabled"] = False
+            return f"✗ Provider '{name}' is not in tier '{tier}' (it's in {current_tiers})"
+        if len(current_tiers) == 1:
+            # This is the provider's ONLY tier — disable rather than write an
+            # empty tiers list (the schema requires at least one entry, and
+            # this preserves the "always routable-or-explicitly-off" invariant).
+            target["enabled"] = False
+        else:
+            target["tiers"] = [t for t in current_tiers if t != tier]
         save_yaml(path, data)
         self._emit_reloaded(name)
         log.engine.info(
-            "[commands] tier.remove_execute: exit — disabled",
-            extra={"_fields": {"name": name, "tier": tier}},
+            "[commands] tier.remove_execute: exit — updated",
+            extra={"_fields": {"name": name, "tier": tier, "disabled": len(current_tiers) == 1}},
         )
         return f"✓ Provider '{name}' removed from tier '{tier}' (disabled) — applied immediately"
 
