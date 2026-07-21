@@ -36,9 +36,11 @@ class _Provider:
 
     protocol = "anthropic"
 
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, model: str = "") -> None:
         self._content = content
+        self._model = model
         self.calls = 0
+        self.seen_models: list[str] = []
 
     def get(self, name: str) -> _Provider:
         return self
@@ -46,8 +48,12 @@ class _Provider:
     def get_by_tier(self, tier: str) -> _Provider:
         return self
 
+    def get_by_tier_and_model(self, tier: str) -> tuple[_Provider, str]:
+        return self, self._model
+
     async def complete(self, messages: object, model: str = "", **k: object) -> object:
         self.calls += 1
+        self.seen_models.append(model)
         return type("R", (), {"content": self._content})()
 
 
@@ -69,6 +75,20 @@ async def test_b_infer_capability_failopen_on_junk() -> None:
     assert await infer_capability("x", _Provider("sorry, no idea")) is None  # type: ignore[arg-type]
 
 
+async def test_infer_capability_threads_resolved_model_to_provider_complete() -> None:
+    """_complete() must resolve (provider, model) via get_by_tier_and_model and
+    pass the SPECIFIC resolved model string into provider.complete(), not the
+    old hardcoded model="".
+    """
+    prov = _Provider(
+        '{"preset": "analyst", "specialty": "tracks tax filing deadlines"}',
+        model="vendor/fast-tier-model-v3",
+    )
+    out = await infer_capability("watch my tax deadlines", prov)  # type: ignore[arg-type]
+    assert out == ("analyst", "tracks tax filing deadlines")
+    assert prov.seen_models == ["vendor/fast-tier-model-v3"], prov.seen_models
+
+
 # --- (d) unit: name suggestion + reroll -------------------------------------
 
 
@@ -83,6 +103,16 @@ async def test_d_suggest_display_name_reroll_excludes_avoided() -> None:
         "watch taxes", _Provider("Tony"), avoid=("tony",),  # type: ignore[arg-type]
     )
     assert out is None
+
+
+async def test_suggest_display_name_threads_resolved_model_to_provider_complete() -> None:
+    """Same _complete() helper, second entrypoint: the resolved model string
+    from get_by_tier_and_model must reach provider.complete() here too.
+    """
+    prov = _Provider("Tony", model="vendor/fast-tier-model-v3")
+    name = await suggest_display_name("watch my tax deadlines", prov)  # type: ignore[arg-type]
+    assert name == "Tony"
+    assert prov.seen_models == ["vendor/fast-tier-model-v3"], prov.seen_models
 
 
 # --- gateway scaffolding (mirrors test_owl_build_clarify_gateway) ------------

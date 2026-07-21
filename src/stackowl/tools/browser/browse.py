@@ -228,7 +228,7 @@ class BrowserBrowseTool(Tool):
             }},
         )
         try:
-            inner_provider = providers.get_by_tier(s.inner_browse_model_tier)
+            inner_provider, inner_model = providers.get_by_tier_and_model(s.inner_browse_model_tier)
         except Exception as exc:
             return _err(f"No provider available for tier {s.inner_browse_model_tier}: {exc}", t0)
 
@@ -400,7 +400,7 @@ class BrowserBrowseTool(Tool):
                         Message(role="user", content=state_text),
                     ]
                     try:
-                        result = await inner_provider.complete(messages, model="")
+                        result = await inner_provider.complete(messages, model=inner_model)
                     except Exception as exc:
                         log.tool.warning(
                             "browser_browse: inner LLM call failed",

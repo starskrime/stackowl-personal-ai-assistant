@@ -114,8 +114,8 @@ class _FakeProviderRegistry:
     def __init__(self, provider: _NoActionProvider) -> None:
         self._provider = provider
 
-    def get_by_tier(self, _tier: str) -> _NoActionProvider:
-        return self._provider
+    def get_by_tier_and_model(self, _tier: str) -> tuple[_NoActionProvider, str]:
+        return self._provider, ""
 
 
 @pytest.fixture
