@@ -61,8 +61,8 @@ class _StubProvider:
 class _StubProviderRegistry:
     provider: _StubProvider = field(default_factory=_StubProvider)
 
-    def get_with_cascade(self, tier):
-        return self.provider
+    def get_with_cascade_and_model(self, tier):
+        return self.provider, ""
 
 
 @dataclass

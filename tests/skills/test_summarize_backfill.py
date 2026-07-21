@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -23,22 +23,22 @@ class _StubProvider:
 
 class _StubProviderRegistry:
     def __init__(self, provider): self._p = provider
-    def get_with_cascade(self, tier): return self._p
+    def get_with_cascade_and_model(self, tier): return self._p, ""
 
 
 class _PerNameProviderRegistry:
-    """Routes ``get_with_cascade`` calls to the next queued behavior — used to
-    build a mix of failed/empty/summarized skills in one ``_summarize_missing``
-    pass for the count-logging test below."""
+    """Routes ``get_with_cascade_and_model`` calls to the next queued behavior —
+    used to build a mix of failed/empty/summarized skills in one
+    ``_summarize_missing`` pass for the count-logging test below."""
 
     def __init__(self, providers_by_call):
         self._providers = list(providers_by_call)
         self._i = 0
 
-    def get_with_cascade(self, tier):
+    def get_with_cascade_and_model(self, tier):
         p = self._providers[self._i]
         self._i += 1
-        return p
+        return p, ""
 
 
 @dataclass
@@ -62,6 +62,36 @@ class _OkProvider:
         class _R:
             content = self.text
         return _R()
+
+
+@dataclass
+class _ModelCapturingProvider:
+    """Records the ``model`` kwarg passed to every ``complete()`` call — proves
+    ``_summarize_missing`` forwards the model resolved by
+    ``get_with_cascade_and_model`` into its per-iteration ``provider.complete()``
+    call, not the hardcoded ``model=""`` it used before Task 18."""
+
+    out: str = "Do X. Then Y."
+    seen_models: list = field(default_factory=list)
+
+    async def complete(self, messages, model="", **kw):
+        self.seen_models.append(model)
+        class _R:
+            content = self.out
+        return _R()
+
+
+class _ModelCapturingProviderRegistry:
+    """Always resolves the SAME fixed (provider, model) pair — used to prove
+    the resolved model string reaches EVERY skill's summarize call in the
+    per-skill loop, not just the first."""
+
+    def __init__(self, provider, model: str) -> None:
+        self._p = provider
+        self._model = model
+
+    def get_with_cascade_and_model(self, tier):
+        return self._p, self._model
 
 
 def _write(root: Path, name="alpha", body="long body to summarize", summary=None):
@@ -176,3 +206,49 @@ async def test_exit_log_reports_all_four_counts(
     assert fresh.summary == "Do X. Then Y."
     assert silent.summary is None  # empty response never writes a summary
     assert broken.summary is None  # exception never writes a summary
+
+
+# ---------- Task 18: per-model provider config — model threading -----------
+
+@pytest.mark.asyncio
+async def test_summarize_threads_resolved_model_to_provider_complete(
+    tmp_db, tmp_path: Path,
+) -> None:
+    """``_summarize_missing`` must forward the model resolved by
+    ``get_with_cascade_and_model("fast")`` into ``provider.complete()``, not
+    the hardcoded ``model=""`` it used before Task 18.
+
+    Genuinely discriminating: if the call site kept hardcoding ``model=""``,
+    ``seen_models`` would be ``[""]`` instead of the sentinel value below.
+    """
+    _write(tmp_path)
+    prov = _ModelCapturingProvider()
+    comp = await SkillsAssembly.build(
+        db=tmp_db, tool_registry=ToolRegistry(), owl_registry=OwlRegistry(),
+        skills_root=tmp_path, builtin_seed_dir=tmp_path / "none",
+        provider_registry=_ModelCapturingProviderRegistry(prov, "summarizer-resolved-model"),
+    )
+    sk = await comp.store.get("user", "alpha")
+    assert sk.summary == "Do X. Then Y."
+    assert prov.seen_models == ["summarizer-resolved-model"], (
+        f"expected provider.complete to receive the resolved model, got: {prov.seen_models!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_summarize_threads_resolved_model_for_every_skill_in_loop(
+    tmp_db, tmp_path: Path,
+) -> None:
+    """2 skills needing summarization, ONE resolved (provider, model) pair —
+    the SAME resolved model string must reach BOTH skills' per-iteration
+    ``provider.complete()`` calls, proving the per-skill loop doesn't just
+    thread it into the first iteration."""
+    _write(tmp_path, name="alpha", body="alpha body")
+    _write(tmp_path, name="beta", body="beta body")
+    prov = _ModelCapturingProvider()
+    await SkillsAssembly.build(
+        db=tmp_db, tool_registry=ToolRegistry(), owl_registry=OwlRegistry(),
+        skills_root=tmp_path, builtin_seed_dir=tmp_path / "none",
+        provider_registry=_ModelCapturingProviderRegistry(prov, "loop-resolved-model"),
+    )
+    assert prov.seen_models == ["loop-resolved-model", "loop-resolved-model"]

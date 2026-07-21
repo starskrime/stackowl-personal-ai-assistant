@@ -69,17 +69,26 @@ class _RecordingConsentGate:
 
 @dataclass
 class _ScriptedProvider:
-    """Stub ModelProvider that returns canned strings in order."""
+    """Stub ModelProvider that returns canned strings in order.
+
+    Also records every ``model`` kwarg passed to ``complete()`` in
+    ``seen_models`` — used by the Task 18 model-threading tests below to prove
+    ``SkillSynthesizer`` forwards its constructor ``model=`` into BOTH internal
+    call sites (``_synthesize_one`` / discover, ``_refine_one`` / refine)
+    instead of hardcoding ``model=""``.
+    """
 
     responses: list[str]
     model_name: str = "stub-fast"
 
     def __post_init__(self) -> None:
         self.calls: list[list[Message]] = []
+        self.seen_models: list[str] = []
         self._idx = 0
 
-    async def complete(self, messages: list[Message], model: str = "") -> CompletionResult:  # noqa: ARG002
+    async def complete(self, messages: list[Message], model: str = "") -> CompletionResult:
         self.calls.append(list(messages))
+        self.seen_models.append(model)
         if self._idx >= len(self.responses):
             raise RuntimeError(f"scripted provider exhausted after {self._idx} calls")
         out = self.responses[self._idx]
@@ -656,6 +665,108 @@ async def test_run_all_aggregates_counts(synth_env) -> None:
     assert report.created == 1
     assert report.refined == 0
     assert report.deprecated == 0
+
+
+# ---------- Task 18: per-model provider config — model threading -----------
+
+async def test_discover_threads_constructor_model_to_provider_complete(synth_env) -> None:
+    """SkillSynthesizer(model=...) must forward that exact model string into
+    the DISCOVER phase's internal provider call (``_synthesize_one``), not the
+    hardcoded ``model=""`` default.
+
+    Genuinely discriminating: if the constructor kept ignoring ``model=`` and
+    ``_synthesize_one`` kept hardcoding ``model=""``, ``seen_models`` would be
+    ``[""]`` instead of the sentinel value below.
+    """
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "discover-model-threaded", "description": "d", "when_to_use": "w",
+        "body": "# Steps\n1. go",
+    })])
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=provider, model="discover-resolved-model", skills_root=root,
+        consent_gate=_allow_gate(),
+        lookback_days=30, min_cluster_size=3, min_mean_quality=0.75,
+    )
+    n = await synth.discover_new_skills()
+    assert n == 1
+    assert provider.seen_models == ["discover-resolved-model"], (
+        f"expected provider.complete to receive the constructor model, got: {provider.seen_models!r}"
+    )
+
+
+async def test_discover_default_model_is_empty_string_when_unset(synth_env) -> None:
+    """Additive/byte-identical guarantee: no ``model=`` passed to the
+    constructor -> the discover phase's provider call still receives
+    ``model=""``, matching pre-Task-18 behavior exactly."""
+    db, root, store = synth_env
+    await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "name": "discover-default-model", "description": "d", "when_to_use": "w",
+        "body": "# Steps\n1. go",
+    })])
+    synth = SkillSynthesizer(
+        outcome_store=TaskOutcomeStore(db), skill_store=store,
+        provider=provider, skills_root=root, consent_gate=_allow_gate(),
+        lookback_days=30, min_cluster_size=3, min_mean_quality=0.75,
+    )
+    n = await synth.discover_new_skills()
+    assert n == 1
+    assert provider.seen_models == [""]
+
+
+async def test_refine_threads_constructor_model_to_provider_complete(synth_env) -> None:
+    """SkillSynthesizer(model=...) must ALSO forward that exact model string
+    into the REFINE phase's internal provider call (``_refine_one``) — a
+    separate call site from discover's ``_synthesize_one``, so this must be
+    proven independently rather than assumed from the discover-phase test."""
+    db, root, store = synth_env
+    learned_dir = root / "learned" / "midtier-skill"
+    learned_dir.mkdir(parents=True)
+    body_original = "# Original\nDo the thing badly."
+    manifest = SkillManifest(
+        name="midtier-skill", description="d", when_to_use="w",
+        source="learned", parent_traces=["t-mid-1"],
+    )
+    (learned_dir / "SKILL.md").write_text(
+        f"---\nname: midtier-skill\ndescription: d\nwhen_to_use: w\nsource: learned\n"
+        f"parent_traces: [t-mid-1]\n---\n\n{body_original}\n", encoding="utf-8",
+    )
+    await store.upsert(LoadedSkill(
+        manifest=manifest, path=learned_dir, body=body_original,
+        tools_registered=0, owls_registered=0,
+    ))
+    sk = await store.get("learned", "midtier-skill")
+    assert sk is not None
+    await store.set_success_rate(sk.skill_id, 0.6)
+    for _ in range(5):
+        await store.increment_n_executions(sk.skill_id)
+    out_store = TaskOutcomeStore(db)
+    await out_store.record(
+        trace_id="t-mid-1", session_id="s", owl_name="scout", channel="cli",
+        success=True, latency_ms=100.0, tool_call_count=1,
+        failure_class=None, step_durations={}, input_text="midtier task",
+        response_text="midtier response",
+    )
+    out = await out_store.get_by_trace_id("t-mid-1")
+    assert out is not None
+    await out_store.set_quality_score(out.outcome_id, 0.6)
+
+    provider = _ScriptedProvider(responses=[json.dumps({
+        "body": "# Improved Body\nDo the thing well now.",
+    })])
+    synth = SkillSynthesizer(
+        outcome_store=out_store, skill_store=store,
+        provider=provider, model="refine-resolved-model", skills_root=root,
+        consent_gate=_allow_gate(),
+    )
+    n = await synth.refine_midtier_skills()
+    assert n == 1
+    assert provider.seen_models == ["refine-resolved-model"], (
+        f"expected provider.complete to receive the constructor model, got: {provider.seen_models!r}"
+    )
 
 
 # ---------- Task 4: shared skill-authoring gate (bypass fix) ---------------

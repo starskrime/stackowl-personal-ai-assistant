@@ -86,7 +86,7 @@ class SkillSynthesizerHandler(JobHandler):
 
         # 2. DECISION — pick a provider
         try:
-            provider = self._providers.get_with_cascade(self._synth_tier)
+            provider, model = self._providers.get_with_cascade_and_model(self._synth_tier)
         except Exception as exc:  # B5
             log.skills.error(
                 "[synth] handler.execute: no provider for synthesis",
@@ -107,6 +107,7 @@ class SkillSynthesizerHandler(JobHandler):
             outcome_store=TaskOutcomeStore(self._db),
             skill_store=self._skill_store,
             provider=provider,
+            model=model,
             skills_root=self._skills_root,
             embedding_registry=self._embedding_registry,
             owl_registry=self._owl_registry,

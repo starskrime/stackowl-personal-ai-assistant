@@ -342,6 +342,7 @@ class SkillSynthesizer:
         outcome_store: TaskOutcomeStore,
         skill_store: SkillIndexStore,
         provider: ModelProvider,
+        model: str = "",
         skills_root: Path,
         embedding_registry: EmbeddingRegistry | None = None,
         owl_registry: OwlRegistry | None = None,
@@ -365,6 +366,7 @@ class SkillSynthesizer:
         self._outcomes = outcome_store
         self._skills = skill_store
         self._provider = provider
+        self._model = model
         self._root = skills_root
         self._embedding_registry = embedding_registry
         self._owl_registry = owl_registry
@@ -466,7 +468,7 @@ class SkillSynthesizer:
         )
         messages = self._prompts.build_for_new(cluster)
         try:
-            completion = await self._provider.complete(messages, model="")
+            completion = await self._provider.complete(messages, model=self._model)
         except Exception as exc:  # B5
             log.skills.warning(
                 "[synth] synthesize_one: provider call failed",
@@ -695,7 +697,7 @@ class SkillSynthesizer:
                 recent.append(out)
         messages = self._prompts.build_for_refine(skill, recent)
         try:
-            completion = await self._provider.complete(messages, model="")
+            completion = await self._provider.complete(messages, model=self._model)
         except Exception as exc:  # B5
             log.skills.warning(
                 "[synth] refine_one: provider call failed",

@@ -399,7 +399,7 @@ async def _summarize_missing(
             continue  # no body to summarize
         # 3. STEP — call fast-tier provider for a condensed summary
         try:
-            provider = provider_registry.get_with_cascade("fast")
+            provider, model = provider_registry.get_with_cascade_and_model("fast")
             messages = [
                 Message(
                     role="system",
@@ -411,7 +411,7 @@ async def _summarize_missing(
                 ),
                 Message(role="user", content=ls.body[:_SUMMARY_BODY_CAP]),
             ]
-            result = await provider.complete(messages, model="")
+            result = await provider.complete(messages, model=model)
         except Exception as exc:  # B5 — never block boot
             failed += 1
             log.skills.warning(

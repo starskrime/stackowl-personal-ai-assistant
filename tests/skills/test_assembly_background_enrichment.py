@@ -44,8 +44,8 @@ class _StubProviderRegistry:
     def __init__(self, provider: _GatedProvider) -> None:
         self._p = provider
 
-    def get_with_cascade(self, tier: str) -> _GatedProvider:  # noqa: ARG002
-        return self._p
+    def get_with_cascade_and_model(self, tier: str) -> tuple[_GatedProvider, str]:  # noqa: ARG002
+        return self._p, ""
 
 
 def _write_skill(root: Path, name: str, *, body: str = "long body to summarize") -> None:
