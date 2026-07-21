@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 from stackowl.memory.entity_extractor import EntityExtractor
 from stackowl.memory.kuzu_adapter import KuzuAdapter
+from stackowl.providers.base import CompletionResult, Message, ModelProvider
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 
 from tests._story_6_5_helpers import (  # noqa: F401 — re-exports
     RaisingConn,
@@ -205,3 +208,79 @@ async def test_entity_extractor_handles_malformed_json() -> None:
     )
     entities = await extractor.extract("anything", "f1")
     assert entities == []
+
+
+# ---------------------------------------------------------------------------
+# Task 16 — EntityExtractor._resolve_provider() threads the resolved (provider,
+# model) tuple through to provider.complete(), instead of hardcoding model="".
+# ---------------------------------------------------------------------------
+
+
+class _ModelCapturingEntityProvider(ModelProvider):
+    """Records the ``model`` kwarg its ``complete()`` was called with — proves
+    ``EntityExtractor.extract()`` forwards the RESOLVED model rather than
+    hardcoding ``model=""``. Returns a fixed, valid entity list."""
+
+    def __init__(self) -> None:
+        self.seen_models: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-entity"
+
+    @property
+    def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_models.append(model)
+        return CompletionResult(
+            content='[{"name": "Alice", "entity_type": "PERSON", "mentions": ["Alice"]}]',
+            input_tokens=5,
+            output_tokens=5,
+            model="model-capturing-entity",
+            provider_name="model-capturing-entity",
+            duration_ms=0.5,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        raise NotImplementedError
+        yield ""  # pragma: no cover — unreachable, satisfies async generator typing
+
+
+async def test_entity_extractor_threads_resolved_second_tier_model() -> None:
+    """A provider registered with TWO models on different tiers must resolve
+    the model belonging to the tier EntityExtractor actually requests — proving
+    ``_resolve_provider()`` threads ``get_with_cascade_and_model()``'s (provider,
+    model) tuple through to ``provider.complete()`` rather than dropping the
+    model half of the tuple (the old ``get_with_cascade()`` behaviour) or always
+    reaching for the first-registered route.
+
+    Genuinely discriminating: if ``_resolve_provider()`` still called
+    ``get_with_cascade`` (provider only) and ``extract()`` kept hardcoding
+    ``model=""``, ``seen_models`` would be ``[""]`` instead of the SECOND
+    model's sentinel string.
+    """
+    capturing_provider = _ModelCapturingEntityProvider()
+    registry = ProviderRegistry()
+    registry.register_mock(
+        "dual-model",
+        capturing_provider,
+        models=(
+            ModelRoute(model="entity-fast-model", tiers=("fast",)),
+            ModelRoute(model="entity-standard-model", tiers=("standard",)),
+        ),
+    )
+    # preferred_tier="standard" is served ONLY by the second registered route —
+    # a match here can only come from resolving the SECOND model.
+    extractor = EntityExtractor(provider_registry=registry, preferred_tier="standard")
+    entities = await extractor.extract("Alice works here", "f-model-thread")
+    assert entities, "extractor must return at least one entity"
+    assert capturing_provider.seen_models == ["entity-standard-model"], (
+        f"expected the SECOND (standard-tier) model to reach provider.complete, "
+        f"got: {capturing_provider.seen_models!r}"
+    )

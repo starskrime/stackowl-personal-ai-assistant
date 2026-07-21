@@ -126,3 +126,82 @@ async def test_extracted_facts_self_when_no_tool_role() -> None:
     assert all(f.trust == expected_trust for f in facts), (
         f"expected all facts {expected_trust!r}, got: {[f.trust for f in facts]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 16 — FactExtractor threads the resolved model through provider.complete()
+# instead of hardcoding model="".
+# ---------------------------------------------------------------------------
+
+
+class _ModelCapturingProvider(ModelProvider):
+    """Records the ``model`` kwarg each ``complete()`` call receives — proves
+    :class:`FactExtractor` forwards ``self._model`` rather than hardcoding
+    ``model=""``. Returns a fixed, valid single-fact draft list."""
+
+    def __init__(self) -> None:
+        self.seen_models: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "model-capturing-fact"
+
+    @property
+    def protocol(self) -> Literal["openai", "anthropic", "gemini"]:
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        self.seen_models.append(model)
+        return CompletionResult(
+            content='[{"content": "The sky is blue", "confidence": 0.9}]',
+            input_tokens=5,
+            output_tokens=3,
+            model="model-capturing-fact",
+            provider_name="model-capturing-fact",
+            duration_ms=0.5,
+        )
+
+    def stream(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> AsyncIterator[str]:
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_extract_threads_constructor_model_to_provider_complete() -> None:
+    """FactExtractor(model=...) must forward that exact model string into
+    provider.complete(), not the hardcoded model="" default.
+
+    Genuinely discriminating: if the constructor kept ignoring ``model=`` and
+    the internal ``complete()`` call kept hardcoding ``model=""``,
+    ``seen_models`` would be ``[""]`` instead of the sentinel value below.
+    """
+    provider = _ModelCapturingProvider()
+    extractor = FactExtractor(provider=provider, model="fact-extractor-resolved-model")
+    convo = [
+        Message(role="user", content="I love hiking."),
+        Message(role="assistant", content="That's great!"),
+    ]
+    facts = await extractor.extract(convo, session_id="sess-model")
+    assert facts, "extractor must return at least one fact"
+    assert provider.seen_models == ["fact-extractor-resolved-model"], (
+        f"expected provider.complete to receive the constructor model, got: {provider.seen_models!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_extract_default_model_is_empty_string_when_unset() -> None:
+    """Byte-identical default: FactExtractor(model=<unset>) still passes model="" —
+    proves the new parameter is additive, not a behaviour change for existing callers."""
+    provider = _ModelCapturingProvider()
+    extractor = FactExtractor(provider=provider)
+    convo = [
+        Message(role="user", content="I love hiking."),
+        Message(role="assistant", content="That's great!"),
+    ]
+    await extractor.extract(convo, session_id="sess-default-model")
+    assert provider.seen_models == [""], (
+        f"expected default model='', got: {provider.seen_models!r}"
+    )

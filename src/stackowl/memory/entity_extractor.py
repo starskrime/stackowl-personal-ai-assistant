@@ -108,20 +108,21 @@ class EntityExtractor:
             )
             return []
 
-        provider = self._resolve_provider()
-        if provider is None:
+        resolved = self._resolve_provider()
+        if resolved is None:
             log.memory.warning(
                 "[memory] entity_extractor.extract: no provider available",
                 extra={"_fields": {"fact_id": fact_id}},
             )
             return []
+        provider, model = resolved
 
         prompt = _PROMPT_TEMPLATE.format(text=text)
         messages = [Message(role="user", content=prompt)]
 
         # 3. STEP — provider call
         try:
-            result = await provider.complete(messages, model="")
+            result = await provider.complete(messages, model=model)
         except Exception as exc:
             # B5
             log.memory.warning(
@@ -153,9 +154,9 @@ class EntityExtractor:
 
     # ------------------------------------------------------------------ helpers
 
-    def _resolve_provider(self) -> ModelProvider | None:
+    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
         try:
-            return self._registry.get_with_cascade(self._preferred_tier)
+            return self._registry.get_with_cascade_and_model(self._preferred_tier)
         except Exception as exc:
             # B5 — any provider lookup failure degrades to []
             log.memory.warning(

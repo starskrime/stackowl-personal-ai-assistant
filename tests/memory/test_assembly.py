@@ -11,7 +11,7 @@ from stackowl.config.settings import MemorySettings, Settings
 from stackowl.db.pool import DbPool
 from stackowl.memory.assembly import MemoryAssembly, MemoryComponents
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.providers.registry import ProviderRegistry
+from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.scheduler.base import HandlerRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -49,7 +49,12 @@ def _stub_provider_registry() -> ProviderRegistry:
 
 
 class _SpyProviderRegistry(ProviderRegistry):
-    """ProviderRegistry that records every tier passed to get_with_cascade."""
+    """ProviderRegistry that records every tier passed to get_with_cascade_and_model.
+
+    Task 16 — assembly.py's fact_extractor/entity_extractor wiring now calls
+    get_with_cascade_and_model() (not get_with_cascade()) to also thread the
+    resolved model, so the spy overrides that method instead.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -58,9 +63,9 @@ class _SpyProviderRegistry(ProviderRegistry):
         self.register_mock("stub-std", _StubProvider(), tier="standard")
         self.register_mock("stub-fast", _StubProvider(), tier="fast")
 
-    def get_with_cascade(self, preferred_tier: str) -> Any:  # type: ignore[override]
+    def get_with_cascade_and_model(self, preferred_tier: str) -> Any:  # type: ignore[override]
         self.cascade_tiers.append(preferred_tier)
-        return super().get_with_cascade(preferred_tier)
+        return super().get_with_cascade_and_model(preferred_tier)
 
 
 @pytest.fixture(autouse=True)
@@ -215,4 +220,29 @@ async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
     # Entity extractor: _preferred_tier must be "standard" at the live construction site.
     assert components.entity_extractor._preferred_tier == "standard", (  # type: ignore[union-attr]
         f"EntityExtractor._preferred_tier is {components.entity_extractor._preferred_tier!r}, expected 'standard'"  # type: ignore[union-attr]
+    )
+
+
+async def test_fact_extractor_receives_the_cascade_resolved_model(tmp_db: DbPool) -> None:
+    """Task 16 — assembly.py must resolve (provider, model) via
+    get_with_cascade_and_model("standard") and thread the model into
+    FactExtractor(model=...), not just the provider.
+
+    Genuinely discriminating: if assembly.py kept calling get_with_cascade()
+    (provider only, dropping the model), fact_extractor._model would stay ""
+    even though the registry's standard-tier route carries a distinct model.
+    """
+    registry = ProviderRegistry()
+    registry.register_mock("stub", _StubProvider(), tier="powerful")
+    registry.register_mock(
+        "stub-std", _StubProvider(),
+        models=(ModelRoute(model="assembly-fact-extractor-model", tiers=("standard",)),),
+    )
+    settings = Settings(memory=MemorySettings())
+    components = await MemoryAssembly.build(
+        db=tmp_db, settings=settings, provider_registry=registry,
+    )
+    assert components.fact_extractor._model == "assembly-fact-extractor-model", (  # type: ignore[union-attr]
+        f"fact_extractor._model is {components.fact_extractor._model!r}, "  # type: ignore[union-attr]
+        f"expected 'assembly-fact-extractor-model'"
     )

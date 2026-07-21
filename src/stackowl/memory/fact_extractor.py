@@ -60,6 +60,7 @@ class FactExtractor:
     def __init__(
         self,
         provider: ModelProvider,
+        model: str = "",
         embedding_registry: EmbeddingRegistry | None = None,
         event_bus: EventBus | None = None,
         sensitive_categories: list[str] | None = None,
@@ -70,6 +71,7 @@ class FactExtractor:
             "[memory] fact_extractor.init: entry",
             extra={
                 "_fields": {
+                    "model": model,
                     "has_embeddings": embedding_registry is not None,
                     "has_event_bus": event_bus is not None,
                     "sensitive_count": len(sensitive_categories or []),
@@ -78,6 +80,7 @@ class FactExtractor:
             },
         )
         self._provider = provider
+        self._model = model
         self._embeddings = embedding_registry
         self._event_bus = event_bus
         self._sensitive_categories = list(sensitive_categories or [])
@@ -118,7 +121,7 @@ class FactExtractor:
 
         # 3. STEP — provider call. The provider strips the <think> trace and the
         # output budget is window-sized, so the model reasons then emits the JSON.
-        result = await self._provider.complete(messages, model="")
+        result = await self._provider.complete(messages, model=self._model)
         log.memory.debug(
             "[memory] fact_extractor.extract: provider response received",
             extra={

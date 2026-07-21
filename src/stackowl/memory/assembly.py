@@ -243,9 +243,12 @@ class MemoryAssembly:
         # so a live `settings_reloaded` alias edit (mutated in place) is seen here
         # too; fall back to a fresh load for standalone/test callers.
         resolver = identity_resolver if identity_resolver is not None else load_identity_resolver()
-        extraction_provider: ModelProvider = provider_registry.get_with_cascade("standard")
+        extraction_provider: ModelProvider
+        extraction_model: str
+        extraction_provider, extraction_model = provider_registry.get_with_cascade_and_model("standard")
         fact_extractor = FactExtractor(
             provider=extraction_provider,
+            model=extraction_model,
             embedding_registry=embedding_registry,
             sensitive_categories=mem.sensitive_categories,
             identity_resolver=resolver,
