@@ -268,7 +268,8 @@ async def test_provider_guided_add_flow_full_journey(
     live_registry = ProviderRegistry.from_settings(live_settings)
     live_provider = live_registry.get(catalog_name)
     assert live_provider.name == catalog_name
-    assert live_registry.get_by_tier(tier).name == catalog_name
+    tier_provider, _tier_model = live_registry.get_by_tier(tier)
+    assert tier_provider.name == catalog_name
 
 
 async def test_provider_added_to_two_tiers_via_tier_add_is_routable_from_both(
@@ -298,5 +299,52 @@ async def test_provider_added_to_two_tiers_via_tier_add_is_routable_from_both(
     assert persisted["tiers"] == ["fast", "standard"]
 
     live_registry = ProviderRegistry.from_settings(Settings())
-    assert live_registry.get_with_cascade("fast").name == "multiprov"
-    assert live_registry.get_with_cascade("standard").name == "multiprov"
+    fast_provider, _fast_model = live_registry.get_with_cascade("fast")
+    standard_provider, _standard_model = live_registry.get_with_cascade("standard")
+    assert fast_provider.name == "multiprov"
+    assert standard_provider.name == "multiprov"
+
+
+async def test_provider_add_model_then_route_from_both_models_independently(
+    tmp_yaml: Path,
+) -> None:
+    """End-to-end proof of the whole plan's core new capability: ONE provider
+    connection serving TWO models, each independently tier-routable, each with
+    its own max_output_tokens override — no duplicated provider block."""
+    from stackowl.config.settings import Settings
+    from stackowl.providers.registry import ProviderRegistry
+
+    deps = CommandDeps(event_bus=MagicMock())
+    register_all_commands(deps, registry=CommandRegistry.instance())
+    registry = CommandRegistry.instance()
+
+    add_reply = await registry.dispatch(
+        "provider", "add multiprov openai gpt-x fast", make_state()
+    )
+    assert "✓" in add_reply.text
+
+    add_model_reply = await registry.dispatch(
+        "provider", "model-add-execute multiprov gpt-x-mini standard", make_state()
+    )
+    assert "✓" in add_model_reply.text
+
+    set_tokens_reply = await registry.dispatch(
+        "provider", "set-model-tokens multiprov gpt-x-mini 40000", make_state()
+    )
+    assert "✓" in set_tokens_reply.text
+
+    data = yaml.safe_load(tmp_yaml.read_text(encoding="utf-8"))
+    persisted = next(p for p in data["providers"] if p["name"] == "multiprov")
+    assert persisted["default_model"] == "gpt-x"
+    assert persisted["models"] == [
+        {"name": "gpt-x-mini", "tiers": ["standard"], "max_output_tokens": 40000}
+    ]
+
+    live_registry = ProviderRegistry.from_settings(Settings())
+    fast_provider, fast_model = live_registry.get_with_cascade("fast")
+    standard_provider, standard_model = live_registry.get_with_cascade("standard")
+    assert fast_provider.name == "multiprov"
+    assert fast_model == "gpt-x"
+    assert standard_provider.name == "multiprov"
+    assert standard_model == "gpt-x-mini"
+    assert fast_provider is standard_provider  # SAME connection, both models
