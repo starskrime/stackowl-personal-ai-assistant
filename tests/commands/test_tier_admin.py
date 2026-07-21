@@ -258,6 +258,7 @@ class TestTierAdminRemove:
         assert isinstance(reply, str)
         assert reply.startswith("✓")
         assert "disabled" in reply
+        assert "(disabled)" in reply
         data = _load(tmp_yaml)
         groq = next(p for p in data["providers"] if p["name"] == "groq")
         assert groq["enabled"] is False
@@ -273,6 +274,9 @@ class TestTierAdminRemove:
         reply = await _make_cmd().handle("remove fast groq", _state())
         assert isinstance(reply, str)
         assert reply.startswith("✓")
+        # The provider is still live from its other tier — the message must
+        # not claim it was disabled.
+        assert "(disabled)" not in reply
         data = _load(tmp_yaml)
         groq = next(p for p in data["providers"] if p["name"] == "groq")
         # Still enabled — "powerful" remains, "fast" was removed (not disabled).

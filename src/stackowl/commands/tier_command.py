@@ -455,7 +455,8 @@ class TierCommand(SlashCommand):
                 extra={"_fields": {"name": name, "tier": tier, "current_tiers": current_tiers}},
             )
             return f"✗ Provider '{name}' is not in tier '{tier}' (it's in {current_tiers})"
-        if len(current_tiers) == 1:
+        was_only_tier = len(current_tiers) == 1
+        if was_only_tier:
             # This is the provider's ONLY tier — disable rather than write an
             # empty tiers list (the schema requires at least one entry, and
             # this preserves the "always routable-or-explicitly-off" invariant).
@@ -466,9 +467,10 @@ class TierCommand(SlashCommand):
         self._emit_reloaded(name)
         log.engine.info(
             "[commands] tier.remove_execute: exit — updated",
-            extra={"_fields": {"name": name, "tier": tier, "disabled": len(current_tiers) == 1}},
+            extra={"_fields": {"name": name, "tier": tier, "disabled": was_only_tier}},
         )
-        return f"✓ Provider '{name}' removed from tier '{tier}' (disabled) — applied immediately"
+        suffix = " (disabled)" if was_only_tier else ""
+        return f"✓ Provider '{name}' removed from tier '{tier}'{suffix} — applied immediately"
 
 
 async def _read_tier(store: object, owner_key: str) -> str | None:

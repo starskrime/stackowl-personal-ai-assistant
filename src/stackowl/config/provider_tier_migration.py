@@ -77,8 +77,15 @@ def migrate_legacy_tier_field(path: Path) -> bool:
         log.config.debug("[config] provider_tier_migration.migrate: exit — nothing to migrate")
         return False
 
-    with path.open("w", encoding="utf-8") as fh:
-        yml.dump(data, fh)
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            yml.dump(data, fh)
+    except Exception as exc:
+        log.config.warning(
+            "[config] provider_tier_migration.migrate: exit — write failed, leaving untouched",
+            extra={"_fields": {"path": str(path), "error": str(exc)}},
+        )
+        return False
     log.config.info(
         "[config] provider_tier_migration.migrate: exit — rewrote legacy tier field",
         extra={"_fields": {"path": str(path), "providers_migrated": migrated}},

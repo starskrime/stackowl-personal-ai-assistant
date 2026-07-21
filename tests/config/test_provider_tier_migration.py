@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from ruamel.yaml import YAML
 
 from stackowl.config.provider_tier_migration import migrate_legacy_tier_field
@@ -100,6 +101,31 @@ def test_malformed_yaml_is_left_untouched_not_raised(tmp_path: Path) -> None:
     cfg = tmp_path / "stackowl.yaml"
     _write(cfg, "providers: [this is not: valid: yaml: at all\n")
     original = cfg.read_text(encoding="utf-8")
+
+    changed = migrate_legacy_tier_field(cfg)
+
+    assert changed is False
+    assert cfg.read_text(encoding="utf-8") == original
+
+
+def test_write_failure_is_swallowed_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read path already has this guarantee; the write path must too —
+    a read-only mount/permissions/disk-full error on rewrite must never
+    block a boot that would otherwise succeed (see module docstring)."""
+    cfg = tmp_path / "stackowl.yaml"
+    _write(cfg, "providers:\n  - name: groq\n    protocol: openai\n    tier: fast\n")
+    original = cfg.read_text(encoding="utf-8")
+
+    real_open = Path.open
+
+    def _open_that_fails_on_write(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+        if "w" in mode:
+            raise OSError("read-only filesystem")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _open_that_fails_on_write)
 
     changed = migrate_legacy_tier_field(cfg)
 
