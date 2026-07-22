@@ -148,13 +148,22 @@ class ScheduleCommitClassifier:
             return False
 
         verdict_bool = self._parse_verdict(verdict)
-        # 2. DECISION — the raw verdict and the parsed bool (truncated text).
+        # 2. DECISION — the raw verdict, the parsed bool, and a truncated snippet
+        # of the draft that was actually judged. Added 2026-07-22 after a live
+        # false-positive (COMMIT on a draft that did not actually promise future
+        # scheduled work) could not be root-caused from logs alone: a floored
+        # turn's draft is deliberately never persisted (persist_turn drops it),
+        # and this call previously logged only response_len — no way to see
+        # WHAT text tripped the verdict. response_snippet is already bounded by
+        # _MAX_RESPONSE_CHARS before it ever reaches here, so this adds no new
+        # unbounded-text exposure versus what the classifier itself received.
         log.engine.info(
             "schedule_commit_classifier.commits_to_future_schedule: verdict parsed",
             extra={
                 "_fields": {
                     "raw_verdict": verdict[:_LOG_TEXT_CHARS],
                     "commits": verdict_bool,
+                    "response_snippet": response[:_MAX_RESPONSE_CHARS],
                 }
             },
         )
