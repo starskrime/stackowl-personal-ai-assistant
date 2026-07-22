@@ -49,6 +49,7 @@ ships.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import traced_span
@@ -63,8 +64,24 @@ __all__ = [
     "resolve_fixed_tier",
     "resolve_cascade_tier",
     "safe_complete",
+    "SafeCompleteOutcome",
     "parse_two_token_verdict",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class SafeCompleteOutcome:
+    """Result of :func:`safe_complete`. ``result`` is ``None`` on ANY failure;
+    ``timed_out`` distinguishes a timeout from every other failure mode
+    (provider error, no-provider, etc.) for callers that need the distinction
+    in their OWN diagnostic reason tag (e.g. ``intent_classifier.py``'s
+    ``AnswerVerdict.reason`` — "provider_timeout" vs "provider_error" — an
+    audit-log distinction that pre-dates this shared module and must survive
+    the migration). Callers that only care about success/failure just check
+    ``outcome.result is None``."""
+
+    result: CompletionResult | None
+    timed_out: bool = False
 
 
 # =============================================================================
@@ -138,17 +155,20 @@ async def safe_complete(
     call_name: str,
     disable_thinking: bool = True,
     response_format: dict[str, object] | None = None,
-) -> CompletionResult | None:
-    """Bounded ``provider.complete(...)`` call — ``None`` on ANY failure, never raises.
+) -> SafeCompleteOutcome:
+    """Bounded ``provider.complete(...)`` call — never raises.
 
-    ``disable_thinking`` defaults ``True`` (matches all 10 existing call
-    sites) but is overridable for a hypothetical future caller that genuinely
-    wants a reasoning trace. ``response_format`` is optional structured-output
-    support (``docs/structured-output-spike.md`` confirmed the deployed
-    gateway honors OpenAI's ``response_format``) — passed through as-is;
-    providers that don't understand it ignore it silently (an unread kwarg),
-    which is why ``disable_thinking`` remains mandatory regardless of whether
-    a schema is supplied.
+    ``outcome.result`` is ``None`` on ANY failure; ``outcome.timed_out`` is
+    ``True`` only for the timeout path specifically, for the rare caller that
+    needs that distinction (most callers just check ``outcome.result is
+    None``). ``disable_thinking`` defaults ``True`` (matches all 10 existing
+    call sites) but is overridable for a hypothetical future caller that
+    genuinely wants a reasoning trace. ``response_format`` is optional
+    structured-output support (``docs/structured-output-spike.md`` confirmed
+    the deployed gateway honors OpenAI's ``response_format``) — passed
+    through as-is; providers that don't understand it ignore it silently (an
+    unread kwarg), which is why ``disable_thinking`` remains mandatory
+    regardless of whether a schema is supplied.
     """
     logger.debug(
         f"{call_name}.safe_complete: entry",
@@ -164,20 +184,20 @@ async def safe_complete(
         async with traced_span(logger, f"{call_name}.safe_complete.provider_call"):
             coro = provider.complete(messages, model=model, **call_kwargs)
             if timeout_s is None:
-                return await coro
-            return await asyncio.wait_for(coro, timeout=timeout_s)
+                return SafeCompleteOutcome(result=await coro)
+            return SafeCompleteOutcome(result=await asyncio.wait_for(coro, timeout=timeout_s))
     except TimeoutError:  # hung provider — fail-safe rather than stall the caller
         logger.warning(
             f"{call_name}.safe_complete: provider call timed out",
             extra={"_fields": {"timeout_s": timeout_s}},
         )
-        return None
+        return SafeCompleteOutcome(result=None, timed_out=True)
     except Exception as exc:  # self-healing — a bounded call must never raise
         logger.error(
             f"{call_name}.safe_complete: provider call failed",
             exc_info=exc,
         )
-        return None
+        return SafeCompleteOutcome(result=None)
 
 
 # =============================================================================

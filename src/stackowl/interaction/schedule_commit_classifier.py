@@ -134,7 +134,7 @@ class ScheduleCommitClassifier:
         provider, model = resolved
 
         user_text = self._build_user_text(response)
-        result = await safe_complete(
+        outcome = await safe_complete(
             provider, model,
             [
                 Message(role="system", content=_SYSTEM_PROMPT),
@@ -145,9 +145,9 @@ class ScheduleCommitClassifier:
             logger=log.engine,
             call_name="schedule_commit_classifier",
         )
-        if result is None:  # timeout or provider error — safe_complete already logged
+        if outcome.result is None:  # timeout or provider error — safe_complete already logged
             return False
-        verdict = (result.content or "").strip()
+        verdict = (outcome.result.content or "").strip()
 
         verdict_bool, confident = parse_two_token_verdict(
             verdict, true_token="commit", false_token="none",

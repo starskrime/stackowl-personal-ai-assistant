@@ -13,9 +13,11 @@ user's MESSAGE. The LLM does the semantic classification; we only parse the MODE
 own one-word verdict (``ANSWER`` / ``NEW``) — a token WE control via the prompt — so
 verdict-parsing carries no language assumptions about the user's text.
 
-**Fast tier.** The verdict is a cheap, one-token call, so the classifier resolves the
-FAST-tier provider lazily (``get_by_tier("fast")``) at call time — a missing provider
-degrades gracefully (fail-safe) instead of failing at construction.
+**Fast tier, on the shared base (2026-07-22).** Uses
+:mod:`stackowl.interaction.classifier_base`'s Pieces A/B/C — pinned
+``get_by_tier("fast")`` resolution, a bounded ``asyncio.wait_for`` call, and the
+shared two-token verdict parser. Pure refactor: same prompts, same token
+budgets, same timeouts, same fail-safe directions as before this migration.
 
 **Fail-safe → True (treat as an answer).** ANY error, missing provider, ambiguous or
 unparseable verdict, or empty message yields ``True``. Rationale: defaulting to
@@ -42,13 +44,17 @@ Provenance: BUILD (no external agent had a multilingual answer-vs-new-request ga
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.infra import decision_ledger
-from stackowl.infra.observability import log, traced_span
-from stackowl.providers.base import Message, ModelProvider
+from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import (
+    parse_two_token_verdict,
+    resolve_fixed_tier,
+    safe_complete,
+)
+from stackowl.providers.base import Message
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.providers.registry import ProviderRegistry
@@ -230,7 +236,9 @@ class ClarifyIntentClassifier:
             )
             return self._low_confidence_answer("empty_message")
 
-        resolved = self._resolve_provider()
+        resolved = resolve_fixed_tier(
+            self._registry, "fast", logger=log.gateway, call_name="intent_classifier.is_answer",
+        )
         if resolved is None:
             log.gateway.warning(
                 "intent_classifier.is_answer: no fast provider — fail-safe to answer",
@@ -239,42 +247,28 @@ class ClarifyIntentClassifier:
             return self._low_confidence_answer("no_provider")
         provider, model = resolved
 
-        try:
-            user_text = self._build_user_text(question, choices, message)
-            # Bound the inline call: a hung fast provider must not HOL-block the
-            # single receive loop. asyncio.CancelledError propagates (it is not an
-            # Exception subclass) so a cancelled receive task still tears down cleanly.
-            async with traced_span(log.gateway, "intent_classifier.is_answer.provider_call"):
-                result = await asyncio.wait_for(
-                    provider.complete(
-                        [
-                            Message(role="system", content=_SYSTEM_PROMPT),
-                            Message(role="user", content=user_text),
-                        ],
-                        model=model,
-                        max_tokens=4,
-                        disable_thinking=True,
-                    ),
-                    timeout=self._timeout_s,
-                )
-            verdict = (result.content or "").strip()
-        except TimeoutError:  # hung provider — fail-safe rather than stall
-            log.gateway.warning(
-                "intent_classifier.is_answer: provider call timed out — fail-safe to answer",
-                extra={
-                    "_fields": {"classified": True, "timeout_s": self._timeout_s}
-                },
+        user_text = self._build_user_text(question, choices, message)
+        outcome = await safe_complete(
+            provider, model,
+            [
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=user_text),
+            ],
+            max_tokens=4,
+            timeout_s=self._timeout_s,
+            logger=log.gateway,
+            call_name="intent_classifier.is_answer",
+        )
+        if outcome.result is None:  # timeout or provider error — safe_complete already logged
+            return self._low_confidence_answer(
+                "provider_timeout" if outcome.timed_out else "provider_error"
             )
-            return self._low_confidence_answer("provider_timeout")
-        except Exception as exc:  # self-healing — a verdict call must never raise
-            log.gateway.error(
-                "intent_classifier.is_answer: provider call failed — fail-safe to answer",
-                exc_info=exc,
-                extra={"_fields": {"classified": True}},
-            )
-            return self._low_confidence_answer("provider_error")
+        verdict = (outcome.result.content or "").strip()
 
-        classified, confident = self._parse_verdict(verdict)
+        classified, confident = parse_two_token_verdict(
+            verdict, true_token="answer", false_token="new",
+            ambiguous_default=True, use_leading_token_tiebreak=True,
+        )
         # 2. DECISION — the raw verdict and the parsed bool (truncated text).
         log.gateway.info(
             "intent_classifier.is_answer: verdict parsed",
@@ -349,7 +343,9 @@ class ClarifyIntentClassifier:
             )
             return False
 
-        resolved = self._resolve_provider()
+        resolved = resolve_fixed_tier(
+            self._registry, "fast", logger=log.gateway, call_name="intent_classifier.is_steer",
+        )
         if resolved is None:
             log.gateway.warning(
                 "intent_classifier.is_steer: no fast provider — fail-safe to new",
@@ -358,40 +354,31 @@ class ClarifyIntentClassifier:
             return False
         provider, model = resolved
 
-        try:
-            user_text = self._build_steer_user_text(running_ask, message)
-            # Bound the inline call: a hung fast provider must not HOL-block the
-            # single receive loop. CancelledError (not an Exception subclass)
-            # still propagates so a cancelled receive task tears down cleanly.
-            async with traced_span(log.gateway, "intent_classifier.is_steer.provider_call"):
-                result = await asyncio.wait_for(
-                    provider.complete(
-                        [
-                            Message(role="system", content=_STEER_SYSTEM_PROMPT),
-                            Message(role="user", content=user_text),
-                        ],
-                        model=model,
-                        max_tokens=4,
-                        disable_thinking=True,
-                    ),
-                    timeout=self._timeout_s,
-                )
-            verdict = (result.content or "").strip()
-        except TimeoutError:  # hung provider — fail-safe to NEW rather than stall
-            log.gateway.warning(
-                "intent_classifier.is_steer: provider call timed out — fail-safe to new",
-                extra={"_fields": {"steer": False, "timeout_s": self._timeout_s}},
-            )
+        user_text = self._build_steer_user_text(running_ask, message)
+        outcome = await safe_complete(
+            provider, model,
+            [
+                Message(role="system", content=_STEER_SYSTEM_PROMPT),
+                Message(role="user", content=user_text),
+            ],
+            max_tokens=4,
+            timeout_s=self._timeout_s,
+            logger=log.gateway,
+            call_name="intent_classifier.is_steer",
+        )
+        if outcome.result is None:  # timeout or provider error — safe_complete already logged
             return False
-        except Exception as exc:  # self-healing — a verdict call must never raise
-            log.gateway.error(
-                "intent_classifier.is_steer: provider call failed — fail-safe to new",
-                exc_info=exc,
-                extra={"_fields": {"steer": False}},
-            )
-            return False
+        verdict = (outcome.result.content or "").strip()
 
-        steer = self._parse_steer_verdict(verdict)
+        steer, confident = parse_two_token_verdict(
+            verdict, true_token="steer", false_token="new",
+            ambiguous_default=False, use_leading_token_tiebreak=False,
+        )
+        if not confident:
+            log.gateway.warning(
+                "intent_classifier._parse_steer_verdict: ambiguous verdict — fail-safe to new",
+                extra={"_fields": {"raw_verdict": verdict[:_LOG_TEXT_CHARS]}},
+            )
         # 2. DECISION — the raw verdict and the parsed bool (truncated text).
         log.gateway.info(
             "intent_classifier.is_steer: verdict parsed",
@@ -446,7 +433,10 @@ class ClarifyIntentClassifier:
             )
             return True
 
-        resolved = self._resolve_provider()
+        resolved = resolve_fixed_tier(
+            self._registry, "fast", logger=log.gateway,
+            call_name="intent_classifier.is_steer_incoherent",
+        )
         if resolved is None:
             log.gateway.warning(
                 "intent_classifier.is_steer_incoherent: no fast provider — fail-safe to veto",
@@ -455,40 +445,31 @@ class ClarifyIntentClassifier:
             return True
         provider, model = resolved
 
-        try:
-            user_text = self._build_coherence_user_text(running_ask, message)
-            # Bound the inline call: a hung fast provider must not HOL-block the
-            # single receive loop. CancelledError (not an Exception subclass)
-            # still propagates so a cancelled receive task tears down cleanly.
-            async with traced_span(log.gateway, "intent_classifier.is_steer_incoherent.provider_call"):
-                result = await asyncio.wait_for(
-                    provider.complete(
-                        [
-                            Message(role="system", content=_COHERENCE_SYSTEM_PROMPT),
-                            Message(role="user", content=user_text),
-                        ],
-                        model=model,
-                        max_tokens=4,
-                        disable_thinking=True,
-                    ),
-                    timeout=self._timeout_s,
-                )
-            verdict = (result.content or "").strip()
-        except TimeoutError:  # hung provider — fail-safe to VETO rather than stall
-            log.gateway.warning(
-                "intent_classifier.is_steer_incoherent: provider call timed out — fail-safe to veto",
-                extra={"_fields": {"veto": True, "timeout_s": self._timeout_s}},
-            )
+        user_text = self._build_coherence_user_text(running_ask, message)
+        outcome = await safe_complete(
+            provider, model,
+            [
+                Message(role="system", content=_COHERENCE_SYSTEM_PROMPT),
+                Message(role="user", content=user_text),
+            ],
+            max_tokens=4,
+            timeout_s=self._timeout_s,
+            logger=log.gateway,
+            call_name="intent_classifier.is_steer_incoherent",
+        )
+        if outcome.result is None:  # timeout or provider error — safe_complete already logged
             return True
-        except Exception as exc:  # self-healing — a verdict call must never raise
-            log.gateway.error(
-                "intent_classifier.is_steer_incoherent: provider call failed — fail-safe to veto",
-                exc_info=exc,
-                extra={"_fields": {"veto": True}},
-            )
-            return True
+        verdict = (outcome.result.content or "").strip()
 
-        veto = self._parse_coherence_verdict(verdict)
+        veto, confident = parse_two_token_verdict(
+            verdict, true_token="conflict", false_token="refine",
+            ambiguous_default=True, use_leading_token_tiebreak=True,
+        )
+        if not confident:
+            log.gateway.warning(
+                "intent_classifier._parse_coherence_verdict: ambiguous verdict — fail-safe to veto",
+                extra={"_fields": {"raw_verdict": verdict[:_LOG_TEXT_CHARS]}},
+            )
         # 2. DECISION — the raw verdict and the parsed bool (truncated text).
         log.gateway.info(
             "intent_classifier.is_steer_incoherent: verdict parsed",
@@ -503,23 +484,6 @@ class ClarifyIntentClassifier:
         return veto
 
     # ------------------------------------------------------------------ helpers
-
-    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
-        """Resolve the fast-tier (provider, model), or ``None`` on any registry error.
-
-        Lazy + defensive: ``get_by_tier`` raising (no providers at all) or
-        any other registry failure degrades to ``None`` so :meth:`is_answer`,
-        :meth:`is_steer`, and :meth:`is_steer_incoherent` (all three callers of this
-        helper) fail-safe.
-        """
-        try:
-            return self._registry.get_by_tier("fast")
-        except Exception as exc:  # self-healing — missing provider must not raise
-            log.gateway.warning(
-                "intent_classifier._resolve_provider: get_by_tier failed",
-                exc_info=exc,
-            )
-            return None
 
     @staticmethod
     def _build_user_text(
@@ -542,53 +506,6 @@ class ClarifyIntentClassifier:
         return "\n".join(lines)
 
     @staticmethod
-    def _parse_verdict(verdict: str) -> tuple[bool, bool]:
-        """Map the model's one-word verdict to ``(classified, confident)``.
-
-        ``classified`` is the bool (fail-safe → ``True``); ``confident`` is ``False``
-        only when ``classified`` came from the ambiguous fail-safe fallback (F-72), so
-        the caller can surface it as an explicit assumption rather than committing it
-        silently. Case-insensitive and token-order robust. A verbose verdict can
-        contain BOTH tokens (e.g. "NEW — this does not answer the question"); naive
-        precedence on ``answer`` would misclassify that as an answer and silently
-        revert the feature. So we test for each token independently:
-
-        * ``new`` present and ``answer`` absent → ``(False, True)`` (a NEW request).
-        * ``answer`` present and ``new`` absent → ``(True, True)`` (an answer).
-        * BOTH present with a clear LEADING token → that token's bool, ``confident``.
-        * BOTH present with NO clear leader (e.g. "answer or new?"), or NEITHER
-          present (empty, garbage like "maybe") → ``(True, False)`` — the fail-safe
-          default that never drops a genuine answer, flagged LOW-confidence.
-
-        This parses only the MODEL's controlled token, never the user's (multilingual)
-        message.
-        """
-        low = verdict.lower().lstrip()
-        has_answer = "answer" in low
-        has_new = "new" in low
-        if has_new and not has_answer:
-            return False, True
-        if has_answer and not has_new:
-            return True, True
-        if has_answer and has_new:
-            # BOTH present: defer to whichever token leads the verdict.
-            if low.startswith("new"):
-                return False, True
-            if low.startswith("answer"):
-                return True, True
-        log.gateway.warning(
-            "intent_classifier._parse_verdict: ambiguous verdict — fail-safe to answer",
-            extra={
-                "_fields": {
-                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
-                    "has_answer": has_answer,
-                    "has_new": has_new,
-                }
-            },
-        )
-        return True, False
-
-    @staticmethod
     def _build_steer_user_text(running_ask: str, message: str) -> str:
         """Render the (capped) STEER-vs-NEW classification prompt body.
 
@@ -608,46 +525,6 @@ class ClarifyIntentClassifier:
         )
 
     @staticmethod
-    def _parse_steer_verdict(verdict: str) -> bool:
-        """Map the model's one-word verdict to a bool (fail-safe → ``False``/NEW).
-
-        The CONSERVATIVE mirror of :meth:`_parse_verdict`: STEER is the EXPENSIVE
-        direction, so it is granted ONLY on an unambiguous STEER verdict. Case- and
-        token-order robust, parsing only the MODEL's controlled token (never the
-        user's multilingual message):
-
-        * ``steer`` present and ``new`` absent → ``True`` (a high-confidence STEER).
-        * ``new`` present and ``steer`` absent → ``False`` (a NEW request).
-        * BOTH present → ``False`` (NEW). The asymmetry is deliberate: a both-token
-          verdict ("steer or new?", "NEW — do not steer") is NOT unambiguous enough
-          to grant the expensive STEER, so it collapses to the cheap, safe NEW
-          direction. (Contrast :meth:`_parse_verdict`, whose fail-safe is the other
-          way, so it lets a leading token break a both-present tie.)
-        * NEITHER present (empty / ambiguous / garbage like "maybe") → the fail-safe
-          default ``False`` (NEW) — the cheap, visible direction. Logged.
-        """
-        low = verdict.lower().lstrip()
-        has_steer = "steer" in low
-        has_new = "new" in low
-        if has_steer and not has_new:
-            return True
-        if has_new and not has_steer:
-            return False
-        # BOTH or NEITHER present: never unambiguous enough for the expensive
-        # STEER → fail-safe to NEW (the conservative, cheap direction).
-        log.gateway.warning(
-            "intent_classifier._parse_steer_verdict: ambiguous verdict — fail-safe to new",
-            extra={
-                "_fields": {
-                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
-                    "has_steer": has_steer,
-                    "has_new": has_new,
-                }
-            },
-        )
-        return False
-
-    @staticmethod
     def _build_coherence_user_text(running_ask: str, message: str) -> str:
         """Render the (capped) coherence (REFINE-vs-CONFLICT) prompt body.
 
@@ -665,46 +542,3 @@ class ClarifyIntentClassifier:
                 "Reply REFINE or CONFLICT.",
             ]
         )
-
-    @staticmethod
-    def _parse_coherence_verdict(verdict: str) -> bool:
-        """Map the one-word coherence verdict to a VETO bool (fail-safe → ``True``).
-
-        Returns ``True`` to VETO (incoherent/contradictory → NEW) and ``False`` to
-        allow the steer (coherent refinement). The fail-safe is the SAFE VETO
-        direction (opposite of :meth:`_parse_steer_verdict`'s cheap-NEW fail-safe,
-        but the same SPIRIT — both default to a separate, recoverable answer). Case-
-        and token-order robust, parsing only the MODEL's controlled token (never the
-        user's multilingual message):
-
-        * ``conflict`` present and ``refine`` absent → ``True`` (veto).
-        * ``refine`` present and ``conflict`` absent → ``False`` (allow the steer).
-        * BOTH present → the LEADING token decides; a tie with no clear leader falls
-          through to the fail-safe.
-        * NEITHER present (empty / ambiguous / garbage like "maybe") → the fail-safe
-          default ``True`` (VETO) — the safe direction. Logged.
-        """
-        low = verdict.lower().lstrip()
-        has_refine = "refine" in low
-        has_conflict = "conflict" in low
-        if has_conflict and not has_refine:
-            return True
-        if has_refine and not has_conflict:
-            return False
-        if has_refine and has_conflict:
-            # BOTH present: defer to whichever token leads the verdict.
-            if low.startswith("conflict"):
-                return True
-            if low.startswith("refine"):
-                return False
-        log.gateway.warning(
-            "intent_classifier._parse_coherence_verdict: ambiguous verdict — fail-safe to veto",
-            extra={
-                "_fields": {
-                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
-                    "has_refine": has_refine,
-                    "has_conflict": has_conflict,
-                }
-            },
-        )
-        return True

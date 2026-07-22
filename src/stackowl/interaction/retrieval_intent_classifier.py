@@ -125,7 +125,7 @@ class RetrievalIntentClassifier:
         provider, model = resolved
 
         user_text = self._build_user_text(request)
-        result = await safe_complete(
+        outcome = await safe_complete(
             provider, model,
             [
                 Message(role="system", content=_SYSTEM_PROMPT),
@@ -136,9 +136,9 @@ class RetrievalIntentClassifier:
             logger=log.engine,
             call_name="retrieval_intent_classifier",
         )
-        if result is None:  # timeout or provider error — safe_complete already logged
+        if outcome.result is None:  # timeout or provider error — safe_complete already logged
             return False
-        verdict = (result.content or "").strip()
+        verdict = (outcome.result.content or "").strip()
 
         verdict_bool, confident = parse_two_token_verdict(
             verdict, true_token="lookup", false_token="known",

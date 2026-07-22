@@ -131,12 +131,13 @@ def test_resolve_cascade_tier_failure_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_safe_complete_success_passes_disable_thinking_and_max_tokens() -> None:
     provider = _FakeProvider(content="COMMIT")
-    result = await safe_complete(
+    outcome = await safe_complete(
         provider, "model-x", [Message(role="user", content="hi")],
         max_tokens=4, timeout_s=10.0, logger=_LOGGER, call_name="t",
     )
-    assert result is not None
-    assert result.content == "COMMIT"
+    assert outcome.result is not None
+    assert outcome.result.content == "COMMIT"
+    assert outcome.timed_out is False
     _, _, kwargs = provider.calls[0]
     assert kwargs["max_tokens"] == 4
     assert kwargs["disable_thinking"] is True
@@ -147,12 +148,12 @@ async def test_safe_complete_success_passes_disable_thinking_and_max_tokens() ->
 async def test_safe_complete_forwards_response_format_when_given() -> None:
     provider = _FakeProvider(content='{"verdict": "NONE"}')
     schema = {"type": "json_schema", "json_schema": {"name": "verdict"}}
-    result = await safe_complete(
+    outcome = await safe_complete(
         provider, "model-x", [Message(role="user", content="hi")],
         max_tokens=20, timeout_s=10.0, logger=_LOGGER, call_name="t",
         response_format=schema,
     )
-    assert result is not None
+    assert outcome.result is not None
     _, _, kwargs = provider.calls[0]
     assert kwargs["response_format"] == schema
 
@@ -175,31 +176,36 @@ async def test_safe_complete_no_timeout_mode() -> None:
     (router.py, acceptance_llm.py, critic_scorer_handler.py, delivery_gate.py's
     apology generator) that currently have no timeout at all."""
     provider = _FakeProvider(hang_seconds=0.05)
-    result = await safe_complete(
+    outcome = await safe_complete(
         provider, "model-x", [Message(role="user", content="hi")],
         max_tokens=4, timeout_s=None, logger=_LOGGER, call_name="t",
     )
-    assert result is not None  # completed fine — no timeout was ever armed
+    assert outcome.result is not None  # completed fine — no timeout was ever armed
 
 
 @pytest.mark.asyncio
-async def test_safe_complete_timeout_returns_none() -> None:
+async def test_safe_complete_timeout_returns_none_and_flags_timed_out() -> None:
+    """timed_out=True distinguishes this from a generic provider error — needed
+    by callers like intent_classifier.py's is_answer, whose AnswerVerdict.reason
+    tags "provider_timeout" separately from "provider_error" for F-72 auditing."""
     provider = _FakeProvider(hang_seconds=5.0)
-    result = await safe_complete(
+    outcome = await safe_complete(
         provider, "model-x", [Message(role="user", content="hi")],
         max_tokens=4, timeout_s=0.05, logger=_LOGGER, call_name="t",
     )
-    assert result is None
+    assert outcome.result is None
+    assert outcome.timed_out is True
 
 
 @pytest.mark.asyncio
-async def test_safe_complete_provider_error_returns_none() -> None:
+async def test_safe_complete_provider_error_returns_none_not_timed_out() -> None:
     provider = _FakeProvider(raise_on_complete=RuntimeError("boom"))
-    result = await safe_complete(
+    outcome = await safe_complete(
         provider, "model-x", [Message(role="user", content="hi")],
         max_tokens=4, timeout_s=10.0, logger=_LOGGER, call_name="t",
     )
-    assert result is None
+    assert outcome.result is None
+    assert outcome.timed_out is False
 
 
 @pytest.mark.asyncio
