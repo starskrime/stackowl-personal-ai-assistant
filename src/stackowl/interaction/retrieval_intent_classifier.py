@@ -16,10 +16,11 @@ never scan the user's request text for words like "news" or "latest". The LLM
 makes the semantic call; we only parse the MODEL's own one-word verdict
 (``LOOKUP`` / ``KNOWN``) — a token WE control via the prompt.
 
-**Fast tier, one-token verdict.** Mirrors :class:`ClarifyIntentClassifier`'s
-shape exactly: lazy ``get_by_tier("fast")`` resolution, ``asyncio.wait_for``
-bounded by ``timeout_s`` (default 10.0s — this runs on the pre-deliver hot
-path), small ``max_tokens``.
+**Fast tier, one-token verdict, on the shared base (2026-07-22).** Uses
+:mod:`stackowl.interaction.classifier_base`'s Pieces A/B/C — pinned
+``get_by_tier("fast")`` resolution, a bounded ``asyncio.wait_for`` call, and
+the shared two-token verdict parser. Pure refactor: same prompt, same token
+budget, same timeout, same fail-safe direction as before this migration.
 
 **Fail-safe -> ``False`` (KNOWN) on every degraded path.** Flooring replaces
 the WHOLE draft, so a wrong ``True`` erases a legitimate knowledge answer —
@@ -35,11 +36,15 @@ message routing — matching the project's one-classifier-per-concern pattern).
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
-from stackowl.infra.observability import log, traced_span
-from stackowl.providers.base import Message, ModelProvider
+from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import (
+    parse_two_token_verdict,
+    resolve_fixed_tier,
+    safe_complete,
+)
+from stackowl.providers.base import Message
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.providers.registry import ProviderRegistry
@@ -108,7 +113,9 @@ class RetrievalIntentClassifier:
             )
             return False
 
-        resolved = self._resolve_provider()
+        resolved = resolve_fixed_tier(
+            self._registry, "fast", logger=log.engine, call_name="retrieval_intent_classifier",
+        )
         if resolved is None:
             log.engine.warning(
                 "retrieval_intent_classifier.requires_lookup: no fast provider — fail-safe to known",
@@ -117,39 +124,31 @@ class RetrievalIntentClassifier:
             return False
         provider, model = resolved
 
-        try:
-            user_text = self._build_user_text(request)
-            # Bounded call: a hung fast provider must never stall the pre-deliver
-            # gate. CancelledError (not an Exception subclass) still propagates.
-            async with traced_span(log.engine, "retrieval_intent_classifier.requires_lookup.provider_call"):
-                result = await asyncio.wait_for(
-                    provider.complete(
-                        [
-                            Message(role="system", content=_SYSTEM_PROMPT),
-                            Message(role="user", content=user_text),
-                        ],
-                        model=model,
-                        max_tokens=_MAX_TOKENS,
-                        disable_thinking=True,
-                    ),
-                    timeout=self._timeout_s,
-                )
-            verdict = (result.content or "").strip()
-        except TimeoutError:  # hung provider — fail-safe rather than stall delivery
-            log.engine.warning(
-                "retrieval_intent_classifier.requires_lookup: provider call timed out — fail-safe to known",
-                extra={"_fields": {"requires_lookup": False, "timeout_s": self._timeout_s}},
-            )
+        user_text = self._build_user_text(request)
+        result = await safe_complete(
+            provider, model,
+            [
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=user_text),
+            ],
+            max_tokens=_MAX_TOKENS,
+            timeout_s=self._timeout_s,
+            logger=log.engine,
+            call_name="retrieval_intent_classifier",
+        )
+        if result is None:  # timeout or provider error — safe_complete already logged
             return False
-        except Exception as exc:  # self-healing — a verdict call must never raise
-            log.engine.error(
-                "retrieval_intent_classifier.requires_lookup: provider call failed — fail-safe to known",
-                exc_info=exc,
-                extra={"_fields": {"requires_lookup": False}},
-            )
-            return False
+        verdict = (result.content or "").strip()
 
-        verdict_bool = self._parse_verdict(verdict)
+        verdict_bool, confident = parse_two_token_verdict(
+            verdict, true_token="lookup", false_token="known",
+            ambiguous_default=False, use_leading_token_tiebreak=False,
+        )
+        if not confident:
+            log.engine.warning(
+                "retrieval_intent_classifier._parse_verdict: ambiguous verdict — fail-safe to known",
+                extra={"_fields": {"raw_verdict": verdict[:_LOG_TEXT_CHARS]}},
+            )
         # 2. DECISION — the raw verdict and the parsed bool (truncated text).
         log.engine.info(
             "retrieval_intent_classifier.requires_lookup: verdict parsed",
@@ -165,51 +164,8 @@ class RetrievalIntentClassifier:
 
     # ------------------------------------------------------------------ helpers
 
-    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
-        """Resolve the fast-tier (provider, model), or ``None`` on any registry error."""
-        try:
-            return self._registry.get_by_tier("fast")
-        except Exception as exc:  # self-healing — missing provider must not raise
-            log.engine.warning(
-                "retrieval_intent_classifier._resolve_provider: get_by_tier failed",
-                exc_info=exc,
-            )
-            return None
-
     @staticmethod
     def _build_user_text(request: str) -> str:
         """Render the (capped) classification prompt body."""
         r = request[:_MAX_REQUEST_CHARS]
         return "\n".join([f"REQUEST: {r}", "Reply LOOKUP or KNOWN."])
-
-    @staticmethod
-    def _parse_verdict(verdict: str) -> bool:
-        """Map the model's one-word verdict to a bool (fail-safe -> ``False``/KNOWN).
-
-        Case- and token-order robust, parsing only the MODEL's controlled token
-        (never the user's multilingual request text):
-
-        * ``lookup`` present and ``known`` absent -> ``True`` (high-confidence LOOKUP).
-        * ``known`` present and ``lookup`` absent -> ``False`` (KNOWN).
-        * BOTH or NEITHER present (empty / ambiguous / garbage) -> the fail-safe
-          default ``False`` — the cheap/safe direction (a wrong ``True`` erases a
-          legitimate answer, so any doubt collapses to KNOWN). Logged.
-        """
-        low = verdict.lower().lstrip()
-        has_lookup = "lookup" in low
-        has_known = "known" in low
-        if has_lookup and not has_known:
-            return True
-        if has_known and not has_lookup:
-            return False
-        log.engine.warning(
-            "retrieval_intent_classifier._parse_verdict: ambiguous verdict — fail-safe to known",
-            extra={
-                "_fields": {
-                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
-                    "has_lookup": has_lookup,
-                    "has_known": has_known,
-                }
-            },
-        )
-        return False
