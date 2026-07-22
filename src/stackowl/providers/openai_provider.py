@@ -183,12 +183,21 @@ class _ThinkStreamFilter:
 # DEFAULT_TURN_MAX_TIME_S (fixing the same wall-clock-timeout-family inversion).
 _ROUND_DEADLINE_FALLBACK_S = 600.0
 
-# No artificial safety-margin padding on the input-headroom estimate (owner
-# decision 2026-07-22) — headroom is the raw window-minus-estimated-input, not
-# padded down further. _MIN_OUTPUT_TOKENS is kept, but only as a bare technical
-# floor: max_tokens=0 or negative is a MALFORMED request the provider rejects
-# outright (every turn fails, not a shorter answer), not a "limit" in the sense
-# the rest of this pass removed — this is input validation, not shaping.
+# RE-ADDED (live incident 2026-07-22, hours after this pass first removed it):
+# without this margin, `estimate_tokens`'s heuristic undercount (it is a
+# script-aware approximation, not a real BPE tokenizer — see
+# parliament/token_estimate.py) leaks straight into the request with zero
+# buffer, and the provider then rejects the call outright with a 400
+# ContextWindowExceededError — every affected turn fails completely, which is
+# strictly worse than the "context gets cut" outcome this pass was trying to
+# avoid. This is a correctness backstop against estimator error, not a
+# context-shrinking limit: 2000 tokens out of a 262144 window is <1% overhead,
+# same category as _MIN_OUTPUT_TOKENS below.
+_INPUT_TOKEN_SAFETY_MARGIN = 2000
+# _MIN_OUTPUT_TOKENS is kept, but only as a bare technical floor: max_tokens=0
+# or negative is a MALFORMED request the provider rejects outright (every turn
+# fails, not a shorter answer), not a "limit" in the sense the rest of this
+# pass removed — this is input validation, not shaping.
 _MIN_OUTPUT_TOKENS = 16
 
 
@@ -1059,11 +1068,15 @@ class OpenAIProvider(ModelProvider):
         bounds output in isolation with no idea how big the prompt actually is.
         Fixed by reserving real headroom for the estimated input size
         (script-aware ``estimate_tokens`` — no hardcoded English, see
-        ``parliament/token_estimate.py``); no extra padding beyond the estimate
-        (owner decision 2026-07-22). Bounded below by ``_MIN_OUTPUT_TOKENS``
-        (a bare technical floor, not a shaping cap — see its own comment) so a
-        huge prompt degrades to the smallest VALID request rather than a
-        zero/negative token request — logged loudly either way.
+        ``parliament/token_estimate.py``) MINUS ``_INPUT_TOKEN_SAFETY_MARGIN``
+        (live incident 2026-07-22, same day: the estimate is a heuristic
+        approximation, not the real tokenizer, and padding down by zero meant
+        any undercount leaked straight into a hard-rejected request — every
+        affected turn failed outright with a 400, worse than a shorter
+        answer). Bounded below by ``_MIN_OUTPUT_TOKENS`` (a bare technical
+        floor, not a shaping cap — see its own comment) so a huge prompt
+        degrades to the smallest VALID request rather than a zero/negative
+        token request — logged loudly either way.
 
         Bounded by the RESOLVED model's own max_output_tokens (per-model
         override if ``resolved_model`` matches a ProviderConfig.models entry
@@ -1082,7 +1095,7 @@ class OpenAIProvider(ModelProvider):
             return effective_max_output_tokens
 
         input_tokens = sum(estimate_tokens(_message_content_text(m)) for m in messages)
-        headroom = window - input_tokens
+        headroom = window - input_tokens - _INPUT_TOKEN_SAFETY_MARGIN
         if headroom < _MIN_OUTPUT_TOKENS:
             log.engine.warning(
                 "[openai] _output_cap: prompt leaves little/no headroom for output — "
