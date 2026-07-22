@@ -155,6 +155,7 @@ async def safe_complete(
     call_name: str,
     disable_thinking: bool = True,
     response_format: dict[str, object] | None = None,
+    temperature: float | None = None,
 ) -> SafeCompleteOutcome:
     """Bounded ``provider.complete(...)`` call — never raises.
 
@@ -163,12 +164,14 @@ async def safe_complete(
     needs that distinction (most callers just check ``outcome.result is
     None``). ``disable_thinking`` defaults ``True`` (matches all 10 existing
     call sites) but is overridable for a hypothetical future caller that
-    genuinely wants a reasoning trace. ``response_format`` is optional
-    structured-output support (``docs/structured-output-spike.md`` confirmed
-    the deployed gateway honors OpenAI's ``response_format``) — passed
-    through as-is; providers that don't understand it ignore it silently (an
-    unread kwarg), which is why ``disable_thinking`` remains mandatory
-    regardless of whether a schema is supplied.
+    genuinely wants a reasoning trace. ``temperature`` is optional (the
+    JSON-verdict classifiers pin ``0.0`` for deterministic parsing; the
+    one-word-verdict classifiers don't set it). ``response_format`` is
+    optional structured-output support (``docs/structured-output-spike.md``
+    confirmed the deployed gateway honors OpenAI's ``response_format``) —
+    passed through as-is; providers that don't understand it ignore it
+    silently (an unread kwarg), which is why ``disable_thinking`` remains
+    mandatory regardless of whether a schema is supplied.
     """
     logger.debug(
         f"{call_name}.safe_complete: entry",
@@ -180,6 +183,8 @@ async def safe_complete(
     }
     if response_format is not None:
         call_kwargs["response_format"] = response_format
+    if temperature is not None:
+        call_kwargs["temperature"] = temperature
     try:
         async with traced_span(logger, f"{call_name}.safe_complete.provider_call"):
             coro = provider.complete(messages, model=model, **call_kwargs)

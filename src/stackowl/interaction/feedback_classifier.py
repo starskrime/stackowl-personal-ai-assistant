@@ -42,13 +42,13 @@ output (the same helper the persistence judge uses) — no new LLM-call framewor
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, get_args
 
-from stackowl.infra.observability import log, traced_span
+from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import resolve_fixed_tier, safe_complete
 from stackowl.memory.json_parser import parse_json_response
-from stackowl.providers.base import Message, ModelProvider
+from stackowl.providers.base import Message
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.providers.registry import ProviderRegistry
@@ -195,7 +195,9 @@ class FeedbackClassifier:
             # No reaction to classify — abstain so the caller never acts on noise.
             return self._abstain("empty_message")
 
-        resolved = self._resolve_provider()
+        resolved = resolve_fixed_tier(
+            self._registry, "fast", logger=log.gateway, call_name="feedback_classifier",
+        )
         if resolved is None:
             log.gateway.warning(
                 "feedback_classifier.classify: no fast provider — abstain",
@@ -204,55 +206,28 @@ class FeedbackClassifier:
             return self._abstain("no_provider")
         provider, model = resolved
 
-        try:
-            user_text = self._build_user_text(
-                user_message, last_agent_message, recent_context,
-            )
-            # 3. STEP — bound the call so a hung provider cannot stall the caller.
-            # CancelledError (not an Exception subclass) still propagates.
-            async with traced_span(log.gateway, "feedback_classifier.classify.provider_call"):
-                result = await asyncio.wait_for(
-                    provider.complete(
-                        [
-                            Message(role="system", content=_SYSTEM_PROMPT),
-                            Message(role="user", content=user_text),
-                        ],
-                        model=model,
-                        max_tokens=_MAX_TOKENS,
-                        temperature=0.0,
-                        disable_thinking=True,
-                    ),
-                    timeout=self._timeout_s,
-                )
-            raw = result.content or ""
-        except TimeoutError:
-            log.gateway.warning(
-                "feedback_classifier.classify: provider call timed out — abstain",
-                extra={"_fields": {"abstain": True, "timeout_s": self._timeout_s}},
-            )
-            return self._abstain("provider_timeout")
-        except Exception as exc:  # self-healing — a verdict call must never raise
-            log.gateway.error(
-                "feedback_classifier.classify: provider call failed — abstain",
-                exc_info=exc,
-                extra={"_fields": {"abstain": True}},
-            )
-            return self._abstain("provider_error")
+        user_text = self._build_user_text(
+            user_message, last_agent_message, recent_context,
+        )
+        # 3. STEP — bound the call so a hung provider cannot stall the caller.
+        outcome = await safe_complete(
+            provider, model,
+            [
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=user_text),
+            ],
+            max_tokens=_MAX_TOKENS,
+            timeout_s=self._timeout_s,
+            logger=log.gateway,
+            call_name="feedback_classifier",
+            temperature=0.0,
+        )
+        if outcome.result is None:  # safe_complete already logged the failure
+            return self._abstain("provider_timeout" if outcome.timed_out else "provider_error")
 
-        return self._parse(raw)
+        return self._parse(outcome.result.content or "")
 
     # ------------------------------------------------------------------ helpers
-
-    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
-        """Resolve the fast-tier (provider, model), or ``None`` on any registry error."""
-        try:
-            return self._registry.get_by_tier("fast")
-        except Exception as exc:  # self-healing — missing provider must not raise
-            log.gateway.warning(
-                "feedback_classifier._resolve_provider: get_by_tier failed",
-                exc_info=exc,
-            )
-            return None
 
     @staticmethod
     def _build_user_text(

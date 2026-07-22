@@ -1142,6 +1142,14 @@ class OpenAIProvider(ModelProvider):
         response_format = kwargs.get("response_format")
         if response_format is not None:
             extra_body = {**extra_body, "response_format": response_format}
+        # A caller-supplied temperature (e.g. classifiers pinning 0.0 for
+        # deterministic parsing) was previously silently swallowed — kwargs
+        # was never forwarded to the real API call. Confirmed via grep: this
+        # is why feedback_classifier.py's and retry_intent_classifier.py's
+        # long-standing temperature=0.0 never actually reached the provider.
+        temperature = kwargs.get("temperature")
+        if temperature is not None:
+            extra_body = {**extra_body, "temperature": temperature}
         async def _round() -> Any:
             return await self._client.chat.completions.create(
                 model=resolved_model,

@@ -159,6 +159,34 @@ async def test_safe_complete_forwards_response_format_when_given() -> None:
 
 
 @pytest.mark.asyncio
+async def test_safe_complete_forwards_temperature_when_given() -> None:
+    """feedback_classifier.py/retry_intent_classifier.py pin temperature=0.0
+    for deterministic JSON parsing — must actually reach the provider call,
+    not be silently dropped (openai_provider.py never forwarded a bare
+    temperature kwarg until this migration surfaced the gap)."""
+    provider = _FakeProvider(content='{"is_retry": true}')
+    outcome = await safe_complete(
+        provider, "model-x", [Message(role="user", content="hi")],
+        max_tokens=128, timeout_s=10.0, logger=_LOGGER, call_name="t",
+        temperature=0.0,
+    )
+    assert outcome.result is not None
+    _, _, kwargs = provider.calls[0]
+    assert kwargs["temperature"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_safe_complete_omits_temperature_when_not_given() -> None:
+    provider = _FakeProvider()
+    await safe_complete(
+        provider, "model-x", [Message(role="user", content="hi")],
+        max_tokens=4, timeout_s=10.0, logger=_LOGGER, call_name="t",
+    )
+    _, _, kwargs = provider.calls[0]
+    assert "temperature" not in kwargs
+
+
+@pytest.mark.asyncio
 async def test_safe_complete_disable_thinking_overridable() -> None:
     provider = _FakeProvider()
     await safe_complete(
