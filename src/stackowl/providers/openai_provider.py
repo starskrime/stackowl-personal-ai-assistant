@@ -1132,6 +1132,16 @@ class OpenAIProvider(ModelProvider):
             else {"role": m.role, "content": m.content}
             for m in messages
         ]
+        # Structured-output spike (2026-07-22, docs/structured-output-spike.md) —
+        # confirmed the deployed gateway honors OpenAI's response_format (JSON
+        # schema / grammar-constrained output). Opt-in per call, forwarded as-is;
+        # callers still need disable_thinking=True (a schema constrains the FINAL
+        # content shape, not whether the model burns its budget on reasoning
+        # first — confirmed by the same spike) and a token budget sized for JSON
+        # overhead, not a bare one-word reply.
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            extra_body = {**extra_body, "response_format": response_format}
         async def _round() -> Any:
             return await self._client.chat.completions.create(
                 model=resolved_model,
