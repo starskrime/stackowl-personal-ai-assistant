@@ -56,20 +56,24 @@ _LOG_TEXT_CHARS = 80
 _MAX_TOKENS = 4
 
 _SYSTEM_PROMPT = (
-    "You decide whether the ASSISTANT's reply commits to doing something for "
-    "the user LATER, at a future time or on a repeating schedule (e.g. it "
-    "promises to ping, remind, check in on, notify, alert, or monitor "
-    "something and report back) — a promise whose fulfillment REQUIRES the "
-    "assistant to act again on its own, without the user asking again. Reply "
-    "COMMIT ONLY if the reply is making that promise FOR THE FIRST TIME, right "
-    "now, in this reply. Reply NONE if the reply only answers now, asks a "
+    "You decide whether the ASSISTANT's reply commits to doing something BRAND "
+    "NEW for the user LATER, at a future time or on a repeating schedule — a "
+    "promise it is making FOR THE FIRST TIME, right now, in this reply, that "
+    "was NOT already set up before this reply (e.g. it newly promises to ping, "
+    "remind, check in on, notify, alert, or monitor something and report back, "
+    "with nothing actually scheduled yet). Reply COMMIT only for that NEW, "
+    "first-time promise. Reply NONE if the reply only answers now, asks a "
     "question, describes what it CAN do in general, requires the user to ask "
-    "again themselves, or REPORTS ON / LISTS scheduled work that already "
-    "exists (e.g. a status summary of currently-scheduled tasks, confirming "
-    "something is 'already scheduled' or 'active') — describing an existing "
-    "schedule is not a new promise, even though it uses schedule-related "
-    "words. Be conservative: if unsure, answer NONE. Reply with exactly one "
-    "word: COMMIT or NONE."
+    "again themselves, or is about scheduled/automated work that ALREADY "
+    "EXISTS — this covers BOTH a status summary/list of currently-scheduled "
+    "tasks AND a closing remark that already-configured automation will "
+    "keep going (e.g. 'I'll keep the scheduled agents running', 'staying on "
+    "standby', 'have a great day'). Restating or reassuring about EXISTING, "
+    "already-configured automation is NOT a new promise, even when phrased "
+    "with future-tense words like 'I'll keep' or 'I'll stay' — those words "
+    "describe continuity of something already set up, not a new commitment. "
+    "Be conservative: if unsure, answer NONE. Reply with exactly one word: "
+    "COMMIT or NONE."
 )
 
 

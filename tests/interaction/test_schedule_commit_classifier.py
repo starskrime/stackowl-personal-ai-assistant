@@ -45,6 +45,16 @@ _REAL_FALSE_POSITIVE_DRAFT = (
     "    *   **Schedule:** Daily at 9:00 A"
 )
 
+# Second live occurrence (2026-07-22, same day, same session, AFTER the first
+# prompt fix shipped): a plain closing sign-off about ALREADY-scheduled
+# automation continuing ALSO got a false-positive COMMIT — the first fix only
+# covered the "status list" phrasing, not this "reassurance/sign-off" one.
+# Captured verbatim from stackowl.jsonl.
+_REAL_FALSE_POSITIVE_SIGNOFF_DRAFT = (
+    "Understood. I'll keep the scheduled agents running and stay on standby "
+    "for any new requests. Have a great day!"
+)
+
 _RESPONSE = "Sure, I'll ping you in 5 minutes to check!"
 
 
@@ -217,6 +227,19 @@ def test_prompt_distinguishes_reporting_existing_schedules_from_new_promises() -
     assert "first time" in lowered or "new" in lowered
 
 
+def test_prompt_distinguishes_signoff_reassurance_from_new_promises() -> None:
+    """Second live incident, same day: the FIRST fix above only covered the
+    "status list" phrasing — a plain sign-off reassurance about EXISTING
+    automation continuing ("I'll keep the scheduled agents running... have a
+    great day") ALSO got a false COMMIT, since "I'll keep"/"stay on standby"
+    reads as future-tense promise-shaped language in isolation. The prompt
+    must explicitly call out that continuity language about already-
+    configured automation is not a new commitment."""
+    lowered = _SYSTEM_PROMPT.lower()
+    assert "keep" in lowered and "standby" in lowered
+    assert "continu" in lowered  # continuity / continue / continuing
+
+
 @pytest.mark.asyncio
 async def test_real_false_positive_draft_reaches_provider_intact() -> None:
     """Plumbing check using the EXACT draft text that caused the live
@@ -239,3 +262,19 @@ async def test_real_false_positive_draft_reaches_provider_intact() -> None:
     )
     sent_user_message = provider.calls[0][1]
     assert "Headhunter" in sent_user_message.content
+
+
+@pytest.mark.asyncio
+async def test_real_signoff_false_positive_draft_reaches_provider_intact() -> None:
+    """Plumbing check for the SECOND live false positive (see
+    _REAL_FALSE_POSITIVE_SIGNOFF_DRAFT) — a closing reassurance about
+    already-running automation, not a status list. A real fast-tier model
+    should now verdict NONE on this input too."""
+    provider = _FakeProvider("NONE")
+    classifier, _ = _make(provider)
+    result = await classifier.commits_to_future_schedule(
+        response=_REAL_FALSE_POSITIVE_SIGNOFF_DRAFT
+    )
+    assert result is False
+    sent_user_message = provider.calls[0][1]
+    assert "standby" in sent_user_message.content
