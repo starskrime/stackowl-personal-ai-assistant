@@ -14,7 +14,10 @@ from stackowl.providers.base import Message
 
 # Intent classes that NEVER enter the tool loop: a tool-free reply (conversational)
 # or a single clarifying question (clarify). Shared by provider_select (skip the
-# tool-capability gate), classify (lean assembly), and assemble (skip skills).
+# tool-capability gate), execute (plain-stream vs tool-loop branch), and assemble
+# (skip skills/tool-protocol description). classify.py no longer gates its
+# lessons/graph-context/skill-relevance blocks on this (owner decision
+# 2026-07-22) — those now run for every intent class.
 TOOL_FREE_CLASSES: frozenset[str] = frozenset({"conversational", "clarify"})
 
 

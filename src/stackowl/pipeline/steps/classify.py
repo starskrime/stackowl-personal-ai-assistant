@@ -15,7 +15,7 @@ from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
+from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import Message
 
 # Unicode tokenisation — stdlib ``re`` ``\w`` already covers \p{L}\p{N}_
@@ -616,17 +616,15 @@ async def run(state: PipelineState) -> PipelineState:
     except Exception:
         short_term_window = 6
     history = await _gather_history(state.session_id, short_term_window)
-    # Lean gate: conversational turns (greetings/small-talk) skip every heavy
-    # block that would only balloon the prompt for no task-relevant gain.
-    # "standard" (the default) is byte-identical to prior behavior.
-    _lean = state.intent_class in TOOL_FREE_CLASSES
-    if _lean:
-        log.engine.info(
-            "[pipeline] classify: tool-free class — lean assembly (skipping heavy blocks)",
-            extra={"_fields": {"trace_id": state.trace_id}},
-        )
+    # No lean gate (owner decision 2026-07-22): a "conversational"-classified
+    # turn used to skip lessons/graph-context/skill-relevance entirely — but
+    # the router's intent_class is coarser than "greetings/small-talk" (e.g.
+    # "who is online?", "what about other agents?" both land here too), so a
+    # substantive question was silently getting the SAME stripped-down memory
+    # a bare "hey" gets. Every turn now gathers the full context; a genuinely
+    # trivial turn just pays for blocks that come back empty.
     # Long-term graph context.
-    graph_context = "" if _lean else await _gather_graph_context(state.input_text)
+    graph_context = await _gather_graph_context(state.input_text)
     # Persisted user preferences (high priority — pin to top, always included).
     # Use identity_key when resolved (cross-channel identity) so preferences
     # follow the user across channels; fall back to session_id when unconfigured.
@@ -648,25 +646,21 @@ async def run(state: PipelineState) -> PipelineState:
     ) if _surface_failures else ""
     # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
     # Suppress owned skills so they don't appear at two altitudes.
-    # Owned-skill lookup is only used by _gather_relevant_skills — skip on lean.
     owned: set[str] = set()
-    if not _lean:
-        _reg = get_services().owl_registry
-        if _reg is not None:
-            try:
-                owned = set(_reg.get(state.owl_name).skills)
-            except Exception as exc:  # unknown owl / lookup failure → no suppression (safe)
-                log.engine.debug(
-                    "[pipeline] classify: owned-skill lookup failed — no suppression",
-                    exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
-                )
-                owned = set()
+    _reg = get_services().owl_registry
+    if _reg is not None:
+        try:
+            owned = set(_reg.get(state.owl_name).skills)
+        except Exception as exc:  # unknown owl / lookup failure → no suppression (safe)
+            log.engine.debug(
+                "[pipeline] classify: owned-skill lookup failed — no suppression",
+                exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
+            )
+            owned = set()
     # Compute the query embedding once (semantic-guarded) and stash on state so the
     # assemble step can score owned skills without re-embedding. Story B.
     # The same vector is threaded into _gather_relevant_skills (pre_embedded) so the
     # query is embedded once per turn instead of twice (F065).
-    # The embedding is NOT gated on _lean: assemble uses it for owned-skill tiering
-    # independently of the heavy gather blocks.
     query_embedding: tuple[float, ...] | None = None
     emb_reg = get_services().embedding_registry
     if emb_reg is not None and getattr(emb_reg, "is_semantic", False) and state.input_text.strip():
@@ -680,16 +674,12 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc,
                 extra={"_fields": {"owl": state.owl_name}},
             )
-    skills_block = (
-        ""
-        if _lean
-        else await _gather_relevant_skills(
-            state.input_text, limit=3, owned=owned, pre_embedded=query_embedding
-        )
+    skills_block = await _gather_relevant_skills(
+        state.input_text, limit=3, owned=owned, pre_embedded=query_embedding
     )
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
-    lessons_block = "" if _lean else await _gather_lessons(state.input_text, limit=3)
+    lessons_block = await _gather_lessons(state.input_text, limit=3)
     # Combine: prefs first (always in view), then skills (what tactics apply),
     # then lessons (cross-source learnings, including reflections — FR-3),
     # then actions (what was done before), then long-term context, then graph.

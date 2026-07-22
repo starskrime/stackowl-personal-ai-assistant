@@ -1,9 +1,18 @@
-"""classify: conversational turns skip heavy memory/skills/lessons blocks.
+"""classify: every intent class gathers the full memory/skills/lessons context.
 
-Intent: a greeting or small-talk turn marked intent_class="conversational"
-must NOT invoke _gather_lessons, _gather_relevant_skills,
-_gather_graph_context, or _gather_recent_actions.
-A standard turn (the default) must still invoke every heavy gather.
+Owner decision 2026-07-22: the old "lean" gate skipped lessons/skills/graph
+context entirely for any turn the router classified "conversational" — but
+that class is coarser than "greeting/small-talk" (e.g. "who is online?" and
+"what about other agents?" land there too), so a substantive question got the
+same stripped-down memory a bare "hey" gets. This locks in the fix: EVERY
+intent class now invokes _gather_lessons, _gather_relevant_skills, and
+_gather_graph_context.
+
+_gather_recent_actions is a SEPARATE, unrelated gate
+(_should_surface_failure_history: intent_class == "standard" and
+intent_classified) — deliberately still fail-closed for an unclassified/
+non-standard turn, so it is NOT expected to fire for the conversational case
+here. See its own docstring for why.
 
 FR-3 (de-complication PRD): reflections are surfaced once per turn via
 _gather_lessons (lessons_index) only — _gather_recent_reflections is no
@@ -42,8 +51,11 @@ class _StubBridge:
 
 
 @pytest.mark.asyncio
-async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """All four heavy gathers must be bypassed for a conversational turn."""
+async def test_conversational_still_gathers_lessons_skills_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conversational-classified turn must NOT skip lessons/skills/graph —
+    only the separately-gated actions_block stays withheld (unclassified)."""
     called: dict[str, bool] = {
         "lessons": False,
         "skills": False,
@@ -51,26 +63,26 @@ async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch
         "actions": False,
     }
 
-    async def _no_lessons(*a: object, **k: object) -> str:
+    async def _mark_lessons(*a: object, **k: object) -> str:
         called["lessons"] = True
         return ""
 
-    async def _no_skills(*a: object, **k: object) -> str:
+    async def _mark_skills(*a: object, **k: object) -> str:
         called["skills"] = True
         return ""
 
-    async def _no_graph(*a: object, **k: object) -> str:
+    async def _mark_graph(*a: object, **k: object) -> str:
         called["graph"] = True
         return ""
 
-    async def _no_actions(*a: object, **k: object) -> str:
+    async def _mark_actions(*a: object, **k: object) -> str:
         called["actions"] = True
         return ""
 
-    monkeypatch.setattr(classify, "_gather_lessons", _no_lessons)
-    monkeypatch.setattr(classify, "_gather_relevant_skills", _no_skills)
-    monkeypatch.setattr(classify, "_gather_graph_context", _no_graph)
-    monkeypatch.setattr(classify, "_gather_recent_actions", _no_actions)
+    monkeypatch.setattr(classify, "_gather_lessons", _mark_lessons)
+    monkeypatch.setattr(classify, "_gather_relevant_skills", _mark_skills)
+    monkeypatch.setattr(classify, "_gather_graph_context", _mark_graph)
+    monkeypatch.setattr(classify, "_gather_recent_actions", _mark_actions)
 
     token = set_services(StepServices(memory_bridge=_StubBridge()))
     try:
@@ -78,12 +90,14 @@ async def test_conversational_skips_heavy_blocks(monkeypatch: pytest.MonkeyPatch
     finally:
         reset_services(token)
 
-    assert called["lessons"] is False, "lessons must NOT be called for conversational"
-    assert called["skills"] is False, "skills must NOT be called for conversational"
-    assert called["graph"] is False, "graph must NOT be called for conversational"
-    assert called["actions"] is False, "actions must NOT be called for conversational"
-    # State must be returned with no memory context — heavy blocks were skipped.
-    assert out.memory_context is None
+    assert called["lessons"] is True, "lessons MUST be called for conversational now"
+    assert called["skills"] is True, "skills MUST be called for conversational now"
+    assert called["graph"] is True, "graph MUST be called for conversational now"
+    # actions_block is gated by _should_surface_failure_history (a SEPARATE,
+    # unrelated fail-closed check on intent_classified), not by intent_class
+    # alone — this turn is not intent_classified, so it stays withheld.
+    assert called["actions"] is False, "actions stays fail-closed (unrelated gate)"
+    assert out is not None
 
 
 @pytest.mark.asyncio

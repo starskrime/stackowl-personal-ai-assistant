@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+
 from stackowl.pipeline.steps.classify import _parse_turns_to_messages
 
 
@@ -26,7 +27,7 @@ def test_parse_turns_tolerates_missing_assistant():
 @pytest.mark.asyncio
 async def test_execute_tool_loop_passes_history_and_system_prompt(monkeypatch):
     """Tool-loop path: complete_with_tools must receive system_prompt and history."""
-    from stackowl.pipeline.services import StepServices, set_services, reset_services
+    from stackowl.pipeline.services import StepServices, reset_services, set_services
     from stackowl.pipeline.state import PipelineState
     from stackowl.pipeline.steps import execute
     from stackowl.providers.base import Message
@@ -90,7 +91,7 @@ async def test_execute_tool_loop_passes_history_and_system_prompt(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_streaming_branch_builds_history_messages(monkeypatch):
     """No-tool streaming branch: message list must be [system, *history, user]."""
-    from stackowl.pipeline.services import StepServices, set_services, reset_services
+    from stackowl.pipeline.services import StepServices, reset_services, set_services
     from stackowl.pipeline.state import PipelineState
     from stackowl.pipeline.steps import execute
     from stackowl.providers.base import Message
@@ -103,6 +104,7 @@ async def test_execute_streaming_branch_builds_history_messages(monkeypatch):
         yield  # make it an async generator
 
     class _FakeProvider:
+        name = "fake-provider"
         protocol = "anthropic"
 
         def stream(self, messages, model=""):
@@ -157,7 +159,7 @@ async def test_execute_streaming_branch_builds_history_messages(monkeypatch):
 async def test_gather_history_logs_error_on_fetch_failure(caplog):
     """When recent_conversation_turns raises, _gather_history must return []
     (self-heal) AND log at ERROR level (not just warning)."""
-    from stackowl.pipeline.services import StepServices, set_services, reset_services
+    from stackowl.pipeline.services import StepServices, reset_services, set_services
     from stackowl.pipeline.steps.classify import _gather_history
 
     class _BrokenBridge:
