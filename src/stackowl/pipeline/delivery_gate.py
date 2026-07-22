@@ -1581,7 +1581,28 @@ async def surface_persistence_handoff(
                 "[persistence_handoff] hand-off delivered — replacing draft with target's answer",
                 extra={"_fields": {"trace_id": state.trace_id, "to": target}},
             )
-            return state.evolve(responses=(chunk,))
+            # CRITICAL: clear the SAME give-up snapshot fields parent_state cleared
+            # above (~line 1544) — but on the state THIS function returns, not just
+            # the child's copy. surface_persistence_handoff can fire on EITHER a
+            # consequential give-up (decide_delivery) or a no-progress give-up
+            # (is_no_progress_giveup) — the entry gate at the top of this function
+            # checks both. Without resetting both signals here, the very next gate,
+            # surface_consequential_giveup_floor, re-derives the SAME stale give-up
+            # verdict from these untouched fields (they still reflect the PARENT's
+            # original failure, stamped by execute() before this hand-off ever ran)
+            # and silently overwrites this real, just-delivered answer with a canned
+            # honest floor. Verified by direct reproduction. tool_calls/errors are
+            # deliberately NOT cleared here (unlike parent_state) — they are this
+            # turn's real history and must survive for outcome-capture/telemetry.
+            return state.evolve(
+                responses=(chunk,),
+                consequential_failures=(),
+                consequential_successes=(),
+                recovered_consequential=(),
+                delivered_successes=(),
+                turn_made_progress=True,
+                no_progress_tools=(),
+            )
         log.engine.info(
             "[persistence_handoff] hand-off did not produce an answer — honest floor next",
             extra={"_fields": {"trace_id": state.trace_id, "to": target, "status": res.status}},

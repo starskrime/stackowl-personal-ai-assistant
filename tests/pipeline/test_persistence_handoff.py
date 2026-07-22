@@ -14,7 +14,10 @@ from stackowl.infra import tool_outcome_ledger as tol
 from stackowl.owls.a2a_delegation import A2AResult
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.pipeline.delivery_gate import surface_persistence_handoff
+from stackowl.pipeline.delivery_gate import (
+    surface_consequential_giveup_floor,
+    surface_persistence_handoff,
+)
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
@@ -219,5 +222,80 @@ async def test_child_parent_state_has_giveup_snapshot_cleared():
         assert ps.no_progress_tools == ()
         assert ps.turn_made_progress is True
         assert ps.has_consequential_snapshot is False
+    finally:
+        tol.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_successful_handoff_survives_the_next_gate_consequential_path():
+    """Reproduces the verified live bug: surface_persistence_handoff delivers a
+    real answer from a better-fit owl, but the VERY NEXT gate in the cascade
+    (surface_consequential_giveup_floor, called in fixed order from
+    backends/shared.py) used to re-derive the SAME stale give-up verdict from
+    the untouched consequential snapshot and silently overwrite the real answer
+    with a canned honest floor. Chains both gates in the same call, exactly as
+    backends/shared.py's run_delivery_gate does, to close the coverage gap that
+    let this ship."""
+    token = tol.bind()
+    try:
+        delegator = _FakeDelegator(A2AResult(status="ok", content="It is 24C and sunny."))
+        # Production-shaped snapshot: a consequential failure stamped directly on
+        # state (not the live ledger), matching how execute() actually stamps it.
+        s = PipelineState(
+            trace_id="t", session_id="s", input_text="what's the weather, email it to me",
+            channel="cli", owl_name="secretary", pipeline_step="deliver",
+            query_embedding=(0.1, 0.2, 0.3),
+            consequential_failures=("send_email",),
+            responses=(ResponseChunk(content="draft", is_final=False, chunk_index=0,
+                                      trace_id="t", owl_name="secretary"),),
+        )
+        after_handoff = await surface_persistence_handoff(
+            s, _services(store=_FakeStore(["web_research"]), delegator=delegator)
+        )
+        # Sanity: the handoff itself worked (already covered above, re-asserted here
+        # so a failure here points at the handoff, not the chained gate).
+        assert "24C and sunny" in "".join(c.content for c in after_handoff.responses)
+
+        # THE BUG: chain the very next gate exactly as run_delivery_gate does.
+        after_next_gate = await surface_consequential_giveup_floor(after_handoff)
+
+        delivered = "".join(c.content for c in after_next_gate.responses)
+        assert "24C and sunny" in delivered, (
+            "the next gate overwrote a real, just-delivered answer with a stale "
+            "give-up floor"
+        )
+        assert not any(c.is_floor for c in after_next_gate.responses)
+    finally:
+        tol.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_successful_handoff_survives_the_next_gate_no_progress_path():
+    """Same bug, the OTHER trigger path: surface_persistence_handoff can also
+    fire on a no-progress give-up (is_no_progress_giveup), independent of the
+    consequential ledger. The success path must clear turn_made_progress/
+    no_progress_tools too, or the next gate re-floors via THIS path instead."""
+    token = tol.bind()
+    try:
+        delegator = _FakeDelegator(A2AResult(status="ok", content="Done via researcher."))
+        s = PipelineState(
+            trace_id="t", session_id="s", input_text="research this for me",
+            channel="cli", owl_name="secretary", pipeline_step="deliver",
+            query_embedding=(0.1, 0.2, 0.3),
+            turn_made_progress=False,
+            no_progress_tools=("web_research",),
+            responses=(ResponseChunk(content="draft", is_final=False, chunk_index=0,
+                                      trace_id="t", owl_name="secretary"),),
+        )
+        after_handoff = await surface_persistence_handoff(
+            s, _services(store=_FakeStore(["web_research"]), delegator=delegator)
+        )
+        assert "Done via researcher" in "".join(c.content for c in after_handoff.responses)
+
+        after_next_gate = await surface_consequential_giveup_floor(after_handoff)
+
+        delivered = "".join(c.content for c in after_next_gate.responses)
+        assert "Done via researcher" in delivered
+        assert not any(c.is_floor for c in after_next_gate.responses)
     finally:
         tol.reset(token)
