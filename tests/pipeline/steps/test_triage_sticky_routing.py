@@ -227,6 +227,21 @@ async def test_clarify_result_never_cached() -> None:
 # ===========================================================================
 
 
+def test_evict_removes_cached_entry() -> None:
+    cache = StickyRouteCache()
+    cache.set("sess-evict", "research_owl", "conversational")
+    assert cache.get("sess-evict") == ("research_owl", "conversational")
+
+    cache.evict("sess-evict")
+
+    assert cache.get("sess-evict") is None
+
+
+def test_evict_on_missing_session_is_a_no_op() -> None:
+    cache = StickyRouteCache()
+    cache.evict("no-such-session")  # must not raise
+
+
 @pytest.mark.asyncio
 async def test_direct_address_never_writes_or_reads_cache() -> None:
     owl_registry = _make_registry(["research_owl"])

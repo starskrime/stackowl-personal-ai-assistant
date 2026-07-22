@@ -88,6 +88,24 @@ class StickyRouteCache:
         )
         return owl_name, intent_class
 
+    def evict(self, session_id: str) -> None:
+        """Drop ``session_id``'s cached entry, if any.
+
+        Called when a turn floors: the cached "conversational" routing just
+        produced a turn with no tools and nothing to back up what it said, so
+        the NEXT short message must not inherit that same routing — it needs
+        a real :class:`~stackowl.owls.router.SecretaryRouter` call instead.
+        """
+        log.engine.debug(
+            "[sticky_route_cache] evict: entry",
+            extra={"_fields": {"session_id": session_id}},
+        )
+        removed = self._entries.pop(session_id, None) is not None
+        log.engine.debug(
+            "[sticky_route_cache] evict: exit",
+            extra={"_fields": {"session_id": session_id, "removed": removed}},
+        )
+
     def set(self, session_id: str, owl_name: str, intent_class: str) -> None:
         """Write/overwrite ``session_id``'s entry with the current monotonic time."""
         log.engine.debug(

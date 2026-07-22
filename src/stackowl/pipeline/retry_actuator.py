@@ -197,7 +197,16 @@ class RetryActuator:
         # same as an explicit floor chunk: the turn was cut off mid-thought, not
         # genuinely completed, even when the partial text never got an is_floor chunk
         # (execute.py's default-backstop budget-breach branch omits it).
-        floored = any(c.is_floor for c in final_state.responses) or final_state.budget_capped
+        # overclaim_blocked mirrors run_corrective's own floor check above — an
+        # overclaim-gated draft already carries is_floor on its replacement chunk
+        # in the normal case, but checking the flag directly (not just the chunk)
+        # keeps this in lockstep with run_corrective instead of two gates silently
+        # drifting apart on what "floored" means for a re-run turn.
+        floored = (
+            any(c.is_floor for c in final_state.responses)
+            or final_state.budget_capped
+            or final_state.overclaim_blocked
+        )
         if floored:
             newly_failed = self._pick_newly_failed(row, final_state)
             outcome = await self._handle_failure(

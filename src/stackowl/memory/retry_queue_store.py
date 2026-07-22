@@ -213,6 +213,69 @@ class RetryQueueStore(OwnedRepository):
         )
         return retry_id
 
+    async def supersede(
+        self,
+        retry_id: str,
+        *,
+        trace_id: str,
+        goal: str,
+        banned_capabilities: list[str],
+    ) -> None:
+        """Repoint an existing PENDING row at a newer floored turn.
+
+        Used when a session already has a pending retry and a SECOND turn
+        floors before the first fires (``turn_persist.py``'s one-pending-per-
+        session dedup — see its 2026-07-16 incident comment): rather than
+        silently dropping the newer ask, this keeps the one-row-per-session
+        invariant that fix relies on while still tracking the user's LATEST
+        request. Resets ``attempt_count``/``banned_capabilities``/``last_error``
+        (this is effectively a fresh ask, not another failure of the old one)
+        and re-arms ``next_retry_at`` to due-now, mirroring :meth:`insert_pending`.
+        Scoped to ``status = 'pending'`` — a row that already resolved must not
+        be repointed.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "retry_queue_store.supersede: entry",
+            extra={"_fields": {
+                "retry_id": retry_id, "trace_id": trace_id, "n_banned": len(banned_capabilities),
+            }},
+        )
+        now = _now_iso()
+        truncated_goal = goal[:_GOAL_MAX_LEN]
+        try:
+            # 3. STEP
+            affected = await self._db.execute_returning_rowcount(
+                """UPDATE retry_queue
+                   SET trace_id = ?, goal = ?, banned_capabilities = ?, attempt_count = 0,
+                       status = 'pending', next_retry_at = ?, last_error = NULL, updated_at = ?
+                   WHERE id = ? AND owner_id = ? AND status = 'pending'""",
+                (
+                    trace_id, truncated_goal,
+                    json.dumps(banned_capabilities, separators=(",", ":")),
+                    now, now, retry_id, self._owner_id,
+                ),
+            )
+        except Exception as exc:
+            log.memory.error(
+                "retry_queue_store.supersede: update failed",
+                exc_info=exc,
+                extra={"_fields": {"retry_id": retry_id, "trace_id": trace_id}},
+            )
+            raise
+        # 2. DECISION + 4. EXIT
+        if affected == 0:
+            log.memory.warning(
+                "retry_queue_store.supersede: no matching pending row — wrong id, "
+                "wrong owner, or row already advanced",
+                extra={"_fields": {"retry_id": retry_id}},
+            )
+            return
+        log.memory.info(
+            "retry_queue_store.supersede: exit",
+            extra={"_fields": {"retry_id": retry_id, "trace_id": trace_id}},
+        )
+
     async def backfill_channel_message(
         self, *, trace_id: str, channel_chat_id: int, channel_message_id: int,
     ) -> None:

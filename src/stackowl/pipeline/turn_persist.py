@@ -90,6 +90,17 @@ async def persist_turn(state: PipelineState) -> None:
     # assistant prose as a promotable fact (LM-3) — see _turn_floored.
     floored = _turn_floored(state)
     if floored:
+        # A floored turn just proved the session's sticky-routed "conversational"
+        # classification (triage.py FR-9) was wrong for this thread — the turn had
+        # no tools wired and nothing to back up what it said. Evict so the NEXT
+        # short message gets a real SecretaryRouter call instead of inheriting the
+        # same tool-free routing and floor-again cycle (live incident 2026-07-21:
+        # a "check on Brain" thread stayed sticky-conversational across a floor AND
+        # its own retry replay, which then had no tools either).
+        sticky_cache = getattr(services, "sticky_route_cache", None)
+        if sticky_cache is not None:
+            sticky_cache.evict(state.session_id)
+
         retry_store = getattr(services, "retry_queue_store", None)
         # retry_replay=True means THIS turn is already RetryActuator's own replay
         # of an existing retry_queue row — its floor is tracked by that row's own
@@ -99,25 +110,35 @@ async def persist_turn(state: PipelineState) -> None:
         # floor too, defeating the cap and compounding into an unbounded loop.
         if retry_store is not None and not state.retry_replay:
             try:
+                banned = _attempts_for_state(state)
                 # Dedup against an already-pending row for this session (live
                 # incident 2026-07-16): insert_pending() has no dedup, so every
                 # floored turn tonight minted its OWN independent row — each one
                 # later fires on its own via the 1-minute sweep, unprompted and
                 # disconnected from whatever the user is discussing by then,
                 # reading as the agent contradicting/forgetting itself. One
-                # in-flight retry per session is enough; a second floor while one
-                # is already pending piles onto the confusion instead of helping.
+                # in-flight retry per session is enough — but a second floor
+                # while one is already pending must not silently DROP the
+                # user's newer ask either (live incident 2026-07-21: it was,
+                # and nothing ever retried it). Repoint the existing row at
+                # THIS turn's trace_id/goal instead — still one row per
+                # session, now tracking the freshest ask.
                 existing = await retry_store.get_latest_pending_for_session(state.session_id)
                 if existing is not None:
                     log.scheduler.info(
                         "[pipeline] persist_turn: retry already pending for session — "
-                        "skipping duplicate row",
+                        "superseding with this turn's goal",
                         extra={"_fields": {
                             "trace_id": state.trace_id, "existing_retry_id": existing.id,
                         }},
                     )
+                    await retry_store.supersede(
+                        existing.id,
+                        trace_id=state.trace_id,
+                        goal=state.input_text,
+                        banned_capabilities=list(banned) if banned else [],
+                    )
                 else:
-                    banned = _attempts_for_state(state)
                     await retry_store.insert_pending(
                         trace_id=state.trace_id,
                         session_id=state.session_id,

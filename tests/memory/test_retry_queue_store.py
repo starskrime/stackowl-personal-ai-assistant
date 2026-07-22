@@ -394,3 +394,84 @@ async def test_reschedule_ignores_missing_row(tmp_db: DbPool) -> None:
     store = RetryQueueStore(tmp_db)
     # Must not raise for an id that doesn't exist — logs a warning and returns.
     await store.reschedule("no-such-id", delay_seconds=60, error="x")
+
+
+async def test_supersede_repoints_trace_id_and_goal(tmp_db: DbPool) -> None:
+    """Live incident 2026-07-21: a second floored turn in the same session used
+    to be silently dropped (turn_persist.py's one-pending-per-session dedup).
+    supersede() repoints the SAME row at the newer turn instead — one row per
+    session, tracking the freshest ask."""
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-old", session_id="sess-1", goal="Yes review",
+        banned_capabilities=["cronjob"],
+    )
+
+    await store.supersede(
+        retry_id, trace_id="trace-new", goal="Yes", banned_capabilities=[],
+    )
+
+    row = await store.get_latest_pending_for_session("sess-1")
+    assert row is not None
+    assert row.id == retry_id
+    assert row.trace_id == "trace-new"
+    assert row.goal == "Yes"
+    assert row.banned_capabilities == []
+    assert row.attempt_count == 0
+    assert row.status == "pending"
+
+
+async def test_supersede_resets_attempt_count_and_last_error(tmp_db: DbPool) -> None:
+    """A superseded row represents a fresh ask, not another failure of the old
+    one — attempt_count/last_error must not carry over."""
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-old", session_id="sess-1", goal="do the thing",
+        banned_capabilities=[],
+    )
+    await store.mark_attempt_failed(
+        retry_id=retry_id, newly_failed_capability="shell", error="boom",
+    )
+
+    await store.supersede(
+        retry_id, trace_id="trace-new", goal="something else",
+        banned_capabilities=[],
+    )
+
+    row = await store.get_latest_pending_for_session("sess-1")
+    assert row is not None
+    assert row.attempt_count == 0
+    assert row.last_error is None
+
+
+async def test_supersede_ignores_non_pending_row(tmp_db: DbPool) -> None:
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-done", session_id="sess-1", goal="do the thing",
+        banned_capabilities=[],
+    )
+    await store.mark_completed(retry_id)
+
+    # Must not raise, and must not resurrect a completed row as pending.
+    await store.supersede(
+        retry_id, trace_id="trace-new", goal="something else",
+        banned_capabilities=[],
+    )
+
+    assert await store.get_latest_pending_for_session("sess-1") is None
+
+
+async def test_supersede_truncates_goal_to_4000_chars(tmp_db: DbPool) -> None:
+    store = RetryQueueStore(tmp_db)
+    retry_id = await store.insert_pending(
+        trace_id="trace-old", session_id="sess-1", goal="short",
+        banned_capabilities=[],
+    )
+
+    await store.supersede(
+        retry_id, trace_id="trace-new", goal="x" * 9000, banned_capabilities=[],
+    )
+
+    row = await store.get_latest_pending_for_session("sess-1")
+    assert row is not None
+    assert len(row.goal) == 4000

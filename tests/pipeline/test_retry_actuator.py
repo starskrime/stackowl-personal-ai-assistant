@@ -245,6 +245,49 @@ async def test_attempt_retry_survives_channel_registry_error_on_give_up():
 
 
 @pytest.mark.asyncio
+async def test_attempt_retry_overclaim_blocked_is_not_success():
+    """Live incident 2026-07-21: a retry replay's draft can clear the overclaim
+    gate on the response TEXT (no is_floor chunk) while the gate still stamped
+    overclaim_blocked=True on the state — that combination must route through
+    _handle_failure, not be delivered as a genuine success. Mirrors
+    run_corrective's own floor check, which already includes this flag."""
+    row = _row()
+
+    overclaim_blocked_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        overclaim_blocked=True,
+        responses=(
+            ResponseChunk(
+                content="I don't have access to my tools right now...",
+                is_final=False, chunk_index=0,
+                trace_id="trace-new", owl_name="secretary", is_floor=False,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=overclaim_blocked_state)
+
+    adapter = MagicMock()
+    adapter.edit_message = AsyncMock()
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(return_value=adapter)
+
+    retry_store = MagicMock()
+    retry_store.mark_completed = AsyncMock()
+    updated_row = _row(attempt_count=1, status="pending")
+    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    outcome = await actuator.attempt_retry(row)
+
+    assert outcome.status == "pending"
+    retry_store.mark_attempt_failed.assert_awaited_once()
+    retry_store.mark_completed.assert_not_awaited()
+    adapter.edit_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_attempt_retry_reschedules_by_telegram_retry_after_on_flood_control():
     """The bug this pins: a delivery failure used to leave next_retry_at
     unchanged, so the very next 1-minute sweep tick re-hammered an already
