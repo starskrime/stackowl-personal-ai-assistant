@@ -149,7 +149,7 @@ async def safe_complete(
     model: str,
     messages: list[Message],
     *,
-    max_tokens: int,
+    max_tokens: int | None = None,
     timeout_s: float | None,
     logger: logging.Logger,
     call_name: str,
@@ -171,16 +171,20 @@ async def safe_complete(
     confirmed the deployed gateway honors OpenAI's ``response_format``) —
     passed through as-is; providers that don't understand it ignore it
     silently (an unread kwarg), which is why ``disable_thinking`` remains
-    mandatory regardless of whether a schema is supplied.
+    mandatory regardless of whether a schema is supplied. ``max_tokens`` is
+    optional too — ``None`` omits it from the call entirely so the provider
+    falls back to its OWN default (``owls/router.py``'s multi-line
+    owl-name/intent-class/clarify-question reply never pinned an explicit
+    budget; forcing one during migration would risk silently truncating a
+    reply shape none of the other classifiers share).
     """
     logger.debug(
         f"{call_name}.safe_complete: entry",
         extra={"_fields": {"model": model, "max_tokens": max_tokens, "timeout_s": timeout_s}},
     )
-    call_kwargs: dict[str, object] = {
-        "max_tokens": max_tokens,
-        "disable_thinking": disable_thinking,
-    }
+    call_kwargs: dict[str, object] = {"disable_thinking": disable_thinking}
+    if max_tokens is not None:
+        call_kwargs["max_tokens"] = max_tokens
     if response_format is not None:
         call_kwargs["response_format"] = response_format
     if temperature is not None:

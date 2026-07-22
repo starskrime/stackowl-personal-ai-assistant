@@ -10,6 +10,8 @@ entirely from the LLM's second line.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from stackowl.owls.manifest import OwlAgentManifest
@@ -281,6 +283,70 @@ def test_prompt_treats_addressing_a_named_owl_as_standard() -> None:
     assert "delegat" in low
     assert "named owl" in low or "owls above" in low
     assert "greeting" in low  # explicitly covers the greeting-shaped wording case
+
+
+# ---------------------------------------------------------------------------
+# Workstream A, Phase 4 — route() gained a timeout it never had before
+# (classifier_base.py migration). Every other hot-path classifier already
+# bounds its provider call; route() was the one exception despite running
+# every turn. A hung provider must fall back to secretary/standard, not hang
+# the whole turn forever.
+# ---------------------------------------------------------------------------
+
+
+class _HangingRouteProvider(ModelProvider):
+    """Never returns within the router's timeout — proves route() now bounds
+    its provider call instead of awaiting it unboundedly."""
+
+    def __init__(self, hang_seconds: float) -> None:
+        self._hang_seconds = hang_seconds
+
+    @property
+    def name(self) -> str:
+        return "hanging-router-provider"
+
+    @property
+    def protocol(self) -> str:  # type: ignore[override]
+        return "openai"
+
+    async def complete(
+        self, messages: list[Message], model: str, **kwargs: object
+    ) -> CompletionResult:
+        await asyncio.sleep(self._hang_seconds)
+        return CompletionResult(
+            content="secretary\nstandard", input_tokens=1, output_tokens=1,
+            model="hanging-router-provider", provider_name=self.name, duration_ms=0.0,
+        )
+
+    async def stream(  # type: ignore[override]
+        self, messages: list[Message], model: str, **kwargs: object
+    ):
+        await asyncio.sleep(self._hang_seconds)
+        yield "secretary"
+
+
+@pytest.mark.asyncio
+async def test_route_falls_back_to_secretary_on_provider_timeout() -> None:
+    hanging_provider = _HangingRouteProvider(hang_seconds=0.2)
+    providers = ProviderRegistry()
+    providers.register_mock("mock-fast", hanging_provider, tier="fast")
+    registry = _make_registry(["research_owl"])
+    router = SecretaryRouter(
+        provider_registry=providers, owl_registry=registry, timeout_s=0.05,
+    )
+    state = PipelineState(
+        trace_id="trace-timeout",
+        session_id="session-timeout",
+        input_text="do a task",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="triage",
+    )
+
+    res = await router.route(state)
+
+    assert res.owl_name == "secretary"
+    assert res.intent_class == "standard"
 
 
 def test_prompt_attempts_resolution_before_clarify() -> None:

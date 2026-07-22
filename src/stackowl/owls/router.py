@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import resolve_cascade_tier, safe_complete
 from stackowl.providers.base import Message
 
 if TYPE_CHECKING:
@@ -27,6 +28,11 @@ if TYPE_CHECKING:
 _DEFAULT_FALLBACK = "secretary"
 _FAST_TIER = "fast"
 _ROUTING_TEMPERATURE = 0.0
+# Same 10s convention as every other hot-path classifier (schedule_commit,
+# retrieval_intent, intent_classifier, feedback, retry_intent) — router.py
+# was the one hot-path call with NO timeout despite running every turn;
+# added here (Workstream A, Phase 4) rather than left unbounded.
+_ROUTING_TIMEOUT_S = 10.0
 
 _VALID_CLASSES = {"conversational", "standard", "clarify"}
 
@@ -155,9 +161,12 @@ class SecretaryRouter:
         self,
         provider_registry: ProviderRegistry,
         owl_registry: OwlRegistry,
+        *,
+        timeout_s: float = _ROUTING_TIMEOUT_S,
     ) -> None:
         self._provider_registry: ProviderRegistry = provider_registry
         self._owl_registry: OwlRegistry = owl_registry
+        self._timeout_s = timeout_s
         # PARL-6 (F080) — the in-module fuzzy matcher, now actually wired into
         # _parse_choice so a near-miss owl name (a typo'd @mention) is corrected
         # to a known owl instead of silently collapsing to the secretary.
@@ -340,15 +349,16 @@ class SecretaryRouter:
         prompt = self._build_prompt(owl_pairs, state.input_text)
         messages = [Message(role="user", content=prompt)]
 
-        try:
-            provider, model = self._provider_registry.get_with_cascade(_FAST_TIER)
-        except Exception as exc:  # noqa: BLE001 — defensive: never block routing
+        resolved = resolve_cascade_tier(
+            self._provider_registry, _FAST_TIER, logger=log.engine, call_name="router",
+        )
+        if resolved is None:
             log.engine.error(
                 "[router] route: provider cascade failed — falling back to secretary",
-                exc_info=exc,
                 extra={"_fields": {"trace_id": state.trace_id}},
             )
             return RouteResult(_DEFAULT_FALLBACK, "standard")
+        provider, model = resolved
 
         log.engine.debug(
             "[router] route: provider selected",
@@ -356,39 +366,39 @@ class SecretaryRouter:
         )
 
         t0 = time.monotonic()
-        try:
-            result = await provider.complete(
-                messages,
-                model=model,
-                temperature=_ROUTING_TEMPERATURE,
-                # A reasoning-capable provider (e.g. a vLLM/Qwen3-style endpoint)
-                # burns its entire max_tokens budget on <think> chain-of-thought
-                # before ever emitting the owl-name/intent-class verdict this
-                # prompt asks for, so `result.content` comes back empty every
-                # time (root cause of "[router] _parse_intent_class: empty
-                # routing reply") — the same failure mode the other five
-                # interaction/*_classifier.py callers already avoid via this
-                # exact flag (built 2026-07-11, "Wired disable_thinking through
-                # complete() to providers"); the router call was the one
-                # structured/classifier call site that never got wired to it.
-                disable_thinking=True,
-            )
-        except Exception as exc:  # noqa: BLE001 — defensive: never block routing
-            duration_ms = (time.monotonic() - t0) * 1000
+        # disable_thinking=True — a reasoning-capable provider (e.g. a
+        # vLLM/Qwen3-style endpoint) burns its entire max_tokens budget on
+        # <think> chain-of-thought before ever emitting the owl-name/intent-
+        # class verdict this prompt asks for, so `result.content` comes back
+        # empty every time (root cause of "[router] _parse_intent_class: empty
+        # routing reply") — the same failure mode every other classifier in
+        # interaction/*_classifier.py already avoids via this exact flag.
+        # timeout_s — router.py was the one hot-path classifier with NO bound
+        # on the provider call despite running every turn; added in the
+        # classifier_base.py migration (Workstream A, Phase 4).
+        outcome = await safe_complete(
+            provider, model, messages,
+            timeout_s=self._timeout_s,
+            logger=log.engine,
+            call_name="router",
+            temperature=_ROUTING_TEMPERATURE,
+        )
+        duration_ms = (time.monotonic() - t0) * 1000
+        if outcome.result is None:  # safe_complete already logged the failure
             log.engine.error(
-                "[router] route: provider.complete failed — falling back to secretary",
-                exc_info=exc,
+                "[router] route: provider call failed — falling back to secretary",
                 extra={
                     "_fields": {
                         "trace_id": state.trace_id,
                         "provider": provider.name,
                         "latency_ms": duration_ms,
+                        "timed_out": outcome.timed_out,
                     }
                 },
             )
             return RouteResult(_DEFAULT_FALLBACK, "standard")
+        result = outcome.result
 
-        duration_ms = (time.monotonic() - t0) * 1000
         log.engine.debug(
             "[router] route: provider replied",
             extra={
