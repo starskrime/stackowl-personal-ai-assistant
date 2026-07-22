@@ -140,8 +140,10 @@ class OwlResourceGuard:
         1. Concurrency — non-blocking semaphore acquire (raises OwlConcurrencyError).
         2. Timeout — per-item ``asyncio.wait_for`` on ``__anext__()``, covering both
            time-to-first-chunk and inter-chunk stalls (raises OwlTimeoutError).
-        3. Token budget — whitespace-token count vs ``manifest.max_tokens``;
-           when exceeded the stream stops cleanly (no exception bubbled).
+
+        No output-length cutoff (owner decision 2026-07-22) — a stream runs to
+        its natural end; ``manifest.max_tokens`` is tracked only for the exit
+        log's telemetry, not enforced.
 
         TestModeGuard.assert_not_test_mode is invoked before any acquire.
         """
@@ -216,24 +218,12 @@ class OwlResourceGuard:
                     # Normal end-of-stream — not a timeout.
                     return
 
-                # 3b. STEP — token budget check (approximate via whitespace split)
-                chunk_tokens = len(text.split())
-                if token_count + chunk_tokens >= self._manifest.max_tokens:
-                    log.engine.warning(
-                        "[guard] stream: token limit reached — truncating",
-                        extra={
-                            "_fields": {
-                                "owl": self._manifest.name,
-                                "max_tokens": self._manifest.max_tokens,
-                                "approx_tokens": token_count + chunk_tokens,
-                            }
-                        },
-                    )
-                    yield text
-                    token_count += chunk_tokens
-                    return
-
-                token_count += chunk_tokens
+                # 3b. STEP — approximate token count kept for the exit log's
+                # telemetry only (owner decision 2026-07-22: no cutoff here —
+                # letting a stream run to its natural end, not an arbitrary
+                # word count, is deliberate; see execute.py's matching removal
+                # of _CONVERSATIONAL_MAX_TOKENS the same day).
+                token_count += len(text.split())
                 yield text
         finally:
             # 4. EXIT — always release the slot, always log result

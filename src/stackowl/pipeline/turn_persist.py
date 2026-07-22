@@ -104,10 +104,10 @@ async def persist_turn(state: PipelineState) -> None:
         retry_store = getattr(services, "retry_queue_store", None)
         # retry_replay=True means THIS turn is already RetryActuator's own replay
         # of an existing retry_queue row — its floor is tracked by that row's own
-        # attempt_count/_MAX_ATTEMPTS (retry_actuator.py's mark_attempt_failed),
-        # not a fresh row. Without this guard, insert_pending() (no dedup, always
-        # a brand-new attempt_count=0 row due immediately) fires on every replay's
-        # floor too, defeating the cap and compounding into an unbounded loop.
+        # attempt_count (retry_actuator.py's mark_attempt_failed), not a fresh
+        # row. Without this guard, insert_pending() (no dedup, always a
+        # brand-new attempt_count=0 row due immediately) fires on every
+        # replay's floor too, multiplying rows instead of tracking one.
         if retry_store is not None and not state.retry_replay:
             try:
                 banned = _attempts_for_state(state)

@@ -20,15 +20,11 @@ from stackowl.infra.observability import log
 # Floor used only when the model reports nothing (probe failure / no info). NOT a
 # cap — by default the window comes DYNAMICALLY from the model's own reported
 # context length, with no platform-imposed upper bound. Raised 8192 -> 262144
-# (256K) 2026-07-18: the old value was a live incident waiting to happen — any
-# provider whose probe genuinely fails (network blip, an endpoint that doesn't
-# pre-validate max_tokens) fell all the way to 8192, needlessly triggering
-# lean-mode degradation for what is very likely a modern, large-context model
-# (see the NeraAiRaw incident this session: real window 262144, 32x the old
-# fallback). 256K is a reasonable modern-model floor for the genuine probe-
-# failure case, not a substitute for probing.
-DEFAULT_WINDOW_FALLBACK = 262_144
-_CLOUD_DEFAULT = 200_000
+# (256K) 2026-07-18, then -> 1_000_000 2026-07-22 (owner decision): probing
+# genuinely failing should assume a large modern-context model, not a small
+# one — this is a probe-failure floor, never a substitute for the real probe.
+DEFAULT_WINDOW_FALLBACK = 1_000_000
+_CLOUD_DEFAULT = 1_000_000
 
 
 def _ceiling() -> int | None:
@@ -51,7 +47,11 @@ def _ceiling() -> int | None:
                 extra={"_fields": {"value": raw}},
             )
     return None
-_PROBE_TIMEOUT = 4.0
+# Raised 4.0 -> 30.0 on 2026-07-22 (owner decision) — a slow-to-respond probe
+# endpoint shouldn't fall back to the (now-generous) DEFAULT_WINDOW_FALLBACK
+# just because it took a few seconds; this only runs once per (provider, model)
+# and is cached, so a longer timeout costs nothing on the steady path.
+_PROBE_TIMEOUT = 30.0
 
 _WINDOW_CACHE: dict[tuple[str, str], int] = {}
 

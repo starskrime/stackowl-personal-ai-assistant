@@ -32,7 +32,6 @@ from stackowl.objectives.model import ExpectedOutcome
 from stackowl.providers.base import Message
 from stackowl.providers.registry import ProviderRegistry
 
-_DERIVE_MAX_TOKENS = 64
 _DERIVE_TEMPERATURE = 0.0
 
 # The reply grammar: ``ARTIFACT: <dir>`` (a saved-file claim, optional directory) or
@@ -100,9 +99,16 @@ class LlmAcceptanceDeriver:
         messages = [Message(role="user", content=self._build_prompt(intent, draft))]
         try:
             provider, model = self._provider_registry.get_with_cascade(self._tier)
+            # No max_tokens cap (owner decision 2026-07-22, matches the router/
+            # apology call sites) — this call previously had NEITHER a cap NOR
+            # disable_thinking, so a reasoning model could burn its whole (tiny,
+            # capped) budget on invisible reasoning and return empty content,
+            # silently fail-closing acceptance-checking for every such model.
+            # disable_thinking=True fixes the actual bug: a one-line ARTIFACT/
+            # NONE classification needs no chain-of-thought.
             result = await provider.complete(
                 messages, model=model,
-                max_tokens=_DERIVE_MAX_TOKENS, temperature=_DERIVE_TEMPERATURE,
+                temperature=_DERIVE_TEMPERATURE, disable_thinking=True,
             )
         except Exception as exc:  # noqa: BLE001 — fail-closed: no expectation, never raise
             log.engine.debug(

@@ -68,7 +68,6 @@ class ProviderConfig(BaseModel):
     # single-model config is completely unaffected.
     models: tuple[ModelOverride, ...] = ()
     max_retries: int = 3
-    timeout_seconds: float = 30.0
     rate_limit_rpm: int | None = None  # Requests per minute; None = no limit
     # Generous output budget — this is also the ceiling _output_cap() applies
     # against a resolved window (min(window, max_output_tokens)), not only the

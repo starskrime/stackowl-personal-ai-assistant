@@ -3,7 +3,8 @@
 Covers the drift scenarios that are the whole point of the projection contract:
 scheduled owl → exactly one owned row; idempotent re-run (no duplicate); on_demand
 → no row; retired owl → owned row deleted; a hand-made cronjob is NEVER touched;
-edit schedule → row updated in place (not duplicated); quota cap; interval floor.
+edit schedule → row updated in place (not duplicated); no quota cap (removed
+2026-07-22); interval floor.
 """
 
 from __future__ import annotations
@@ -206,15 +207,17 @@ async def test_threshold_trigger_projects_threshold_watch(db: DbPool) -> None:
     assert len(await _owned_rows(db)) == 1
 
 
-async def test_quota_caps_scheduled_projection_at_five(db: DbPool) -> None:
+async def test_no_quota_caps_scheduled_projection(db: DbPool) -> None:
+    """Per-user scheduled-owl quota removed (owner decision 2026-07-22) — every
+    registered scheduled owl projects a standing job, no cap."""
     reg = OwlRegistry()
     for i in range(6):
         reg.register(_scheduled_owl(f"watcher{i}"))
     result = await reconcile_owl_schedules(reg, db)
     rows = await _owned_rows(db)
-    assert len(rows) == 5  # cap enforced defensively at the projection
-    assert result.created == 5
-    assert result.skipped == 1
+    assert len(rows) == 6
+    assert result.created == 6
+    assert result.skipped == 0
 
 
 async def test_report_trigger_projects_the_named_handler(db: DbPool) -> None:

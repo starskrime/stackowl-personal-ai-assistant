@@ -33,7 +33,6 @@ from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -224,19 +223,18 @@ class TestOwlResourceGuard:
         result = await task
         assert result[0] == "start "
 
-    async def test_token_limit_truncates_after_max_tokens(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_max_tokens_no_longer_truncates(self) -> None:
+        """Owner decision 2026-07-22: OwlResourceGuard no longer enforces a
+        client-side word-count cutoff — a stream runs to its natural end
+        regardless of manifest.max_tokens. The field is kept for exit-log
+        telemetry only (see guards.py)."""
         manifest = _make_manifest(max_tokens=1)
         guard = OwlResourceGuard(manifest)
         provider = MockProvider(name="mock", canned_text="alpha beta gamma delta")
-        caplog.set_level("WARNING", logger="stackowl.engine")
         collected = [
             chunk async for chunk in guard.stream(provider, [Message(role="user", content="x")], model="")
         ]
-        # Only the first chunk should be yielded before truncation kicks in.
-        assert collected == ["alpha "]
-        assert any("token limit" in rec.message for rec in caplog.records)
+        assert "".join(collected).strip() == "alpha beta gamma delta"
 
     async def test_timeout_raises_owl_timeout_error(self) -> None:
         manifest = _make_manifest(timeout_seconds=0.01)
@@ -393,7 +391,9 @@ class TestExecuteWithGuard:
         for state in results:
             assert state.errors == () or any("OwlConcurrencyError" in e for e in state.errors)
 
-    async def test_token_limit_truncates_without_state_error(self) -> None:
+    async def test_small_manifest_max_tokens_does_not_truncate_turn(self) -> None:
+        """Owner decision 2026-07-22: a small manifest.max_tokens no longer
+        cuts a turn short — the full stream is delivered."""
         manifest = _make_manifest("tiny", max_tokens=1)
         services = _services_with(
             providers={"tiny": MockProvider("tiny", "alpha beta gamma")},
@@ -404,6 +404,7 @@ class TestExecuteWithGuard:
             new_state = await execute_run(_base_state("tiny"))
         finally:
             reset_services(token)
-        # Truncation must not produce an error — collected chunks remain in state.
         assert new_state.errors == ()
         assert len(new_state.responses) >= 1
+        delivered = "".join(c.content for c in new_state.responses)
+        assert "gamma" in delivered

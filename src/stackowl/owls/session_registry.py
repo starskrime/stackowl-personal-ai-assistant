@@ -16,12 +16,12 @@ writes each turn back to the bridge under that id. The handle therefore carries
 ONLY identity + activity — no ``history`` (a duplicated handle-history would be
 dead, silently overwritten by classify's bridge read).
 
-Self-healing: every method is bounded and structured — a duplicate label or the
-``MAX_LIVE_SESSIONS`` cap raises a typed :class:`SessionRegistryError` the tool
-surfaces as a structured refusal (never a fake-success); the TTL sweep reaps idle
-sessions so a dead handle is never a stuck one; draining on clear/reap prevents a
-mailbox leak. Clock-injected (ARCH-99) so the idle-TTL is deterministically
-testable by advancing a fake clock.
+Self-healing: every method is bounded and structured — a duplicate label raises
+a typed :class:`SessionRegistryError` the tool surfaces as a structured refusal
+(never a fake-success); the TTL sweep reaps idle sessions so a dead handle is
+never a stuck one; draining on clear/reap prevents a mailbox leak. Clock-injected
+(ARCH-99) so the idle-TTL is deterministically testable by advancing a fake
+clock. No live-session count cap (owner decision 2026-07-22).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from stackowl.exceptions import StackOwlError
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.messaging.a2a import A2AQueue
-from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS, SESSION_IDLE_TTL_SECONDS
+from stackowl.owls.delegation_limits import SESSION_IDLE_TTL_SECONDS
 
 
 class SessionRegistryError(StackOwlError):
@@ -73,35 +73,37 @@ class SessionHandle(BaseModel):
 
 
 class SessionRegistry:
-    """Holds named owl sessions; bounds count + idle lifetime; drains on reap."""
+    """Holds named owl sessions; bounds idle lifetime; drains on reap.
+
+    No live-session COUNT cap (owner decision 2026-07-22 — see spawn())."""
 
     def __init__(
         self,
         *,
         a2a_queue: A2AQueue | None = None,
         clock: Clock | None = None,
-        max_sessions: int = MAX_LIVE_SESSIONS,
         idle_ttl_seconds: float = SESSION_IDLE_TTL_SECONDS,
     ) -> None:
         self._sessions: dict[str, SessionHandle] = {}
         self._a2a_queue = a2a_queue
         self._clock: Clock = clock or WallClock()
-        self._max_sessions = max_sessions
         self._idle_ttl = idle_ttl_seconds
         self._lock = Lock()
         log.engine.debug(
             "[sessions] __init__: entry",
-            extra={"_fields": {"max_sessions": max_sessions, "idle_ttl_s": idle_ttl_seconds,
+            extra={"_fields": {"idle_ttl_s": idle_ttl_seconds,
                                "has_queue": a2a_queue is not None}},
         )
 
     # --------------------------------------------------------------- spawn
     def spawn(self, label: str, owl_name: str) -> SessionHandle:
-        """Register a new named session; refuse a duplicate label or past the cap.
+        """Register a new named session; refuse a duplicate label.
 
         Raises :class:`SessionRegistryError` (structured, caught by the tool) on a
-        duplicate label or once ``MAX_LIVE_SESSIONS`` live sessions exist — the
-        caller MUST learn it collided / saturated rather than silently reuse.
+        duplicate label — the caller MUST learn it collided rather than silently
+        reuse. No live-session COUNT cap (owner decision 2026-07-22 — was a guess
+        at normal usage, not a measured pathology); ``SESSION_IDLE_TTL_SECONDS``
+        still reaps abandoned sessions so growth isn't unbounded over time.
         """
         # 1. ENTRY
         log.engine.debug(
@@ -119,17 +121,6 @@ class SessionRegistry:
                     "duplicate_label",
                     f"a session labelled {label!r} already exists; choose another label "
                     "or clear the existing one first.",
-                )
-            if len(self._sessions) >= self._max_sessions:
-                log.engine.warning(
-                    "[sessions] spawn: capacity reached — refusing",
-                    extra={"_fields": {"label": label, "live": len(self._sessions),
-                                       "cap": self._max_sessions}},
-                )
-                raise SessionRegistryError(
-                    "too_many_sessions",
-                    f"too many live sessions ({len(self._sessions)} >= {self._max_sessions}); "
-                    "clear an idle session before spawning a new one.",
                 )
             now = self._clock.monotonic()
             handle = SessionHandle(

@@ -20,7 +20,9 @@ if TYPE_CHECKING:  # pragma: no cover
 
 _RAISE = "Raise"
 _STOP = "Stop"
-_WAIT_TIMEOUT_S = 120.0
+# Raised 120.0 -> 600.0 on 2026-07-22 (owner decision): a human needs real time
+# to see and respond to a Raise/Stop prompt, not just two minutes.
+_WAIT_TIMEOUT_S = 600.0
 
 
 def resolve_clarify_wait_timeout(channel: str, settings: Any) -> float:
@@ -28,9 +30,9 @@ def resolve_clarify_wait_timeout(channel: str, settings: Any) -> float:
 
     Accepts EITHER a :class:`ClarifySettings` directly OR a root ``Settings``
     object (whose ``.clarify`` is unwrapped). A ``per_channel`` override for
-    ``channel`` wins, else the global ``wait_timeout_s`` (default 120s). Pure and
+    ``channel`` wins, else the global ``wait_timeout_s`` (default 600s). Pure and
     fail-safe — a missing/odd settings object or a non-positive configured value
-    falls back to the 120s default and NEVER raises (a broken config must not
+    falls back to the 600s default and NEVER raises (a broken config must not
     auto-Stop the user; it degrades to the safe documented default).
     """
     try:

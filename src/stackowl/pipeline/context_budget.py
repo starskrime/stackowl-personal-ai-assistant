@@ -10,13 +10,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-PROMPT_SAFETY_FRACTION = 0.9
-RESPONSE_RESERVE_TOKENS = 2048
 # Default max tools presented per turn. The effective cap is configurable via
 # OrchestratorSettings.tool_count_cap (threaded through the budget dict as
-# "max_tools"); this is the byte-identical fallback when none is supplied. Lower
-# it for weak/quantized models that derail when offered too many tools.
-HARD_TOOL_COUNT_CAP = 40
+# "max_tools"); this is the byte-identical fallback when none is supplied.
+# Raised 2026-07-22 (owner decision): the registered toolset (~60-78 tools) was
+# already exceeding the old cap of 40, silently trimming real tools every turn
+# — this is a backstop against a pathological catalog, not a shaping lever, so
+# it should sit comfortably above any real toolset, not below it.
+HARD_TOOL_COUNT_CAP = 150
 
 
 def resolve_tool_count_cap(configured: int | None) -> int:
@@ -30,9 +31,14 @@ def resolve_tool_count_cap(configured: int | None) -> int:
 
 
 def tool_budget_tokens(*, window: int, fixed_cost_tokens: int) -> int:
-    """Tokens available for tool schemas this turn (may be <= 0 → base only)."""
-    usable = int(window * PROMPT_SAFETY_FRACTION)
-    return usable - RESPONSE_RESERVE_TOKENS - fixed_cost_tokens
+    """Tokens available for tool schemas this turn (may be <= 0 → base only).
+
+    No artificial safety-fraction/response-reserve shrinkage (owner decision
+    2026-07-22) — the full window minus the turn's real fixed cost, not a
+    pre-emptive smaller number. ``fit_items`` below already tolerates a
+    negative budget (discretionary tools simply get none; the guaranteed set
+    is never dropped), so this isn't a crash risk, just no longer padded."""
+    return window - fixed_cost_tokens
 
 
 def fit_items[T](

@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.owls.owl_schedule_guards import (
-    MAX_SCHEDULED_OWLS,
     OWL_LIFECYCLE_SOURCE,
     interval_floor_error,
 )
@@ -176,13 +175,6 @@ async def reconcile_owl_schedules(
             log.scheduler.warning(
                 "[owls] reconcile: refusing sub-floor schedule — not projected",
                 extra={"_fields": {"owl": owl.name, "schedule": schedule, "reason": floor_err}},
-            )
-            result = _bump(result, skipped=1)
-            continue
-        if len(desired_names) >= MAX_SCHEDULED_OWLS and owl.name not in owned:
-            log.scheduler.warning(
-                "[owls] reconcile: scheduled-owl quota reached — new owl not projected",
-                extra={"_fields": {"owl": owl.name, "cap": MAX_SCHEDULED_OWLS}},
             )
             result = _bump(result, skipped=1)
             continue

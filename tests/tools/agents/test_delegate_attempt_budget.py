@@ -1,34 +1,38 @@
-"""CONC-6 (F158) — the delegation attempt-budget counter must not be wiped for
+"""CONC-6 (F158) — the delegation attempt-budget COUNTER must not be wiped for
 LIVE in-flight turns.
 
 Before the fix ``_charge_attempt`` did ``self._attempts.clear()`` once the dict
-crossed 256 entries — nuking EVERY trace's counter, including active turns, so a
-fork-bomb rail (MAX_DELEGATION_ATTEMPTS_PER_TURN) silently reset mid-turn.
+crossed 256 entries — nuking EVERY trace's counter, including active turns.
+Owner decision 2026-07-22 removed the enforcement cap this counter used to feed
+(MAX_DELEGATION_ATTEMPTS_PER_TURN) — ``_charge_attempt`` always returns True
+now — but the counter itself is kept for observability, so the underlying
+monotonicity property (never silently reset under a live turn) is still real
+and still worth guarding.
 
 The fix evicts a trace's attempt counter on turn completion (when its in-flight
 count returns to zero in ``_release``) and, as a bounded safety net, evicts the
 OLDEST IDLE entry — never a live one. The high-traffic test below drives many
 completed traces past the bound while ONE trace stays live, and asserts the live
-trace's rail stays monotonic (its budget is never reset under it).
+trace's counter stays monotonic (never reset under it).
 """
 
 from __future__ import annotations
 
 import threading
 
-from stackowl.owls.delegation_limits import MAX_DELEGATION_ATTEMPTS_PER_TURN
 from stackowl.tools.agents.delegate_task import DelegateTaskTool
 
 
-def test_live_trace_budget_not_reset_by_high_traffic() -> None:
+def test_live_trace_counter_not_reset_by_high_traffic() -> None:
     tool = DelegateTaskTool()
 
     live = "live-trace"
     # The live turn is in-flight (acquired a width slot) and has charged some
-    # attempts — its rail must keep counting up monotonically.
+    # attempts — its counter must keep counting up monotonically.
     assert tool._try_acquire(live) is True
     for _ in range(3):
         assert tool._charge_attempt(live) is True
+    assert tool._attempts[live] == 3
 
     # Churn a large number of OTHER traces through the full lifecycle
     # (acquire -> charge -> release), far exceeding any internal bound.
@@ -38,16 +42,10 @@ def test_live_trace_budget_not_reset_by_high_traffic() -> None:
         tool._charge_attempt(other)
         tool._release(other)
 
-    # The live trace has charged 3; the next charges must continue from 3, never
-    # restart at 0. So exactly (CAP - 3) more must succeed, then refuse.
-    remaining = MAX_DELEGATION_ATTEMPTS_PER_TURN - 3
-    granted = 0
-    while tool._charge_attempt(live):
-        granted += 1
-        if granted > MAX_DELEGATION_ATTEMPTS_PER_TURN * 2:  # runaway guard
-            break
-    assert granted == remaining, (
-        f"live budget was reset: expected {remaining} more grants, got {granted}"
+    # The live trace's counter must continue from 3, never reset to 0.
+    assert tool._charge_attempt(live) is True
+    assert tool._attempts[live] == 4, (
+        f"live counter was reset: expected 4, got {tool._attempts[live]}"
     )
 
 

@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 import stackowl.providers.model_window as mw
-from stackowl.owls.base_prompt import behavioral_charter, behavioral_charter_lean
+from stackowl.owls.base_prompt import behavioral_charter
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -94,8 +94,13 @@ def _make_provider_registry(context_chars: int | None) -> ProviderRegistry:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_small_window_uses_lean_charter() -> None:
-    """context_chars=8000 → window=2000 (≤ 8192) → assemble picks the lean charter."""
+async def test_small_window_still_uses_full_charter() -> None:
+    """Owner decision 2026-07-22: the charter no longer shrinks for a small
+    window — a small-window model needs the FULL instructions most, not a
+    trimmed version. context_chars=8000 → window=2000 (small), but assemble
+    still picks the full charter. model_window is still resolved/stamped
+    (other consumers — delivery_gate's honest acknowledgement,
+    progress_tracker's adaptive threshold — still need it)."""
     mw._WINDOW_CACHE.clear()
 
     owl_registry = _make_owl_registry()
@@ -110,14 +115,14 @@ async def test_small_window_uses_lean_charter() -> None:
     finally:
         reset_services(token)
 
-    assert result.model_window is not None, "model_window must be stamped"
+    assert result.model_window is not None, "model_window must still be stamped"
     assert result.model_window <= 8192, (
         f"Expected small window ≤ 8192, got {result.model_window}"
     )
     sp = result.system_prompt or ""
-    lean_text = behavioral_charter_lean()
-    assert lean_text in sp, (
-        f"Lean charter not found in system_prompt (window={result.model_window}).\n"
+    full_text = behavioral_charter()
+    assert full_text in sp, (
+        f"Full charter not found in system_prompt (window={result.model_window}).\n"
         f"system_prompt[:300]={sp[:300]!r}"
     )
 

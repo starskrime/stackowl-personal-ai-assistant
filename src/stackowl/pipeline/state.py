@@ -115,8 +115,8 @@ class PipelineState(BaseModel, frozen=True):
     # floored-turn handling from calling retry_queue_store.insert_pending() AGAIN —
     # that call has no dedup, so every floored replay was minting a brand-new
     # attempt_count=0 row instead of feeding back into the row RetryActuator is
-    # already tracking via mark_attempt_failed(), defeating the store's own
-    # _MAX_ATTEMPTS circuit breaker and compounding into an unbounded retry loop.
+    # already tracking via mark_attempt_failed(), losing that row's attempt
+    # history and compounding into duplicate, ever-multiplying retry rows.
     # Default False = every non-replay turn (live user, scheduled job) unchanged.
     retry_replay: bool = False
     # True when this turn IS a delivery-gate corrective re-run (one bounded

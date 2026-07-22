@@ -72,7 +72,9 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
 # the anthropic SDK's own default takes (minutes). Bounded by the SAME residual
 # budget threaded in as wrapup_deadline_s when the caller (execute.py's
 # BudgetGovernor) supplies one; this fallback covers a non-budgeted caller.
-_ROUND_DEADLINE_FALLBACK_S = 120.0
+# Raised 120.0 -> 600.0 on 2026-07-22 to match authz/bounds.py's
+# DEFAULT_TURN_MAX_TIME_S (fixing the same wall-clock-timeout-family inversion).
+_ROUND_DEADLINE_FALLBACK_S = 600.0
 
 
 class AnthropicProvider(ModelProvider):
@@ -323,11 +325,10 @@ class AnthropicProvider(ModelProvider):
                 )
             return directive
 
-        budget = (
-            int(self._config.context_chars * 0.8)
-            if self._config.context_chars
-            else CONTEXT_CHAR_BUDGET
-        )
+        # Full resolved context_chars, no artificial 80% shrink (owner decision
+        # 2026-07-22) — CONTEXT_CHAR_BUDGET only backstops the case where
+        # context_chars is entirely unconfigured, not a normal-path ceiling.
+        budget = self._config.context_chars or CONTEXT_CHAR_BUDGET
 
         guard = LoopGuard()
         # Known tool names (anthropic schema shape: {"name": ...}) — lets the ReAct

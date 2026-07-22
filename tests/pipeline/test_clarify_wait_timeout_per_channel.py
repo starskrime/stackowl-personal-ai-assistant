@@ -13,11 +13,12 @@ from stackowl.config.settings import ClarifySettings
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 
 
-def test_default_is_120s_when_unconfigured() -> None:
+def test_default_is_600s_when_unconfigured() -> None:
+    """Raised 120.0 -> 600.0 on 2026-07-22 (owner decision)."""
     s = ClarifySettings()
-    assert resolve_clarify_wait_timeout("cli", s) == 120.0
-    assert resolve_clarify_wait_timeout("telegram", s) == 120.0
-    assert s.wait_timeout_s == 120.0  # the documented fallback default
+    assert resolve_clarify_wait_timeout("cli", s) == 600.0
+    assert resolve_clarify_wait_timeout("telegram", s) == 600.0
+    assert s.wait_timeout_s == 600.0  # the documented fallback default
 
 
 def test_global_override_applies_to_all_channels() -> None:
@@ -40,5 +41,5 @@ def test_unknown_channel_falls_back_to_global_default() -> None:
 
 
 def test_resolver_is_fail_safe_on_bad_input() -> None:
-    # A None settings or odd channel must never raise — fall back to 120s.
-    assert resolve_clarify_wait_timeout("cli", None) == 120.0
+    # A None settings or odd channel must never raise — fall back to 600s.
+    assert resolve_clarify_wait_timeout("cli", None) == 600.0

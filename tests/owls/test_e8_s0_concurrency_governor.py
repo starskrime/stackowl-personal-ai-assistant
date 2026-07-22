@@ -16,9 +16,11 @@ from stackowl.owls.delegation_limits import (
 
 class TestDelegationLimits:
     def test_constants_have_expected_values(self) -> None:
-        assert MAX_DELEGATION_DEPTH == 2
+        """Depth/width raised 2026-07-22 (owner decision); MAX_INFLIGHT_PIPELINES
+        is the physical host ceiling and is unchanged."""
+        assert MAX_DELEGATION_DEPTH == 6
         assert MAX_INFLIGHT_PIPELINES == 4
-        assert MAX_CONCURRENT_DELEGATIONS == 4
+        assert MAX_CONCURRENT_DELEGATIONS == 12
 
 
 class TestConcurrencyGovernor:

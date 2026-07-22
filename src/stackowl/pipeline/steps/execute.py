@@ -39,7 +39,7 @@ from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
-from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP, RESPONSE_RESERVE_TOKENS
+from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.progress.emitter import get_turn_callback, make_progress_callback
 from stackowl.pipeline.provider_select import (
@@ -120,29 +120,14 @@ _SHORT_DRAFT_CHARS = 150
 _DEGENERATE_REPEAT_THRESHOLD = 20
 _DEGENERATE_REPEAT_MIN_LEN = 3
 
-# Output-token cap for a TOOL_FREE_CLASSES turn (live incident 2026-07-22): a
-# "hi" reply was given the provider's full default budget (min(250000,
-# window-headroom) — see openai_provider.py's _output_cap) and a verbose model
-# used 7951 of it, taking 205s. A conversational/clarify turn is a short reply
-# by definition (classify.py already runs "lean assembly" for these classes);
-# it needs nowhere near the room a real tool-using task does. Generous enough
-# for a genuine multi-paragraph casual reply, nowhere near the runaway case.
-#
-# SAME-DAY REGRESSION (2026-07-22, ~30min after the first fix shipped): an
-# initial 1024-token value broke EVERY conversational turn. NeraAiRaw streams
-# reasoning through its own reasoning_content field (openai_provider.py's
-# stream(), post gateway-fix 2026-07-16) — invisible tokens that still count
-# against max_tokens. This model reasons even for "hi", and 1024 tokens was
-# consumed entirely by reasoning before any visible content was emitted —
-# the stream ended with zero content chars every time, floored as a critical
-# failure ("owl timeout"), so the platform did nothing but apologize.
-# _CONVERSATIONAL_MAX_TOKENS must leave room for BOTH the reasoning phase AND
-# the actual answer, not just the answer — 4096 matches OwlAgentManifest's own
-# established default per-turn ceiling (owls/manifest.py), still 61x smaller
-# than the original 250000-token runaway case. Paired with a disable_thinking
-# hint (below) so a well-behaved turn skips reasoning entirely rather than
-# needing headroom for it.
-_CONVERSATIONAL_MAX_TOKENS = 4096
+# A fixed conversational output-token cap was tried and reverted twice on
+# 2026-07-22: too generous (250000 default) produced a 205s/$0.14 "hi"; too
+# tight (1024) starved a reasoning model of room to think and produced zero
+# visible content on every turn. Deliberately no cap here now — the provider's
+# own window-derived _output_cap() (openai_provider.py) is the only ceiling,
+# by owner decision to let system-prompt/skill quality govern answer shape
+# rather than a hardcoded number. disable_thinking below still applies (an
+# efficiency toggle, not a cutoff — skips unneeded reasoning on a trivial turn).
 
 
 def build_persistence_check(
@@ -1129,7 +1114,6 @@ async def _run_with_tools(
             "intent_class": state.intent_class,
             "tools_used": True,
             "model_window": _window,
-            "response_reserve": RESPONSE_RESERVE_TOKENS,
             "system_prompt_tokens": _est_tokens(state.system_prompt),
             "history_tokens": sum(_est_tokens(getattr(m, "content", "")) for m in state.history),
             "tools_count": len(tool_schemas),
@@ -1897,8 +1881,6 @@ async def _run_with_tools(
         _extra: dict[str, Any] = {}
         if persistence_check is not None:
             _extra["persistence_check"] = persistence_check
-        if state.intent_class in TOOL_FREE_CLASSES:
-            _extra["max_tokens"] = _CONVERSATIONAL_MAX_TOKENS
         # Budget gate first (it may Raise to stop the loop), then steering fold,
         # then progress LAST (observe-only — must run after the short-circuiting
         # callbacks so a budget Raise pre-empts a pointless progress emit).
@@ -2324,18 +2306,13 @@ def _open_stream(
     """Return a guarded stream — every plain-stream call goes through
     OwlResourceGuard, even with no owl manifest.
 
-    ``max_tokens`` (live incident 2026-07-22): explicit provider-call override
-    for a turn the caller already knows is small (conversational/clarify) —
-    threaded through to ``provider.stream()``'s own ``max_tokens`` kwarg.
-    ``None`` (default) preserves today's behavior: the provider picks its own
-    default cap (``_output_cap`` on the OpenAI-compatible provider — up to its
-    generous ``max_output_tokens``). This is a SEPARATE guard from
-    ``OwlResourceGuard``'s own client-side ``manifest.max_tokens`` cutoff below
-    — that one stops CONSUMING chunks once a whitespace-word count is crossed,
-    it does not bound what the provider is told it may GENERATE, so a verbose
-    model can still spend real wall-clock time producing tokens the guard then
-    throws away (live incident: "hi" got a 7951-token/205s answer before
-    anything downstream noticed it was too long).
+    ``max_tokens``: optional explicit provider-call override, threaded through
+    to ``provider.stream()``'s own ``max_tokens`` kwarg. ``None`` (the only
+    value any caller passes as of 2026-07-22, by owner decision) preserves the
+    provider's own default cap (``_output_cap`` on the OpenAI-compatible
+    provider) with no smaller override — no artificial per-turn ceiling below
+    that. ``OwlResourceGuard`` no longer enforces a separate client-side
+    cutoff either (see guards.py).
 
     ``disable_thinking`` (SAME-DAY regression, 2026-07-22): a reasoning model
     can spend its entire ``max_tokens`` budget on invisible reasoning content
@@ -2685,10 +2662,9 @@ async def run(state: PipelineState) -> PipelineState:
 
     manifest = _resolve_manifest(state.owl_name)
     _is_tool_free_turn = state.intent_class in TOOL_FREE_CLASSES
-    _stream_max_tokens = _CONVERSATIONAL_MAX_TOKENS if _is_tool_free_turn else None
     stream_iter = _open_stream(
         provider, manifest, messages, choice.model,
-        _stream_max_tokens, disable_thinking=_is_tool_free_turn,
+        max_tokens=None, disable_thinking=_is_tool_free_turn,
     )
 
     t0 = time.monotonic()

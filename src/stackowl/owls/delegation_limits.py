@@ -15,9 +15,11 @@ truth (ARCH-90 / placement-voting: a single owned module).
 
 from __future__ import annotations
 
-# Secretary → specialist → sub-specialist; deeper recursion is almost never a
-# legitimate shape for a personal assistant. The S1 tool refuses at this depth.
-MAX_DELEGATION_DEPTH = 2
+# Raised 2 -> 6 on 2026-07-22 (owner decision): this was a guess at normal
+# usage, not a measured pathology — a genuinely complex multi-part task
+# shouldn't be structurally blocked. Still finite; _MAX_ANCESTOR_WALK
+# (durable/delegation_link.py) remains the real cycle-protection backstop.
+MAX_DELEGATION_DEPTH = 6
 
 # Total concurrent in-flight pipelines (delegated + parliament) on one host.
 # The shared ConcurrencyGovernor blocks/awaits a slot past this. This is the
@@ -29,7 +31,8 @@ MAX_INFLIGHT_PIPELINES = 4
 
 # Per-turn (per trace_id) fan-out width cap; prevents depth-1 × width-N blow-up.
 # The S1 tool refuses past this; provided here for that enforcement site.
-MAX_CONCURRENT_DELEGATIONS = 4
+# Raised 4 -> 12 on 2026-07-22 (owner decision) — see MAX_DELEGATION_DEPTH.
+MAX_CONCURRENT_DELEGATIONS = 12
 
 # Autonomous (unattended — no human watching each level, e.g. an
 # ObjectiveDriverHandler-driven epic subgoal) delegation caps. A background
@@ -39,8 +42,9 @@ MAX_CONCURRENT_DELEGATIONS = 4
 # ConcurrencyGovernor host ceiling above — these only widen the TREE SHAPE,
 # never the physical concurrency cap, so raising them is safe even on small
 # hardware.
-MAX_DELEGATION_DEPTH_AUTONOMOUS = 4
-MAX_CONCURRENT_DELEGATIONS_AUTONOMOUS = 8
+# Raised 2026-07-22 (owner decision) — see MAX_DELEGATION_DEPTH above.
+MAX_DELEGATION_DEPTH_AUTONOMOUS = 10
+MAX_CONCURRENT_DELEGATIONS_AUTONOMOUS = 20
 
 
 def depth_cap(delegation_profile: str) -> int:
@@ -62,20 +66,14 @@ def width_cap(delegation_profile: str) -> int:
 # Bounded wait for a governor slot. A delegated child acquires WITH this timeout
 # so that — if every permit is held by parents awaiting their own children
 # (acquire-while-holding) — a child fails fast (structured) and replies, freeing
-# the parent rather than deadlocking forever. Kept below a typical delegation
-# receive timeout so the child surrenders before the parent gives up.
-GOVERNOR_ACQUIRE_TIMEOUT_SECONDS = 45.0
-
-# Cumulative delegate() attempts per turn (per trace), INCLUDING retries + fallbacks.
-# An amplification ceiling ABOVE the structural depth x width x ladder bound — a crafted
-# prompt cannot walk an unbounded delegation tree within a single turn.
-MAX_DELEGATION_ATTEMPTS_PER_TURN = 12
-
-# E8-S3 — hard cap on concurrently-live named owl sessions in the SessionRegistry.
-# A personal assistant rarely needs more than a handful of parallel persistent
-# sub-conversations; past this the `sessions_spawn` tool refuses (structured,
-# never raising) so a runaway caller cannot leak unbounded session handles.
-MAX_LIVE_SESSIONS = 8
+# the parent rather than deadlocking forever.
+# Raised 45.0 -> 1800.0 on 2026-07-22 (owner decision: relax delegation limits).
+# NOT removed outright, unlike most limits in this pass — MAX_INFLIGHT_PIPELINES
+# stays a hard host ceiling, so a child that never gets a slot would otherwise
+# wait forever (a real deadlock, not just a slow turn). 30 minutes is long
+# enough to never fire in normal operation while still being an eventual escape
+# hatch, not an infinite wait.
+GOVERNOR_ACQUIRE_TIMEOUT_SECONDS = 1800.0
 
 # E8-S3 — idle time-to-live for a named session. A session whose `last_active`
 # (monotonic) is older than this is reaped by the SessionRegistry sweep (its A2A

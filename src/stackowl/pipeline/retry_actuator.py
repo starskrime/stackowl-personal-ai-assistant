@@ -34,10 +34,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.channels.registry import ChannelRegistry
     from stackowl.pipeline.backends.base import OrchestratorBackend
 
-_STILL_FAILED_NOTICE = (
-    "Still couldn't complete this after {attempts} tries: {goal}"
-)
-
 # Fixed cadence kept for any delivery failure that ISN'T a Telegram flood-control
 # error (matches the sweep's own 1-minute tick — see retry_sweep.py).
 _DEFAULT_DELIVERY_RETRY_DELAY_SECONDS = 60.0
@@ -170,10 +166,10 @@ class RetryActuator:
             interactive=False,
             defer_delivery=True,
             # This run IS the retry — its own outcome is tracked below via
-            # mark_attempt_failed()/_MAX_ATTEMPTS. Without this flag, a floor on
-            # THIS attempt would make persist_turn mint a SECOND, independent
-            # retry_queue row (attempt_count=0, due immediately), compounding
-            # forever instead of respecting this row's own attempt cap.
+            # mark_attempt_failed(). Without this flag, a floor on THIS
+            # attempt would make persist_turn mint a SECOND, independent
+            # retry_queue row (attempt_count=0, due immediately) instead of
+            # feeding back into this row's own attempt history.
             retry_replay=True,
         )
         try:
@@ -338,25 +334,7 @@ class RetryActuator:
             # "pending" is the conservative, non-data-losing report: worst case
             # is a harmless extra retry, never a silently dropped failure.
             return RetryOutcome(status="pending")
-        if updated.status == "failed":
-            await self._notify_gave_up(updated)
+        # No terminal "failed" status anymore (owner decision 2026-07-22) —
+        # mark_attempt_failed always re-arms, so there is no give-up
+        # notification to send here; updated.status is always "pending".
         return RetryOutcome(status=updated.status)
-
-    async def _notify_gave_up(self, row: RetryQueueRow) -> None:
-        if not row.channel_chat_id:
-            return
-        text = _STILL_FAILED_NOTICE.format(attempts=row.attempt_count, goal=row.goal)
-        try:
-            # channel_registry.get() raises ChannelNotFoundError for an
-            # unregistered channel (channels/registry.py) — must stay inside
-            # this try, notification is best-effort and must never raise into
-            # attempt_retry's "never raise into the scheduler loop" contract.
-            adapter = self._channel_registry.get(row.channel)
-            await cast("_TargetedSender", adapter).send_text(
-                text, chat_id=int(row.channel_chat_id)
-            )
-        except Exception as exc:  # notification best-effort
-            log.telegram.error(
-                "retry_actuator._notify_gave_up: notification send failed",
-                exc_info=exc, extra={"_fields": {"retry_id": row.id}},
-            )

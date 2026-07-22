@@ -1,15 +1,15 @@
 from stackowl.pipeline.context_budget import (
     HARD_TOOL_COUNT_CAP,
-    PROMPT_SAFETY_FRACTION,
-    RESPONSE_RESERVE_TOKENS,
     fit_items,
     tool_budget_tokens,
 )
 
 
-def test_tool_budget_subtracts_reserve_and_fixed_cost():
+def test_tool_budget_is_full_window_minus_fixed_cost():
+    """Owner decision 2026-07-22: no safety-fraction/reserve shrinkage — the
+    full window minus the turn's real fixed cost, not a padded-down number."""
     b = tool_budget_tokens(window=8192, fixed_cost_tokens=1000)
-    assert b == int(8192 * PROMPT_SAFETY_FRACTION) - RESPONSE_RESERVE_TOKENS - 1000
+    assert b == 8192 - 1000
 
 
 def test_fit_keeps_all_guaranteed_even_when_over_budget():

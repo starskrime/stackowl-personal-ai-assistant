@@ -47,7 +47,15 @@ class NetworkRule(BaseModel):
 # Default per-turn safety backstop (applied only when an owl sets NO explicit caps).
 # Guarantees every turn terminates with a reply in bounded time/steps even when a
 # weak model spirals. Generous for happy-path multi-step; bounds the pathology.
-DEFAULT_TURN_MAX_TIME_S: float = 120.0
+#
+# Raised 120.0 -> 600.0 on 2026-07-22 (owner decision): this whole-turn ceiling was
+# TIGHTER than owls/manifest.py's OwlAgentManifest.timeout_seconds (400.0), a
+# SINGLE stream item's stall timeout nested inside this same turn — an inversion
+# that was never caught because the item timeout was widened twice (30->60->400)
+# on live-incident evidence while this outer ceiling was never revisited to match.
+# 600.0 gives real headroom above one 400s item, not just barely exceeding it —
+# a turn can legitimately involve more than one such item.
+DEFAULT_TURN_MAX_TIME_S: float = 600.0
 DEFAULT_TURN_MAX_STEPS: int = 20
 
 # Default backstop for a NON-interactive, DEFERRED-delivery turn (a scheduled

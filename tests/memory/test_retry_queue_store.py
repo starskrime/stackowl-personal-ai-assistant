@@ -114,30 +114,22 @@ async def test_mark_attempt_failed_below_cap_stays_pending_and_appends_capabilit
     assert row.banned_capabilities == ["a", "b"]
 
 
-async def test_mark_attempt_failed_reaches_cap_at_three_attempts(tmp_db: DbPool) -> None:
+async def test_mark_attempt_failed_never_reaches_a_terminal_cap(tmp_db: DbPool) -> None:
+    """No attempt cap (owner decision 2026-07-22) — a row keeps re-arming as
+    ``pending`` no matter how many times it fails, never abandoned as
+    "failed"."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
         trace_id="trace-5", session_id="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
-    row = await store.mark_attempt_failed(
-        retry_id=retry_id, newly_failed_capability="a", error="boom-1",
-    )
-    assert row.status == "pending"
-    assert row.attempt_count == 1
-
-    row = await store.mark_attempt_failed(
-        retry_id=retry_id, newly_failed_capability="b", error="boom-2",
-    )
-    assert row.status == "pending"
-    assert row.attempt_count == 2
-
-    row = await store.mark_attempt_failed(
-        retry_id=retry_id, newly_failed_capability="c", error="boom-3",
-    )
-    assert row.status == "failed"
-    assert row.attempt_count == 3
+    for i, cap in enumerate(("a", "b", "c", "d", "e"), start=1):
+        row = await store.mark_attempt_failed(
+            retry_id=retry_id, newly_failed_capability=cap, error=f"boom-{i}",
+        )
+        assert row.status == "pending"
+        assert row.attempt_count == i
 
 
 async def test_mark_attempt_failed_next_retry_at_grows_with_attempt_count(
@@ -265,18 +257,20 @@ async def test_mark_attempt_failed_concurrent_calls_do_not_lose_an_increment(
     assert set(final.banned_capabilities) == {"a", "b"}
 
 
-async def test_mark_attempt_failed_on_already_failed_row_raises_value_error(
+async def test_mark_attempt_failed_on_raced_terminal_row_raises_value_error(
     tmp_db: DbPool,
 ) -> None:
+    """A row is never driven to 'failed' by mark_attempt_failed itself anymore
+    (no attempt cap) — but the not-pending guard must still hold for a row a
+    concurrent caller raced into a terminal state some other way."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
         trace_id="trace-9", session_id="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
-    for i in range(3):
-        await store.mark_attempt_failed(
-            retry_id=retry_id, newly_failed_capability=f"cap-{i}", error="boom",
-        )
+    await tmp_db.execute(
+        "UPDATE retry_queue SET status = 'failed' WHERE id = ?", (retry_id,),
+    )
 
     with pytest.raises(ValueError, match="not pending"):
         await store.mark_attempt_failed(

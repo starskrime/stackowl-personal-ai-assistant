@@ -39,11 +39,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.cost_pause import gate_or_continue
-from stackowl.owls.delegation_limits import (
-    MAX_DELEGATION_ATTEMPTS_PER_TURN,
-    depth_cap,
-    width_cap,
-)
+from stackowl.owls.delegation_limits import depth_cap, width_cap
 from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
 from stackowl.pipeline.durable.context import get_active
 from stackowl.pipeline.durable.delegation_link import derive_child_task_id
@@ -278,10 +274,9 @@ class DelegateTaskTool(Tool):
         the width cap, guarded by a lock because concurrent ``delegate_task`` calls
         in the same turn (fan-out) mutate it from different tasks.
 
-        ``_attempts`` is a cumulative per-``trace_id`` counter for the global
-        per-turn attempt budget (``MAX_DELEGATION_ATTEMPTS_PER_TURN``). It bounds
-        all delegate() calls (initial + retries + fallbacks) within one turn so a
-        crafted prompt cannot walk an unbounded delegation tree.
+        ``_attempts`` is a cumulative per-``trace_id`` counter of delegate() calls
+        (initial + retries + fallbacks) within one turn — telemetry only (owner
+        decision 2026-07-22: no per-turn attempt-count ceiling).
 
         Lifecycle (F158): a trace's attempt counter is evicted on TURN COMPLETION
         — when its in-flight count returns to zero in ``_release`` — so the dict
@@ -555,13 +550,7 @@ class DelegateTaskTool(Tool):
                     extra={"_fields": {"trace_id": trace_id, "to_owl": to_owl}},
                 )
                 return cached
-            if not self._charge_attempt(trace_id):
-                log.tool.warning(
-                    "delegate_task._run_delegation: attempt budget exhausted — short-circuit",
-                    extra={"_fields": {"trace_id": trace_id, "cap": MAX_DELEGATION_ATTEMPTS_PER_TURN}},
-                )
-                from stackowl.owls.a2a_delegation import A2AResult  # local import avoids circular dep
-                return A2AResult(status="refused", resolved_owl=to_owl)
+            self._charge_attempt(trace_id)
             try:
                 res: _A2AResult = await delegator.delegate(  # type: ignore[attr-defined]
                     from_owl=caller, to_owl=to_owl, sub_task=sub_task, parent_state=parent_state,
@@ -994,7 +983,9 @@ class DelegateTaskTool(Tool):
                 self._active[trace_id] = current - 1
 
     def _charge_attempt(self, trace_id: str) -> bool:
-        """Increment the per-trace cumulative attempt counter; return False past budget.
+        """Increment the per-trace cumulative attempt counter. Always returns True
+        (owner decision 2026-07-22: no per-turn attempt-count ceiling — the
+        counter is kept only for observability/telemetry, not enforcement).
 
         Mirrors ``_try_acquire`` structure (same lock, same pattern). The dict is
         bounded by the natural evict-on-release lifecycle; this method only adds a
@@ -1006,8 +997,6 @@ class DelegateTaskTool(Tool):
             if len(self._attempts) >= self._ATTEMPTS_MAX_ENTRIES:
                 self._evict_oldest_idle_locked()
             current = self._attempts.get(trace_id, 0)
-            if current >= MAX_DELEGATION_ATTEMPTS_PER_TURN:
-                return False
             self._attempts[trace_id] = current + 1
             return True
 

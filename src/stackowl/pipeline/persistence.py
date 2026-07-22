@@ -78,10 +78,13 @@ PERSISTENCE_DIRECTIVE = (
     "Continue now and complete the task."
 )
 
-# Truncation budgets — keep the judge prompt compact (mirrors critic's 2000-char caps).
-_REQUEST_CAP = 2000
-_DRAFT_CAP = 2000
-_TOOLS_CAP = 40
+# No truncation of the judge PROMPT itself (owner decision 2026-07-22) — a
+# capped user_request/draft_answer/tool_list risked the judge ruling a genuine
+# delivery a "give-up" purely because the evidence proving delivery had been
+# cut off past 2000/2000/40. The judge sees the full request, draft, and tool
+# list. _TOOLS_LOG_CAP below is a SEPARATE, purely cosmetic bound on how many
+# tool names land in a log line — it never reaches the judge's own prompt.
+_TOOLS_LOG_CAP = 40
 
 # ── Relevance judge (D3) ─────────────────────────────────────────────────────
 
@@ -290,7 +293,7 @@ def _build_messages(
     strings (see :func:`summarize_tool_outcomes`). A plain ``name`` with no
     ``(failed)`` reads as not-failed, so a bare name list still works gracefully.
     """
-    tool_list = ", ".join(tools_tried[:_TOOLS_CAP]) if tools_tried else "(none)"
+    tool_list = ", ".join(tools_tried) if tools_tried else "(none)"
     system = Message(
         role="system",
         content=(
@@ -361,8 +364,8 @@ def _build_messages(
     user = Message(
         role="user",
         content=(
-            f"USER REQUEST:\n{user_request[:_REQUEST_CAP]}\n\n"
-            f"AGENT DRAFT REPLY:\n{draft_answer[:_DRAFT_CAP]}\n\n"
+            f"USER REQUEST:\n{user_request}\n\n"
+            f"AGENT DRAFT REPLY:\n{draft_answer}\n\n"
             f"TOOLS USED THIS TURN (name and outcome): {tool_list}\n\n"
             "First decide whether this request needs an external action or is "
             "answerable directly (a greeting, an opinion, an acknowledgement, or "
@@ -451,7 +454,7 @@ async def judge_delivery(
         extra={"_fields": {
             "request_len": len(user_request),
             "draft_len": len(draft_answer),
-            "tools_tried": tools_tried[:_TOOLS_CAP],
+            "tools_tried": tools_tried[:_TOOLS_LOG_CAP],
             "has_fallback": fallback_provider is not None,
             "consequential": consequential,
             "model": model,
@@ -474,7 +477,7 @@ async def judge_delivery(
             log.engine.warning(
                 "[persistence] judge_delivery: unvettable on a consequential turn — "
                 "failing toward not-delivered (continue)",
-                extra={"_fields": {"tools_tried": tools_tried[:_TOOLS_CAP]}},
+                extra={"_fields": {"tools_tried": tools_tried[:_TOOLS_LOG_CAP]}},
             )
             return False, JUDGE_CONSEQUENTIAL_FAILSAFE
         log.engine.warning(
@@ -490,7 +493,7 @@ async def judge_delivery(
         extra={"_fields": {
             "delivered": delivered,
             "reason": reason_str[:120],
-            "tools_tried": tools_tried[:_TOOLS_CAP],
+            "tools_tried": tools_tried[:_TOOLS_LOG_CAP],
         }},
     )
     return delivered, reason_str

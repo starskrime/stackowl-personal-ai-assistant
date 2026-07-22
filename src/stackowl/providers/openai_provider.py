@@ -179,17 +179,17 @@ class _ThinkStreamFilter:
 # the openai SDK's own default takes (minutes). Bounded by the SAME residual
 # budget threaded in as wrapup_deadline_s when the caller (execute.py's
 # BudgetGovernor) supplies one; this fallback covers a non-budgeted caller.
-_ROUND_DEADLINE_FALLBACK_S = 120.0
+# Raised 120.0 -> 600.0 on 2026-07-22 to match authz/bounds.py's
+# DEFAULT_TURN_MAX_TIME_S (fixing the same wall-clock-timeout-family inversion).
+_ROUND_DEADLINE_FALLBACK_S = 600.0
 
-# _output_cap()'s input-headroom guard (live incident 2026-07-21): estimate_tokens()
-# is an approximation, not the provider's real tokenizer count, and chat templates
-# add per-message structural overhead the heuristic can't see — reserve extra room
-# rather than cutting headroom exactly at the estimate.
-_INPUT_TOKEN_SAFETY_MARGIN = 2000
-# Never request less than this as an output budget — a smaller cap isn't a usable
-# answer size. Flooring here (with a loud warning) beats requesting a tiny/negative
-# max_tokens the provider would reject anyway.
-_MIN_OUTPUT_TOKENS = 256
+# No artificial safety-margin padding on the input-headroom estimate (owner
+# decision 2026-07-22) — headroom is the raw window-minus-estimated-input, not
+# padded down further. _MIN_OUTPUT_TOKENS is kept, but only as a bare technical
+# floor: max_tokens=0 or negative is a MALFORMED request the provider rejects
+# outright (every turn fails, not a shorter answer), not a "limit" in the sense
+# the rest of this pass removed — this is input validation, not shaping.
+_MIN_OUTPUT_TOKENS = 16
 
 
 def _message_content_text(message: object) -> str:
@@ -555,11 +555,10 @@ class OpenAIProvider(ModelProvider):
                 )
             return directive
 
-        budget = (
-            int(self._config.context_chars * 0.8)
-            if self._config.context_chars
-            else CONTEXT_CHAR_BUDGET
-        )
+        # Full resolved context_chars, no artificial 80% shrink (owner decision
+        # 2026-07-22) — CONTEXT_CHAR_BUDGET only backstops the case where
+        # context_chars is entirely unconfigured, not a normal-path ceiling.
+        budget = self._config.context_chars or CONTEXT_CHAR_BUDGET
 
         guard = LoopGuard()
         # Known tool names — lets the ReAct parser validate/repair a flattened-newline
@@ -1060,10 +1059,11 @@ class OpenAIProvider(ModelProvider):
         bounds output in isolation with no idea how big the prompt actually is.
         Fixed by reserving real headroom for the estimated input size
         (script-aware ``estimate_tokens`` — no hardcoded English, see
-        ``parliament/token_estimate.py``) plus ``_INPUT_TOKEN_SAFETY_MARGIN``.
-        Bounded below by ``_MIN_OUTPUT_TOKENS`` so a huge prompt degrades to the
-        smallest usable answer size rather than a zero/negative token request —
-        logged loudly, since that means the prompt itself may need trimming.
+        ``parliament/token_estimate.py``); no extra padding beyond the estimate
+        (owner decision 2026-07-22). Bounded below by ``_MIN_OUTPUT_TOKENS``
+        (a bare technical floor, not a shaping cap — see its own comment) so a
+        huge prompt degrades to the smallest VALID request rather than a
+        zero/negative token request — logged loudly either way.
 
         Bounded by the RESOLVED model's own max_output_tokens (per-model
         override if ``resolved_model`` matches a ProviderConfig.models entry
@@ -1082,7 +1082,7 @@ class OpenAIProvider(ModelProvider):
             return effective_max_output_tokens
 
         input_tokens = sum(estimate_tokens(_message_content_text(m)) for m in messages)
-        headroom = window - input_tokens - _INPUT_TOKEN_SAFETY_MARGIN
+        headroom = window - input_tokens
         if headroom < _MIN_OUTPUT_TOKENS:
             log.engine.warning(
                 "[openai] _output_cap: prompt leaves little/no headroom for output — "

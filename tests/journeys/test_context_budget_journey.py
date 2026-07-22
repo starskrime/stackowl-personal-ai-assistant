@@ -64,10 +64,13 @@ _LARGE_CONTEXT_CHARS = 320_000
 _EXPECTED_BASE_NAMES = {"read_file", "tool_search"}
 
 # Small-window upper bound on presented count.  The guaranteed base has ~12 tools
-# (always_present=2 + base=10) — a tight budget may only fit those.  We give a
-# generous upper bound of 15 to avoid brittleness from minor future base changes
-# while still proving the catalog (~60 tools) was NOT dumped wholesale.
-_SMALL_WINDOW_MAX = 15
+# (always_present=2 + base=10) — a tight budget may only fit those plus a few
+# more.  Raised from 15 to 25 on 2026-07-22 (owner decision): tool_budget_tokens
+# no longer shrinks the window by a 90% safety fraction + 2048-token reserve
+# before fitting tools, so a small window now legitimately fits a few more —
+# this bound proves the catalog (~76 tools) still was NOT dumped wholesale,
+# not that the exact old-math count is preserved.
+_SMALL_WINDOW_MAX = 25
 
 # ---------------------------------------------------------------------------
 # Minimal "triage/judge" provider — routes to secretary + accepts any answer

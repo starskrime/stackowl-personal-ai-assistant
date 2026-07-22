@@ -161,10 +161,13 @@ async def test_already_floored_noop() -> None:
 
 
 # stripping that guts the answer → floor even though retrieval ran
+# _MIN_SUBSTANCE_WORDCHARS lowered 20 -> 5 on 2026-07-22 (owner decision) — the
+# fixture below is genuinely near-empty after stripping (URLs only, no
+# surrounding words) so it still floors under the new, looser threshold.
 @pytest.mark.asyncio
 async def test_gutted_after_strip_floored() -> None:
     state = _state(
-        responses=(_draft("See https://fake.example/a and https://fake.example/b"),),
+        responses=(_draft("https://fake.example/a https://fake.example/b"),),
         tool_calls=(_web_search_call("https://real.example/c"),),
     )
     result = await surface_grounding_gate(state)

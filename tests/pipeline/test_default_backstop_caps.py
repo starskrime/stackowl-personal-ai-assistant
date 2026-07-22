@@ -43,8 +43,11 @@ from stackowl.tools.registry import ToolRegistry
 
 
 def test_backstop_constants_present_and_sane() -> None:
-    """The two backstop constants must be importable and have the documented values."""
-    assert DEFAULT_TURN_MAX_TIME_S == 120.0
+    """The two backstop constants must be importable and have the documented
+    values. DEFAULT_TURN_MAX_TIME_S raised 120.0 -> 600.0 on 2026-07-22 to fix
+    an inversion — it was tighter than the 400s single-item timeout nested
+    inside the turn it wraps (owls/manifest.py's OwlAgentManifest.timeout_seconds)."""
+    assert DEFAULT_TURN_MAX_TIME_S == 600.0
     assert DEFAULT_TURN_MAX_STEPS == 20
 
     # ResourceCaps() must still default all-None — the backstop lives in execute.py,

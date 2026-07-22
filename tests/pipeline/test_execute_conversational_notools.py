@@ -258,14 +258,12 @@ class _CapturingProvider:
 
 
 @pytest.mark.asyncio
-async def test_conversational_plain_stream_gets_small_max_tokens_cap() -> None:
-    """Live incident 2026-07-22: a 'hi' conversational turn was given the
-    provider's full default output budget (up to 250000 tokens) on the
-    plain-stream path and a verbose model used 7951 of them, taking 205s.
-    The conversational turn must pass a small explicit max_tokens override
-    to provider.stream() instead of relying on the provider's own default."""
-    from stackowl.pipeline.steps.execute import _CONVERSATIONAL_MAX_TOKENS
-
+async def test_conversational_plain_stream_has_no_max_tokens_cap() -> None:
+    """Owner decision 2026-07-22: no hardcoded output-token ceiling on a
+    conversational turn (tried twice the same day — too generous produced a
+    205s/$0.14 'hi', too tight starved a reasoning model and produced zero
+    visible content on every turn; the fix is no cap, not a better-tuned
+    one). disable_thinking still applies — an efficiency toggle, not a cutoff."""
     provider = _CapturingProvider()
     services = StepServices(
         provider_registry=_FakeProviderRegistry(provider),  # type: ignore[arg-type]
@@ -279,7 +277,7 @@ async def test_conversational_plain_stream_gets_small_max_tokens_cap() -> None:
         reset_services(stoken)
 
     assert provider.received_kwargs is not None
-    assert provider.received_kwargs.get("max_tokens") == _CONVERSATIONAL_MAX_TOKENS
+    assert "max_tokens" not in provider.received_kwargs
     assert provider.received_kwargs.get("disable_thinking") is True
 
 

@@ -467,9 +467,9 @@ async def test_complete_does_not_send_fixed_4096_cap(
 
     await provider.complete([Message(role="user", content="hi")], model="")
 
-    # window (32768) minus "hi"'s ~1 estimated token minus the 2000-token
-    # input-headroom safety margin — window-derived, not 4096.
-    assert completions.calls[0]["max_tokens"] == 30767
+    # window (32768) minus "hi"'s ~1 estimated token — no artificial safety
+    # margin (owner decision 2026-07-22) — window-derived, not 4096.
+    assert completions.calls[0]["max_tokens"] == 32767
 
 
 @pytest.mark.asyncio
@@ -518,16 +518,21 @@ async def test_complete_reserves_headroom_for_a_large_prompt(
     max_tokens = completions.calls[0]["max_tokens"]
     # The old behavior (min(window, max_output_tokens) alone) always requested
     # 250000 here — reproducing the live 400. The fix must leave real room.
+    # No artificial safety margin (owner decision 2026-07-22), so the bound is
+    # input + output <= window exactly, not strictly less.
     assert max_tokens < 250000
-    assert 12145 + max_tokens < 262144
+    assert 12145 + max_tokens <= 262144
 
 
 @pytest.mark.asyncio
 async def test_complete_floors_output_when_prompt_leaves_almost_no_room(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A prompt large enough to leave near-zero headroom must floor to the
-    minimum usable output budget, never a zero/negative max_tokens."""
+    """A prompt large enough to leave near-zero (or negative) headroom must
+    floor to the minimum usable output budget, never a zero/negative
+    max_tokens. No artificial safety margin now (owner decision 2026-07-22),
+    so the prompt must genuinely approach/exceed the window itself, not just
+    approach window-minus-old-margin."""
     from stackowl.providers import model_window
 
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
@@ -535,10 +540,10 @@ async def test_complete_floors_output_when_prompt_leaves_almost_no_room(
     completions = _ScriptedCompletions(["an answer"])
     provider = _make_provider(_FakeClient(completions))
 
-    huge_prompt = "x" * (32000 * 4)  # ~32000 tokens — nearly the whole 32768 window
+    huge_prompt = "x" * (32760 * 4)  # ~32760 tokens — leaves <16 headroom in a 32768 window
     await provider.complete([Message(role="user", content=huge_prompt)], model="")
 
-    assert completions.calls[0]["max_tokens"] == 256  # floored, matches _MIN_OUTPUT_TOKENS
+    assert completions.calls[0]["max_tokens"] == 16  # floored, matches _MIN_OUTPUT_TOKENS
 
 
 @pytest.mark.asyncio
@@ -560,9 +565,9 @@ async def test_stream_does_not_send_fixed_max_output_tokens_when_window_resolves
     async for _ in provider.stream([Message(role="user", content="hi")], model=""):
         pass
 
-    # window (32768) minus "hi"'s ~1 estimated token minus the 2000-token
-    # input-headroom safety margin — window-derived, not the flat config value.
-    assert completions.calls[0]["max_tokens"] == 30767
+    # window (32768) minus "hi"'s ~1 estimated token — no artificial safety
+    # margin (owner decision 2026-07-22) — window-derived, not the flat config value.
+    assert completions.calls[0]["max_tokens"] == 32767
 
 
 @pytest.mark.asyncio

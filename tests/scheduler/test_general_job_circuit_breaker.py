@@ -1,14 +1,17 @@
-"""Generalized circuit-breaker — ANY recurring job (not just owl-lifecycle ones).
+"""Generalized recurring-job failure handling — ANY recurring job (not just
+owl-lifecycle ones), no consecutive-failure circuit breaker (owner decision
+2026-07-22).
 
 Live incident (2026-07-12): a user-created ``goal_execution`` cronjob hit the
 SAME ``budget:stop:steps:limit=20.0:actual=20.0`` cap on every occurrence.
-Before this fix, ``_mark_failed``'s circuit-breaker (S11c) only paused a job
-carrying ``params['source'] == 'owl_lifecycle'`` — a plain user cronjob has no
-such marker, so it fell through to the unconditional re-arm+notify path and
-looped/spammed forever. This suite locks in the generalized behavior: ANY
-recurring job pauses after ``MAX_CONSECUTIVE_FAILURES`` consecutive full-cycle
-failures, with exactly ONE alert (not one per cycle), and a success resets the
-counter so an unrelated later failure streak starts clean.
+Before the circuit-breaker fix, ``_mark_failed`` only paused a job carrying
+``params['source'] == 'owl_lifecycle'`` — a plain user cronjob had no such
+marker, so it fell through to the unconditional re-arm+notify path and
+looped/spammed forever. The circuit breaker (S11c) was later removed
+entirely (owner decision 2026-07-22, tool-count is the only limit kept) — a
+recurring job now re-arms forever regardless of how many times it fails, and
+gets an operator alert on EVERY re-arm (not just a one-time pause alert), so
+ongoing trouble is never silent but the job itself is never given up on.
 """
 
 from __future__ import annotations
@@ -60,13 +63,13 @@ async def _reload(db: DbPool, job_id: str) -> Any:
     return row_to_job(rows[0])
 
 
-async def test_non_owl_recurring_job_circuit_breaks_after_threshold_with_one_alert(
+async def test_non_owl_recurring_job_rearms_forever_with_alert_every_time(
     db: DbPool,
 ) -> None:
     """A plain user cronjob (no owl-lifecycle 'source' marker) that structurally
-    cannot succeed (e.g. always hits the same step-budget cap) must be PAUSED
-    after MAX_CONSECUTIVE_FAILURES, not re-armed forever — and must send exactly
-    ONE alert across the whole streak, not one per cycle."""
+    cannot succeed (e.g. always hits the same step-budget cap) must keep
+    RE-ARMING onto its next slot no matter how many times it fails — it is never
+    permanently paused — and must alert on EVERY failure (not just once)."""
     deliverer = _StubDeliverer()
     sched = JobScheduler(db=db, job_deliverer=deliverer)
     job = await sched.create_job(
@@ -76,42 +79,25 @@ async def test_non_owl_recurring_job_circuit_breaks_after_threshold_with_one_ale
     )
     err = "budget:stop:steps:limit=20.0:actual=20.0"
 
-    # Failures 1 and 2 — still under threshold: re-armed, each sends its own
-    # per-re-arm alert (pre-existing F-61 behavior, unchanged for non-owl jobs).
-    await sched._mark_failed(await _reload(db, job.job_id), last_error=err)
-    j1 = await _reload(db, job.job_id)
-    assert j1.status == "pending" and j1.enabled is True
-    assert j1.failure_count == 1
+    for expected_count in (1, 2, 3, 4, 5):
+        await sched._mark_failed(await _reload(db, job.job_id), last_error=err)
+        reloaded = await _reload(db, job.job_id)
+        assert reloaded.status == "pending" and reloaded.enabled is True
+        assert reloaded.failure_count == expected_count
 
-    await sched._mark_failed(await _reload(db, job.job_id), last_error=err)
-    j2 = await _reload(db, job.job_id)
-    assert j2.status == "pending" and j2.enabled is True
-    assert j2.failure_count == 2
-
-    # Failure 3 — CIRCUIT BREAK: paused (failed + disabled), one final alert.
-    await sched._mark_failed(await _reload(db, job.job_id), last_error=err)
-    j3 = await _reload(db, job.job_id)
-    assert j3.status == "failed" and j3.enabled is False
-    assert j3.failure_count == 3
-
-    # A 4th poll tick would never even reach _mark_failed again — the job is no
-    # longer selected by `WHERE status='pending' AND enabled=1`. The alert count
-    # across the whole streak is bounded (3, matching the 3 distinct cycles),
-    # never unbounded/forever, and the LAST alert is the actionable pause message.
-    assert deliverer.calls, "must have alerted at least once"
-    last_message = deliverer.calls[-1]
-    assert "PAUSED" in last_message
-    assert err in last_message
-    assert "/cronjob" in last_message
-    assert job.job_id in last_message
+    # Every single re-arm sent its own alert — never silently swallowed after
+    # some threshold, since there is no longer a threshold.
+    assert len(deliverer.calls) == 5
+    for message in deliverer.calls:
+        assert "is failing repeatedly" in message
+        assert err in message
 
 
-async def test_success_resets_counter_so_unrelated_later_failures_dont_wrongly_pause(
+async def test_success_resets_counter_so_unrelated_later_failures_dont_wrongly_accumulate(
     db: DbPool,
 ) -> None:
     """Fail, succeed, fail again — the intervening success must reset
-    failure_count to 0 so the second failure streak starts clean and does NOT
-    inherit the first streak's count toward the pause threshold."""
+    failure_count to 0 so the second failure streak starts clean."""
     sched = JobScheduler(db=db)
     job = await sched.create_job(
         handler_name="goal_execution",
@@ -123,7 +109,7 @@ async def test_success_resets_counter_so_unrelated_later_failures_dont_wrongly_p
     await sched._mark_failed(await _reload(db, job.job_id), last_error="transient boom")
     assert (await _reload(db, job.job_id)).failure_count == 1
 
-    # A success closes the breaker.
+    # A success resets the counter.
     reloaded = await _reload(db, job.job_id)
     await sched._mark_completed(
         reloaded,
@@ -133,7 +119,8 @@ async def test_success_resets_counter_so_unrelated_later_failures_dont_wrongly_p
     assert (await _reload(db, job.job_id)).failure_count == 0
 
     # A second, unrelated failure must count as failure #1 of a NEW streak, not
-    # failure #2 of the old one — still well under threshold, still enabled.
+    # failure #2 of the old one — still enabled either way, since there is no
+    # pause threshold anymore.
     await sched._mark_failed(await _reload(db, job.job_id), last_error="transient boom again")
     after = await _reload(db, job.job_id)
     assert after.failure_count == 1

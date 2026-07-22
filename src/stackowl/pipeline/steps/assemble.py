@@ -59,14 +59,16 @@ async def run(state: PipelineState) -> PipelineState:
     )
     services = get_services()
 
-    # Model-aware lean charter/DNA: resolve THIS turn's window (shared selection +
-    # Slice-1 resolve_window, memoized) so a small-window/weak model gets the lean
-    # charter + suppressed backfiring DNA. Fail-safe: any error → full prompt.
+    # Model window resolution (shared selection + Slice-1 resolve_window, memoized):
+    # still needed for delivery_gate's honest small-window acknowledgement and
+    # progress_tracker's adaptive no-progress threshold. The charter/DNA no longer
+    # shrinks based on it (owner decision 2026-07-22) — a small-window model is
+    # exactly the case that most needs the FULL instructions, not a trimmed one;
+    # `lean` is hardcoded False below. Fail-safe: any error → full prompt regardless.
     lean = False
     model_window: int | None = None
     try:
         if services.provider_registry is not None:
-            from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
             from stackowl.pipeline.provider_select import select_tool_provider_plan
             from stackowl.providers.model_window import resolve_window
             # Quiet, side-effect-free window probe: no INFO log AND no recovery
@@ -86,17 +88,15 @@ async def run(state: PipelineState) -> PipelineState:
                 protocol=getattr(_p, "protocol", "") or "",
                 api_key=_safe_resolve_api_key(_pc),
             )
-            lean = model_window <= LEAN_WINDOW_THRESHOLD
             log.engine.debug(
                 "[pipeline] assemble: model window resolved",
-                extra={"_fields": {"trace_id": state.trace_id, "model_window": model_window, "lean": lean}},
+                extra={"_fields": {"trace_id": state.trace_id, "model_window": model_window}},
             )
     except Exception as exc:  # no-hidden-errors: degrade to the FULL prompt, never crash
         log.engine.warning(
             "[pipeline] assemble: window resolution failed — full charter",
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
-        lean = False
         model_window = None
 
     registry = services.owl_registry

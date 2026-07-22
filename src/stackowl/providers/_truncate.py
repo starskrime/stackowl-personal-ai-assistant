@@ -19,8 +19,13 @@ from typing import Any
 
 from stackowl.infra.observability import log
 
-MAX_OBSERVATION_CHARS = 12000  # ~3k tokens; generous for useful output, prevents explosion
-CONTEXT_CHAR_BUDGET = 400_000  # ~100k tokens; well under typical context windows
+# Raised 2026-07-22 (owner decision) — both are now pure backstops against a
+# genuinely pathological single tool result / totally-unconfigured window, not
+# shaping ceilings. Callers with a real resolved context_chars pass their own
+# (unshrunk) budget to trim_messages_to_budget; CONTEXT_CHAR_BUDGET here is
+# only the fallback when that's unavailable.
+MAX_OBSERVATION_CHARS = 100_000  # ~25k tokens; a single tool result this large is pathological
+CONTEXT_CHAR_BUDGET = 1_000_000  # ~250k tokens; fallback only, real callers pass context_chars
 
 _ELIDED_PLACEHOLDER = "[earlier tool output elided to fit context]"
 

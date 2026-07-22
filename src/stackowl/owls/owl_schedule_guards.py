@@ -1,42 +1,38 @@
 """Guardrails for `lifecycle="scheduled"` owls (UniOwl ADR-B, Story S11).
 
 Pure, side-effect-free helpers (mirrors :mod:`owl_build_guards`): an interval
-FLOOR so a scheduled owl can never fire faster than the box can afford, a per-user
-QUOTA on how many scheduled owls may project a standing job, and the shared
-constants the projection loop and the scheduler circuit-breaker key on.
+FLOOR so a scheduled owl can never fire faster than the box can afford.
 
-Founder decisions (UNIOWL_IMPLEMENTATION_PLAN.md, resolved):
+Founder decision (UNIOWL_IMPLEMENTATION_PLAN.md, resolved):
 * interval floor **5 min** (sub-5 needs an explicit ≥5-min schedule — we REFUSE
   rather than silently clamp, so the manifest, the single source of truth, can
   never hold a hotter trigger than was approved).
-* per-user quota **5 scheduled owls** (reuses the ``MAX_AGENT_OWLS`` soft-cap shape).
-* circuit-break after **3 consecutive failed scheduled runs** → pause + ONE alert.
+
+No per-user scheduled-owl quota and no consecutive-failure circuit breaker
+(owner decision 2026-07-22) — see ``MIN_SCHEDULED_INTERVAL_SECONDS`` below.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.scheduler.scheduler_helpers import parse_every
 from stackowl.tools.scheduling.cron_helpers import parse_daily_hhmm
 
-if TYPE_CHECKING:  # pragma: no cover — typing only (registry imports manifest; avoid cycle)
-    from stackowl.owls.registry import OwlRegistry
-
 # The provenance marker stamped into a scheduled owl's projected ``jobs`` row
 # (``params['source']``). Reconcile only ever touches rows carrying it; a
 # hand-made cronjob (``params['created_by']='cronjob'``) never does, so reconcile
-# can never delete a user's own cron. Also read by the scheduler circuit-breaker.
+# can never delete a user's own cron. Also read by the scheduler's crash-time
+# self-heal requeue (``_requeue_circuit_broken``, unrelated to the removed
+# per-job consecutive-failure breaker).
 OWL_LIFECYCLE_SOURCE = "owl_lifecycle"
 
 # Interval floor: a scheduled owl may not fire more often than this (Jetson-safe).
 MIN_SCHEDULED_INTERVAL_SECONDS = 300.0
-# Per-user quota: at most this many scheduled owls project a standing job.
-MAX_SCHEDULED_OWLS = 5
-# Circuit-breaker: consecutive failed scheduled runs before the job is paused.
-MAX_CONSECUTIVE_FAILURES = 3
+# No per-user scheduled-owl quota and no consecutive-failure circuit breaker
+# (owner decision 2026-07-22) — a failing recurring job keeps re-arming and
+# alerting instead of being permanently paused (see scheduler/scheduler.py).
 
 
 def schedule_interval_seconds(schedule: str) -> float | None:
@@ -88,22 +84,3 @@ def interval_floor_error(schedule: str) -> str | None:
     return None
 
 
-def count_scheduled_owls(registry: OwlRegistry) -> int:
-    """Number of ``lifecycle='scheduled'`` owls currently registered (quota input)."""
-    return sum(1 for m in registry.all() if m.lifecycle == "scheduled")
-
-
-def scheduled_quota_error(registry: OwlRegistry) -> str | None:
-    """Return a refusal string if the scheduled-owl quota is already full, else None.
-
-    Mirrors the ``MAX_AGENT_OWLS`` hard-gate shape: a caller about to mint a NEW
-    scheduled owl checks this first. (The projection loop applies the same cap
-    defensively so a YAML-edited surplus still cannot flood the box.)
-    """
-    current = count_scheduled_owls(registry)
-    if current >= MAX_SCHEDULED_OWLS:
-        return (
-            f"you already have {current} scheduled owls (cap {MAX_SCHEDULED_OWLS}) — "
-            "retire one before scheduling another."
-        )
-    return None

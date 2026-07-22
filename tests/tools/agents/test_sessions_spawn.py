@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 
 from stackowl.infra.trace import TraceContext
-from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.owls.session_registry import SessionRegistry
@@ -73,9 +72,11 @@ async def test_duplicate_label_surfaces_structured_refusal() -> None:
     assert rec["reason"] == "duplicate_label"
 
 
-async def test_capacity_cap_surfaces_structured_refusal() -> None:
+async def test_no_capacity_cap_spawns_past_old_limit() -> None:
+    """Owner decision 2026-07-22: no live-session count cap — spawning well
+    past the old cap (8) must succeed via the tool too."""
     sessions = SessionRegistry()
-    for i in range(MAX_LIVE_SESSIONS):
+    for i in range(20):
         sessions.spawn(f"s{i}", "scout")
     services = StepServices(session_registry=sessions, owl_registry=_registry_with_specialist())
     token = set_services(services)
@@ -86,8 +87,7 @@ async def test_capacity_cap_surfaces_structured_refusal() -> None:
         TraceContext.reset(trace)
         reset_services(token)
     rec = _record(res.output)
-    assert rec["status"] == "refused"
-    assert rec["reason"] == "too_many_sessions"
+    assert rec["status"] == "spawned"
 
 
 async def test_no_registry_wired_degrades_structured() -> None:

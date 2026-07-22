@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 
 from stackowl.messaging.a2a import A2AMessage, A2AQueue
-from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS
 from stackowl.owls.session_registry import SessionRegistry, SessionRegistryError
 
 
@@ -57,15 +56,13 @@ def test_duplicate_label_is_structured_error() -> None:
     assert reg.get("dup").owl_name == "scout"
 
 
-def test_capacity_cap_ninth_session_is_structured_error() -> None:
+def test_no_capacity_cap_many_sessions_all_spawn() -> None:
+    """Owner decision 2026-07-22: no live-session count cap — spawning well
+    past the old cap (8) must succeed for every session."""
     reg = SessionRegistry(clock=_FakeClock())
-    for i in range(MAX_LIVE_SESSIONS):
+    for i in range(20):
         reg.spawn(f"s{i}", "scout")
-    assert len(reg.all()) == MAX_LIVE_SESSIONS
-    with pytest.raises(SessionRegistryError) as exc:
-        reg.spawn("one-too-many", "scout")
-    assert exc.value.reason == "too_many_sessions"
-    assert len(reg.all()) == MAX_LIVE_SESSIONS
+    assert len(reg.all()) == 20
 
 
 def test_clear_session_removes_and_drains_mailbox() -> None:

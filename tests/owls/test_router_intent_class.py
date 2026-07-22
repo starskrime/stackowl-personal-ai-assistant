@@ -15,7 +15,6 @@ import pytest
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.owls.router import (
-    _ROUTING_MAX_TOKENS,
     RouteResult,
     SecretaryRouter,
 )
@@ -196,10 +195,6 @@ async def test_route_threads_resolved_fast_model_to_provider_complete() -> None:
 
 def _r() -> SecretaryRouter:
     return SecretaryRouter(provider_registry=None, owl_registry=None)  # type: ignore[arg-type]
-
-
-def test_token_cap_raised() -> None:
-    assert _ROUTING_MAX_TOKENS == 64
 
 
 def test_class_on_line_2() -> None:

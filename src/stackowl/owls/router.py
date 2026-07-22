@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 
 _DEFAULT_FALLBACK = "secretary"
 _FAST_TIER = "fast"
-_ROUTING_MAX_TOKENS = 64
 _ROUTING_TEMPERATURE = 0.0
 
 _VALID_CLASSES = {"conversational", "standard", "clarify"}
@@ -361,7 +360,6 @@ class SecretaryRouter:
             result = await provider.complete(
                 messages,
                 model=model,
-                max_tokens=_ROUTING_MAX_TOKENS,
                 temperature=_ROUTING_TEMPERATURE,
                 # A reasoning-capable provider (e.g. a vLLM/Qwen3-style endpoint)
                 # burns its entire max_tokens budget on <think> chain-of-thought

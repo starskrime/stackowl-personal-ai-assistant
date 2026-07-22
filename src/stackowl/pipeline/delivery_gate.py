@@ -421,7 +421,12 @@ _TRAILING_PUNCT = ".,;:!?。．)]}>\"'`*"
 
 # A stripped answer with fewer than this many Unicode word-chars left is "gutted"
 # (the URLs were carrying the substance) → floor instead of delivering a husk.
-_MIN_SUBSTANCE_WORDCHARS = 20
+# Lowered 20 -> 5 on 2026-07-22 (owner decision: relax content-shaping gates) —
+# NOT removed outright, unlike most limits in this pass: this is the one thing
+# standing between a legitimately-stripped answer and delivering a literally
+# blank/near-blank message with no explanation, a worse outcome than the honest
+# floor it replaces. 5 still lets through anything with real remaining content.
+_MIN_SUBSTANCE_WORDCHARS = 5
 _WORDCHAR_RE = re.compile(r"\w", re.UNICODE)
 
 _FLOOR_TEXT = (
@@ -1062,8 +1067,6 @@ _DELEGATION_TERMINAL_STATUSES: frozenset[str] = frozenset(
 # Tier to start the apology cascade from. A different/healthy provider in the
 # cascade may answer even when the owl's own provider tripped its breaker.
 _APOLOGY_TIER = "fast"
-# Keep the apology generation tiny — one short sentence is the whole budget.
-_APOLOGY_MAX_TOKENS = 60
 
 # Language-agnostic last-resort. Used ONLY when the cascade apology itself fails
 # (total provider outage). A warning sign + a short stable marker + the failure
@@ -1228,12 +1231,11 @@ async def _generate_localized_apology(
         tried.add(id(provider))
         try:
             # disable_thinking: a one-sentence apology needs no chain-of-thought;
-            # a reasoning-capable provider otherwise burns the whole 60-token
-            # budget on <think> and never emits the sentence (same empty-reply
-            # failure mode fixed in owls/router.py).
+            # a reasoning-capable provider otherwise burns its budget on <think>
+            # and never emits the sentence (same empty-reply failure mode fixed
+            # in owls/router.py). No max_tokens cap (owner decision 2026-07-22).
             result = await provider.complete(
-                messages, model=model, max_tokens=_APOLOGY_MAX_TOKENS,
-                disable_thinking=True,
+                messages, model=model, disable_thinking=True,
             )
         except Exception as exc:  # provider call itself failed (outage mid-cascade)
             log.engine.warning(

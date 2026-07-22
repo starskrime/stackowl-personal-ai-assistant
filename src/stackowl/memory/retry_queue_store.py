@@ -4,7 +4,8 @@ Every floored turn (the terminal "I couldn't fully complete this" response)
 gets a row here, inserted synchronously in-pipeline (turn_persist.py) and
 backfilled with the sent channel message reference asynchronously once the
 Telegram send resolves (adapter.py). A scheduler sweep (retry_sweep.py)
-retries due rows every minute, capped at 3 attempts.
+retries due rows every minute, re-arming on an exponential (capped) delay
+forever — no attempt cap, no terminal give-up (owner decision 2026-07-22).
 
 Owner-scoped (subclasses :class:`~stackowl.tenancy.OwnedRepository`): every
 query binds ``owner_id = ?`` so a row can never be read or written across
@@ -32,12 +33,13 @@ from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
-_MAX_ATTEMPTS = 3
 _RETRY_INTERVAL_MINUTES = 1
 #: FX-02 — a fixed 1-minute re-arm hammers a still-failing goal at the same
 #: cadence regardless of how many times it's already failed. Doubling per
-#: attempt (1, 2, 4, ... capped) spaces later attempts out without touching
-#: _MAX_ATTEMPTS itself.
+#: attempt (1, 2, 4, ... capped) spaces later attempts out. No terminal
+#: attempt cap (owner decision 2026-07-22) — a row now re-arms forever
+#: instead of being abandoned as permanently "failed"; this cap only paces
+#: how often a chronically-failing row is retried, it never gives up on it.
 _RETRY_INTERVAL_CAP_MINUTES = 10
 #: Unbounded exception text must not bloat the row (Boundaries & Constraints).
 _LAST_ERROR_MAX_LEN = 2000
@@ -46,8 +48,17 @@ _GOAL_MAX_LEN = 4000
 
 
 def _retry_delay_minutes(attempt_count: int) -> float:
-    """Exponential re-arm delay for the Nth failed attempt, capped."""
-    delay = float(_RETRY_INTERVAL_MINUTES) * (2.0 ** (attempt_count - 1))
+    """Exponential re-arm delay for the Nth failed attempt, capped.
+
+    ``attempt_count`` is unbounded now that a row never terminally fails, so
+    the exponent is clamped before ``2.0 ** exponent`` — otherwise a row that
+    has failed thousands of times over a long period would eventually
+    overflow float exponentiation. 20 is already far past the point
+    ``_RETRY_INTERVAL_CAP_MINUTES`` takes over, so clamping there changes
+    nothing observable.
+    """
+    exponent = min(attempt_count - 1, 20)
+    delay = float(_RETRY_INTERVAL_MINUTES) * (2.0**exponent)
     return min(delay, float(_RETRY_INTERVAL_CAP_MINUTES))
 
 
@@ -486,7 +497,7 @@ class RetryQueueStore(OwnedRepository):
     async def mark_attempt_failed(
         self, *, retry_id: str, newly_failed_capability: str, error: str,
     ) -> RetryQueueRow:
-        """Record a failed retry attempt: increment, ban the capability, cap or re-arm.
+        """Record a failed retry attempt: increment, ban the capability, re-arm.
 
         Read-then-write inside one :meth:`DbPool.transaction` (SELECT current
         row, compute next state, UPDATE, return the computed row) — the whole
@@ -494,8 +505,14 @@ class RetryQueueStore(OwnedRepository):
         same ``retry_id`` (e.g. overlapping sweep ticks) cannot both read the
         same ``attempt_count`` and silently lose an increment. Raises
         :class:`ValueError` if ``retry_id`` doesn't exist for this owner, or if
-        the row is not currently ``pending`` (already terminal — a caller bug,
-        since a terminal row should never be retried again).
+        the row is not currently ``pending`` (already terminal via
+        :meth:`mark_completed`, or raced by a concurrent caller — a caller
+        bug, since a terminal row should never be retried again).
+
+        No attempt cap (owner decision 2026-07-22): a row always re-arms and
+        stays ``pending`` — it is never abandoned as permanently "failed" no
+        matter how many times it has failed. Only the retry PACING grows
+        (see :func:`_retry_delay_minutes`), never a give-up.
         """
         # 1. ENTRY
         log.memory.debug(
@@ -521,11 +538,12 @@ class RetryQueueStore(OwnedRepository):
                     raise ValueError(f"retry_queue row not found: {retry_id}")
                 current = _row_to_model(_cursor_row_to_dict(cursor, raw))
 
-                # 2. DECISION — refuse to re-fail an already-terminal row (would
-                # otherwise increment attempt_count past _MAX_ATTEMPTS forever);
-                # dedup the newly-failed capability; cap at 'failed' once
-                # attempt_count reaches _MAX_ATTEMPTS, else re-arm on an
-                # exponential (capped) delay — see _retry_delay_minutes.
+                # 2. DECISION — refuse to re-fail an already-terminal row (a
+                # caller bug — a completed/raced row should never be retried
+                # again); dedup the newly-failed capability; ALWAYS re-arm on
+                # an exponential (capped) delay — see _retry_delay_minutes.
+                # No terminal "failed" status: a row keeps re-arming no matter
+                # how many times it fails (owner decision 2026-07-22).
                 if current.status != "pending":
                     log.memory.error(
                         "retry_queue_store.mark_attempt_failed: row not pending",
@@ -539,7 +557,7 @@ class RetryQueueStore(OwnedRepository):
                 if newly_failed_capability and newly_failed_capability not in banned:
                     banned.append(newly_failed_capability)
                 attempt_count = current.attempt_count + 1
-                status = "failed" if attempt_count >= _MAX_ATTEMPTS else "pending"
+                status = "pending"
                 next_retry_at = (
                     datetime.now(UTC)
                     + timedelta(minutes=_retry_delay_minutes(attempt_count))
@@ -547,10 +565,7 @@ class RetryQueueStore(OwnedRepository):
                 now = _now_iso()
                 log.memory.debug(
                     "retry_queue_store.mark_attempt_failed: decision",
-                    extra={"_fields": {
-                        "retry_id": retry_id, "attempt_count": attempt_count, "status": status,
-                        "capped": status == "failed",
-                    }},
+                    extra={"_fields": {"retry_id": retry_id, "attempt_count": attempt_count}},
                 )
 
                 # 3. STEP — write the computed next state
