@@ -280,6 +280,7 @@ async def test_conversational_plain_stream_gets_small_max_tokens_cap() -> None:
 
     assert provider.received_kwargs is not None
     assert provider.received_kwargs.get("max_tokens") == _CONVERSATIONAL_MAX_TOKENS
+    assert provider.received_kwargs.get("disable_thinking") is True
 
 
 @pytest.mark.asyncio

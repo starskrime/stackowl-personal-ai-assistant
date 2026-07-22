@@ -213,6 +213,47 @@ class _ScriptedStreamCompletions:
 
 
 @pytest.mark.asyncio
+async def test_stream_honors_disable_thinking_kwarg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live incident 2026-07-22: stream() was the one call path NOT honoring
+    disable_thinking — a reasoning model given a tight max_tokens cap (for a
+    turn the caller knows is trivial) spent the ENTIRE budget on invisible
+    reasoning_content and emitted zero visible characters. stream() must pass
+    chat_template_kwargs={"enable_thinking": False} through to create() when
+    the caller opts in, same as complete()/complete_with_tools() already do."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ScriptedStreamCompletions(["hi there"])
+    provider = _make_provider(_FakeClient(completions))  # type: ignore[arg-type]
+
+    collected = [
+        c async for c in provider.stream(
+            [Message(role="user", content="hi")], model="", disable_thinking=True,
+        )
+    ]
+
+    assert "".join(collected) == "hi there"
+    assert len(completions.calls) == 1
+    extra_body = completions.calls[0].get("extra_body", {})
+    assert extra_body.get("chat_template_kwargs") == {"enable_thinking": False}
+
+
+@pytest.mark.asyncio
+async def test_stream_disable_thinking_false_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (no disable_thinking) must stay byte-identical to today."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ScriptedStreamCompletions(["hi there"])
+    provider = _make_provider(_FakeClient(completions))  # type: ignore[arg-type]
+
+    _ = [c async for c in provider.stream([Message(role="user", content="hi")], model="")]
+
+    assert len(completions.calls) == 1
+    assert "extra_body" not in completions.calls[0]
+
+
+@pytest.mark.asyncio
 async def test_stream_passes_whitespace_deltas_through_verbatim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

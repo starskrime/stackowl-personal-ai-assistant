@@ -127,7 +127,22 @@ _DEGENERATE_REPEAT_MIN_LEN = 3
 # by definition (classify.py already runs "lean assembly" for these classes);
 # it needs nowhere near the room a real tool-using task does. Generous enough
 # for a genuine multi-paragraph casual reply, nowhere near the runaway case.
-_CONVERSATIONAL_MAX_TOKENS = 1024
+#
+# SAME-DAY REGRESSION (2026-07-22, ~30min after the first fix shipped): an
+# initial 1024-token value broke EVERY conversational turn. NeraAiRaw streams
+# reasoning through its own reasoning_content field (openai_provider.py's
+# stream(), post gateway-fix 2026-07-16) — invisible tokens that still count
+# against max_tokens. This model reasons even for "hi", and 1024 tokens was
+# consumed entirely by reasoning before any visible content was emitted —
+# the stream ended with zero content chars every time, floored as a critical
+# failure ("owl timeout"), so the platform did nothing but apologize.
+# _CONVERSATIONAL_MAX_TOKENS must leave room for BOTH the reasoning phase AND
+# the actual answer, not just the answer — 4096 matches OwlAgentManifest's own
+# established default per-turn ceiling (owls/manifest.py), still 61x smaller
+# than the original 250000-token runaway case. Paired with a disable_thinking
+# hint (below) so a well-behaved turn skips reasoning entirely rather than
+# needing headroom for it.
+_CONVERSATIONAL_MAX_TOKENS = 4096
 
 
 def build_persistence_check(
@@ -2304,6 +2319,7 @@ def _open_stream(
     messages: list[Message],
     model: str = "",
     max_tokens: int | None = None,
+    disable_thinking: bool = False,
 ) -> AsyncIterator[str]:
     """Return a guarded stream — every plain-stream call goes through
     OwlResourceGuard, even with no owl manifest.
@@ -2320,9 +2336,25 @@ def _open_stream(
     model can still spend real wall-clock time producing tokens the guard then
     throws away (live incident: "hi" got a 7951-token/205s answer before
     anything downstream noticed it was too long).
+
+    ``disable_thinking`` (SAME-DAY regression, 2026-07-22): a reasoning model
+    can spend its entire ``max_tokens`` budget on invisible reasoning content
+    before ever emitting a visible answer — capping ``max_tokens`` alone does
+    NOT protect against this, it just makes the failure more reliable (a
+    tight cap paired with a model that always reasons at length produced a
+    truncated reasoning block and ZERO visible content on every conversational
+    turn). Threaded to ``provider.stream()``'s own ``disable_thinking`` kwarg
+    (already used by classifier/structured callers via ``complete()``) so a
+    trivial turn skips reasoning entirely instead of needing headroom for it.
+    ``False`` (default) preserves today's behavior on a provider/model that
+    doesn't opt in.
     """
     guard = OwlResourceGuard(manifest if manifest is not None else _default_stream_manifest())
-    extra: dict[str, object] = {} if max_tokens is None else {"max_tokens": max_tokens}
+    extra: dict[str, object] = {}
+    if max_tokens is not None:
+        extra["max_tokens"] = max_tokens
+    if disable_thinking:
+        extra["disable_thinking"] = True
     return guard.stream(provider, messages, model=model, **extra)
 
 
@@ -2652,10 +2684,12 @@ async def run(state: PipelineState) -> PipelineState:
         messages = [Message(role="system", content=state.system_prompt), *messages]
 
     manifest = _resolve_manifest(state.owl_name)
-    _stream_max_tokens = (
-        _CONVERSATIONAL_MAX_TOKENS if state.intent_class in TOOL_FREE_CLASSES else None
+    _is_tool_free_turn = state.intent_class in TOOL_FREE_CLASSES
+    _stream_max_tokens = _CONVERSATIONAL_MAX_TOKENS if _is_tool_free_turn else None
+    stream_iter = _open_stream(
+        provider, manifest, messages, choice.model,
+        _stream_max_tokens, disable_thinking=_is_tool_free_turn,
     )
-    stream_iter = _open_stream(provider, manifest, messages, choice.model, _stream_max_tokens)
 
     t0 = time.monotonic()
     chunks: list[ResponseChunk] = []

@@ -290,7 +290,17 @@ class OpenAIProvider(ModelProvider):
                 max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model, messages)),
                 stream=True,
                 stream_options={"include_usage": True},
-                **self._ollama_extra_body(resolved_model),
+                # disable_thinking (live incident 2026-07-22): stream() was the one
+                # call path still ignoring this hint — a reasoning model can spend
+                # its ENTIRE max_tokens budget on reasoning_content before ever
+                # emitting visible content, especially once max_tokens is capped
+                # for a turn the caller knows is trivial (see execute.py's
+                # _CONVERSATIONAL_MAX_TOKENS). Routes through the same
+                # chat_template_kwargs hint complete()/complete_with_tools() already
+                # honor via _complete_extra_body, merged with the ollama num_ctx hint.
+                **self._complete_extra_body(
+                    resolved_model, disable_thinking=bool(kwargs.get("disable_thinking", False)),
+                ),
             )
             try:
                 async for chunk in stream_resp:
