@@ -100,12 +100,14 @@ class _ToolEveryTimeCompletions:
         self._raise_on_wrapup = raise_on_wrapup
         self._sleep_on_wrapup_s = sleep_on_wrapup_s
         self.tools_seen: list[bool] = []  # per-call: was `tools` passed?
+        self.max_tokens_seen: list[int] = []  # per-call: the max_tokens value used
         self.create_count = 0
 
     async def create(self, **kwargs: Any) -> _FakeResponse:
         self.create_count += 1
         has_tools = "tools" in kwargs and kwargs["tools"] is not None
         self.tools_seen.append(has_tools)
+        self.max_tokens_seen.append(kwargs.get("max_tokens"))  # type: ignore[arg-type]
         if not has_tools:
             # This is the wrap-up call.
             if self._sleep_on_wrapup_s:
@@ -304,12 +306,14 @@ class _AnthropicMessages:
     def __init__(self, *, sleep_on_wrapup_s: float = 0.0) -> None:
         self._sleep_on_wrapup_s = sleep_on_wrapup_s
         self.tools_seen: list[bool] = []
+        self.max_tokens_seen: list[int] = []
         self.create_count = 0
 
     async def create(self, **kwargs: Any) -> _AResponse:
         self.create_count += 1
         has_tools = "tools" in kwargs and kwargs["tools"] is not None
         self.tools_seen.append(has_tools)
+        self.max_tokens_seen.append(kwargs.get("max_tokens"))  # type: ignore[arg-type]
         if not has_tools:
             if self._sleep_on_wrapup_s:
                 import asyncio
@@ -319,7 +323,10 @@ class _AnthropicMessages:
         # max-iterations / Phase F, not the repeated-call guard).
         return _AResponse(
             "tool_use",
-            [_ABlock("tool_use", id=f"tu_{self.create_count}", name="web_search", input={"query": f"q{self.create_count}"})],
+            [_ABlock(
+                "tool_use", id=f"tu_{self.create_count}", name="web_search",
+                input={"query": f"q{self.create_count}"},
+            )],
         )
 
 
@@ -542,3 +549,59 @@ def test_wrapup_directive_is_nonempty_and_global() -> None:
     # The directive carries no case specifics and instructs a tool-free answer.
     assert WRAPUP_DIRECTIVE
     assert "Do not call any tool" in WRAPUP_DIRECTIVE
+
+
+# --------------------------------------------------------------------------- #
+# max_tokens override (live incident 2026-07-22) — an explicit caller-supplied
+# max_tokens must reach every create() call, both in-loop tool rounds and the
+# terminal wrap-up; omitting it preserves today's _output_cap/config default.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_openai_complete_with_tools_honors_explicit_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolEveryTimeCompletions(tool_call=True)
+    provider = _make_openai_provider(_FakeClient(completions))
+
+    await provider.complete_with_tools(
+        user_text="go", system_text="sys", tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher, max_tokens=512,
+    )
+
+    assert all(m == 512 for m in completions.max_tokens_seen)
+
+
+@pytest.mark.asyncio
+async def test_openai_complete_with_tools_max_tokens_none_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ToolEveryTimeCompletions(tool_call=True)
+    provider = _make_openai_provider(_FakeClient(completions))
+
+    await provider.complete_with_tools(
+        user_text="go", system_text="sys", tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher,
+    )
+
+    # Byte-identical to today: no explicit override, none of the calls used 512.
+    assert 512 not in completions.max_tokens_seen
+
+
+@pytest.mark.asyncio
+async def test_anthropic_complete_with_tools_honors_explicit_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    messages = _AnthropicMessages()
+    provider = _make_anthropic_provider(_AnthropicClient(messages))
+
+    await provider.complete_with_tools(
+        user_text="go", system_text="sys", tool_schemas=_SCHEMAS,
+        tool_dispatcher=_dispatcher, max_tokens=512,
+    )
+
+    assert all(m == 512 for m in messages.max_tokens_seen)

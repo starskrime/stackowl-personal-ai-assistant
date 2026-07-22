@@ -266,6 +266,7 @@ class ModelProvider(ABC):
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
         can_escalate: bool = False,
+        max_tokens: int | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run a multi-turn tool loop; return (final_response_text, tool_invocation_records).
 
@@ -327,6 +328,11 @@ class ModelProvider(ABC):
         exact behavior: every call site the base default forwards it to falls
         back to the provider's ``default_model`` unchanged.
 
+        ``max_tokens`` (live incident 2026-07-22): explicit per-call override
+        for the output-token budget, forwarded to ``complete()`` when set.
+        ``None`` (default) preserves today's behavior — ``complete()`` picks
+        its own default cap.
+
         Default: falls back to a single complete() ignoring tools.
         Providers that support tool use override this method.
         """
@@ -348,7 +354,8 @@ class ModelProvider(ABC):
             msgs.append(Message(role="system", content=system_text))
         msgs.extend(history or [])
         msgs.append(Message(role="user", content=user_text))
-        result = await self.complete(msgs, model=model)
+        complete_kwargs: dict[str, Any] = {} if max_tokens is None else {"max_tokens": max_tokens}
+        result = await self.complete(msgs, model=model, **complete_kwargs)
         return result.content, []
 
     # ---- HealableResource protocol --------------------------------------

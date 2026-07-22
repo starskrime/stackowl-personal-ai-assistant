@@ -242,6 +242,67 @@ async def test_conversational_degenerate_repetition_is_floored_not_delivered(
     assert len(delivered) < 100
 
 
+class _CapturingProvider:
+    """Provider whose stream() records the kwargs it was called with, so a
+    test can assert on the max_tokens override without a real provider call."""
+
+    protocol = "anthropic"
+    name = "capturing-test-provider"
+
+    def __init__(self) -> None:
+        self.received_kwargs: dict[str, object] | None = None
+
+    async def stream(self, messages, model, **kwargs):  # noqa: ANN001, ANN201
+        self.received_kwargs = kwargs
+        yield "hi there!"
+
+
+@pytest.mark.asyncio
+async def test_conversational_plain_stream_gets_small_max_tokens_cap() -> None:
+    """Live incident 2026-07-22: a 'hi' conversational turn was given the
+    provider's full default output budget (up to 250000 tokens) on the
+    plain-stream path and a verbose model used 7951 of them, taking 205s.
+    The conversational turn must pass a small explicit max_tokens override
+    to provider.stream() instead of relying on the provider's own default."""
+    from stackowl.pipeline.steps.execute import _CONVERSATIONAL_MAX_TOKENS
+
+    provider = _CapturingProvider()
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(provider),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(),
+        owl_registry=OwlRegistry.with_default_secretary(),
+    )
+    stoken = set_services(services)
+    try:
+        await exe.run(_make_state("conversational"))
+    finally:
+        reset_services(stoken)
+
+    assert provider.received_kwargs is not None
+    assert provider.received_kwargs.get("max_tokens") == _CONVERSATIONAL_MAX_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_standard_plain_stream_does_not_cap_max_tokens() -> None:
+    """A 'standard' turn that reaches the plain-stream path (e.g. no tools
+    registered) must NOT get the conversational cap — it may legitimately
+    need the provider's full default output budget."""
+    provider = _CapturingProvider()
+    services = StepServices(
+        provider_registry=_FakeProviderRegistry(provider),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(),  # empty — no tools registered
+        owl_registry=OwlRegistry.with_default_secretary(),
+    )
+    stoken = set_services(services)
+    try:
+        await exe.run(_make_state("standard"))
+    finally:
+        reset_services(stoken)
+
+    assert provider.received_kwargs is not None
+    assert "max_tokens" not in provider.received_kwargs
+
+
 @pytest.mark.asyncio
 async def test_standard_enters_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """A standard turn MUST call _run_with_tools when tools are registered."""

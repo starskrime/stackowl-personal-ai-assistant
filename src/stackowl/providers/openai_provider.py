@@ -396,8 +396,18 @@ class OpenAIProvider(ModelProvider):
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
         can_escalate: bool = False,
+        max_tokens: int | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """OpenAI function-calling tool-use loop.
+
+        ``max_tokens`` (live incident 2026-07-22): explicit per-call override for
+        the output-token budget. ``None`` (default) preserves today's behavior —
+        each round computes its own cap via ``_output_cap`` (window-aware, up to
+        the provider's generous ``max_output_tokens``). A caller that already
+        knows this turn needs far less room (e.g. a conversational reply to
+        "hi") passes a small value here instead of relying on the same
+        250000-token ceiling every turn gets — a verbose model given that much
+        room took 205s / 7951 tokens to answer "hi".
 
         ``model`` (Task 22): resolved per-model override for THIS call — same
         ``model or self._config.default_model`` fallback as ``complete()``/
@@ -572,7 +582,10 @@ class OpenAIProvider(ModelProvider):
                 return await self._client.chat.completions.create(
                     model=resolved_model,
                     messages=_msgs,  # type: ignore[arg-type]
-                    max_tokens=self._output_cap(resolved_model, _msgs),
+                    max_tokens=(
+                        max_tokens if max_tokens is not None
+                        else self._output_cap(resolved_model, _msgs)
+                    ),
                     tools=tool_schemas,  # type: ignore[arg-type]
                     **self._ollama_extra_body(resolved_model),
                 )
@@ -882,7 +895,10 @@ class OpenAIProvider(ModelProvider):
                 return await self._client.chat.completions.create(
                     model=resolved_model,
                     messages=messages,  # type: ignore[arg-type]
-                    max_tokens=self._output_cap(resolved_model, messages),
+                    max_tokens=(
+                        max_tokens if max_tokens is not None
+                        else self._output_cap(resolved_model, messages)
+                    ),
                     **self._ollama_extra_body(resolved_model),
                 )
 

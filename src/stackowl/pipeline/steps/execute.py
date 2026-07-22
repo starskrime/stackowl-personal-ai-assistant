@@ -47,7 +47,7 @@ from stackowl.pipeline.provider_select import (
     select_tool_provider_plan,
 )
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import PipelineState, StepError, ToolCall
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState, StepError, ToolCall
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
@@ -119,6 +119,15 @@ _SHORT_DRAFT_CHARS = 150
 # times" concept, applied to raw streamed text instead of (name, args) tuples.
 _DEGENERATE_REPEAT_THRESHOLD = 20
 _DEGENERATE_REPEAT_MIN_LEN = 3
+
+# Output-token cap for a TOOL_FREE_CLASSES turn (live incident 2026-07-22): a
+# "hi" reply was given the provider's full default budget (min(250000,
+# window-headroom) — see openai_provider.py's _output_cap) and a verbose model
+# used 7951 of it, taking 205s. A conversational/clarify turn is a short reply
+# by definition (classify.py already runs "lean assembly" for these classes);
+# it needs nowhere near the room a real tool-using task does. Generous enough
+# for a genuine multi-paragraph casual reply, nowhere near the runaway case.
+_CONVERSATIONAL_MAX_TOKENS = 1024
 
 
 def build_persistence_check(
@@ -1873,6 +1882,8 @@ async def _run_with_tools(
         _extra: dict[str, Any] = {}
         if persistence_check is not None:
             _extra["persistence_check"] = persistence_check
+        if state.intent_class in TOOL_FREE_CLASSES:
+            _extra["max_tokens"] = _CONVERSATIONAL_MAX_TOKENS
         # Budget gate first (it may Raise to stop the loop), then steering fold,
         # then progress LAST (observe-only — must run after the short-circuiting
         # callbacks so a budget Raise pre-empts a pointless progress emit).
@@ -2292,11 +2303,27 @@ def _open_stream(
     manifest: OwlAgentManifest | None,
     messages: list[Message],
     model: str = "",
+    max_tokens: int | None = None,
 ) -> AsyncIterator[str]:
     """Return a guarded stream — every plain-stream call goes through
-    OwlResourceGuard, even with no owl manifest."""
+    OwlResourceGuard, even with no owl manifest.
+
+    ``max_tokens`` (live incident 2026-07-22): explicit provider-call override
+    for a turn the caller already knows is small (conversational/clarify) —
+    threaded through to ``provider.stream()``'s own ``max_tokens`` kwarg.
+    ``None`` (default) preserves today's behavior: the provider picks its own
+    default cap (``_output_cap`` on the OpenAI-compatible provider — up to its
+    generous ``max_output_tokens``). This is a SEPARATE guard from
+    ``OwlResourceGuard``'s own client-side ``manifest.max_tokens`` cutoff below
+    — that one stops CONSUMING chunks once a whitespace-word count is crossed,
+    it does not bound what the provider is told it may GENERATE, so a verbose
+    model can still spend real wall-clock time producing tokens the guard then
+    throws away (live incident: "hi" got a 7951-token/205s answer before
+    anything downstream noticed it was too long).
+    """
     guard = OwlResourceGuard(manifest if manifest is not None else _default_stream_manifest())
-    return guard.stream(provider, messages, model=model)
+    extra: dict[str, object] = {} if max_tokens is None else {"max_tokens": max_tokens}
+    return guard.stream(provider, messages, model=model, **extra)
 
 
 def _clarify_resolvable_from_context(state: PipelineState) -> bool:
@@ -2625,7 +2652,10 @@ async def run(state: PipelineState) -> PipelineState:
         messages = [Message(role="system", content=state.system_prompt), *messages]
 
     manifest = _resolve_manifest(state.owl_name)
-    stream_iter = _open_stream(provider, manifest, messages, choice.model)
+    _stream_max_tokens = (
+        _CONVERSATIONAL_MAX_TOKENS if state.intent_class in TOOL_FREE_CLASSES else None
+    )
+    stream_iter = _open_stream(provider, manifest, messages, choice.model, _stream_max_tokens)
 
     t0 = time.monotonic()
     chunks: list[ResponseChunk] = []

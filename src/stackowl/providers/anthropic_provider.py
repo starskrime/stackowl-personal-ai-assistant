@@ -204,8 +204,15 @@ class AnthropicProvider(ModelProvider):
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
         can_escalate: bool = False,
+        max_tokens: int | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Anthropic native tool-use loop using content blocks.
+
+        ``max_tokens`` (live incident 2026-07-22): explicit per-call override
+        for the output-token budget, mirroring the OpenAI-compatible provider's
+        own ``max_tokens`` param. ``None`` (default) preserves today's
+        behavior: every round uses ``self._config.max_output_tokens``
+        unconditionally.
 
         ``can_escalate`` (set ONLY by LLMGateway below the ceiling tier) mirrors the
         openai provider: when the model persistently emits an unparseable tool call
@@ -353,7 +360,10 @@ class AnthropicProvider(ModelProvider):
                 return await self._client.messages.create(
                     model=resolved_model,
                     messages=_msgs,  # type: ignore[arg-type]
-                    max_tokens=self._config.max_output_tokens,
+                    max_tokens=(
+                        max_tokens if max_tokens is not None
+                        else self._config.max_output_tokens
+                    ),
                     tools=tool_schemas,  # type: ignore[arg-type]
                     **system_kwargs,
                 )
@@ -593,7 +603,10 @@ class AnthropicProvider(ModelProvider):
                 return await self._client.messages.create(
                     model=resolved_model,
                     messages=messages,  # type: ignore[arg-type]
-                    max_tokens=self._config.max_output_tokens,
+                    max_tokens=(
+                        max_tokens if max_tokens is not None
+                        else self._config.max_output_tokens
+                    ),
                     **system_kwargs,
                 )
 
