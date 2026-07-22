@@ -1,6 +1,6 @@
 """ScheduleCommitClassifier — LLM verdict: does this draft PROMISE future scheduled work?
 
-Overclaim trigger 4 — the no-tool-call sibling of ``RetrievalIntentClassifier``
+Overclaim trigger 4 — the no-tool-call sibling of :class:`RetrievalIntentClassifier`
 (trigger 3). That classifier judges the REQUEST ("did this need a live lookup");
 this one judges the RESPONSE ("does this draft commit to doing something for the
 user LATER, on a schedule, without the user asking again"). A confident "Sure,
@@ -16,10 +16,15 @@ scan the draft for words like "remind" or "ping". The LLM makes the semantic
 call; we only parse the MODEL's own one-word verdict (``COMMIT`` / ``NONE``) — a
 token WE control via the prompt.
 
-**Fast tier, one-token verdict.** Mirrors :class:`RetrievalIntentClassifier`'s
-shape exactly: lazy ``get_by_tier("fast")`` resolution, ``asyncio.wait_for``
-bounded by ``timeout_s`` (default 10.0s — pre-deliver hot path), small
-``max_tokens``.
+**Fast tier, one-token verdict, on the shared base (2026-07-22).** Uses
+:mod:`stackowl.interaction.classifier_base`'s Pieces A/B/C — pinned
+``get_by_tier("fast")`` resolution, a bounded ``asyncio.wait_for`` call, and the
+shared two-token verdict parser. This migration is a pure refactor: same
+prompt, same token budget, same timeout, same fail-safe direction, verified
+against the exact pre-migration behavior (including the two real
+false-positive drafts captured as regression fixtures in this module's test
+file after the live incidents this classifier was involved in — see
+``tests/interaction/test_schedule_commit_classifier.py``).
 
 **Fail-safe -> ``False`` (NONE) on every degraded path.** Flooring replaces the
 WHOLE draft, so a wrong ``True`` erases a legitimate answer — the EXPENSIVE
@@ -36,11 +41,15 @@ concern pattern).
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
-from stackowl.infra.observability import log, traced_span
-from stackowl.providers.base import Message, ModelProvider
+from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import (
+    parse_two_token_verdict,
+    resolve_fixed_tier,
+    safe_complete,
+)
+from stackowl.providers.base import Message
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.providers.registry import ProviderRegistry
@@ -113,7 +122,9 @@ class ScheduleCommitClassifier:
             )
             return False
 
-        resolved = self._resolve_provider()
+        resolved = resolve_fixed_tier(
+            self._registry, "fast", logger=log.engine, call_name="schedule_commit_classifier",
+        )
         if resolved is None:
             log.engine.warning(
                 "schedule_commit_classifier.commits_to_future_schedule: no fast provider — fail-safe to none",
@@ -122,41 +133,31 @@ class ScheduleCommitClassifier:
             return False
         provider, model = resolved
 
-        try:
-            user_text = self._build_user_text(response)
-            # Bounded call: a hung fast provider must never stall the pre-deliver
-            # gate. CancelledError (not an Exception subclass) still propagates.
-            async with traced_span(
-                log.engine, "schedule_commit_classifier.commits_to_future_schedule.provider_call"
-            ):
-                result = await asyncio.wait_for(
-                    provider.complete(
-                        [
-                            Message(role="system", content=_SYSTEM_PROMPT),
-                            Message(role="user", content=user_text),
-                        ],
-                        model=model,
-                        max_tokens=_MAX_TOKENS,
-                        disable_thinking=True,
-                    ),
-                    timeout=self._timeout_s,
-                )
-            verdict = (result.content or "").strip()
-        except TimeoutError:  # hung provider — fail-safe rather than stall delivery
-            log.engine.warning(
-                "schedule_commit_classifier.commits_to_future_schedule: provider call timed out — fail-safe to none",
-                extra={"_fields": {"commits": False, "timeout_s": self._timeout_s}},
-            )
+        user_text = self._build_user_text(response)
+        result = await safe_complete(
+            provider, model,
+            [
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=user_text),
+            ],
+            max_tokens=_MAX_TOKENS,
+            timeout_s=self._timeout_s,
+            logger=log.engine,
+            call_name="schedule_commit_classifier",
+        )
+        if result is None:  # timeout or provider error — safe_complete already logged
             return False
-        except Exception as exc:  # self-healing — a verdict call must never raise
-            log.engine.error(
-                "schedule_commit_classifier.commits_to_future_schedule: provider call failed — fail-safe to none",
-                exc_info=exc,
-                extra={"_fields": {"commits": False}},
-            )
-            return False
+        verdict = (result.content or "").strip()
 
-        verdict_bool = self._parse_verdict(verdict)
+        verdict_bool, confident = parse_two_token_verdict(
+            verdict, true_token="commit", false_token="none",
+            ambiguous_default=False, use_leading_token_tiebreak=False,
+        )
+        if not confident:
+            log.engine.warning(
+                "schedule_commit_classifier._parse_verdict: ambiguous verdict — fail-safe to none",
+                extra={"_fields": {"raw_verdict": verdict[:_LOG_TEXT_CHARS]}},
+            )
         # 2. DECISION — the raw verdict, the parsed bool, and a truncated snippet
         # of the draft that was actually judged. Added 2026-07-22 after a live
         # false-positive (COMMIT on a draft that did not actually promise future
@@ -181,51 +182,8 @@ class ScheduleCommitClassifier:
 
     # ------------------------------------------------------------------ helpers
 
-    def _resolve_provider(self) -> tuple[ModelProvider, str] | None:
-        """Resolve the fast-tier (provider, model), or ``None`` on any registry error."""
-        try:
-            return self._registry.get_by_tier("fast")
-        except Exception as exc:  # self-healing — missing provider must not raise
-            log.engine.warning(
-                "schedule_commit_classifier._resolve_provider: get_by_tier failed",
-                exc_info=exc,
-            )
-            return None
-
     @staticmethod
     def _build_user_text(response: str) -> str:
         """Render the (capped) classification prompt body."""
         r = response[:_MAX_RESPONSE_CHARS]
         return "\n".join([f"REPLY: {r}", "Reply COMMIT or NONE."])
-
-    @staticmethod
-    def _parse_verdict(verdict: str) -> bool:
-        """Map the model's one-word verdict to a bool (fail-safe -> ``False``/NONE).
-
-        Case- and token-order robust, parsing only the MODEL's controlled token
-        (never the draft's multilingual text):
-
-        * ``commit`` present and ``none`` absent -> ``True`` (high-confidence COMMIT).
-        * ``none`` present and ``commit`` absent -> ``False`` (NONE).
-        * BOTH or NEITHER present (empty / ambiguous / garbage) -> the fail-safe
-          default ``False`` — the cheap/safe direction (a wrong ``True`` erases a
-          legitimate answer, so any doubt collapses to NONE). Logged.
-        """
-        low = verdict.lower().lstrip()
-        has_commit = "commit" in low
-        has_none = "none" in low
-        if has_commit and not has_none:
-            return True
-        if has_none and not has_commit:
-            return False
-        log.engine.warning(
-            "schedule_commit_classifier._parse_verdict: ambiguous verdict — fail-safe to none",
-            extra={
-                "_fields": {
-                    "raw_verdict": verdict[:_LOG_TEXT_CHARS],
-                    "has_commit": has_commit,
-                    "has_none": has_none,
-                }
-            },
-        )
-        return False
