@@ -61,10 +61,15 @@ _SYSTEM_PROMPT = (
     "promises to ping, remind, check in on, notify, alert, or monitor "
     "something and report back) — a promise whose fulfillment REQUIRES the "
     "assistant to act again on its own, without the user asking again. Reply "
-    "COMMIT if the reply makes such a future-scheduled promise. Reply NONE if "
-    "the reply only answers now, asks a question, describes what it CAN do in "
-    "general, or requires the user to ask again themselves. Be conservative: "
-    "if unsure, answer NONE. Reply with exactly one word: COMMIT or NONE."
+    "COMMIT ONLY if the reply is making that promise FOR THE FIRST TIME, right "
+    "now, in this reply. Reply NONE if the reply only answers now, asks a "
+    "question, describes what it CAN do in general, requires the user to ask "
+    "again themselves, or REPORTS ON / LISTS scheduled work that already "
+    "exists (e.g. a status summary of currently-scheduled tasks, confirming "
+    "something is 'already scheduled' or 'active') — describing an existing "
+    "schedule is not a new promise, even though it uses schedule-related "
+    "words. Be conservative: if unsure, answer NONE. Reply with exactly one "
+    "word: COMMIT or NONE."
 )
 
 

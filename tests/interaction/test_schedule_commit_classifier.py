@@ -24,8 +24,26 @@ from typing import Literal
 
 import pytest
 
-from stackowl.interaction.schedule_commit_classifier import ScheduleCommitClassifier
+from stackowl.interaction.schedule_commit_classifier import (
+    _SYSTEM_PROMPT,
+    ScheduleCommitClassifier,
+)
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
+
+# Live incident (2026-07-22): this EXACT draft (a status report of already-
+# scheduled jobs, not a new promise) got a false-positive COMMIT verdict,
+# floored, and delivered a confusing "I didn't actually schedule anything"
+# non-sequitur to the user asking about it. Captured verbatim from
+# stackowl.jsonl's response_snippet field after adding that logging.
+_REAL_FALSE_POSITIVE_DRAFT = (
+    "Understood.\n\nHere is the current status of the **Secretary's** "
+    "scheduled tasks:\n\n### ✅ Active Scheduled Tasks\n1.  **Headhunter**\n"
+    "    *   **Goal:** Find Senior/Lead/Staff Software Engineer jobs in "
+    "Plano, TX.\n    *   **Schedule:** Every 3 hours (8 AM – 8 PM CDT).\n"
+    "    *   **Status:** Active.\n\n2.  **Brain (Me)**\n"
+    "    *   **Goal:** Daily brainstorming and AI trends.\n"
+    "    *   **Schedule:** Daily at 9:00 A"
+)
 
 _RESPONSE = "Sure, I'll ping you in 5 minutes to check!"
 
@@ -183,3 +201,41 @@ async def test_resolved_model_reaches_provider_complete() -> None:
     classifier, _ = _make(provider, model="qwen-schedule-commit-v2")
     await classifier.commits_to_future_schedule(response=_RESPONSE)
     assert provider.models == ["qwen-schedule-commit-v2"]
+
+
+def test_prompt_distinguishes_reporting_existing_schedules_from_new_promises() -> None:
+    """Live incident 2026-07-22 regression guard: the system prompt must keep
+    an explicit instruction that REPORTING/LISTING already-scheduled work is
+    NOT a new commitment — else this exact false positive (a status summary
+    of existing jobs, saturated with the words "Scheduled"/"Schedule:"/
+    "Active", misread as a brand-new promise) can silently come back if the
+    prompt is ever edited without this guard in mind. Can't unit-test the
+    real model's verdict here (these tests mock the provider), so this pins
+    the INSTRUCTION'S presence instead."""
+    lowered = _SYSTEM_PROMPT.lower()
+    assert "already exists" in lowered or "report" in lowered
+    assert "first time" in lowered or "new" in lowered
+
+
+@pytest.mark.asyncio
+async def test_real_false_positive_draft_reaches_provider_intact() -> None:
+    """Plumbing check using the EXACT draft text that caused the live
+    incident (see _REAL_FALSE_POSITIVE_DRAFT) — confirms it reaches
+    provider.complete() intact (within _MAX_RESPONSE_CHARS) and the fixed
+    prompt's instructions are present in the system message sent alongside
+    it. A real fast-tier model should now verdict NONE on this input; anyone
+    re-validating the prompt against a live model should use this exact
+    fixture."""
+    provider = _FakeProvider("NONE")
+    classifier, _ = _make(provider)
+    result = await classifier.commits_to_future_schedule(
+        response=_REAL_FALSE_POSITIVE_DRAFT
+    )
+    assert result is False
+    sent_system_message = provider.calls[0][0]
+    assert sent_system_message.role == "system"
+    assert "already exists" in sent_system_message.content.lower() or (
+        "report" in sent_system_message.content.lower()
+    )
+    sent_user_message = provider.calls[0][1]
+    assert "Headhunter" in sent_user_message.content
