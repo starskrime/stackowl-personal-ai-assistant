@@ -188,6 +188,36 @@ def test_fds_to_keep_race_in_model_transcribe_retries_once(
     assert calls["n"] == 2
 
 
+def test_ensure_loaded_warms_up_tqdm_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live incident 2026-07-23 (third occurrence): a bounded retry-once for
+    tqdm's multiprocessing-lock construction still failed twice in a row when
+    left to fire under real concurrent transcribe() load. The lock must be
+    warmed up here, once, right after model load — a quiet moment with no
+    concurrent request contending for fds — not lazily under live traffic."""
+    import sys
+    import types
+
+    backend = WhisperSttBackend(model_name="base")
+
+    fake_whisper = types.ModuleType("whisper")
+    fake_model = object()
+    fake_whisper.load_model = lambda name: fake_model  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "whisper", fake_whisper)
+
+    calls = {"n": 0}
+    fake_tqdm_module = types.ModuleType("tqdm")
+    fake_tqdm_module.tqdm = types.SimpleNamespace(  # type: ignore[attr-defined]
+        get_lock=lambda: calls.__setitem__("n", calls["n"] + 1)
+    )
+    monkeypatch.setitem(sys.modules, "tqdm", fake_tqdm_module)
+
+    avail = backend._ensure_loaded()
+
+    assert avail.available is True
+    assert calls["n"] == 1
+    assert backend._model is fake_model
+
+
 async def test_is_available_negative_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = WhisperSttBackend(model_name="base")
 

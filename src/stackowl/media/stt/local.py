@@ -87,6 +87,19 @@ class WhisperSttBackend(SttBackend):
                 extra={"_fields": {"model_name": self._model_name}},
             )
             self._model = whisper.load_model(self._model_name)
+            # Warm up tqdm's multiprocessing lock HERE, once, at a quiet moment —
+            # not lazily under a live transcribe() call. tqdm.tqdm.__new__
+            # unconditionally constructs a multiprocessing.RLock on its first
+            # instantiation in the process (cached at the class level forever
+            # after), which spawns CPython's resource_tracker helper via the
+            # same fds_to_keep-racy fork_exec path as ffmpeg. Retrying that
+            # construction under real concurrent request load just re-races it
+            # (confirmed live 2026-07-23: a bounded retry-once still failed
+            # twice in a row) — forcing it here, before any concurrent traffic
+            # can contend for fds, means the one-time spawn never has to race.
+            import tqdm
+
+            self._retry_fds_race("_ensure_loaded.tqdm_warmup", tqdm.tqdm.get_lock)
             log.tool.info(
                 "[stt.whisper] _ensure_loaded: model ready",
                 extra={"_fields": {"model_name": self._model_name}},
