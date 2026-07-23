@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
+from stackowl.infra import retry_ledger
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import HandlerRegistry
@@ -294,6 +295,17 @@ class JobScheduler(SupervisedTask):
             )
             return
 
+        # PATHFINDER-2026-07-22 Proposal 5 — a scheduled job never constructs a
+        # PipelineState/goes through backend.run() UNLESS its handler itself
+        # does (goal_execution does; evolution/critic_scorer/tool_outcome_miner
+        # call providers directly), so retry_ledger would otherwise never be
+        # bound for those handlers' own provider calls — a circuit-breaker-open
+        # during a scheduled job was previously invisible anywhere. Binding
+        # HERE, at the one central dispatch point every handler funnels
+        # through, covers all of them with one change (nested bind inside a
+        # handler that also calls backend.run() just isolates as designed —
+        # see retry_ledger.py's docstring on nested-bind semantics).
+        retry_ledger_token = retry_ledger.bind()
         try:
             result = await asyncio.wait_for(handler.execute(job), timeout=_HANDLER_TIMEOUT_SEC)
         except TimeoutError:
@@ -321,6 +333,22 @@ class JobScheduler(SupervisedTask):
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
             result = JobResult(job_id=job.job_id, success=False, output=None, error=str(exc), duration_ms=duration_ms)
+        finally:
+            _retry_events = retry_ledger.get_retry()
+            if _retry_events:
+                log.heartbeat.info(
+                    "[retry] job summary",
+                    extra={"_fields": {
+                        "job_id": job.job_id,
+                        "handler": job.handler_name,
+                        "events": [
+                            {"kind": e.kind, "provider": e.provider, "detail": e.detail,
+                             "attempt_number": e.attempt_number}
+                            for e in _retry_events
+                        ],
+                    }},
+                )
+            retry_ledger.reset(retry_ledger_token)
 
         duration_ms = (time.monotonic() - t0) * 1000
         # PB6a — a job that self-reports success=True but was checked and found

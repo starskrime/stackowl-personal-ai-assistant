@@ -571,6 +571,7 @@ class ToolRegistry:
         from stackowl.tools.knowledge.evolve_now import EvolveNowTool
         from stackowl.tools.knowledge.memory import MemoryTool
         from stackowl.tools.knowledge.output_preference import SetOutputPreferenceTool
+        from stackowl.tools.knowledge.read_logs import ReadLogsTool
         from stackowl.tools.knowledge.reflect_now import ReflectNowTool
         from stackowl.tools.knowledge.session_search import SessionSearchTool
         from stackowl.tools.knowledge.skill_manage import SkillManageTool
@@ -741,6 +742,11 @@ class ToolRegistry:
         registry.register(EvolveNowTool())
         registry.register(SessionSearchTool())
         registry.register(TranscriptsTool())
+        # read_logs — CLAUDE.md's long-documented self-observability capability,
+        # never actually implemented until now (PATHFINDER-2026-07-22 Proposal
+        # 5). Bounded query over the live stackowl.jsonl file; no constructor
+        # wiring (resolves its own log path at execute time).
+        registry.register(ReadLogsTool())
         # todo + update_plan share ONE PlanStore so they write a single plan slot
         # (operator decision): todo mutates individual items; update_plan replaces
         # the whole plan — same source of truth (cf. the shared UndoStore above).
