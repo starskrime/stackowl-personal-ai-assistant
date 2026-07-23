@@ -293,3 +293,19 @@ async def test_resolved_model_reaches_provider_complete() -> None:
     classifier, _ = _make(provider, model="qwen-feedback-v3")
     await _classify(classifier, "I like this, keep it")
     assert provider.models == ["qwen-feedback-v3"]
+
+
+def test_system_prompt_disambiguates_new_requests_from_feedback() -> None:
+    """Live incident 2026-07-23: "i want all information from now to have
+    source link url near the content" (a brand-new forward-looking request,
+    not a reaction to anything) verdicted as positive/format/referent=last —
+    confirmed live against the real fast-tier model, both before this prompt
+    change (misclassified) and after (correctly neutral/referent=none). This
+    guard just protects the disambiguation instruction from an accidental
+    revert; the actual proof is the live before/after classification, which a
+    mocked-provider unit test cannot exercise (the model's real behavior is
+    what changed, not the parsing logic)."""
+    from stackowl.interaction.feedback_classifier import _SYSTEM_PROMPT
+
+    assert "NEW capability or behavior" in _SYSTEM_PROMPT
+    assert '"referent": "none"' in _SYSTEM_PROMPT

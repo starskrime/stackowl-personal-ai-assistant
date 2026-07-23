@@ -92,6 +92,14 @@ _SYSTEM_PROMPT = (
     'Also return "referent": "last" if the message reacts to the assistant\'s '
     'immediately-preceding message (the default for a bare "I like this"), or '
     '"none" if there is no clear thing it points at.\n'
+    "CRITICAL: only use referent \"last\" with a non-neutral polarity when the "
+    "message evaluates or reacts to what the PREVIOUS MESSAGE actually did or "
+    "looked like. A message asking for a NEW capability or behavior going "
+    "forward that the previous message never exhibited (e.g. \"always include "
+    "a source link\", \"add citations\") is a fresh instruction, NOT feedback on "
+    "that message — even if it mentions a formatting-adjacent word like "
+    '"link" or "table". Classify those as {"polarity": "neutral", "aspect": '
+    '"overall", "confidence": 1.0} with "referent": "none".\n'
     "Reply with ONLY a JSON object, no prose:\n"
     '{"signals": [{"polarity": "...", "aspect": "...", "confidence": 0.0}], '
     '"referent": "last"}'
