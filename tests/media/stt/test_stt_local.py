@@ -106,6 +106,59 @@ def test_decode_non_wav_without_ffmpeg_is_actionable(monkeypatch: pytest.MonkeyP
         backend._decode_audio(b"OggS....", audio_format="ogg")
 
 
+def test_fds_to_keep_race_retries_once_and_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live incident 2026-07-23: whisper.load_audio()'s ffmpeg subprocess spawn
+    can hit CPython's documented fds_to_keep race under concurrent subprocess
+    use elsewhere in the process. First call raises the exact ValueError;
+    the retry must succeed and return its result — never raise."""
+    calls = {"n": 0}
+
+    class _FakeWhisperModule:
+        @staticmethod
+        def load_audio(tmp_path: str) -> str:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ValueError("bad value(s) in fds_to_keep: {-1}")
+            return "decoded-audio"
+
+    result = WhisperSttBackend._load_audio_with_retry(_FakeWhisperModule(), "/tmp/x.ogg")
+
+    assert result == "decoded-audio"
+    assert calls["n"] == 2
+
+
+def test_fds_to_keep_race_persists_after_retry_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry is bounded, not infinite — if the race (implausibly) recurs on
+    the second attempt too, the ValueError must still propagate rather than
+    retry forever."""
+    class _AlwaysRacesModule:
+        @staticmethod
+        def load_audio(tmp_path: str) -> str:
+            raise ValueError("bad value(s) in fds_to_keep: {-1}")
+
+    with pytest.raises(ValueError, match="fds_to_keep"):
+        WhisperSttBackend._load_audio_with_retry(_AlwaysRacesModule(), "/tmp/x.ogg")
+
+
+def test_unrelated_value_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the specific fds_to_keep race is treated as transient — any other
+    ValueError (a real decode/argument problem) must propagate immediately,
+    unretried, so a genuine bug is never silently masked by a retry."""
+    calls = {"n": 0}
+
+    class _GenuinelyBrokenModule:
+        @staticmethod
+        def load_audio(tmp_path: str) -> str:
+            calls["n"] += 1
+            raise ValueError("invalid sample rate")
+
+    with pytest.raises(ValueError, match="invalid sample rate"):
+        WhisperSttBackend._load_audio_with_retry(_GenuinelyBrokenModule(), "/tmp/x.ogg")
+    assert calls["n"] == 1  # no retry for an unrelated ValueError
+
+
 async def test_is_available_negative_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = WhisperSttBackend(model_name="base")
 

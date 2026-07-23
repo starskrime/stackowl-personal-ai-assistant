@@ -176,10 +176,40 @@ class WhisperSttBackend(SttBackend):
             tmp.write(audio_bytes)
             tmp_path = tmp.name
         try:
-            return whisper.load_audio(tmp_path)
+            return self._load_audio_with_retry(whisper, tmp_path)
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
+
+    @staticmethod
+    def _load_audio_with_retry(whisper_module: Any, tmp_path: str) -> Any:
+        """``whisper.load_audio()`` shells out to ffmpeg via ``subprocess.run()``
+        (see openai-whisper's ``audio.py``). This platform runs many tools
+        concurrently, each spawning subprocesses from the SAME shared
+        ``run_in_executor`` thread pool (shell/git/browser/ffmpeg) — under
+        that concurrency, CPython's own ``subprocess`` module has a
+        documented race (bpo-38435) computing ``fds_to_keep`` by scanning
+        ``/proc/self/fd`` at fork time: if another thread closes a listed fd
+        between the scan and the actual ``posix_spawn``, it raises
+        ``ValueError: bad value(s) in fds_to_keep``. Live incident
+        2026-07-23 — confirmed via read_logs. Transient by construction (the
+        race window is milliseconds), so a bounded retry-once — the same
+        pattern already used elsewhere in this codebase for a classifiably-
+        transient error (``Tool.__call__``'s F-24 retry-once) — succeeds
+        essentially always. Any OTHER exception (corrupt audio, missing
+        codec, a real ffmpeg failure) propagates immediately, unretried.
+        """
+        try:
+            return whisper_module.load_audio(tmp_path)
+        except ValueError as exc:
+            if "fds_to_keep" not in str(exc):
+                raise
+            log.tool.warning(
+                "[stt.whisper] _decode_audio: transient subprocess-spawn race "
+                "(fds_to_keep) — retrying once",
+                extra={"_fields": {"exc": str(exc)}},
+            )
+            return whisper_module.load_audio(tmp_path)
 
     @staticmethod
     def _decode_wav(audio_bytes: bytes) -> Any:
