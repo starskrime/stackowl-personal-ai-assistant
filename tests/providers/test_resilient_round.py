@@ -26,6 +26,7 @@ from stackowl.exceptions import (
     ProviderError,
     TurnStopped,
 )
+from stackowl.infra import retry_ledger
 from stackowl.providers._resilient_round import (
     FailureCause,
     classify_failure_cause,
@@ -175,10 +176,18 @@ async def test_resilient_round_penalizes_limiter_on_rate_limit() -> None:
     limiter = RateLimiter(provider_name="p", capacity=5, refill_rate=1.0)
     assert limiter._penalty_until == 0.0
 
-    with pytest.raises(_TooManyRequests):
-        await resilient_round(breaker, limiter, _raiser(_TooManyRequests()))
+    ledger_token = retry_ledger.bind()
+    try:
+        with pytest.raises(_TooManyRequests):
+            await resilient_round(breaker, limiter, _raiser(_TooManyRequests()))
 
-    assert limiter._penalty_until > 0.0, "RATE_LIMIT failure did not penalize the limiter"
+        assert limiter._penalty_until > 0.0, "RATE_LIMIT failure did not penalize the limiter"
+        # Workstream B — the ledger records the penalty for cross-layer observability.
+        events = retry_ledger.get_retry()
+        assert [e.kind for e in events] == ["rate_limit_penalty"]
+        assert events[0].provider == "p"
+    finally:
+        retry_ledger.reset(ledger_token)
 
 
 async def test_resilient_round_does_not_penalize_limiter_on_server_error() -> None:
@@ -219,11 +228,19 @@ async def test_breaker_open_skips_limiter_acquire() -> None:
         called = True
         return "x"
 
-    with pytest.raises(CircuitOpenError):
-        await resilient_round(breaker, limiter, _round)
+    ledger_token = retry_ledger.bind()
+    try:
+        with pytest.raises(CircuitOpenError):
+            await resilient_round(breaker, limiter, _round)
 
-    assert called is False, "the round ran despite an OPEN breaker"
-    assert limiter._tokens == tokens_before, "a token was burned on a short-circuited call"
+        assert called is False, "the round ran despite an OPEN breaker"
+        assert limiter._tokens == tokens_before, "a token was burned on a short-circuited call"
+        # Workstream B — the ledger records the skip for cross-layer observability.
+        events = retry_ledger.get_retry()
+        assert [e.kind for e in events] == ["circuit_open_skip"]
+        assert events[0].detail == "OPEN"
+    finally:
+        retry_ledger.reset(ledger_token)
 
 
 async def test_configured_rpm_throttles_second_round() -> None:

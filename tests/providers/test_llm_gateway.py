@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from stackowl.exceptions import CircuitOpenError, ProviderError, RateLimitError
+from stackowl.infra import retry_ledger
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.llm_gateway import (
     ESCALATE_INSTRUCTION,
@@ -107,6 +108,24 @@ def _sys(content: str) -> Message:
 
 def _user(content: str) -> Message:
     return Message(role="user", content=content)
+
+
+async def _with_retry_ledger(coro):
+    """Run ``coro`` bound to a fresh retry_ledger context; return (result, events).
+
+    bind/reset must happen INSIDE the same asyncio.run() call as the awaited
+    coroutine — asyncio.run() copies the calling context for its top-level
+    Task (confirmed empirically: a ContextVar mutated inside asyncio.run()
+    never reaches the caller's own context), so binding/reading from the sync
+    test function around a bare ``asyncio.run(gw.complete(...))`` call would
+    silently see an always-empty ledger.
+    """
+    token = retry_ledger.bind()
+    try:
+        result = await coro
+        return result, retry_ledger.get_retry()
+    finally:
+        retry_ledger.reset(token)
 
 
 # -- helpers ----------------------------------------------------------------- #
@@ -293,12 +312,19 @@ def test_complete_falls_back_to_higher_tier_on_provider_fault() -> None:
     standard = _FakeProvider("standard", reply="recovered answer")
     powerful = _FakeProvider("powerful", reply="unused")
     gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": powerful}))
-    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    out, events = asyncio.run(
+        _with_retry_ledger(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    )
     assert out.content == "recovered answer"
     assert out.model == "standard"
     # ADR-2 (default ON): the floor is attempted + retried once on the same tier, THEN cascaded.
     assert len(fast.complete_calls) == 2
     assert len(powerful.complete_calls) == 0  # stopped once standard answered
+    # Workstream B — the ledger records the fault-driven cascade for cross-layer
+    # observability (the same-tier retry above failed, so no same_tier_retry event).
+    assert [e.kind for e in events] == ["tier_escalation"]
+    assert events[0].provider == "fast"
+    assert "fast->standard" in events[0].detail
 
 
 def test_complete_reraises_provider_fault_at_last_tier() -> None:
@@ -329,12 +355,17 @@ def test_tools_falls_back_to_higher_tier_on_provider_fault() -> None:
     async def on_escalate(frm: str, to: str) -> None:
         resets.append((frm, to))
 
-    text, _ = asyncio.run(gw.complete_with_tools(
+    (text, _), events = asyncio.run(_with_retry_ledger(gw.complete_with_tools(
         user_text="u", system_text="s", tool_schemas=[{"name": "t"}],
         tool_dispatcher=None, floor="fast", ceiling="powerful", on_escalate=on_escalate,
-    ))
+    )))
     assert text == "done with tools"
     assert resets == [("fast", "standard")]  # ledger reset before the recovery tier
+    # Workstream B — the ledger records the fault-driven cascade for cross-layer
+    # observability.
+    assert [e.kind for e in events] == ["tier_escalation"]
+    assert events[0].provider == "fast"
+    assert "fast->standard" in events[0].detail
 
 
 def test_tools_reraises_provider_fault_at_last_tier() -> None:
@@ -505,11 +536,17 @@ def test_same_tier_retry_recovers_without_cascade(monkeypatch: Any) -> None:
     fast = _FlakyProvider("fast", fail_times=1, reply="recovered same tier")
     standard = _FakeProvider("standard", reply="should not be reached")
     gw = LLMGateway(_FakeRegistry({"fast": fast, "standard": standard, "powerful": standard}))
-    out = asyncio.run(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    out, events = asyncio.run(
+        _with_retry_ledger(gw.complete([_user("hi")], floor="fast", ceiling="powerful"))
+    )
     assert out.content == "recovered same tier"
     assert out.model == "fast"  # stayed on the same tier — no cascade burned
     assert len(fast.complete_calls) == 2  # initial fault + same-tier retry
     assert len(standard.complete_calls) == 0  # never cascaded
+    # Workstream B — a RECOVERED same-tier retry records same_tier_retry, not
+    # tier_escalation (no cascade actually happened).
+    assert [e.kind for e in events] == ["same_tier_retry"]
+    assert events[0].provider == "fast"
 
 
 def test_flag_off_is_single_attempt_then_cascade(monkeypatch: Any) -> None:

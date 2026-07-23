@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from stackowl.config.provider import ProviderConfig
+from stackowl.infra import retry_ledger
 from stackowl.infra.clock import Clock
 from stackowl.providers._resilient_round import _parse_retry_after_seconds, resilient_round
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
@@ -41,11 +42,20 @@ async def test_parseable_reset_header_opens_breaker_for_that_exact_duration() ->
     async def failing_round() -> None:
         raise _RateLimited429(retry_after="120")
 
-    with pytest.raises(_RateLimited429):
-        await resilient_round(breaker, limiter, failing_round, cooldown_hours=None)
+    ledger_token = retry_ledger.bind()
+    try:
+        with pytest.raises(_RateLimited429):
+            await resilient_round(breaker, limiter, failing_round, cooldown_hours=None)
 
-    assert breaker.state is CircuitState.OPEN
-    assert breaker.retry_after_seconds == pytest.approx(120.0)
+        assert breaker.state is CircuitState.OPEN
+        assert breaker.retry_after_seconds == pytest.approx(120.0)
+        # Workstream B — the ledger records the cooldown for cross-layer observability.
+        events = retry_ledger.get_retry()
+        cooldown_events = [e for e in events if e.kind == "cooldown"]
+        assert len(cooldown_events) == 1
+        assert cooldown_events[0].detail == "120s"
+    finally:
+        retry_ledger.reset(ledger_token)
 
 
 @pytest.mark.asyncio

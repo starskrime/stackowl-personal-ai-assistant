@@ -16,6 +16,7 @@ import asyncio
 import pytest
 
 from stackowl.exceptions import CircuitOpenError
+from stackowl.infra import retry_ledger
 from stackowl.providers._resilient_round import resilient_round
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
 
@@ -77,8 +78,16 @@ async def test_half_open_admits_exactly_one_probe() -> None:
     await started.wait()  # the first round is now the in-flight probe
 
     # A second concurrent round must be rejected while the probe is in flight.
-    with pytest.raises(CircuitOpenError):
-        await resilient_round(breaker, None, _slow_round, is_provider_fault=_fault)
+    ledger_token = retry_ledger.bind()
+    try:
+        with pytest.raises(CircuitOpenError):
+            await resilient_round(breaker, None, _slow_round, is_provider_fault=_fault)
+        # Workstream B — the ledger records the skip for cross-layer observability.
+        events = retry_ledger.get_retry()
+        assert [e.kind for e in events] == ["circuit_open_skip"]
+        assert events[0].detail == "half_open_probe_in_flight"
+    finally:
+        retry_ledger.reset(ledger_token)
 
     release.set()
     assert await task == "ok"

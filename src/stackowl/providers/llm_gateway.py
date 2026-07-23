@@ -23,6 +23,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from stackowl.exceptions import CircuitOpenError, RateLimitError
+from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
 from stackowl.providers._resilient_round import is_provider_fault
 from stackowl.providers.base import CompletionResult, Message
@@ -135,6 +136,7 @@ class LLMGateway:
                 "[llm_gateway] same-tier retry recovered a transient provider fault",
                 extra={"_fields": {"purpose": purpose, "tier": tier}},
             )
+            retry_ledger.record_retry(kind="same_tier_retry", provider=tier, detail=purpose)
             return outcome.result
         return None
 
@@ -207,6 +209,10 @@ class LLMGateway:
                                            "to_tier": tiers[idx + 1], "model": model,
                                            "exc_type": type(exc).__name__,
                                            "degraded_from": degraded}},
+                    )
+                    retry_ledger.record_retry(
+                        kind="tier_escalation", provider=tier,
+                        detail=f"{tier}->{tiers[idx + 1]}:{type(exc).__name__}",
                     )
                     continue
             # Reached only on a try success OR a recovered same-tier retry → result is set.
@@ -345,6 +351,10 @@ class LLMGateway:
                                            "to_tier": tiers[idx + 1], "model": model,
                                            "exc_type": type(exc).__name__,
                                            "degraded_from": degraded}},
+                    )
+                    retry_ledger.record_retry(
+                        kind="tier_escalation", provider=tier,
+                        detail=f"{tier}->{tiers[idx + 1]}:{type(exc).__name__}",
                     )
                     if on_escalate is not None:
                         await on_escalate(tier, tiers[idx + 1])

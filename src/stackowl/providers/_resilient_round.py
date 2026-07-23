@@ -39,6 +39,7 @@ from stackowl.exceptions import (
     ResumeTranscriptError,
     TurnStopped,
 )
+from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
 from stackowl.providers.circuit_breaker import CircuitBreaker, CircuitState
 from stackowl.providers.rate_limiter import RateLimiter
@@ -273,6 +274,9 @@ async def resilient_round[T](
                         }
                     },
                 )
+                retry_ledger.record_retry(
+                    kind="circuit_open_skip", provider=provider, detail="OPEN",
+                )
                 raise CircuitOpenError(provider, breaker.retry_after_seconds)
             if state is CircuitState.HALF_OPEN:
                 admitted_probe = await breaker.admit_probe()
@@ -282,6 +286,10 @@ async def resilient_round[T](
                         "[resilient_round] decision — half-open probe already in flight, "
                         "skipping (treated as OPEN)",
                         extra={"_fields": {"provider": provider}},
+                    )
+                    retry_ledger.record_retry(
+                        kind="circuit_open_skip", provider=provider,
+                        detail="half_open_probe_in_flight",
                     )
                     raise CircuitOpenError(provider, breaker.retry_after_seconds)
         except CircuitOpenError:
@@ -343,6 +351,8 @@ async def resilient_round[T](
                     exc_info=pen_exc,
                     extra={"_fields": {"provider": provider}},
                 )
+            else:
+                retry_ledger.record_retry(kind="rate_limit_penalty", provider=provider)
             if breaker is not None:
                 reset_seconds = _parse_retry_after_seconds(exc)
                 cooldown_seconds = (
@@ -357,6 +367,11 @@ async def resilient_round[T](
                             "[resilient_round] breaker.open_for raised — continuing to re-raise",
                             exc_info=cd_exc,
                             extra={"_fields": {"provider": provider}},
+                        )
+                    else:
+                        retry_ledger.record_retry(
+                            kind="cooldown", provider=provider,
+                            detail=f"{cooldown_seconds:.0f}s",
                         )
         log.engine.debug(
             "[resilient_round] exit — round raised",
