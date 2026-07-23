@@ -43,6 +43,7 @@ def _make_adapter(sent: list[tuple[int, str]]) -> TelegramChannelAdapter:
     adapter = TelegramChannelAdapter.__new__(TelegramChannelAdapter)
     adapter._bot_app = _FakeBot(sent)  # type: ignore[attr-defined]
     adapter._last_chat_id = 111  # type: ignore[attr-defined]
+    adapter._flood_until = None  # type: ignore[attr-defined]
 
     class _NoSplit:
         def split(self, text: str) -> list[str]:

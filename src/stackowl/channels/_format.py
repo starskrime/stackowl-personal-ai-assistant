@@ -42,7 +42,9 @@ def _is_delimiter_row(line: str) -> bool:
 
 
 def flatten_gfm_tables(text: str) -> str:
-    """Flatten GFM pipe-tables to fenced, column-aligned text blocks.
+    """Flatten GFM pipe-tables to a fenced, column-aligned block — or, when that
+    block would be too wide for a mobile screen, to the same plain per-row list
+    :func:`tables_to_plain_list` uses (see :func:`_render_auto`).
 
     Both Telegram MarkdownV2 and Slack mrkdwn stash ````` ``` ````` fences
     verbatim before their escape/conversion passes, so the rendered block
@@ -55,10 +57,11 @@ def flatten_gfm_tables(text: str) -> str:
         text: Raw assistant GFM text, possibly containing one or more tables.
 
     Returns:
-        Text with any detected GFM tables replaced by fenced aligned blocks;
-        all other content is returned byte-for-byte unchanged.
+        Text with any detected GFM tables replaced by an aligned block or a
+        plain list (whichever fits); all other content is returned
+        byte-for-byte unchanged.
     """
-    return _transform_tables(text, _render_block)
+    return _transform_tables(text, _render_auto)
 
 
 def _transform_tables(
@@ -445,6 +448,40 @@ async def load_output_style(store: PreferenceStore, owner_key: str) -> OutputSty
     global_prefs = await store.list_for_owner(GLOBAL_OWNER_KEY)
     owner_prefs = await store.list_for_owner(owner_key)
     return resolve_output_style({**global_prefs, **owner_prefs})
+
+
+# Telegram wraps a monospace line well before this on a standard phone in
+# portrait mode. A row that wraps mid-line visually shreds the column
+# alignment _render_block worked to produce — worse than not aligning at all
+# (live incident 2026-07-23: a 4-column job-listing table wrapped and looked
+# broken on mobile). _render_auto falls back to the plain per-row list instead
+# of ever emitting a block wider than this.
+_MAX_MOBILE_TABLE_WIDTH = 36
+
+def _block_width(header: list[str], body: list[list[str]]) -> int:
+    """The rendered line width _render_block would produce for this table."""
+    rows = [header, *body]
+    width = max(len(r) for r in rows)
+    norm = [r + [""] * (width - len(r)) for r in rows]
+    cols = [max(len(norm[r][c]) for r in range(len(norm))) for c in range(width)]
+    return sum(cols) + 2 * max(width - 1, 0)
+
+
+def _render_auto(header: list[str], body: list[list[str]]) -> str:
+    """Fenced aligned block when it fits a mobile screen, else the plain list.
+
+    Emphasis markup (e.g. "**Capital One**") is stripped via the shared
+    _strip_emphasis for cells bound for the fenced block — inside a ``` fence
+    Telegram never parses markdown, so the delimiters would just be literal
+    noise there. Left untouched for the plain-list fallback, whose unfenced
+    output renders that same markdown correctly through the channel's own
+    conversion.
+    """
+    stripped_header = [_strip_emphasis(c) for c in header]
+    stripped_body = [[_strip_emphasis(c) for c in row] for row in body]
+    if _block_width(stripped_header, stripped_body) <= _MAX_MOBILE_TABLE_WIDTH:
+        return _render_block(stripped_header, stripped_body)
+    return _render_plain_list(header, body)
 
 
 def _render_block(header: list[str], body: list[list[str]]) -> str:

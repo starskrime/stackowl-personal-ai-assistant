@@ -72,3 +72,52 @@ def test_table_inside_fence_passes_through_unchanged() -> None:
     assert "| --- | --- |" in out
     # Must still be exactly one fenced block, not nested/double
     assert out.count("```") == 2
+
+
+# ---------------------------------------------------------------------------
+# Live incident 2026-07-23 — wide tables must not become mobile-broken blocks
+# ---------------------------------------------------------------------------
+
+_WIDE_TABLE = (
+    "| Company | Role | Salary | Visa? |\n"
+    "| --- | --- | --- | --- |\n"
+    "| **Capital One** | Sr. Lead SE, Full Stack (EPTech) | $209K - $238.5K | Yes |\n"
+    "| **Caterpillar** | Principal SE - Autonomy Services | $147.8K - $240.1K | Yes |\n"
+)
+
+
+def test_wide_table_falls_back_to_plain_list_not_a_broken_block() -> None:
+    """A table wide enough to wrap mid-line on a phone (the real job-listing
+    shape that prompted this fix) must render as the plain per-row list, not
+    the fenced monospace block — a wrapped block looks MORE broken than no
+    alignment at all."""
+    out = flatten_gfm_tables(_WIDE_TABLE)
+    assert "```" not in out
+    assert "|" not in out
+    assert "Company: **Capital One**" in out
+    assert "Role: Sr. Lead SE, Full Stack (EPTech)" in out
+    assert "Company: **Caterpillar**" in out
+
+
+def test_wide_table_plain_list_keeps_bold_markdown_for_channel_rendering() -> None:
+    """Unlike the fenced-block path, the plain-list fallback is NOT inside a
+    code fence, so bold markdown in cells should survive for the channel's own
+    markdown conversion to render (not be stripped)."""
+    out = flatten_gfm_tables(_WIDE_TABLE)
+    assert "**Capital One**" in out
+
+
+def test_narrow_table_with_bold_cells_strips_markup_inside_the_fence() -> None:
+    """A narrow table still uses the fenced block, where bold markup would
+    otherwise leak through as literal asterisks (Telegram never parses
+    markdown inside a ``` fence) — it must be stripped."""
+    src = "| Name | Age |\n| --- | --- |\n| **Ann** | 30 |\n"
+    out = flatten_gfm_tables(src)
+    assert "```" in out
+    assert "**" not in out
+    assert "Ann" in out
+
+
+def test_wide_table_flatten_is_idempotent() -> None:
+    once = flatten_gfm_tables(_WIDE_TABLE)
+    assert flatten_gfm_tables(once) == once
