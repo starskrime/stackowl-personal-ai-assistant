@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from stackowl.infra import recovery_context
 from stackowl.infra.observability import log
+from stackowl.pipeline.delivery_gate import detect_critical_failure
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.setup.localize import localize_format
@@ -24,6 +25,10 @@ _TEMPLATE_BY_KIND = {
 # F-10: when the final response is an honest floor we still surface ONE brief,
 # GENERIC line so the user knows alternatives were tried before the give-up. No
 # names are leaked (a floored turn is the worst time to expose internal tool names).
+# FR3 (honesty guard): gated OFF this turn CRITICALLY FAILED — a substitution
+# recorded earlier does not make "I tried alternatives" honest once the turn as
+# a whole still ended in an unrecovered failure; showing it there would read as
+# a false claim of partial success layered onto the floor.
 _ATTEMPTED_KEY = "self_heal_recovery_attempted"
 
 
@@ -42,11 +47,19 @@ async def surface_recovery(state: PipelineState) -> PipelineState:
             # When an honest floor is present, surface ONE brief, GENERIC line so
             # "I tried alternatives before giving up" is visible. With no floor to
             # annotate (e.g. empty response), there is nothing to surface alongside.
+            # FR3 — but only when the turn didn't ALSO critically fail: a
+            # substitution recorded earlier this turn does not make "I tried
+            # alternatives" honest once the turn as a whole ended unrecovered
+            # (see module docstring on _ATTEMPTED_KEY).
             has_floor = any(c.content.strip() and c.is_floor for c in state.responses)
-            if not has_floor:
+            if not has_floor or detect_critical_failure(state):
                 log.engine.debug(
-                    "[recovery_summary] skip — no answer or floor to annotate",
-                    extra={"_fields": {"trace_id": state.trace_id, "n_events": len(events)}},
+                    "[recovery_summary] skip — no answer/floor to annotate, "
+                    "or turn critically failed (FR3 honesty guard)",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id, "n_events": len(events),
+                        "has_floor": has_floor,
+                    }},
                 )
                 return state
             attempted = ResponseChunk(
