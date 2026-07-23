@@ -21,7 +21,9 @@ _SCHEMA = """
         captured_at REAL NOT NULL, scored_at REAL, owner_id TEXT NOT NULL DEFAULT 'principal-default',
         tool_sequence TEXT NOT NULL DEFAULT '[]', dna_snapshot TEXT NOT NULL DEFAULT '{}',
         overclaim_blocked INTEGER NOT NULL DEFAULT 0, recovered_via_tool TEXT,
-        failed_capability TEXT, approach_rating TEXT, UNIQUE(trace_id)
+        failed_capability TEXT, approach_rating TEXT,
+        retry_lineage_id TEXT, retry_event_count INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(trace_id)
     )
 """
 

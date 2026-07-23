@@ -55,6 +55,7 @@ from stackowl.channels._format import (
     load_output_style,
     tables_to_plain_list,
 )
+from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -410,6 +411,11 @@ async def _record_rejection(services: object, state: PipelineState, render: str)
             step_durations={},
             input_text=state.input_text,
             response_text=render,
+            retry_lineage_id=state.retry_lineage_id,
+            # Workstream B — a live read is safe HERE (unlike the backends'
+            # post-turn _capture_outcome): this step runs mid-pipeline while
+            # retry_ledger is still bound, well before the turn's own reset.
+            retry_event_count=len(retry_ledger.get_retry()),
         )
     except Exception as exc:  # B5 — telemetry must never crash the turn
         log.gateway.error(

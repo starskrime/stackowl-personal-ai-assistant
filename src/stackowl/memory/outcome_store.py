@@ -64,6 +64,13 @@ class TaskOutcome:
     # positive-only filter to exclude disliked-approach outcomes even when
     # they otherwise look like a trustworthy success.
     approach_rating: str | None = None
+    # Migration 0090 (Workstream B, Phase 5) — retry-ledger observability.
+    # retry_lineage_id correlates every attempt of the same underlying retry
+    # despite trace_id churn per attempt; None for a normal turn.
+    # retry_event_count is how many provider-layer retry/circuit-breaker
+    # events fired during THIS turn — 0 for the overwhelming common case.
+    retry_lineage_id: str | None = None
+    retry_event_count: int = 0
 
 
 def classify_failure(errors: tuple[str, ...]) -> str | None:
@@ -119,6 +126,8 @@ class TaskOutcomeStore(OwnedRepository):
         overclaim_blocked: bool = False,
         recovered_via_tool: str | None = None,
         failed_capability: str | None = None,
+        retry_lineage_id: str | None = None,
+        retry_event_count: int = 0,
     ) -> None:
         """Insert a new outcome row. quality_score / scored_at start NULL.
 
@@ -134,6 +143,8 @@ class TaskOutcomeStore(OwnedRepository):
                 "tool_call_count": tool_call_count,
                 "recovered_via_tool": recovered_via_tool,
                 "failed_capability": failed_capability,
+                "retry_lineage_id": retry_lineage_id,
+                "retry_event_count": retry_event_count,
             }},
         )
         await self._db.execute(
@@ -142,8 +153,9 @@ class TaskOutcomeStore(OwnedRepository):
                    latency_ms, tool_call_count, failure_class,
                    step_durations, input_text, response_text, captured_at,
                    tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
-                   recovered_via_tool, failed_capability
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   recovered_via_tool, failed_capability, retry_lineage_id,
+                   retry_event_count
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_id, owl_name, channel, int(success),
@@ -156,6 +168,8 @@ class TaskOutcomeStore(OwnedRepository):
                 int(overclaim_blocked),
                 recovered_via_tool,
                 failed_capability,
+                retry_lineage_id,
+                retry_event_count,
             ),
         )
         log.memory.info(
@@ -672,4 +686,8 @@ def _row_to_outcome(row: dict[str, object]) -> TaskOutcome:
         approach_rating=(
             str(row["approach_rating"]) if row.get("approach_rating") else None
         ),
+        retry_lineage_id=(
+            str(row["retry_lineage_id"]) if row.get("retry_lineage_id") else None
+        ),
+        retry_event_count=int(str(row.get("retry_event_count") or 0)),
     )

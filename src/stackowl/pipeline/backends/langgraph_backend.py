@@ -157,6 +157,10 @@ class LangGraphBackend(OrchestratorBackend):
             if state.interactive
             else 0.0
         )
+        # Workstream B, Phase 5 — captured inside `finally` (retry_ledger is
+        # still bound there); see AsyncioBackend's identical comment for why
+        # this can't be read at the _capture_outcome call site itself.
+        retry_event_count = 0
         try:
             compiled = await self._ensure_compiled()
             # Isolate per-task checkpoints: a durable task gets its own thread so
@@ -238,6 +242,21 @@ class LangGraphBackend(OrchestratorBackend):
                 decision_ledger.reset(decision_token)
             tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
+            _retry_events = retry_ledger.get_retry()
+            if _retry_events:
+                log.engine.info(
+                    "[retry] turn summary",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id,
+                        "retry_lineage_id": state.retry_lineage_id,
+                        "events": [
+                            {"kind": e.kind, "provider": e.provider, "detail": e.detail,
+                             "attempt_number": e.attempt_number}
+                            for e in _retry_events
+                        ],
+                    }},
+                )
+            retry_event_count = len(_retry_events)
             retry_ledger.reset(retry_ledger_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)
@@ -266,7 +285,10 @@ class LangGraphBackend(OrchestratorBackend):
         # derived expected_outcome on a LangGraph-run turn was never checked, unlike
         # AsyncioBackend. Mirrors AsyncioBackend.run()'s tail exactly.
         acceptance = await _verify_turn_acceptance(final, wall_t0, self._services)
-        await _capture_outcome(final, total_ms, self._services, acceptance=acceptance)
+        await _capture_outcome(
+            final, total_ms, self._services,
+            acceptance=acceptance, retry_event_count=retry_event_count,
+        )
         return final
 
     async def _deadline_floor(self, state: PipelineState, deadline_s: float) -> PipelineState:

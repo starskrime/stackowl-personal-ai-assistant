@@ -155,6 +155,13 @@ class AsyncioBackend(OrchestratorBackend):
         _progress_cb = make_progress_callback(current, self._services)
         progress_token = bind_progress_callback(_progress_cb)
         await emit_progress_start(_progress_cb)
+        # Workstream B, Phase 5 — captured inside `finally` (retry_ledger is
+        # still bound there), consumed AFTER the try/finally by _capture_outcome.
+        # Reading retry_ledger.get_retry() at the _capture_outcome call site
+        # itself would always see () — it runs after this function's own
+        # reset (see shared.py's _capture_outcome docstring for the same
+        # lesson already learned once for recovery_context).
+        retry_event_count = 0
         try:
             # Global interactive turn deadline (2026-07 incident: a telegram turn
             # hung 1670+s — lower-level timeouts like resilient_round don't cover
@@ -289,6 +296,21 @@ class AsyncioBackend(OrchestratorBackend):
                 decision_ledger.reset(decision_token)
             tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
+            _retry_events = retry_ledger.get_retry()
+            if _retry_events:
+                log.engine.info(
+                    "[retry] turn summary",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id,
+                        "retry_lineage_id": state.retry_lineage_id,
+                        "events": [
+                            {"kind": e.kind, "provider": e.provider, "detail": e.detail,
+                             "attempt_number": e.attempt_number}
+                            for e in _retry_events
+                        ],
+                    }},
+                )
+            retry_event_count = len(_retry_events)
             retry_ledger.reset(retry_ledger_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)
@@ -313,5 +335,8 @@ class AsyncioBackend(OrchestratorBackend):
 
         # Outcome capture — best-effort; never block the response on a
         # telemetry write failure. Helper logs its own warning on error.
-        await _capture_outcome(current, total_ms, self._services, acceptance=acceptance)
+        await _capture_outcome(
+            current, total_ms, self._services,
+            acceptance=acceptance, retry_event_count=retry_event_count,
+        )
         return current

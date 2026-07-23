@@ -207,7 +207,7 @@ async def _derive_turn_acceptance(
 
 async def _capture_outcome(
     state: PipelineState, total_ms: float, services: StepServices,
-    *, acceptance: AcceptanceVerdict | None = None,
+    *, acceptance: AcceptanceVerdict | None = None, retry_event_count: int = 0,
 ) -> None:
     """Persist a row in task_outcomes for this run. Best-effort — logs on failure.
 
@@ -220,6 +220,14 @@ async def _capture_outcome(
     is an UNACHIEVED EFFECT — the turn claimed an outcome reality refuted — so the
     row is marked not-trustworthy and labelled so the positive-only learner skips it,
     exactly mirroring the unrecovered-effect path. ``None`` (the default) is a no-op.
+
+    ``retry_event_count`` (Workstream B, Phase 5) — how many provider-layer
+    retry/circuit-breaker events fired during this turn. MUST be passed in by
+    the caller, captured from retry_ledger.get_retry() BEFORE that backend's
+    own reset — reading the ContextVar directly HERE would always see ()
+    (this function runs after both backends' own retry_ledger.reset(), the
+    same lesson already learned once for recovery_context; see
+    recovered_via_tool's derivation below for that original fix).
     """
     # 1. ENTRY
     log.engine.debug(
@@ -341,6 +349,8 @@ async def _capture_outcome(
             overclaim_blocked=state.overclaim_blocked,
             recovered_via_tool=recovered_via_tool,
             failed_capability=failed_capability,
+            retry_lineage_id=state.retry_lineage_id,
+            retry_event_count=retry_event_count,
         )
         # LS7 — close the skill-usage loop: nudge applied skills' success_rate
         # from this turn's MEASURED outcome. Internally fail-open.
