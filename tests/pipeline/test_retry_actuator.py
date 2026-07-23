@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telegram.error import RetryAfter
 
+from stackowl.infra import retry_ledger
 from stackowl.memory.retry_queue_store import RetryQueueRow
 from stackowl.pipeline.retry_actuator import RetryActuator
 from stackowl.pipeline.state import PipelineState
@@ -138,7 +139,7 @@ async def test_attempt_retry_success_joins_streamed_chunks_without_newlines():
 
 
 @pytest.mark.asyncio
-async def test_attempt_retry_failure_marks_attempt():
+async def test_attempt_retry_failure_marks_attempt(monkeypatch: pytest.MonkeyPatch):
     row = _row()
 
     floored_state = PipelineState(
@@ -159,11 +160,27 @@ async def test_attempt_retry_failure_marks_attempt():
     updated_row = _row(attempt_count=1, status="pending")
     retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
 
+    # Workstream B — spy on retry_ledger.record_retry rather than binding a
+    # context: _handle_failure runs outside any backend-bound ledger scope in
+    # production (backend.run() already returned by the time it's called), so
+    # asserting via a real bind()/get_retry() round-trip would prove nothing
+    # about THIS call site's own logic — a spy proves the kwargs it computes
+    # are correct regardless of binding.
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        retry_ledger, "record_retry",
+        lambda **kwargs: recorded.append(kwargs),
+    )
+
     actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "pending"
     retry_store.mark_attempt_failed.assert_awaited_once()
+    assert len(recorded) == 1
+    assert recorded[0]["kind"] == "goal_retry_attempt"
+    assert recorded[0]["provider"] == row.id
+    assert recorded[0]["attempt_number"] == 1  # updated_row.attempt_count
 
 
 @pytest.mark.asyncio

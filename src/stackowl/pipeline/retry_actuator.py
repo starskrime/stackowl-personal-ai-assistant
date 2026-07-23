@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from telegram.error import RetryAfter
 
+from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
 from stackowl.memory.retry_queue_store import RetryQueueRow, RetryQueueStore
 from stackowl.notifications.deliverer import _TargetedSender
@@ -346,6 +347,21 @@ class RetryActuator:
             # "pending" is the conservative, non-data-losing report: worst case
             # is a harmless extra retry, never a silently dropped failure.
             return RetryOutcome(status="pending")
+        # Workstream B — the real attempt_number mark_attempt_failed just
+        # persisted (not the pre-attempt count captured at attempt_retry's
+        # entry), so a later reader (task_outcomes, Phase 5) can tell "attempt
+        # 1 of many" from "attempt 40 and still failing". provider=row.id
+        # matches this row's retry_lineage_id, so both are the same key.
+        # NOTE: attempt_retry runs outside any backend-bound retry_ledger
+        # scope (backend.run() binds/resets its OWN per-turn context and
+        # returns before _handle_failure is ever called) — this call is a
+        # graceful no-op until a caller binds a ledger scope spanning the
+        # goal-retry lifecycle, which Phase 5 adds alongside the durable
+        # persistence read.
+        retry_ledger.record_retry(
+            kind="goal_retry_attempt", provider=row.id,
+            detail=error[:120], attempt_number=updated.attempt_count,
+        )
         # No terminal "failed" status anymore (owner decision 2026-07-22) —
         # mark_attempt_failed always re-arms, so there is no give-up
         # notification to send here; updated.status is always "pending".
