@@ -23,7 +23,6 @@ from stackowl.pipeline.steps.execute import _run_with_tools
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
-
 # ---------------------------------------------------------------------------
 # Minimal recording tools (copied from test_bounds_dispatch.py)
 # ---------------------------------------------------------------------------
@@ -254,10 +253,36 @@ async def test_presentation_restricted_when_envelope_set() -> None:
 
 @pytest.mark.asyncio
 async def test_presentation_parity_when_no_envelope() -> None:
-    """When no task_envelope is set, full toolset is presented (S2 parity)."""
+    """When no task_envelope is set AND the owl's bounds already cover the full
+    registered set, the full toolset is presented (S2 parity) — this test's
+    owl_bounds happens to equal the registry, so narrowing-to-bounds (below)
+    and "no narrowing at all" produce the same presented set either way."""
     owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
     _a, _f, provider = await _drive(owl_bounds, task_envelope=None)
     presented = _schema_names(provider.seen_schemas)
     assert {"allowed_tool", "forbidden_tool"} <= presented, (
         f"Both tools must be presented when no envelope is set, but presented={presented}"
     )
+
+
+@pytest.mark.asyncio
+async def test_presentation_narrows_to_bounds_when_no_envelope_or_profile() -> None:
+    """Live incident 2026-07-23: a bounded owl (bounds narrower than the full
+    registry) with no task_envelope and no capability_profile fell through to
+    the FULL catalog — presenting forbidden_tool even though the owl's own
+    bounds could NEVER let it call it (bounds_guard always blocks it at
+    dispatch). That produced a confusing self-report: a tool "in the catalog"
+    yet always refused. Presentation must narrow to the owl's own effective
+    bounds in this case, exactly like it already does for a task_envelope."""
+    owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool"}))
+    _a, forbidden, provider = await _drive(owl_bounds, task_envelope=None)
+    presented = _schema_names(provider.seen_schemas)
+    assert "forbidden_tool" not in presented, (
+        f"forbidden_tool is outside owl bounds and must never be presented, "
+        f"but presented={presented}"
+    )
+    assert "allowed_tool" in presented, (
+        f"allowed_tool is within owl bounds and must be presented, but presented={presented}"
+    )
+    # bounds_guard still denies it at dispatch too (defense-in-depth, unchanged).
+    assert forbidden.executed is False

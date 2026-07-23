@@ -1041,6 +1041,18 @@ async def _run_with_tools(
     # envelope, restrict the presented set to plan ∪ discovery (drift
     # prevention). None envelope → restrict_to=None → byte-for-byte S2.
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
+    # A bounded owl (bounds.tools is a real, closed allowlist) with no DNA
+    # capability_profile and no task envelope falls through to the full/budget-
+    # ranked catalog below — presenting tools the owl can NEVER call (bounds_guard
+    # always blocks them at dispatch). That mismatch surfaced live 2026-07-23: a
+    # scheduled-job owl (headhunter) self-reported web_search as present in its
+    # catalog yet always refused — its manifest bounds excluded it, but nothing
+    # had narrowed presentation to match. Narrow presentation to the owl's own
+    # effective bounds whenever one applies and nothing already narrower is set.
+    if restrict_to is None and profile is None:
+        effective = compute_effective_bounds(state, owl_registry)
+        if effective is not None and effective.tools is not None:
+            restrict_to = effective.tools
     # FX-07 — tools surfaced by tool_search earlier this session get promoted
     # into this turn's presented set instead of the model re-discovering the
     # same tool by name every turn. Session-scoped, not turn-scoped (survives
