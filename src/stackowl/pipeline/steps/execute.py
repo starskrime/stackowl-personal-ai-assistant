@@ -2477,7 +2477,7 @@ async def _maybe_clarify(state: PipelineState, services: object) -> PipelineStat
 
 async def _resolve_provider_choice(
     state: PipelineState, services: StepServices, registry: ProviderRegistry,
-) -> ToolProviderChoice | PipelineState:
+) -> tuple[ToolProviderChoice | PipelineState, tuple[recovery_context.RecoveryEvent, ...]]:
     """Resolve this turn's tool-provider choice (unchanged logic).
 
     LAT.3 — extracted so it can run CONCURRENTLY, via ``asyncio.gather`` in
@@ -2487,16 +2487,28 @@ async def _resolve_provider_choice(
     already-evolved error state on ``AllProvidersUnavailableError`` /
     ``ToolUseUnsupportedError`` (callers must check
     ``isinstance(result, PipelineState)``).
+
+    Also returns any ``recovery_context`` events ``select_tool_provider_plan``
+    recorded during this call. ``asyncio.gather`` runs this coroutine in its
+    own Task with a COPIED context (a contextvars snapshot taken at Task
+    creation) — a ``record_recovery`` call made inside never reaches the
+    parent's context once ``gather`` returns, even though the return VALUE
+    does. Confirmed live: a real provider-fallback recovery was recorded here
+    but never rendered by ``surface_recovery`` because the parent (post-
+    gather) context never saw it. The caller must ``recovery_context.replay``
+    these events onto its OWN context after ``gather`` completes.
     """
+    _baseline = recovery_context.get_recovery()
+    result: ToolProviderChoice | PipelineState
     try:
-        return select_tool_provider_plan(registry, services, state)
+        result = select_tool_provider_plan(registry, services, state)
     except AllProvidersUnavailableError as exc:
         log.engine.error(
             "[pipeline] execute: all providers unavailable — flooring",
             exc_info=exc,
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
-        return state.evolve(
+        result = state.evolve(
             errors=(*state.errors, format_step_error("execute", exc)),
             step_errors=(*state.step_errors,
                          StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
@@ -2511,11 +2523,13 @@ async def _resolve_provider_choice(
             exc_info=exc,
             extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
         )
-        return state.evolve(
+        result = state.evolve(
             errors=(*state.errors, format_step_error("execute", exc)),
             step_errors=(*state.step_errors,
                          StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
         )
+    new_events = recovery_context.get_recovery()[len(_baseline):]
+    return result, new_events
 
 
 async def _join_feedback_task(state: PipelineState) -> PipelineState:
@@ -2589,10 +2603,14 @@ async def run(state: PipelineState) -> PipelineState:
     # point before this step would generate/stream ANY user-visible content (a
     # clarify question or generated text) — so a confident reaction still
     # short-circuits correctly (AC#2) before either downstream branch runs.
-    choice_or_err, state = await asyncio.gather(
+    (choice_or_err, _recovery_events_from_gather), state = await asyncio.gather(
         _resolve_provider_choice(state, services, registry),
         _join_feedback_task(state),
     )
+    # Bridge asyncio.gather's context-isolation boundary — see
+    # _resolve_provider_choice's docstring. Without this, a provider-fallback
+    # recovery recorded during that gathered call never reaches surface_recovery.
+    recovery_context.replay(_recovery_events_from_gather)
 
     # LS4 — the feedback task, once joined above, may have captured a reaction to
     # the last render and stamped the confirmation onto responses; that

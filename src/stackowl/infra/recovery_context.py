@@ -63,3 +63,28 @@ def record_recovery(
 def get_recovery() -> tuple[RecoveryEvent, ...]:
     """Non-consuming read of this turn's recovery events (empty if none/unbound)."""
     return _events.get() or ()
+
+
+def replay(events: tuple[RecoveryEvent, ...]) -> None:
+    """Re-append already-built events onto the CURRENT context.
+
+    Bridges ``asyncio.gather``'s context-isolation boundary: a coroutine
+    started via ``gather`` runs inside its own COPIED context (a snapshot
+    taken when the Task was created), so a ``record_recovery`` call made
+    inside it mutates only that copy — the parent's context is never updated,
+    even though the coroutine's return VALUE does reach the caller normally.
+    A caller that captured events recorded inside such a child (by diffing
+    ``get_recovery()`` before/after the child ran) replays them here, in the
+    parent, so they become visible to the parent's own ``get_recovery()``
+    readers (e.g. ``surface_recovery``). No-op (logged) when unbound.
+    """
+    if not events:
+        return
+    current = _events.get()
+    if current is None:
+        log.engine.debug(
+            "[recovery_context] replay: unbound turn — ignoring",
+            extra={"_fields": {"n_events": len(events)}},
+        )
+        return
+    _events.set((*current, *events))
