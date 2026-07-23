@@ -172,6 +172,14 @@ class PipelineState(BaseModel, frozen=True):
     # checkpoint, not a sibling turn's. Additive — default None preserves the
     # exact prior behavior for every non-durable turn.
     task_id: str | None = None
+    # Workstream B (retry-ledger observability) — a stable id linking every
+    # attempt of the SAME underlying retry_queue row across RetryActuator's
+    # per-attempt trace_id churn (each attempt_retry call mints a fresh
+    # trace_id, so trace_id alone can't correlate a goal's retries with each
+    # other). None for a normal (non-retry) turn. Carried across evolve() like
+    # every other field; projected onto TraceContext (not read from here
+    # directly) so tools/providers see it the same way they see trace_id.
+    retry_lineage_id: str | None = None
     # E2-S2/S3 — the task-scoped authorization fields.
     # ENFORCEMENT formula: effective = owl.bounds(now) ∩ creation_ceiling
     #

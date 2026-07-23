@@ -27,6 +27,7 @@ class _TraceToken(NamedTuple):
     creation_ceiling: Token[Any]
     task_id: Token[str | None]
     durable_owner_id: Token[str | None]
+    retry_lineage_id: Token[str | None]
 
 
 class TraceContext:
@@ -81,6 +82,17 @@ class TraceContext:
     _durable_owner_id: ContextVar[str | None] = ContextVar(
         "durable_owner_id", default=None
     )
+    # Workstream B (retry-ledger observability) — links every attempt of the
+    # SAME underlying retry_queue row across RetryActuator's per-attempt
+    # trace_id churn (each attempt_retry call mints a fresh trace_id). Set
+    # once from the stable retry_queue row id so every log line at every
+    # layer (provider cascade, LLM gateway escalation, scheduler sweep)
+    # automatically carries it via observability.py's field merge. Default
+    # None ⇒ a normal (non-retry) turn is byte-identical. LOG-SAFE — included
+    # in get() like task_id.
+    _retry_lineage_id: ContextVar[str | None] = ContextVar(
+        "retry_lineage_id", default=None
+    )
 
     @classmethod
     def start(
@@ -98,6 +110,7 @@ class TraceContext:
         creation_ceiling: BoundsSpec | None = None,
         task_id: str | None = None,
         durable_owner_id: str | None = None,
+        retry_lineage_id: str | None = None,
     ) -> _TraceToken:
         """Set trace context for the current async task; return a token to reset later.
 
@@ -127,6 +140,7 @@ class TraceContext:
             creation_ceiling=cls._creation_ceiling.set(creation_ceiling),
             task_id=cls._task_id.set(task_id),
             durable_owner_id=cls._durable_owner_id.set(durable_owner_id),
+            retry_lineage_id=cls._retry_lineage_id.set(retry_lineage_id),
         )
 
     @classmethod
@@ -146,6 +160,7 @@ class TraceContext:
         cls._creation_ceiling.reset(token.creation_ceiling)
         cls._task_id.reset(token.task_id)
         cls._durable_owner_id.reset(token.durable_owner_id)
+        cls._retry_lineage_id.reset(token.retry_lineage_id)
 
     @classmethod
     @asynccontextmanager
@@ -203,6 +218,7 @@ class TraceContext:
             "delegation_profile": cls._delegation_profile.get(),
             "owl_name": cls._owl_name.get(),
             "task_id": cls._task_id.get(),
+            "retry_lineage_id": cls._retry_lineage_id.get(),
         }
 
     @classmethod

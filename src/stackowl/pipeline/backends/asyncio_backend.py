@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from stackowl.infra import decision_ledger, recovery_context, tool_outcome_ledger
+from stackowl.infra import decision_ledger, recovery_context, retry_ledger, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline import lesson_context as lc
@@ -121,9 +121,11 @@ class AsyncioBackend(OrchestratorBackend):
             creation_ceiling=state.creation_ceiling,
             task_id=state.task_id,
             durable_owner_id=state.durable_owner_id,
+            retry_lineage_id=state.retry_lineage_id,
         )
         lesson_token = lc.bind()
         recovery_token = recovery_context.bind()
+        retry_ledger_token = retry_ledger.bind()
         ledger_token = tool_outcome_ledger.bind()
         # ADR-7 — bind the per-turn DecisionLedger only when enabled (default ON; off
         # only if settings explicitly sets decision_ledger=False). Unbound ⇒
@@ -287,6 +289,7 @@ class AsyncioBackend(OrchestratorBackend):
                 decision_ledger.reset(decision_token)
             tool_outcome_ledger.reset(ledger_token)
             recovery_context.reset(recovery_token)
+            retry_ledger.reset(retry_ledger_token)
             lc.reset(lesson_token)
             TraceContext.reset(trace_token)
             reset_services(token)
