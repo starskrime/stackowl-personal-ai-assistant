@@ -34,7 +34,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from stackowl.infra.observability import log
-from stackowl.memory.outcome_store import TaskOutcome
+from stackowl.memory.outcome_store import TaskOutcome, is_positive_signal
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 
@@ -101,16 +101,14 @@ def _filter_scored_outcomes(outcomes: list[TaskOutcome]) -> list[TaskOutcome]:
 
     F-54 (ACCEPTED-BY-DIRECTIVE): tune traits from SUCCESSFUL outcomes only
     (see feedback_positive_only_learning). Failed/penalized outcomes are
-    dropped even when they carry a quality_score + dna_snapshot. A user
-    Dislike vote (``approach_rating == "negative"``) is excluded too — the
-    turn may have technically succeeded, but the user rejected the approach,
-    so it must not reinforce the trait band that produced it.
+    dropped even when they carry a quality_score + dna_snapshot — the shared
+    :func:`is_positive_signal` gate (success + no failure_class + not
+    Disliked) — AND (DNA-attribution-specific) a trait delta can't be
+    computed without a scored quality + a captured DNA snapshot.
     """
     return [
         o for o in outcomes
-        if o.quality_score is not None and o.dna_snapshot
-        and o.success and not o.failure_class
-        and o.approach_rating != "negative"
+        if is_positive_signal(o) and o.quality_score is not None and o.dna_snapshot
     ]
 
 

@@ -73,6 +73,27 @@ class TaskOutcome:
     retry_event_count: int = 0
 
 
+def is_positive_signal(outcome: TaskOutcome) -> bool:
+    """POSITIVE-ONLY LEARNING core gate (operator directive, F-54): the ONE
+    condition every learner mining ``task_outcomes`` must apply before
+    treating a row as a genuine win — ``success`` AND no ``failure_class``
+    AND not user-Disliked (``approach_rating == "negative"``).
+
+    Shared by :func:`stackowl.owls.dna_attribution._filter_scored_outcomes`
+    (DNA trait tuning) and :class:`stackowl.learning.tool_outcome_miner.ToolOutcomeMiner`
+    (tool heuristic mining) — two independent learners that used to
+    re-implement this same gate separately (PATHFINDER-2026-07-22 Proposal
+    3), with tool_outcome_miner's copy missing the ``approach_rating`` check
+    entirely (a user Dislike could still be mined as a positive tool
+    heuristic). Each caller ANDs its own additional requirements on top
+    (DNA attribution also needs ``quality_score``/``dna_snapshot`` to
+    compute a trait delta at all; tool mining needs none) — this function is
+    deliberately just the shared kernel, not a full eligibility check for
+    either caller.
+    """
+    return bool(outcome.success) and not outcome.failure_class and outcome.approach_rating != "negative"
+
+
 def classify_failure(errors: tuple[str, ...]) -> str | None:
     """Derive a failure_class string from ``state.errors``.
 
@@ -325,11 +346,17 @@ class TaskOutcomeStore(OwnedRepository):
             "[outcomes] list_scored_for_owl_global: entry",
             extra={"_fields": {"since_epoch": since_epoch, "limit": limit}},
         )
+        # approach_rating is selected (PATHFINDER-2026-07-22 Proposal 3 gap
+        # fix) so ToolOutcomeMiner's is_positive_signal() filter can actually
+        # see a Disliked vote — omitting it here silently defaulted every row
+        # to approach_rating=None regardless of the real DB value (unlike
+        # list_scored_for_owl below, which already selected it correctly).
         rows = await self._db.fetch_all(
             """SELECT outcome_id, trace_id, session_id, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
-                      captured_at, scored_at, tool_sequence, dna_snapshot
+                      captured_at, scored_at, tool_sequence, dna_snapshot,
+                      approach_rating
                FROM task_outcomes
                WHERE owner_id = ?
                  AND quality_score IS NOT NULL

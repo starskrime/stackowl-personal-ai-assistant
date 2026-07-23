@@ -141,6 +141,38 @@ async def test_miner_skips_below_threshold(tmp_db: DbPool) -> None:
     assert report.n_heuristics_written == 0
 
 
+async def test_miner_skips_disliked_approach_positive_only(tmp_db: DbPool) -> None:
+    """PATHFINDER-2026-07-22 Proposal 3 gap fix: a Disliked (approach_rating=
+    "negative") outcome must be excluded from tool-heuristic mining too, not
+    just from DNA attribution — a user explicitly rejecting the approach is
+    a clear "this was not a genuine positive" signal, shared via
+    outcome_store.is_positive_signal (this miner's own filter used to skip
+    only failure_class, missing this check entirely)."""
+    store = TaskOutcomeStore(tmp_db)
+    for i in range(3):
+        tid = f"disliked-{i}"
+        await store.record(
+            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            success=True, latency_ms=200.0, tool_call_count=1,
+            failure_class=None, step_durations={},
+            input_text=f"task {i}", response_text="done",
+            tool_sequence=("web_fetch",),
+        )
+        o = await store.get_by_trace_id(tid)
+        await store.set_quality_score(o.outcome_id, 0.9)
+        await store.set_approach_rating(trace_id=tid, rating="negative")
+
+    heur_store = ToolHeuristicStore(tmp_db)
+    miner = ToolOutcomeMiner(
+        outcome_store=store, heuristic_store=heur_store,
+        lessons_index=None, min_evidence=3,
+    )
+    report = await miner.mine()
+
+    assert report.n_heuristics_written == 0
+    assert await heur_store.find_for_tool("web_fetch", min_evidence=3) == []
+
+
 async def test_miner_writes_success_heuristic_too(tmp_db: DbPool) -> None:
     """High-frequency successes also produce heuristics (predicted_outcome='succeeds')."""
     await _seed_outcomes_with_failures(tmp_db, n_fail=0, n_success=5)

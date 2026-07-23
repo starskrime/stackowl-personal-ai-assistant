@@ -29,7 +29,7 @@ from stackowl.learning.tool_heuristic_store import (
     ToolHeuristicStore,
     heuristic_summary,
 )
-from stackowl.memory.outcome_store import TaskOutcomeStore
+from stackowl.memory.outcome_store import TaskOutcomeStore, is_positive_signal
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.memory.outcome_store import TaskOutcome
@@ -108,8 +108,14 @@ class ToolOutcomeMiner:
                 continue
             # POSITIVE-ONLY LEARNING (operator directive): mine ONLY what WORKED.
             # A failed run is skipped entirely — the platform never learns a
-            # "tool X fails under Y" heuristic, only "tool X succeeds for these".
-            if o.failure_class:
+            # "tool X fails under Y" heuristic, only "tool X succeeds for
+            # these". Shared gate with dna_attribution.py's identical filter
+            # (PATHFINDER-2026-07-22 Proposal 3) — this ALSO now excludes a
+            # user-Disliked approach (approach_rating == "negative"), closing
+            # a gap where this miner (unlike DNA attribution) could mine a
+            # tool sequence the user explicitly rejected as a "positive"
+            # heuristic.
+            if not is_positive_signal(o):
                 continue
             failure_label = "succeeded"
             for tool in o.tool_sequence:
