@@ -147,7 +147,15 @@ class WhisperSttBackend(SttBackend):
         # 16 kHz mono WAV via arecord, so this removes the ffmpeg dependency for
         # the dictation path entirely.
         audio = self._decode_audio(audio_bytes, audio_format)
-        result: dict[str, Any] = self._model.transcribe(audio)
+        # tqdm's progress bar unconditionally constructs a multiprocessing.RLock
+        # on first use in this process (see tqdm/std.py's TqdmDefaultWriteLock),
+        # spawning CPython's resource_tracker helper via the same racy fork_exec
+        # path as the ffmpeg decode below — a second, independent site for the
+        # identical fds_to_keep race. Live incident 2026-07-23 (confirmed via
+        # read_logs after the first fix, decode-only, didn't cover this call).
+        result: dict[str, Any] = self._retry_fds_race(
+            "_transcribe_sync", lambda: self._model.transcribe(audio)
+        )
         text: str = str(result.get("text", "")).strip()
         return text
 
@@ -184,32 +192,43 @@ class WhisperSttBackend(SttBackend):
     @staticmethod
     def _load_audio_with_retry(whisper_module: Any, tmp_path: str) -> Any:
         """``whisper.load_audio()`` shells out to ffmpeg via ``subprocess.run()``
-        (see openai-whisper's ``audio.py``). This platform runs many tools
-        concurrently, each spawning subprocesses from the SAME shared
-        ``run_in_executor`` thread pool (shell/git/browser/ffmpeg) — under
-        that concurrency, CPython's own ``subprocess`` module has a
-        documented race (bpo-38435) computing ``fds_to_keep`` by scanning
-        ``/proc/self/fd`` at fork time: if another thread closes a listed fd
-        between the scan and the actual ``posix_spawn``, it raises
-        ``ValueError: bad value(s) in fds_to_keep``. Live incident
-        2026-07-23 — confirmed via read_logs. Transient by construction (the
-        race window is milliseconds), so a bounded retry-once — the same
-        pattern already used elsewhere in this codebase for a classifiably-
-        transient error (``Tool.__call__``'s F-24 retry-once) — succeeds
-        essentially always. Any OTHER exception (corrupt audio, missing
-        codec, a real ffmpeg failure) propagates immediately, unretried.
+        (see openai-whisper's ``audio.py``) — one of (at least) two call sites
+        in this class that can spawn a subprocess and hit CPython's
+        ``fds_to_keep`` race (see ``_retry_fds_race`` below for the shared
+        explanation and retry policy).
+        """
+        return WhisperSttBackend._retry_fds_race(
+            "_decode_audio", lambda: whisper_module.load_audio(tmp_path)
+        )
+
+    @staticmethod
+    def _retry_fds_race(op_name: str, call: Any) -> Any:
+        """Bounded retry-once for CPython's documented ``fds_to_keep`` race
+        (bpo-38435): this platform runs many tools concurrently, each
+        spawning subprocesses from the SAME shared ``run_in_executor`` thread
+        pool (shell/git/browser/ffmpeg/tqdm's multiprocessing lock) — under
+        that concurrency, ``subprocess``/``multiprocessing`` computing
+        ``fds_to_keep`` by scanning ``/proc/self/fd`` at fork time can race:
+        if another thread closes a listed fd between the scan and the actual
+        ``posix_spawn``, it raises ``ValueError: bad value(s) in
+        fds_to_keep``. Transient by construction (the race window is
+        milliseconds), so a bounded retry-once — the same pattern already
+        used elsewhere in this codebase for a classifiably-transient error
+        (``Tool.__call__``'s F-24 retry-once) — succeeds essentially always.
+        Any OTHER exception (corrupt audio, missing codec, a real failure)
+        propagates immediately, unretried.
         """
         try:
-            return whisper_module.load_audio(tmp_path)
+            return call()
         except ValueError as exc:
             if "fds_to_keep" not in str(exc):
                 raise
             log.tool.warning(
-                "[stt.whisper] _decode_audio: transient subprocess-spawn race "
+                f"[stt.whisper] {op_name}: transient subprocess-spawn race "
                 "(fds_to_keep) — retrying once",
                 extra={"_fields": {"exc": str(exc)}},
             )
-            return whisper_module.load_audio(tmp_path)
+            return call()
 
     @staticmethod
     def _decode_wav(audio_bytes: bytes) -> Any:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
-from stackowl.media.stt.base import SttResult
+from stackowl.media.stt.base import SttAvailability, SttResult
 from stackowl.media.stt.local import WhisperSttBackend
 
 pytestmark = pytest.mark.asyncio
@@ -157,6 +157,35 @@ def test_unrelated_value_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -
     with pytest.raises(ValueError, match="invalid sample rate"):
         WhisperSttBackend._load_audio_with_retry(_GenuinelyBrokenModule(), "/tmp/x.ogg")
     assert calls["n"] == 1  # no retry for an unrelated ValueError
+
+
+def test_fds_to_keep_race_in_model_transcribe_retries_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live incident 2026-07-23 (second occurrence): the SAME race can hit
+    tqdm's multiprocessing.RLock construction inside model.transcribe(),
+    not just whisper.load_audio()'s ffmpeg subprocess. _transcribe_sync must
+    retry that call site too, via the shared _retry_fds_race helper."""
+    backend = WhisperSttBackend()
+    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda op: None))
+    monkeypatch.setattr(backend, "_ensure_loaded", lambda: SttAvailability.ok())
+    monkeypatch.setattr(backend, "_decode_audio", lambda audio_bytes, audio_format: "decoded")
+
+    calls = {"n": 0}
+
+    class _FakeModel:
+        @staticmethod
+        def transcribe(audio: str) -> dict[str, str]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ValueError("bad value(s) in fds_to_keep: {-1}")
+            return {"text": "hello"}
+
+    backend._model = _FakeModel()
+    text = backend._transcribe_sync(b"x", "wav")
+
+    assert text == "hello"
+    assert calls["n"] == 2
 
 
 async def test_is_available_negative_cache(monkeypatch: pytest.MonkeyPatch) -> None:
