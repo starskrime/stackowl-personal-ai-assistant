@@ -109,6 +109,10 @@ async def test_retrieval_overclaim_corrected_in_turn() -> None:
     assert corrective_state.retry_replay is True
     assert corrective_state.defer_delivery is True
     assert "rejected" in corrective_state.input_text
+    # Workstream B — the child's retry_lineage_id must match the PARENT's
+    # trace_id (not the child's own derivative trace_id, "t-corr-fix"), so
+    # the retry ledger correlates the correction with the turn it's fixing.
+    assert corrective_state.retry_lineage_id == "t-corr"
 
 
 @pytest.mark.asyncio

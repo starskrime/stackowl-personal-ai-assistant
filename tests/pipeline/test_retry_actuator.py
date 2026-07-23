@@ -59,6 +59,47 @@ async def test_attempt_retry_success_edits_message():
 
 
 @pytest.mark.asyncio
+async def test_attempt_retry_shares_one_retry_lineage_id_across_attempts():
+    """Workstream B — two consecutive attempt_retry calls for the SAME row
+    each mint their own fresh trace_id (retry-<uuid>), but must share ONE
+    retry_lineage_id (row.id) so the retry ledger can correlate attempt N's
+    log lines with attempt N+1's despite the trace_id churn."""
+    row = _row()
+
+    success_state = PipelineState(
+        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        channel="telegram", owl_name="secretary", pipeline_step="",
+        responses=(
+            ResponseChunk(
+                content="done", is_final=True, chunk_index=0,
+                trace_id="trace-new", owl_name="secretary", is_floor=False,
+            ),
+        ),
+    )
+    backend = MagicMock()
+    backend.run = AsyncMock(return_value=success_state)
+
+    adapter = MagicMock()
+    adapter.edit_message = AsyncMock()
+    channel_registry = MagicMock()
+    channel_registry.get = MagicMock(return_value=adapter)
+
+    retry_store = MagicMock()
+    retry_store.mark_completed = AsyncMock()
+
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    await actuator.attempt_retry(row)
+    await actuator.attempt_retry(row)
+
+    first_state = backend.run.await_args_list[0].args[0]
+    second_state = backend.run.await_args_list[1].args[0]
+    assert first_state.trace_id != second_state.trace_id  # fresh per attempt
+    assert first_state.retry_lineage_id == row.id
+    assert second_state.retry_lineage_id == row.id
+    assert first_state.retry_lineage_id == second_state.retry_lineage_id
+
+
+@pytest.mark.asyncio
 async def test_attempt_retry_success_joins_streamed_chunks_without_newlines():
     """Live bug (2026-07-16): a streamed response is one chunk per token
     (execute.py yields once per delta) — joining chunks with "\n" put every

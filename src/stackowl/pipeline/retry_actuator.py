@@ -122,6 +122,12 @@ class RetryActuator:
             defer_delivery=True,
             retry_replay=True,
             corrective_replay=True,
+            # Workstream B — the corrective child's trace_id is already a
+            # derivative of the parent's (f"{original.trace_id}-fix"), but
+            # the LINEAGE id must match the PARENT's trace_id verbatim so a
+            # corrective re-run correlates with the turn it's correcting in
+            # the retry ledger, not with itself.
+            retry_lineage_id=original.trace_id,
         )
         try:
             final_state = await self._backend.run(state)
@@ -171,6 +177,12 @@ class RetryActuator:
             # retry_queue row (attempt_count=0, due immediately) instead of
             # feeding back into this row's own attempt history.
             retry_replay=True,
+            # Workstream B — row.id is STABLE across every attempt of this
+            # same goal, unlike trace_id (freshly minted above on every
+            # attempt_retry call). This is what lets the retry ledger
+            # correlate attempt N's log lines with attempt N+1's despite
+            # each having its own trace_id.
+            retry_lineage_id=row.id,
         )
         try:
             # 3. STEP — drive the pipeline exactly like a scheduled goal.
