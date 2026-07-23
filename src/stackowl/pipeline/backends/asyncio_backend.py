@@ -5,19 +5,22 @@ from __future__ import annotations
 import asyncio
 import time
 
-from stackowl.infra import decision_ledger, recovery_context, retry_ledger, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
-from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.backends.base import OrchestratorBackend
-from stackowl.pipeline.backends.shared import _capture_outcome, _verify_turn_acceptance, run_delivery_gate
-from stackowl.pipeline.budget import human_wait as human_wait_ctx
+from stackowl.pipeline.backends.shared import (
+    _capture_outcome,
+    _verify_turn_acceptance,
+    bind_turn_context,
+    run_delivery_gate,
+    unbind_turn_context,
+)
 from stackowl.pipeline.progress.emitter import bind_turn_callback as bind_progress_callback
 from stackowl.pipeline.progress.emitter import emit_start as emit_progress_start
 from stackowl.pipeline.progress.emitter import make_progress_callback
 from stackowl.pipeline.progress.emitter import reset_turn_callback as reset_progress_callback
 from stackowl.pipeline.registry import PIPELINE_STEPS
-from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState, StepError
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
@@ -103,40 +106,7 @@ class AsyncioBackend(OrchestratorBackend):
                 }
             },
         )
-        t0 = time.monotonic()
-        # Wall-clock turn start — the acceptance freshness clock (a fresh artifact's
-        # mtime is compared against this). monotonic() is unsuitable (not epoch).
-        wall_t0 = time.time()
-        token = set_services(self._services)
-        trace_token = TraceContext.start(
-            state.session_id,
-            trace_id=state.trace_id,
-            interactive=state.interactive,
-            channel=state.channel,
-            reply_target=state.reply_target,
-            delegation_depth=state.delegation_depth,
-            delegation_chain=state.delegation_chain,
-            delegation_profile=state.delegation_profile,
-            owl_name=state.owl_name,
-            creation_ceiling=state.creation_ceiling,
-            task_id=state.task_id,
-            durable_owner_id=state.durable_owner_id,
-            retry_lineage_id=state.retry_lineage_id,
-        )
-        lesson_token = lc.bind()
-        recovery_token = recovery_context.bind()
-        retry_ledger_token = retry_ledger.bind()
-        ledger_token = tool_outcome_ledger.bind()
-        # ADR-7 — bind the per-turn DecisionLedger only when enabled (default ON; off
-        # only if settings explicitly sets decision_ledger=False). Unbound ⇒
-        # record_decision no-ops ⇒ byte-identical to the pre-ADR-7 path.
-        _settings = self._services.settings
-        decision_token = (
-            decision_ledger.bind()
-            if _settings is None or _settings.decision_ledger
-            else None
-        )
-        human_wait_token = human_wait_ctx.bind()
+        bindings = bind_turn_context(state, self._services)
         current = state
         step_durations: list[tuple[str, float]] = []
         # Task 2 — surface "Working on it…" the instant the turn begins, BEFORE
@@ -155,29 +125,12 @@ class AsyncioBackend(OrchestratorBackend):
         _progress_cb = make_progress_callback(current, self._services)
         progress_token = bind_progress_callback(_progress_cb)
         await emit_progress_start(_progress_cb)
-        # Workstream B, Phase 5 — captured inside `finally` (retry_ledger is
-        # still bound there), consumed AFTER the try/finally by _capture_outcome.
-        # Reading retry_ledger.get_retry() at the _capture_outcome call site
-        # itself would always see () — it runs after this function's own
-        # reset (see shared.py's _capture_outcome docstring for the same
-        # lesson already learned once for recovery_context).
-        retry_event_count = 0
         try:
-            # Global interactive turn deadline (2026-07 incident: a telegram turn
-            # hung 1670+s — lower-level timeouts like resilient_round don't cover
-            # every hang, e.g. a wedged tool call). Interactive turns only; the
-            # long-running non-interactive paths (goal_execution, parliament,
-            # delegation children, evolution) carry their own budgets and must
-            # never be cut by this.
-            # getattr-guarded: unit tests hand StepServices duck-typed settings
-            # stubs without a `system` section — those (and settings=None) mean
-            # "deadline disabled", never a crash.
-            deadline_s: float = (
-                getattr(getattr(_settings, "system", None),
-                        "interactive_turn_timeout_s", 0.0)
-                if state.interactive
-                else 0.0
-            )
+            # Global interactive turn deadline — computed once by
+            # bind_turn_context (2026-07 incident: a telegram turn hung
+            # 1670+s — lower-level timeouts like resilient_round don't cover
+            # every hang, e.g. a wedged tool call). Interactive turns only.
+            deadline_s = bindings.deadline_s
             if deadline_s > 0:
                 try:
                     current = await asyncio.wait_for(
@@ -260,67 +213,15 @@ class AsyncioBackend(OrchestratorBackend):
                     )
         finally:
             reset_progress_callback(progress_token)
-            _rec_events = recovery_context.get_recovery()
-            if _rec_events:
-                log.engine.info(
-                    "[recovery] turn summary",
-                    extra={"_fields": {
-                        "trace_id": state.trace_id,
-                        "events": [
-                            {"kind": e.kind, "failed": e.failed,
-                             "recovered_via": e.recovered_via, "user_visible": e.user_visible}
-                            for e in _rec_events
-                        ],
-                    }},
-                )
-            human_wait_ctx.reset(human_wait_token)
-            if decision_token is not None:
-                # ADR-7 — persist this turn's decisions durably (cross-process /
-                # restart-safe) BEFORE reset clears the ledger. Best-effort: a
-                # persistence failure must NEVER break the turn (B5).
-                _decisions = decision_ledger.get_decisions()
-                if self._services.db_pool is not None and state.session_id and _decisions:
-                    try:
-                        from stackowl.pipeline.decision_store import TurnDecisionStore
-                        await TurnDecisionStore(self._services.db_pool).save(
-                            session_id=state.session_id,
-                            trace_id=state.trace_id,
-                            decisions=_decisions,
-                        )
-                    except Exception as exc:
-                        log.engine.error(
-                            "[asyncio_backend] run: decision persist failed (swallowed)",
-                            exc_info=exc,
-                            extra={"_fields": {"session_id": state.session_id}},
-                        )
-                decision_ledger.reset(decision_token)
-            tool_outcome_ledger.reset(ledger_token)
-            recovery_context.reset(recovery_token)
-            _retry_events = retry_ledger.get_retry()
-            if _retry_events:
-                log.engine.info(
-                    "[retry] turn summary",
-                    extra={"_fields": {
-                        "trace_id": state.trace_id,
-                        "retry_lineage_id": state.retry_lineage_id,
-                        "events": [
-                            {"kind": e.kind, "provider": e.provider, "detail": e.detail,
-                             "attempt_number": e.attempt_number}
-                            for e in _retry_events
-                        ],
-                    }},
-                )
-            retry_event_count = len(_retry_events)
-            retry_ledger.reset(retry_ledger_token)
-            lc.reset(lesson_token)
-            TraceContext.reset(trace_token)
-            reset_services(token)
+            retry_event_count = await unbind_turn_context(
+                bindings, state, self._services, backend_name="asyncio_backend",
+            )
 
         # Persist the measured step durations onto the final state for the
         # outcome-capture helper to read.
         current = current.evolve(step_durations=tuple(step_durations))
 
-        total_ms = (time.monotonic() - t0) * 1000
+        total_ms = (time.monotonic() - bindings.t0) * 1000
         log.engine.info(
             "[asyncio_backend] run: exit",
             extra={"_fields": {"trace_id": state.trace_id, "total_ms": total_ms, "error_count": len(current.errors)}},
@@ -331,7 +232,7 @@ class AsyncioBackend(OrchestratorBackend):
         # against reality. No declared outcome AND the LLM layer OFF (the default) ⇒
         # this returns None ⇒ byte-identical. A refuted verdict makes the captured
         # outcome untrustworthy below (so the positive-only learner skips a false win).
-        acceptance = await _verify_turn_acceptance(current, wall_t0, self._services)
+        acceptance = await _verify_turn_acceptance(current, bindings.wall_t0, self._services)
 
         # Outcome capture — best-effort; never block the response on a
         # telemetry write failure. Helper logs its own warning on error.

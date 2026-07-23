@@ -10,15 +10,36 @@ them in the exact order each backend already did. Of those, giveup_floor,
 overclaim_gate, grounding_gate, critical_failure, and persistence_handoff are
 the five honesty-critical gate modules FR-11 targets for a later, separate
 physical merge into one file — untouched here, only their call site moved.
+
+**Workstream C item 5** — ``bind_turn_context``/``unbind_turn_context`` below
+consolidate the ~90-110 lines of near-byte-identical ContextVar bind/reset
+boilerplate each backend's ``run()`` used to carry independently (turn-scoped
+TraceContext/lesson/recovery/retry-ledger/tool-outcome-ledger/decision-ledger/
+human-wait binding, and their mirrored teardown + summary logging in a
+``finally``). Deliberately EXCLUDES the live-progress-callback bind
+(``bind_progress_callback``/``emit_progress_start``) — that is genuinely
+asyncio-only (LangGraph has no live-progress wiring at all today), a real
+specialization, not duplication, so it stays in ``AsyncioBackend.run()``
+itself, bracketing a call to these shared functions rather than being forced
+into them.
 """
 
 from __future__ import annotations
 
+import time
+from contextvars import Token
+from dataclasses import dataclass
+
+from stackowl.infra import decision_ledger, recovery_context, retry_ledger, tool_outcome_ledger
 from stackowl.infra.observability import log
+from stackowl.infra.tool_outcome_ledger import ToolOutcome
+from stackowl.infra.trace import TraceContext, _TraceToken
 from stackowl.memory.outcome_store import TaskOutcomeStore, classify_failure
 from stackowl.objectives.model import ExpectedOutcome
+from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.acceptance import AcceptanceChecker, AcceptanceVerdict
 from stackowl.pipeline.applied_lessons import surface_applied_lessons
+from stackowl.pipeline.budget import human_wait as human_wait_ctx
 from stackowl.pipeline.command_hint import surface_command_hint
 from stackowl.pipeline.delivery_gate import (
     surface_consequential_giveup_floor,
@@ -27,10 +48,173 @@ from stackowl.pipeline.delivery_gate import (
     surface_overclaim_gate,
     surface_persistence_handoff,
 )
+from stackowl.pipeline.lesson_context import _LessonToken
 from stackowl.pipeline.recovery_summary import surface_recovery
-from stackowl.pipeline.services import StepServices
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.turn_persist import persist_turn
+
+
+@dataclass(frozen=True, slots=True)
+class TurnBindings:
+    """Reset tokens + timing captured by :func:`bind_turn_context`.
+
+    Opaque to callers beyond passing it straight to
+    :func:`unbind_turn_context` — field names mirror each ContextVar's own
+    ``bind()``/``reset()`` pair.
+    """
+
+    services_token: Token[StepServices]
+    trace_token: _TraceToken
+    lesson_token: _LessonToken
+    recovery_token: Token[list[recovery_context.RecoveryEvent] | None]
+    retry_ledger_token: Token[list[retry_ledger.RetryEvent] | None]
+    tool_outcome_token: Token[tuple[ToolOutcome, ...] | None]
+    decision_token: Token[list[decision_ledger.Decision] | None] | None
+    human_wait_token: Token[float]
+    t0: float
+    wall_t0: float
+    deadline_s: float
+
+
+def bind_turn_context(state: PipelineState, services: StepServices) -> TurnBindings:
+    """Install every turn-scoped ContextVar for one ``run()`` call.
+
+    Order matches what both backends' ``run()`` did inline before this
+    consolidation: services → TraceContext → lesson_context → recovery_context
+    → retry_ledger → tool_outcome_ledger → decision_ledger (conditional on the
+    ``decision_ledger`` setting, default ON) → human_wait. ``deadline_s`` is
+    computed here too (a pure derivation from ``state.interactive`` +
+    ``services.settings``) since both backends immediately needed it right
+    after binding.
+    """
+    t0 = time.monotonic()
+    # Wall-clock turn start — the acceptance freshness clock (a fresh artifact's
+    # mtime is compared against this). monotonic() is unsuitable (not epoch).
+    wall_t0 = time.time()
+    services_token = set_services(services)
+    trace_token = TraceContext.start(
+        state.session_id,
+        trace_id=state.trace_id,
+        interactive=state.interactive,
+        channel=state.channel,
+        reply_target=state.reply_target,
+        delegation_depth=state.delegation_depth,
+        delegation_chain=state.delegation_chain,
+        delegation_profile=state.delegation_profile,
+        owl_name=state.owl_name,
+        creation_ceiling=state.creation_ceiling,
+        task_id=state.task_id,
+        durable_owner_id=state.durable_owner_id,
+        retry_lineage_id=state.retry_lineage_id,
+    )
+    lesson_token = lc.bind()
+    recovery_token = recovery_context.bind()
+    retry_ledger_token = retry_ledger.bind()
+    tool_outcome_token = tool_outcome_ledger.bind()
+    # ADR-7 — bind the per-turn DecisionLedger only when enabled (default ON; off
+    # only if settings explicitly sets decision_ledger=False). Unbound ⇒
+    # record_decision no-ops ⇒ byte-identical to the pre-ADR-7 path.
+    _settings = services.settings
+    decision_token = (
+        decision_ledger.bind()
+        if _settings is None or _settings.decision_ledger
+        else None
+    )
+    human_wait_token = human_wait_ctx.bind()
+    # Global interactive turn deadline (2026-07 incident: a telegram turn hung
+    # 1670+s — lower-level timeouts like resilient_round don't cover every
+    # hang, e.g. a wedged tool call). Interactive turns only; the long-running
+    # non-interactive paths (goal_execution, parliament, delegation children,
+    # evolution) carry their own budgets and must never be cut by this.
+    # getattr-guarded: unit tests hand StepServices duck-typed settings stubs
+    # without a `system` section — those (and settings=None) mean "deadline
+    # disabled", never a crash.
+    deadline_s: float = (
+        getattr(getattr(_settings, "system", None), "interactive_turn_timeout_s", 0.0)
+        if state.interactive
+        else 0.0
+    )
+    return TurnBindings(
+        services_token=services_token, trace_token=trace_token, lesson_token=lesson_token,
+        recovery_token=recovery_token, retry_ledger_token=retry_ledger_token,
+        tool_outcome_token=tool_outcome_token, decision_token=decision_token,
+        human_wait_token=human_wait_token, t0=t0, wall_t0=wall_t0, deadline_s=deadline_s,
+    )
+
+
+async def unbind_turn_context(
+    bindings: TurnBindings, state: PipelineState, services: StepServices, *, backend_name: str,
+) -> int:
+    """Tear down every ContextVar :func:`bind_turn_context` installed.
+
+    Call from the backend's own ``finally`` — mirrors the bind order in
+    reverse-ish (matches what both backends did inline: recovery summary log
+    → human_wait reset → decision persist-then-reset → tool_outcome reset →
+    recovery reset → retry summary log + reset → lesson reset → TraceContext
+    reset → services reset). Returns ``retry_event_count`` — the number of
+    provider-layer retry events this turn recorded — captured here (while
+    retry_ledger is still bound) for the caller to thread into
+    ``_capture_outcome`` afterward, since that runs after this function
+    returns and the ledger is reset (see :func:`_capture_outcome`'s
+    docstring).
+    """
+    _rec_events = recovery_context.get_recovery()
+    if _rec_events:
+        log.engine.info(
+            "[recovery] turn summary",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "events": [
+                    {"kind": e.kind, "failed": e.failed,
+                     "recovered_via": e.recovered_via, "user_visible": e.user_visible}
+                    for e in _rec_events
+                ],
+            }},
+        )
+    human_wait_ctx.reset(bindings.human_wait_token)
+    if bindings.decision_token is not None:
+        # ADR-7 — persist this turn's decisions durably (cross-process /
+        # restart-safe) BEFORE reset clears the ledger. Best-effort: a
+        # persistence failure must NEVER break the turn (B5).
+        _decisions = decision_ledger.get_decisions()
+        if services.db_pool is not None and state.session_id and _decisions:
+            try:
+                from stackowl.pipeline.decision_store import TurnDecisionStore
+                await TurnDecisionStore(services.db_pool).save(
+                    session_id=state.session_id,
+                    trace_id=state.trace_id,
+                    decisions=_decisions,
+                )
+            except Exception as exc:
+                log.engine.error(
+                    f"[{backend_name}] run: decision persist failed (swallowed)",
+                    exc_info=exc,
+                    extra={"_fields": {"session_id": state.session_id}},
+                )
+        decision_ledger.reset(bindings.decision_token)
+    tool_outcome_ledger.reset(bindings.tool_outcome_token)
+    recovery_context.reset(bindings.recovery_token)
+    _retry_events = retry_ledger.get_retry()
+    if _retry_events:
+        log.engine.info(
+            "[retry] turn summary",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "retry_lineage_id": state.retry_lineage_id,
+                "events": [
+                    {"kind": e.kind, "provider": e.provider, "detail": e.detail,
+                     "attempt_number": e.attempt_number}
+                    for e in _retry_events
+                ],
+            }},
+        )
+    retry_event_count = len(_retry_events)
+    retry_ledger.reset(bindings.retry_ledger_token)
+    lc.reset(bindings.lesson_token)
+    TraceContext.reset(bindings.trace_token)
+    reset_services(bindings.services_token)
+    return retry_event_count
 
 # B4b — the general failure_class stamped on a turn whose only "success" was an
 # UNRECOVERED effectful failure the error-based classifier missed (a verified=False

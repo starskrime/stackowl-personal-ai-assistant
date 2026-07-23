@@ -22,16 +22,13 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from stackowl.exceptions import InfrastructureError
-from stackowl.infra import decision_ledger, recovery_context, retry_ledger, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
-from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
-from stackowl.pipeline.backends.shared import run_delivery_gate
-from stackowl.pipeline.budget import human_wait as human_wait_ctx
+from stackowl.pipeline.backends.shared import bind_turn_context, run_delivery_gate, unbind_turn_context
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
-from stackowl.pipeline.services import StepServices, get_services, reset_services, set_services
+from stackowl.pipeline.services import StepServices, get_services
 from stackowl.pipeline.state import PipelineState, StepError
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
@@ -108,59 +105,11 @@ class LangGraphBackend(OrchestratorBackend):
                 }
             },
         )
-        t0 = time.monotonic()
-        # Wall-clock turn start — the acceptance freshness clock (a fresh artifact's
-        # mtime is compared against this). monotonic() is unsuitable (not epoch).
-        # Parity with AsyncioBackend (FR-13 gap fix).
-        wall_t0 = time.time()
-        token = set_services(self._services)
-        trace_token = TraceContext.start(
-            state.session_id,
-            trace_id=state.trace_id,
-            interactive=state.interactive,
-            channel=state.channel,
-            reply_target=state.reply_target,
-            delegation_depth=state.delegation_depth,
-            delegation_chain=state.delegation_chain,
-            delegation_profile=state.delegation_profile,
-            owl_name=state.owl_name,
-            creation_ceiling=state.creation_ceiling,
-            task_id=state.task_id,
-            durable_owner_id=state.durable_owner_id,
-            retry_lineage_id=state.retry_lineage_id,
-        )
-        lesson_token = lc.bind()
-        recovery_token = recovery_context.bind()
-        retry_ledger_token = retry_ledger.bind()
-        ledger_token = tool_outcome_ledger.bind()
-        # ADR-7 — bind the per-turn DecisionLedger only when enabled (default ON; off
-        # only if settings explicitly sets decision_ledger=False). Unbound ⇒
-        # record_decision no-ops ⇒ byte-identical to the pre-ADR-7 path.
-        _settings = self._services.settings
-        decision_token = (
-            decision_ledger.bind()
-            if _settings is None or _settings.decision_ledger
-            else None
-        )
-        human_wait_token = human_wait_ctx.bind()
-        # Global interactive turn deadline — parity with AsyncioBackend (same
-        # 2026-07 incident: a telegram turn hung 1670+s; lower-level timeouts
-        # don't cover every hang). Interactive turns only; non-interactive runs
-        # (goal_execution, parliament, delegation children, evolution) carry
-        # their own budgets and must never be cut by this.
-        # getattr-guarded: unit tests hand StepServices duck-typed settings
-        # stubs without a `system` section — those (and settings=None) mean
-        # "deadline disabled", never a crash.
-        deadline_s: float = (
-            getattr(getattr(_settings, "system", None),
-                    "interactive_turn_timeout_s", 0.0)
-            if state.interactive
-            else 0.0
-        )
-        # Workstream B, Phase 5 — captured inside `finally` (retry_ledger is
-        # still bound there); see AsyncioBackend's identical comment for why
-        # this can't be read at the _capture_outcome call site itself.
-        retry_event_count = 0
+        # Parity with AsyncioBackend (FR-13 gap fix) — same shared bind, same
+        # deadline_s derivation (2026-07 incident: a telegram turn hung
+        # 1670+s; lower-level timeouts don't cover every hang).
+        bindings = bind_turn_context(state, self._services)
+        deadline_s = bindings.deadline_s
         try:
             compiled = await self._ensure_compiled()
             # Isolate per-task checkpoints: a durable task gets its own thread so
@@ -190,7 +139,7 @@ class LangGraphBackend(OrchestratorBackend):
                 output = await compiled.ainvoke({"pipeline_state": state}, config=config)
                 final = output.get("pipeline_state", state)
         except Exception as exc:
-            duration_ms = (time.monotonic() - t0) * 1000
+            duration_ms = (time.monotonic() - bindings.t0) * 1000
             log.engine.error(
                 "[langgraph_backend] run: graph invocation failed — %s: %s",
                 type(exc).__name__,
@@ -206,63 +155,11 @@ class LangGraphBackend(OrchestratorBackend):
             )
             raise InfrastructureError(f"LangGraph backend invocation failed: {type(exc).__name__}: {exc}") from exc
         finally:
-            _rec_events = recovery_context.get_recovery()
-            if _rec_events:
-                log.engine.info(
-                    "[recovery] turn summary",
-                    extra={"_fields": {
-                        "trace_id": state.trace_id,
-                        "events": [
-                            {"kind": e.kind, "failed": e.failed,
-                             "recovered_via": e.recovered_via, "user_visible": e.user_visible}
-                            for e in _rec_events
-                        ],
-                    }},
-                )
-            human_wait_ctx.reset(human_wait_token)
-            if decision_token is not None:
-                # ADR-7 — persist this turn's decisions durably (cross-process /
-                # restart-safe) BEFORE reset clears the ledger. Best-effort: a
-                # persistence failure must NEVER break the turn (B5).
-                _decisions = decision_ledger.get_decisions()
-                if self._services.db_pool is not None and state.session_id and _decisions:
-                    try:
-                        from stackowl.pipeline.decision_store import TurnDecisionStore
-                        await TurnDecisionStore(self._services.db_pool).save(
-                            session_id=state.session_id,
-                            trace_id=state.trace_id,
-                            decisions=_decisions,
-                        )
-                    except Exception as exc:
-                        log.engine.error(
-                            "[langgraph_backend] run: decision persist failed (swallowed)",
-                            exc_info=exc,
-                            extra={"_fields": {"session_id": state.session_id}},
-                        )
-                decision_ledger.reset(decision_token)
-            tool_outcome_ledger.reset(ledger_token)
-            recovery_context.reset(recovery_token)
-            _retry_events = retry_ledger.get_retry()
-            if _retry_events:
-                log.engine.info(
-                    "[retry] turn summary",
-                    extra={"_fields": {
-                        "trace_id": state.trace_id,
-                        "retry_lineage_id": state.retry_lineage_id,
-                        "events": [
-                            {"kind": e.kind, "provider": e.provider, "detail": e.detail,
-                             "attempt_number": e.attempt_number}
-                            for e in _retry_events
-                        ],
-                    }},
-                )
-            retry_event_count = len(_retry_events)
-            retry_ledger.reset(retry_ledger_token)
-            lc.reset(lesson_token)
-            TraceContext.reset(trace_token)
-            reset_services(token)
+            retry_event_count = await unbind_turn_context(
+                bindings, state, self._services, backend_name="langgraph_backend",
+            )
 
-        total_ms = (time.monotonic() - t0) * 1000
+        total_ms = (time.monotonic() - bindings.t0) * 1000
         log.engine.debug(
             "[langgraph_backend] run: exit",
             extra={
@@ -284,7 +181,7 @@ class LangGraphBackend(OrchestratorBackend):
         # _verify_turn_acceptance, so acceptance was always None here — a declared/
         # derived expected_outcome on a LangGraph-run turn was never checked, unlike
         # AsyncioBackend. Mirrors AsyncioBackend.run()'s tail exactly.
-        acceptance = await _verify_turn_acceptance(final, wall_t0, self._services)
+        acceptance = await _verify_turn_acceptance(final, bindings.wall_t0, self._services)
         await _capture_outcome(
             final, total_ms, self._services,
             acceptance=acceptance, retry_event_count=retry_event_count,
