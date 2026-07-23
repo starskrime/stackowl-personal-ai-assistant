@@ -27,6 +27,7 @@ import io
 import os
 import shutil
 import tempfile
+import threading
 import wave
 from typing import Any
 
@@ -46,6 +47,23 @@ class WhisperSttBackend(SttBackend):
         self._model_name = model_name or _DEFAULT_MODEL
         self._model: Any = None
         self._unavailable_reason: str | None = None
+        # tqdm.tqdm.__new__ unconditionally constructs a multiprocessing.RLock
+        # on its FIRST instantiation anywhere in the process (cached at the
+        # class level forever after) purely to coordinate progress-bar output
+        # across processes — coordination this backend never needs, since a
+        # single dedicated executor thread does all transcription. That
+        # construction spawns CPython's resource_tracker helper via a
+        # fork_exec path prone to the documented fds_to_keep race (bpo-38435)
+        # under this platform's concurrent thread-pool subprocess usage. Live
+        # incident 2026-07-23: two separate bounded-retry mitigations around
+        # that race both still failed under real concurrent load, and one of
+        # them even negative-cached this whole backend as permanently
+        # unavailable. Root-caused instead: force tqdm onto a plain thread
+        # lock up front, which removes the subprocess spawn (and the race
+        # with it) entirely rather than retrying past it.
+        import tqdm
+
+        tqdm.tqdm.set_lock(threading.RLock())
         log.tool.debug(
             "[stt.whisper] init",
             extra={"_fields": {"model_name": self._model_name}},
@@ -87,19 +105,6 @@ class WhisperSttBackend(SttBackend):
                 extra={"_fields": {"model_name": self._model_name}},
             )
             self._model = whisper.load_model(self._model_name)
-            # Warm up tqdm's multiprocessing lock HERE, once, at a quiet moment —
-            # not lazily under a live transcribe() call. tqdm.tqdm.__new__
-            # unconditionally constructs a multiprocessing.RLock on its first
-            # instantiation in the process (cached at the class level forever
-            # after), which spawns CPython's resource_tracker helper via the
-            # same fds_to_keep-racy fork_exec path as ffmpeg. Retrying that
-            # construction under real concurrent request load just re-races it
-            # (confirmed live 2026-07-23: a bounded retry-once still failed
-            # twice in a row) — forcing it here, before any concurrent traffic
-            # can contend for fds, means the one-time spawn never has to race.
-            import tqdm
-
-            self._retry_fds_race("_ensure_loaded.tqdm_warmup", tqdm.tqdm.get_lock)
             log.tool.info(
                 "[stt.whisper] _ensure_loaded: model ready",
                 extra={"_fields": {"model_name": self._model_name}},
@@ -160,12 +165,10 @@ class WhisperSttBackend(SttBackend):
         # 16 kHz mono WAV via arecord, so this removes the ffmpeg dependency for
         # the dictation path entirely.
         audio = self._decode_audio(audio_bytes, audio_format)
-        # tqdm's progress bar unconditionally constructs a multiprocessing.RLock
-        # on first use in this process (see tqdm/std.py's TqdmDefaultWriteLock),
-        # spawning CPython's resource_tracker helper via the same racy fork_exec
-        # path as the ffmpeg decode below — a second, independent site for the
-        # identical fds_to_keep race. Live incident 2026-07-23 (confirmed via
-        # read_logs after the first fix, decode-only, didn't cover this call).
+        # __init__ forces tqdm onto a plain threading lock (see its docstring),
+        # so this call should never hit the multiprocessing-lock fork_exec race
+        # anymore — the retry wrapper stays only as defense-in-depth for any
+        # OTHER subprocess spawn model.transcribe() might make.
         result: dict[str, Any] = self._retry_fds_race(
             "_transcribe_sync", lambda: self._model.transcribe(audio)
         )

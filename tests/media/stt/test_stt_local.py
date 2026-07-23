@@ -162,10 +162,9 @@ def test_unrelated_value_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -
 def test_fds_to_keep_race_in_model_transcribe_retries_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Live incident 2026-07-23 (second occurrence): the SAME race can hit
-    tqdm's multiprocessing.RLock construction inside model.transcribe(),
-    not just whisper.load_audio()'s ffmpeg subprocess. _transcribe_sync must
-    retry that call site too, via the shared _retry_fds_race helper."""
+    """The retry-once wrapper around model.transcribe() stays as defense-in-
+    depth for any subprocess spawn other than tqdm's now-eliminated
+    multiprocessing lock (see test_init_forces_tqdm_onto_a_threading_lock)."""
     backend = WhisperSttBackend()
     monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda op: None))
     monkeypatch.setattr(backend, "_ensure_loaded", lambda: SttAvailability.ok())
@@ -188,34 +187,29 @@ def test_fds_to_keep_race_in_model_transcribe_retries_once(
     assert calls["n"] == 2
 
 
-def test_ensure_loaded_warms_up_tqdm_lock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Live incident 2026-07-23 (third occurrence): a bounded retry-once for
-    tqdm's multiprocessing-lock construction still failed twice in a row when
-    left to fire under real concurrent transcribe() load. The lock must be
-    warmed up here, once, right after model load — a quiet moment with no
-    concurrent request contending for fds — not lazily under live traffic."""
+def test_init_forces_tqdm_onto_a_threading_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live incident 2026-07-23 (third occurrence): two separate bounded
+    retry-once mitigations around tqdm's lazy multiprocessing.RLock
+    construction both still failed under real concurrent transcribe() load —
+    one of them even negative-cached the whole backend as permanently
+    unavailable. Root-caused instead: this backend never needs CROSS-PROCESS
+    progress-bar coordination (a single dedicated executor thread does all
+    transcription), so __init__ must force tqdm onto a plain threading lock,
+    removing the subprocess-spawning fork_exec path entirely."""
     import sys
     import types
 
-    backend = WhisperSttBackend(model_name="base")
-
-    fake_whisper = types.ModuleType("whisper")
-    fake_model = object()
-    fake_whisper.load_model = lambda name: fake_model  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "whisper", fake_whisper)
-
-    calls = {"n": 0}
+    calls: list[object] = []
     fake_tqdm_module = types.ModuleType("tqdm")
     fake_tqdm_module.tqdm = types.SimpleNamespace(  # type: ignore[attr-defined]
-        get_lock=lambda: calls.__setitem__("n", calls["n"] + 1)
+        set_lock=lambda lock: calls.append(lock)
     )
     monkeypatch.setitem(sys.modules, "tqdm", fake_tqdm_module)
 
-    avail = backend._ensure_loaded()
+    WhisperSttBackend(model_name="base")
 
-    assert avail.available is True
-    assert calls["n"] == 1
-    assert backend._model is fake_model
+    assert len(calls) == 1
+    assert "multiprocessing" not in type(calls[0]).__module__
 
 
 async def test_is_available_negative_cache(monkeypatch: pytest.MonkeyPatch) -> None:
