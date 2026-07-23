@@ -21,6 +21,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import TransientError
 from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import resolve_fixed_tier, safe_complete
 from stackowl.memory.kuzu_adapter import KuzuAdapter
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.owls.concurrency import ConcurrencyGovernor
@@ -853,23 +854,35 @@ class EvolutionCoordinator(JobHandler):
             manifest.name, manifest, excerpts, stats_summary=stats_summary,
         )
         TestModeGuard.assert_not_test_mode(f"evolution.complete[{manifest.name}]")
-        try:
-            provider, model = self._provider_registry.get_by_tier("fast")
-            # disable_thinking: a JSON-deltas verdict needs no chain-of-thought;
-            # a reasoning-capable provider otherwise burns the whole max_tokens
-            # budget on <think> and never emits the deltas (same empty-reply
-            # failure mode fixed in owls/router.py and every interaction/
-            # *_classifier.py caller via this same flag).
-            result = await provider.complete(
-                messages, model=model, max_tokens=512, disable_thinking=True,
-            )
-        except Exception as exc:  # B5
+        resolved = resolve_fixed_tier(
+            self._provider_registry, "fast", logger=log.engine, call_name="dna_evolution",
+        )
+        if resolved is None:
             log.engine.warning(
-                "[dna] coordinator._llm_fallback: provider call failed — skipping",
-                exc_info=exc, extra={"_fields": {"owl": manifest.name}},
+                "[dna] coordinator._llm_fallback: no fast provider — skipping",
+                extra={"_fields": {"owl": manifest.name}},
             )
             return {}
-        deltas = self._validator.validate(result.content)
+        provider, model = resolved
+        # disable_thinking: a JSON-deltas verdict needs no chain-of-thought;
+        # a reasoning-capable provider otherwise burns the whole max_tokens
+        # budget on <think> and never emits the deltas (same empty-reply
+        # failure mode fixed in owls/router.py and every interaction/
+        # *_classifier.py caller via this same flag).
+        outcome = await safe_complete(
+            provider, model, messages,
+            max_tokens=512,
+            timeout_s=None,
+            logger=log.engine,
+            call_name="dna_evolution",
+        )
+        if outcome.result is None:  # safe_complete already logged the failure
+            log.engine.warning(
+                "[dna] coordinator._llm_fallback: provider call failed — skipping",
+                extra={"_fields": {"owl": manifest.name}},
+            )
+            return {}
+        deltas = self._validator.validate(outcome.result.content)
         log.engine.debug(
             "[dna] coordinator._llm_fallback: exit",
             extra={"_fields": {

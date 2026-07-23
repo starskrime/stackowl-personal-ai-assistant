@@ -22,6 +22,7 @@ from typing import ClassVar
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import resolve_cascade_tier, safe_complete
 from stackowl.memory.critic_prompt import CriticScorerPromptBuilder, parse_critic_response
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
 from stackowl.providers.base import ModelProvider
@@ -110,22 +111,23 @@ class CriticScorerHandler(JobHandler):
         )
 
         # 3. STEP — score each pending outcome
-        try:
-            provider, model = self._providers.get_with_cascade(self._critic_tier)
-        except Exception as exc:  # B5
+        resolved = resolve_cascade_tier(
+            self._providers, self._critic_tier, logger=log.memory, call_name="critic_scorer",
+        )
+        if resolved is None:
             log.memory.error(
                 "[critic] execute: no provider available for critic",
-                exc_info=exc,
                 extra={"_fields": {"job_id": job.job_id, "tier": self._critic_tier}},
             )
             duration_ms = (time.monotonic() - t0) * 1000
             return JobResult(
                 job_id=job.job_id,
                 effect_class="state_change", success=False, output=None,
-                error=f"no provider for tier {self._critic_tier}: {exc}",
+                error=f"no provider for tier {self._critic_tier}",
                 duration_ms=duration_ms,
                 metadata={"scored": 0, "pending_count": len(pending)},
             )
+        provider, model = resolved
 
         scored = 0
         for outcome in pending:
@@ -175,28 +177,31 @@ class CriticScorerHandler(JobHandler):
         # 2. DECISION — build prompt
         messages = self._prompt_builder.build(outcome)
         # 3. STEP — provider call
-        try:
-            # disable_thinking: a JSON quality-score verdict needs no chain-of-
-            # thought; a reasoning-capable provider otherwise burns the whole
-            # max_tokens budget on <think> and never emits the score (same
-            # empty-reply failure mode fixed in owls/router.py).
-            result = await provider.complete(messages, model=model, disable_thinking=True)
-        except Exception as exc:  # B5
+        # disable_thinking: a JSON quality-score verdict needs no chain-of-
+        # thought; a reasoning-capable provider otherwise burns the whole
+        # max_tokens budget on <think> and never emits the score (same
+        # empty-reply failure mode fixed in owls/router.py).
+        outcome_result = await safe_complete(
+            provider, model, messages,
+            timeout_s=None,
+            logger=log.memory,
+            call_name="critic_scorer",
+        )
+        if outcome_result.result is None:  # safe_complete already logged the failure
             log.memory.warning(
-                "[critic] score_one: provider.complete failed — skipping",
-                exc_info=exc,
+                "[critic] score_one: provider call failed — skipping",
                 extra={"_fields": {"outcome_id": outcome.outcome_id}},
             )
             return None
         # 2. DECISION (cont.) — parse
-        score = parse_critic_response(result.content)
+        score = parse_critic_response(outcome_result.result.content)
         # 4. EXIT
         if score is None:
             log.memory.warning(
                 "[critic] score_one: could not parse critic response — skipping",
                 extra={"_fields": {
                     "outcome_id": outcome.outcome_id,
-                    "raw_preview": result.content[:200],
+                    "raw_preview": outcome_result.result.content[:200],
                 }},
             )
         else:

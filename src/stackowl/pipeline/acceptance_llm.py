@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 
 from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import resolve_cascade_tier, safe_complete
 from stackowl.objectives.model import ExpectedOutcome
 from stackowl.providers.base import Message
 from stackowl.providers.registry import ProviderRegistry
@@ -97,25 +98,33 @@ class LlmAcceptanceDeriver:
         if not draft.strip():
             return None
         messages = [Message(role="user", content=self._build_prompt(intent, draft))]
-        try:
-            provider, model = self._provider_registry.get_with_cascade(self._tier)
-            # No max_tokens cap (owner decision 2026-07-22, matches the router/
-            # apology call sites) — this call previously had NEITHER a cap NOR
-            # disable_thinking, so a reasoning model could burn its whole (tiny,
-            # capped) budget on invisible reasoning and return empty content,
-            # silently fail-closing acceptance-checking for every such model.
-            # disable_thinking=True fixes the actual bug: a one-line ARTIFACT/
-            # NONE classification needs no chain-of-thought.
-            result = await provider.complete(
-                messages, model=model,
-                temperature=_DERIVE_TEMPERATURE, disable_thinking=True,
-            )
-        except Exception as exc:  # noqa: BLE001 — fail-closed: no expectation, never raise
+        resolved = resolve_cascade_tier(
+            self._provider_registry, self._tier, logger=log.engine, call_name="acceptance_llm",
+        )
+        if resolved is None:
             log.engine.debug(
                 "[acceptance-llm] derive: provider unavailable — no expectation",
-                extra={"_fields": {"err": type(exc).__name__}},
+                extra={"_fields": {"tier": self._tier}},
             )
             return None
+        provider, model = resolved
+        # No max_tokens cap (owner decision 2026-07-22, matches the router/
+        # apology call sites) — this call previously had NEITHER a cap NOR
+        # disable_thinking, so a reasoning model could burn its whole (tiny,
+        # capped) budget on invisible reasoning and return empty content,
+        # silently fail-closing acceptance-checking for every such model.
+        # disable_thinking=True fixes the actual bug: a one-line ARTIFACT/
+        # NONE classification needs no chain-of-thought.
+        outcome = await safe_complete(
+            provider, model, messages,
+            timeout_s=None,
+            logger=log.engine,
+            call_name="acceptance_llm",
+            temperature=_DERIVE_TEMPERATURE,
+        )
+        if outcome.result is None:  # safe_complete already logged the failure; fail-closed
+            return None
+        result = outcome.result
 
         line = (result.content or "").strip().splitlines()[0] if result.content else ""
         match = _ARTIFACT_RE.match(line)

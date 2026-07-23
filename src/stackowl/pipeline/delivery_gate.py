@@ -36,6 +36,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
+from stackowl.interaction.classifier_base import resolve_cascade_tier, safe_complete
 from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
 from stackowl.owls.skill_ownership import read_all_skill_ownership
 from stackowl.pipeline.authz_compose import child_floor
@@ -1217,34 +1218,32 @@ async def _generate_localized_apology(
         tier_walk = _TIER_ORDER
     tried: set[int] = set()
     for tier in tier_walk:
-        try:
-            provider, model = registry.get_with_cascade(tier)
-        except Exception as exc:  # AllProvidersUnavailableError or any lookup failure
-            log.engine.warning(
-                "[critical_failure] apology: cascade found no provider for tier — advancing",
-                exc_info=exc,
-                extra={"_fields": {"trace_id": state.trace_id, "tier": tier}},
-            )
-            continue
+        resolved = resolve_cascade_tier(
+            registry, tier, logger=log.engine, call_name="apology",
+        )
+        if resolved is None:
+            continue  # already logged by resolve_cascade_tier
+        provider, model = resolved
         if id(provider) in tried:
             continue  # same provider serves multiple tiers — don't re-attempt
         tried.add(id(provider))
-        try:
-            # disable_thinking: a one-sentence apology needs no chain-of-thought;
-            # a reasoning-capable provider otherwise burns its budget on <think>
-            # and never emits the sentence (same empty-reply failure mode fixed
-            # in owls/router.py). No max_tokens cap (owner decision 2026-07-22).
-            result = await provider.complete(
-                messages, model=model, disable_thinking=True,
-            )
-        except Exception as exc:  # provider call itself failed (outage mid-cascade)
+        # disable_thinking: a one-sentence apology needs no chain-of-thought;
+        # a reasoning-capable provider otherwise burns its budget on <think>
+        # and never emits the sentence (same empty-reply failure mode fixed
+        # in owls/router.py). No max_tokens cap (owner decision 2026-07-22).
+        outcome = await safe_complete(
+            provider, model, messages,
+            timeout_s=None,
+            logger=log.engine,
+            call_name="apology",
+        )
+        if outcome.result is None:  # safe_complete already logged the failure
             log.engine.warning(
-                "[critical_failure] apology: provider.complete failed — advancing tier",
-                exc_info=exc,
+                "[critical_failure] apology: provider call failed — advancing tier",
                 extra={"_fields": {"trace_id": state.trace_id, "tier": tier}},
             )
             continue
-        text = (result.content or "").strip()
+        text = (outcome.result.content or "").strip()
         if not text:
             log.engine.warning(
                 "[critical_failure] apology: provider returned empty — advancing tier",
