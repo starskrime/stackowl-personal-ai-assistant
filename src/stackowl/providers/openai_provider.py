@@ -602,7 +602,7 @@ class OpenAIProvider(ModelProvider):
                     messages=_msgs,  # type: ignore[arg-type]
                     max_tokens=(
                         max_tokens if max_tokens is not None
-                        else self._output_cap(resolved_model, _msgs)
+                        else self._output_cap(resolved_model, _msgs, tool_schemas)
                     ),
                     tools=tool_schemas,  # type: ignore[arg-type]
                     **self._ollama_extra_body(resolved_model),
@@ -1043,7 +1043,12 @@ class OpenAIProvider(ModelProvider):
             body["chat_template_kwargs"] = {"enable_thinking": False}
         return {"extra_body": body} if body else {}
 
-    def _output_cap(self, resolved_model: str, messages: Sequence[object]) -> int:
+    def _output_cap(
+        self,
+        resolved_model: str,
+        messages: Sequence[object],
+        tool_schemas: Sequence[object] | None = None,
+    ) -> int:
         """Output-token budget for a generation — as much as the model's window
         allows, never a small fixed cap, but NEVER the whole window either.
 
@@ -1078,6 +1083,18 @@ class OpenAIProvider(ModelProvider):
         degrades to the smallest VALID request rather than a zero/negative
         token request — logged loudly either way.
 
+        ``tool_schemas`` (live incident 2026-07-23, 192+ recurring
+        ContextWindowExceededError 400s over 3 days — confirmed via
+        read_logs): the tool-loop's own ``_round`` sends ``tools=tool_schemas``
+        as PART of the real request, which the provider counts toward input
+        tokens exactly like the messages — but this function only ever
+        estimated ``messages``, systematically UNDER-counting input for every
+        tool-using call by the tool catalog's own JSON size (this platform's
+        ``HARD_TOOL_COUNT_CAP`` allows up to 150 tool schemas presented in one
+        turn — easily several thousand tokens the old estimate never saw).
+        Optional and additive: ``None`` (every non-tool call site) is
+        byte-identical to the pre-fix calculation.
+
         Bounded by the RESOLVED model's own max_output_tokens (per-model
         override if ``resolved_model`` matches a ProviderConfig.models entry
         with one set, else the provider's own value) — see
@@ -1095,6 +1112,9 @@ class OpenAIProvider(ModelProvider):
             return effective_max_output_tokens
 
         input_tokens = sum(estimate_tokens(_message_content_text(m)) for m in messages)
+        if tool_schemas:
+            import json
+            input_tokens += estimate_tokens(json.dumps(tool_schemas, default=str))
         headroom = window - input_tokens - _INPUT_TOKEN_SAFETY_MARGIN
         if headroom < _MIN_OUTPUT_TOKENS:
             log.engine.warning(
