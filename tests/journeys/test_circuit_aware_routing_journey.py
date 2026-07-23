@@ -668,7 +668,7 @@ async def test_real_upstream_faults_open_breaker_then_cascade(
     assert powerful._client.completions.calls == 3  # type: ignore[attr-defined]
 
     # (2) The cascade now SKIPS the open powerful provider and admits the backup.
-    chosen, degraded_from = preg.resolve_tier_with_fallback("powerful")
+    chosen, _model, degraded_from = preg.resolve_tier_with_fallback("powerful")
     assert chosen is backup, "cascade did not skip the OPEN provider"
     assert degraded_from == _POWERFUL_NAME
 
@@ -684,7 +684,7 @@ async def test_real_upstream_faults_open_breaker_then_cascade(
     powerful._client = _FakeOpenAIClient(fail_times=0)  # type: ignore[assignment]
     await powerful.complete(msgs, model="")
     assert breaker.state is CircuitState.CLOSED
-    chosen2, degraded2 = preg.resolve_tier_with_fallback("powerful")
+    chosen2, _model2, degraded2 = preg.resolve_tier_with_fallback("powerful")
     assert chosen2 is powerful and degraded2 is None, (
         "recovered provider was not re-admitted by the cascade"
     )
