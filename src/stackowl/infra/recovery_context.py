@@ -6,6 +6,21 @@ backend ``bind()``s a fresh context at turn start and ``reset()``s it in a
 ``finally``; recovery sites (e.g. capability substitution) call
 ``record_recovery``; the render step and the per-turn log read via the
 NON-consuming ``get_recovery``.
+
+**Mutable container, not immutable-tuple-via-set()** (same fix as
+``retry_ledger.py``/``decision_ledger.py`` — see ``retry_ledger.py``'s
+docstring for the full empirical proof): both ``asyncio.gather`` (confirmed
+live in ``execute.py``'s LAT.3 concurrent provider resolution) and
+``LangGraphBackend``'s ``compiled.ainvoke(...)`` (confirmed against the real
+library) run a coroutine/graph-node in its OWN Task with a COPIED context —
+a ``record_recovery`` call made inside never reached the caller's own
+context under the OLD immutable-tuple-via-``.set()`` design. The ContextVar
+now holds a ``list`` mutated in place; a copied context still references the
+SAME list object, so the mutation survives the isolated Task. ``replay()``
+below predates this fix (it bridges the SAME class of gap via an explicit
+diff-and-reappend) and still works correctly, but is no longer the only way
+to close it — kept as-is (not removed) since its existing callers/tests are
+unaffected and still pass.
 """
 
 from __future__ import annotations
@@ -27,17 +42,17 @@ class RecoveryEvent:
     user_visible: bool
 
 
-_events: ContextVar[tuple[RecoveryEvent, ...] | None] = ContextVar(
+_events: ContextVar[list[RecoveryEvent] | None] = ContextVar(
     "recovery_events", default=None,
 )
 
 
-def bind() -> Token[tuple[RecoveryEvent, ...] | None]:
+def bind() -> Token[list[RecoveryEvent] | None]:
     """Install a fresh empty recovery context for one turn. Returns a reset token."""
-    return _events.set(())
+    return _events.set([])
 
 
-def reset(token: Token[tuple[RecoveryEvent, ...] | None]) -> None:
+def reset(token: Token[list[RecoveryEvent] | None]) -> None:
     """Restore the prior recovery context (call in a ``finally``)."""
     _events.reset(token)
 
@@ -54,29 +69,28 @@ def record_recovery(
             extra={"_fields": {"kind": kind, "failed": failed}},
         )
         return
-    _events.set((*current, RecoveryEvent(
+    # In-place append (not .set()) — see module docstring: this is what lets
+    # the event survive an asyncio.gather/LangGraph-node isolated Task.
+    current.append(RecoveryEvent(
         kind=kind, failed=failed, recovered_via=recovered_via,
         detail=detail, user_visible=user_visible,
-    )))
+    ))
 
 
 def get_recovery() -> tuple[RecoveryEvent, ...]:
     """Non-consuming read of this turn's recovery events (empty if none/unbound)."""
-    return _events.get() or ()
+    current = _events.get()
+    return tuple(current) if current is not None else ()
 
 
 def replay(events: tuple[RecoveryEvent, ...]) -> None:
     """Re-append already-built events onto the CURRENT context.
 
-    Bridges ``asyncio.gather``'s context-isolation boundary: a coroutine
-    started via ``gather`` runs inside its own COPIED context (a snapshot
-    taken when the Task was created), so a ``record_recovery`` call made
-    inside it mutates only that copy — the parent's context is never updated,
-    even though the coroutine's return VALUE does reach the caller normally.
-    A caller that captured events recorded inside such a child (by diffing
-    ``get_recovery()`` before/after the child ran) replays them here, in the
-    parent, so they become visible to the parent's own ``get_recovery()``
-    readers (e.g. ``surface_recovery``). No-op (logged) when unbound.
+    Predates the mutable-container fix above (see module docstring) — kept
+    for ``execute.py``'s existing explicit diff-and-reappend bridge, which
+    still works correctly (now belt-and-suspenders rather than load-bearing
+    for THAT specific call site, but harmless and unchanged). No-op (logged)
+    when unbound.
     """
     if not events:
         return
@@ -87,4 +101,4 @@ def replay(events: tuple[RecoveryEvent, ...]) -> None:
             extra={"_fields": {"n_events": len(events)}},
         )
         return
-    _events.set((*current, *events))
+    current.extend(events)

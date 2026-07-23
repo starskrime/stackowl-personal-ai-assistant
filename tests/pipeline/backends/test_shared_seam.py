@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 import stackowl.pipeline.backends.shared as shared
-from stackowl.infra import recovery_context, retry_ledger
+from stackowl.infra import decision_ledger, recovery_context, retry_ledger
 from stackowl.objectives.model import ExpectedOutcome
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.backends.langgraph_backend import LangGraphBackend
@@ -185,3 +185,55 @@ async def test_langgraph_backend_captures_retry_event_count_past_context_reset(
 
     assert _FakeStore.last_kwargs["retry_event_count"] == 1
     assert _FakeStore.last_kwargs["retry_lineage_id"] == "row-100"
+
+
+async def test_langgraph_backend_persists_decisions_recorded_inside_a_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real, previously-shipped-broken bug found while writing the
+    retry_event_count parity test above: ADR-7's DecisionLedger used the SAME
+    immutable-tuple-via-.set() pattern retry_ledger.py had — a
+    record_decision() call made inside a pipeline step (a LangGraph graph
+    node) never reached the backend's own post-graph finally read, so
+    TurnDecisionStore.save() was NEVER actually called for any LangGraph-
+    backend turn. Fixed at the same primitive level (decision_ledger.py's
+    ContextVar now holds a mutable list). This test drives a REAL
+    LangGraphBackend.run() end to end and proves the persisted decisions
+    are exactly what the node recorded.
+    """
+    import stackowl.pipeline.backends.langgraph_backend as mod
+    import stackowl.pipeline.decision_store as decision_store_mod
+
+    async def _probe_step(state: PipelineState) -> PipelineState:
+        decision_ledger.record_decision(point="probe", verdict="ok", reason="test")
+        return state
+
+    saved: dict[str, Any] = {}
+
+    class _FakeDecisionStore:
+        def __init__(self, _db: Any) -> None:
+            pass
+
+        async def save(self, **kwargs: Any) -> None:
+            saved.update(kwargs)
+
+    monkeypatch.setattr(mod, "PIPELINE_STEPS", [("probe", _probe_step)])
+    monkeypatch.setattr(shared, "TaskOutcomeStore", _FakeStore)
+    monkeypatch.setattr(decision_store_mod, "TurnDecisionStore", _FakeDecisionStore)
+
+    services = StepServices(db_pool=object())  # type: ignore[arg-type]
+    backend = LangGraphBackend(services=services, use_memory_checkpoint=True)
+    state = PipelineState(
+        trace_id="t-decision-lg", session_id="s-decision-lg", input_text="do the thing",
+        channel="cli", owl_name="secretary", pipeline_step="",
+    )
+    try:
+        await backend.run(state)
+    finally:
+        await backend.shutdown()
+
+    assert saved.get("session_id") == "s-decision-lg"
+    decisions = saved.get("decisions")
+    assert decisions is not None and len(decisions) == 1
+    assert decisions[0].point == "probe"
+    assert decisions[0].verdict == "ok"

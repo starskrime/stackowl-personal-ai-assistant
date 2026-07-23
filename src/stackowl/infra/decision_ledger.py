@@ -13,6 +13,17 @@ lives in ``infra/`` (the base layer) so any layer can record WITHOUT a dependenc
 inversion. The backend ``bind()``s a fresh ledger at turn start and ``reset()``s it in a
 ``finally``; emit sites call :func:`record_decision`; consumers (recovery_summary, the
 crash path, an /explain surface) read via the NON-consuming :func:`get_decisions`.
+
+**Mutable container, not immutable-tuple-via-set()** (same fix as
+``retry_ledger.py`` — see that module's docstring for the full empirical
+proof): ``LangGraphBackend`` drives the pipeline via ``compiled.ainvoke(...)``,
+which runs every graph node (i.e. every pipeline step) in its OWN Task with
+a COPIED context — a ``record_decision`` call made inside a step never
+reached the backend's own post-graph ``finally`` read, so ADR-7's durable
+persistence (``TurnDecisionStore.save(...)``) was silently a no-op for
+EVERY LangGraph-backend turn until this fix. The ContextVar now holds a
+``list`` mutated in place; a copied context still references the SAME list
+object, so the mutation survives the node's isolated Task.
 """
 
 from __future__ import annotations
@@ -44,17 +55,17 @@ class Decision:
     evidence: dict[str, object] = field(default_factory=dict)
 
 
-_decisions: ContextVar[tuple[Decision, ...] | None] = ContextVar(
+_decisions: ContextVar[list[Decision] | None] = ContextVar(
     "decisions", default=None,
 )
 
 
-def bind() -> Token[tuple[Decision, ...] | None]:
+def bind() -> Token[list[Decision] | None]:
     """Install a fresh empty ledger for one turn. Returns a reset token."""
-    return _decisions.set(())
+    return _decisions.set([])
 
 
-def reset(token: Token[tuple[Decision, ...] | None]) -> None:
+def reset(token: Token[list[Decision] | None]) -> None:
     """Restore the prior ledger (call in a ``finally``)."""
     _decisions.reset(token)
 
@@ -80,16 +91,19 @@ def record_decision(
             extra={"_fields": {"point": point, "verdict": verdict}},
         )
         return
-    _decisions.set((*current, Decision(
+    # In-place append (not .set()) — see module docstring: this is what lets
+    # the decision survive a LangGraph node's isolated Task context.
+    current.append(Decision(
         point=point, verdict=verdict, reason=reason,
         inputs=inputs or {}, alternatives_considered=alternatives_considered,
         evidence=evidence or {},
-    )))
+    ))
 
 
 def get_decisions() -> tuple[Decision, ...]:
     """Non-consuming read of this turn's decisions (empty if none/unbound)."""
-    return _decisions.get() or ()
+    current = _decisions.get()
+    return tuple(current) if current is not None else ()
 
 
 def render_why(decisions: tuple[Decision, ...]) -> str:
