@@ -113,7 +113,12 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     Loads+merges the per-(owner,channel) prefs UNDER which the structured
     ``output_style`` (markdown/links/tables/emoji/length) is resolved, then
     deterministically enforces + verifies every transform via
-    ``apply_output_preferences`` — independent of whether the model complied.
+    ``OutputStyle.enforce`` — independent of whether the model complied. When
+    ``length == "terse"``, additionally runs the real async summariser
+    (``_summarize_if_terse``) — the ONE production seam where that upgrade,
+    documented but deferred in ``OutputStyle._enforce_length``, actually
+    happens — then re-verifies the deterministic fields on the result (a fresh
+    LLM summary could reintroduce markdown the style forbids).
     Channel-agnostic and fail-safe (B5): a missing store, no preferences, or any
     error returns ``state`` unchanged — enforcement never crashes delivery. When a
     transform actually rewrites the text, the response chunks are collapsed into
@@ -137,10 +142,14 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
         prefs = {**global_prefs, **owner_prefs}
         if not prefs:
             return state
-        from stackowl.channels._format import apply_output_preferences
+        from stackowl.channels._format import resolve_output_style
 
+        resolved_style = resolve_output_style(prefs)
         combined = "".join(c.content for c in state.responses if c.content)
-        transformed = apply_output_preferences(combined, prefs)
+        transformed = resolved_style.enforce(combined)
+        if resolved_style.length == "terse":
+            transformed = await _summarize_if_terse(transformed, services, state)
+            transformed = resolved_style.verify(transformed)
         if transformed == combined:
             return state  # no preference rewrote anything → byte-identical
         template = state.responses[0]
@@ -162,6 +171,75 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
             exc_info=exc, extra={"_fields": {"session_id": state.session_id}},
         )
         return state
+
+
+# Below this, a reply already reads as short — skip the summariser call
+# entirely rather than risk an LLM "compressing" text that's already terse.
+_TERSE_SKIP_BELOW_CHARS = 400
+
+
+async def _summarize_if_terse(
+    text: str, services: StepServices, state: PipelineState,
+) -> str:
+    """Compress ``text`` via a fast-tier LLM when it's long enough to bother.
+
+    The upgrade path ``OutputStyle._enforce_length`` documents but deliberately
+    leaves as a no-op (that method must stay sync/deterministic) — this is
+    where length=terse becomes a REAL guarantee instead of an unenforced field.
+    Best-effort: returns ``text`` UNCHANGED on any failure (no provider, a
+    timeout, an empty reply) — a failed compression must never drop content or
+    crash delivery; the alternative (fabricating a truncation) is worse than
+    delivering the reply whole.
+    """
+    if len(text) <= _TERSE_SKIP_BELOW_CHARS:
+        return text
+    registry = services.provider_registry
+    if registry is None:
+        return text
+
+    from stackowl.interaction.classifier_base import resolve_fixed_tier, safe_complete
+    from stackowl.providers.base import Message
+
+    resolved = resolve_fixed_tier(
+        registry, "fast", logger=log.gateway, call_name="length_terse",
+    )
+    if resolved is None:
+        return text
+    provider, model = resolved
+    system_text = (
+        "You compress the assistant's reply to be significantly shorter while "
+        "preserving every concrete fact, number, name, and instruction it "
+        "contains. Keep the SAME language and the SAME formatting conventions "
+        "(markdown, links, emoji) already used — only remove restating, "
+        "hedging, and filler prose, never actual content. Reply with ONLY the "
+        "compressed text, no preamble, no explanation."
+    )
+    outcome = await safe_complete(
+        provider, model,
+        [Message(role="system", content=system_text), Message(role="user", content=text)],
+        timeout_s=10.0,
+        logger=log.gateway,
+        call_name="length_terse",
+    )
+    if outcome.result is None:  # safe_complete already logged the failure
+        log.gateway.warning(
+            "[pipeline] deliver: length_terse summarizer failed — delivering full text",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return text
+    compressed = (outcome.result.content or "").strip()
+    if not compressed:
+        log.gateway.warning(
+            "[pipeline] deliver: length_terse summarizer returned empty — delivering full text",
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return text
+    log.gateway.info(
+        "[pipeline] deliver: length_terse summarized",
+        extra={"_fields": {"trace_id": state.trace_id, "before_len": len(text),
+                           "after_len": len(compressed)}},
+    )
+    return compressed
 
 
 async def _proactive_fallback(state: PipelineState, services: StepServices) -> None:

@@ -207,9 +207,13 @@ class OutputStyle(BaseModel):
         return _strip_emoji(text) if self.emoji == "off" else text
 
     def _enforce_length(self, text: str) -> str:
-        # ponytail: length=terse is a logged no-op — honest truncation needs an
-        # LLM summary (LS-future); fabricating a cut that drops content is worse
-        # than leaving the text whole. Upgrade path: route terse through a summariser.
+        # Deliberately stays a no-op HERE: this method (and apply/verify/enforce)
+        # must stay pure/synchronous/deterministic (every other enforcer is a
+        # fixed-point string transform re-runnable by verify() with no I/O).
+        # Honest compression needs an LLM summary, which is neither — that now
+        # happens as a real, additive async step at the ONE production delivery
+        # seam (pipeline/steps/deliver.py's _summarize_if_terse), layered on top
+        # of this sync pass rather than folded into it.
         if self.length == "terse":
             log.gateway.debug(
                 "[format] OutputStyle: length=terse not yet enforced (no-op)",
@@ -294,6 +298,8 @@ class OutputStyle(BaseModel):
             rules.append("links shown as titles")
         if self.emoji == "off":
             rules.append("no emoji")
+        if self.length == "terse":
+            rules.append("replies kept short")
         return rules
 
 

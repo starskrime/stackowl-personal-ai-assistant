@@ -88,7 +88,13 @@ async def _run_and_join(state: PipelineState) -> PipelineState:
 # (a) confident tone/length/content + referent=last → note written + surfaced #
 # --------------------------------------------------------------------------- #
 
-async def test_confident_length_signal_writes_note() -> None:
+async def test_confident_length_signal_sets_output_style() -> None:
+    """"length" is mechanically enforceable (the delivery-seam terse summarizer)
+    — it now writes output_style like "format" does, NOT a free-text note
+    nobody re-reads (see test_feedback_capture.py for the parallel format
+    coverage)."""
+    from stackowl.channels._format import OUTPUT_STYLE_KEY
+
     store = FakeStore()
     classifier = ScriptedClassifier(
         _result(FeedbackSignal(polarity="negative", aspect="length", confidence=0.9)))
@@ -99,10 +105,10 @@ async def test_confident_length_signal_writes_note() -> None:
         out = await _run_and_join(state)
     finally:
         reset_services(token)
-    raw = store.data[(OWNER, PREFERENCE_NOTES_KEY)]
-    assert "be more concise please" in raw  # verbatim capture, not synthesized
-    # the note path never short-circuits the turn (no fmt signal present)
-    assert out.feedback_handled is False
+    assert (OWNER, OUTPUT_STYLE_KEY) in store.data
+    assert '"length": "terse"' in store.data[(OWNER, OUTPUT_STYLE_KEY)]
+    assert (OWNER, PREFERENCE_NOTES_KEY) not in store.data  # no redundant note
+    assert out.feedback_handled is True  # short-circuits like format does
 
 
 async def test_note_appears_in_next_turn_prefs_block() -> None:
@@ -151,11 +157,15 @@ async def test_content_and_format_signals_both_write_independently() -> None:
 # --------------------------------------------------------------------------- #
 
 async def test_abstain_signal_writes_no_note() -> None:
+    """"content" stays a note-only aspect (unlike "length", which is now
+    mechanically enforceable and — like "format" — asks a clarifying question
+    on abstain instead of silently passing through; see
+    test_feedback_capture.py::test_abstain_surfaces_question_no_write)."""
     store = FakeStore()
     classifier = ScriptedClassifier(
-        _result(FeedbackSignal(polarity="negative", aspect="length", confidence=0.3),
+        _result(FeedbackSignal(polarity="negative", aspect="content", confidence=0.3),
                 abstain=True))
-    state, services = _state("too long", "A long reply here.",
+    state, services = _state("that wasn't quite right", "A reply here.",
                              store=store, classifier=classifier)
     token = set_services(services)
     try:

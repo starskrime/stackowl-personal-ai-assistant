@@ -75,10 +75,16 @@ _CLARIFY_QUESTION = (
     "or was that about something else?"
 )
 
+# Aspects with a real, mechanically-enforceable output_style field. "length" was
+# a free-text NOTE until length=terse gained real enforcement (the delivery-seam
+# summariser in pipeline/steps/deliver.py) — it now writes the structured field
+# exactly like "format" does, instead of an unenforced note nobody re-reads.
+_ENFORCEABLE_ASPECTS = frozenset({"format", "length"})
+
 # FR-2 (de-complication PRD) — aspects captured as durable preference NOTES
 # (verbatim user text), independent of the FORMAT/output_style path above.
 # "overall" stays excluded (too vague to be an enforceable preference).
-_NOTE_ASPECTS = frozenset({"content", "tone", "length"})
+_NOTE_ASPECTS = frozenset({"content", "tone"})
 
 # FR-8 (de-complication PRD) — messages this long or longer skip the classifier
 # LLM call entirely: reactions to a prior render are short; a message this long
@@ -167,11 +173,12 @@ async def _classify_and_apply(
     if result.referent != "last":
         return state
 
-    # Only the FORMAT aspect is mechanically enforceable (LS2). content / tone /
-    # length are captured separately below as preference NOTES (FR-2); "overall"
-    # stays a no-op write either way (too vague to be a specific preference).
+    # FORMAT and LENGTH are mechanically enforceable (LS2 + the terse summariser
+    # at the delivery seam). content / tone are captured separately below as
+    # preference NOTES (FR-2); "overall" stays a no-op write either way (too
+    # vague to be a specific preference).
     fmt = [s for s in result.signals
-           if s.aspect == "format" and s.polarity in ("positive", "negative")]
+           if s.aspect in _ENFORCEABLE_ASPECTS and s.polarity in ("positive", "negative")]
     notes = [s for s in result.signals
              if s.aspect in _NOTE_ASPECTS and s.polarity in ("positive", "negative")]
     if not fmt and not notes:
@@ -184,7 +191,7 @@ async def _classify_and_apply(
 
     owner_key = state.identity_key or state.session_id
 
-    # FR-2 — confident content/tone/length reactions are captured as a durable
+    # FR-2 — confident content/tone reactions are captured as a durable
     # preference NOTE (verbatim state.input_text, aspect-keyed), independent of
     # the FORMAT path below: "good content but lose the asterisks" writes BOTH.
     # This never short-circuits the turn (no confirmation message) and never
@@ -219,10 +226,11 @@ async def _classify_and_apply(
         return _short_circuit(state, _CLARIFY_QUESTION)
 
     try:
+        aspects = frozenset(s.aspect for s in fmt)
         negative = any(s.polarity == "negative" for s in fmt)
         if negative:
-            return await _handle_negative(state, services, store, owner_key, render)
-        return await _handle_positive(state, store, owner_key, render)
+            return await _handle_negative(state, services, store, owner_key, render, aspects)
+        return await _handle_positive(state, store, owner_key, render, aspects)
     except Exception as exc:  # B5 — a write fault must never crash the turn
         log.gateway.error(
             "[pipeline] feedback: capture failed — pass-through",
@@ -238,11 +246,12 @@ async def _classify_and_apply(
 
 async def _handle_negative(
     state: PipelineState, services: object, store: PreferenceStore,
-    owner_key: str, render: str,
+    owner_key: str, render: str, aspects: frozenset[str],
 ) -> PipelineState:
-    """NEGATIVE/format — detect the offending artifact, set the suppressing field,
-    record a (non-lesson) rejection outcome row, confirm by NAMING the defect."""
-    changes, defects = _detect_defects(render)
+    """NEGATIVE/format+length — detect the offending artifact, set the suppressing
+    field, record a (non-lesson) rejection outcome row, confirm by NAMING the
+    defect."""
+    changes, defects = _detect_defects(render, aspects)
     if not changes:
         # The user says it broke but no known artifact is present. Re-assert the
         # existing explicit style (durability) if any; otherwise we genuinely do not
@@ -264,12 +273,14 @@ async def _handle_negative(
 
 async def _handle_positive(
     state: PipelineState, store: PreferenceStore, owner_key: str, render: str,
+    aspects: frozenset[str],
 ) -> PipelineState:
-    """POSITIVE/format — PIN the current effective style (or, if none is set, the
-    clean attributes of the last render) so "keep doing this" becomes durable. No
-    outcome row: a pin is not a rejection (positive-only corpus untouched)."""
+    """POSITIVE/format+length — PIN the current effective style (or, if none is
+    set, the clean attributes of the last render) so "keep doing this" becomes
+    durable. No outcome row: a pin is not a rejection (positive-only corpus
+    untouched)."""
     current = await load_output_style(store, owner_key)
-    changes = _explicit_fields(current) or _infer_clean_style(render)
+    changes = _explicit_fields(current) or _infer_clean_style(render, aspects)
     style = await _merge_write_style(store, owner_key, changes)
     log.gateway.info(
         "[pipeline] feedback: positive/format pinned",
@@ -300,38 +311,65 @@ def _has_bare_link(text: str) -> bool:
     return _apply_outside_code(text, _title_bare_links) != text
 
 
-def _detect_defects(render: str) -> tuple[dict[str, str], list[str]]:
-    """Map detected offending artifacts in ``render`` to suppressing style fields.
+# Heuristic threshold for "this render reads as long" — the length-aspect
+# equivalent of _has_emphasis/_has_table's artifact detectors, used only for
+# the POSITIVE/pin-the-clean-shape path (see _infer_clean_style).
+_LONG_RENDER_CHARS = 600
+
+
+def _has_long_render(render: str) -> bool:
+    return len(render) > _LONG_RENDER_CHARS
+
+
+def _detect_defects(render: str, aspects: frozenset[str]) -> tuple[dict[str, str], list[str]]:
+    """Map detected offending artifacts in ``render`` to suppressing style fields,
+    scoped to the aspects the classifier actually signaled — a length-only
+    complaint must never also silently touch markdown/tables/links, and vice
+    versa.
 
     Returns ``(changes, defects)`` where ``changes`` is the format-key patch and
     ``defects`` is the plain-language list of what was found (for the confirmation).
     """
     changes: dict[str, str] = {}
     defects: list[str] = []
-    if _has_emphasis(render):
-        changes["markdown"] = "minimal"
-        defects.append("asterisks")
-    if _has_table(render):
-        changes["tables"] = "off"
-        defects.append("a raw table")
-    if _has_bare_link(render):
-        changes["links"] = "titles"
-        defects.append("an untitled link")
+    if "format" in aspects:
+        if _has_emphasis(render):
+            changes["markdown"] = "minimal"
+            defects.append("asterisks")
+        if _has_table(render):
+            changes["tables"] = "off"
+            defects.append("a raw table")
+        if _has_bare_link(render):
+            changes["links"] = "titles"
+            defects.append("an untitled link")
+    if "length" in aspects:
+        # Unlike format, a length complaint's DIRECTION isn't recoverable from
+        # the render itself or from polarity alone (the classifier only knows
+        # positive/negative, not "too long" vs "too short") — negative/length
+        # overwhelmingly means "too long" in practice, so this pins terse
+        # unconditionally rather than trying to detect it.
+        changes["length"] = "terse"
+        defects.append("a too-long reply")
     return changes, defects
 
 
-def _infer_clean_style(render: str) -> dict[str, str]:
-    """Pin the clean shape of a liked render with no prior style set.
+def _infer_clean_style(render: str, aspects: frozenset[str]) -> dict[str, str]:
+    """Pin the clean shape of a liked render with no prior style set, scoped to
+    the aspects actually signaled (see _detect_defects for why scoping matters).
 
     "no asterisks → keep them out (markdown minimal); no raw table → keep tables
-    off; links already titled → keep titling." If the render legitimately used an
-    artifact the user liked, the matching field stays at its keep-it default
-    (markdown full / tables on / links inline)."""
-    return {
-        "markdown": "full" if _has_emphasis(render) else "minimal",
-        "tables": "on" if _has_table(render) else "off",
-        "links": "inline" if _has_bare_link(render) else "titles",
-    }
+    off; links already titled → keep titling; already short → keep it terse."
+    If the render legitimately used an artifact the user liked, the matching
+    field stays at its keep-it default (markdown full / tables on / links
+    inline / length normal)."""
+    out: dict[str, str] = {}
+    if "format" in aspects:
+        out["markdown"] = "full" if _has_emphasis(render) else "minimal"
+        out["tables"] = "on" if _has_table(render) else "off"
+        out["links"] = "inline" if _has_bare_link(render) else "titles"
+    if "length" in aspects:
+        out["length"] = "normal" if _has_long_render(render) else "terse"
+    return out
 
 
 def _explicit_fields(style: OutputStyle) -> dict[str, str]:
