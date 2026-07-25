@@ -242,13 +242,23 @@ deployment:
 current:
   wave: 1
   item: D01.7
-  stage: architect
+  stage: implement
   stage_status: in_progress
-  blocked_by: null
-  brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Next stage: architect, blocked on D01.7-OA1."
+  slice: "3a — identity rename + ingress wiring. Slices 1 and 2 are committed (b38e8145, 7a319d0f)."
+  brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Architect COMPLETE — OA1 resolved, at_hour signed off."
+  stale_header_corrected:
+    date: 2026-07-25
+    what: >
+      This block read `stage: architect / in_progress` while the D01.7 item body read
+      `architect: done, implement: in_progress` and two implement slices were already
+      committed. The item body and the git log agreed; this header did not.
+    why_it_matters: >
+      The header is what the next agent reads first. A stale header sends it to redo a
+      finished stage. Corrected here, and `blocked_by` was declared twice in this same
+      block (lines 247 and 261) — the duplicate key is removed.
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
-    Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
+    D01.7 slices 1+2 committed. at_hour signed off at 4 AM.
   previous: "D01.1 brainstorm done (25 questions answered, Approach A approved) + architect done (design doc written)."
   order_change:
     date: 2026-07-25
@@ -258,7 +268,6 @@ current:
       debug() and the live log level is INFO, so 0 of 17403 log lines carry them.
       Without a baseline we cannot prove the fix worked. D01.6 moves to order 1.
     effect: "D01.1 brainstorm+architect proceed now; D01.1 implement is BLOCKED on D01.6 validate."
-  blocked_by: null
   note: >
     Walk order is by `wave` then `order`. D01 first because the two CONFLICT items
     gate the value of most of the 42 MISSING items — fixing anything else first means
@@ -1001,6 +1010,82 @@ items:
           guillotines it; at 4 AM nobody is talking. Ships configurable (reset_mode + at_hour)
           so midnight remains reachable, with 4 as the default. Supersedes the Q16 answer.
         blocks_cleared: ["D01.7 implement"]
+      - date: 2026-07-25
+        stage: implement
+        round: "slice-3 design round (5 questions, 2 batches)"
+        by: Bakir
+        trigger: >
+          Slice 3 is the first slice to touch the LIVE message path, and reading that path
+          surfaced two facts the architect stage did not have. Both change what slice 3 is,
+          so they were put back to Bakir before any code was written.
+        finding_1_identifier_collision:
+          what: >
+            StackOwl's existing `session_id` IS Hermes' `session_key` — the LANE, not the
+            incarnation. Verified: channels/telegram/adapter.py mints it as str(user_id);
+            channels/base.py:81 resolve_target(session_id) treats it as the delivery target;
+            gateway/turn_registry.py keys concurrency on it; memory/sqlite_bridge.py scopes
+            staged facts by it. The design doc's model (session_id = incarnation) therefore
+            collides head-on with 1715 occurrences in src/.
+          why_the_doc_missed_it: >
+            The design was written from Hermes' model outward. Nobody had yet traced what
+            StackOwl's existing identifier actually MEANT at the channel boundary.
+        finding_2_transcript_store_has_no_writer:
+          what: >
+            The `conversations` and `messages` tables (migration 0002) have ZERO INSERT
+            sites anywhere in src/, and both are empty in the live DB.
+          evidence: >
+            `grep -rn "INSERT INTO messages|INSERT INTO conversations" src/` -> no matches.
+            Live DB: conversations 0 rows, messages 0 rows — against cost_records 61858 and
+            staged_facts 109380. The de-facto transcript is staged_facts
+            (source_type='conversation', source_ref=session_id).
+          six_dead_readers:
+            - "owls/evolution.py:92 — fetches excerpts to evolve owl DNA. Evolves on an empty set."
+            - "memory/extraction_handler.py:22 — fact extraction from session messages. Extracts from nothing."
+            - "tools/knowledge/session_search.py:71 — search past conversations."
+            - "tools/knowledge/transcripts.py:50 — read a transcript."
+            - "tools/knowledge/session_access.py:137 — owner lookup used for authz."
+            - "tools/scheduling/cron_helpers.py:20 — owl owner for a cron job."
+          why_it_belongs_to_D01_7: >
+            Invariant I6 says "no transcript is destroyed by a rollover". There is no
+            transcript being written to destroy. I6 was unfalsifiable as stated.
+        answers:
+          identity: >
+            FULL RENAME. Today's session_id becomes session_key across the conversation
+            domain; the minted incarnation takes the name session_id, matching Hermes and
+            the design doc exactly. Chosen over the cheaper alternative (keep session_id as
+            the routing identifier, name the incarnation `incarnation_id`) which reaches the
+            same functional end state with a ~10x smaller diff.
+          transcript: "FIX IT INSIDE D01.7 — write the transcript at turn end, keyed by lane + incarnation."
+          rollover_scoping: >
+            Re-scope, keep both queryable. New conversation facts are stamped with the
+            incarnation; in-conversation recall reads the current incarnation, lane-wide
+            search still reaches everything. Delivers Q7's "fresh start that still remembers
+            me" without deleting anything.
+          slicing: "Split 3a (live path: resolve + notice + transcript writer) from 3b (rollover event + durable tasks + summary)."
+        measured_cost_put_back_to_bakir:
+          scale: "1715 occurrences in 173 src files + 1757 in 445 test files = ~3472 across ~618 files."
+          tables: "7 conversation-domain tables carry a session_id column: cost_records (61858 rows), task_outcomes (8029), retry_queue (3802), turn_decisions (106), message_ledger (78), conversations (0), thread_registry (0). parliament_sessions is a DIFFERENT domain and is not touched."
+          not_just_a_rename: >
+            The lane's VALUE also changes shape, from a bare chat id ("12345") to a composite
+            key ("owl:brain:telegram:dm:12345"). channels/base.py:81 resolve_target parses
+            that value as an int chat id, and notifications/router_helpers.resolve_target_chat_id
+            feeds it from send_message, send_file and heartbeat_respond. Proactive delivery
+            must change with it, and 61k+ historical rows hold bare chat ids whose owl and
+            channel cannot be reconstructed for backfill.
+          overloaded_name: >
+            session_id names unrelated things elsewhere — parliament debates (135 occurrences),
+            browser page sessions (~110), sandbox scratch names. Nothing here can be a
+            mechanical find-replace; every file is classified before it is touched.
+          reaffirmed: >
+            Bakir was shown all three measurements and reaffirmed the full rename. Recorded
+            so a future reader sees the cost was known and accepted, not overlooked.
+        commit_plan:
+          - "1 — pure mechanical rename session_id -> session_key in the conversation domain. No behaviour change; values still bare chat ids. Existing tests are the safety net."
+          - "2 — migration 0093: rename the column in the 7 conversation-domain tables."
+          - "3 — resolve_target + proactive delivery taught to resolve a composite lane key."
+          - "4 — incarnation id on TraceContext, stamped into cost_records and the ledger."
+          - "5 — the one-line reset notice + the transcript writer (conversations/messages)."
+          - "3b — session.rollover on the EventBus, durable consumer tasks, standard-tier summary."
     changes:
       - date: 2026-07-25
         slice: "2 of 3 — SessionStore + migration 0092 + the derived mirror"
