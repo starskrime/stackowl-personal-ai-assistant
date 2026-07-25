@@ -26,6 +26,23 @@ program:
     learns from every conversation without being asked.
   owner: Bakir
   started: 2026-07-25
+  constraints:
+    provider_agnostic:
+      stated_by: Bakir
+      date: 2026-07-25
+      constraint: >
+        Bakir's own deployment is a SINGLE LiteLLM gateway (NeraAiRaw). His users run
+        many different backends, and StackOwl's provider config already supports that.
+        Therefore NO code may branch on a provider's name. Dispatch on response SHAPE
+        and declared CAPABILITY instead.
+      worked_example: >
+        D01.6's _cached_input_tokens() walks prompt_tokens_details.cached_tokens ->
+        cache_read_input_tokens -> cached_tokens -> 0. Nothing in it names a vendor. A
+        new backend reporting any of those three shapes works with no code change; one
+        reporting none returns 0 honestly. Had it hardcoded the OpenAI shape it would
+        have read 0 forever on Bakir's own LiteLLM gateway, and we would have wrongly
+        concluded D01.1 had failed.
+      related_rule: feedback_no_vendor_specific_logic
   vision:
     # Bakir, 2026-07-25, answering "what hurts today?" — all four pains, plus:
     stated: >
@@ -73,6 +90,8 @@ teacher:
     6: "New core tool — last resort"
 
 map_document: docs/hermes-mapping/HERMES_STACKOWL_MAP.md
+process_document: docs/hermes-mapping/PROCESS.md   # READ THIS FIRST — how the work is done
+doc_standard: docs/hermes-mapping/DOC_STANDARD.md
 artifacts:
   map: "https://claude.ai/code/artifact/b2d8c038-9200-4d25-93a9-dca286ed575a"
   stackowl_components: "https://claude.ai/code/artifact/7c501b7c-a949-49e6-9783-d7f221257755"
@@ -168,6 +187,8 @@ workflow:
 # ---------------------------------------------------------------------------
 rules:
   process:
+    - "READ docs/hermes-mapping/PROCESS.md before picking up any item. It is the method."
+    - "Port the DESIGN, never the code. Read Hermes until you can explain it, then write our own in our idiom, then state the divergence in the doc."
     - "One item at a time. Finish all six stages before starting the next item."
     - "GRILL RULE (Bakir, 2026-07-25): ask 25 questions per item during brainstorm, and 25 more for each architecture design. Batch 4 per round. Purpose is to extract his full vision and knowledge, not to confirm ours."
     - "Never skip a stage. `no_change_needed` is an allowed outcome; silence is not."
@@ -262,6 +283,46 @@ waves:
   8: {domains: [D10, D11], theme: "Skills and recall", items: 12}
   9: {domains: [D16, D17, D18], theme: "Extensibility, security, operations", items: 21}
   10: {domains: [D04, D06, D13, D14], theme: "Breadth, once the core is settled", items: 19}
+
+# ---------------------------------------------------------------------------
+# DOCUMENTATION — tracked for EVERY finding, no exceptions
+# ---------------------------------------------------------------------------
+documentation:
+  rule: >
+    Every one of the 111 items ships a document at docs/hermes-mapping/designs/<ID>.md
+    meeting docs/hermes-mapping/DOC_STANDARD.md. No item reaches `done` without one.
+    The document is OPENED in `architect`, kept current through `implement`, and CLOSED
+    in `document`. It is never written after the fact.
+  why: >
+    Hermes' docs/session-lifecycle.md is why we adopted their whole session model in an
+    afternoon instead of reverse-engineering gateway/session.py for a week. The document
+    is not overhead — it is what makes the NEXT item cheaper. A subsystem legible only by
+    reading its source gets rebuilt by the next person who touches it.
+  our_style_vs_theirs: >
+    We take their structure (audience, source files, field tables, flow diagrams, config
+    appendix) and ADD four sections they had no need for: Invariants, Observability,
+    Failure modes, Verification. Hermes has no trace propagation, no mandated logging
+    contract, no acceptance authority and no self-heal ladder, so their docs never had to
+    describe those. We have all four and they are the parts of StackOwl worth keeping.
+  mandatory_sections:
+    - "Why this exists"
+    - Model
+    - Lifecycle
+    - "Invariants — numbered, each phrased so it could become an assertion"
+    - Configuration
+    - "Observability — exact log strings, span names, a copy-pasteable query"
+    - "Failure modes — detected by / recovery / what the user sees"
+    - "Verification — commands that pass, which the validate stage executes"
+    - "Related — including WHERE WE DIVERGED FROM HERMES AND WHY"
+  hard_rules:
+    - "Never state anything you have not run. The first draft of D01.6.md cited a DB path, a CLI tool and a test file that did not exist — caught by running its own Verification section (see DEBT-2)."
+    - "One document per subsystem. When several items land on one subsystem the later ones EXTEND it; they never add a second. Anti-duplication applied to prose."
+    - "`Last verified` is a date AND a commit, never 'recently'. If you cannot re-verify, set status `stale` rather than leave a confident lie."
+    - "Every Invariant must map to a real test. If it cannot be tested it is a wish — sharpen it or delete it."
+  status:
+    written: 3        # D01.1, D01.6, D01.7
+    closed: 0         # none have completed the `document` stage yet
+    outstanding: 108
 
 # ---------------------------------------------------------------------------
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
