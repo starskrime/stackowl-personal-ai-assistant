@@ -163,3 +163,72 @@ async def test_a_deleted_mirror_regenerates(store) -> None:
     store.mirror_path().unlink()
     await store.resolve_for(src(), at(20, 13))
     assert store.mirror_path().exists()
+
+
+# --------------------------------------------------------------------------
+# D01.7 slice 3a.2 — the native send target lives ON the lane.
+#
+# Once a lane is a composite key ("owl:Brain:telegram:dm:123") it is no longer
+# int()-able into a chat id, and channels/base.py resolve_target used to rely on
+# exactly that. Bakir's choice was to store the target rather than parse the key,
+# because on Slack the lane was never the send target in the first place.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_native_send_target_is_persisted_on_the_lane(store) -> None:
+    entry, _, _ = await store.resolve_for(
+        SessionSource("Brain", "telegram", ChatType.DM, "123", chat_target="456"),
+        at(20, 12),
+    )
+    assert entry.chat_id == "456"
+    reloaded = await store.get(entry.session_key)
+    assert reloaded is not None
+    assert reloaded.chat_id == "456"
+
+
+@pytest.mark.asyncio
+async def test_the_send_target_is_resolvable_from_the_lane_alone(store) -> None:
+    """What proactive delivery actually needs: lane in, native target out."""
+    source = SessionSource("Brain", "telegram", ChatType.DM, "123", chat_target="456")
+    entry, _, _ = await store.resolve_for(source, at(20, 12))
+    assert await store.resolve_send_target(entry.session_key) == "456"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_lane_resolves_to_no_target(store) -> None:
+    """Never fabricate a recipient — a fabricated chat id IS the cross-deliver bug."""
+    assert await store.resolve_send_target("owl:Brain:telegram:dm:nope") is None
+
+
+@pytest.mark.asyncio
+async def test_a_rollover_keeps_the_send_target(store) -> None:
+    """A new incarnation is still the same lane, so it is still the same recipient."""
+    source = SessionSource("Brain", "telegram", ChatType.DM, "123", chat_target="456")
+    first, _, _ = await store.resolve_for(source, at(20, 12))
+    rolled, branch, _ = await store.resolve_for(source, at(22, 12))
+    assert branch is Branch.EXPIRED
+    assert rolled.session_id != first.session_id
+    assert rolled.chat_id == "456"
+
+
+@pytest.mark.asyncio
+async def test_a_later_message_refreshes_a_changed_send_target(store) -> None:
+    """Telegram can re-key a chat (a group upgraded to a supergroup). The lane is
+    unchanged, so the stored target must follow the newest message, not the first."""
+    entry, _, _ = await store.resolve_for(
+        SessionSource("Brain", "telegram", ChatType.DM, "123", chat_target="456"), at(20, 12))
+    moved, _, _ = await store.resolve_for(
+        SessionSource("Brain", "telegram", ChatType.DM, "123", chat_target="789"), at(20, 13))
+    assert moved.session_key == entry.session_key
+    assert moved.chat_id == "789"
+
+
+@pytest.mark.asyncio
+async def test_a_message_without_a_target_does_not_erase_the_known_one(store) -> None:
+    """A channel that cannot state its target (CLI) must not blank a real one."""
+    await store.resolve_for(
+        SessionSource("Brain", "telegram", ChatType.DM, "123", chat_target="456"), at(20, 12))
+    later, _, _ = await store.resolve_for(
+        SessionSource("Brain", "telegram", ChatType.DM, "123"), at(20, 13))
+    assert later.chat_id == "456"

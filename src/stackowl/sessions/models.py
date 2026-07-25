@@ -78,6 +78,14 @@ class SessionSource:
     chat_id: str | None = None
     thread_id: str | None = None
     participant_id: str | None = None
+    #: The channel-NATIVE send target for this message (a Telegram chat_id, a
+    #: Slack channel id). Kept SEPARATE from ``chat_id`` because the two are not
+    #: the same thing: ``chat_id`` identifies the conversation for KEYING, while
+    #: this addresses it for DELIVERY. They coincide in a Telegram DM and diverge
+    #: everywhere else — a Telegram group's chat id is not the asking user's, and
+    #: a Slack lane is a hash that was never a channel id at all. ``None`` when the
+    #: channel cannot state a target (CLI); that is honest, not a failure.
+    chat_target: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +104,11 @@ class SessionEntry:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     turn_count: int = 0
+    #: Where to SEND to reach this lane, in the channel's own terms. Stored rather
+    #: than derived: a composite lane key is not int()-able into a chat id, and
+    #: parsing one would couple every delivery path to the key's exact shape.
+    #: ``None`` for channels with no per-lane destination (CLI).
+    chat_id: str | None = None
 
     # --- state flags, evaluated in the order of Branch above (invariant I3) ---
     # Hard wipe. Set by /stop or the 3-strike stuck-loop escape. Beats everything.
@@ -202,6 +215,7 @@ def new_entry(source: SessionSource, now: datetime.datetime,
         channel=source.channel,
         created_at=now,
         updated_at=now,
+        chat_id=source.chat_target,
     )
 
 
@@ -211,4 +225,5 @@ ENTRY_FIELDS: tuple[str, ...] = (
     "session_key", "session_id", "owl_name", "channel", "created_at", "updated_at",
     "turn_count", "suspended", "resume_pending", "resume_reason", "was_auto_reset",
     "auto_reset_reason", "is_fresh_reset", "expiry_finalized", "restart_failures",
+    "chat_id",
 )

@@ -40,7 +40,8 @@ _MIRROR_NAME = "sessions.json"
 _COLUMNS = (
     "session_key, session_id, owl_name, channel, created_at, updated_at, "
     "turn_count, suspended, resume_pending, resume_reason, was_auto_reset, "
-    "auto_reset_reason, is_fresh_reset, expiry_finalized, restart_failures"
+    "auto_reset_reason, is_fresh_reset, expiry_finalized, restart_failures, "
+    "chat_id"
 )
 
 
@@ -63,6 +64,7 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
         is_fresh_reset=bool(row["is_fresh_reset"]),
         expiry_finalized=bool(row["expiry_finalized"]),
         restart_failures=int(row["restart_failures"] or 0),
+        chat_id=row.get("chat_id"),
     )
 
 
@@ -82,6 +84,23 @@ class SessionStore:
             f"SELECT {_COLUMNS} FROM sessions WHERE session_key = ?", (session_key,)
         )
         return _to_entry(rows[0]) if rows else None
+
+    async def resolve_send_target(self, session_key: str) -> str | None:
+        """The channel-native destination for ``session_key``, or ``None``.
+
+        This is what proactive delivery needs and what a composite lane key can no
+        longer supply on its own. ``None`` for an unknown lane or a channel with no
+        per-lane destination — the caller then falls back loudly. A fabricated
+        recipient IS the cross-delivery bug, so this never guesses.
+        """
+        entry = await self.get(session_key)
+        target = entry.chat_id if entry else None
+        log.gateway.debug(
+            "session.resolve_send_target: exit",
+            extra={"_fields": {"session_key": session_key, "known_lane": entry is not None,
+                               "resolved": target is not None}},
+        )
+        return target
 
     async def list_all(self) -> list[SessionEntry]:
         rows = await self._db.fetch_all(
@@ -113,11 +132,16 @@ class SessionStore:
         existing = await self.get(key)
         decision = resolve(existing, now, self._policy, has_active_work=has_active_work)
 
+        # The newest message wins on the send target — a Telegram group upgraded to
+        # a supergroup re-keys the chat while staying the SAME lane — but a message
+        # that carries no target must not erase one we already have.
+        target = source.chat_target or (existing.chat_id if existing else None)
+
         if existing is None:
             entry = SessionEntry(
                 session_key=key, session_id=new_session_id(now),
                 owl_name=source.owl_name, channel=source.channel,
-                created_at=now, updated_at=now,
+                created_at=now, updated_at=now, chat_id=target,
             )
         elif decision.mints_new_incarnation:
             # A rollover ENDS an incarnation; it never destroys a transcript
@@ -131,10 +155,10 @@ class SessionStore:
                 and decision.reason.is_automatic,
                 auto_reset_reason=decision.reason,
                 is_fresh_reset=False, expiry_finalized=False,
-                restart_failures=0,
+                restart_failures=0, chat_id=target,
             )
         else:
-            entry = existing.evolve(updated_at=now)
+            entry = existing.evolve(updated_at=now, chat_id=target)
 
         await self.save(entry)
         log.gateway.info(
@@ -163,7 +187,7 @@ class SessionStore:
         await self._db.execute(
             f"""
             INSERT INTO sessions ({_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_key) DO UPDATE SET
                 session_id=excluded.session_id, owl_name=excluded.owl_name,
                 channel=excluded.channel, created_at=excluded.created_at,
@@ -174,7 +198,11 @@ class SessionStore:
                 auto_reset_reason=excluded.auto_reset_reason,
                 is_fresh_reset=excluded.is_fresh_reset,
                 expiry_finalized=excluded.expiry_finalized,
-                restart_failures=excluded.restart_failures
+                restart_failures=excluded.restart_failures,
+                -- COALESCE, not excluded.chat_id: a channel that cannot state a
+                -- target (CLI) must never blank a real one we already know, or a
+                -- single CLI turn would silently unaddress the Telegram lane.
+                chat_id=COALESCE(excluded.chat_id, sessions.chat_id)
             """,
             (
                 entry.session_key, entry.session_id, entry.owl_name, entry.channel,
@@ -183,7 +211,7 @@ class SessionStore:
                 entry.resume_reason, int(entry.was_auto_reset),
                 entry.auto_reset_reason.value if entry.auto_reset_reason else None,
                 int(entry.is_fresh_reset), int(entry.expiry_finalized),
-                entry.restart_failures,
+                entry.restart_failures, entry.chat_id,
             ),
         )
         await self._project_mirror()
