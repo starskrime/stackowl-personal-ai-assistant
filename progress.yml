@@ -244,7 +244,10 @@ current:
   item: D01.7
   stage: architect
   stage_status: blocked
-  blocked_by: "D01.7-OA1 — verify providers/tier_selector.py can serve a cheap-model summary call. If not, D04.4 returns to the path and Q19 is re-asked."
+  blocked_by: >
+    Q19 RE-ASK. D01.7-OA1 resolved NEGATIVE: TierSelector is a provider round-robin, not a
+    per-task model router, so it cannot serve the rollover summary call. D04.4 is genuinely
+    on D01.7's path. Bakir must choose: promote D04.4, or build a minimal router inside D01.7.
   brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Next stage: architect, blocked on D01.7-OA1."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
@@ -943,8 +946,19 @@ items:
               That option was offered WITH the caveat 'I would need to check before promising this.'
               Bakir picked it, so the answer is conditional on the check. If tier_selector cannot do
               it, D04.4 comes back onto D01.7's path and Q19 must be re-asked.
-            status: open
-            blocks: "D01.7 architect"
+            status: RESOLVED — NEGATIVE
+            resolved: 2026-07-25
+            finding: >
+              TierSelector CANNOT serve this. It is a round-robin picker among healthy providers
+              WITHIN a tier (sync, lock-free, ~30 lines), whose only caller is
+              ProviderRegistry.get_with_cascade. It selects WHICH PROVIDER, not WHICH MODEL FOR
+              WHICH TASK. No per-task configuration, no cheap-by-default policy, no side-LLM
+              fallback chain. A different concern entirely.
+            consequence: >
+              Q19's answer does not hold. D04.4 (auxiliary-model router) genuinely returns to
+              D01.7's path and Q19 MUST BE RE-ASKED with this information. This is why the answer
+              was recorded as conditional rather than settled.
+            blocks: "D01.7 architect — still blocked, now on a re-asked Q19"
         accepted_tradeoffs:
           - "Q18: resuming with the NEW prompt means the second half of an interrupted answer can come from a different persona than the first half, if DNA evolved or routing changed overnight. Bakir chose simplicity over coherence here; recorded so it is a known consequence rather than a surprise bug report later."
       - date: 2026-07-25
