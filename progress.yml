@@ -264,6 +264,23 @@ waves:
   10: {domains: [D04, D06, D13, D14], theme: "Breadth, once the core is settled", items: 19}
 
 # ---------------------------------------------------------------------------
+# KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
+# ---------------------------------------------------------------------------
+known_debt:
+  - id: DEBT-1
+    found: 2026-07-25
+    what: "46 pre-existing ruff errors in src/, in files unrelated to any current item."
+    evidence: "`uv run ruff check src/` -> Found 46 errors. `ruff check src/stackowl/providers/cost_tracker.py` -> All checks passed."
+    decision: "NOT fixed during D01.6 — unrelated files, and fixing them mid-item violates minimal-diffs. Scheduled as its own cleanup pass."
+    status: open
+  - id: DEBT-2
+    found: 2026-07-25
+    what: "Two stale paths existed in the first draft of designs/D01.6.md: wrong DB location and a test file that does not exist."
+    evidence: "Live DB is ~/.stackowl/workspace/stackowl.db (StackowlHome.workspace()); sqlite3 CLI is not installed; the suite is tests/providers/test_cost_tracker_turn_totals.py."
+    decision: "Corrected in the doc, with the correction left visible as a worked example of DOC_STANDARD rule 3."
+    status: closed
+
+# ---------------------------------------------------------------------------
 # DEDUP TARGETS — resolve before building. Each maps to items via `dedup_target`.
 # ---------------------------------------------------------------------------
 dedup_targets:
@@ -559,7 +576,7 @@ items:
     stages:
       brainstorm: not_started
       architect:  done
-      implement:  not_started
+      implement:  in_progress
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -567,7 +584,28 @@ items:
     doc: "docs/hermes-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25
     decisions: []
-    changes: []
+    changes:
+      - date: 2026-07-25
+        commit: pending
+        slice: "schema + CostRecord + CostTracker.record"
+        files:
+          - "src/stackowl/db/migrations/0091_turn_metrics.sql (new)"
+          - "src/stackowl/providers/cost_tracker.py (CostRecord +5 fields, record() +5 kwargs, INSERT, 4-point logging)"
+        verified:
+          migration: "applied twice; second run reports 'already applied'. Schema version 0091."
+          schema: "all 5 columns present; ix_cost_records_session created; 61416 existing rows preserved."
+          tests: "tests/providers/test_cost_tracker_turn_totals.py + tests/smoke/test_e8_s0cost_cost_recording_functional.py -> 5 passed."
+          lint: "ruff clean on cost_tracker.py."
+          types: "mypy clean on cost_tracker.py."
+        remaining:
+          - "openai_provider: capture usage.prompt_tokens_details.cached_tokens (Anthropic fallback: cache_read_input_tokens)."
+          - "assemble.py: compute + stamp prompt_hash and system_prompt_chars on PipelineState."
+          - "execute/provider: measure ttft_ms on the streaming path."
+          - "thread session_id + the four new values from the pipeline into CostTracker.record()."
+          - "config: system.metrics {enabled, capture_ttft, prompt_hash}."
+          - "/cost: per-conversation view + rows_reporting so I4 is readable."
+          - "tests: one per invariant I1-I5."
+          - "capture D01.6-baseline.md (the deliverable that unblocks D01.1)."
     notes: null
 
   - id: D01.7

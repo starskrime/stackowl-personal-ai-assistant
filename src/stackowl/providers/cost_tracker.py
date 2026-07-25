@@ -34,6 +34,21 @@ class CostRecord(BaseModel):
     trace_id: str
     recorded_at: str  # ISO-8601 UTC
 
+    # D01.6 turn metrics (migration 0091). All defaulted, so every existing
+    # construction site keeps working untouched and an un-threaded caller
+    # records a row that is still valid — just without the new dimensions.
+    session_id: str = ""
+    # Provider-reported prefix-cache hits. 0 is AMBIGUOUS by construction: it
+    # means "no cache hit" OR "provider does not report" (D01.6 I4). Readers
+    # must count reporting rows to tell the two apart — see /cost.
+    cached_input_tokens: int = 0
+    # SHA-256[:16] of the exact system prompt sent. The D01.1 stability
+    # invariant is COUNT(DISTINCT prompt_hash) per session_id == 1.
+    prompt_hash: str = ""
+    system_prompt_chars: int = 0
+    # Time to first content token, streaming calls only. None = not measured.
+    ttft_ms: int | None = None
+
 
 class DailySummary(BaseModel):
     """Aggregated daily spend."""
@@ -117,19 +132,40 @@ class CostTracker(OwnedRepository):
         duration_ms: float,
         trace_id: str = "",
         is_local: bool = False,
+        session_id: str = "",
+        cached_input_tokens: int = 0,
+        prompt_hash: str = "",
+        system_prompt_chars: int = 0,
+        ttft_ms: int | None = None,
     ) -> CostRecord:
         """Record a completed LLM call. Persists to SQLite and checks budget.
 
         ``is_local`` marks a self-hosted backend so an unknown LOCAL model stays
         $0 while an unknown CLOUD model gets a conservative fallback price (F128).
         Defaults to ``False`` (cloud) so an un-threaded caller fails safe to PAID.
+
+        The five D01.6 turn-metric arguments all default, so a caller that does
+        not thread them records exactly the row it recorded before. See
+        ``docs/hermes-mapping/designs/D01.6.md``.
         """
         log.engine.debug(
             "[cost_tracker] record: entry",
             extra={"_fields": {
                 "provider": provider_name, "model": model,
                 "input_tokens": input_tokens, "output_tokens": output_tokens,
-                "duration_ms": duration_ms,
+                "duration_ms": duration_ms, "session_id": session_id,
+            }},
+        )
+        # D01.6 DECISION point — which naming the provider used for cache stats,
+        # or none at all. Logged because "cached=0" alone cannot distinguish a
+        # cold cache from a silent provider (I4), and misreading that would make
+        # a working D01.1 look like a failed one.
+        log.engine.debug(
+            "[cost_tracker] record: cache stats source",
+            extra={"_fields": {
+                "source": "reported" if cached_input_tokens > 0 else "absent_or_zero",
+                "cached_input_tokens": cached_input_tokens,
+                "provider": provider_name,
             }},
         )
 
@@ -154,6 +190,9 @@ class CostTracker(OwnedRepository):
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,
             cost_usd=cost_usd, trace_id=trace_id, recorded_at=now.isoformat(),
+            session_id=session_id, cached_input_tokens=cached_input_tokens,
+            prompt_hash=prompt_hash, system_prompt_chars=system_prompt_chars,
+            ttft_ms=ttft_ms,
         )
 
         try:
@@ -161,13 +200,17 @@ class CostTracker(OwnedRepository):
                 """
                 INSERT INTO cost_records (
                     provider_name, model, input_tokens, output_tokens,
-                    cost_usd, trace_id, recorded_at, owner_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    cost_usd, trace_id, recorded_at, owner_id,
+                    session_id, cached_input_tokens, prompt_hash,
+                    system_prompt_chars, ttft_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.provider_name, record.model, record.input_tokens,
                     record.output_tokens, record.cost_usd, record.trace_id,
                     record.recorded_at, self._owner_id,
+                    record.session_id, record.cached_input_tokens,
+                    record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
                 ),
             )
         except Exception as exc:
@@ -189,6 +232,12 @@ class CostTracker(OwnedRepository):
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "duration_ms": duration_ms,
+                    # D01.6 EXIT point — the four measured dimensions.
+                    "session_id": session_id,
+                    "cached_input_tokens": cached_input_tokens,
+                    "prompt_hash": prompt_hash,
+                    "system_prompt_chars": system_prompt_chars,
+                    "ttft_ms": ttft_ms,
                 }
             },
         )
