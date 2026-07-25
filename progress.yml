@@ -350,7 +350,11 @@ known_debt:
       it was reaching for — every declared subcommand has a summary, and privacy is present —
       instead of asserting the exact set. This is map item D18.6 (change-detector test ban)
       appearing in our own tree.
-    status: awaiting_bakir
+    status: resolved
+    resolution: >
+      2026-07-25, approved by Bakir. Converted to the invariant it was reaching for:
+      privacy must stay reachable, every declared subcommand must have a summary, and
+      no two may share a name. The frozen set assertion is gone. 369 tests pass.
   - id: DEBT-2
     found: 2026-07-25
     what: "Two stale paths existed in the first draft of designs/D01.6.md: wrong DB location and a test file that does not exist."
@@ -442,7 +446,7 @@ summary:
     in_progress: 0
     done: 0
     blocked: 0
-  stages_completed: 4   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_completed: 6   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
@@ -654,15 +658,32 @@ items:
     stages:
       brainstorm: not_started
       architect:  done
-      implement:  in_progress
+      implement:  done
       cleanup:    not_started
-      test:       in_progress
+      test:       done
       validate:   not_started
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25
     decisions: []
     changes:
+      - date: 2026-07-25
+        slice: "TTFT + /cost turns + config-gate drop + DEBT-4 conversion"
+        files:
+          - "src/stackowl/providers/openai_provider.py — _ttft_ms on first CONTENT delta"
+          - "src/stackowl/commands/cost_command.py — /cost turns + SubCommand declaration"
+          - "tests/commands/test_cost_meta.py — change-detector converted to an invariant"
+          - "docs/hermes-mapping/designs/D01.6.md — config gate dropped WITH reasoning"
+        scope_change: >
+          The system.metrics config gate was specified in the design and deliberately dropped.
+          The feature is append-only instrumentation that already fails open by I1, so a
+          kill-switch mitigates near-zero risk while adding a hot-path branch and a dormant-
+          feature mode that conflicts with "ships ON, not dormant". Rollback is `git revert`;
+          the migration is additive with defaults so old rows stay valid either way.
+        verified:
+          tests: "369 passed in tests/commands + the 20 D01.6 invariant tests. Only remaining red is DEBT-3, verified pre-existing by stash/run/pop."
+          lint: "ruff + mypy clean on every touched file."
+          live: "/cost turns executes against the real DB and returns its honest no-metrics-yet message."
       - date: 2026-07-25
         commit: pending
         slice: "cached-token capture + invariant tests"
@@ -716,8 +737,7 @@ items:
           tests: "tests/providers/test_cost_tracker_turn_totals.py + tests/smoke/test_e8_s0cost_cost_recording_functional.py -> 5 passed."
           lint: "ruff clean on cost_tracker.py."
           types: "mypy clean on cost_tracker.py."
-        remaining:
-          - "execute/provider: measure ttft_ms on the streaming path and pass to _record_cost."
+        remaining: []
           - "config: system.metrics {enabled, capture_ttft, prompt_hash}."
           - "/cost: per-conversation view + rows_reporting so I4 is readable."
           - "tests: one per invariant I1-I5."

@@ -20,13 +20,28 @@ def _state():  # type: ignore[no-untyped-def]
     )
 
 
-def test_cost_declares_only_privacy_subcommand() -> None:
+def test_cost_meta_declares_usable_subcommands() -> None:
+    """Every declared subcommand is usable, and `privacy` stays reachable.
+
+    Deliberately NOT ``names == {"privacy"}``. Freezing the set turns every
+    legitimate new subcommand into a CI failure while adding no behavioural
+    coverage — the change-detector anti-pattern (map item D18.6). It fired on
+    ``/cost turns``, a correct feature, which is exactly the cost such a test
+    imposes.
+
+    What actually matters, and is asserted here: `privacy` must remain
+    reachable (it is destructive and has a confirmation contract), every
+    declared subcommand must render in help, and no two may share a name.
+    """
     cmd = CostCommand()
-    names = {s.name for s in cmd.meta.subcommands}
-    assert names == {"privacy"}
+    names = [s.name for s in cmd.meta.subcommands]
+    assert "privacy" in names, "the destructive wipe must stay reachable"
+    assert len(names) == len(set(names)), f"duplicate subcommand names: {names}"
+    assert all(s.summary for s in cmd.meta.subcommands), (
+        "a subcommand with no summary is invisible in /help"
+    )
     assert cmd.meta.grammar == "verb"
     assert cmd.meta.group == "Cost & Usage"
-    assert cmd.meta.subcommands[0].summary
 
 
 @pytest.mark.asyncio
