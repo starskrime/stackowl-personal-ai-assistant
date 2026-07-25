@@ -578,13 +578,31 @@ items:
       architect:  done
       implement:  in_progress
       cleanup:    not_started
-      test:       not_started
+      test:       in_progress
       validate:   not_started
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25
     decisions: []
     changes:
+      - date: 2026-07-25
+        commit: pending
+        slice: "cached-token capture + invariant tests"
+        files:
+          - "src/stackowl/providers/openai_provider.py — _cached_input_tokens() helper wired into all 3 _record_cost sites"
+          - "tests/providers/test_turn_metrics_d016.py (new) — 20 tests, one per stated invariant"
+        design_note: >
+          Cache-stat naming is NOT standardised across OpenAI-protocol backends, so
+          the reader walks a priority chain rather than assuming one shape:
+          prompt_tokens_details.cached_tokens (OpenAI) -> cache_read_input_tokens
+          (Anthropic naming, which LiteLLM-style gateways pass through verbatim) ->
+          cached_tokens (flattened) -> 0. This matters concretely: the only enabled
+          provider is NeraAiRaw, a LiteLLM gateway, so the Anthropic-named branch is
+          a live path here, not a hypothetical.
+        verified:
+          tests: "20 new invariant tests pass; 485 passed across tests/providers + tests/pipeline/steps + cost smoke."
+          lint: "ruff clean on the provider and the new test; src/ total unchanged at 46 pre-existing (DEBT-1) — zero added."
+          types: "mypy clean on openai_provider.py."
       - date: 2026-07-25
         commit: pending
         slice: "prompt identity carrier + single-site threading"
@@ -621,7 +639,6 @@ items:
           lint: "ruff clean on cost_tracker.py."
           types: "mypy clean on cost_tracker.py."
         remaining:
-          - "openai_provider: capture usage.prompt_tokens_details.cached_tokens (Anthropic fallback: cache_read_input_tokens) and pass to _record_cost."
           - "execute/provider: measure ttft_ms on the streaming path and pass to _record_cost."
           - "config: system.metrics {enabled, capture_ttft, prompt_hash}."
           - "/cost: per-conversation view + rows_reporting so I4 is readable."

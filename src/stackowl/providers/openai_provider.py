@@ -104,6 +104,45 @@ _THINK_TAGS: tuple[tuple[str, str], ...] = (
 )
 
 
+
+def _cached_input_tokens(usage: Any) -> int:
+    """Prefix-cache hits reported by the provider, or 0 when it reports none (D01.6).
+
+    Naming is not standardised across OpenAI-protocol backends, so this walks a
+    priority chain rather than assuming one shape:
+
+      1. ``usage.prompt_tokens_details.cached_tokens``  — OpenAI's own field
+      2. ``usage.cache_read_input_tokens``              — Anthropic-style naming,
+         which some gateways (LiteLLM among them) pass through verbatim
+      3. ``usage.cached_tokens``                        — flattened variants
+      4. 0
+
+    NEVER raises: a usage object of an unexpected shape is data we do not have,
+    not an error, and cost recording must never break a completion that already
+    happened (B5).
+
+    The 0 return is AMBIGUOUS by construction — it means "no cache hit" OR "this
+    backend does not report cache statistics" (D01.6 invariant I4). Readers must
+    count reporting rows to tell those apart; do not read a 0 as a cold cache.
+    """
+    if usage is None:
+        return 0
+    try:
+        details = getattr(usage, "prompt_tokens_details", None)
+        if details is not None:
+            cached = getattr(details, "cached_tokens", None)
+            if cached is None and isinstance(details, dict):
+                cached = details.get("cached_tokens")
+            if cached:
+                return int(cached)
+        for attr in ("cache_read_input_tokens", "cached_tokens"):
+            value = getattr(usage, attr, None)
+            if value:
+                return int(value)
+    except Exception:  # B5 — an odd usage shape must never break a completion.
+        return 0
+    return 0
+
 class _ThinkStreamFilter:
     """Stateful reasoning-block filter for a LIVE token stream.
 
@@ -398,6 +437,7 @@ class OpenAIProvider(ModelProvider):
             return
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+            cached_input_tokens=_cached_input_tokens(usage),
         )
 
     async def complete_with_tools(
@@ -1007,6 +1047,7 @@ class OpenAIProvider(ModelProvider):
             return
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+            cached_input_tokens=_cached_input_tokens(usage),
         )
 
     def _ollama_extra_body(self, resolved_model: str) -> dict[str, Any]:
@@ -1266,6 +1307,7 @@ class OpenAIProvider(ModelProvider):
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             duration_ms=duration_ms,
+            cached_input_tokens=_cached_input_tokens(usage),
         )
         log.engine.debug(
             "[openai] complete: exit",
