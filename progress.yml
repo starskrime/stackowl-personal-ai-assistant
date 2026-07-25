@@ -243,7 +243,8 @@ current:
   wave: 1
   item: D01.7
   stage: brainstorm
-  stage_status: not_started
+  stage_status: in_progress
+  brainstorm_round: "1 of 7 done (Q1-Q4). Q5-Q25 outstanding."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
     Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
@@ -856,7 +857,7 @@ items:
       - "Hermes has one agent; StackOwl has owls. Our cache key must be session_key + owl_name — switching owls mid-lane means a different persona and therefore a different prompt."
       - "Their SessionContext block goes INTO the system prompt (platform, connected channels, delivery targets) with optional PII redaction. Stable per session for them; for us it must be checked against the D01.1 decision that job output lands in its own conversation with a note in main."
     stages:
-      brainstorm: not_started
+      brainstorm: in_progress
       architect:  done
       implement:  not_started
       cleanup:    not_started
@@ -866,6 +867,25 @@ items:
     doc: "docs/hermes-mapping/designs/D01.7.md"
     doc_last_verified: 2026-07-25
     decisions:
+      - date: 2026-07-25
+        stage: brainstorm
+        round: "1 of 7 (Q1-Q4)"
+        by: Bakir
+        answers:
+          owl_in_session_key: "YES — a different owl is a different conversation. Confirms the assertion made unilaterally in the design doc; each owl gets its own lane, its own stable prompt, its own history."
+          extra_reset_triggers: "Explicit /new, AND context getting too full. NOT crash — so a crash PRESERVES the session and auto-continues, matching Hermes' resume_pending."
+          boundary_ux: "A short one-line note, shown once. A boundary the user cannot see is one they experience as amnesia."
+          storage: "BOTH, exactly like Hermes — SQLite canonical + a JSON mirror of the key->id map."
+        implications:
+          - "Choosing 'context too full' as a reset trigger TIES D01.7 to compression (D03.2): the session boundary becomes compression's mechanism. Good convergence — one seam, two items."
+          - "Crash-preserves confirms the resume_pending design, which matters more for us than for Hermes because our core exec-replaces itself on every code change."
+        design_response_to_sync_risk: >
+          Bakir was shown the cost of 'both' (two things to keep in sync) and reaffirmed it. Rather
+          than accept that bug class, the design eliminates it: SQLite is the SINGLE source of
+          truth, and the JSON file is a DERIVED, WRITE-ONLY MIRROR — projected after each commit,
+          never read back except by a human inspecting it. A one-way projection cannot drift into
+          disagreement, because nothing ever trusts it. If the mirror is deleted or corrupted it is
+          simply regenerated. This gives the legibility he asked for at no correctness cost.
       - date: 2026-07-25
         stage: architect
         by: Bakir
