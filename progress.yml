@@ -244,7 +244,34 @@ current:
   item: D01.7
   stage: implement
   stage_status: in_progress
-  slice: "3a — identity rename + ingress wiring. Slices 1 and 2 are committed (b38e8145, 7a319d0f)."
+  slice: >
+    3a.2 IN PROGRESS. Committed so far: slice 1 (b38e8145), slice 2 (7a319d0f),
+    3a.1 the identity rename + migration 0093 (c82ea736), 3a.2 part 1 — the lane
+    carries its own send target + migration 0094 (7b145f15).
+  next_action: >
+    3a.2 part 2 — wire resolve_for into the gateway ingress. Concretely:
+      1. PipelineState gains `session_id` (the INCARNATION); session_key already exists.
+      2. pipeline/backends/shared.py:96 is the ONE TraceContext.start seam — pass the
+         incarnation through it so every log line and cost row carries both ids.
+      3. cost_records gains a session_id column (migration 0095) for the incarnation.
+         session_key already holds the lane. That pair is what D01.1's byte-identical-
+         prompt invariant needs to group by.
+      4. startup/orchestrator.py — call SessionStore.resolve_for just before
+         _dispatch_turn (db_pool is available from line 779). Compose Q12's four
+         never-expire conditions into the has_active_work boolean there.
+      5. Point channels/base.py resolve_target and
+         notifications/router_helpers.resolve_target_chat_id at resolve_send_target.
+         NOTE: resolve_target_chat_id is PURE today; this makes it do I/O. Its
+         docstring still claims "session_key == str(user_id) == chat_id", which stops
+         being true the moment composite keys are written — fix the docstring with it.
+    Then 3a.3 (notice as a SEPARATE message + the turn-end transcript writer, user and
+    assistant roles only), then 3b (session.rollover on the EventBus, durable consumer
+    tasks, standard-tier summary, and the /new -> /queue verb swap).
+  live_state: >
+    Platform RESTARTED onto the renamed code at 2026-07-25 and verified: 1199 log lines
+    in 3 minutes with ZERO ERROR/CRITICAL, cost_records inserting again, lane values
+    flowing (72055773, goal-goal_execution-715f6143, incident-e7fb46d91410). Schema is
+    at 0094.
   brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Architect COMPLETE — OA1 resolved, at_hour signed off."
   stale_header_corrected:
     date: 2026-07-25
@@ -1169,7 +1196,25 @@ items:
           the rollover path exists; swapping earlier would leave /new pointing at nothing.
     changes:
       - date: 2026-07-25
+        slice: "3a.2 part 1 — the lane carries its own send target"
+        commit: 7b145f15
+        files:
+          - "src/stackowl/sessions/models.py — SessionSource.chat_target, SessionEntry.chat_id"
+          - "src/stackowl/sessions/store.py — resolve_send_target(), COALESCE on save"
+          - "src/stackowl/db/migrations/0094_session_send_target.sql (new)"
+          - "tests/sessions/test_session_store.py — 6 new tests, written FIRST and red"
+        design_notes:
+          - "chat_target (how to ADDRESS a message) is kept separate from chat_id (how to KEY a conversation). They coincide in a Telegram DM and diverge everywhere else — a Telegram group's chat id is not the asking user's, and a Slack lane is a hash that was never a channel id. Collapsing them is what made delivery fragile in the first place."
+          - "Newest message wins on the target (a group upgraded to a supergroup re-keys the chat while staying the same lane), but a message with NO target never erases a known one — otherwise one CLI turn would silently unaddress the Telegram lane. Both directions are pinned by a test, and the same rule is enforced twice: in resolve_for for the returned object, and by COALESCE in the upsert for any direct save() caller."
+          - "An unknown lane resolves to None, never a guess. A fabricated recipient IS the cross-delivery bug this codebase already fixed once."
+        verified:
+          tests: "49 passed in tests/sessions/ (43 existing + 6 new). The 6 were red before the implementation."
+          lint: "ruff clean on src/stackowl/sessions/ and tests/sessions/."
+          types: "mypy strict — no issues in 4 source files."
+          migration: "0094 applied; second run reports already-applied; sessions.chat_id present. Schema at 0094."
+      - date: 2026-07-25
         slice: "3a.1 of 3 — the identity rename: session_id -> session_key, code and schema together"
+        commit: c82ea736
         files:
           - "571 files rewritten mechanically (2829 lane occurrences) across src/ and tests/"
           - "src/stackowl/db/migrations/0093_session_key_rename.sql (new) — 7 tables"
