@@ -242,9 +242,10 @@ deployment:
 current:
   wave: 1
   item: D01.7
-  stage: brainstorm
-  stage_status: in_progress
-  brainstorm_round: "5 of 7 done (Q1-Q20). Q21-Q25 outstanding."
+  stage: architect
+  stage_status: blocked
+  blocked_by: "D01.7-OA1 — verify providers/tier_selector.py can serve a cheap-model summary call. If not, D04.4 returns to the path and Q19 is re-asked."
+  brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Next stage: architect, blocked on D01.7-OA1."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
     Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
@@ -474,7 +475,7 @@ summary:
     in_progress: 0
     done: 0
     blocked: 0
-  stages_completed: 9   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_completed: 10   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
@@ -857,7 +858,7 @@ items:
       - "Hermes has one agent; StackOwl has owls. Our cache key must be session_key + owl_name — switching owls mid-lane means a different persona and therefore a different prompt."
       - "Their SessionContext block goes INTO the system prompt (platform, connected channels, delivery targets) with optional PII redaction. Stable per session for them; for us it must be checked against the D01.1 decision that job output lands in its own conversation with a note in main."
     stages:
-      brainstorm: in_progress
+      brainstorm: done
       architect:  done
       implement:  not_started
       cleanup:    not_started
@@ -947,6 +948,27 @@ items:
         accepted_tradeoffs:
           - "Q18: resuming with the NEW prompt means the second half of an interrupted answer can come from a different persona than the first half, if DNA evolved or routing changed overnight. Bakir chose simplicity over coherence here; recorded so it is a known consequence rather than a surprise bug report later."
       - date: 2026-07-25
+        stage: brainstorm
+        round: "6 of 6 (Q21-Q24) — BRAINSTORM COMPLETE, 24 questions"
+        by: Bakir
+        answers:
+          rollout: "Straight cutover, default ON. No flag, no dual path; migration is automatic per Q17."
+          hard_invariants: "'Nothing. We can have a new conversation.' — no ADDITIONAL hard constraints beyond those already chosen."
+          success_criteria: "The FULL invariant suite green — every one of I1-I6 has a test, plus the live run."
+          standing_requirement: "'Just make sure we are not creating duplicate code and always optimizing code.'"
+        contradiction_surfaced:
+          apparent: "Q22 ('nothing must never break') pulls against Q11 (keep the transcript), Q12 (four never-expire conditions) and Q23 (full invariant suite green)."
+          resolution: >
+            Read Q22 as 'I will not be upset if a conversation resets' — a statement about his
+            tolerance — NOT as 'discard the invariants you already chose'. I1-I6 are structural
+            correctness properties, not user-facing promises, and Q23 explicitly demands all of
+            them be tested. Flagged to Bakir for correction rather than silently reconciled.
+          status: "resolved unless Bakir corrects"
+        implications:
+          - "Q22 LOWERS the risk bar: no recall-regression gate, no history-preservation gate beyond what Q11 already chose. D01.7 can move fast."
+          - "Q24 elevates anti-duplication from a process rule to a STANDING ACCEPTANCE CRITERION for every item. Already encoded in dedup_targets X1-X10 and the PROCESS.md three-question check; now also a stated success condition."
+          - "Q23 + Q22 together define the shape: prove the MECHANISM rigorously (I1-I6 + live run), do not gate on user-facing guarantees he does not want."
+      - date: 2026-07-25
         stage: architect
         by: Bakir
         question: "session.at_hour — midnight (his Q16 answer) or 4 AM (Hermes default)?"
@@ -957,6 +979,16 @@ items:
           so midnight remains reachable, with 4 as the default. Supersedes the Q16 answer.
         blocks_cleared: ["D01.7 implement"]
     changes: []
+    brainstorm_summary: >
+      COMPLETE — 24 questions across 6 rounds, 2026-07-25. Settled: owl-keyed lanes; daily 4 AM
+      + 24h idle + /new + context-full as the four rollover triggers, all sharing ONE code path;
+      threads shared / main channel private; silent mid-turn restart recovery via resume_pending;
+      3-strike stuck-loop escape that says why; a one-line visible boundary notice; SQLite canonical
+      with a derived write-only JSON mirror of the key->id map; every runner gets a lane; keep
+      transcripts, prune records; four never-expire conditions; cheap-model rollover summary gated
+      on notability, publishing on the EventBus with durable consumer tasks; clock-injected unit
+      tests plus a live wiring run; straight cutover with automatic migration.
+      ONE OPEN ACTION blocks architect: D01.7-OA1 (verify tier_selector can serve the summary call).
     notes: >
       at_hour RESOLVED 2026-07-25: 4 AM, signed off by Bakir, superseding his Q16 midnight
       answer. Configurable so midnight stays reachable. No open questions remain on this item —
