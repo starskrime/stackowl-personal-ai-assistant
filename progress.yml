@@ -243,11 +243,8 @@ current:
   wave: 1
   item: D01.7
   stage: architect
-  stage_status: blocked
-  blocked_by: >
-    Q19 RE-ASK. D01.7-OA1 resolved NEGATIVE: TierSelector is a provider round-robin, not a
-    per-task model router, so it cannot serve the rollover summary call. D04.4 is genuinely
-    on D01.7's path. Bakir must choose: promote D04.4, or build a minimal router inside D01.7.
+  stage_status: ready
+  blocked_by: null
   brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Next stage: architect, blocked on D01.7-OA1."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
@@ -818,7 +815,7 @@ items:
       StackOwl has exactly one session identifier and it never changes, so a session can
       never start or end. "Build the prompt once per session" is meaningless without this.
       Prerequisite for D01.1, and the natural home for D09.1 / D09.3 / D03.3.
-    depends_on: [D01.6, D04.4]
+    depends_on: [D01.6]
     blocks: [D01.1, D01.4, D03.3, D09.1, D09.3]
     dedup_target: null
     hermes_reference:
@@ -958,7 +955,19 @@ items:
               Q19's answer does not hold. D04.4 (auxiliary-model router) genuinely returns to
               D01.7's path and Q19 MUST BE RE-ASKED with this information. This is why the answer
               was recorded as conditional rather than settled.
-            blocks: "D01.7 architect — still blocked, now on a re-asked Q19"
+            blocks: "NOTHING — Q19 re-asked and answered, see below."
+            q19_final_answer:
+              date: 2026-07-25
+              by: Bakir
+              answer: "Point the rollover summary at the STANDARD tier explicitly."
+              why_this_works: >
+                Footprint-ladder RUNG 1 — extend existing code, add nothing. The fast/standard/
+                powerful tier concept already exists and is config-driven (NeraAiRaw is configured
+                on all three). The summary call simply names its tier instead of inheriting the
+                owl's selection or requiring a new router. No D04.4 dependency, no second
+                resolution path, nothing to deduplicate later — which satisfies the Q24 standing
+                acceptance criterion directly.
+              consequence: "D01.7 depends_on reverts to [D01.6] alone. ARCHITECT IS UNBLOCKED."
         accepted_tradeoffs:
           - "Q18: resuming with the NEW prompt means the second half of an interrupted answer can come from a different persona than the first half, if DNA evolved or routing changed overnight. Bakir chose simplicity over coherence here; recorded so it is a known consequence rather than a surprise bug report later."
       - date: 2026-07-25
