@@ -243,7 +243,7 @@ current:
   wave: 1
   item: D01.7
   stage: architect
-  stage_status: ready
+  stage_status: in_progress
   blocked_by: null
   brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Next stage: architect, blocked on D01.7-OA1."
   note_2: >
@@ -475,7 +475,7 @@ summary:
     in_progress: 0
     done: 0
     blocked: 0
-  stages_completed: 10   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_completed: 11   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
@@ -860,7 +860,7 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
+      implement:  in_progress
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -1001,7 +1001,31 @@ items:
           guillotines it; at 4 AM nobody is talking. Ships configurable (reset_mode + at_hour)
           so midnight remains reachable, with 4 as the default. Supersedes the Q16 answer.
         blocks_cleared: ["D01.7 implement"]
-    changes: []
+    changes:
+      - date: 2026-07-25
+        slice: "1 of 3 — identity + policy core (pure logic, no I/O)"
+        files:
+          - "src/stackowl/sessions/models.py (new) — SessionSource, SessionEntry, build_session_key, new_session_id, is_shared_lane"
+          - "src/stackowl/sessions/policy.py (new) — ResetMode, ResetPolicy, resolve() priority order, reset_notice"
+          - "src/stackowl/sessions/__init__.py (new) — package surface"
+          - "tests/sessions/test_session_invariants.py (new) — 31 tests"
+        design_notes:
+          - "Deliberately pure: no store, no gateway, no clock of its own. Every branch of I3 is unit-testable without a database or waiting until 4 AM — which is exactly Bakir's Q16 answer (clock injection for logic, live run for wiring)."
+          - "resolve() takes has_active_work as a BOOLEAN. The module does not know what 'work' means; the caller composes Q12's four conditions (background process, durable task, active objective, pending clarify). Keeps the policy layer free of dependencies on the autonomy layer."
+          - "SessionEntry is frozen with an evolve() method, so no caller can mutate shared state by accident and every transition is a greppable call."
+        bug_caught_by_types: >
+          mypy found a real defect before any test ran: expired_reason() called
+          policy.idle_armed / policy.daily_armed, but those properties live on
+          ResetMode, not ResetPolicy. Would have raised AttributeError on the first
+          real rollover. Fixed to policy.mode.idle_armed.
+        verified:
+          tests: "31 passed in tests/sessions/ — one per invariant I1-I5 plus the priority order, isolation rules, 4 AM boundary, stuck-loop escape and config validation."
+          lint: "ruff clean (StrEnum adopted per UP042)."
+          types: "mypy strict clean on all 3 source files."
+        remaining:
+          - "Slice 2: SessionStore — SQLite table (migration 0092) + the derived write-only JSON mirror of the key->id map."
+          - "Slice 3: gateway wiring — resolve on inbound, rollover event on EventBus with durable consumer tasks, the standard-tier summary, and the one-line notice."
+          - "Then: live validation run, and fold the 24 brainstorm answers into designs/D01.7.md."
     brainstorm_summary: >
       COMPLETE — 24 questions across 6 rounds, 2026-07-25. Settled: owl-keyed lanes; daily 4 AM
       + 24h idle + /new + context-full as the four rollover triggers, all sharing ONE code path;
