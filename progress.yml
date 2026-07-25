@@ -244,7 +244,7 @@ current:
   item: D01.7
   stage: brainstorm
   stage_status: in_progress
-  brainstorm_round: "4 of 7 done (Q1-Q16). Q17-Q25 outstanding."
+  brainstorm_round: "5 of 7 done (Q1-Q20). Q21-Q25 outstanding."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
     Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
@@ -926,6 +926,26 @@ items:
           - "Q15 raises the bar above what was designed. The doc said 'emit session.rollover on the EventBus'; Bakir wants the consumers to enqueue DURABLE tasks so a crash mid-rollover does not lose the summary. Correct instinct — a rollover fires at 4 AM unattended, which is precisely when nobody is watching. pipeline/durable/ already provides the machinery."
           - "Q14's notability gate is a cost control: Q9 made EVERY runner a lane, so an ungated summary would fire one LLM call per lane per day. The gate is what keeps that bounded."
           - "Q16 names the failure mode explicitly: registered-but-unreachable. A clock-injected unit test proves the logic; only a live run proves the gateway actually calls it."
+      - date: 2026-07-25
+        stage: brainstorm
+        round: "5 of 7 (Q17-Q20)"
+        by: Bakir
+        answers:
+          migration: "Adopt every existing conversation as one lane with its history intact; the first 4 AM boundary after upgrade rolls it. Nothing lost, no user action, everyone on the new model within a day."
+          resume_across_change: "Resume with the NEW prompt. Simpler — no stale prompt retained."
+          aux_router_dependency: "Use the existing providers/tier_selector.py as-is — CONDITIONAL, see open_action below."
+          json_mirror: "Key->id map plus timestamps, exactly like Hermes. Smallest useful mirror."
+        open_actions:
+          - id: "D01.7-OA1"
+            what: "VERIFY that providers/tier_selector.py can actually serve a cheap-model summary call before treating Q19 as settled."
+            why: >
+              That option was offered WITH the caveat 'I would need to check before promising this.'
+              Bakir picked it, so the answer is conditional on the check. If tier_selector cannot do
+              it, D04.4 comes back onto D01.7's path and Q19 must be re-asked.
+            status: open
+            blocks: "D01.7 architect"
+        accepted_tradeoffs:
+          - "Q18: resuming with the NEW prompt means the second half of an interrupted answer can come from a different persona than the first half, if DNA evolved or routing changed overnight. Bakir chose simplicity over coherence here; recorded so it is a known consequence rather than a surprise bug report later."
       - date: 2026-07-25
         stage: architect
         by: Bakir
