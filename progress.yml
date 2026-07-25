@@ -244,7 +244,7 @@ current:
   item: D01.7
   stage: brainstorm
   stage_status: in_progress
-  brainstorm_round: "3 of 7 done (Q1-Q12). Q13-Q25 outstanding."
+  brainstorm_round: "4 of 7 done (Q1-Q16). Q17-Q25 outstanding."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
     Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
@@ -814,7 +814,7 @@ items:
       StackOwl has exactly one session identifier and it never changes, so a session can
       never start or end. "Build the prompt once per session" is meaningless without this.
       Prerequisite for D01.1, and the natural home for D09.1 / D09.3 / D03.3.
-    depends_on: [D01.6]
+    depends_on: [D01.6, D04.4]
     blocks: [D01.1, D01.4, D03.3, D09.1, D09.3]
     dedup_target: null
     hermes_reference:
@@ -912,6 +912,20 @@ items:
           - "Q12 EXTENDS Hermes rather than adopting it. Their rule protects background processes only; ours protects four conditions because StackOwl has autonomy machinery Hermes lacks (durable tasks, objectives, the clarify gateway). Worth stating in the design doc as a deliberate divergence — a future reader will otherwise assume the extra three were scope creep."
           - "Q9 means the D01.1 frozen prompt benefits BACKGROUND work too, not just chat. The baseline already hinted at this: goal-owl_lifecycle sessions were the ONLY ones showing 1 distinct prompt across many calls."
           - "Q12's fourth condition (pending clarify) is subtle: if a lane rolls while the owl is waiting for an answer, the parked turn has nowhere to land. That is a live bug class in the current clarify_pump, not a hypothetical."
+      - date: 2026-07-25
+        stage: brainstorm
+        round: "4 of 7 (Q13-Q16)"
+        by: Bakir
+        answers:
+          summary_model: "Cheap by default, CONFIGURABLE PER TASK. This is Hermes' `auxiliary` block verbatim — and it is map item D04.4."
+          summary_content: "All four selected: facts about him, what was decided/agreed, what went wrong, AND a notability gate. Read as a conjunction not a contradiction: summarise ONLY when something notable happened, but when you do, capture all three categories."
+          rollover_hook: "EventBus publication, BUT the work must be queued DURABLY in case the session crashes mid-rollover. Option 4 — publish the event, consumers enqueue durable tasks rather than working inline."
+          boundary_testing: "BOTH — clock-injected unit tests for every branch of the priority order, PLUS one live run to prove it is actually wired into the gateway."
+        implications:
+          - "NEW DEPENDENCY FOUND: Q13 pulls D04.4 (auxiliary-model router) into D01.7's path. Today StackOwl resolves side-LLM models ad hoc across acceptance_llm, the interaction/ classifiers, critic_scorer and reflection. The rollover summary needs a cheap-by-default, per-task-configurable resolution chain — which is exactly D04.4. Either build a minimal version inside D01.7 or promote D04.4 ahead of it. RESOLVE BEFORE ARCHITECT."
+          - "Q15 raises the bar above what was designed. The doc said 'emit session.rollover on the EventBus'; Bakir wants the consumers to enqueue DURABLE tasks so a crash mid-rollover does not lose the summary. Correct instinct — a rollover fires at 4 AM unattended, which is precisely when nobody is watching. pipeline/durable/ already provides the machinery."
+          - "Q14's notability gate is a cost control: Q9 made EVERY runner a lane, so an ungated summary would fire one LLM call per lane per day. The gate is what keeps that bounded."
+          - "Q16 names the failure mode explicitly: registered-but-unreachable. A clock-injected unit test proves the logic; only a live run proves the gateway actually calls it."
       - date: 2026-07-25
         stage: architect
         by: Bakir
