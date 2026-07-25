@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from stackowl.health.status import HealthStatus
+from stackowl.infra import prompt_metrics
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.providers.react_callback import IterationCallback
@@ -145,6 +146,8 @@ class ModelProvider(ABC):
         input_tokens: int,
         output_tokens: int,
         duration_ms: float,
+        cached_input_tokens: int = 0,
+        ttft_ms: int | None = None,
     ) -> None:
         """Record ONE LLM call's cost to the shared tracker (single recording site).
 
@@ -158,7 +161,13 @@ class ModelProvider(ABC):
         tracker = self._cost_tracker
         if tracker is None:
             return
-        trace_id = str(TraceContext.get().get("trace_id") or "")
+        ctx = TraceContext.get()
+        trace_id = str(ctx.get("trace_id") or "")
+        # D01.6 — session_id already rides TraceContext, and the prompt's identity
+        # rides its own turn-scoped carrier. Both are read here rather than passed
+        # in, so no provider signature has to grow to make a turn measurable.
+        session_id = str(ctx.get("session_id") or "")
+        prompt_hash, system_prompt_chars = prompt_metrics.current()
         try:
             await tracker.record(
                 provider_name=self.name,
@@ -168,6 +177,11 @@ class ModelProvider(ABC):
                 duration_ms=duration_ms,
                 trace_id=trace_id,
                 is_local=self._is_local_backend,
+                session_id=session_id,
+                cached_input_tokens=cached_input_tokens,
+                prompt_hash=prompt_hash,
+                system_prompt_chars=system_prompt_chars,
+                ttft_ms=ttft_ms,
             )
         except Exception as exc:  # B5 — never let cost recording break a completion.
             log.engine.error(

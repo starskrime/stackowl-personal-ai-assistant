@@ -9,6 +9,7 @@ recalled memory blocks classify produced.
 from __future__ import annotations
 
 from stackowl.exceptions import OwlNotFoundError
+from stackowl.infra import prompt_metrics
 from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
 from stackowl.owls.base_prompt import build_base_prompt
@@ -308,15 +309,26 @@ async def run(state: PipelineState) -> PipelineState:
         p for p in (base, capabilities, banner, persona, owls_block, skills_block, state.memory_context) if p
     ]
     system_prompt = "\n\n".join(parts) or None
-    log.engine.debug(
+    # D01.6 — stamp this turn's prompt identity so the single cost-recording site
+    # (providers/base.py::_record_cost) can attach it without threading arguments
+    # through every provider signature. Never raises.
+    prompt_hash, prompt_chars = prompt_metrics.stamp(system_prompt)
+    # INFO, not DEBUG. These per-part sizes are the diagnostic D01.6 exists to
+    # obtain, and at debug level they vanished entirely: 0 of 17403 lines in the
+    # live log carried them, which is why prompt composition was unmeasurable.
+    log.engine.info(
         "[pipeline] assemble: exit",
         extra={"_fields": {
             "trace_id": state.trace_id,
+            "session_id": state.session_id,
             "base_len": len(base),
             "persona_len": len(persona),
             "banner_len": len(banner),
             "owls_len": len(owls_block),
-            "system_len": len(system_prompt or ""),
+            "skills_len": len(skills_block),
+            "memory_len": len(state.memory_context or ""),
+            "system_len": prompt_chars,
+            "prompt_hash": prompt_hash,
         }},
     )
     return state.evolve(system_prompt=system_prompt, model_window=model_window)

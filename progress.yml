@@ -587,6 +587,29 @@ items:
     changes:
       - date: 2026-07-25
         commit: pending
+        slice: "prompt identity carrier + single-site threading"
+        files:
+          - "src/stackowl/infra/prompt_metrics.py (new) — turn-scoped ContextVar carrying prompt_hash + system_prompt_chars"
+          - "src/stackowl/pipeline/steps/assemble.py — stamps prompt identity; exit log RAISED from debug to info"
+          - "src/stackowl/providers/base.py — _record_cost reads session_id off TraceContext and prompt identity off the carrier"
+        design_note: >
+          The design doc implied threading five values through provider signatures.
+          Implementation found a better seam: _record_cost is the SINGLE recording
+          site and already reads trace_id off TraceContext, which also carries
+          session_id. Prompt identity rides its own ContextVar in infra/ (providers
+          cannot import pipeline). Net result: no provider signature grew to carry
+          measurement, only the two values that genuinely originate provider-side
+          (cached_input_tokens, ttft_ms) became parameters.
+        also_fixed: >
+          assemble's exit log was debug() — the reason prompt composition was
+          unmeasurable (0 of 17403 live log lines carried it). Now info(), and it
+          additionally emits skills_len, memory_len, session_id and prompt_hash.
+        verified:
+          tests: "48 passed (cost tracker turn totals + cost recording smoke + all pipeline step tests)."
+          lint: "ruff clean on all 4 touched files; src/ total unchanged at 46 pre-existing (DEBT-1) — zero added."
+          types: "mypy clean on all touched files."
+      - date: 2026-07-25
+        commit: pending
         slice: "schema + CostRecord + CostTracker.record"
         files:
           - "src/stackowl/db/migrations/0091_turn_metrics.sql (new)"
@@ -598,10 +621,8 @@ items:
           lint: "ruff clean on cost_tracker.py."
           types: "mypy clean on cost_tracker.py."
         remaining:
-          - "openai_provider: capture usage.prompt_tokens_details.cached_tokens (Anthropic fallback: cache_read_input_tokens)."
-          - "assemble.py: compute + stamp prompt_hash and system_prompt_chars on PipelineState."
-          - "execute/provider: measure ttft_ms on the streaming path."
-          - "thread session_id + the four new values from the pipeline into CostTracker.record()."
+          - "openai_provider: capture usage.prompt_tokens_details.cached_tokens (Anthropic fallback: cache_read_input_tokens) and pass to _record_cost."
+          - "execute/provider: measure ttft_ms on the streaming path and pass to _record_cost."
           - "config: system.metrics {enabled, capture_ttft, prompt_hash}."
           - "/cost: per-conversation view + rows_reporting so I4 is readable."
           - "tests: one per invariant I1-I5."
@@ -674,13 +695,22 @@ items:
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.7.md"
     doc_last_verified: 2026-07-25
-    decisions: []
+    decisions:
+      - date: 2026-07-25
+        stage: architect
+        by: Bakir
+        question: "session.at_hour — midnight (his Q16 answer) or 4 AM (Hermes default)?"
+        answer: "4 AM. SIGNED OFF."
+        rationale: >
+          Hermes' reasoning accepted: a session running at 1 AM is mid-thought and midnight
+          guillotines it; at 4 AM nobody is talking. Ships configurable (reset_mode + at_hour)
+          so midnight remains reachable, with 4 as the default. Supersedes the Q16 answer.
+        blocks_cleared: ["D01.7 implement"]
     changes: []
     notes: >
-      Bakir chose midnight in Q16; Hermes defaults to 4 AM because a 1am session is mid-thought
-      and midnight guillotines it. RESOLUTION: ship it configurable (mode + at_hour, exactly as
-      Hermes does) with at_hour default 4. Both preferences are then reachable and neither is
-      hardcoded. Flag this in the design doc for explicit sign-off.
+      at_hour RESOLVED 2026-07-25: 4 AM, signed off by Bakir, superseding his Q16 midnight
+      answer. Configurable so midnight stays reachable. No open questions remain on this item —
+      it is ready to implement once D01.6 lands its baseline.
 
   - id: D02.1
     title: "One agent class, all surfaces"
