@@ -244,7 +244,7 @@ current:
   item: D01.7
   stage: brainstorm
   stage_status: in_progress
-  brainstorm_round: "2 of 7 done (Q1-Q8). Q9-Q25 outstanding."
+  brainstorm_round: "3 of 7 done (Q1-Q12). Q13-Q25 outstanding."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
     Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
@@ -899,6 +899,19 @@ items:
           - "DEDUP: /new and the daily rollover become the SAME code path — archive, summarise, mint a new incarnation. One mechanism, two triggers. Four triggers in total once idle and context-full are counted."
           - "Q6 confirms resume_pending is load-bearing for StackOwl in a way it is not for Hermes: their gateway restarts rarely, ours exec-replaces on every code change. The synthesised-continue path is not a nicety here."
           - "Q5 means the session key needs chat_type + thread_id + participant_id, exactly as Hermes' build_session_key does. The design doc's key format already anticipated this."
+      - date: 2026-07-25
+        stage: brainstorm
+        round: "3 of 7 (Q9-Q12)"
+        by: Bakir
+        answers:
+          non_human_lanes: "EVERY runner gets a lane — cron jobs, delegated subagents, objectives. One rule, no special cases."
+          idle_window: "24h, keeping Hermes' number. With a 4 AM rollover the idle path rarely fires anyway; it only catches a conversation abandoned mid-day."
+          retention: "Keep the TRANSCRIPT, prune the session RECORD. Hermes' exact split — entries are pruned, transcripts are not."
+          never_expire: "ALL FOUR conditions: running background process, in-flight durable task, active objective, AND a pending clarify question."
+        implications:
+          - "Q12 EXTENDS Hermes rather than adopting it. Their rule protects background processes only; ours protects four conditions because StackOwl has autonomy machinery Hermes lacks (durable tasks, objectives, the clarify gateway). Worth stating in the design doc as a deliberate divergence — a future reader will otherwise assume the extra three were scope creep."
+          - "Q9 means the D01.1 frozen prompt benefits BACKGROUND work too, not just chat. The baseline already hinted at this: goal-owl_lifecycle sessions were the ONLY ones showing 1 distinct prompt across many calls."
+          - "Q12's fourth condition (pending clarify) is subtle: if a lane rolls while the owl is waiting for an answer, the parked turn has nowhere to land. That is a live bug class in the current clarify_pump, not a hypothetical."
       - date: 2026-07-25
         stage: architect
         by: Bakir
