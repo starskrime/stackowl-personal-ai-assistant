@@ -334,6 +334,16 @@ known_debt:
     evidence: "`uv run ruff check src/` -> Found 46 errors. `ruff check src/stackowl/providers/cost_tracker.py` -> All checks passed."
     decision: "NOT fixed during D01.6 — unrelated files, and fixing them mid-item violates minimal-diffs. Scheduled as its own cleanup pass."
     status: open
+  - id: DEBT-5
+    found: 2026-07-25
+    what: "progress.yml was pushed to main in an INVALID-YAML state for one commit (01c53d78)."
+    evidence: "A scripted edit replaced a `remaining:` key with `remaining: []` while its list items were still present, orphaning them. yaml.safe_load raised ParserError at line 728. Repaired in the next commit."
+    root_cause: "The validation step ran AFTER the write and its failure did not block the commit — the script printed a traceback but `git commit` in the same shell line ran regardless."
+    decision: >
+      FIXED PROCESS: progress.yml must be validated BEFORE the commit, and the commit must not
+      run when validation fails. Use `uv run python -c \"import yaml; yaml.safe_load(open('progress.yml'))\" && git commit ...`
+      so a parse failure short-circuits the chain.
+    status: closed
   - id: DEBT-3
     found: 2026-07-25
     what: "tests/commands/test_config_meta.py::test_config_declares_all_subcommands fails on main, unrelated to any current item."
@@ -737,12 +747,16 @@ items:
           tests: "tests/providers/test_cost_tracker_turn_totals.py + tests/smoke/test_e8_s0cost_cost_recording_functional.py -> 5 passed."
           lint: "ruff clean on cost_tracker.py."
           types: "mypy clean on cost_tracker.py."
-        remaining: []
-          - "config: system.metrics {enabled, capture_ttft, prompt_hash}."
-          - "/cost: per-conversation view + rows_reporting so I4 is readable."
-          - "tests: one per invariant I1-I5."
-          - "capture D01.6-baseline.md (the deliverable that unblocks D01.1)."
-    notes: null
+        remaining_at_the_time:
+          - "config: system.metrics {enabled, capture_ttft, prompt_hash}. — LATER DROPPED, see slice 5 scope_change."
+          - "/cost: per-conversation view + rows_reporting so I4 is readable. — DONE in slice 4."
+          - "tests: one per invariant I1-I5. — DONE in slice 3 (20 tests)."
+          - "capture D01.6-baseline.md (the deliverable that unblocks D01.1). — OUTSTANDING, needs Bakir to drive live turns."
+    remaining_overall:
+      - "capture D01.6-baseline.md — requires a platform restart and ~5 real turns through Telegram. This is the deliverable that unblocks D01.1."
+    notes: >
+      Code complete 2026-07-25. All four Q20 measures have a source and a reader.
+      Only the live baseline capture remains, and it needs Bakir at the keyboard.
 
   - id: D01.7
     title: "Session lifecycle — session_key / session_id split"
