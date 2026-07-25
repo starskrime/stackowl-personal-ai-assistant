@@ -1,0 +1,3453 @@
+# ============================================================================
+# progress.yml — StackOwl re-architecture against the Hermes Agent reference
+# ============================================================================
+# THIS FILE IS THE SOURCE OF TRUTH FOR *STATE*.
+# docs/hermes-mapping/HERMES_STACKOWL_MAP.md is the source of truth for *CONTENT*.
+# Never duplicate map prose into this file — reference it by `map_ref`.
+#
+# EVERY agent working this program MUST:
+#   1. Read `workflow` and `rules` below before touching anything.
+#   2. Work the item named in `current`. Do not jump ahead.
+#   3. Advance one stage at a time. Update this file after EVERY stage.
+#   4. Never mark a stage `done` without the evidence named in the stage gate.
+#   5. Append to `decisions` and `changes` — never rewrite history.
+# ============================================================================
+
+schema_version: 1
+updated: 2026-07-25
+updated_by: "claude-opus-5 (session 0682205b)"
+
+program:
+  name: "StackOwl ← Hermes"
+  goal: >
+    Rebuild StackOwl toward the architecture of Hermes Agent — the teacher platform —
+    while keeping the 16 areas where StackOwl is already ahead. Outcome: a personal
+    assistant that is cheap per turn, narrow at the core, broad at the edges, and
+    learns from every conversation without being asked.
+  owner: Bakir
+  started: 2026-07-25
+  vision:
+    # Bakir, 2026-07-25, answering "what hurts today?" — all four pains, plus:
+    stated: >
+      Full J.A.R.V.I.S. for everyone. Today StackOwl is expensive, slow, and
+      inconsistent; beyond that it lacks a good memory system, good tool usage,
+      and a real autonomous agentic solution. Owls can be created and scheduled,
+      but he wants much more: knowledge, the ability to learn the customer and
+      know him well, and genuine autonomy.
+    pillars:
+      - "Cheap and fast enough to talk to all day"
+      - "Memory that actually knows the user, not just stores facts"
+      - "Tool usage that reliably accomplishes things"
+      - "Autonomy beyond scheduled jobs — give it a goal and forget it"
+      - "Learns continuously from every conversation"
+
+teacher:
+  name: hermes-agent
+  origin: NousResearch/hermes-agent
+  commit: 689b51bef
+  local_path: do_not_push_to_git_research_only/hermes-agent
+  handling: reference_only
+  constraints:
+    - "NEVER push this directory to git."
+    - "NEVER copy source verbatim — port the design, write our own code."
+    - "License is MIT; attribute ported designs in commit messages."
+  laws:
+    law_1:
+      name: "Per-conversation prompt caching is sacred"
+      statement: >
+        A long conversation reuses a cached prefix every turn. Nothing may mutate past
+        context, swap toolsets, or rebuild the system prompt mid-conversation. The only
+        sanctioned exception is context compression.
+    law_2:
+      name: "The core is a narrow waist; capability lives at the edges"
+      statement: >
+        Every model tool ships on every API call, so a new core tool is the most expensive
+        possible addition. Grow the product aggressively — at the edges, never at the waist.
+  footprint_ladder:
+    # Take the HIGHEST rung that correctly solves the problem.
+    1: "Extend existing code"
+    2: "CLI command + skill"
+    3: "Service-gated tool (check_fn)"
+    4: "Plugin"
+    5: "MCP server in the catalog"
+    6: "New core tool — last resort"
+
+map_document: docs/hermes-mapping/HERMES_STACKOWL_MAP.md
+artifacts:
+  map: "https://claude.ai/code/artifact/b2d8c038-9200-4d25-93a9-dca286ed575a"
+  stackowl_components: "https://claude.ai/code/artifact/7c501b7c-a949-49e6-9783-d7f221257755"
+  hermes_components: "https://claude.ai/code/artifact/c44a1318-f316-468e-b980-23d23b2d824e"
+
+# ---------------------------------------------------------------------------
+# WORKFLOW — six stages, per item, in order. No stage may be skipped.
+# ---------------------------------------------------------------------------
+workflow:
+  doc_standard: docs/hermes-mapping/DOC_STANDARD.md
+  doc_location: "docs/hermes-mapping/designs/<ID>.md"
+  doc_rule: >
+    EVERY item ships a document. Hermes' docs/session-lifecycle.md is why we adopted their
+    session model in an afternoon instead of reverse-engineering it for a week. Our template
+    takes their structure and ADDS the four sections they have no need for — Invariants,
+    Observability, Failure modes, Verification — because those are the parts of StackOwl
+    worth keeping. See doc_standard for the template and rules.
+  stages: [brainstorm, architect, implement, cleanup, test, validate, document]
+
+  stage_status_values:
+    - not_started
+    - in_progress
+    - blocked
+    - done
+    - no_change_needed   # legitimate terminal state for `keep` / `verify` tracks
+
+  stage_definitions:
+    brainstorm:
+      skill: "superpowers:brainstorming"
+      purpose: >
+        Understand what Hermes designed for this component and WHY, understand what
+        StackOwl does today and why, then explore the option space with Bakir.
+      gate: "Bakir has answered the item's `Ask` questions. Decision recorded in `decisions`."
+      output: "One or more entries appended to `decisions`."
+
+    architect:
+      skill: "bmad-agent-architect (Winston) or superpowers:writing-plans"
+      purpose: >
+        Turn the decision into a design: seams, interfaces, migration path, flag strategy,
+        and an explicit statement of which Footprint Ladder rung this lands on.
+      gate: >
+        A written design exists at docs/hermes-mapping/designs/<ID>.md, names the ladder
+        rung, names every file it will touch, and states how Law 1 and Law 2 are preserved.
+      output: "design_doc path recorded in the item."
+
+    implement:
+      skill: "superpowers:test-driven-development + superpowers:subagent-driven-development"
+      purpose: "Build it. Tests first. Minimal root-cause diffs. Enterprise, OOP, interface-driven."
+      gate: "Feature complete and ships ON by default (not dormant behind a flag)."
+      output: "Commits appended to `changes`."
+
+    cleanup:
+      skill: "tonyStyle + simplify"
+      purpose: >
+        Remove what this item made obsolete. Resolve the item's `dedup_target` if it has one.
+        No dead code, no silent catches, 4-point logging present on every new execute().
+      gate: "Nothing duplicated, nothing orphaned, ruff + mypy strict green."
+      output: "Cleanup commits appended to `changes`."
+
+    test:
+      skill: "superpowers:test-driven-development"
+      purpose: >
+        Unit + gateway-driven integration tests built from BUSINESS requirements, mocking
+        ONLY the AI provider. Targeted paths with timeouts — never a full pytest run.
+      gate: "All new tests green; no pre-existing failure left unexplained or unfixed."
+      output: "Test paths recorded in `changes`."
+
+    document:
+      skill: "none — follow docs/hermes-mapping/DOC_STANDARD.md"
+      purpose: >
+        Close the document opened during `architect`: bring every section to final, re-verify
+        every source path / config key / default against the tree, stamp `Last verified` with
+        today's date and the commit sha, and write the paragraph explaining where we diverged
+        from Hermes and why.
+      gate: >
+        Document exists at docs/hermes-mapping/designs/<ID>.md, has all mandatory sections,
+        its Verification section is copy-pasteable and passes, and every Invariant maps to a
+        real test. Status line reads `live`.
+      output: "doc path + last_verified recorded on the item."
+
+    validate:
+      skill: "superpowers:verification-before-completion"
+      purpose: >
+        Prove it works in the real platform, not just in tests. Restart gateway + core,
+        drive a real turn, read the JSONL logs, confirm the behaviour changed.
+      gate: >
+        Evidence pasted into `notes` — log lines, measured numbers, or a transcript.
+        For D01 items this MUST include a measured cache-hit / token-cost delta.
+      output: "Item status flips to done; `updated` bumped."
+
+# ---------------------------------------------------------------------------
+# RULES — non-negotiable, derived from Bakir's standing preferences.
+# ---------------------------------------------------------------------------
+rules:
+  process:
+    - "One item at a time. Finish all six stages before starting the next item."
+    - "GRILL RULE (Bakir, 2026-07-25): ask 25 questions per item during brainstorm, and 25 more for each architecture design. Batch 4 per round. Purpose is to extract his full vision and knowledge, not to confirm ours."
+    - "Never skip a stage. `no_change_needed` is an allowed outcome; silence is not."
+    - "Update this file after EVERY stage transition, not at the end of the item."
+    - "Append to decisions/changes. Never delete or rewrite an existing entry."
+    - "If an item turns out bigger than one iteration, split it into <ID>a / <ID>b here."
+    - "EVERY item ships a document per docs/hermes-mapping/DOC_STANDARD.md. No item reaches done without one."
+    - "The document is opened in `architect`, kept current through `implement`, and closed in `document`. It is never written after the fact."
+  engineering:
+    - "Check existing code before writing new — wire/extend, never recreate."
+    - "Fix the architecture, not the example that surfaced it."
+    - "Minimal diffs. Change only the lines needed."
+    - "Never disable or stub an existing feature without explicit consent."
+    - "No hidden errors — recover loudly or propagate. Every catch logs."
+    - "4-point logging (entry/decision/step/exit) on every new execute()."
+    - "Schema changes are migrations only. Idempotent."
+    - "All state under ~/.stackowl/ via StackowlHome. Never the project dir."
+    - "No vendor names in src/. No hardcoded English keyword lists. Cross-platform."
+    - "Finished features ship ON by default, not dormant."
+  verification:
+    - "Restart gateway + core after every fix and verify via JSONL logs, not PID."
+    - "Never claim done without running the command and reading the output."
+    - "Never silently fix a failing integration test — stop and report."
+    - "Test runs are targeted paths with timeouts. Never a full pytest run (it hangs)."
+  git:
+    - "Commit at sub-story granularity when green and reviewed. Bisectable."
+    - "Merge to main and push when an item is fully green."
+    - "Never push do_not_push_to_git_research_only/."
+
+# ---------------------------------------------------------------------------
+# DEPLOYMENT FACTS — discovered 2026-07-25, constrains several items
+# ---------------------------------------------------------------------------
+deployment:
+  active_provider:
+    name: NeraAiRaw
+    protocol: openai
+    base_url: "http://llm-gateway.dev.nera.gov:4000/v1"
+    model: neraai-v1-raw
+    note: "The ONLY enabled provider. qwen36 / ollama-standard / ollama-powerful are all enabled:false."
+  implications:
+    - "Anthropic-style cache_control breakpoints DO NOT apply — this is an OpenAI-protocol endpoint."
+    - "OpenAI-protocol caching is AUTOMATIC on a byte-identical prefix (typically >=1024 tokens). Law 1 therefore matters MORE, not less: stability alone earns the discount, and instability forfeits it silently with no marker to blame."
+    - "D01.2 (cache breakpoints) is provider-dependent and should be re-scoped after D01.1 — it may become a no-op for this deployment."
+  session_model:
+    finding: "StackOwl has no session lifetime concept. /reset deletes history; nothing starts a new session. Sessions are effectively permanent per chat."
+    implication: "Hermes' 'rebuild next session' escape hatch has no equivalent here. A session boundary may need to be invented as part of D01.1."
+
+# ---------------------------------------------------------------------------
+# CURRENT POSITION
+# ---------------------------------------------------------------------------
+current:
+  wave: 1
+  item: D01.6
+  stage: implement
+  stage_status: in_progress
+  previous: "D01.1 brainstorm done (25 questions answered, Approach A approved) + architect done (design doc written)."
+  order_change:
+    date: 2026-07-25
+    decision: "Bakir (Q15): build D01.6 measurement BEFORE D01.1 implementation."
+    reason: >
+      Prompt composition is unmeasurable today — assemble logs per-part sizes at
+      debug() and the live log level is INFO, so 0 of 17403 log lines carry them.
+      Without a baseline we cannot prove the fix worked. D01.6 moves to order 1.
+    effect: "D01.1 brainstorm+architect proceed now; D01.1 implement is BLOCKED on D01.6 validate."
+  blocked_by: null
+  note: >
+    Walk order is by `wave` then `order`. D01 first because the two CONFLICT items
+    gate the value of most of the 42 MISSING items — fixing anything else first means
+    paying full input price on every turn while we build it.
+
+# ---------------------------------------------------------------------------
+# WALK ORDER — waves, in sequence
+# ---------------------------------------------------------------------------
+waves:
+  1:
+    domains: [D01]
+    theme: "Prompt economics — the two conflicts, plus the session lifecycle they need"
+    items: 7
+    sequence: [D01.6, D01.7, D01.1, D01.2, D01.4, D01.5, D01.3]
+    sequence_reason: >
+      D01.6 first — nothing is measurable today, so we would be guessing. D01.7 next because
+      "build the prompt once per session" is meaningless until a session can start and end.
+      D01.1 then delivers the frozen prompt. D01.3 moves LAST in this wave despite being a
+      CONFLICT: its resolution is toolsets + progressive disclosure, which are wave 2, so it
+      is really a wave-2 consequence rather than a wave-1 fix.
+  2: {domains: [D05], theme: "Tool architecture — toolsets, gating, disclosure", items: 8}
+  3: {domains: [D02], theme: "Core agent shape", items: 6}
+  4: {domains: [D08, D09], theme: "Memory and the learning loop", items: 12}
+  5: {domains: [D03], theme: "Context management", items: 5}
+  6: {domains: [D12], theme: "Channels — the biggest dedup win", items: 8}
+  7: {domains: [D07, D15], theme: "Delegation and autonomy", items: 13}
+  8: {domains: [D10, D11], theme: "Skills and recall", items: 12}
+  9: {domains: [D16, D17, D18], theme: "Extensibility, security, operations", items: 21}
+  10: {domains: [D04, D06, D13, D14], theme: "Breadth, once the core is settled", items: 19}
+
+# ---------------------------------------------------------------------------
+# DEDUP TARGETS — resolve before building. Each maps to items via `dedup_target`.
+# ---------------------------------------------------------------------------
+dedup_targets:
+  X1:
+    name: "Two work queues"
+    detail: "objectives/ vs a Hermes-style Kanban board. Pick one kernel."
+    items: [D07.6, D15.4]
+    status: unresolved
+  X2:
+    name: "Two tool-selection mechanisms"
+    detail: "Per-turn context_budget budgeter vs toolsets + progressive disclosure. Budgeter should go."
+    items: [D01.3, D05.2, D05.4]
+    status: unresolved
+  X3:
+    name: "Two learning paths"
+    detail: "Scheduled learning/ miners vs per-turn background review fork. Compose or replace?"
+    items: [D09.1, D09.7]
+    status: unresolved
+  X4:
+    name: "Two memory models"
+    detail: "Extraction pipeline vs curated two-file layer. Layer, do not fork."
+    items: [D08.1]
+    status: unresolved
+  X5:
+    name: "Two loop-guard systems"
+    detail: "TurnProgressSupervisor vs Hermes tool_guardrails. Confirm not the same thing twice."
+    items: [D05.7]
+    status: unresolved
+  X6:
+    name: "Four near-duplicate channel adapters"
+    detail: "~24 parity modules across telegram/slack/discord/whatsapp. Collapse to one relay + descriptors."
+    items: [D12.3]
+    status: unresolved
+  X7:
+    name: "Two skill-injection paths"
+    detail: "System prompt (assemble) vs slash-command user message."
+    items: [D10.5]
+    status: unresolved
+  X8:
+    name: "Two verification systems"
+    detail: "acceptance_authority (blocking) vs Hermes verification_evidence (passive). Ours is a superset — do not add theirs."
+    items: [D02.5]
+    status: unresolved
+  X9:
+    name: "Two provider-error paths"
+    detail: "circuit_breaker + escalation_signal vs Hermes error_classifier. Compose: classifier feeds our ladder."
+    items: [D02.6, D04.6]
+    status: unresolved
+  X10:
+    name: "Two config channels"
+    detail: "YAML and STACKOWL_* env both blessed. Pick the split."
+    items: [D18.1]
+    status: unresolved
+
+# ---------------------------------------------------------------------------
+# SUMMARY — recompute on every update
+# ---------------------------------------------------------------------------
+summary:
+  total_items: 111   # 110 mapped + D01.7 discovered during D01.1 brainstorm
+  domains: 18
+  by_verdict:
+    CONFLICT: 2
+    MISSING: 43   # +D01.7, discovered during D01.1 brainstorm
+    PARTIAL: 28
+    DIVERGENT: 6
+    PARITY: 16
+    AHEAD: 16
+  by_track:
+    adopt: 43        # MISSING — build it (+D01.7)
+    close_gap: 28    # PARTIAL — extend what exists
+    decide: 8        # CONFLICT + DIVERGENT — choose one design
+    verify: 16       # PARITY — confirm the claim, likely no-op
+    keep: 16         # AHEAD — confirm it survives the rewrite, do not replace
+  by_priority:
+    P0: 8
+    P1: 15
+    P2: 56
+    P3: 32
+  by_status:
+    not_started: 111
+    in_progress: 0
+    done: 0
+    blocked: 0
+  stages_completed: 4   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_total: 777   # 111 items x 7 stages
+
+# ---------------------------------------------------------------------------
+# ITEMS
+# ---------------------------------------------------------------------------
+items:
+  - id: D01.1
+    title: "System-prompt stability"
+    domain: D01
+    verdict: CONFLICT
+    track: decide
+    priority: P0
+    wave: 1
+    order: 3
+    started: 2026-07-25
+    implement_blocked_by: [D01.6, D01.7]
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d011"
+    gap: "Zero prefix reuse. Every turn pays full input price on a prompt that is mostly identical."
+    depends_on: [D01.6]
+    blocks: [D01.2, D01.4, D03.2, D09.1, D10.5, D10.6]
+    dedup_target: null
+    stages:
+      brainstorm: done
+      architect:  done
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: "docs/hermes-mapping/designs/D01.1.md"
+    doc_last_verified: 2026-07-25
+    decisions:
+      - date: 2026-07-25
+        stage: brainstorm
+        round: "25-question grill (Q1-Q25)"
+        by: Bakir
+        answers:
+          session_boundary: "Conversations roll over DAILY, at the first message after midnight in the user's local timezone."
+          after_silence: "Fresh start that still remembers me — continuity comes from memory, not from carrying the old transcript."
+          old_transcript: "Archived + searchable, AND a summary written into memory at rollover."
+          cross_channel: "Telegram / CLI / TUI stay separate threads, but each can see what happened on the others."
+          job_output: "Scheduled jobs and briefs get their own conversation, with a one-line note visible in the main thread."
+          subagents: "Children get a fresh focused prompt — no parent prefix reuse."
+          memory_shape: "A stable profile of the user, always loaded, PLUS a memory tool the model can call for depth. (Reconciles Q5 with Q12.)"
+          memory_legibility: "Plain file the user can open and edit — Hermes MEMORY.md / USER.md model."
+          memory_latency: "Newly learned facts land in the NEXT conversation, not the current one."
+          memory_consent: "Notify, do not ask. Saved automatically, user informed, undo available."
+          skills: "Names + descriptions always loaded; full body fetched on demand via tool call."
+          persona: "Frozen for the life of a conversation. Nightly evolution + daily rollover means deferred costs ~nothing."
+          owls_block: "Keep it, but resolve once per conversation instead of per turn."
+          negotiable: "Per-message skill scoring may be dropped. Per-message memory search is replaced by profile + tool, not deleted."
+          measure_first: "YES — build D01.6 instrumentation BEFORE D01.1 implementation."
+          success_metric: "ALL FOUR: cached-input %, time-to-first-token, cost per 10-turn conversation, and a byte-identical-prompt invariant."
+          migration: "Cut over immediately and restart the platform. No dual path, no flag."
+          hard_invariants:
+            - "The owl still sounds like itself (persona fidelity)."
+            - "No tool the owl owns may become invisible."
+            - "Scheduled jobs and proactive delivery keep working."
+          recall_risk: "ACCEPTED. Memory is weak today, so a regression is tolerable; the profile + tool is expected to be a net gain. No recall-regression gate required."
+          other_installs: "Friends run StackOwl on their own machines. Ship config default ON; they get it on update."
+        approach_approved:
+          id: A
+          name: "Session Prompt Object"
+          approved_by: Bakir
+          approved_on: 2026-07-25
+          summary: >
+            Build a SessionPrompt ONCE when a conversation starts, persist it keyed by
+            session_key + owl_name, and reuse it verbatim every turn. All six parts resolve at
+            build time: persona+DNA, owls block, capability banner, skill CATALOGUE (names +
+            descriptions only), user profile from an editable file, and model_window. Depth
+            moves to tool calls the model makes when it needs them — `memory` for recall and
+            `skill_view` for a skill body, both of which ALREADY EXIST. assemble.py shrinks
+            from an orchestrator to a cache lookup.
+          rejected:
+            B: "Stable prefix + live suffix — keeps per-turn retrieval latency and leaves two assembly paths alive permanently."
+            C: "Freeze on first turn, no daily boundary — a permanent conversation never reaches a 'next conversation', so the deferred-learning answers in Q7 and Q14 never arrive."
+          wins: "Byte-identical prompt (automatic prefix caching on NeraAiRaw), plus the window probe, embedding scoring and DB reads all leave the critical path of every reply. Cost AND latency together."
+          sequence: "D01.6 (measure) -> D01.7 (session lifecycle) -> D01.1 (frozen prompt)"
+        implications:
+          - "D08.1 (two-file curated memory) is pre-answered toward the curated layer — dedup target X4 resolved in principle."
+          - "Daily rollover creates the natural home for D09.1 background review and D09.3 curator — three items converge on one seam."
+          - "D01.2 is likely a no-op for this deployment: NeraAiRaw is OpenAI-protocol, where prefix caching is automatic."
+          - "Q23 (friends on other machines) raises the priority of D18.3 profiles above what the map assumed."
+          - "NEW PREREQUISITE FOUND: StackOwl has no session lifecycle at all. Tracked as D01.7."
+    changes: []
+    notes: null
+
+  - id: D01.2
+    title: "Prompt-cache breakpoints"
+    domain: D01
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 1
+    order: 4
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d012"
+    gap: "Even after D01.1, no markers means no cache."
+    depends_on: [D01.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D01.3
+    title: "Per-turn tool-schema selection"
+    domain: D01
+    verdict: CONFLICT
+    track: decide
+    priority: P0
+    wave: 1
+    order: 7
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d013"
+    gap: "A varying tools array invalidates the cached prefix on every turn, independently of D01.1."
+    depends_on: [D05.2, D05.4]
+    blocks: []
+    dedup_target: X2
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D01.4
+    title: "Deferred invalidation as a UX pattern"
+    domain: D01
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 1
+    order: 5
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d014"
+    gap: "No vocabulary for 'this would cost you money right now'."
+    depends_on: [D01.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D01.5
+    title: "Message-role alternation invariant"
+    domain: D01
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 1
+    order: 6
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d015"
+    gap: "Latent provider-compat bug class, and a blocker for anything that injects mid-loop."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D01.6
+    title: "Cost measurement per conversation"
+    domain: D01
+    verdict: PARTIAL
+    track: close_gap
+    priority: P0
+    wave: 1
+    order: 1
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d016"
+    gap: "Cannot measure whether D01.1–D01.3 actually worked."
+    depends_on: []
+    blocks: [D01.1]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  done
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: "docs/hermes-mapping/designs/D01.6.md"
+    doc_last_verified: 2026-07-25
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D01.7
+    title: "Session lifecycle — session_key / session_id split"
+    domain: D01
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 1
+    order: 2
+    discovered: "2026-07-25 during D01.1 brainstorm — NOT in the original 110-item map."
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d017"
+    gap: >
+      StackOwl has exactly one session identifier and it never changes, so a session can
+      never start or end. "Build the prompt once per session" is meaningless without this.
+      Prerequisite for D01.1, and the natural home for D09.1 / D09.3 / D03.3.
+    depends_on: [D01.6]
+    blocks: [D01.1, D01.4, D03.3, D09.1, D09.3]
+    dedup_target: null
+    hermes_reference:
+      doc: "do_not_push_to_git_research_only/hermes-agent/docs/session-lifecycle.md (637 lines)"
+      source: "gateway/session.py (~1444 lines), gateway/run.py, gateway/config.py"
+      model:
+        session_key: "The conversation LANE. Deterministic, never changes. Format: agent:main:{platform}:{chat_type}[:{chat_id}][:{thread_id}][:{participant_id}]"
+        session_id: "This INCARNATION of the lane. Format YYYYMMDD_HHMMSS_<8hex>. A reset keeps the key and mints a new id."
+      reset_policy:
+        modes: [none, idle, daily, both]
+        default_mode: both
+        at_hour: 4
+        idle_minutes: 1440
+        notify: true
+        per_platform_override: true
+        exclusion: "A session with an active background process is NEVER expired or reset."
+      state_flags:
+        suspended: "Hard wipe. Set by /stop or 3+ consecutive restart failures. Forces a new id."
+        resume_pending: "Soft recovery. PRESERVES the id so the transcript continues. Cleared after the next successful turn."
+        was_auto_reset: "Consumed once to inject a visible 'session expired' notice, with auto_reset_reason = idle|daily."
+        is_fresh_reset: "Explicit /new or /reset. Kept distinct from was_auto_reset so the user never sees a misleading 'expired' message."
+        expiry_finalized: "Set by the background watcher after hooks ran and the cached agent was evicted."
+      priority_order: ["suspended -> force reset", "resume_pending -> preserve id", "policy expiry -> auto reset", "otherwise -> return existing, bump updated_at"]
+      isolation:
+        group_sessions_per_user: "true — group/channel sessions isolated per user"
+        thread_sessions_per_user: "false — threads SHARED by default"
+        multi_user: "Shared sessions prefix the sender name onto each USER MESSAGE, never into the system prompt. Explicitly done to preserve prompt caching."
+      caching_mechanism: >
+        The gateway holds an LRU cache of live AIAgent objects keyed by session_key (max 128,
+        1h idle TTL). The doc states its purpose verbatim: "to preserve prompt caching across
+        turns." Freezing the prompt and caching the agent are the SAME feature — this is the
+        mechanism that makes Law 1 real rather than aspirational.
+      crash_recovery: >
+        A .clean_shutdown marker is written on graceful exit. If missing at boot, sessions
+        touched within 120s are marked resume_pending and the gateway SYNTHESISES message
+        events to auto-continue them. Three consecutive restarts on one session -> suspended.
+      background_watcher: "Runs every 300s: finalize expired sessions, evict idle cached agents (1h TTL), prune stale entries."
+    does_not_transfer:
+      - "StackOwl's core exec-replaces itself on every code change. An in-memory prompt cache would be discarded constantly during development — the SessionPrompt must be PERSISTED, not just cached in memory. Their resume_pending + .clean_shutdown machinery is the analogue, and StackOwl already has drain + durable recovery to build on."
+      - "Hermes has one agent; StackOwl has owls. Our cache key must be session_key + owl_name — switching owls mid-lane means a different persona and therefore a different prompt."
+      - "Their SessionContext block goes INTO the system prompt (platform, connected channels, delivery targets) with optional PII redaction. Stable per session for them; for us it must be checked against the D01.1 decision that job output lands in its own conversation with a note in main."
+    stages:
+      brainstorm: not_started
+      architect:  done
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: "docs/hermes-mapping/designs/D01.7.md"
+    doc_last_verified: 2026-07-25
+    decisions: []
+    changes: []
+    notes: >
+      Bakir chose midnight in Q16; Hermes defaults to 4 AM because a 1am session is mid-thought
+      and midnight guillotines it. RESOLUTION: ship it configurable (mode + at_hour, exactly as
+      Hermes does) with at_hour default 4. Both preferences are then reachable and neither is
+      hardcoded. Flag this in the design doc for explicit sign-off.
+
+  - id: D02.1
+    title: "One agent class, all surfaces"
+    domain: D02
+    verdict: DIVERGENT
+    track: decide
+    priority: P1
+    wave: 3
+    order: 16
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d021"
+    gap: "Not a gap — a genuine fork in the road. StackOwl's pipeline is more inspectable; Hermes'"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D02.2
+    title: "Iteration budget"
+    domain: D02
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 3
+    order: 17
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d022"
+    gap: "No bound on a runaway loop other than the tool-call breaker."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D02.3
+    title: "Interrupt / steer / redirect"
+    domain: D02
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 3
+    order: 18
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d023"
+    gap: "Mid-turn course-correction is coarse."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D02.4
+    title: "Turn finalization seam"
+    domain: D02
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 3
+    order: 19
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d024"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D02.5
+    title: "Acceptance authority / measured success"
+    domain: D02
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 3
+    order: 20
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d025"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: X8
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D02.6
+    title: "Recovery ladder"
+    domain: D02
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 3
+    order: 21
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d026"
+    gap: "Hermes is ahead on provider-error taxonomy; StackOwl is ahead on task recovery."
+    depends_on: []
+    blocks: []
+    dedup_target: X9
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D03.1
+    title: "Pluggable context engine"
+    domain: D03
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 5
+    order: 34
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d031"
+    gap: "Long conversations have no strategy other than truncation."
+    depends_on: [D03.2]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D03.2
+    title: "Conversation compression"
+    domain: D03
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 5
+    order: 35
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d032"
+    gap: "The single largest functional hole for long-running sessions."
+    depends_on: [D01.1]
+    blocks: [D03.1, D03.3]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D03.3
+    title: "Session splitting on compression"
+    domain: D03
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 5
+    order: 36
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d033"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D03.2]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D03.4
+    title: "Tool-result overflow defense"
+    domain: D03
+    verdict: PARTIAL
+    track: close_gap
+    priority: P1
+    wave: 5
+    order: 37
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d034"
+    gap: "Level 2 and 3 missing. Truncation currently destroys information."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D03.5
+    title: "Context-window discovery"
+    domain: D03
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 5
+    order: 38
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d035"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D04.1
+    title: "Providers as plugins"
+    domain: D04
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 93
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d041"
+    gap: "Provider breadth is a core-edit operation. This is Law 2 applied to inference backends."
+    depends_on: [D16.3]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D04.2
+    title: "Transport adapters"
+    domain: D04
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 10
+    order: 94
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d042"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D04.3
+    title: "Credential pool & rotation"
+    domain: D04
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 95
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d043"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D04.4
+    title: "Auxiliary-model router"
+    domain: D04
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 10
+    order: 96
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d044"
+    gap: "No single seam for 'cheap model work', so cost/latency of side tasks is unmanaged."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D04.5
+    title: "Tier escalation"
+    domain: D04
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 10
+    order: 97
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d045"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D04.6
+    title: "Rate limiting & circuit breaking"
+    domain: D04
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 10
+    order: 98
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d046"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: X9
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.1
+    title: "Registry & auto-discovery"
+    domain: D05
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 2
+    order: 8
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d051"
+    gap: "Small: no dynamic_schema_overrides, no AST prefilter."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.2
+    title: "Toolsets"
+    domain: D05
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 2
+    order: 9
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d052"
+    gap: "This is the mechanism that makes Law 2 enforceable. Without it there is no 'core' to keep narrow."
+    depends_on: []
+    blocks: [D01.3, D05.3, D05.4]
+    dedup_target: X2
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.3
+    title: "Service gating (check_fn)"
+    domain: D05
+    verdict: PARTIAL
+    track: close_gap
+    priority: P0
+    wave: 2
+    order: 10
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d053"
+    gap: "Unconfigured capability still costs tokens on every call and invites hallucinated use."
+    depends_on: [D05.2]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.4
+    title: "Progressive tool disclosure"
+    domain: D05
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 2
+    order: 11
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d054"
+    gap: "This is the *cache-safe* answer to the problem the budgeter solves expensively."
+    depends_on: [D05.2]
+    blocks: [D01.3]
+    dedup_target: X2
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.5
+    title: "Programmatic tool calling (PTC)"
+    domain: D05
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 2
+    order: 12
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d055"
+    gap: "Likely narrower (a privileged escape hatch rather than a general RPC surface)."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.6
+    title: "Cross-tool references in schemas"
+    domain: D05
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 2
+    order: 13
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d056"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.7
+    title: "Tool-loop guardrails"
+    domain: D05
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 2
+    order: 14
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d057"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: X5
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D05.8
+    title: "Tool count"
+    domain: D05
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 2
+    order: 15
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d058"
+    gap: "(none — parity or ahead)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D06.1
+    title: "Pluggable execution backends"
+    domain: D06
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 10
+    order: 99
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d061"
+    gap: "No remote/cloud execution. The ABC exists — the implementations do not."
+    depends_on: []
+    blocks: [D06.2]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D06.2
+    title: "Serverless / hibernating environments"
+    domain: D06
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 100
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d062"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D06.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D06.3
+    title: "Confinement depth"
+    domain: D06
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 10
+    order: 101
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d063"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D06.4
+    title: "Filesystem checkpoints"
+    domain: D06
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 10
+    order: 102
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d064"
+    gap: "No 'undo the whole turn'."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D07.1
+    title: "Subagent delegation"
+    domain: D07
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 7
+    order: 47
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d071"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D07.2
+    title: "Delegation roles & depth"
+    domain: D07
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 7
+    order: 48
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d072"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D07.3
+    title: "Background delegation & durability"
+    domain: D07
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 7
+    order: 49
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d073"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D07.4
+    title: "Mixture-of-agents"
+    domain: D07
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 7
+    order: 50
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d074"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D07.5
+    title: "Named persistent sessions"
+    domain: D07
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 7
+    order: 51
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d075"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D07.6
+    title: "Multi-agent work queue (Kanban)"
+    domain: D07
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 7
+    order: 52
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d076"
+    gap: "No shared work queue, no claim/reclaim, no cross-profile collaboration."
+    depends_on: [D18.3]
+    blocks: []
+    dedup_target: X1
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D08.1
+    title: "Two-file curated memory"
+    domain: D08
+    verdict: DIVERGENT
+    track: decide
+    priority: P1
+    wave: 4
+    order: 22
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d081"
+    gap: "Inverted. Ours is far more sophisticated and far more expensive; theirs is legible, editable"
+    depends_on: []
+    blocks: [D08.2, D08.3]
+    dedup_target: X4
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D08.2
+    title: "Memory providers as plugins"
+    domain: D08
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 4
+    order: 23
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d082"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D08.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D08.3
+    title: "Memory-write nudges"
+    domain: D08
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 4
+    order: 24
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d083"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D08.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D08.4
+    title: "Memory as prompt-injection surface"
+    domain: D08
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 4
+    order: 25
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d084"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D08.5
+    title: "Graph memory"
+    domain: D08
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 4
+    order: 26
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d085"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.1
+    title: "Background review fork"
+    domain: D09
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 4
+    order: 27
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d091"
+    gap: "Learning is not tied to the moment the lesson exists, and does not see the live conversation."
+    depends_on: [D01.1]
+    blocks: [D09.2, D09.4]
+    dedup_target: X3
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.2
+    title: "The review prompt itself"
+    domain: D09
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 4
+    order: 28
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d092"
+    gap: "We treat correction as a setting; they treat it as procedural knowledge."
+    depends_on: [D09.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.3
+    title: "Skill curator"
+    domain: D09
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 4
+    order: 29
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d093"
+    gap: "Skills accumulate and rot with no pressure to consolidate."
+    depends_on: [D10.2]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.4
+    title: "Skill-creation nudges"
+    domain: D09
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 4
+    order: 30
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d094"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D09.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.5
+    title: "/learn — user-initiated skill authoring"
+    domain: D09
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 4
+    order: 31
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d095"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.6
+    title: "Learning made visible"
+    domain: D09
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 4
+    order: 32
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d096"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D09.7
+    title: "Outcome mining from failures"
+    domain: D09
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 4
+    order: 33
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d097"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: X3
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.1
+    title: "Skill format"
+    domain: D10
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 8
+    order: 60
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d101"
+    gap: "(none — parity or ahead)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.2
+    title: "Authoring standard"
+    domain: D10
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 8
+    order: 61
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d102"
+    gap: "Without a standard, an agent that writes its own skills writes inconsistent ones."
+    depends_on: []
+    blocks: [D09.3]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.3
+    title: "Active vs. optional skills"
+    domain: D10
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 8
+    order: 62
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d103"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.4
+    title: "Skills Hub"
+    domain: D10
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 8
+    order: 63
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d104"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.5
+    title: "Skills as slash commands"
+    domain: D10
+    verdict: PARTIAL
+    track: close_gap
+    priority: P1
+    wave: 8
+    order: 64
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d105"
+    gap: "Direct Law 1 violation, and it also means the model cannot be pointed at a skill on demand."
+    depends_on: [D01.1]
+    blocks: []
+    dedup_target: X7
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.6
+    title: "Skill relevance scoring"
+    domain: D10
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 8
+    order: 65
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d106"
+    gap: "Ours is smarter but is a per-turn prompt mutation (feeds D01.1)."
+    depends_on: [D01.1]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D10.7
+    title: "Skill ownership per persona"
+    domain: D10
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 8
+    order: 66
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d107"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D11.1
+    title: "Session store"
+    domain: D11
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 8
+    order: 67
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d111"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D11.2
+    title: "Full-text search over messages"
+    domain: D11
+    verdict: PARTIAL
+    track: close_gap
+    priority: P1
+    wave: 8
+    order: 68
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d112"
+    gap: "Substring ≠ relevance. Cross-session recall is weak in exactly the way Hermes advertises as"
+    depends_on: []
+    blocks: [D11.3]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D11.3
+    title: "Session-search shapes"
+    domain: D11
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 8
+    order: 69
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d113"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D11.2]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D11.4
+    title: "Session export & recap"
+    domain: D11
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 8
+    order: 70
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d114"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D11.5
+    title: "Trajectory capture for training"
+    domain: D11
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 8
+    order: 71
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d115"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.1
+    title: "Platform adapter contract"
+    domain: D12
+    verdict: DIVERGENT
+    track: decide
+    priority: P2
+    wave: 6
+    order: 39
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d121"
+    gap: "Ours branches on channel identity in places; theirs reads a descriptor."
+    depends_on: []
+    blocks: [D12.2, D12.3]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.2
+    title: "Channel breadth"
+    domain: D12
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 6
+    order: 40
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d122"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D12.1, D12.3]
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.3
+    title: "Generic relay adapter"
+    domain: D12
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 6
+    order: 41
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d123"
+    gap: "~24 near-duplicate modules that must each be fixed separately. This is the *dedup* target"
+    depends_on: [D12.1]
+    blocks: [D12.2]
+    dedup_target: X6
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.4
+    title: "Streaming to chat platforms"
+    domain: D12
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 6
+    order: 42
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d124"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.5
+    title: "Turn lease / concurrency correctness"
+    domain: D12
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 6
+    order: 43
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d125"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.6
+    title: "Delivery routing & mirroring"
+    domain: D12
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 6
+    order: 44
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d126"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.7
+    title: "Pairing & authorization"
+    domain: D12
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 6
+    order: 45
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d127"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D12.8
+    title: "Untrusted-input toolset"
+    domain: D12
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 6
+    order: 46
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d128"
+    gap: "A public webhook can currently reach shell."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D13.1
+    title: "Surface count"
+    domain: D13
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 10
+    order: 103
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d131"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D13.2
+    title: "'Do not rebuild the chat experience' rule"
+    domain: D13
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 104
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d132"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D13.3
+    title: "TUI transport"
+    domain: D13
+    verdict: DIVERGENT
+    track: decide
+    priority: P2
+    wave: 10
+    order: 105
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d133"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D13.4
+    title: "Editor integration (ACP)"
+    domain: D13
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 106
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d134"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D14.1
+    title: "Single command registry, derived everywhere"
+    domain: D14
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 10
+    order: 107
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d141"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D14.2
+    title: "Command count"
+    domain: D14
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 10
+    order: 108
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d142"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D14.3
+    title: "Contextual onboarding"
+    domain: D14
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 109
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d143"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D14.4
+    title: "Doctor"
+    domain: D14
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 10
+    order: 110
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d144"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D14.5
+    title: "Theming"
+    domain: D14
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 10
+    order: 111
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d145"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.1
+    title: "Cron scheduler"
+    domain: D15
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 7
+    order: 53
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d151"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.2
+    title: "Job richness"
+    domain: D15
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 7
+    order: 54
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d152"
+    gap: "Their jobs are user-authorable in natural language; ours are developer-authored handlers."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.3
+    title: "Cron hardening invariants"
+    domain: D15
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 7
+    order: 55
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d153"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.4
+    title: "Objectives / standing goals"
+    domain: D15
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 7
+    order: 56
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d154"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: X1
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.5
+    title: "Background-process notifications"
+    domain: D15
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 7
+    order: 57
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d155"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.6
+    title: "Proactive outreach"
+    domain: D15
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 7
+    order: 58
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d156"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D15.7
+    title: "Instincts / perches"
+    domain: D15
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 7
+    order: 59
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d157"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D16.1
+    title: "Plugin surface"
+    domain: D16
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 9
+    order: 72
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d161"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: [D16.3]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D16.2
+    title: "'Plugins must not touch core' rule"
+    domain: D16
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 73
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d162"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D16.3
+    title: "Category ABCs"
+    domain: D16
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 9
+    order: 74
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d163"
+    gap: "(no gap line — see Ask)"
+    depends_on: [D16.1]
+    blocks: [D04.1]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D16.4
+    title: "Third-party products stay out of tree"
+    domain: D16
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 75
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d164"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D16.5
+    title: "MCP"
+    domain: D16
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 9
+    order: 76
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d165"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D16.6
+    title: "Integrations"
+    domain: D16
+    verdict: DIVERGENT
+    track: decide
+    priority: P2
+    wave: 9
+    order: 77
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d166"
+    gap: "Ours is rung 6 for something they solve at rung 2."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D17.1
+    title: "Dangerous-command approval"
+    domain: D17
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 9
+    order: 78
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d171"
+    gap: "No LLM-assisted smart approval; no persisted user allowlist."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D17.2
+    title: "Prompt-injection pattern library"
+    domain: D17
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 9
+    order: 79
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d172"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D17.3
+    title: "External security scanner"
+    domain: D17
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 80
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d173"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D17.4
+    title: "URL / path / egress guards"
+    domain: D17
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 9
+    order: 81
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d174"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D17.5
+    title: "Dependency pinning policy"
+    domain: D17
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 82
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d175"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D17.6
+    title: "Authz & tenancy"
+    domain: D17
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 9
+    order: 83
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d176"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.1
+    title: "Config vs. secrets discipline"
+    domain: D18
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 84
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d181"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: X10
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.2
+    title: "Config surface & loaders"
+    domain: D18
+    verdict: DIVERGENT
+    track: decide
+    priority: P2
+    wave: 9
+    order: 85
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d182"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.3
+    title: "Profiles / multi-instance"
+    domain: D18
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 86
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d183"
+    gap: "No way to run a work assistant and a personal assistant side by side, and no clean test isolation."
+    depends_on: []
+    blocks: [D07.6]
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.4
+    title: "State-path discipline"
+    domain: D18
+    verdict: PARITY
+    track: verify
+    priority: P3
+    wave: 9
+    order: 87
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d184"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.5
+    title: "Test isolation"
+    domain: D18
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 9
+    order: 88
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d185"
+    gap: "Our full suite is not runnable — Hermes' subprocess isolation is plausibly *why* theirs is."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.6
+    title: "Change-detector test ban"
+    domain: D18
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 9
+    order: 89
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d186"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.7
+    title: "Installer & platform reach"
+    domain: D18
+    verdict: PARTIAL
+    track: close_gap
+    priority: P2
+    wave: 9
+    order: 90
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d187"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.8
+    title: "Observability"
+    domain: D18
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 9
+    order: 91
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d188"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null
+
+  - id: D18.9
+    title: "Migrations"
+    domain: D18
+    verdict: AHEAD
+    track: keep
+    priority: P3
+    wave: 9
+    order: 92
+    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d189"
+    gap: "(no gap line — see Ask)"
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions: []
+    changes: []
+    notes: null

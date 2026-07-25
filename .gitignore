@@ -40,3 +40,6 @@ graphify-out/
 
 # Subagent-driven-development scratch (briefs, reports, diffs)
 .superpowers/
+
+# Hermes Agent research clone — reference only, NEVER push (see progress.yml teacher.constraints)
+do_not_push_to_git_research_only/
