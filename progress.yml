@@ -241,10 +241,12 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 1
-  item: D01.6
-  stage: document
-  stage_status: in_progress
-  note_2: "D01.6 baseline captured. D01.1 is now UNBLOCKED."
+  item: D01.7
+  stage: brainstorm
+  stage_status: not_started
+  note_2: >
+    D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
+    Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
   previous: "D01.1 brainstorm done (25 questions answered, Approach A approved) + architect done (design doc written)."
   order_change:
     date: 2026-07-25
@@ -321,9 +323,9 @@ documentation:
     - "`Last verified` is a date AND a commit, never 'recently'. If you cannot re-verify, set status `stale` rather than leave a confident lie."
     - "Every Invariant must map to a real test. If it cannot be tested it is a wish — sharpen it or delete it."
   status:
-    written: 3        # D01.1, D01.6, D01.7
-    closed: 0         # none have completed the `document` stage yet
-    outstanding: 108
+    written: 4        # D01.1, D01.6, D01.6-baseline, D01.7
+    closed: 1         # D01.6
+    outstanding: 107
 
 # ---------------------------------------------------------------------------
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
@@ -471,7 +473,7 @@ summary:
     in_progress: 0
     done: 0
     blocked: 0
-  stages_completed: 7   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_completed: 9   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
@@ -684,12 +686,12 @@ items:
       brainstorm: not_started
       architect:  done
       implement:  done
-      cleanup:    not_started
+      cleanup:    no_change_needed
       test:       done
       validate:   done
-      document:   not_started
+      document:   done
     doc: "docs/hermes-mapping/designs/D01.6.md"
-    doc_last_verified: 2026-07-25
+    doc_last_verified: 2026-07-25  # against commit a717c4e9
     decisions: []
     changes:
       - date: 2026-07-25
