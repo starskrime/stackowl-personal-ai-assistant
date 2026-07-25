@@ -1120,6 +1120,9 @@ items:
           reaffirmed: >
             Bakir was shown all three measurements and reaffirmed the full rename. Recorded
             so a future reader sees the cost was known and accepted, not overlooked.
+        commit_plan_superseded_note: >
+          Steps 1 and 2 below were merged into ONE commit (3a.1). See the changes entry for why:
+          neither ordering has a green intermediate, so schema and code are one atomic unit.
         commit_plan:
           - "1 — pure mechanical rename session_id -> session_key in the conversation domain. No behaviour change; values still bare chat ids. Existing tests are the safety net."
           - "2 — migration 0093: rename the column in the 7 conversation-domain tables."
@@ -1127,6 +1130,43 @@ items:
           - "4 — incarnation id on TraceContext, stamped into cost_records and the ledger."
           - "5 — the one-line reset notice + the transcript writer (conversations/messages)."
           - "3b — session.rollover on the EventBus, durable consumer tasks, standard-tier summary."
+      - date: 2026-07-25
+        stage: implement
+        round: "slice-3a design round 2 (4 questions + 1 re-ask)"
+        by: Bakir
+        answers:
+          new_verb: >
+            /new BECOMES THE SESSION VERB (archive + summarise + new incarnation), and today's
+            mid-turn "queue this as a separate turn" signal MOVES to /queue. The capability is
+            preserved under an accurate name, not deleted.
+          delivery: >
+            Store the native send target on the session row (chat_id column, migration 0094);
+            resolve_target looks the lane up instead of parsing the composite key.
+          transcript_roles: "user + assistant only. Tool and system messages stay out of a table the knowledge tools search."
+          notice: "A separate message sent BEFORE the reply, not a prefix on it."
+        how_the_new_verb_question_was_settled: >
+          The first framing was WRONG and was corrected rather than defended. It described /new
+          as a live conflict; Bakir asked what today's /new actually does, and reading
+          gateway/turn_router.py showed the honest picture: /new is NOT a registered slash
+          command, it is only consulted inside route_inflight_message, which only runs when a
+          turn is already in flight on that lane. When the lane is idle /new does nothing at
+          all. So the "conflict" was one meaning plus an empty slot.
+        hermes_evidence: >
+          Bakir then asked whether we need today's /new and whether Hermes has it. Checked
+          rather than asserted. Hermes documents "/new or /reset" as START A FRESH CONVERSATION
+          in every README, and gateway/run.py intercepts /stop and /new — the same meaning Q8
+          gave it. Hermes has NO "queue as a separate turn" concept: a message arriving mid-run
+          calls agent.interrupt(new_message.text), which is our /steer. The queue-separately
+          signal is StackOwl-only.
+        why_queue_not_deletion: >
+          Deleting it would have removed the only manual override for the STEER-vs-NEW
+          classifier when it confidently picks STEER and the user disagrees (the classifier
+          already defaults to NEW on uncertainty, so the token only matters in that case).
+          Renaming keeps the capability and frees the word — never disable a feature to make a
+          naming problem go away.
+        sequencing_consequence: >
+          The /new -> /queue swap lands in 3b, NOT 3a. /new only gains its session meaning once
+          the rollover path exists; swapping earlier would leave /new pointing at nothing.
     changes:
       - date: 2026-07-25
         slice: "3a.1 of 3 — the identity rename: session_id -> session_key, code and schema together"
