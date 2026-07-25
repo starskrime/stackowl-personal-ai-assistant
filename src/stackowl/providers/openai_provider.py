@@ -350,6 +350,13 @@ class OpenAIProvider(ModelProvider):
                     resolved_model, disable_thinking=bool(kwargs.get("disable_thinking", False)),
                 ),
             )
+            # D01.6 metric 2 — time to first token. Stamped on the first CONTENT
+            # delta, not the first chunk of any kind: a reasoning model emits
+            # reasoning_content for a long time before anything the user could see,
+            # and "does it feel fast" is about when text starts appearing. Stays
+            # None if the stream produces no content at all, which is honestly
+            # "not measured" rather than a misleading 0.
+            _ttft_ms: int | None = None
             try:
                 async for chunk in stream_resp:
                     # The trailing empty-choices chunk carries .usage (include_usage).
@@ -373,6 +380,8 @@ class OpenAIProvider(ModelProvider):
                         if getattr(delta_obj, "reasoning_content", None) if delta_obj else None:
                             yield ""
                         continue
+                    if _ttft_ms is None:
+                        _ttft_ms = int((time.monotonic() - _t0) * 1000)
                     # NOTE (2026-07-16): a standalone whitespace-only SSE delta used to
                     # collapse to a single space here — a workaround for a gateway
                     # framing bug (junk "\n\n\n" splitting real tokens mid-identifier).
@@ -400,7 +409,8 @@ class OpenAIProvider(ModelProvider):
                 # B5/F119 — record consumed spend even if the consumer abandoned the
                 # stream early (OwlTimeout/disconnect): best-effort, fail-open.
                 await self._record_stream_usage_safe(
-                    final_usage, final_model, (time.monotonic() - _t0) * 1000
+                    final_usage, final_model, (time.monotonic() - _t0) * 1000,
+                    ttft_ms=_ttft_ms,
                 )
         except openai.APIError as exc:
             log.engine.error(
@@ -412,7 +422,7 @@ class OpenAIProvider(ModelProvider):
         log.engine.debug("[openai] stream: exit", extra={"_fields": {"provider": self._name}})
 
     async def _record_stream_usage_safe(
-        self, usage: Any, model: str, duration_ms: float
+        self, usage: Any, model: str, duration_ms: float, ttft_ms: int | None = None
     ) -> None:
         """Record one streamed round's cost from the trailing usage chunk (F119).
 
@@ -438,6 +448,7 @@ class OpenAIProvider(ModelProvider):
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
             cached_input_tokens=_cached_input_tokens(usage),
+            ttft_ms=ttft_ms,
         )
 
     async def complete_with_tools(

@@ -334,6 +334,23 @@ known_debt:
     evidence: "`uv run ruff check src/` -> Found 46 errors. `ruff check src/stackowl/providers/cost_tracker.py` -> All checks passed."
     decision: "NOT fixed during D01.6 — unrelated files, and fixing them mid-item violates minimal-diffs. Scheduled as its own cleanup pass."
     status: open
+  - id: DEBT-3
+    found: 2026-07-25
+    what: "tests/commands/test_config_meta.py::test_config_declares_all_subcommands fails on main, unrelated to any current item."
+    evidence: "Fails IDENTICALLY with D01.6 changes stashed and unstashed — verified by stash/run/pop. Not caused by this work."
+    decision: "Tracked, not fixed during D01.6. Needs its own root-cause pass."
+    status: open
+  - id: DEBT-4
+    found: 2026-07-25
+    what: "tests/commands/test_cost_meta.py::test_cost_declares_only_privacy_subcommand is a CHANGE-DETECTOR test."
+    evidence: "assert names == {'privacy'} — freezes an enumeration, so it breaks whenever a subcommand is legitimately added. It broke on /cost turns, a correct feature."
+    decision: >
+      NOT autonomously patched. Bakir's standing rule is that the AI must STOP and inform rather
+      than silently fix a failing test. Recommendation on the table: convert it to the invariant
+      it was reaching for — every declared subcommand has a summary, and privacy is present —
+      instead of asserting the exact set. This is map item D18.6 (change-detector test ban)
+      appearing in our own tree.
+    status: awaiting_bakir
   - id: DEBT-2
     found: 2026-07-25
     what: "Two stale paths existed in the first draft of designs/D01.6.md: wrong DB location and a test file that does not exist."
