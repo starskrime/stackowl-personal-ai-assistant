@@ -242,8 +242,9 @@ deployment:
 current:
   wave: 1
   item: D01.6
-  stage: implement
+  stage: document
   stage_status: in_progress
+  note_2: "D01.6 baseline captured. D01.1 is now UNBLOCKED."
   previous: "D01.1 brainstorm done (25 questions answered, Approach A approved) + architect done (design doc written)."
   order_change:
     date: 2026-07-25
@@ -333,6 +334,20 @@ known_debt:
     what: "46 pre-existing ruff errors in src/, in files unrelated to any current item."
     evidence: "`uv run ruff check src/` -> Found 46 errors. `ruff check src/stackowl/providers/cost_tracker.py` -> All checks passed."
     decision: "NOT fixed during D01.6 — unrelated files, and fixing them mid-item violates minimal-diffs. Scheduled as its own cleanup pass."
+    status: open
+  - id: DEBT-6
+    found: 2026-07-25
+    what: "Empty completions from NeraAiRaw — the model emits reasoning but no visible content."
+    evidence: "Log, repeatedly: '[openai] complete: empty after think-strip — retrying once with a varied prompt' then 'still empty after varied retry — returning empty for the downstream floor'."
+    impact: "Every occurrence costs a full paid call and yields nothing. Seen 3+ times in a 5-message conversation."
+    decision: "Tracked. Needs its own root-cause pass — likely a reasoning model spending max_tokens on reasoning_content."
+    status: open
+  - id: DEBT-7
+    found: 2026-07-25
+    what: "Budget alerting can NEVER fire — 'budget_80pct_alert' and 'budget_exceeded' are subscribed with no publisher."
+    evidence: "Boot wiring audit: 'DANGLING event subscription ... subscribed but NO module declares it as a publisher, so the subscriber will NEVER fire.'"
+    impact: "A conversation that cost $2.85 produced no budget signal. Directly relevant to D01.6's purpose."
+    decision: "Tracked. Small fix; fold into a D01 cleanup pass."
     status: open
   - id: DEBT-5
     found: 2026-07-25
@@ -456,7 +471,7 @@ summary:
     in_progress: 0
     done: 0
     blocked: 0
-  stages_completed: 6   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_completed: 7   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
@@ -671,7 +686,7 @@ items:
       implement:  done
       cleanup:    not_started
       test:       done
-      validate:   not_started
+      validate:   done
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25
@@ -752,8 +767,32 @@ items:
           - "/cost: per-conversation view + rows_reporting so I4 is readable. — DONE in slice 4."
           - "tests: one per invariant I1-I5. — DONE in slice 3 (20 tests)."
           - "capture D01.6-baseline.md (the deliverable that unblocks D01.1). — OUTSTANDING, needs Bakir to drive live turns."
-    remaining_overall:
-      - "capture D01.6-baseline.md — requires a platform restart and ~5 real turns through Telegram. This is the deliverable that unblocks D01.1."
+    remaining_overall: []
+    baseline:
+      captured: 2026-07-25
+      doc: docs/hermes-mapping/designs/D01.6-baseline.md
+      session: "72055773 — 5 real Telegram messages, one requesting web research"
+      measured:
+        llm_calls: 40
+        distinct_prompts_per_session: 10
+        distinct_prompts_per_trace: 2
+        input_tokens: 180712
+        cached_input_tokens: 0
+        turns_reporting_cache: 0
+        avg_ttft_ms: 887
+        cost_usd: 2.85
+        system_prompt_chars: "0 -> 13001, varying call to call"
+      findings:
+        - "D01.1 CONFLICT CONFIRMED, and sharper than assumed: the prompt changes MID-TURN, between consecutive calls answering the same message — not merely between turns. The D01.1 invariant must therefore be asserted per TRACE as well as per session."
+        - "Control case found unprompted: scheduled goal-owl_lifecycle sessions show 1 distinct prompt across 10 and 6 calls. The machinery CAN produce a stable prompt; the interactive path is what destabilises it."
+        - "METRIC 1 IS NOT MEASURABLE ON THIS DEPLOYMENT. NeraAiRaw reports no cache fields in any of the three accepted shapes. Invariant I4 earned its keep: 0-with-0-reporting is a silent gateway, NOT a cold cache. D01.1 must be proven via prompt stability, input tokens and cost instead."
+        - "CORRECTION to the first reading: the 40 calls are not tool-loop waste. web_fetch ran 6 times for a genuine research request, and a long tool loop is precisely the workload prefix caching is designed for — this makes D01.1 MORE valuable, not less."
+        - "SECOND CORRECTION: the four -fix traces (72% of spend, $2.05 of $2.85) are retry_actuator.py:112 running a CORRECTIVE re-run. Trigger logged verbatim: 'it cited sources/URLs but NO source was actually retrieved this turn — the citations are fabricated.' This is the grounding gate catching hallucinated citations and forcing real retrieval. It is the platform working correctly, and the 20x cost is the price of not shipping fabricated sources."
+      lesson_for_the_program: >
+        An expensive path is not automatically a wasteful one. A cost-reduction item that had
+        blindly suppressed the -fix path would have deleted one of StackOwl's genuine advantages
+        over the reference platform — Hermes has no equivalent of the acceptance/grounding veto.
+        Measure before concluding, and read the trigger before judging the cost.
     notes: >
       Code complete 2026-07-25. All four Q20 measures have a source and a reader.
       Only the live baseline capture remains, and it needs Bakir at the keyboard.
