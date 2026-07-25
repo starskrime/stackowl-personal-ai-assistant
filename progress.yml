@@ -244,7 +244,7 @@ current:
   item: D01.7
   stage: brainstorm
   stage_status: in_progress
-  brainstorm_round: "1 of 7 done (Q1-Q4). Q5-Q25 outstanding."
+  brainstorm_round: "2 of 7 done (Q1-Q8). Q9-Q25 outstanding."
   note_2: >
     D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
     Next: D01.7 session lifecycle. at_hour already signed off at 4 AM.
@@ -886,6 +886,19 @@ items:
           never read back except by a human inspecting it. A one-way projection cannot drift into
           disagreement, because nothing ever trusts it. If the mirror is deleted or corrupted it is
           simply regenerated. This gives the legibility he asked for at no correctness cost.
+      - date: 2026-07-25
+        stage: brainstorm
+        round: "2 of 7 (Q5-Q8)"
+        by: Bakir
+        answers:
+          multi_user_isolation: "Shared in THREADS, private in the main channel — Hermes' exact default combination (group_sessions_per_user true, thread_sessions_per_user false). A thread is a focused sub-discussion where shared context helps; the main channel is where privacy matters."
+          mid_turn_restart: "SILENTLY FINISH THE ANSWER. resume_pending + a synthesised message event to auto-continue. The most machinery of the four options, and it earns it — this is the case he hits constantly during development because the core exec-replaces on every code change."
+          stuck_loop_escape: "3 consecutive restart failures on one lane -> clean slate, AND tell him why. The counter is per-lane so one poisoned conversation cannot take down the others. Naming the failure turns a silent wipe into a bug report, which fits the self-heal-and-surface posture."
+          new_semantics: "/new archives the conversation AND summarises it into memory — the full rollover treatment. /reset stays the destructive verb."
+        implications:
+          - "DEDUP: /new and the daily rollover become the SAME code path — archive, summarise, mint a new incarnation. One mechanism, two triggers. Four triggers in total once idle and context-full are counted."
+          - "Q6 confirms resume_pending is load-bearing for StackOwl in a way it is not for Hermes: their gateway restarts rarely, ours exec-replaces on every code change. The synthesised-continue path is not a nicety here."
+          - "Q5 means the session key needs chat_type + thread_id + participant_id, exactly as Hermes' build_session_key does. The design doc's key format already anticipated this."
       - date: 2026-07-25
         stage: architect
         by: Bakir
