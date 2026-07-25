@@ -1003,6 +1003,24 @@ items:
         blocks_cleared: ["D01.7 implement"]
     changes:
       - date: 2026-07-25
+        slice: "2 of 3 — SessionStore + migration 0092 + the derived mirror"
+        files:
+          - "src/stackowl/db/migrations/0092_sessions.sql (new) — sessions table, 2 indexes"
+          - "src/stackowl/sessions/store.py (new) — SessionStore: resolve_for, save, prune, mirror projection"
+          - "tests/sessions/test_session_store.py (new) — 12 tests against a REAL DbPool + real migrations, no mocks"
+        design_notes:
+          - "SQLite is the SINGLE source of truth; the JSON file is a DERIVED, WRITE-ONLY projection refreshed after each commit and never read back. That asymmetry is what makes Bakir's Q4 'both' choice safe: two stores that are both TRUSTED is a bug class, but a one-way projection cannot drift into disagreement because nothing consults it. Two tests pin the property — a corrupted mirror cannot affect behaviour, and a deleted mirror regenerates."
+          - "Mirror failure is logged and swallowed. Nothing reads the file, so letting it raise would make a debugging aid capable of breaking a conversation — exactly backwards."
+          - "prune() drops lane RECORDS but never a lane with suspended/resume_pending set: dropping those would lose the fact that a turn needs resuming. Transcripts are never touched (Q11, invariant I6)."
+          - "resolve_for() returns the BRANCH rather than letting the caller infer it, so the DECISION point is logged from one place and a caller can never disagree with what actually happened."
+        verified:
+          migration: "0092 applied; second run reports already-applied. Schema at 0092."
+          tests: "43 passed in tests/sessions/ (31 policy + 12 store). Store tests use a real DbPool and real migrations against a temp HOME — no mocks, because a mock here would hide column drift and boolean round-trip bugs."
+          lint: "ruff clean."
+          types: "mypy strict clean on all 4 source files."
+        remaining:
+          - "Slice 3: gateway wiring — call resolve_for on inbound, publish session.rollover with durable consumer tasks, the standard-tier summary, and surface the one-line notice. TOUCHES THE LIVE MESSAGE PATH."
+      - date: 2026-07-25
         slice: "1 of 3 — identity + policy core (pure logic, no I/O)"
         files:
           - "src/stackowl/sessions/models.py (new) — SessionSource, SessionEntry, build_session_key, new_session_id, is_shared_lane"
