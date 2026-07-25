@@ -37,13 +37,13 @@ class CostRecord(BaseModel):
     # D01.6 turn metrics (migration 0091). All defaulted, so every existing
     # construction site keeps working untouched and an un-threaded caller
     # records a row that is still valid — just without the new dimensions.
-    session_id: str = ""
+    session_key: str = ""
     # Provider-reported prefix-cache hits. 0 is AMBIGUOUS by construction: it
     # means "no cache hit" OR "provider does not report" (D01.6 I4). Readers
     # must count reporting rows to tell the two apart — see /cost.
     cached_input_tokens: int = 0
     # SHA-256[:16] of the exact system prompt sent. The D01.1 stability
-    # invariant is COUNT(DISTINCT prompt_hash) per session_id == 1.
+    # invariant is COUNT(DISTINCT prompt_hash) per session_key == 1.
     prompt_hash: str = ""
     system_prompt_chars: int = 0
     # Time to first content token, streaming calls only. None = not measured.
@@ -132,7 +132,7 @@ class CostTracker(OwnedRepository):
         duration_ms: float,
         trace_id: str = "",
         is_local: bool = False,
-        session_id: str = "",
+        session_key: str = "",
         cached_input_tokens: int = 0,
         prompt_hash: str = "",
         system_prompt_chars: int = 0,
@@ -153,7 +153,7 @@ class CostTracker(OwnedRepository):
             extra={"_fields": {
                 "provider": provider_name, "model": model,
                 "input_tokens": input_tokens, "output_tokens": output_tokens,
-                "duration_ms": duration_ms, "session_id": session_id,
+                "duration_ms": duration_ms, "session_key": session_key,
             }},
         )
         # D01.6 DECISION point — which naming the provider used for cache stats,
@@ -190,7 +190,7 @@ class CostTracker(OwnedRepository):
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,
             cost_usd=cost_usd, trace_id=trace_id, recorded_at=now.isoformat(),
-            session_id=session_id, cached_input_tokens=cached_input_tokens,
+            session_key=session_key, cached_input_tokens=cached_input_tokens,
             prompt_hash=prompt_hash, system_prompt_chars=system_prompt_chars,
             ttft_ms=ttft_ms,
         )
@@ -201,7 +201,7 @@ class CostTracker(OwnedRepository):
                 INSERT INTO cost_records (
                     provider_name, model, input_tokens, output_tokens,
                     cost_usd, trace_id, recorded_at, owner_id,
-                    session_id, cached_input_tokens, prompt_hash,
+                    session_key, cached_input_tokens, prompt_hash,
                     system_prompt_chars, ttft_ms
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -209,7 +209,7 @@ class CostTracker(OwnedRepository):
                     record.provider_name, record.model, record.input_tokens,
                     record.output_tokens, record.cost_usd, record.trace_id,
                     record.recorded_at, self._owner_id,
-                    record.session_id, record.cached_input_tokens,
+                    record.session_key, record.cached_input_tokens,
                     record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
                 ),
             )
@@ -233,7 +233,7 @@ class CostTracker(OwnedRepository):
                     "output_tokens": output_tokens,
                     "duration_ms": duration_ms,
                     # D01.6 EXIT point — the four measured dimensions.
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "cached_input_tokens": cached_input_tokens,
                     "prompt_hash": prompt_hash,
                     "system_prompt_chars": system_prompt_chars,

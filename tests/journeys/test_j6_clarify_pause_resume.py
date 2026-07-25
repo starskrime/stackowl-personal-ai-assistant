@@ -297,7 +297,7 @@ async def test_j6_ambiguous_request_pauses_then_resumes_with_the_answer() -> Non
     # so clarify PARKS (does not return the non-interactive sentinel).
     _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
         interactive=True,
     )
@@ -335,7 +335,7 @@ async def test_j6_ambiguous_request_pauses_then_resumes_with_the_answer() -> Non
     answer_msg = await _inbound(env, _ANSWER)
     answer_decision = env.scanner.scan(answer_msg)
     consumed, _rewritten = await env.pump.resolve_or_rewrite(
-        session_id=answer_msg.session_id,  # type: ignore[attr-defined]
+        session_key=answer_msg.session_key,  # type: ignore[attr-defined]
         channel=answer_msg.channel,  # type: ignore[attr-defined]
         route=answer_decision.route,
         target=answer_decision.target,
@@ -386,7 +386,7 @@ async def test_j6_non_interactive_run_does_not_hang_self_heals() -> None:
     # if it parked, the (much longer) clarify park would blow this bound and fail
     # honestly — proving "does not hang".
     state = PipelineState(
-        trace_id="t-cron-j6", session_id=str(USER_ID), input_text=_AMBIGUOUS,
+        trace_id="t-cron-j6", session_key=str(USER_ID), input_text=_AMBIGUOUS,
         channel="telegram", owl_name="secretary", pipeline_step="start",
         interactive=False,
     )

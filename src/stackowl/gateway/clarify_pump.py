@@ -18,7 +18,7 @@ loop needs:
   done-callback closes the writer, guaranteeing the send drains and the stream is
   reaped (party-mode review B-1).
 
-The class is deliberately framed around primitives (``session_id``, ``channel``,
+The class is deliberately framed around primitives (``session_key``, ``channel``,
 ``route``, ``target``, ``input_text``) rather than the inbound-message /
 route-decision types, so both channel loops share ONE implementation and the
 smoke/unit tests exercise the REAL pump instead of a re-simulation.
@@ -92,7 +92,7 @@ class ClarifyPump:
     # ----------------------------------------------------------- resolve-router
 
     async def resolve_or_rewrite(
-        self, *, session_id: str, channel: str, route: str, target: str, input_text: str,
+        self, *, session_key: str, channel: str, route: str, target: str, input_text: str,
     ) -> tuple[bool, str]:
         """Intercept a reply to a pending clarify.
 
@@ -117,11 +117,11 @@ class ClarifyPump:
         """
         if route == "command":
             if target == _RESET_COMMAND:
-                self._gateway.clear_session(session_id)
+                self._gateway.clear_session(session_key)
             return False, input_text
 
         # Is there a pending clarify for this session+channel? (read-only)
-        pending = self._gateway.peek_for_session(session_id, channel)
+        pending = self._gateway.peek_for_session(session_key, channel)
         if pending is None:
             return False, input_text  # ordinary message — no clarify in flight
 
@@ -138,29 +138,29 @@ class ClarifyPump:
                 # assumption) and run this message as a fresh turn. Use
                 # cancel_pending (a pivot), NOT clear_session (a teardown that
                 # wakes as TIMED_OUT and would wrongly invite a best-guess).
-                self._gateway.cancel_pending(session_id, channel)
+                self._gateway.cancel_pending(session_key, channel)
                 log.gateway.info(
                     "clarify_pump.resolve_or_rewrite: reply classified NEW_REQUEST — "
                     "clarify cancelled, running as a fresh turn",
-                    extra={"_fields": {"session_id": session_id, "channel": channel}},
+                    extra={"_fields": {"session_key": session_key, "channel": channel}},
                 )
                 return False, input_text
 
-        resolved = self._gateway.try_resolve(session_id, channel, input_text)
+        resolved = self._gateway.try_resolve(session_key, channel, input_text)
         if resolved is None:
             # Raced away (e.g. a button tap resolved it during classification).
             return False, input_text
         if resolved.event is not None and resolved.event.is_set():
             log.gateway.info(
                 "clarify_pump.resolve_or_rewrite: reply resumed parked turn",
-                extra={"_fields": {"session_id": session_id, "channel": channel}},
+                extra={"_fields": {"session_key": session_key, "channel": channel}},
             )
             return True, input_text
         # Turn-yield fallback — re-inject the question + the user's reply so a
         # fresh turn can act on it (the parked-turn path is the primary one).
         log.gateway.info(
             "clarify_pump.resolve_or_rewrite: reply -> turn-yield resume",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
         return False, (
             f"[Earlier you asked the user: {resolved.question}]\n"
@@ -174,7 +174,7 @@ class ClarifyPump:
         *,
         channel_adapter: _SendableAdapter,
         reader: AsyncIterator[ResponseChunk],
-        session_id: str,
+        session_key: str,
         request_id: str | None = None,
         producer: asyncio.Task[object],
         writer: StreamWriter | _ClosableWriter | None,
@@ -183,13 +183,13 @@ class ClarifyPump:
 
         Two DISTINCT keys (FF-E5-B2 / §4.1 stream re-key):
 
-        * ``session_id`` keys the per-loop ``_inflight`` slot — the drain/reap
+        * ``session_key`` keys the per-loop ``_inflight`` slot — the drain/reap
           ledger awaited on loop teardown. Same-session ordering is owned by the
           TurnRegistry now (§4.3), not this slot.
         * ``request_id`` (== the turn's ``trace_id``) keys the RESPONSE STREAM in
           the registry, matching the key :mod:`deliver` resolves the writer by
           (``state.trace_id``). The stream is reaped under THIS key. Defaults to
-          ``session_id`` for back-compat when a caller doesn't supply one.
+          ``session_key`` for back-compat when a caller doesn't supply one.
 
         ``producer`` is the turn task (``backend.run`` / parliament / command
         stub). If it crashes or is cancelled before :mod:`deliver` closes the
@@ -197,19 +197,19 @@ class ClarifyPump:
         and wedge the session — so a producer done-callback closes the writer
         (idempotent) to guarantee the send drains and the stream is reaped.
         """
-        stream_key = request_id if request_id is not None else session_id
+        stream_key = request_id if request_id is not None else session_key
         send_task: asyncio.Task[None] = asyncio.create_task(
             channel_adapter.send(reader)
         )
-        self._inflight[session_id] = send_task
+        self._inflight[session_key] = send_task
 
         def _cleanup(
             task: asyncio.Task[None],
-            sid: str = session_id,
+            sid: str = session_key,
             skey: str = stream_key,
         ) -> None:
             # Reap the STREAM by request_id (deliver's key); free the in-flight
-            # SLOT by session_id.
+            # SLOT by session_key.
             self._stream_registry.remove(skey)
             if self._inflight.get(sid) is task:
                 self._inflight.pop(sid, None)
@@ -228,7 +228,7 @@ class ClarifyPump:
                 "clarify_pump._cleanup: send_task failed — response was not "
                 "delivered to the user",
                 exc_info=exc,
-                extra={"_fields": {"session_id": sid, "stream_key": skey}},
+                extra={"_fields": {"session_key": sid, "stream_key": skey}},
             )
             # consequential=True: the reader/stream is already terminally
             # consumed once send_task is done, so there is no re-runnable rung
@@ -251,7 +251,7 @@ class ClarifyPump:
         # before deliver does, so the send task can never hang the session.
         if writer is not None:
             def _close_on_producer_failure(
-                prod: asyncio.Task[object], w: object = writer, sid: str = session_id,
+                prod: asyncio.Task[object], w: object = writer, sid: str = session_key,
             ) -> None:
                 failed = prod.cancelled() or (
                     not prod.cancelled() and prod.exception() is not None
@@ -261,7 +261,7 @@ class ClarifyPump:
                 log.gateway.warning(
                     "clarify_pump.spawn_send: producer failed before close — "
                     "closing writer so the send task drains",
-                    extra={"_fields": {"session_id": sid}},
+                    extra={"_fields": {"session_key": sid}},
                 )
                 with contextlib.suppress(RuntimeError):
                     close_task = asyncio.create_task(self._safe_close(w))  # type: ignore[arg-type]

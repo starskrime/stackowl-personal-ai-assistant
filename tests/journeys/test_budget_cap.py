@@ -210,7 +210,7 @@ class _FakeProviderRegistry:
 # Clarify double for the interactive-raise test (Journey 2)
 #
 # Implements the ClarifyGateway duck-type used by make_budget_callback:
-#   ask(session_id, channel, question, choices, blocking) → clarify_id
+#   ask(session_key, channel, question, choices, blocking) → clarify_id
 #   wait_for_answer(clarify_id, timeout) → (answer, outcome)
 #
 # Always answers "Raise" so the governor doubles the cap and continues.
@@ -225,7 +225,7 @@ class _AlwaysRaiseClarify:
 
     async def ask(  # noqa: ANN201
         self,
-        session_id: str,
+        session_key: str,
         channel: str,
         question: str,
         *,
@@ -234,7 +234,7 @@ class _AlwaysRaiseClarify:
         awaiting_text: bool = False,
     ) -> str:
         self.ask_calls.append({
-            "session_id": session_id, "channel": channel,
+            "session_key": session_key, "channel": channel,
             "question": question, "choices": choices,
         })
         return "raise-clarify-id"
@@ -335,7 +335,7 @@ async def _turn(env: _Env, text: str) -> str:
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -461,7 +461,7 @@ async def test_interactive_step_cap_raise_continues() -> None:
 
     state = PipelineState(
         trace_id="trace-budget-interactive",
-        session_id="sess-budget-interactive",
+        session_key="sess-budget-interactive",
         input_text="run many steps interactively",
         channel="telegram",
         owl_name=_OWL_NAME,

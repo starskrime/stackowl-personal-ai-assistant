@@ -77,11 +77,11 @@ def _cd_for(keyboard: dict, scope: str) -> str:
 
 
 def _req(allow_relaxation: bool = True) -> ConsentRequest:
-    # session_id must be a numeric Telegram chat id: the B1 fix resolves the
+    # session_key must be a numeric Telegram chat id: the B1 fix resolves the
     # target chat from it and fails closed (no send) on a non-numeric value, so a
     # placeholder like "s1" would make the inline keyboard never go out.
     return ConsentRequest(
-        tool_name="danger", channel="telegram", session_id="100",
+        tool_name="danger", channel="telegram", session_key="100",
         summary="run the dangerous thing", allow_relaxation=allow_relaxation,
     )
 
@@ -177,10 +177,10 @@ async def test_callback_for_unknown_request_is_ignored() -> None:
 
 
 async def test_prompt_targets_requesting_users_chat() -> None:
-    """B1 fix — the consent prompt goes to the initiating user's chat (session_id)."""
+    """B1 fix — the consent prompt goes to the initiating user's chat (session_key)."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=0.05)
-    req = ConsentRequest(tool_name="danger", channel="telegram", session_id="424242", summary="x")
+    req = ConsentRequest(tool_name="danger", channel="telegram", session_key="424242", summary="x")
     await prompter.prompt(req)  # times out to deny, but records the target chat
     assert adapter.sent_chat_ids == [424242]
     # Consent prompts are sent as PLAIN TEXT (parse_mode=None) so an unescaped
@@ -189,10 +189,10 @@ async def test_prompt_targets_requesting_users_chat() -> None:
 
 
 async def test_non_numeric_session_fails_closed() -> None:
-    """If the target chat can't be resolved from session_id, fail closed fast."""
+    """If the target chat can't be resolved from session_key, fail closed fast."""
     adapter = _FakeAdapter()
     prompter = TelegramConsentPrompter(adapter, timeout_seconds=5.0)
-    req = ConsentRequest(tool_name="danger", channel="telegram", session_id="not-an-id", summary="x")
+    req = ConsentRequest(tool_name="danger", channel="telegram", session_key="not-an-id", summary="x")
     assert await prompter.prompt(req) is ConsentScope.DENY
     assert adapter.sent == []  # never attempted a send
 
@@ -244,7 +244,7 @@ async def test_tap_edits_message_to_allow_symbol() -> None:
     assert scope is ConsentScope.ONCE
     assert len(adapter.edits) == 1
     chat_id, message_id, text, reply_markup = adapter.edits[0]
-    assert chat_id == 100  # session_id of _req()
+    assert chat_id == 100  # session_key of _req()
     assert message_id == 4242
     assert reply_markup is None  # keyboard removed
     assert text.startswith("✅")

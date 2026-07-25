@@ -27,10 +27,10 @@ from stackowl.pipeline.turn_persist import persist_turn
 pytestmark = pytest.mark.asyncio
 
 
-def _base_state(*, session_id: str = "sess-trust", input_text: str = "run a tool") -> PipelineState:
+def _base_state(*, session_key: str = "sess-trust", input_text: str = "run a tool") -> PipelineState:
     return PipelineState(
-        trace_id=f"trace-{session_id}",
-        session_id=session_id,
+        trace_id=f"trace-{session_key}",
+        session_key=session_key,
         input_text=input_text,
         channel="cli",
         owl_name="secretary",

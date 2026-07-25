@@ -2,7 +2,7 @@
 
 Mirrors the Telegram consent prompter exactly in behavior, with the
 Slack-specific target resolution: the destination channel is resolved from
-``adapter.target_for_session(session_id)`` (the ``slack:{hash}`` session_id is
+``adapter.target_for_session(session_key)`` (the ``slack:{hash}`` session_key is
 NOT itself a send target). Fail-closed (DENY) on: unresolved target, send
 failure, timeout, unknown scope, any exception.
 
@@ -71,7 +71,7 @@ class _FakeAdapter:
         if target is not None and thread_ts is not None:
             self._threads[target] = thread_ts
 
-    def target_for_session(self, session_id: str) -> str | None:
+    def target_for_session(self, session_key: str) -> str | None:
         return self._target
 
 
@@ -101,7 +101,7 @@ def _req(allow_relaxation: bool = True) -> ConsentRequest:
     return ConsentRequest(
         tool_name="danger",
         channel="slack",
-        session_id="slack:abcd1234",
+        session_key="slack:abcd1234",
         summary="run the dangerous thing",
         allow_relaxation=allow_relaxation,
     )

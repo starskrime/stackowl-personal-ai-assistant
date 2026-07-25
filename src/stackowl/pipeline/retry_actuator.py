@@ -110,7 +110,7 @@ class RetryActuator:
         )
         state = PipelineState(
             trace_id=f"{original.trace_id}-fix",
-            session_id=original.session_id,
+            session_key=original.session_key,
             input_text=(
                 f"{original.input_text}\n\n"
                 f"[Your previous draft was rejected before delivery: {correction} "
@@ -165,7 +165,7 @@ class RetryActuator:
         trace_id = f"retry-{uuid.uuid4().hex[:8]}"
         state = PipelineState(
             trace_id=trace_id,
-            session_id=row.session_id,
+            session_key=row.session_key,
             input_text=augmented_goal,
             channel=row.channel,
             owl_name="secretary",

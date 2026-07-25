@@ -75,8 +75,8 @@ class _SnapshotThenClickProvider:
 
     protocol = "anthropic"
 
-    def __init__(self, session_id: str, page_handle: str) -> None:
-        self._sid = session_id
+    def __init__(self, session_key: str, page_handle: str) -> None:
+        self._sid = session_key
         self._ph = page_handle
         self.calls: list[str] = []
 
@@ -84,9 +84,9 @@ class _SnapshotThenClickProvider:
         self, *, user_text, system_text, tool_schemas,
         tool_dispatcher, history=None, **_kwargs,
     ):  # noqa: ANN001
-        # Thread session_id + page_handle exactly as a real model would after
+        # Thread session_key + page_handle exactly as a real model would after
         # browser_navigate returned them (so the tools act on the live page).
-        args = {"session_id": self._sid, "page_handle": self._ph}
+        args = {"session_key": self._sid, "page_handle": self._ph}
         snap = await tool_dispatcher("browser_snapshot", dict(args))
         self.calls.append("browser_snapshot")
         m = re.search(r'button[^\n]*\[ref=([A-Za-z0-9]+)\]', snap) or re.search(r"\[ref=([A-Za-z0-9]+)\]", snap)
@@ -163,7 +163,7 @@ async def _turn(env: _Env, text: str) -> str:
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
     )
     before = len(env.bot.messages)
@@ -181,8 +181,8 @@ class _MultiToolProvider:
 
     protocol = "anthropic"
 
-    def __init__(self, session_id: str, page_handle: str) -> None:
-        self._args = {"session_id": session_id, "page_handle": page_handle}
+    def __init__(self, session_key: str, page_handle: str) -> None:
+        self._args = {"session_key": session_key, "page_handle": page_handle}
         self.results: dict[str, str] = {}
 
     async def complete_with_tools(
@@ -320,8 +320,8 @@ class _ConsoleProvider:
 
     protocol = "anthropic"
 
-    def __init__(self, session_id: str, page_handle: str) -> None:
-        self._args = {"session_id": session_id, "page_handle": page_handle}
+    def __init__(self, session_key: str, page_handle: str) -> None:
+        self._args = {"session_key": session_key, "page_handle": page_handle}
         self.result = ""
 
     async def complete_with_tools(

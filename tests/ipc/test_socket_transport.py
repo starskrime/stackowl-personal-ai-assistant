@@ -42,7 +42,7 @@ async def test_duplex_round_trip(socket_path) -> None:
     await server.start(handler)
     try:
         conn = await IpcClient(socket_path).connect(timeout_s=5)
-        await conn.send(IngressFrame(text="ping", session_id="s1", channel="cli", trace_id="t1"))
+        await conn.send(IngressFrame(text="ping", session_key="s1", channel="cli", trace_id="t1"))
         chunks = []
         async for frame in conn:
             chunks.append(frame)

@@ -354,7 +354,7 @@ async def _run_turn(env: _Env, text: str) -> tuple[asyncio.Task, asyncio.Task, s
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text  # type: ignore[attr-defined]
     _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
         interactive=True,
     )
@@ -376,7 +376,7 @@ async def test_j8_run_morning_routine_one_batch_approval(
 ) -> None:
     env = await _build(tmp_db, tmp_path)
 
-    run_task, send_task, session_id = await _run_turn(env, "Run my morning routine.")
+    run_task, send_task, session_key = await _run_turn(env, "Run my morning routine.")
 
     # =================================================================
     # BUSINESS OUTCOME 1 — EXACTLY ONE batch prompt reaches the user: ONE inline
@@ -410,7 +410,7 @@ async def test_j8_run_morning_routine_one_batch_approval(
     await _tap_batch(env, _APPROVE)
     await asyncio.wait_for(run_task, timeout=5.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(session_id)
+    env.stream_registry.remove(session_key)
 
     # The user was prompted EXACTLY ONCE (still one keyboard after the whole turn).
     assert len(_keyboards(env)) == 1, (
@@ -472,12 +472,12 @@ async def test_j8_run_morning_routine_one_batch_approval(
 
 async def test_j8_reject_executes_nothing(tmp_db: DbPool, tmp_path: Path) -> None:
     env = await _build(tmp_db, tmp_path)
-    run_task, send_task, session_id = await _run_turn(env, "Run my morning routine.")
+    run_task, send_task, session_key = await _run_turn(env, "Run my morning routine.")
 
     await _tap_batch(env, _REJECT)
     await asyncio.wait_for(run_task, timeout=5.0)
     await asyncio.wait_for(send_task, timeout=5.0)
-    env.stream_registry.remove(session_id)
+    env.stream_registry.remove(session_key)
 
     # Exactly ONE prompt was still shown (the batch), and NOTHING executed.
     assert len(_keyboards(env)) == 1
@@ -505,7 +505,7 @@ async def test_j8_non_interactive_fail_closed(tmp_db: DbPool, tmp_path: Path) ->
     env = await _build(tmp_db, tmp_path)
 
     state = PipelineState(
-        trace_id="t-cron-j8", session_id=str(USER_ID), input_text="Run my morning routine.",
+        trace_id="t-cron-j8", session_key=str(USER_ID), input_text="Run my morning routine.",
         channel="telegram", owl_name="secretary", pipeline_step="start",
         interactive=False,
     )

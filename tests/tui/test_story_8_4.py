@@ -34,44 +34,44 @@ pytestmark = pytest.mark.tui
 
 def test_parliament_started_message_has_required_fields() -> None:
     msg = ParliamentStartedMessage(
-        session_id="s1", owl_names=("a", "b"), trigger="multi_mention"
+        session_key="s1", owl_names=("a", "b"), trigger="multi_mention"
     )
-    assert msg.session_id == "s1"
+    assert msg.session_key == "s1"
     assert msg.owl_names == ("a", "b")
     assert msg.trigger == "multi_mention"
     assert dataclasses.is_dataclass(msg)
 
 
 def test_parliament_started_message_is_frozen() -> None:
-    msg = ParliamentStartedMessage(session_id="x")
+    msg = ParliamentStartedMessage(session_key="x")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        msg.session_id = "y"  # type: ignore[misc]
+        msg.session_key = "y"  # type: ignore[misc]
 
 
 def test_parliament_round_started_message_has_round_number() -> None:
-    msg = ParliamentRoundStartedMessage(session_id="s1", round_number=2)
-    assert msg.session_id == "s1"
+    msg = ParliamentRoundStartedMessage(session_key="s1", round_number=2)
+    assert msg.session_key == "s1"
     assert msg.round_number == 2
 
 
 def test_synthesis_arrived_message_has_required_fields() -> None:
     msg = SynthesisArrivedMessage(
-        session_id="s1",
+        session_key="s1",
         consensus="agree on X",
         recommendation="do Y",
         confidence=0.75,
         disagreements=("d1", "d2"),
     )
-    assert msg.session_id == "s1"
+    assert msg.session_key == "s1"
     assert msg.consensus == "agree on X"
     assert msg.recommendation == "do Y"
     assert msg.confidence == pytest.approx(0.75)
     assert msg.disagreements == ("d1", "d2")
 
 
-def test_parliament_closed_message_has_session_id() -> None:
-    msg = ParliamentClosedMessage(session_id="s1")
-    assert msg.session_id == "s1"
+def test_parliament_closed_message_has_session_key() -> None:
+    msg = ParliamentClosedMessage(session_key="s1")
+    assert msg.session_key == "s1"
 
 
 # ---------------------------------------------------------------------------

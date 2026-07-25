@@ -20,7 +20,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 def _state(text: str) -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="send the email",
         channel="cli",
         owl_name="secretary",

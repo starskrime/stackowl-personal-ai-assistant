@@ -24,7 +24,7 @@ from stackowl.gateway.turn_registry import TurnRegistry, TurnStatus
 
 
 def _msg(rid: str) -> IngressMessage:
-    return IngressMessage(text="hi", session_id="s1", channel="cli", trace_id=rid)
+    return IngressMessage(text="hi", session_key="s1", channel="cli", trace_id=rid)
 
 
 def test_evict_removes_reaped_request_id() -> None:
@@ -74,7 +74,7 @@ async def test_sweep_fires_on_reaped_and_evicts_parked() -> None:
     task = asyncio.create_task(_noop())
     await task  # task is now done()
     turn = await reg.register(
-        "wedged-1", session_id="s1", task=task, target=None, original_input="x"
+        "wedged-1", session_key="s1", task=task, target=None, original_input="x"
     )
     assert turn.status is not TurnStatus.DONE
     parked.put("wedged-1", _msg("wedged-1"))

@@ -23,7 +23,7 @@ async def test_token_line_appended_when_records_exist(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t1", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
+        trace_id="t1", session_key="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="here is the answer", is_final=False, chunk_index=0,
@@ -51,7 +51,7 @@ async def test_no_token_line_when_no_records(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t2", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
+        trace_id="t2", session_key="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="here is the answer", is_final=False, chunk_index=0,
@@ -77,7 +77,7 @@ async def test_no_token_line_on_floor_chunk(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t3", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
+        trace_id="t3", session_key="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="I couldn't complete this", is_final=False, chunk_index=0,
@@ -106,7 +106,7 @@ async def test_no_token_line_on_non_telegram_channel(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t4", session_id="s1", input_text="hi", channel="cli", owl_name="secretary",
+        trace_id="t4", session_key="s1", input_text="hi", channel="cli", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="here is the answer", is_final=False, chunk_index=0,

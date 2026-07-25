@@ -37,19 +37,19 @@ class _FakeGateway:
         self.cancelled: list[tuple[str, str]] = []
         self.resolve_calls: list[tuple[str, str, str]] = []
 
-    def peek_for_session(self, session_id: str, channel: str) -> _FakeEntry | None:
+    def peek_for_session(self, session_key: str, channel: str) -> _FakeEntry | None:
         return self.peek_result
 
-    def try_resolve(self, session_id: str, channel: str, answer: str) -> _FakeEntry | None:
-        self.resolve_calls.append((session_id, channel, answer))
+    def try_resolve(self, session_key: str, channel: str, answer: str) -> _FakeEntry | None:
+        self.resolve_calls.append((session_key, channel, answer))
         return self.resolve_result
 
-    def clear_session(self, session_id: str) -> list[str]:
-        self.cleared.append(session_id)
+    def clear_session(self, session_key: str) -> list[str]:
+        self.cleared.append(session_key)
         return []
 
-    def cancel_pending(self, session_id: str, channel: str) -> str | None:
-        self.cancelled.append((session_id, channel))
+    def cancel_pending(self, session_key: str, channel: str) -> str | None:
+        self.cancelled.append((session_key, channel))
         return None
 
 
@@ -92,7 +92,7 @@ async def test_resolve_blocking_consumes_no_new_turn() -> None:
     gw.peek_result = _FakeEntry(event=ev)  # a clarify is pending
     gw.resolve_result = _FakeEntry(event=ev)
     consumed, text = await pump.resolve_or_rewrite(
-        session_id="s1", channel="cli", route="owl", target="default", input_text="blue",
+        session_key="s1", channel="cli", route="owl", target="default", input_text="blue",
     )
     assert consumed is True
     assert text == "blue"
@@ -103,7 +103,7 @@ async def test_resolve_turn_yield_rewrites_input() -> None:
     gw.peek_result = _FakeEntry(question="Which colour?", event=None)
     gw.resolve_result = _FakeEntry(question="Which colour?", event=None)  # turn-yield
     consumed, text = await pump.resolve_or_rewrite(
-        session_id="s1", channel="cli", route="owl", target="default", input_text="blue",
+        session_key="s1", channel="cli", route="owl", target="default", input_text="blue",
     )
     assert consumed is False
     assert "Which colour?" in text and "blue" in text
@@ -113,7 +113,7 @@ async def test_no_pending_passes_through() -> None:
     pump, gw, _ = _pump()
     gw.peek_result = None  # no clarify in flight
     consumed, text = await pump.resolve_or_rewrite(
-        session_id="s1", channel="cli", route="owl", target="default", input_text="hello",
+        session_key="s1", channel="cli", route="owl", target="default", input_text="hello",
     )
     assert consumed is False
     assert text == "hello"
@@ -124,7 +124,7 @@ async def test_command_is_never_an_answer_and_reset_clears() -> None:
     pump, gw, _ = _pump()
     gw.peek_result = _FakeEntry(event=asyncio.Event())  # would resolve if consulted
     consumed, text = await pump.resolve_or_rewrite(
-        session_id="s1", channel="cli", route="command", target="reset", input_text="/reset",
+        session_key="s1", channel="cli", route="command", target="reset", input_text="/reset",
     )
     assert consumed is False
     assert text == "/reset"
@@ -141,7 +141,7 @@ async def test_classifier_new_request_cancels_and_runs_fresh() -> None:
     pump, gw, _ = _pump(classifier)
     gw.peek_result = _FakeEntry(question="Which colour?", event=asyncio.Event())
     consumed, text = await pump.resolve_or_rewrite(
-        session_id="s1", channel="cli", route="owl", target="default",
+        session_key="s1", channel="cli", route="owl", target="default",
         input_text="actually, what's the weather?",
     )
     assert consumed is False
@@ -161,7 +161,7 @@ async def test_classifier_answer_resolves() -> None:
     gw.peek_result = _FakeEntry(event=ev)
     gw.resolve_result = _FakeEntry(event=ev)
     consumed, text = await pump.resolve_or_rewrite(
-        session_id="s1", channel="cli", route="owl", target="default", input_text="blue",
+        session_key="s1", channel="cli", route="owl", target="default", input_text="blue",
     )
     assert consumed is True
     assert classifier.calls == ["blue"]
@@ -197,7 +197,7 @@ async def test_serialize_prior_gate_is_gone() -> None:
 async def test_spawn_send_drains_and_reaps_on_normal_close() -> None:
     pump, _, reg = _pump()
     # DELIBERATE re-key (§4.1): the stream registry is now keyed by request_id
-    # (== trace_id), not session_id. Mint a request_id and drive the registry +
+    # (== trace_id), not session_key. Mint a request_id and drive the registry +
     # spawn_send bookkeeping by it; the slot is reaped under that request_id.
     request_id = "req-1"
     writer, reader = reg.create(request_id)
@@ -213,7 +213,7 @@ async def test_spawn_send_drains_and_reaps_on_normal_close() -> None:
 
     producer = asyncio.create_task(_producer())
     pump.spawn_send(
-        channel_adapter=adapter, reader=reader, session_id=request_id,
+        channel_adapter=adapter, reader=reader, session_key=request_id,
         producer=producer, writer=writer,
     )
     await asyncio.wait_for(producer, 1.0)
@@ -240,7 +240,7 @@ async def test_spawn_send_does_not_wedge_when_producer_crashes_before_close() ->
 
     producer = asyncio.create_task(_crashing_producer())
     pump.spawn_send(
-        channel_adapter=adapter, reader=reader, session_id=request_id,
+        channel_adapter=adapter, reader=reader, session_key=request_id,
         producer=producer, writer=writer,
     )
     # The producer crash is observed (retrieve the exception so no warning).
@@ -354,7 +354,7 @@ async def test_cleanup_logs_loudly_and_routes_real_send_failure_to_recovery(
 
     producer = asyncio.create_task(_noop_producer())
     pump.spawn_send(
-        channel_adapter=_RaisingAdapter(), reader=reader, session_id=request_id,
+        channel_adapter=_RaisingAdapter(), reader=reader, session_key=request_id,
         producer=producer, writer=writer,
     )
     await asyncio.wait_for(producer, 1.0)
@@ -397,7 +397,7 @@ async def test_cleanup_ignores_plain_cancellation(monkeypatch: object) -> None:
 
     producer = asyncio.create_task(_noop_producer())
     pump.spawn_send(
-        channel_adapter=_HangingAdapter(), reader=reader, session_id=request_id,
+        channel_adapter=_HangingAdapter(), reader=reader, session_key=request_id,
         producer=producer, writer=None,
     )
     await asyncio.wait_for(producer, 1.0)
@@ -445,7 +445,7 @@ async def test_cleanup_normal_completion_unchanged(monkeypatch: object) -> None:
 
     producer = asyncio.create_task(_producer())
     pump.spawn_send(
-        channel_adapter=adapter, reader=reader, session_id=request_id,
+        channel_adapter=adapter, reader=reader, session_key=request_id,
         producer=producer, writer=writer,
     )
     await asyncio.wait_for(producer, 1.0)

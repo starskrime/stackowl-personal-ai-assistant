@@ -135,8 +135,8 @@ async def test_handle_event_authorized() -> None:
     assert msg.text == "hello world"
     assert msg.channel == "slack"
     # Session_id includes the hashed (never raw) user_id.
-    assert msg.session_id.startswith("slack:")
-    assert "U_allowed" not in msg.session_id
+    assert msg.session_key.startswith("slack:")
+    assert "U_allowed" not in msg.session_key
 
 
 # --------------------------------------------------------------------------- #
@@ -206,7 +206,7 @@ async def test_handle_event_stamps_channel_target(monkeypatch: pytest.MonkeyPatc
     # The routing destination (channel id) is stamped on chat_id.
     assert msg.chat_id == "C123"
     # Session→target map records the channel id for Phase B to resolve.
-    assert adapter.target_for_session(msg.session_id) == "C123"
+    assert adapter.target_for_session(msg.session_key) == "C123"
 
 
 @pytest.mark.asyncio
@@ -300,7 +300,7 @@ async def _seed_session(adapter: SlackChannelAdapter, channel: str) -> str:
         text="hi",
     )
     msg = await asyncio.wait_for(adapter.receive(), timeout=1.0)
-    return msg.session_id
+    return msg.session_key
 
 
 def _actions_elements(call: dict[str, object]) -> list[dict]:
@@ -319,12 +319,12 @@ def _actions_elements(call: dict[str, object]) -> list[dict]:
 async def test_send_clarify_posts_block_kit_buttons() -> None:
     """One button per non-blank choice, action_id/value = clarify:{cid}:{idx}."""
     adapter = _make_adapter(allowed=["U_allowed"])
-    session_id = await _seed_session(adapter, "C123")
+    session_key = await _seed_session(adapter, "C123")
     app = _attach_live(adapter)
     TestModeGuard.deactivate()
 
     await adapter.send_clarify(
-        session_id,
+        session_key,
         question="Pick a color",
         choices=("red", "green", "blue"),
         clarify_id="cid",
@@ -351,12 +351,12 @@ async def test_send_clarify_posts_block_kit_buttons() -> None:
 async def test_send_clarify_preserves_original_index_with_blanks() -> None:
     """Blank choices are skipped but the ORIGINAL index is preserved in the id."""
     adapter = _make_adapter(allowed=["U_allowed"])
-    session_id = await _seed_session(adapter, "C123")
+    session_key = await _seed_session(adapter, "C123")
     app = _attach_live(adapter)
     TestModeGuard.deactivate()
 
     await adapter.send_clarify(
-        session_id,
+        session_key,
         question="Q",
         choices=("a", "", "c"),
         clarify_id="cid",
@@ -399,12 +399,12 @@ async def test_send_clarify_unresolved_target_degrades_to_text() -> None:
 async def test_send_clarify_no_choices_sends_plain_text() -> None:
     """Open-ended question (no non-blank choices) → plain text, no buttons."""
     adapter = _make_adapter(allowed=["U_allowed"])
-    session_id = await _seed_session(adapter, "C123")
+    session_key = await _seed_session(adapter, "C123")
     app = _attach_live(adapter)
     TestModeGuard.deactivate()
 
     await adapter.send_clarify(
-        session_id,
+        session_key,
         question="What is your name?",
         choices=(),
         clarify_id="cid",
@@ -435,13 +435,13 @@ async def test_send_clarify_post_failure_degrades_to_text() -> None:
             self.client = _FailThenOkClient()
 
     adapter = _make_adapter(allowed=["U_allowed"])
-    session_id = await _seed_session(adapter, "C123")
+    session_key = await _seed_session(adapter, "C123")
     app = _FailApp()
     adapter.set_bolt_app(app)
     TestModeGuard.deactivate()
 
     await adapter.send_clarify(
-        session_id,
+        session_key,
         question="Pick",
         choices=("a", "b"),
         clarify_id="cid",

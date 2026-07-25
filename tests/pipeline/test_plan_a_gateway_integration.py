@@ -32,7 +32,7 @@ that seam. The persona+history path (classify → assemble → execute) runs in 
 through the real ``AsyncioBackend``.
 
 Turn 1 seeds a prior turn directly into the bridge (history precondition).
-Turn 2 asserts (same session_id):
+Turn 2 asserts (same session_key):
   RC-B: turn-2 ``system_text`` contains the secretary persona text (tool-loop).
   RC-C: turn-2 ``history`` contains "I am learning AWS" (tool-loop).
 """
@@ -146,13 +146,13 @@ def _build_services(
 
 
 def _state_from_decision(
-    decision, *, trace_id: str, session_id: str, channel: str, raw_text: str
+    decision, *, trace_id: str, session_key: str, channel: str, raw_text: str
 ) -> PipelineState:
     """Build PipelineState exactly as startup/orchestrator.py does for an owl route."""
     input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel=channel,
         owl_name=decision.target,
@@ -177,15 +177,15 @@ async def test_gateway_to_backend_persona_and_history_on_tool_loop(tmp_db: DbPoo
     backend = AsyncioBackend(services=services)
     scanner = GatewayScanner(owl_registry=owl_registry)
 
-    session_id = "sess-gw-tool-loop"
+    session_key = "sess-gw-tool-loop"
 
     # --- Seed ONE prior turn so history is non-empty on turn 2 ----------------
-    await bridge.store("User: I am learning AWS\n\nAssistant: ok", session_id)
+    await bridge.store("User: I am learning AWS\n\nAssistant: ok", session_key)
 
     # --- Turn (the user message) driven THROUGH the gateway scanner -----------
     msg = IngressMessage(
         text="what am I learning?",
-        session_id=session_id,
+        session_key=session_key,
         channel="cli",
         trace_id="trace-gw-1",
     )
@@ -197,7 +197,7 @@ async def test_gateway_to_backend_persona_and_history_on_tool_loop(tmp_db: DbPoo
     state = _state_from_decision(
         decision,
         trace_id=msg.trace_id,
-        session_id=session_id,
+        session_key=session_key,
         channel=msg.channel,
         raw_text=msg.text,
     )

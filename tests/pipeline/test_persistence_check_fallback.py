@@ -118,7 +118,7 @@ def fake_services() -> StepServices:
 def _state(trace_id: str, text: str, *, interactive: bool, depth: int) -> PipelineState:
     return PipelineState(
         trace_id=trace_id,
-        session_id="s-1",
+        session_key="s-1",
         input_text=text,
         channel="cli",
         owl_name="secretary",

@@ -36,7 +36,7 @@ class HelpCommand(SlashCommand):
         """
         log.gateway.debug(
             "[commands] help.handle: entry",
-            extra={"_fields": {"session": state.session_id, "args_len": len(args)}},
+            extra={"_fields": {"session": state.session_key, "args_len": len(args)}},
         )
         registry = CommandRegistry.instance()
         tokens = args.split()

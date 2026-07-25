@@ -55,7 +55,7 @@ class IngressMessage:
     """A raw incoming message before routing."""
 
     text: str
-    session_id: str
+    session_key: str
     channel: str
     trace_id: str
     # Per-message delivery target for fan-out channels (e.g. a Telegram chat_id).
@@ -121,7 +121,7 @@ class IngressQueue:
         except asyncio.QueueFull:
             log.gateway.warning(
                 "[gateway] ingress: queue full — dropping message",
-                extra={"_fields": {"session_id": msg.session_id, "maxsize": _INGRESS_MAXSIZE}},
+                extra={"_fields": {"session_key": msg.session_key, "maxsize": _INGRESS_MAXSIZE}},
             )
             return False
 
@@ -303,14 +303,14 @@ class GatewayScanner:
     def scan(self, msg: IngressMessage) -> RouteDecision:
         log.gateway.info(
             "[gateway] scanner.scan: entry",
-            extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+            extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
         )
         text = _strip_rtl(unicodedata.normalize("NFC", msg.text))
 
         if _PANIC_RE.search(text):
             log.gateway.info(
                 "[gateway] scanner.scan: panic route",
-                extra={"_fields": {"session_id": msg.session_id}},
+                extra={"_fields": {"session_key": msg.session_key}},
             )
             return RouteDecision(route="panic", target="panic")
 
@@ -322,7 +322,7 @@ class GatewayScanner:
                 "[gateway] scanner.scan: parliament route (multi-owl)",
                 extra={
                     "_fields": {
-                        "session_id": msg.session_id,
+                        "session_key": msg.session_key,
                         "owls": all_mentions,
                     }
                 },
@@ -343,7 +343,7 @@ class GatewayScanner:
                 "[gateway] scanner.scan: owl route",
                 extra={
                     "_fields": {
-                        "session_id": msg.session_id,
+                        "session_key": msg.session_key,
                         "requested": requested_name,
                         "target": target,
                         "fuzzy_suggestion": bool(suggestion),
@@ -362,7 +362,7 @@ class GatewayScanner:
             cmd = m2.group(1)
             log.gateway.info(
                 "[gateway] scanner.scan: command route",
-                extra={"_fields": {"session_id": msg.session_id, "cmd": cmd}},
+                extra={"_fields": {"session_key": msg.session_key, "cmd": cmd}},
             )
             return RouteDecision(route="command", target=cmd)
 
@@ -374,12 +374,12 @@ class GatewayScanner:
                 target, stripped = vocative
                 log.gateway.info(
                     "[gateway] scanner.scan: vocative owl route",
-                    extra={"_fields": {"session_id": msg.session_id, "target": target}},
+                    extra={"_fields": {"session_key": msg.session_key, "target": target}},
                 )
                 return RouteDecision(route="owl", target=target, stripped_text=stripped)
 
         log.gateway.info(
             "[gateway] scanner.scan: default secretary route",
-            extra={"_fields": {"session_id": msg.session_id}},
+            extra={"_fields": {"session_key": msg.session_key}},
         )
         return RouteDecision(route="owl", target="secretary")

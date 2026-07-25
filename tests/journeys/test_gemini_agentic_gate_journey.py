@@ -89,7 +89,7 @@ class _ToolCapableProvider(ModelProvider):
 
 def _state(intent: str = "standard") -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id="s", input_text="do a task",
+        trace_id="t", session_key="s", input_text="do a task",
         channel="cli", owl_name="owl-x", pipeline_step="execute",
         interactive=True, intent_class=intent,  # type: ignore[arg-type]
     )

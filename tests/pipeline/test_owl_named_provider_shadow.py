@@ -36,7 +36,7 @@ class _FakeServices:
 
 def _state(owl_name: str = "scout") -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id="s1", input_text="hi", channel="cli",
+        trace_id="t", session_key="s1", input_text="hi", channel="cli",
         owl_name=owl_name, pipeline_step="execute",
     )
 

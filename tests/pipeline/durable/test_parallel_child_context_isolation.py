@@ -55,7 +55,7 @@ async def test_four_concurrent_children_no_task_id_crossover(monkeypatch) -> Non
     async def _run(label: str, task_id: str) -> None:
         backend = AsyncioBackend(services=StepServices())
         state = PipelineState(
-            trace_id=f"tr-{label}", session_id="s", input_text="x", channel="cli",
+            trace_id=f"tr-{label}", session_key="s", input_text="x", channel="cli",
             owl_name="secretary", pipeline_step="", interactive=False,
             task_id=task_id, durable_owner_id="owner",
         )

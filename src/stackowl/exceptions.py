@@ -345,10 +345,10 @@ class OwlConcurrencyError(DomainError):
 class ParliamentTimeoutError(InfrastructureError):
     """Raised when a Parliament session exceeds its hard wall-clock budget."""
 
-    def __init__(self, session_id: str, elapsed_s: float) -> None:
-        self.session_id = session_id
+    def __init__(self, session_key: str, elapsed_s: float) -> None:
+        self.session_key = session_key
         self.elapsed_s = elapsed_s
-        super().__init__(f"Parliament session {session_id} timed out after {elapsed_s:.1f}s")
+        super().__init__(f"Parliament session {session_key} timed out after {elapsed_s:.1f}s")
 
 
 class ParliamentTokenBudgetError(DomainError):

@@ -5,10 +5,10 @@ Tests assert:
   2. The description does NOT claim cross-channel / owner propagation without
      the qualifier "when configured".
   3. Setting a tier for one session is read back in the same session.
-  4. A different session_id with no identity_key does NOT inherit the tier.
+  4. A different session_key with no identity_key does NOT inherit the tier.
   5. ARM-THE-GUN: two sessions sharing identity_key DO see the same tier via
-     get_session_tier(identity_key or session_id) — the router lookup key.
-  6. FALLBACK: identity_key="" means the router uses session_id (byte-identical
+     get_session_tier(identity_key or session_key) — the router lookup key.
+  6. FALLBACK: identity_key="" means the router uses session_key (byte-identical
      to prior behaviour).
 """
 
@@ -29,8 +29,8 @@ def _reset_registry_and_tiers() -> None:
     reset_session_tiers()
 
 
-def _make_state(session_id: str, identity_key: str = "") -> PipelineState:
-    return make_state().model_copy(update={"session_id": session_id, "identity_key": identity_key})
+def _make_state(session_key: str, identity_key: str = "") -> PipelineState:
+    return make_state().model_copy(update={"session_key": session_key, "identity_key": identity_key})
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ async def test_tier_different_sessions_are_independent() -> None:
     """A tier set for session A is not visible to session B.
 
     This proves the preference is session-scoped, not owner-wide:
-    get_session_tier uses session_id as key, so session B starts with None.
+    get_session_tier uses session_key as key, so session B starts with None.
     """
     state_a = _make_state("session-A")
     state_b = _make_state("session-B")
@@ -134,10 +134,10 @@ async def test_tier_show_current_when_no_arg() -> None:
 async def test_router_tier_lookup_uses_identity_key_across_channels() -> None:
     """ARM-THE-GUN: tier set on telegram session surfaces on slack session with same identity_key.
 
-    This test would be RED if the router called get_session_tier(state.session_id)
-    (bare session_id) — the second channel's session_id "slack:U0" != "telegram:123"
+    This test would be RED if the router called get_session_tier(state.session_key)
+    (bare session_key) — the second channel's session_key "slack:U0" != "telegram:123"
     so the cache would miss and return None.  It is GREEN only when the router calls
-    get_session_tier(state.identity_key or state.session_id).
+    get_session_tier(state.identity_key or state.session_key).
     """
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
@@ -148,25 +148,25 @@ async def test_router_tier_lookup_uses_identity_key_across_channels() -> None:
 
     # Router-side lookup for a DIFFERENT session on Slack with the SAME identity
     state_slack = _make_state("slack:U0", identity_key="owner-primary")
-    router_key = state_slack.identity_key or state_slack.session_id
+    router_key = state_slack.identity_key or state_slack.session_key
     tier = get_session_tier(router_key)
 
     assert tier == "fast", (
         f"Router lookup with identity_key='owner-primary' returned {tier!r} instead of 'fast'. "
-        "This means get_session_tier was called with bare session_id instead of identity_key or session_id."
+        "This means get_session_tier was called with bare session_key instead of identity_key or session_key."
     )
 
 
 async def test_router_tier_lookup_falls_back_to_session_id_when_no_identity() -> None:
-    """FALLBACK: identity_key='' → router uses session_id — byte-identical to prior behaviour."""
+    """FALLBACK: identity_key='' → router uses session_key — byte-identical to prior behaviour."""
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     state = _make_state("cli:mybox", identity_key="")
     await CommandRegistry.instance().dispatch("tier", "local", state)
 
-    # Router key: identity_key is empty so it falls back to session_id
-    router_key = state.identity_key or state.session_id
+    # Router key: identity_key is empty so it falls back to session_key
+    router_key = state.identity_key or state.session_key
     assert router_key == "cli:mybox"
     tier = get_session_tier(router_key)
     assert tier == "local", (

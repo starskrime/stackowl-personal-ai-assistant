@@ -10,7 +10,7 @@ vocabularies never collide (tier names vs. subcommand names are disjoint):
    :class:`PreferenceStore` so it survives ``stackowl serve`` restarts. Keyed
    by the resolved identity: when ``state.identity_key`` is set (cross-channel
    identity threading is active) the preference follows the user across
-   channels. Falls back to ``state.session_id`` otherwise (byte-identical to
+   channels. Falls back to ``state.session_key`` otherwise (byte-identical to
    the original, pre-merge behaviour). Falls back to an in-memory dict when
    the store is unavailable (e.g. unit tests).
 
@@ -163,10 +163,10 @@ def _owner_key_for_state(state: PipelineState) -> str:
 
     Returns ``state.identity_key`` when set — the resolved cross-channel
     identity so preferences follow the user across Telegram, Slack, CLI, etc.
-    Falls back to ``state.session_id`` for channels not yet configured for
+    Falls back to ``state.session_key`` for channels not yet configured for
     cross-channel identity (byte-identical to prior behaviour).
     """
-    return state.identity_key or state.session_id
+    return state.identity_key or state.session_key
 
 
 class TierCommand(SlashCommand):
@@ -200,7 +200,7 @@ class TierCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.engine.debug(
             "[commands] tier.handle: entry",
-            extra={"_fields": {"session": state.session_id, "args_len": len(args)}},
+            extra={"_fields": {"session": state.session_key, "args_len": len(args)}},
         )
         parts = args.strip().split(maxsplit=1)
         first = parts[0].lower() if parts else ""
@@ -244,7 +244,7 @@ class TierCommand(SlashCommand):
         # -- neither a valid tier nor a valid admin subcommand -----------------
         log.engine.warning(
             "[commands] tier.handle: rejected unknown tier/subcommand",
-            extra={"_fields": {"session": state.session_id, "token": first[:40]}},
+            extra={"_fields": {"session": state.session_key, "token": first[:40]}},
         )
         return f"✗ Unknown tier: {first} — valid tiers: {', '.join(_VALID_TIERS)}\n\n{_USAGE}"
 
@@ -262,7 +262,7 @@ class TierCommand(SlashCommand):
             current = await _read_tier(store, owner_key) or "default"
             log.engine.debug(
                 "[commands] tier.handle_preference: decision — show current",
-                extra={"_fields": {"session": state.session_id, "current": current}},
+                extra={"_fields": {"session": state.session_key, "current": current}},
             )
             text = f"Current tier preference: {current}\nValid tiers: {', '.join(_VALID_TIERS)}"
             actions = tuple(
@@ -272,7 +272,7 @@ class TierCommand(SlashCommand):
         await _write_tier(store, owner_key, tier)
         log.engine.info(
             "[commands] tier.handle_preference: exit — preference stored",
-            extra={"_fields": {"session": state.session_id, "tier": tier}},
+            extra={"_fields": {"session": state.session_key, "tier": tier}},
         )
         return f"Tier preference set to {tier} for this session"
 
@@ -672,11 +672,11 @@ def get_session_tier(owner_key: str) -> str | None:
     """Return the cached tier for ``owner_key`` or ``None`` if unset.
 
     ``owner_key`` must be the *resolved* preference key — i.e.
-    ``state.identity_key or state.session_id`` — matching the key used by
+    ``state.identity_key or state.session_key`` — matching the key used by
     :func:`_write_tier` via :func:`_owner_key_for_state`.  When
     ``identity_key`` is set, the same tier is returned regardless of which
     channel (Telegram, Slack, CLI …) the lookup originates from.  When
-    ``identity_key`` is empty, ``session_id`` is used as the key, which is
+    ``identity_key`` is empty, ``session_key`` is used as the key, which is
     byte-identical to the prior behaviour.
 
     Reads from the in-memory fallback dict only — synchronous callers like the

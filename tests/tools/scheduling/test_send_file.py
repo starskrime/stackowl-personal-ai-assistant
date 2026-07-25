@@ -131,14 +131,14 @@ async def _run(
     *,
     deliverer: Any,
     channel: str | None = "telegram",
-    session_id: str | None = "sess-sf",
+    session_key: str | None = "sess-sf",
     trace_id: str | None = _TRACE,
     **kwargs: Any,
 ) -> Any:
     services = StepServices(proactive_deliverer=deliverer)
     stoken = set_services(services)
     ttoken = TraceContext.start(
-        session_id=session_id, trace_id=trace_id, interactive=True, channel=channel
+        session_key=session_key, trace_id=trace_id, interactive=True, channel=channel
     )
     try:
         return await tool.execute(**kwargs)
@@ -712,7 +712,7 @@ async def _turn(env: _Env, text: str, *, tap: str) -> None:
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
     )
     run_task = asyncio.create_task(env.backend.run(state))

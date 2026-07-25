@@ -109,9 +109,9 @@ class SlackChannelAdapter(ChannelAdapter):
         self._bot_user_id: str = ""
         self._session_counter = 0
         self._last_ping_at: datetime | None = None
-        # Session→target map (load-bearing): session_id → the Slack channel id
+        # Session→target map (load-bearing): session_key → the Slack channel id
         # that this session's replies route to. Phase B's consent + clarify
-        # resolve the Slack destination from THIS map because the session_id
+        # resolve the Slack destination from THIS map because the session_key
         # (``slack:{hash}``) is NOT itself a send target. ``_last_target`` is the
         # single-terminal fallback when a chunk carries no explicit target.
         self._targets: dict[str, str] = {}
@@ -130,7 +130,7 @@ class SlackChannelAdapter(ChannelAdapter):
         # grows unbounded across a long-lived process.
         self._thread_by_trace: dict[str, str] = {}
         # Inbound-files map (F010): trace_id → the Slack file id(s) attached to the
-        # inbound event that minted this turn. Previously keyed by session_id
+        # inbound event that minted this turn. Previously keyed by session_key
         # (``slack:{hash(user)}`` — shared across ALL of a user's messages), so a
         # later FILELESS same-user event cleared an earlier turn's ids before it
         # fetched them. Keying by the turn-owned trace_id makes the ids immune to
@@ -161,31 +161,31 @@ class SlackChannelAdapter(ChannelAdapter):
     def channel_name(self) -> str:
         return "slack"
 
-    def resolve_target(self, session_id: str) -> str | int | None:
-        """Resolve the Slack channel id for ``session_id`` (C1/F104).
+    def resolve_target(self, session_key: str) -> str | int | None:
+        """Resolve the Slack channel id for ``session_key`` (C1/F104).
 
-        The ``slack:{hash}`` session_id is NOT itself a send target, so this
+        The ``slack:{hash}`` session_key is NOT itself a send target, so this
         delegates to the adapter-owned :meth:`target_for_session` / ``_targets``
         map (the asymmetry is honored by keeping resolution in the adapter that
         owns the map). Returns the Slack-native ``str`` channel id, or ``None``
         for an unknown session (the caller then records undeliverable, never a
         guess).
         """
-        target = self.target_for_session(session_id)
+        target = self.target_for_session(session_key)
         log.slack.debug(
             "[slack] adapter.resolve_target: resolved",
             extra={"_fields": {"resolved": target is not None}},
         )
         return target
 
-    def target_for_session(self, session_id: str) -> str | None:
+    def target_for_session(self, session_key: str) -> str | None:
         """Resolve the Slack send destination (channel id) for a session.
 
         Phase B (consent / clarify) calls this to find where to deliver an
-        out-of-band prompt, since the ``slack:{hash}`` session_id is not itself
+        out-of-band prompt, since the ``slack:{hash}`` session_key is not itself
         a send target. Returns ``None`` for an unknown session.
         """
-        return self._targets.get(session_id)
+        return self._targets.get(session_key)
 
     def inbound_files_for_trace(self, trace_id: str) -> list[str]:
         """Return the Slack file id(s) attached to the event that minted this turn.
@@ -219,7 +219,7 @@ class SlackChannelAdapter(ChannelAdapter):
             "[slack] adapter.receive: yielded message",
             extra={
                 "_fields": {
-                    "session_id": msg.session_id,
+                    "session_key": msg.session_key,
                     "trace_id": msg.trace_id,
                     "text_len": len(msg.text),
                 }
@@ -485,15 +485,15 @@ class SlackChannelAdapter(ChannelAdapter):
 
     async def send_clarify(
         self,
-        session_id: str,
+        session_key: str,
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,
     ) -> None:
         """Deliver a clarify question as tap-buttons (one Block Kit button/choice).
 
-        The Slack destination is resolved from ``target_for_session(session_id)``
-        — the ``slack:{hash}`` session_id is NOT itself a send target. When that
+        The Slack destination is resolved from ``target_for_session(session_key)``
+        — the ``slack:{hash}`` session_key is NOT itself a send target. When that
         returns ``None`` we degrade to the numbered-text fallback (best-effort to
         ``_last_target``) rather than guessing a channel.
 
@@ -517,11 +517,11 @@ class SlackChannelAdapter(ChannelAdapter):
             extra={"_fields": {"n_choices": n_nonblank, "clarify_id": clarify_id}},
         )
         # 2. DECISION — resolve the Slack destination from the session→channel map.
-        dest = self.target_for_session(session_id)
+        dest = self.target_for_session(session_key)
         if dest is None:
             log.slack.warning(
                 "[slack] adapter.send_clarify: no target for session — text fallback",
-                extra={"_fields": {"session_id": session_id, "clarify_id": clarify_id}},
+                extra={"_fields": {"session_key": session_key, "clarify_id": clarify_id}},
             )
             await self._send_clarify_text_fallback(question, choices, channel=None)
             return
@@ -774,7 +774,7 @@ class SlackChannelAdapter(ChannelAdapter):
         )
 
         self._session_counter += 1
-        session_id = f"slack:{hash_user_id(user_id)}"
+        session_key = f"slack:{hash_user_id(user_id)}"
         trace_id = f"slack-{hash_user_id(user_id)}-{self._session_counter}"
 
         # Resolve the Slack send destination. The event carries `channel` (the
@@ -789,7 +789,7 @@ class SlackChannelAdapter(ChannelAdapter):
         # C2 — surface inbound files so the turn can fetch them via
         # ``download_media``. Slack puts uploads in an event-level ``files``
         # array, each carrying an ``id``. We extract the ids only (never log raw
-        # file contents) and key them by session_id so the turn already owns the
+        # file contents) and key them by session_key so the turn already owns the
         # lookup. Non-list/missing → no files (no fabricated ids).
         raw_files = event.get("files")
         file_ids: list[str] = []
@@ -812,7 +812,7 @@ class SlackChannelAdapter(ChannelAdapter):
 
         msg = IngressMessage(
             text=cleaned,
-            session_id=session_id,
+            session_key=session_key,
             channel=self.channel_name,
             trace_id=trace_id,
             # Stamp the routing channel id so this turn delivers back to ITS OWN
@@ -826,7 +826,7 @@ class SlackChannelAdapter(ChannelAdapter):
         )
         # Record the session→target map (Phase B) + single-terminal fallback for
         # best-effort callers that carry no explicit target.
-        self._targets[session_id] = channel_id
+        self._targets[session_key] = channel_id
         self._last_target = channel_id
         # Per-TURN thread (F011): stamp this turn's originating thread under its
         # trace_id so its reply threads correctly even after a newer concurrent

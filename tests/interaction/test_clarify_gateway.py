@@ -41,9 +41,9 @@ class _FakeAdapter:
         return self._name
 
     async def send_clarify(
-        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_key: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((session_id, question, tuple(choices), clarify_id))
+        self.calls.append((session_key, question, tuple(choices), clarify_id))
 
 
 class _FakeClock:
@@ -68,7 +68,7 @@ async def test_ask_registers_and_delivers() -> None:
     cid = await gw.ask("s1", "cli", "X or Y?", choices=("X", "Y"))
 
     assert isinstance(cid, str) and cid
-    # Delivered exactly once with the new (session_id-first) signature.
+    # Delivered exactly once with the new (session_key-first) signature.
     assert adapter.calls == [("s1", "X or Y?", ("X", "Y"), cid)]
     # Registered and resolvable.
     entry = gw.try_resolve("s1", "cli", "X")
@@ -305,7 +305,7 @@ async def test_peek_returns_entry_without_pop_or_event_touch() -> None:
     assert isinstance(entry, PendingClarify)
     assert entry.clarify_id == cid
     assert entry.choices == ("A", "B")
-    assert entry.session_id == "s1"
+    assert entry.session_key == "s1"
     assert entry.channel == "cli"
     # peek is a pure read: entry stays in _pending and its event is untouched.
     assert cid in gw._pending

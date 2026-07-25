@@ -16,7 +16,7 @@ async def test_why_dispatch_returns_pipeline_step() -> None:
     register_all_commands(CommandDeps(), registry=CommandRegistry.instance())
     state = PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="",
         channel="cli",
         owl_name="secretary",

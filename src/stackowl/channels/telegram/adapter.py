@@ -140,32 +140,32 @@ class TelegramChannelAdapter(ChannelAdapter):
     def contributor_name(self) -> str:
         return "telegram"
 
-    def resolve_target(self, session_id: str) -> str | int | None:
-        """Resolve the numeric chat id for ``session_id`` (private-chat convention).
+    def resolve_target(self, session_key: str) -> str | int | None:
+        """Resolve the numeric chat id for ``session_key`` (private-chat convention).
 
         Mirrors :func:`stackowl.notifications.router_helpers.resolve_target_chat_id`
-        for the telegram channel: a private chat's ``session_id`` IS the chat id
-        (session_id == str(user_id) == chat_id). A non-numeric session (e.g. a
+        for the telegram channel: a private chat's ``session_key`` IS the chat id
+        (session_key == str(user_id) == chat_id). A non-numeric session (e.g. a
         group, whose chat_id != user_id) cannot be resolved here and returns
         ``None`` — logged, never guessed — so the caller records the send as
         undeliverable rather than riding ``_last_chat_id``.
         """
         log.telegram.debug(
             "[telegram] adapter.resolve_target: entry",
-            extra={"_fields": {"session_present": bool(session_id)}},
+            extra={"_fields": {"session_present": bool(session_key)}},
         )
-        sid = (session_id or "").strip()
+        sid = (session_key or "").strip()
         if not sid:
             log.telegram.warning(
-                "[telegram] adapter.resolve_target: blank session_id — unresolved",
+                "[telegram] adapter.resolve_target: blank session_key — unresolved",
             )
             return None
         try:
             chat_id = int(sid)
         except ValueError:
             log.telegram.warning(
-                "[telegram] adapter.resolve_target: session_id is not a chat id — unresolved",
-                extra={"_fields": {"session_id": sid}},
+                "[telegram] adapter.resolve_target: session_key is not a chat id — unresolved",
+                extra={"_fields": {"session_key": sid}},
             )
             return None
         log.telegram.debug(
@@ -932,21 +932,21 @@ class TelegramChannelAdapter(ChannelAdapter):
 
     async def send_clarify(
         self,
-        session_id: str,
+        session_key: str,
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,
     ) -> None:
         """Deliver a clarify question as tap-buttons (one per choice).
 
-        Targets the asking user's chat (``session_id`` == Telegram user id). Each
+        Targets the asking user's chat (``session_key`` == Telegram user id). Each
         choice becomes an inline button whose ``callback_data`` is
         ``clarify:{clarify_id}:{idx}`` — a tap is resolved by the clarify callback
         handler, which maps ``idx`` back to the choice text and wakes the parked
         turn. Open-ended questions (no choices) are sent as plain text and
         answered by typing.
 
-        Self-healing: a non-int ``session_id``, a callback_data overflow, or any
+        Self-healing: a non-int ``session_key``, a callback_data overflow, or any
         delivery error degrades to a best-effort ``send_text`` of the bare
         question — delivery failure must never crash the turn (the gateway treats
         ``send_clarify`` as best-effort).
@@ -968,11 +968,11 @@ class TelegramChannelAdapter(ChannelAdapter):
             extra={"_fields": {"n_choices": n_nonblank, "clarify_id": clarify_id}},
         )
         try:
-            chat_id = int(session_id)
+            chat_id = int(session_key)
         except (TypeError, ValueError):
             log.telegram.error(
-                "[telegram] adapter.send_clarify: session_id is not a chat id — text fallback",
-                extra={"_fields": {"session_id": session_id, "clarify_id": clarify_id}},
+                "[telegram] adapter.send_clarify: session_key is not a chat id — text fallback",
+                extra={"_fields": {"session_key": session_key, "clarify_id": clarify_id}},
             )
             await self._send_clarify_text_fallback(body)
             return
@@ -1351,7 +1351,7 @@ class TelegramChannelAdapter(ChannelAdapter):
                     is_reply_to_bot = True
         ingress = IngressMessage(
             text=stripped,
-            session_id=str(user_id),
+            session_key=str(user_id),
             channel=self.channel_name,
             trace_id=_mint_request_id(),
             # Stamp the ORIGINATING chat on this message so its turn delivers back

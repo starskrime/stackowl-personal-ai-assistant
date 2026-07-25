@@ -7,8 +7,8 @@ Four scenarios:
   (a) Preference crosses channels — a preference stored under the identity_key
       appears when _gather_preferences is called via state.identity_key for BOTH
       a SLACK PipelineState and a TELEGRAM PipelineState that share the same
-      identity_key="owner-primary".  Pre-Task-3 the classify step used session_id,
-      so the Slack turn (session_id="slack:abc") would have missed the preference
+      identity_key="owner-primary".  Pre-Task-3 the classify step used session_key,
+      so the Slack turn (session_key="slack:abc") would have missed the preference
       stored under "owner-primary".
 
   (b) Fact store unity (real-seam assertion) — FactExtractor.extract() is called
@@ -16,7 +16,7 @@ Four scenarios:
       both to "owner-primary".  The resulting StagedFacts carry source_ref=
       "owner-primary" (not the per-channel handles), and the DB contains zero rows
       under either per-channel handle after staging.  This WOULD have been RED
-      before Task 4 when source_ref=session_id.
+      before Task 4 when source_ref=session_key.
 
   (c) Conversation does NOT cross — MemoryBridge.store() writes a conversation
       turn under "telegram:123".  The POSITIVE control confirms it is visible to
@@ -26,7 +26,7 @@ Four scenarios:
 
   (d) Unconfigured byte-identical — IdentityResolver({}).resolve() returns the
       handle unchanged; when identity_key is empty, _gather_preferences falls back
-      to state.session_id.
+      to state.session_key.
 """
 
 from __future__ import annotations
@@ -190,11 +190,11 @@ def _disable_test_mode():  # noqa: ANN202
 
 async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
     """A preference stored under 'owner-primary' is visible when classify looks up
-    _gather_preferences(state.identity_key or state.session_id) for BOTH a Slack
+    _gather_preferences(state.identity_key or state.session_key) for BOTH a Slack
     and a Telegram PipelineState sharing identity_key='owner-primary'.
 
-    Pre-Task-3: classify used session_id for the lookup.  A Slack turn with
-    session_id='slack:abc' would return empty because no preference is stored
+    Pre-Task-3: classify used session_key for the lookup.  A Slack turn with
+    session_key='slack:abc' would return empty because no preference is stored
     under 'slack:abc' — only under 'owner-primary'.  After Task 3 the step uses
     state.identity_key (non-empty) so BOTH channels see the cross-channel preference.
     """
@@ -213,7 +213,7 @@ async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
         # Slack channel state: identity_key resolves to "owner-primary"
         slack_state = PipelineState(
             trace_id="trace-identity-a-slack",
-            session_id="slack:abc",
+            session_key="slack:abc",
             identity_key="owner-primary",
             input_text="hi",
             channel="slack",
@@ -221,13 +221,13 @@ async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
             pipeline_step="start",
             interactive=True,
         )
-        slack_effective_key = slack_state.identity_key or slack_state.session_id
+        slack_effective_key = slack_state.identity_key or slack_state.session_key
         assert slack_effective_key == "owner-primary"
 
-        # Telegram channel state: different session_id, same identity_key
+        # Telegram channel state: different session_key, same identity_key
         telegram_state = PipelineState(
             trace_id="trace-identity-a-telegram",
-            session_id="telegram:123",
+            session_key="telegram:123",
             identity_key="owner-primary",
             input_text="hi",
             channel="telegram",
@@ -235,7 +235,7 @@ async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
             pipeline_step="start",
             interactive=True,
         )
-        telegram_effective_key = telegram_state.identity_key or telegram_state.session_id
+        telegram_effective_key = telegram_state.identity_key or telegram_state.session_key
         assert telegram_effective_key == "owner-primary"
 
         # This is the exact call classify makes — both channels resolve to the same key
@@ -256,9 +256,9 @@ async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
             f"[{label}] preference value 'bullets' missing; got: {prefs_block!r}"
         )
 
-    # Discriminating negative: pre-Task-3 the lookup used session_id directly.
+    # Discriminating negative: pre-Task-3 the lookup used session_key directly.
     # A bare per-channel handle has nothing stored under it — returns empty.
-    # This is the gun: if classify still used session_id, the slack/telegram checks
+    # This is the gun: if classify still used session_key, the slack/telegram checks
     # above would PASS trivially (identity_key happens to match owner-primary).
     # The negative proves the data is NOT under the per-channel handle.
     token2 = set_services(services)
@@ -284,7 +284,7 @@ async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
 
 
 async def test_journey_b_fact_stored_under_identity_key(tmp_db: DbPool) -> None:
-    """Facts staged by FactExtractor are keyed on identity, not session_id.
+    """Facts staged by FactExtractor are keyed on identity, not session_key.
 
     This drives the REAL extraction path via FactExtractor.extract() for both
     'telegram:123' and 'slack:abc' using an IdentityResolver that maps both to
@@ -295,7 +295,7 @@ async def test_journey_b_fact_stored_under_identity_key(tmp_db: DbPool) -> None:
          per-channel handle.
 
     This test WOULD HAVE BEEN RED before Task 4: without a resolver, extract()
-    stamps source_ref=session_id, producing separate rows under the per-channel
+    stamps source_ref=session_key, producing separate rows under the per-channel
     handles.  A hardcoded INSERT bypasses the feature entirely — this test does not.
     """
     resolver = IdentityResolver({"owner-primary": ["telegram:123", "slack:abc"]})
@@ -305,11 +305,11 @@ async def test_journey_b_fact_stored_under_identity_key(tmp_db: DbPool) -> None:
     convo = [Message(role="user", content="I prefer dark mode.")]
 
     # Drive real extraction for the telegram session
-    telegram_facts = await extractor.extract(convo, session_id="telegram:123")
+    telegram_facts = await extractor.extract(convo, session_key="telegram:123")
     assert telegram_facts, "extractor must return at least one fact from telegram session"
 
     # Drive real extraction for the slack session (same user, same identity)
-    slack_facts = await extractor.extract(convo, session_id="slack:abc")
+    slack_facts = await extractor.extract(convo, session_key="slack:abc")
     assert slack_facts, "extractor must return at least one fact from slack session"
 
     # Both sets of StagedFacts must carry source_ref=identity, not per-channel handles.
@@ -373,7 +373,7 @@ async def test_journey_c_conversation_does_not_cross_channels(tmp_db: DbPool) ->
     This is the isolation invariant: extracted facts cross channels (via identity_key);
     live conversation turns do NOT cross (source_ref stays per-session).
 
-    Also verifies the structural distinction between identity_key and session_id,
+    Also verifies the structural distinction between identity_key and session_key,
     and that the classify fallback expression is correctly parenthesized.
     """
     bridge = SqliteMemoryBridge(tmp_db)
@@ -400,22 +400,22 @@ async def test_journey_c_conversation_does_not_cross_channels(tmp_db: DbPool) ->
         f"resolve to 'owner-primary'; got: {[t.content for t in slack_turns]}"
     )
 
-    # Structural invariant: identity_key != session_id (they are different values)
+    # Structural invariant: identity_key != session_key (they are different values)
     state = PipelineState(
         trace_id="trace-identity-c",
-        session_id="slack:abc",
+        session_key="slack:abc",
         identity_key="owner-primary",
         input_text="hello",
         channel="slack",
         owl_name="secretary",
         pipeline_step="start",
     )
-    assert state.identity_key != state.session_id, (
-        "identity_key and session_id must be different (cross-channel vs per-session)"
+    assert state.identity_key != state.session_key, (
+        "identity_key and session_key must be different (cross-channel vs per-session)"
     )
     # The classify step uses identity_key (non-empty) — parenthesized to avoid
     # the operator-precedence bug where `a or b == c` evaluates as `a or (b == c)`.
-    effective_key = state.identity_key or state.session_id
+    effective_key = state.identity_key or state.session_key
     assert effective_key == "owner-primary", (
         f"effective_key must be 'owner-primary' when identity_key is set; got: {effective_key!r}"
     )
@@ -430,7 +430,7 @@ async def test_journey_d_unconfigured_byte_identical(tmp_db: DbPool) -> None:
     """With no aliases configured, IdentityResolver returns the handle unchanged.
 
     When state.identity_key is empty, _gather_preferences falls back to
-    state.session_id — byte-identical to pre-identity behavior.
+    state.session_key — byte-identical to pre-identity behavior.
     """
     resolver = IdentityResolver({})
 
@@ -440,33 +440,33 @@ async def test_journey_d_unconfigured_byte_identical(tmp_db: DbPool) -> None:
     )
     assert resolver.resolve("slack:xyz") == "slack:xyz"
 
-    # Store a preference under the session_id (the fallback key)
+    # Store a preference under the session_key (the fallback key)
     store = PreferenceStore(db=tmp_db)
     await store.set("telegram:999", "timezone", "UTC")
 
     services = StepServices(preference_store=store)
     token = set_services(services)
     try:
-        # With empty identity_key, classify falls back to session_id
+        # With empty identity_key, classify falls back to session_key
         state = PipelineState(
             trace_id="trace-identity-d",
-            session_id="telegram:999",
+            session_key="telegram:999",
             identity_key="",  # unconfigured — no identity resolution
             input_text="hi",
             channel="telegram",
             owl_name="secretary",
             pipeline_step="start",
         )
-        effective_key = state.identity_key or state.session_id
+        effective_key = state.identity_key or state.session_key
         assert effective_key == "telegram:999", (
-            f"empty identity_key must fall back to session_id; got: {effective_key!r}"
+            f"empty identity_key must fall back to session_key; got: {effective_key!r}"
         )
         prefs_block = await _gather_preferences(effective_key)
     finally:
         reset_services(token)
 
     assert "timezone" in prefs_block, (
-        f"unconfigured fallback must read preference from session_id; got: {prefs_block!r}"
+        f"unconfigured fallback must read preference from session_key; got: {prefs_block!r}"
     )
     assert "UTC" in prefs_block
 

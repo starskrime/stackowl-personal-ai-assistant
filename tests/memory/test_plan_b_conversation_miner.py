@@ -26,13 +26,13 @@ class _StubExtractor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
 
-    async def extract(self, messages: list[object], session_id: str) -> list[StagedFact]:
-        self.calls.append((session_id, len(messages)))
+    async def extract(self, messages: list[object], session_key: str) -> list[StagedFact]:
+        self.calls.append((session_key, len(messages)))
         return [
             StagedFact(
-                content=f"fact about {session_id}",
+                content=f"fact about {session_key}",
                 source_type="conversation_fact",
-                source_ref=session_id,
+                source_ref=session_key,
                 confidence=0.9,
             )
         ]
@@ -110,7 +110,7 @@ async def test_remine_reinforces_existing_fact(tmp_db: DbPool) -> None:
 
 
 async def test_mine_all_iterates_distinct_sessions(tmp_db: DbPool) -> None:
-    """mine_all() processes every distinct session_id with conversation turns."""
+    """mine_all() processes every distinct session_key with conversation turns."""
     bridge = SqliteMemoryBridge(tmp_db)
     await bridge.store("User: a\n\nAssistant: b", "s1")
     await bridge.store("User: c\n\nAssistant: d", "s2")
@@ -130,18 +130,18 @@ async def test_mine_all_iterates_distinct_sessions(tmp_db: DbPool) -> None:
 class _TwoFactExtractor:
     """Returns 2 facts per session — first staging will raise, second should succeed."""
 
-    async def extract(self, messages: list[object], session_id: str) -> list[StagedFact]:
+    async def extract(self, messages: list[object], session_key: str) -> list[StagedFact]:
         return [
             StagedFact(
-                content=f"fact-A for {session_id}",
+                content=f"fact-A for {session_key}",
                 source_type="conversation_fact",
-                source_ref=session_id,
+                source_ref=session_key,
                 confidence=0.9,
             ),
             StagedFact(
-                content=f"fact-B for {session_id}",
+                content=f"fact-B for {session_key}",
                 source_type="conversation_fact",
-                source_ref=session_id,
+                source_ref=session_key,
                 confidence=0.8,
             ),
         ]

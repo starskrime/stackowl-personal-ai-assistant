@@ -62,10 +62,10 @@ def test_parliament_panel_on_started_sets_session_id_and_round_panels() -> None:
     panel = ParliamentPanel()
     panel.on_parliament_started_message(
         ParliamentStartedMessage(
-            session_id="s99", owl_names=("Alice", "Bob"), trigger="explicit"
+            session_key="s99", owl_names=("Alice", "Bob"), trigger="explicit"
         )
     )
-    assert panel.session_id == "s99"
+    assert panel.session_key == "s99"
     assert panel.current_round == 1
     assert set(panel.round_panels.keys()) == {"Alice", "Bob"}
 
@@ -74,7 +74,7 @@ def test_parliament_panel_on_started_sets_display_true() -> None:
     panel = ParliamentPanel()
     panel.display = False
     panel.on_parliament_started_message(
-        ParliamentStartedMessage(session_id="s", owl_names=("o1",))
+        ParliamentStartedMessage(session_key="s", owl_names=("o1",))
     )
     assert panel.display is True
 
@@ -82,17 +82,17 @@ def test_parliament_panel_on_started_sets_display_true() -> None:
 def test_parliament_panel_on_closed_sets_display_false() -> None:
     panel = ParliamentPanel()
     panel.display = True
-    panel.on_parliament_closed_message(ParliamentClosedMessage(session_id="s"))
+    panel.on_parliament_closed_message(ParliamentClosedMessage(session_key="s"))
     assert panel.display is False
 
 
 def test_parliament_panel_round_started_updates_current_round() -> None:
     panel = ParliamentPanel()
     panel.on_parliament_started_message(
-        ParliamentStartedMessage(session_id="s", owl_names=("o1",))
+        ParliamentStartedMessage(session_key="s", owl_names=("o1",))
     )
     panel.on_parliament_round_started_message(
-        ParliamentRoundStartedMessage(session_id="s", round_number=3)
+        ParliamentRoundStartedMessage(session_key="s", round_number=3)
     )
     assert panel.current_round == 3
 
@@ -100,10 +100,10 @@ def test_parliament_panel_round_started_updates_current_round() -> None:
 def test_parliament_panel_round_started_collapses_prior_panels_after_round_1() -> None:
     panel = ParliamentPanel()
     panel.on_parliament_started_message(
-        ParliamentStartedMessage(session_id="s", owl_names=("o1", "o2"))
+        ParliamentStartedMessage(session_key="s", owl_names=("o1", "o2"))
     )
     panel.on_parliament_round_started_message(
-        ParliamentRoundStartedMessage(session_id="s", round_number=2)
+        ParliamentRoundStartedMessage(session_key="s", round_number=2)
     )
     for sub_panel in panel.round_panels.values():
         assert sub_panel.collapsed is True
@@ -112,11 +112,11 @@ def test_parliament_panel_round_started_collapses_prior_panels_after_round_1() -
 def test_parliament_panel_round_message_registers_new_owls() -> None:
     panel = ParliamentPanel()
     panel.on_parliament_started_message(
-        ParliamentStartedMessage(session_id="s", owl_names=("o1",))
+        ParliamentStartedMessage(session_key="s", owl_names=("o1",))
     )
     panel.on_parliament_round_message(
         ParliamentRoundMessage(
-            session_id="s", round_number=1, owl_responses={"new_owl": "hi"}
+            session_key="s", round_number=1, owl_responses={"new_owl": "hi"}
         )
     )
     assert "new_owl" in panel.round_panels
@@ -126,7 +126,7 @@ def test_parliament_panel_synthesis_handler_does_not_raise_without_mount() -> No
     panel = ParliamentPanel()
     panel.on_synthesis_arrived_message(
         SynthesisArrivedMessage(
-            session_id="s", consensus="agree", recommendation="do Y",
+            session_key="s", consensus="agree", recommendation="do Y",
             confidence=0.5, disagreements=("d1",),
         )
     )
@@ -168,12 +168,12 @@ async def test_coordinator_dispatches_parliament_started() -> None:
     coord = UIStateCoordinator(app=app, event_bus=EventBus())  # type: ignore[arg-type]
     await coord._dispatch(
         "parliament_started",
-        {"session_id": "abc", "owl_names": ["o1", "o2"], "trigger": "multi_mention"},
+        {"session_key": "abc", "owl_names": ["o1", "o2"], "trigger": "multi_mention"},
     )
     assert len(app.posted) == 1
     msg = app.posted[0]
     assert isinstance(msg, ParliamentStartedMessage)
-    assert msg.session_id == "abc"
+    assert msg.session_key == "abc"
     assert msg.owl_names == ("o1", "o2")
     assert msg.trigger == "multi_mention"
 
@@ -183,7 +183,7 @@ async def test_coordinator_dispatches_parliament_round_started() -> None:
     app = _FakeApp()
     coord = UIStateCoordinator(app=app, event_bus=EventBus())  # type: ignore[arg-type]
     await coord._dispatch(
-        "parliament_round_started", {"session_id": "abc", "round_number": 2}
+        "parliament_round_started", {"session_key": "abc", "round_number": 2}
     )
     msg = app.posted[0]
     assert isinstance(msg, ParliamentRoundStartedMessage)
@@ -197,7 +197,7 @@ async def test_coordinator_dispatches_synthesis_arrived() -> None:
     await coord._dispatch(
         "synthesis_arrived",
         {
-            "session_id": "abc", "consensus": "agree", "recommendation": "do",
+            "session_key": "abc", "consensus": "agree", "recommendation": "do",
             "confidence": 0.42, "disagreements": ["d1"],
         },
     )
@@ -211,10 +211,10 @@ async def test_coordinator_dispatches_synthesis_arrived() -> None:
 async def test_coordinator_dispatches_parliament_session_closed() -> None:
     app = _FakeApp()
     coord = UIStateCoordinator(app=app, event_bus=EventBus())  # type: ignore[arg-type]
-    await coord._dispatch("parliament_session_closed", {"session_id": "abc"})
+    await coord._dispatch("parliament_session_closed", {"session_key": "abc"})
     msg = app.posted[0]
     assert isinstance(msg, ParliamentClosedMessage)
-    assert msg.session_id == "abc"
+    assert msg.session_key == "abc"
 
 
 # D. TCSS purity + migration presence --------------------------------------

@@ -162,7 +162,7 @@ def _outcome(
     from stackowl.memory.outcome_store import TaskOutcome
 
     return TaskOutcome(
-        outcome_id=0, trace_id=trace_id, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace_id, session_key="s", owl_name="o",
         channel="cli", success=True, latency_ms=100.0, tool_call_count=len(sequence),
         tool_sequence=sequence, failure_class=None, quality_score=quality,
         step_durations={}, input_text="in", response_text="out",
@@ -249,7 +249,7 @@ async def _seed_outcomes(
     for i in range(n):
         tid = f"trace-{sequence[0]}-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=True, latency_ms=50.0, tool_call_count=len(sequence),
             failure_class=None, step_durations={},
             input_text=f"do the thing {i}", response_text="done",
@@ -369,7 +369,7 @@ async def test_refine_rewrites_body_for_midtier(synth_env) -> None:
     # Seed the parent trace's outcome so refine has context
     out_store = TaskOutcomeStore(db)
     await out_store.record(
-        trace_id="t-mid-1", session_id="s", owl_name="scout", channel="cli",
+        trace_id="t-mid-1", session_key="s", owl_name="scout", channel="cli",
         success=True, latency_ms=100.0, tool_call_count=1,
         failure_class=None, step_durations={}, input_text="midtier task",
         response_text="midtier response",
@@ -745,7 +745,7 @@ async def test_refine_threads_constructor_model_to_provider_complete(synth_env) 
         await store.increment_n_executions(sk.skill_id)
     out_store = TaskOutcomeStore(db)
     await out_store.record(
-        trace_id="t-mid-1", session_id="s", owl_name="scout", channel="cli",
+        trace_id="t-mid-1", session_key="s", owl_name="scout", channel="cli",
         success=True, latency_ms=100.0, tool_call_count=1,
         failure_class=None, step_durations={}, input_text="midtier task",
         response_text="midtier response",
@@ -778,17 +778,17 @@ def test_resolve_consent_identity_uses_scheduled_identity_without_trace_context(
     — never the live one."""
     from stackowl.skills.authoring import resolve_consent_identity
 
-    tool_name, channel, session_id = resolve_consent_identity(
+    tool_name, channel, session_key = resolve_consent_identity(
         live_tool_name="live-x", scheduled_tool_name="scheduled-y",
     )
     assert tool_name == "scheduled-y"
     assert channel == "scheduler"
-    assert session_id == "scheduler"
+    assert session_key == "scheduler"
 
 
 def test_resolve_consent_identity_uses_live_identity_inside_interactive_trace() -> None:
     """Reviewer Finding 1a: inside an interactive TraceContext (a live human
-    turn), resolve_consent_identity must read the REAL channel/session_id off
+    turn), resolve_consent_identity must read the REAL channel/session_key off
     TraceContext.get() and return the LIVE identity — the specific branch that
     fixes the SynthesizeSkillsTool regression, previously untested."""
     from stackowl.infra.trace import TraceContext
@@ -796,14 +796,14 @@ def test_resolve_consent_identity_uses_live_identity_inside_interactive_trace() 
 
     token = TraceContext.start("live-session-1", interactive=True, channel="telegram")
     try:
-        tool_name, channel, session_id = resolve_consent_identity(
+        tool_name, channel, session_key = resolve_consent_identity(
             live_tool_name="live-x", scheduled_tool_name="scheduled-y",
         )
     finally:
         TraceContext.reset(token)
     assert tool_name == "live-x"
     assert channel == "telegram"
-    assert session_id == "live-session-1"
+    assert session_key == "live-session-1"
 
 
 async def test_scheduled_write_auto_trusted_via_real_consent_assembly(synth_env) -> None:
@@ -984,7 +984,7 @@ async def test_refine_one_denied_consent_leaves_existing_skill_untouched(synth_e
         await store.increment_n_executions(sk.skill_id)
     out_store = TaskOutcomeStore(db)
     await out_store.record(
-        trace_id="t-mid-1", session_id="s", owl_name="scout", channel="cli",
+        trace_id="t-mid-1", session_key="s", owl_name="scout", channel="cli",
         success=True, latency_ms=100.0, tool_call_count=1,
         failure_class=None, step_durations={}, input_text="midtier task",
         response_text="midtier response",

@@ -347,7 +347,7 @@ class DelegateTaskTool(Tool):
         depth_limit = depth_cap(profile)
         # Width counter is keyed per turn; fall back to session (not a shared "")
         # so untraced turns don't contend for one global bucket (L1).
-        trace_id = str(ctx.get("trace_id") or ctx.get("session_id") or "delegate-task")
+        trace_id = str(ctx.get("trace_id") or ctx.get("session_key") or "delegate-task")
         caller = self._caller_owl()
 
         # 2. DECISION — depth backstop (defense-in-depth; delegate NOT called).
@@ -447,7 +447,7 @@ class DelegateTaskTool(Tool):
         try:
             return await self._run_delegation(
                 delegator=delegator, args=args, caller=caller, target=target, depth=depth,
-                trace_id=trace_id, session_id=str(ctx.get("session_id") or ""),
+                trace_id=trace_id, session_key=str(ctx.get("session_key") or ""),
                 channel=str(ctx.get("channel") or "internal"), t0=t0,
                 durable_scope=durable_scope, delegation_profile=profile,
             )
@@ -468,7 +468,7 @@ class DelegateTaskTool(Tool):
         target: str,
         depth: int,
         trace_id: str,
-        session_id: str,
+        session_key: str,
         channel: str,
         t0: float,
         durable_scope: _DurableChildScope,
@@ -516,7 +516,7 @@ class DelegateTaskTool(Tool):
         memo: dict[tuple[str, str], _A2AResult] = {}
         chain = tuple(TraceContext.get().get("delegation_chain") or ())
         parent_state = PipelineState(
-            trace_id=trace_id or "delegate-task", session_id=session_id, input_text=sub_task,
+            trace_id=trace_id or "delegate-task", session_key=session_key, input_text=sub_task,
             channel=channel, owl_name=caller, pipeline_step="dispatch", delegation_depth=depth,
             delegation_chain=chain, delegation_profile=delegation_profile,
             # E2-S2 delegation floor — clamp to parent EFFECTIVE bounds (owl ∩ ceiling).

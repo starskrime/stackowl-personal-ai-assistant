@@ -36,7 +36,7 @@ def _stub_claude_binary(tmp_path: Path) -> Path:
     stub.write_text(
         "#!/bin/sh\n"
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "sess-123"}\'\n'
+        '"session_key": "sess-123"}\'\n'
     )
     os.chmod(stub, 0o755)
     return stub
@@ -98,7 +98,7 @@ async def test_successful_run_parses_json_summary(
     stub.write_text(
         "#!/bin/sh\n"
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "sess-123"}\'\n'
+        '"session_key": "sess-123"}\'\n'
     )
     os.chmod(stub, 0o755)
     monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)
@@ -108,7 +108,7 @@ async def test_successful_run_parses_json_summary(
     assert result.success is True
     payload = json.loads(result.output)
     assert payload["is_error"] is False
-    assert payload["session_id"] == "sess-123"
+    assert payload["session_key"] == "sess-123"
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_isolates_into_worktree_when_workdir_is_git_repo(
         "#!/bin/sh\n"
         "echo edited > isolated.txt\n"
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "sess-999"}\'\n'
+        '"session_key": "sess-999"}\'\n'
     )
     os.chmod(stub, 0o755)
     monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)
@@ -164,7 +164,7 @@ async def test_isolates_into_worktree_when_workdir_is_git_repo(
 async def test_resume_skips_isolation_even_in_git_repo(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """resume_session_id must see the SAME files an earlier turn edited — no
+    """resume_session_key must see the SAME files an earlier turn edited — no
     session→worktree mapping exists yet, so isolation is skipped, not guessed."""
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
@@ -175,7 +175,7 @@ async def test_resume_skips_isolation_even_in_git_repo(
     monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)
 
     result = await ClaudeCodeTool()(
-        prompt="continue", workdir=str(repo), resume_session_id="sess-123",
+        prompt="continue", workdir=str(repo), resume_session_key="sess-123",
     )
 
     assert result.success is True
@@ -216,7 +216,7 @@ async def test_successful_run_in_git_repo_includes_diff(
         "#!/bin/sh\n"
         "echo edited >> README.md\n"
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "sess-999"}\'\n'
+        '"session_key": "sess-999"}\'\n'
     )
     os.chmod(stub, 0o755)
     monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)
@@ -240,7 +240,7 @@ async def test_successful_run_in_non_git_workdir_has_no_diff_key(
     stub.write_text(
         "#!/bin/sh\n"
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "sess-123"}\'\n'
+        '"session_key": "sess-123"}\'\n'
     )
     os.chmod(stub, 0o755)
     monkeypatch.setattr(shutil, "which", lambda name: str(stub) if name == "claude" else None)

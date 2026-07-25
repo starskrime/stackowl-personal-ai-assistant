@@ -42,7 +42,7 @@ class _Pending:
     """A transcript awaiting the user's Send/Discard decision."""
 
     chat_id: int
-    session_id: str
+    session_key: str
     transcript: str
     is_reply: bool
     message_id: int | None = None
@@ -55,13 +55,13 @@ class PendingTranscriptStore:
         self._pending: dict[str, _Pending] = {}
 
     def add(
-        self, *, chat_id: int, session_id: str, transcript: str, is_reply: bool
+        self, *, chat_id: int, session_key: str, transcript: str, is_reply: bool
     ) -> str:
         """Stash a transcript and return its short id (embedded in callback_data)."""
         rid = uuid4().hex[:16]
         self._pending[rid] = _Pending(
             chat_id=chat_id,
-            session_id=session_id,
+            session_key=session_key,
             transcript=transcript,
             is_reply=is_reply,
         )
@@ -139,7 +139,7 @@ class VoiceConfirmHandler:
         """Enqueue the confirmed transcript as a normal IngressMessage."""
         ingress = IngressMessage(
             text=pending.transcript,
-            session_id=pending.session_id,
+            session_key=pending.session_key,
             channel=self._adapter.channel_name,
             trace_id=uuid4().hex,
             # STAMP chat_id (the cross-deliver fix the old auto-inject path omitted)

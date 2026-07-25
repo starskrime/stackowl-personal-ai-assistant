@@ -55,7 +55,7 @@ def test_factory_registers_on_handler_registry() -> None:
 async def test_handler_drives_sweep_and_reports_reaped() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("stuck", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("stuck", session_key="s1", task=t, target=None, original_input="a")
     await t  # done, status still RUNNING — the reapable wedge
     handler = TurnSweepHandler(reg, ttl_seconds=999_999.0)
 
@@ -71,7 +71,7 @@ async def test_handler_drives_sweep_and_reports_reaped() -> None:
 async def test_handler_does_not_reap_live_turn() -> None:
     reg = TurnRegistry()
     live = asyncio.create_task(asyncio.sleep(60))
-    await reg.register("live", session_id="s1", task=live, target=None, original_input="a")
+    await reg.register("live", session_key="s1", task=live, target=None, original_input="a")
     handler = TurnSweepHandler(reg, ttl_seconds=0.0)  # past TTL but NOT done
 
     res = await handler.execute(_job())
@@ -94,7 +94,7 @@ async def test_reaped_stranded_session_is_drained() -> None:
     reg = TurnRegistry()
     reg.set_stranded_drainer(_drainer)
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("stuck", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("stuck", session_key="s1", task=t, target=None, original_input="a")
     await t
     handler = TurnSweepHandler(reg, ttl_seconds=0.0)
 

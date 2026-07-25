@@ -109,7 +109,7 @@ class _StubReadTool(_StubConsequentialTool):
 async def test_tier_auto_allows_without_prompting() -> None:
     prompter = _RecordingPrompter(ConsentScope.DENY)
     policy = ConsentPolicy(prompter=prompter, tiers={"t": TrustTier.AUTO})
-    allowed = await policy.request(tool_name="t", channel="cli", session_id="s1")
+    allowed = await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert allowed is True
     assert prompter.requests == []  # never prompted
 
@@ -117,7 +117,7 @@ async def test_tier_auto_allows_without_prompting() -> None:
 async def test_tier_never_denies_without_prompting() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     policy = ConsentPolicy(prompter=prompter, tiers={"t": TrustTier.NEVER})
-    allowed = await policy.request(tool_name="t", channel="cli", session_id="s1")
+    allowed = await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert allowed is False
     assert prompter.requests == []
 
@@ -125,7 +125,7 @@ async def test_tier_never_denies_without_prompting() -> None:
 async def test_default_tier_prompts_and_user_once_allows() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     policy = ConsentPolicy(prompter=prompter)
-    allowed = await policy.request(tool_name="t", channel="cli", session_id="s1")
+    allowed = await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert allowed is True
     assert len(prompter.requests) == 1
 
@@ -133,7 +133,7 @@ async def test_default_tier_prompts_and_user_once_allows() -> None:
 async def test_user_deny_blocks() -> None:
     prompter = _RecordingPrompter(ConsentScope.DENY)
     policy = ConsentPolicy(prompter=prompter)
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is False
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is False
 
 
 # ---------------------------------------------------------------------------
@@ -144,20 +144,20 @@ async def test_user_deny_blocks() -> None:
 async def test_once_grant_does_not_suppress_reprompt() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     policy = ConsentPolicy(prompter=prompter)
-    await policy.request(tool_name="t", channel="cli", session_id="s1")
-    await policy.request(tool_name="t", channel="cli", session_id="s1")
+    await policy.request(tool_name="t", channel="cli", session_key="s1")
+    await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert len(prompter.requests) == 2  # ONCE re-prompts every time
 
 
 async def test_session_batch_suppresses_reprompt_same_session_only() -> None:
     prompter = _RecordingPrompter(ConsentScope.SESSION)
     policy = ConsentPolicy(prompter=prompter)
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
     # second call in same session: no prompt
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 1
     # different session must re-prompt
-    assert await policy.request(tool_name="t", channel="cli", session_id="s2") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s2") is True
     assert len(prompter.requests) == 2
 
 
@@ -165,22 +165,22 @@ async def test_time_window_grant_expires() -> None:
     clock = _FakeClock()
     prompter = _RecordingPrompter(ConsentScope.WINDOW)
     policy = ConsentPolicy(prompter=prompter, clock=clock, window_seconds=900.0)
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
     # within window: no re-prompt
     clock.advance(300.0)
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 1
     # past window: re-prompts
     clock.advance(601.0)
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 2
 
 
 async def test_ask_once_session_tier_auto_after_first_approval() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     policy = ConsentPolicy(prompter=prompter, tiers={"t": TrustTier.ASK_ONCE_SESSION})
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 1  # asked once, then auto for the session
 
 
@@ -192,8 +192,8 @@ async def test_ask_once_session_tier_auto_after_first_approval() -> None:
 async def test_excluded_tool_reprompts_despite_session_grant() -> None:
     prompter = _RecordingPrompter(ConsentScope.SESSION)
     policy = ConsentPolicy(prompter=prompter, always_ask_tools=frozenset({"execute_code"}))
-    assert await policy.request(tool_name="execute_code", channel="cli", session_id="s1") is True
-    assert await policy.request(tool_name="execute_code", channel="cli", session_id="s1") is True
+    assert await policy.request(tool_name="execute_code", channel="cli", session_key="s1") is True
+    assert await policy.request(tool_name="execute_code", channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 2  # always re-prompts, batch never recorded
 
 
@@ -203,22 +203,22 @@ async def test_excluded_category_reprompts_despite_window() -> None:
     policy = ConsentPolicy(
         prompter=prompter, clock=clock, always_ask_categories=frozenset({"lock"})
     )
-    assert await policy.request(tool_name="ha", channel="cli", session_id="s1", category="lock") is True
-    assert await policy.request(tool_name="ha", channel="cli", session_id="s1", category="lock") is True
+    assert await policy.request(tool_name="ha", channel="cli", session_key="s1", category="lock") is True
+    assert await policy.request(tool_name="ha", channel="cli", session_key="s1", category="lock") is True
     assert len(prompter.requests) == 2
 
 
 async def test_excluded_tool_prompt_disallows_relaxation() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     policy = ConsentPolicy(prompter=prompter, always_ask_tools=frozenset({"execute_code"}))
-    await policy.request(tool_name="execute_code", channel="cli", session_id="s1")
+    await policy.request(tool_name="execute_code", channel="cli", session_key="s1")
     assert prompter.requests[0].allow_relaxation is False
 
 
 async def test_nonexcluded_tool_prompt_allows_relaxation() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     policy = ConsentPolicy(prompter=prompter)
-    await policy.request(tool_name="t", channel="cli", session_id="s1")
+    await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert prompter.requests[0].allow_relaxation is True
 
 
@@ -230,12 +230,12 @@ async def test_nonexcluded_tool_prompt_allows_relaxation() -> None:
 async def test_default_policy_fails_closed() -> None:
     """No prompter wired → deny."""
     policy = ConsentPolicy()
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is False
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is False
 
 
 async def test_prompter_exception_fails_closed() -> None:
     policy = ConsentPolicy(prompter=_RaisingPrompter())
-    assert await policy.request(tool_name="t", channel="cli", session_id="s1") is False
+    assert await policy.request(tool_name="t", channel="cli", session_key="s1") is False
 
 
 async def test_unknown_channel_in_routing_fails_closed() -> None:
@@ -243,7 +243,7 @@ async def test_unknown_channel_in_routing_fails_closed() -> None:
 
     routing = RoutingPrompter()  # nothing registered
     policy = ConsentPolicy(prompter=routing)
-    assert await policy.request(tool_name="t", channel="telegram", session_id="s1") is False
+    assert await policy.request(tool_name="t", channel="telegram", session_key="s1") is False
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ async def test_every_decision_is_audited() -> None:
     audit = _FakeAudit()
     prompter = _RecordingPrompter(ConsentScope.DENY)
     policy = ConsentPolicy(prompter=prompter, audit_logger=audit)
-    await policy.request(tool_name="t", channel="cli", session_id="s1")
+    await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert len(audit.rows) == 1
     row = audit.rows[0]
     assert row["event_type"] == "consent.decision"
@@ -266,7 +266,7 @@ async def test_every_decision_is_audited() -> None:
 async def test_auto_allow_is_audited() -> None:
     audit = _FakeAudit()
     policy = ConsentPolicy(prompter=_RecordingPrompter(ConsentScope.DENY), audit_logger=audit, tiers={"t": TrustTier.AUTO})
-    await policy.request(tool_name="t", channel="cli", session_id="s1")
+    await policy.request(tool_name="t", channel="cli", session_key="s1")
     assert audit.rows[0]["details"]["decision"] == "allow"
 
 
@@ -285,18 +285,18 @@ async def test_gate_allows_read_tool_without_policy_call() -> None:
 async def test_gate_delegates_consequential_to_policy() -> None:
     prompter = _RecordingPrompter(ConsentScope.ONCE)
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
-    assert await gate.check(_StubConsequentialTool(), channel="cli", session_id="s1") is True
+    assert await gate.check(_StubConsequentialTool(), channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 1
 
 
 async def test_gate_blocks_when_policy_denies() -> None:
     gate = ConsequentialActionGate(ConsentPolicy(prompter=_RecordingPrompter(ConsentScope.DENY)))
-    assert await gate.check(_StubConsequentialTool(), channel="cli", session_id="s1") is False
+    assert await gate.check(_StubConsequentialTool(), channel="cli", session_key="s1") is False
 
 
 async def test_gate_default_construction_fails_closed() -> None:
     gate = ConsequentialActionGate()
-    assert await gate.check(_StubConsequentialTool(), channel="telegram", session_id="s1") is False
+    assert await gate.check(_StubConsequentialTool(), channel="telegram", session_key="s1") is False
 
 
 async def test_gate_backward_compat_sync_confirm_fn() -> None:
@@ -308,7 +308,7 @@ async def test_gate_backward_compat_sync_confirm_fn() -> None:
         return True
 
     gate = ConsequentialActionGate(confirm_fn=_confirm)
-    assert await gate.check(_StubConsequentialTool(name="x"), channel="cli", session_id="s1") is True
+    assert await gate.check(_StubConsequentialTool(name="x"), channel="cli", session_key="s1") is True
     assert calls == ["x"]
 
 
@@ -319,7 +319,7 @@ async def test_never_tier_blocks_excluded_tool_without_prompt() -> None:
         prompter=prompter, tiers={"execute_code": TrustTier.NEVER},
         always_ask_tools=frozenset({"execute_code"}),
     )
-    assert await policy.request(tool_name="execute_code", channel="cli", session_id="s1") is False
+    assert await policy.request(tool_name="execute_code", channel="cli", session_key="s1") is False
     assert prompter.requests == []
 
 
@@ -330,16 +330,16 @@ async def test_auto_tier_still_prompts_excluded_tool() -> None:
         prompter=prompter, tiers={"execute_code": TrustTier.AUTO},
         always_ask_tools=frozenset({"execute_code"}),
     )
-    assert await policy.request(tool_name="execute_code", channel="cli", session_id="s1") is False
+    assert await policy.request(tool_name="execute_code", channel="cli", session_key="s1") is False
     assert len(prompter.requests) == 1  # prompted despite AUTO
 
 
 async def test_empty_session_does_not_record_standing_grant() -> None:
-    """An empty session_id must not collapse all callers into one batch bucket."""
+    """An empty session_key must not collapse all callers into one batch bucket."""
     prompter = _RecordingPrompter(ConsentScope.SESSION)
     policy = ConsentPolicy(prompter=prompter)
-    await policy.request(tool_name="t", channel="cli", session_id="")
-    await policy.request(tool_name="t", channel="cli", session_id="")
+    await policy.request(tool_name="t", channel="cli", session_key="")
+    await policy.request(tool_name="t", channel="cli", session_key="")
     assert len(prompter.requests) == 2  # no standing grant recorded for empty session
 
 
@@ -359,8 +359,8 @@ async def test_gate_derives_category_from_manifest() -> None:
         ConsentPolicy(prompter=prompter, always_ask_categories=frozenset({"lock"}))
     )
     tool = _LockTool(name="ha")
-    assert await gate.check(tool, channel="cli", session_id="s1") is True
-    assert await gate.check(tool, channel="cli", session_id="s1") is True
+    assert await gate.check(tool, channel="cli", session_key="s1") is True
+    assert await gate.check(tool, channel="cli", session_key="s1") is True
     assert len(prompter.requests) == 2  # lock category always re-prompts
 
 

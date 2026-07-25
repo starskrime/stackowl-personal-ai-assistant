@@ -187,7 +187,7 @@ class StepServices:
     providers_degraded: bool = field(default=False)
     # Cross-channel identity — maps per-channel handles (e.g. "telegram:123") to a
     # stable identity_key so durable knowledge (preferences, facts) follows the user
-    # across channels. None → unconfigured; callers degrade to session_id (per-channel
+    # across channels. None → unconfigured; callers degrade to session_key (per-channel
     # behavior, byte-identical to before this feature existed).
     identity_resolver: IdentityResolver | None = field(default=None)
     # WS-D command-hint resolver (issue 3) — a CommandResolver indexed over the
@@ -196,7 +196,7 @@ class StepServices:
     # turn (marked, never auto-run). None → no hint (feature off); built only
     # when ui.command_hints is enabled.
     command_hint_resolver: CommandResolver | None = field(default=None)
-    # FR-9 — the sticky-routing cache (session_id -> last-resolved owl +
+    # FR-9 — the sticky-routing cache (session_key -> last-resolved owl +
     # intent_class, 30-min TTL). triage.py reads THIS instance to bypass the
     # LLM SecretaryRouter call on short, same-session follow-ups. None → the
     # bypass never fires (byte-identical to pre-FR-9 behavior — always calls
@@ -232,12 +232,12 @@ def get_services() -> StepServices:
         return StepServices()
 
 
-def resolve_identity_key(services: StepServices, session_id: str) -> str:
+def resolve_identity_key(services: StepServices, session_key: str) -> str:
     """Resolve the inbound channel handle to a cross-channel identity_key.
 
-    Returns "" when no resolver is wired (consumers fall back to session_id),
+    Returns "" when no resolver is wired (consumers fall back to session_key),
     and the handle unchanged when the resolver has no alias for it.
     """
     if services.identity_resolver is None:
         return ""
-    return services.identity_resolver.resolve(session_id)
+    return services.identity_resolver.resolve(session_key)

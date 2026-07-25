@@ -36,7 +36,7 @@ class _RecordingDeliverer:
 def _state(*, trace_id: str, depth: int = 0, target: int | str | None = 5) -> PipelineState:
     st = PipelineState(
         trace_id=trace_id,
-        session_id="s1",
+        session_key="s1",
         input_text="hi",
         channel="telegram",
         owl_name="secretary",

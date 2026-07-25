@@ -48,11 +48,11 @@ class _NewClassifier:
 
 def test_ingress_message_reply_field_defaults_false_and_is_byte_compatible() -> None:
     # Existing positional/keyword constructors are unaffected (no reply arg).
-    msg = IngressMessage(text="hi", session_id="s1", channel="telegram", trace_id="t1")
+    msg = IngressMessage(text="hi", session_key="s1", channel="telegram", trace_id="t1")
     assert msg.is_reply is False
     # And the new flag is settable.
     reply = IngressMessage(
-        text="hi", session_id="s1", channel="telegram", trace_id="t2", is_reply=True
+        text="hi", session_key="s1", channel="telegram", trace_id="t2", is_reply=True
     )
     assert reply.is_reply is True
 
@@ -76,7 +76,7 @@ async def test_reply_to_inflight_folds_and_does_not_duplicate() -> None:
     router = TurnRouter(classifier)  # type: ignore[arg-type]
     task = asyncio.create_task(asyncio.sleep(5.0))
     turn = await reg.register(
-        "r1", session_id="s1", task=task, target=None, original_input="build the parser"
+        "r1", session_key="s1", task=task, target=None, original_input="build the parser"
     )
     try:
         # The orchestrator resolves the structural flag from the IngressMessage.
@@ -91,7 +91,7 @@ async def test_reply_to_inflight_folds_and_does_not_duplicate() -> None:
                 registry=reg,
                 running=turn,
                 text="also use tabs",
-                session_id="s1",
+                session_key="s1",
                 request_id_new="r2",
                 target=None,
                 is_reply_to_inflight=is_reply_to_inflight,

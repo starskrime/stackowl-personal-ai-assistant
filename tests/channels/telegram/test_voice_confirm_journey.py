@@ -148,7 +148,7 @@ async def test_send_tap_injects_transcript_into_queue(db_pool: DbPool) -> None:
     assert adapter._queue.qsize() == 1
     msg = await adapter._queue.get()
     assert msg.text == "book a table for two"
-    assert msg.session_id == "42"
+    assert msg.session_key == "42"
     assert msg.channel == "telegram"
     assert msg.chat_id == 999  # STAMPED — routes the answer back to this chat
     # The router acknowledged the tap (handler must not ack itself).

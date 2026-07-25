@@ -88,7 +88,7 @@ async def _services(tmp_db: DbPool, *, auto_consent: bool) -> tuple[StepServices
 def _state(*, interactive: bool, channel: str | None) -> PipelineState:
     return PipelineState(
         trace_id="t-tool-build",
-        session_id="s-tool-build",
+        session_key="s-tool-build",
         input_text="please build me a tool",
         channel=channel or "",
         owl_name="secretary",

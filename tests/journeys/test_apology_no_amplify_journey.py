@@ -94,11 +94,11 @@ async def test_apology_not_amplified_across_turns(
     )
     backend = AsyncioBackend(services=services)
 
-    session_id = f"sess-apology-dedup-{uuid.uuid4().hex[:8]}"
+    session_key = f"sess-apology-dedup-{uuid.uuid4().hex[:8]}"
 
     for i, text in enumerate(["please rename the file", "and the other one", "so what?"], 1):
         trace = f"trace-apology-dedup-{i}"
-        await _execute_turn(text, session_id, trace, backend)
+        await _execute_turn(text, session_key, trace, backend)
 
     # Turn 3's call to complete_with_tools captured the history it was handed.
     # (complete_with_tools now appends to self.calls — fixture gap closed in Step 5)

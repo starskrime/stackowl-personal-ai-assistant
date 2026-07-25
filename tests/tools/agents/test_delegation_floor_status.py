@@ -44,7 +44,7 @@ _FLOOR_TEXT = (
 def _parent(**kw: Any) -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="go",
         channel="cli",
         owl_name="secretary",

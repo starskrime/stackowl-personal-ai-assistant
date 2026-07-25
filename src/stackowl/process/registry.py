@@ -13,7 +13,7 @@ reused via the shell seam, never reimplemented) are: a hard CONCURRENCY CAP
 (``MAX_CONCURRENT_PROCESSES`` — start refuses past it, structured) and a MANDATORY
 per-process TTL (``PROCESS_MAX_LIFETIME_SECONDS`` — the sweep auto-kills a runaway)
 so an ungated spawn can neither fork-bomb nor leak forever. ``kill`` is always
-allowed (de-escalation). Every handle carries ``session_id``; query methods default
+allowed (de-escalation). Every handle carries ``session_key``; query methods default
 to the caller's session, with an explicit ``all=True`` cross-session view (Fork E).
 
 Self-healing throughout (B5): kill-of-a-dead-pid is a no-op success, eager-reap
@@ -106,7 +106,7 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         self,
         command: list[str],
         *,
-        session_id: str,
+        session_key: str,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> ProcessHandle:
@@ -121,7 +121,7 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         # 1. ENTRY
         log.tool.debug(
             "process.registry.start: entry",
-            extra={"_fields": {"session_id": session_id, "argv": command[:3],
+            extra={"_fields": {"session_key": session_key, "argv": command[:3],
                                "live": len(self._procs)}},
         )
         if not command:
@@ -185,7 +185,7 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
             now = self._clock.monotonic()
             handle = ProcessHandle(
                 command=command,
-                session_id=session_id,
+                session_key=session_key,
                 transport=transport,
                 pid=transport.pid,
                 created_at=now,
@@ -204,7 +204,7 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
             log.tool.info(
                 "process.registry.start: exit",
                 extra={"_fields": {"process_id": handle.process_id, "pid": handle.pid,
-                                   "session_id": session_id}},
+                                   "session_key": session_key}},
             )
             return handle
         finally:
@@ -219,14 +219,14 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
                 )
 
     # ------------------------------------------------------------------ poll
-    async def poll(self, process_id: str, session_id: str | None = None) -> ProcessHandle | None:
+    async def poll(self, process_id: str, session_key: str | None = None) -> ProcessHandle | None:
         """Return the handle, eager-reaping it if its transport has exited.
 
         Eager-reap (self-healing): if the transport reports a return code, await it
-        (reap the zombie) and record the terminal status+exit_code. ``session_id``
+        (reap the zombie) and record the terminal status+exit_code. ``session_key``
         scopes the lookup (Fork E): a mismatch returns ``None``.
         """
-        handle = self._get_scoped(process_id, session_id)
+        handle = self._get_scoped(process_id, session_key)
         if handle is None:
             return None
         await self._reap_if_exited(handle)
@@ -258,7 +258,7 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         )
 
     # ------------------------------------------------------------------ kill
-    async def kill(self, process_id: str, session_id: str | None = None) -> bool:
+    async def kill(self, process_id: str, session_key: str | None = None) -> bool:
         """Terminate a scoped process (kill is ALWAYS allowed — de-escalation).
 
         Kill-of-an-already-dead process is a no-op SUCCESS (self-healing). Returns
@@ -266,7 +266,7 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         """
         # 1. ENTRY
         log.tool.debug("process.registry.kill: entry", extra={"_fields": {"process_id": process_id}})
-        handle = self._get_scoped(process_id, session_id)
+        handle = self._get_scoped(process_id, session_key)
         if handle is None:
             return False
         if not handle.is_running:
@@ -295,8 +295,8 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         return True
 
     # ------------------------------------------------------------------ list
-    def list(self, session_id: str | None = None, *, all: bool = False) -> list[ProcessHandle]:
-        """List handles scoped to ``session_id`` (Fork E); ``all=True`` is cross-session.
+    def list(self, session_key: str | None = None, *, all: bool = False) -> list[ProcessHandle]:
+        """List handles scoped to ``session_key`` (Fork E); ``all=True`` is cross-session.
 
         ``all=True`` is the audited cross-session view (the S1 tool logs it); the
         default returns only the caller's own processes.
@@ -306,23 +306,23 @@ class ProcessRegistry(ProcessIoMixin, ProcessMaintenanceMixin):
         if all:
             log.tool.info(
                 "process.registry.list: cross-session listing (all=True)",
-                extra={"_fields": {"count": len(handles), "caller_session": session_id}},
+                extra={"_fields": {"count": len(handles), "caller_session": session_key}},
             )
             return handles
-        return [h for h in handles if session_id is None or h.session_id == session_id]
+        return [h for h in handles if session_key is None or h.session_key == session_key]
 
     # --------------------------------------------------------------- helpers
-    def _get_scoped(self, process_id: str, session_id: str | None) -> ProcessHandle | None:
+    def _get_scoped(self, process_id: str, session_key: str | None) -> ProcessHandle | None:
         """Fetch a handle, enforcing session scoping (Fork E). None on mismatch."""
         with self._lock:
             handle = self._procs.get(process_id)
         if handle is None:
             return None
-        if session_id is not None and handle.session_id != session_id:
+        if session_key is not None and handle.session_key != session_key:
             log.tool.debug(
                 "process.registry._get_scoped: session mismatch — hidden",
-                extra={"_fields": {"process_id": process_id, "caller": session_id,
-                                   "owner": handle.session_id}},
+                extra={"_fields": {"process_id": process_id, "caller": session_key,
+                                   "owner": handle.session_key}},
             )
             return None
         return handle

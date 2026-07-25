@@ -117,19 +117,19 @@ class _StubExtractor:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def extract(self, messages: list[object], session_id: str) -> list[StagedFact]:
-        self.calls.append(session_id)
+    async def extract(self, messages: list[object], session_key: str) -> list[StagedFact]:
+        self.calls.append(session_key)
         return [
             StagedFact(
-                content=f"fact about {session_id}",
+                content=f"fact about {session_key}",
                 source_type="conversation_fact",
-                source_ref=session_id,
+                source_ref=session_key,
                 confidence=0.9,
             )
         ]
 
 
-async def _store_turn(db: DbPool, session_id: str, staged_at: datetime) -> None:
+async def _store_turn(db: DbPool, session_key: str, staged_at: datetime) -> None:
     await db.execute(
         """INSERT INTO staged_facts (
                fact_id, content, source_type, source_ref, confidence,
@@ -138,7 +138,7 @@ async def _store_turn(db: DbPool, session_id: str, staged_at: datetime) -> None:
         (
             str(uuid.uuid4()),
             "User: I live in Baku\n\nAssistant: Noted.",
-            session_id,
+            session_key,
             staged_at.isoformat(),
             b"",
             None,
@@ -185,5 +185,5 @@ async def test_recent_conversation_turns_default_path_unchanged(tmp_db: DbPool) 
     await _store_turn(tmp_db, "s1", _T - timedelta(minutes=1))
     await _store_turn(tmp_db, "s1", _T - timedelta(minutes=100))
 
-    turns = await bridge.recent_conversation_turns(session_id="s1", limit=10)
+    turns = await bridge.recent_conversation_turns(session_key="s1", limit=10)
     assert len(turns) == 2, "default path must not filter by age"

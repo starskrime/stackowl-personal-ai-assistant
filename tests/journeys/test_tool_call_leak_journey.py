@@ -143,11 +143,11 @@ def _build_services(provider: OpenAIProvider, tool_registry: ToolRegistry) -> St
 
 async def _execute_turn(text: str, backend: AsyncioBackend) -> str:
     scanner = GatewayScanner(owl_registry=OwlRegistry.with_default_secretary())
-    msg = IngressMessage(text=text, session_id="sess-leak", channel="cli", trace_id="trace-leak")
+    msg = IngressMessage(text=text, session_key="sess-leak", channel="cli", trace_id="trace-leak")
     decision = scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start", interactive=True,
     )
     final_state = await backend.run(state)

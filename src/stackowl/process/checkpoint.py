@@ -34,7 +34,7 @@ class CheckpointEntry:
     process_id: str
     pid: int | None
     command: list[str]
-    session_id: str
+    session_key: str
     created_at: float
     status: str
 
@@ -79,7 +79,7 @@ class ProcessCheckpoint:
                 "process_id": e.process_id,
                 "pid": e.pid,
                 "command": e.command,
-                "session_id": e.session_id,
+                "session_key": e.session_key,
                 "created_at": e.created_at,
                 "status": e.status,
             }
@@ -136,7 +136,7 @@ class ProcessCheckpoint:
                     process_id=str(item.get("process_id", "")),
                     pid=item.get("pid") if isinstance(item.get("pid"), int) else None,
                     command=[str(c) for c in cmd] if isinstance(cmd, list) else [],
-                    session_id=str(item.get("session_id", "")),
+                    session_key=str(item.get("session_key", "")),
                     created_at=float(item.get("created_at", 0.0) or 0.0),
                     status=str(item.get("status", "running")),
                 )

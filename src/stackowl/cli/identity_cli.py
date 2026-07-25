@@ -33,7 +33,7 @@ def relink(
     dry_run rolls back (reports would-change counts without modifying the DB).
 
     Only re-keys rows whose source_type is NOT 'conversation' in staged_facts and
-    committed_facts — conversation turns remain keyed on their per-session session_id
+    committed_facts — conversation turns remain keyed on their per-session session_key
     so chat history stays channel-isolated.
     """
     counts: dict[str, int] = {"preferences": 0, "facts": 0, "committed": 0}

@@ -35,7 +35,7 @@ async def test_resolve_before_park_records_wait_duration() -> None:
     ev = asyncio.Event()
     ev.set()  # already resolved → skip await, but still measured
     gw._pending["c1"] = PendingClarify(
-        clarify_id="c1", session_id="s", channel="cli",
+        clarify_id="c1", session_key="s", channel="cli",
         question="q", answer="yes", event=ev,
     )
     token = human_wait.bind()
@@ -53,7 +53,7 @@ async def test_timeout_path_still_records_wait() -> None:
     gw = ClarifyGateway(time_fn=_StepClock([200.0, 203.0]))
     ev = asyncio.Event()  # not set
     gw._pending["c2"] = PendingClarify(
-        clarify_id="c2", session_id="s", channel="cli",
+        clarify_id="c2", session_key="s", channel="cli",
         question="q", event=ev,
     )
     token = human_wait.bind()

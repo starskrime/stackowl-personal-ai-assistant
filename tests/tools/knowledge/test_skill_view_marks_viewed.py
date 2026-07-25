@@ -84,7 +84,7 @@ async def test_skill_view_marks_viewed(
     await _seed_skill(wired_store, workspace, name="alpha")
 
     token = TraceContext.start(
-        session_id="s1",
+        session_key="s1",
         trace_id="t1",
         interactive=True,
         channel="cli",
@@ -113,7 +113,7 @@ async def test_skill_view_no_mark_when_skill_not_found(
     FOCUS_TRACKER.clear_all()
 
     token = TraceContext.start(
-        session_id="s2",
+        session_key="s2",
         trace_id="t2",
         interactive=True,
         channel="cli",

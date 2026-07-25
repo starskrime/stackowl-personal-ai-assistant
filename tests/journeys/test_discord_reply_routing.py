@@ -61,9 +61,9 @@ async def test_discord_stamps_channel_id_and_resolves_target() -> None:
     msg, _ = _message("hello", user_id=11, channel_id=7777)
     await adapter.handle_message(msg)
     ingress = await adapter._queue.get()
-    # chat_id is the CHANNEL id, session_id stays the user id.
+    # chat_id is the CHANNEL id, session_key stays the user id.
     assert ingress.chat_id == 7777
-    assert ingress.session_id == "11"
+    assert ingress.session_key == "11"
     assert adapter.resolve_target("11") == 7777
     # Unknown session is never guessed.
     assert adapter.resolve_target("999") is None

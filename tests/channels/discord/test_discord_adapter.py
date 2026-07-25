@@ -84,7 +84,7 @@ async def test_handle_message_authorized_enqueue() -> None:
     msg = await adapter._queue.get()
     assert msg.text == "hello world"
     assert msg.channel == "discord"
-    assert msg.session_id == "42"
+    assert msg.session_key == "42"
     assert len(msg.trace_id) > 0
 
 

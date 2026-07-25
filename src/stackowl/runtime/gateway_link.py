@@ -217,7 +217,7 @@ class GatewayLink:
             self._pending.append(msg)
             log.gateway.info(
                 "[ipc] gateway link: buffering message during core restart",
-                extra={"_fields": {"session_id": msg.session_id, "queued": len(self._pending)}},
+                extra={"_fields": {"session_key": msg.session_key, "queued": len(self._pending)}},
             )
             return
         await self._do_submit(msg)
@@ -274,7 +274,7 @@ class GatewayLink:
                 exc_info=exc,
                 extra={"_fields": {
                     "request_id": msg.trace_id, "channel": msg.channel,
-                    "session_id": msg.session_id,
+                    "session_key": msg.session_key,
                 }},
             )
             from stackowl.pipeline.recovery_actuator import Failure, RecoveryActuator
@@ -493,7 +493,7 @@ class GatewayLink:
                 req = ConsentRequest(
                     tool_name=frame.tool_name,
                     channel=frame.channel,
-                    session_id=frame.session_id,
+                    session_key=frame.session_key,
                     category=frame.category,
                     summary=frame.summary,
                     allow_relaxation=frame.allow_relaxation,

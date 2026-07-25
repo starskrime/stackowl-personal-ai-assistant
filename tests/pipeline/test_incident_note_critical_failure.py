@@ -53,7 +53,7 @@ class _ApologyProvider(ModelProvider):
 def _state() -> PipelineState:
     return PipelineState(
         trace_id="trace-incident-note",
-        session_id="sess-incident-note",
+        session_key="sess-incident-note",
         input_text="do the thing",
         channel="cli",
         owl_name="secretary",

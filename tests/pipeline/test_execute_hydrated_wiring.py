@@ -107,9 +107,9 @@ class _Reg:
 
 
 async def test_build_tool_schemas_passes_hydrated_from_session_store() -> None:
-    session_id = "hydrated-wiring-test-session"
-    hydrated_tools.clear(session_id)
-    hydrated_tools.record(session_id, ["shell"])
+    session_key = "hydrated-wiring-test-session"
+    hydrated_tools.clear(session_key)
+    hydrated_tools.record(session_key, ["shell"])
 
     registry = _CapturingRegistry()
     registry.register(_StubTool("shell"))
@@ -120,7 +120,7 @@ async def test_build_tool_schemas_passes_hydrated_from_session_store() -> None:
     ))
     provider = _NoToolCallProvider()
     state = PipelineState(
-        trace_id="t", session_id=session_id, input_text="x", channel="telegram",
+        trace_id="t", session_key=session_key, input_text="x", channel="telegram",
         owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(
@@ -137,7 +137,7 @@ async def test_build_tool_schemas_passes_hydrated_from_session_store() -> None:
         recovery_context.reset(recovery_token)
         tool_outcome_ledger.reset(ledger_token)
         reset_services(token)
-        hydrated_tools.clear(session_id)
+        hydrated_tools.clear(session_key)
 
     assert registry.calls, "to_provider_schema was never called"
     assert any("shell" in (call.get("hydrated") or set()) for call in registry.calls), (
@@ -147,8 +147,8 @@ async def test_build_tool_schemas_passes_hydrated_from_session_store() -> None:
 
 async def test_build_tool_schemas_empty_hydrated_for_unknown_session() -> None:
     """No prior tool_search hits for this session -> hydrated is empty, not None-crash."""
-    session_id = "hydrated-wiring-test-session-empty"
-    hydrated_tools.clear(session_id)
+    session_key = "hydrated-wiring-test-session-empty"
+    hydrated_tools.clear(session_key)
 
     registry = _CapturingRegistry()
     registry.register(_StubTool("shell"))
@@ -159,7 +159,7 @@ async def test_build_tool_schemas_empty_hydrated_for_unknown_session() -> None:
     ))
     provider = _NoToolCallProvider()
     state = PipelineState(
-        trace_id="t", session_id=session_id, input_text="x", channel="telegram",
+        trace_id="t", session_key=session_key, input_text="x", channel="telegram",
         owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(

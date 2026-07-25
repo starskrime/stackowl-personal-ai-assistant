@@ -317,7 +317,7 @@ class _CapturingAdapter(ChannelAdapter):
 
 
 class _NullGateway:
-    def peek_for_session(self, session_id: str, channel: str) -> None:  # pragma: no cover
+    def peek_for_session(self, session_key: str, channel: str) -> None:  # pragma: no cover
         return None
 
 
@@ -364,7 +364,7 @@ async def _dispatch_turn(
     writer, reader = stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -375,7 +375,7 @@ async def _dispatch_turn(
     producer: asyncio.Task[object] = asyncio.create_task(backend.run(state))
     await turn_registry.register(
         msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         task=cast("asyncio.Task[None]", producer),
         target=msg.chat_id,
         original_input=input_text,
@@ -383,12 +383,12 @@ async def _dispatch_turn(
     pump.spawn_send(
         channel_adapter=adapter,
         reader=reader,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         request_id=msg.trace_id,
         producer=producer,
         writer=writer,
     )
-    send_task = pump._inflight[msg.session_id]  # type: ignore[attr-defined]
+    send_task = pump._inflight[msg.session_key]  # type: ignore[attr-defined]
     return producer, send_task
 
 
@@ -424,7 +424,7 @@ async def test_midturn_add_steer_folds_into_running_turn_output(tmp_db: DbPool) 
 
         sid = "sess-A"
         msg = IngressMessage(
-            text="research X", session_id=sid, channel="cli", trace_id="trace-A"
+            text="research X", session_key=sid, channel="cli", trace_id="trace-A"
         )
 
         # 1. Dispatch the running turn; it enters iteration 0 and HOLDS on the gate.
@@ -445,7 +445,7 @@ async def test_midturn_add_steer_folds_into_running_turn_output(tmp_db: DbPool) 
                 registry=turn_registry,
                 running=running,
                 text=steer_msg,
-                session_id=sid,
+                session_key=sid,
                 request_id_new="trace-A-steer-new",
                 target=None,
             ),
@@ -508,10 +508,10 @@ async def test_second_chat_runs_parallel_and_reply_correlates(tmp_db: DbPool) ->
         adapter_b = _CapturingAdapter()
 
         msg_a = IngressMessage(
-            text="research X", session_id="sess-A", channel="cli", trace_id="trace-A"
+            text="research X", session_key="sess-A", channel="cli", trace_id="trace-A"
         )
         msg_b = IngressMessage(
-            text="weather please", session_id="sess-B", channel="cli", trace_id="trace-B"
+            text="weather please", session_key="sess-B", channel="cli", trace_id="trace-B"
         )
 
         prod_a, send_a = await _dispatch_turn(
@@ -563,7 +563,7 @@ async def _drain_next(
         if nxt is None:
             return
         parked = IngressMessage(
-            text=nxt.original_input, session_id=sid, channel="cli",
+            text=nxt.original_input, session_key=sid, channel="cli",
             trace_id=nxt.request_id, chat_id=nxt.target,
         )
         await _dispatch_turn(
@@ -609,7 +609,7 @@ async def test_midturn_contradiction_routes_new_and_runs_coherent_separate(
 
         sid = "sess-A"
         msg = IngressMessage(
-            text="research X", session_id=sid, channel="cli", trace_id="trace-A"
+            text="research X", session_key=sid, channel="cli", trace_id="trace-A"
         )
 
         # 1. Running turn dispatched and HELD in flight.
@@ -636,7 +636,7 @@ async def test_midturn_contradiction_routes_new_and_runs_coherent_separate(
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=turn_registry, running=running,
-                text=contradiction, session_id=sid,
+                text=contradiction, session_key=sid,
                 request_id_new="trace-A-new", target=None,
             ),
             timeout=_WAIT,

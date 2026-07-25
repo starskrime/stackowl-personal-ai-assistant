@@ -23,7 +23,7 @@ def _o(
     """Helper: TaskOutcome with the fields attribution actually cares about."""
     return TaskOutcome(
         outcome_id=0, trace_id=trace_id or f"t-{quality}-{dna_snapshot}",
-        session_id="s", owl_name="scout", channel="cli",
+        session_key="s", owl_name="scout", channel="cli",
         success=True, latency_ms=100.0, tool_call_count=0,
         failure_class=None, quality_score=quality, step_durations={},
         input_text="", response_text="",
@@ -42,7 +42,7 @@ def _failed_o(
     """
     return TaskOutcome(
         outcome_id=0, trace_id=trace_id,
-        session_id="s", owl_name="scout", channel="cli",
+        session_key="s", owl_name="scout", channel="cli",
         success=False, latency_ms=100.0, tool_call_count=0,
         failure_class="unachieved_effect", quality_score=quality, step_durations={},
         input_text="", response_text="",

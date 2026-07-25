@@ -167,7 +167,7 @@ def _build_services(
 class _NullGateway:
     """A clarify gateway the pump never consults (spawn_send-only slice)."""
 
-    def peek_for_session(self, session_id: str, channel: str) -> None:  # pragma: no cover
+    def peek_for_session(self, session_key: str, channel: str) -> None:  # pragma: no cover
         return None
 
 
@@ -193,7 +193,7 @@ async def _dispatch_turn(
     writer, reader = stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -204,7 +204,7 @@ async def _dispatch_turn(
     producer: asyncio.Task[object] = asyncio.create_task(backend.run(state))
     await turn_registry.register(
         msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         task=cast("asyncio.Task[None]", producer),
         target=msg.chat_id,
         original_input=input_text,
@@ -212,12 +212,12 @@ async def _dispatch_turn(
     pump.spawn_send(
         channel_adapter=adapter,
         reader=reader,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         request_id=msg.trace_id,
         producer=producer,
         writer=writer,
     )
-    send_task = pump._inflight[msg.session_id]  # type: ignore[attr-defined]
+    send_task = pump._inflight[msg.session_key]  # type: ignore[attr-defined]
     return producer, send_task
 
 

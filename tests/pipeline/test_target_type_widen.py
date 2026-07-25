@@ -48,7 +48,7 @@ async def test_deliver_stamps_string_target_end_to_end() -> None:
     writer, reader = reg.create("req-slack-1")
     state = PipelineState(
         trace_id="req-slack-1",
-        session_id="sess-A",
+        session_key="sess-A",
         input_text="hi",
         channel="slack",
         owl_name="owl",
@@ -77,7 +77,7 @@ async def test_deliver_stamps_string_target_end_to_end() -> None:
 
 def test_ingress_message_accepts_string_chat_id() -> None:
     msg = IngressMessage(
-        text="hi", session_id="s", channel="slack", trace_id="t",
+        text="hi", session_key="s", channel="slack", trace_id="t",
         chat_id="thread.ts",
     )
     assert msg.chat_id == "thread.ts"
@@ -88,7 +88,7 @@ def test_ingress_message_accepts_string_chat_id() -> None:
 
 def test_turn_accepts_string_target() -> None:
     turn = Turn(
-        turn_id="r1", session_id="s", task=None,
+        turn_id="r1", session_key="s", task=None,
         target="C123:1234.5678", original_input="hi",
     )
     assert turn.target == "C123:1234.5678"
@@ -106,13 +106,13 @@ def test_int_path_still_works() -> None:
     assert chunk.target == 123
 
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi",
+        trace_id="t", session_key="s", input_text="hi",
         channel="telegram", owl_name="owl", pipeline_step="deliver",
         reply_target=456,
     )
     assert state.reply_target == 456
 
     msg = IngressMessage(
-        text="hi", session_id="s", channel="telegram", trace_id="t", chat_id=789,
+        text="hi", session_key="s", channel="telegram", trace_id="t", chat_id=789,
     )
     assert msg.chat_id == 789

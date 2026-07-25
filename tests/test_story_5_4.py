@@ -51,7 +51,7 @@ async def parliament_db(tmp_path: Path) -> AsyncGenerator[DbPool]:
 def _msg(text: str) -> IngressMessage:
     return IngressMessage(
         text=text,
-        session_id="sess-1",
+        session_key="sess-1",
         channel="cli",
         trace_id="trace-1",
     )
@@ -60,7 +60,7 @@ def _msg(text: str) -> IngressMessage:
 def _state() -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="",
         channel="cli",
         owl_name="secretary",
@@ -183,9 +183,9 @@ class _StubOrchestrator:
         self,
         topic: str,
         owl_names: list[str],
-        session_id: str | None = None,
+        session_key: str | None = None,
     ) -> ParliamentSession:
-        self.run_calls.append((topic, owl_names, session_id))
+        self.run_calls.append((topic, owl_names, session_key))
         return self._session
 
     async def inject_interjection(self, message: str) -> bool:

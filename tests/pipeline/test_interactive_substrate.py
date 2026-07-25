@@ -22,7 +22,7 @@ from stackowl.pipeline.state import PipelineState
 def _make_state(**overrides: object) -> PipelineState:
     base: dict[str, object] = {
         "trace_id": "t-1",
-        "session_id": "s-1",
+        "session_key": "s-1",
         "input_text": "hi",
         "channel": "cli",
         "owl_name": "secretary",

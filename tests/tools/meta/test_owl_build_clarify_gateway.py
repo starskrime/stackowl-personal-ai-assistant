@@ -71,9 +71,9 @@ class _FakeAdapter:
         return self._name
 
     async def send_clarify(
-        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_key: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((session_id, question, tuple(choices), clarify_id))
+        self.calls.append((session_key, question, tuple(choices), clarify_id))
 
 
 def _services(
@@ -119,7 +119,7 @@ async def _run(
     """Drive one REAL owl_build.execute() turn inside the trace + service context."""
     svc_token = set_services(services)
     trace_token = TraceContext.start(
-        session_id=_SESSION if (interactive and channel) else None,
+        session_key=_SESSION if (interactive and channel) else None,
         trace_id="t-owl-build",
         interactive=interactive,
         channel=channel,

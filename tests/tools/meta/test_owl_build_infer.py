@@ -125,9 +125,9 @@ class _FakeAdapter:
         return self._name
 
     async def send_clarify(
-        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_key: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((session_id, question))
+        self.calls.append((session_key, question))
 
 
 _SESSION = "s-owl-infer"
@@ -156,7 +156,7 @@ def _gateway() -> tuple[ClarifyGateway, _FakeAdapter]:
 async def _run(services: StepServices, args: dict[str, object]) -> object:
     svc_token = set_services(services)
     trace_token = TraceContext.start(
-        session_id=_SESSION, trace_id="t-owl-infer", interactive=True,
+        session_key=_SESSION, trace_id="t-owl-infer", interactive=True,
         channel="cli", delegation_depth=0, owl_name="secretary",
     )
     try:

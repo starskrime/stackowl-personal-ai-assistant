@@ -10,7 +10,7 @@ from stackowl.scheduler.job import Job
 
 def _row(id_="r1"):
     return RetryQueueRow(
-        id=id_, trace_id="t1", session_id="s1", goal="g", banned_capabilities=[],
+        id=id_, trace_id="t1", session_key="s1", goal="g", banned_capabilities=[],
         attempt_count=0, status="pending", next_retry_at="", last_error=None,
         channel="telegram", channel_chat_id="1", channel_message_id="2",
         created_at="", updated_at="",

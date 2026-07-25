@@ -264,12 +264,12 @@ class ExecuteCodeTool(Tool):
 
         The model never sets caps directly (the rails are not negotiable); only
         ``timeout_s`` is forwarded (a backend clamps it to its wall-time cap). The
-        session_id correlates the audit trail; backends log it, never trust it.
+        session_key correlates the audit trail; backends log it, never trust it.
         """
-        session_id = str(TraceContext.get().get("session_id") or "")
+        session_key = str(TraceContext.get().get("session_key") or "")
         spec_kwargs: dict[str, object] = {
             "code": args.code, "language": "python", "network": args.network,
-            "caps": ResourceCaps(), "session_id": session_id,
+            "caps": ResourceCaps(), "session_key": session_key,
         }
         if args.timeout_s is not None:
             spec_kwargs["timeout_s"] = args.timeout_s

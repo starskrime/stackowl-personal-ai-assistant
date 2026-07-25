@@ -290,7 +290,7 @@ async def _turn_as_owl(env: _Env, text: str, owl_name: str) -> str:
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=owl_name,  # force the browser-profile owl
@@ -461,13 +461,13 @@ async def test_guard_actions_live_recall_of_recent_action(tmp_db: DbPool) -> Non
     # Confirm the harness genuinely persisted a task_outcomes row for turn 1
     # (the prior-turn record P2 reads). This is the REAL _capture_outcome path.
     store = TaskOutcomeStore(tmp_db)
-    # The Telegram adapter uses session_id = str(user_id); turns share it.
+    # The Telegram adapter uses session_key = str(user_id); turns share it.
     msg_session = str(USER_ID)
     outcomes = await store.recent_for_session(msg_session, limit=5)
     assert any("web_search" in o.tool_sequence for o in outcomes), (
         "GUARD ACTIONS PRECONDITION FAIL: turn-1 outcome with web_search was not "
         f"persisted to task_outcomes — _capture_outcome did not run. outcomes: "
-        f"{[(o.session_id, o.tool_sequence) for o in outcomes]!r}"
+        f"{[(o.session_key, o.tool_sequence) for o in outcomes]!r}"
     )
 
     # ---- TURN 2: ask what you just did -------------------------------------

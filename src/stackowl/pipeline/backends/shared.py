@@ -94,7 +94,7 @@ def bind_turn_context(state: PipelineState, services: StepServices) -> TurnBindi
     wall_t0 = time.time()
     services_token = set_services(services)
     trace_token = TraceContext.start(
-        state.session_id,
+        state.session_key,
         trace_id=state.trace_id,
         interactive=state.interactive,
         channel=state.channel,
@@ -178,11 +178,11 @@ async def unbind_turn_context(
         # restart-safe) BEFORE reset clears the ledger. Best-effort: a
         # persistence failure must NEVER break the turn (B5).
         _decisions = decision_ledger.get_decisions()
-        if services.db_pool is not None and state.session_id and _decisions:
+        if services.db_pool is not None and state.session_key and _decisions:
             try:
                 from stackowl.pipeline.decision_store import TurnDecisionStore
                 await TurnDecisionStore(services.db_pool).save(
-                    session_id=state.session_id,
+                    session_key=state.session_key,
                     trace_id=state.trace_id,
                     decisions=_decisions,
                 )
@@ -190,7 +190,7 @@ async def unbind_turn_context(
                 log.engine.error(
                     f"[{backend_name}] run: decision persist failed (swallowed)",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": state.session_id}},
+                    extra={"_fields": {"session_key": state.session_key}},
                 )
         decision_ledger.reset(bindings.decision_token)
     tool_outcome_ledger.reset(bindings.tool_outcome_token)
@@ -518,7 +518,7 @@ async def _capture_outcome(
                 )
         await store.record(
             trace_id=state.trace_id,
-            session_id=state.session_id,
+            session_key=state.session_key,
             owl_name=state.owl_name,
             channel=state.channel,
             success=trustworthy_success,

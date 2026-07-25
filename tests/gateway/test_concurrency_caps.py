@@ -11,7 +11,7 @@ from stackowl.gateway.turn_registry import QueueFull, TurnRegistry, default_glob
 async def test_per_session_queue_bounded() -> None:
     reg = TurnRegistry(per_session_queue_max=2, global_running_max=100)
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r0", session_id="s1", task=t, target=None, original_input="x")
+    await reg.register("r0", session_key="s1", task=t, target=None, original_input="x")
     reg.enqueue("s1", original_input="a", request_id="r1", target=None)
     reg.enqueue("s1", original_input="b", request_id="r2", target=None)
     with pytest.raises(QueueFull):
@@ -23,7 +23,7 @@ async def test_per_session_queue_bounded() -> None:
 async def test_global_running_cap(monkeypatch) -> None:
     reg = TurnRegistry(per_session_queue_max=8, global_running_max=1)
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r0", session_id="s1", task=t, target=None, original_input="x")
+    await reg.register("r0", session_key="s1", task=t, target=None, original_input="x")
     assert reg.at_global_capacity() is True  # second session must wait/queue
     await t
 
@@ -32,7 +32,7 @@ async def test_global_running_cap(monkeypatch) -> None:
 async def test_not_at_global_capacity_when_below_max() -> None:
     reg = TurnRegistry(per_session_queue_max=8, global_running_max=2)
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r0", session_id="s1", task=t, target=None, original_input="x")
+    await reg.register("r0", session_key="s1", task=t, target=None, original_input="x")
     assert reg.at_global_capacity() is False
     await t
 
@@ -41,7 +41,7 @@ async def test_not_at_global_capacity_when_below_max() -> None:
 async def test_capacity_frees_after_deregister() -> None:
     reg = TurnRegistry(per_session_queue_max=8, global_running_max=1)
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r0", session_id="s1", task=t, target=None, original_input="x")
+    await reg.register("r0", session_key="s1", task=t, target=None, original_input="x")
     assert reg.at_global_capacity() is True
     await reg.deregister("r0")
     assert reg.at_global_capacity() is False
@@ -59,7 +59,7 @@ async def test_idle_queued_session_surfaces_global_cap_holders() -> None:
     reg = TurnRegistry(per_session_queue_max=8, global_running_max=4)
     # sA is RUNNING with a queued follow-up -> NOT idle, must not be surfaced.
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("rA", session_id="sA", task=t, target=None, original_input="a")
+    await reg.register("rA", session_key="sA", task=t, target=None, original_input="a")
     reg.enqueue("sA", original_input="a2", request_id="rA2", target=None)
     assert reg.idle_queued_session() is None  # sA is running
 
@@ -70,7 +70,7 @@ async def test_idle_queued_session_surfaces_global_cap_holders() -> None:
     # Once sB starts running it is no longer surfaced.
     reg.pop_next("sB")
     t2 = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("rB", session_id="sB", task=t2, target=None, original_input="b")
+    await reg.register("rB", session_key="sB", task=t2, target=None, original_input="b")
     assert reg.idle_queued_session() is None
     await t
     await t2

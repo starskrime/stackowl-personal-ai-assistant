@@ -224,7 +224,7 @@ async def _turn(env: _Env, text: str) -> None:
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
     )
     run_task = asyncio.create_task(env.backend.run(state))
@@ -264,7 +264,7 @@ async def test_smoke_spawn_then_send_continuity_THROUGH_THE_BRIDGE(tmp_db: DbPoo
     # consolidate, depth-1, no skip) — NOT on the handle (which has no history).
     handle = env.sessions.get("worker")
     assert handle is not None and not hasattr(handle, "history"), handle
-    turns = await env.bridge.recent_conversation_turns(session_id="session:worker", limit=10)
+    turns = await env.bridge.recent_conversation_turns(session_key="session:worker", limit=10)
     assert len(turns) == 1, f"first send's turn not persisted to the bridge: {turns}"
     assert "remember-mango" in turns[0].content, turns[0].content
 
@@ -276,7 +276,7 @@ async def test_smoke_spawn_then_send_continuity_THROUGH_THE_BRIDGE(tmp_db: DbPoo
     assert "history=2" in send_rec2["reply"], send_rec2  # the scout saw the prior turn
     assert "scout answer" in _delivered_last(env), _delivered_last(env)
     # Both turns are now under the session id in the bridge.
-    turns2 = await env.bridge.recent_conversation_turns(session_id="session:worker", limit=10)
+    turns2 = await env.bridge.recent_conversation_turns(session_key="session:worker", limit=10)
     assert len(turns2) == 2, f"second send's turn not persisted: {turns2}"
 
 

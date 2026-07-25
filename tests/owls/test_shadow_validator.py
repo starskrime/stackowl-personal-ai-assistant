@@ -125,7 +125,7 @@ async def _seed_outcomes(
         trace_id = f"{base_trace}-{i}"
         await store.record(
             trace_id=trace_id,
-            session_id="seed-session",
+            session_key="seed-session",
             owl_name=_OWL_NAME,
             channel="cli",
             success=True,

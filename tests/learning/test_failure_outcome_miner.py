@@ -46,7 +46,7 @@ def _outcome(
     """Build a TaskOutcome. Failures default to quality_score=None/scored_at=None
     — matching reality: the critic (positive-only) never scores a failure."""
     return TaskOutcome(
-        outcome_id=0, trace_id=trace_id, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace_id, session_key="s", owl_name="o",
         channel="cli", success=failure_class is None, latency_ms=100.0,
         tool_call_count=1, tool_sequence=(tool,), failure_class=failure_class,
         quality_score=quality, step_durations={}, input_text="in",
@@ -64,7 +64,7 @@ def _outcome_with_sequence(
     the ONE tool/capability that actually failed this turn; historical rows
     have it None and fall back to co-occurrence crediting."""
     return TaskOutcome(
-        outcome_id=0, trace_id=trace_id, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace_id, session_key="s", owl_name="o",
         channel="cli", success=failure_class is None, latency_ms=100.0,
         tool_call_count=len(tool_sequence), tool_sequence=tool_sequence,
         failure_class=failure_class, quality_score=None, step_durations={},
@@ -207,7 +207,7 @@ def test_cluster_falls_back_to_cooccurrence_when_no_failed_capability() -> None:
 
 def test_cluster_ignores_empty_tool_sequence() -> None:
     empty_seq = TaskOutcome(
-        outcome_id=0, trace_id="e", session_id="s", owl_name="o", channel="cli",
+        outcome_id=0, trace_id="e", session_key="s", owl_name="o", channel="cli",
         success=False, latency_ms=1.0, tool_call_count=0, tool_sequence=(),
         failure_class="X", quality_score=None, step_durations={},
         input_text="i", response_text="o", captured_at=time.time(), scored_at=None,
@@ -279,7 +279,7 @@ async def test_list_failed_global_returns_failures_without_quality_score(
     source must NOT require quality_score IS NOT NULL."""
     store = TaskOutcomeStore(tmp_db)
     await store.record(
-        trace_id="fail-1", session_id="s", owl_name="scout", channel="cli",
+        trace_id="fail-1", session_key="s", owl_name="scout", channel="cli",
         success=False, latency_ms=5000.0, tool_call_count=1,
         failure_class="ToolTimeoutError", step_durations={},
         input_text="task", response_text="(error)", tool_sequence=("web_fetch",),
@@ -321,7 +321,7 @@ async def _seed_failures(
     for i in range(n):
         tid = f"fail-{tool}-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=False, latency_ms=5000.0, tool_call_count=1,
             failure_class=failure_class, step_durations={},
             input_text=f"task {i}", response_text="(error)",

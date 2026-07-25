@@ -35,11 +35,11 @@ class ResetCommand(SlashCommand):
         return "Clear session conversation history."
 
     async def handle(self, args: str, state: PipelineState) -> str:
-        """Execute /reset — delete conversation turns for state.session_id."""
+        """Execute /reset — delete conversation turns for state.session_key."""
         # 1. ENTRY
         log.gateway.debug(
             "[commands] reset.handle: entry",
-            extra={"_fields": {"session_id": state.session_id}},
+            extra={"_fields": {"session_key": state.session_key}},
         )
         # 2. DECISION — refuse honestly when not configured
         if self._bridge is None:
@@ -48,7 +48,7 @@ class ResetCommand(SlashCommand):
 
         # 3. STEP — delegate to bridge
         try:
-            count = await self._bridge.clear_session(state.session_id)
+            count = await self._bridge.clear_session(state.session_key)
         except Exception as exc:
             log.gateway.error("[commands] reset.handle: clear_session failed", exc_info=exc)
             return f"✗ /reset: {exc}"
@@ -60,6 +60,6 @@ class ResetCommand(SlashCommand):
             result = f"Cleared {count} conversation turn(s) for this session."
         log.gateway.info(
             "[commands] reset.handle: exit",
-            extra={"_fields": {"session_id": state.session_id, "deleted": count}},
+            extra={"_fields": {"session_key": state.session_key, "deleted": count}},
         )
         return result

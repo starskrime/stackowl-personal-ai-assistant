@@ -8,7 +8,7 @@ role → a sensible default specialist via :func:`resolve_target_owl`). When an
 ``initial_task`` is supplied, it is run ONCE through a child
 :class:`stackowl.pipeline.backends.asyncio_backend.AsyncioBackend` UNDER the shared
 ``delegation_governor`` (depth-aware, mirroring :class:`A2ADelegator`) with
-``session_id=f"session:{label}"`` so the seed turn is persisted to the MemoryBridge
+``session_key=f"session:{label}"`` so the seed turn is persisted to the MemoryBridge
 under the SESSION's id (by ``consolidate``); a later ``sessions_send`` (E8-S4)
 reads it back via ``classify``. Continuity is the bridge's job — nothing is stored
 on the handle.
@@ -122,7 +122,7 @@ class SessionsSpawnTool(Tool):
             return _failed(f"sessions_spawn: invalid arguments — {exc.errors()!r}", t0)
 
         ctx = TraceContext.get()
-        trace_id = str(ctx.get("trace_id") or ctx.get("session_id") or "sessions-spawn")
+        trace_id = str(ctx.get("trace_id") or ctx.get("session_key") or "sessions-spawn")
         caller = str(ctx.get("owl_name") or _DEFAULT_CALLER)
 
         services = get_services()
@@ -193,7 +193,7 @@ class SessionsSpawnTool(Tool):
     ) -> str:
         """Run ``initial_task`` once under the governor. Self-healing.
 
-        The run uses ``session_id=f"session:{label}"`` so ``consolidate`` persists
+        The run uses ``session_key=f"session:{label}"`` so ``consolidate`` persists
         the seed turn to the MemoryBridge under the SESSION's id — that IS the
         continuity (a later ``sessions_send`` reads it back via ``classify``). The
         handle stores NO history. A run failure NEVER tears down the already-spawned
@@ -203,12 +203,12 @@ class SessionsSpawnTool(Tool):
         """
         # A2A sub-pipeline: no user channel binding (default-deny clarify), and
         # delegation_depth=1 so the child cannot itself spawn/delegate (S0 cap).
-        # session_id is the SESSION's id (NOT the caller's) so the seed turn lands
+        # session_key is the SESSION's id (NOT the caller's) so the seed turn lands
         # in the bridge under this session — consolidate persists it (no depth skip).
         services = get_services()
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-spawn",
-            session_id=f"session:{label}",
+            session_key=f"session:{label}",
             input_text=initial_task,
             channel=channel,
             owl_name=owl_name,

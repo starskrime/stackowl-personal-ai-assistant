@@ -186,7 +186,7 @@ async def test_semantic_recall_returns_empty_when_no_embeddings(
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id="s", input_text="how do i summarize a pdf",
+        trace_id="t", session_key="s", input_text="how do i summarize a pdf",
         channel="cli", owl_name="scout", pipeline_step="start",
     )
 

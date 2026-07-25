@@ -8,8 +8,8 @@ WhatsApp loop calls :meth:`resolve_reply` (BEFORE the clarify pump) — a reply 
 ``1`` grants, ``2`` denies, anything else stays parked (the message runs as an
 ordinary turn; consent is never guessed).
 
-The WhatsApp ``session_id`` is a LOSSY hash of the JID, so the destination is
-resolved via ``adapter.resolve_target(session_id)`` (the adapter-owned
+The WhatsApp ``session_key`` is a LOSSY hash of the JID, so the destination is
+resolved via ``adapter.resolve_target(session_key)`` (the adapter-owned
 session→JID map). An unresolved JID fails CLOSED without a send — silence is
 never consent.
 
@@ -62,7 +62,7 @@ class WhatsAppConsentPrompter:
         self._adapter = adapter
         self._timeout = timeout_seconds
         self._lang = lang
-        # At most one parked consent per session (keyed by session_id).
+        # At most one parked consent per session (keyed by session_key).
         self._pending: dict[str, _Pending] = {}
 
     async def prompt(self, req: ConsentRequest) -> ConsentScope:
@@ -73,7 +73,7 @@ class WhatsAppConsentPrompter:
             extra={"_fields": {"tool": req.tool_name, "relax": req.allow_relaxation}},
         )
         # 2. DECISION — resolve the initiating session's JID; never guess.
-        dest = self._adapter.resolve_target(req.session_id)
+        dest = self._adapter.resolve_target(req.session_key)
         if not isinstance(dest, str) or not dest:
             log.whatsapp.error(
                 "[whatsapp] consent.prompt: no JID for session — denying (fail closed)",
@@ -82,7 +82,7 @@ class WhatsAppConsentPrompter:
             return ConsentScope.DENY
         # Only one parked consent per session — a second prompt while one is live
         # fails closed rather than racing two Futures over one reply stream.
-        if req.session_id in self._pending and not self._pending[req.session_id].future.done():
+        if req.session_key in self._pending and not self._pending[req.session_key].future.done():
             log.whatsapp.warning(
                 "[whatsapp] consent.prompt: a consent is already parked — denying",
                 extra={"_fields": {"tool": req.tool_name}},
@@ -94,7 +94,7 @@ class WhatsAppConsentPrompter:
         approve_scope = (
             ConsentScope.SESSION if req.allow_relaxation else ConsentScope.ONCE
         )
-        self._pending[req.session_id] = _Pending(
+        self._pending[req.session_key] = _Pending(
             future=future, approve_scope=approve_scope
         )
 
@@ -103,7 +103,7 @@ class WhatsAppConsentPrompter:
         try:
             await self._adapter.send_text(text, target=dest)
         except Exception as exc:
-            self._pending.pop(req.session_id, None)
+            self._pending.pop(req.session_key, None)
             log.whatsapp.error(
                 "[whatsapp] consent.prompt: send failed — denying (fail closed)",
                 exc_info=exc,
@@ -127,7 +127,7 @@ class WhatsAppConsentPrompter:
             )
             return ConsentScope.DENY
         finally:
-            self._pending.pop(req.session_id, None)
+            self._pending.pop(req.session_key, None)
 
         # 4. EXIT
         log.whatsapp.info(
@@ -136,7 +136,7 @@ class WhatsAppConsentPrompter:
         )
         return scope
 
-    async def resolve_reply(self, session_id: str, text: str) -> bool:
+    async def resolve_reply(self, session_key: str, text: str) -> bool:
         """Resolve a parked consent from the user's next inbound reply.
 
         Called by the WhatsApp loop BEFORE the clarify pump. Returns ``True`` iff
@@ -146,9 +146,9 @@ class WhatsAppConsentPrompter:
         """
         log.whatsapp.debug(
             "[whatsapp] consent.resolve_reply: entry",
-            extra={"_fields": {"has_pending": session_id in self._pending}},
+            extra={"_fields": {"has_pending": session_key in self._pending}},
         )
-        pending = self._pending.get(session_id)
+        pending = self._pending.get(session_key)
         if pending is None or pending.future.done():
             return False
         choice = text.strip()

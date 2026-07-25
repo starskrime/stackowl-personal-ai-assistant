@@ -18,7 +18,7 @@ from stackowl.channels.slack.clarify import SlackClarifyResolver
 
 @dataclass
 class _FakeEntry:
-    session_id: str
+    session_key: str
     channel: str
     choices: tuple[str, ...]
 
@@ -41,7 +41,7 @@ class _FakeGateway:
 @pytest.mark.asyncio
 async def test_handle_action_maps_index_to_choice_and_resolves() -> None:
     entry = _FakeEntry(
-        session_id="slack:abcd1234",
+        session_key="slack:abcd1234",
         channel="slack",
         choices=("red", "green", "blue"),
     )

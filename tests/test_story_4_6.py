@@ -34,7 +34,7 @@ from stackowl.providers.registry import ProviderRegistry
 def _state(**overrides: Any) -> PipelineState:
     defaults: dict[str, Any] = {
         "trace_id": "trace-4-6",
-        "session_id": "sess-4-6",
+        "session_key": "sess-4-6",
         "input_text": "hello",
         "channel": "cli",
         "owl_name": "secretary",

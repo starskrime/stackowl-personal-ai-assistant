@@ -111,7 +111,7 @@ async def _seed_messages(db: DbPool, owl_name: str, count: int) -> None:
     conv_id = uuid.uuid4().hex
     now = datetime.now(UTC).isoformat()
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
         (conv_id, f"sess-{owl_name}-{conv_id[:6]}", owl_name, now, count),
     )
@@ -165,7 +165,7 @@ def _state(owl_name: str) -> PipelineState:
     """PipelineState shaped like the OwlsCommand tests build it."""
     return PipelineState(
         trace_id="trace-dna-journey",
-        session_id="sess-dna-journey",
+        session_key="sess-dna-journey",
         input_text="hello",
         channel="cli",
         owl_name=owl_name,

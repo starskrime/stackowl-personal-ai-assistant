@@ -47,7 +47,7 @@ async def _seed(
 ) -> None:
     out_store = TaskOutcomeStore(db)
     await out_store.record(
-        trace_id=trace_id, session_id="s", owl_name=owl, channel="cli",
+        trace_id=trace_id, session_key="s", owl_name=owl, channel="cli",
         success=True, latency_ms=10.0, tool_call_count=1,
         failure_class=None, step_durations={},
         input_text="hi", response_text="ok",

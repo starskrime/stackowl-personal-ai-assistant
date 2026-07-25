@@ -38,12 +38,12 @@ class MemoryBridge(ABC):
     # --- legacy pipeline contract ---------------------------------------------------
 
     @abstractmethod
-    async def retrieve(self, query: str, session_id: str) -> str:
+    async def retrieve(self, query: str, session_key: str) -> str:
         """Return relevant memory context as a string, or ``""`` if none."""
         ...
 
     @abstractmethod
-    async def store(self, content: str, session_id: str, *, trust: Trust | None = None) -> None:
+    async def store(self, content: str, session_key: str, *, trust: Trust | None = None) -> None:
         """Persist content for future retrieval.
 
         ``trust`` overrides the default trust level for this source type.  When
@@ -97,8 +97,8 @@ class MemoryBridge(ABC):
         """
         return None
 
-    async def clear_session(self, session_id: str) -> int:
-        """Delete all conversation staged facts for *session_id*.
+    async def clear_session(self, session_key: str) -> int:
+        """Delete all conversation staged facts for *session_key*.
 
         Returns the number of rows deleted.  Used by ``/reset`` to actually
         wipe session history (the previous no-op implementation returned a
@@ -108,9 +108,9 @@ class MemoryBridge(ABC):
         return 0
 
     async def recent_conversation_turns(
-        self, session_id: str, limit: int = 6, staged_before: str | None = None,
+        self, session_key: str, limit: int = 6, staged_before: str | None = None,
     ) -> list[StagedFact]:
-        """Return last *limit* conversation staged facts for *session_id*, oldest-first.
+        """Return last *limit* conversation staged facts for *session_key*, oldest-first.
 
         Used by ``classify`` to give the LLM short-term memory of the in-progress
         session even before the dream worker promotes facts to ``committed_facts``.
@@ -132,17 +132,17 @@ class NullMemoryBridge(MemoryBridge):
     real SQLite-backed path.
     """
 
-    async def retrieve(self, query: str, session_id: str) -> str:
+    async def retrieve(self, query: str, session_key: str) -> str:
         log.memory.debug(
             "[memory] NullMemoryBridge.retrieve: noop — returning empty context",
-            extra={"_fields": {"session_id": session_id, "query_len": len(query)}},
+            extra={"_fields": {"session_key": session_key, "query_len": len(query)}},
         )
         return ""
 
-    async def store(self, content: str, session_id: str, *, trust: Trust | None = None) -> None:
+    async def store(self, content: str, session_key: str, *, trust: Trust | None = None) -> None:
         log.memory.debug(
             "[memory] NullMemoryBridge.store: noop",
-            extra={"_fields": {"session_id": session_id, "content_len": len(content), "trust_override": trust}},
+            extra={"_fields": {"session_key": session_key, "content_len": len(content), "trust_override": trust}},
         )
 
     async def stage(self, fact: StagedFact) -> None:

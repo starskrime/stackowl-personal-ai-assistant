@@ -48,7 +48,7 @@ _TRANSCRIPT_SQL = """
 SELECT m.id, m.role, m.content, m.created_at
 FROM messages m
 JOIN conversations c ON c.id = m.conversation_id
-WHERE c.session_id = ?
+WHERE c.session_key = ?
 ORDER BY m.created_at ASC, m.id ASC
 LIMIT ? OFFSET ?
 """
@@ -67,7 +67,7 @@ class TranscriptsTool(Tool):
     def description(self) -> str:
         return (
             "Return the ORDERED full transcript (message log) of a past session "
-            "by session_id. Distinct from session_search: this is the complete "
+            "by session_key. Distinct from session_search: this is the complete "
             "in-order conversation, not a ranked search. user/assistant turns by "
             "default; pass include_tool_calls=true to also include (redacted) "
             "tool turns. Reads the current session by default; another session "
@@ -83,7 +83,7 @@ class TranscriptsTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "session_id": {
+                "session_key": {
                     "type": "string",
                     "description": (
                         "Session whose transcript to return. Defaults to the "
@@ -132,7 +132,7 @@ class TranscriptsTool(Tool):
 
         try:
             # 2. DECISION — resolve which session we may read.
-            sid = kwargs.get("session_id")
+            sid = kwargs.get("session_key")
             sid_str = str(sid).strip() if isinstance(sid, str) else None
             vis = await resolve_visibility(db, sid_str)
             if not vis.allowed:
@@ -142,7 +142,7 @@ class TranscriptsTool(Tool):
             limit = self._coerce(kwargs.get("limit"), _DEFAULT_LIMIT, _MAX_LIMIT)
             offset = self._coerce(kwargs.get("offset"), 0, 10**9, lo=0)
 
-            rows = await db.fetch_all(_TRANSCRIPT_SQL, (vis.session_id, limit, offset))
+            rows = await db.fetch_all(_TRANSCRIPT_SQL, (vis.session_key, limit, offset))
             if not include_tools:
                 rows = [r for r in rows if str(r.get("role")) != _TOOL_ROLE]
             # 3. STEP
@@ -150,7 +150,7 @@ class TranscriptsTool(Tool):
                 "transcripts.execute: fetched",
                 extra={"_fields": {"rows": len(rows), "include_tools": include_tools}},
             )
-            return self._ok(self._render(rows, vis.session_id), t0, len(rows))
+            return self._ok(self._render(rows, vis.session_key), t0, len(rows))
         except Exception as exc:  # self-healing — degrade, never raise.
             log.tool.error(
                 "transcripts.execute: failed — degrading to structured error",
@@ -172,9 +172,9 @@ class TranscriptsTool(Tool):
         return max(lo, min(val, hi))
 
     @staticmethod
-    def _render(rows: list[dict[str, object]], session_id: str | None) -> str:
+    def _render(rows: list[dict[str, object]], session_key: str | None) -> str:
         """Render the ordered transcript with REDACTION on every turn."""
-        header = f"transcript of session {session_id}"
+        header = f"transcript of session {session_key}"
         if not rows:
             return f"{header}\n(no turns — empty or unknown session)"
         lines = [header]

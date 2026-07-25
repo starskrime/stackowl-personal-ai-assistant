@@ -15,7 +15,7 @@ async def test_registry_is_keyed_by_request_id_not_session() -> None:
     w2, r2 = reg.create("req-2")
     assert reg.get_writer("req-1") is w1
     assert reg.get_writer("req-2") is w2
-    assert reg.get_writer("session-x") is None  # session_id no longer a key
+    assert reg.get_writer("session-x") is None  # session_key no longer a key
     reg.remove("req-1")
     assert reg.get_writer("req-1") is None
     assert reg.get_writer("req-2") is w2
@@ -43,12 +43,12 @@ async def _drain(reader) -> list[ResponseChunk]:
 
 @pytest.mark.asyncio
 async def test_deliver_resolves_writer_by_trace_id() -> None:
-    """deliver looks up the writer by request_id (state.trace_id), not session_id."""
+    """deliver looks up the writer by request_id (state.trace_id), not session_key."""
     reg = StreamRegistry()
     writer, reader = reg.create("req-deliver-1")  # keyed by request_id
     state = PipelineState(
         trace_id="req-deliver-1",
-        session_id="sess-A",
+        session_key="sess-A",
         input_text="hi",
         channel="cli",
         owl_name="owl",
@@ -81,7 +81,7 @@ async def test_deliver_stream_miss_hard_drops_no_reroute() -> None:
     other_writer, other_reader = reg.create("req-other")
     state = PipelineState(
         trace_id="req-missing",
-        session_id="sess-A",
+        session_key="sess-A",
         input_text="hi",
         channel="cli",
         owl_name="owl",
@@ -111,7 +111,7 @@ async def test_deliver_drops_mismatched_chunk_request_id() -> None:
     writer, reader = reg.create("req-mix")
     state = PipelineState(
         trace_id="req-mix",
-        session_id="sess-A",
+        session_key="sess-A",
         input_text="hi",
         channel="cli",
         owl_name="owl",

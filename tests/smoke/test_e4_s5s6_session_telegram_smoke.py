@@ -2,7 +2,7 @@
 
 A real inbound Telegram message traverses the GENUINE path (adapter → scanner →
 AsyncioBackend → execute._dispatch → ToolRegistry → session_search / transcripts).
-Messages are seeded into the SAME session_id the pipeline assigns (captured mid-
+Messages are seeded into the SAME session_key the pipeline assigns (captured mid-
 flow) so the visibility guard's own-session path is exercised; a seeded secret
 proves redaction is applied on the way back out. Read tools — no consent.
 """
@@ -31,12 +31,12 @@ from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 USER_ID = 888888
 
 
-async def _seed(db: DbPool, *, session_id: str, owl_name: str, turns: list[tuple[str, str]]) -> None:
+async def _seed(db: DbPool, *, session_key: str, owl_name: str, turns: list[tuple[str, str]]) -> None:
     conv = uuid.uuid4().hex
     base = datetime(2026, 1, 1, tzinfo=UTC)
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) VALUES (?,?,?,?,?)",
-        (conv, session_id, owl_name, base.isoformat(), len(turns)),
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) VALUES (?,?,?,?,?)",
+        (conv, session_key, owl_name, base.isoformat(), len(turns)),
     )
     for i, (role, content) in enumerate(turns):
         await db.execute(
@@ -137,7 +137,7 @@ async def test_smoke_session_tools_through_telegram(tmp_db: DbPool) -> None:
         provider=provider,
     )
 
-    # Intake the inbound message to learn the session_id the pipeline will use,
+    # Intake the inbound message to learn the session_key the pipeline will use,
     # then seed prior turns (incl. a secret) into THAT session before running.
     update = SimpleNamespace(
         effective_message=SimpleNamespace(text="what did we say earlier about the token"),
@@ -148,7 +148,7 @@ async def test_smoke_session_tools_through_telegram(tmp_db: DbPool) -> None:
     msg = await env.adapter.receive()
     decision = env.scanner.scan(msg)
     await _seed(
-        tmp_db, session_id=msg.session_id, owl_name=decision.target,
+        tmp_db, session_key=msg.session_key, owl_name=decision.target,
         turns=[
             ("user", "deploy with token sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"),
             ("assistant", "noted, deploying"),
@@ -157,7 +157,7 @@ async def test_smoke_session_tools_through_telegram(tmp_db: DbPool) -> None:
 
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=msg.text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=msg.text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
     )
     # transcripts (own current session) returns the ordered log with the secret REDACTED.

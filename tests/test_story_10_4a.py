@@ -83,7 +83,7 @@ def audit_logger(db_path: Path) -> AuditLogger:
 @pytest.fixture()
 def pipeline_state() -> MagicMock:
     state = MagicMock()
-    state.session_id = "test-session"
+    state.session_key = "test-session"
     return state
 
 

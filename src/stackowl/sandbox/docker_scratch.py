@@ -27,18 +27,18 @@ class DockerScratch:
     """Creates / writes / cleans up a per-run scratch under ~/.stackowl/sandbox."""
 
     @staticmethod
-    def session_tag(session_id: str) -> str:
+    def session_tag(session_key: str) -> str:
         """A filesystem/docker-safe, collision-resistant tag for scratch + name."""
-        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:32]
+        safe = "".join(c for c in session_key if c.isalnum() or c in "-_")[:32]
         return f"{safe}-{uuid.uuid4().hex[:8]}" if safe else uuid.uuid4().hex[:16]
 
     @classmethod
-    def container_name(cls, session_id: str) -> str:
+    def container_name(cls, session_key: str) -> str:
         """A unique, valid ``--name`` for reaping (matches docker's name regex)."""
-        return f"stackowl-sbx-{cls.session_tag(session_id)}"
+        return f"stackowl-sbx-{cls.session_tag(session_key)}"
 
     @classmethod
-    def make(cls, session_id: str) -> Path:
+    def make(cls, session_key: str) -> Path:
         """Create the scratch + ``code`` subdir; return the scratch ROOT.
 
         The code goes in ``code/main.py`` and ONLY the ``code`` subdir is bind-mounted
@@ -46,7 +46,7 @@ class DockerScratch:
         """
         root = StackowlHome.home() / "sandbox"
         root.mkdir(parents=True, exist_ok=True)
-        scratch = root / cls.session_tag(session_id)
+        scratch = root / cls.session_tag(session_key)
         code_dir = scratch / "code"
         code_dir.mkdir(parents=True, exist_ok=True)
         for d in (scratch, code_dir):

@@ -23,7 +23,7 @@ from stackowl.pipeline.state import PipelineState
 
 def _state(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
-        trace_id="t", session_id="s", input_text="hi", owl_name="secretary",
+        trace_id="t", session_key="s", input_text="hi", owl_name="secretary",
         channel="cli", pipeline_step="start",
     )
     base.update(kw)

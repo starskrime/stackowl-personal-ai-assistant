@@ -157,7 +157,7 @@ async def test_real_mailbox_steer_folds_into_next_iteration_full_chain(
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        request_id, session_id="s1", task=bg, target=None, original_input="research X"
+        request_id, session_key="s1", task=bg, target=None, original_input="research X"
     )
 
     # 2. A steer arrives on the REAL mailbox BEFORE the loop's first boundary.
@@ -211,7 +211,7 @@ async def test_no_steer_pending_full_chain_folds_nothing(
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
     await reg.register(
-        request_id, session_id="s2", task=bg, target=None, original_input="research X"
+        request_id, session_key="s2", task=bg, target=None, original_input="research X"
     )
     steering_cb = make_steering_callback(reg, request_id)
     assert steering_cb is not None

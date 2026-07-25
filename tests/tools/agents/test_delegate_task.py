@@ -373,7 +373,7 @@ async def test_backend_propagates_state_depth_to_trace_context() -> None:
     try:
         state = PipelineState(
             trace_id="tr-be",
-            session_id="s",
+            session_key="s",
             input_text="x",
             channel="cli",
             owl_name="secretary",
@@ -778,7 +778,7 @@ async def test_dedup_memo_prevents_second_delegate_call_for_same_ok_key() -> Non
             target: str,
             depth: int,
             trace_id: str,
-            session_id: str,
+            session_key: str,
             channel: str,
             t0: float,
             durable_scope: object = None,
@@ -797,7 +797,7 @@ async def test_dedup_memo_prevents_second_delegate_call_for_same_ok_key() -> Non
             chain = tuple(TraceContext.get().get("delegation_chain") or ())
             parent_state = PipelineState(
                 trace_id=trace_id or "delegate-task",
-                session_id=session_id,
+                session_key=session_key,
                 input_text=sub_task,
                 channel=channel,
                 owl_name=caller,

@@ -31,7 +31,7 @@ from stackowl.pipeline.steps import triage
 
 def _row() -> RetryQueueRow:
     return RetryQueueRow(
-        id="retry-1", trace_id="trace-orig", session_id="sess-1",
+        id="retry-1", trace_id="trace-orig", session_key="sess-1",
         goal="prepare me for the interview", banned_capabilities=[],
         attempt_count=0, status="pending", next_retry_at="", last_error=None,
         channel="telegram", channel_chat_id="555", channel_message_id="999",
@@ -84,7 +84,7 @@ async def test_manual_retry_seam_single_delivery_no_recursion(monkeypatch) -> No
     monkeypatch.setattr(backend_mod.deliver, "run", _spy_deliver)
 
     outer_state = PipelineState(
-        trace_id="outer-1", session_id="sess-1", input_text="do it again",
+        trace_id="outer-1", session_key="sess-1", input_text="do it again",
         channel="telegram", owl_name="secretary", pipeline_step="",
         interactive=True, reply_target=555,
     )

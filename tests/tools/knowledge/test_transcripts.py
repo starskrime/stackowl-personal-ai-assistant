@@ -31,16 +31,16 @@ if TYPE_CHECKING:  # pragma: no cover
 async def _seed_session(
     db: DbPool,
     *,
-    session_id: str,
+    session_key: str,
     owl_name: str,
     turns: list[tuple[str, str]],
 ) -> None:
     conv_id = uuid.uuid4().hex
     base = datetime(2026, 1, 1, tzinfo=UTC)
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
-        (conv_id, session_id, owl_name, base.isoformat(), len(turns)),
+        (conv_id, session_key, owl_name, base.isoformat(), len(turns)),
     )
     for i, (role, content) in enumerate(turns):
         await db.execute(
@@ -59,8 +59,8 @@ def services_with_db(tmp_db: DbPool) -> Iterator[DbPool]:
         reset_services(token)
 
 
-def _in_session(session_id: str) -> object:
-    return TraceContext.start(session_id=session_id)
+def _in_session(session_key: str) -> object:
+    return TraceContext.start(session_key=session_key)
 
 
 # ---------------------------------------------------------------------- manifest
@@ -81,7 +81,7 @@ async def test_returns_ordered_transcript(services_with_db: DbPool) -> None:
     db = services_with_db
     await _seed_session(
         db,
-        session_id="s1",
+        session_key="s1",
         owl_name="scout",
         turns=[
             ("user", "first"),
@@ -91,7 +91,7 @@ async def test_returns_ordered_transcript(services_with_db: DbPool) -> None:
     )
     token = _in_session("s1")
     try:
-        res = await TranscriptsTool().execute(session_id="s1")
+        res = await TranscriptsTool().execute(session_key="s1")
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
     assert res.success
@@ -103,7 +103,7 @@ async def test_tool_turns_excluded_by_default(services_with_db: DbPool) -> None:
     db = services_with_db
     await _seed_session(
         db,
-        session_id="s1",
+        session_key="s1",
         owl_name="scout",
         turns=[
             ("user", "ask"),
@@ -113,9 +113,9 @@ async def test_tool_turns_excluded_by_default(services_with_db: DbPool) -> None:
     )
     token = _in_session("s1")
     try:
-        default = await TranscriptsTool().execute(session_id="s1")
+        default = await TranscriptsTool().execute(session_key="s1")
         with_tools = await TranscriptsTool().execute(
-            session_id="s1", include_tool_calls=True,
+            session_key="s1", include_tool_calls=True,
         )
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
@@ -130,12 +130,12 @@ async def test_redaction_applied(services_with_db: DbPool) -> None:
     db = services_with_db
     secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
     await _seed_session(
-        db, session_id="s1", owl_name="scout",
+        db, session_key="s1", owl_name="scout",
         turns=[("user", f"token {secret}")],
     )
     token = _in_session("s1")
     try:
-        res = await TranscriptsTool().execute(session_id="s1")
+        res = await TranscriptsTool().execute(session_key="s1")
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
     assert res.success
@@ -149,13 +149,13 @@ async def test_redaction_applied_to_included_tool_payload(
     db = services_with_db
     secret = "sk-SECRETSECRETSECRETSECRET1234567890"
     await _seed_session(
-        db, session_id="s1", owl_name="scout",
+        db, session_key="s1", owl_name="scout",
         turns=[("tool", f"result with {secret}")],
     )
     token = _in_session("s1")
     try:
         res = await TranscriptsTool().execute(
-            session_id="s1", include_tool_calls=True,
+            session_key="s1", include_tool_calls=True,
         )
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
@@ -170,7 +170,7 @@ async def test_unknown_session_is_structured(services_with_db: DbPool) -> None:
     token = _in_session("s1")
     try:
         # Caller's own current session s1 has no messages → empty, structured.
-        res = await TranscriptsTool().execute(session_id="s1")
+        res = await TranscriptsTool().execute(session_key="s1")
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
     assert res.success  # known-empty is a successful empty transcript
@@ -182,15 +182,15 @@ async def test_cross_session_blocked_for_different_owner(
 ) -> None:
     db = services_with_db
     await _seed_session(
-        db, session_id="s1", owl_name="scout", turns=[("user", "scout")],
+        db, session_key="s1", owl_name="scout", turns=[("user", "scout")],
     )
     await _seed_session(
-        db, session_id="s2", owl_name="oracle",
+        db, session_key="s2", owl_name="oracle",
         turns=[("user", "oracle private transcript")],
     )
     token = _in_session("s1")
     try:
-        res = await TranscriptsTool().execute(session_id="s2")
+        res = await TranscriptsTool().execute(session_key="s2")
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
     assert not res.success
@@ -205,7 +205,7 @@ async def test_store_unavailable_is_structured() -> None:
     token_services = set_services(StepServices(db_pool=None))
     trace = _in_session("s1")
     try:
-        res = await TranscriptsTool().execute(session_id="s1")
+        res = await TranscriptsTool().execute(session_key="s1")
     finally:
         TraceContext.reset(trace)  # type: ignore[arg-type]
         reset_services(token_services)

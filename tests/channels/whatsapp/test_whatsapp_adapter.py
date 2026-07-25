@@ -54,8 +54,8 @@ async def test_handle_message_authorized_enqueues() -> None:
     msg = await adapter._queue.get()
     assert msg.text == "hello world"
     assert msg.channel == "whatsapp"
-    assert msg.session_id.startswith("whatsapp:")
-    assert "15551234567" not in msg.session_id  # never raw phone in session_id
+    assert msg.session_key.startswith("whatsapp:")
+    assert "15551234567" not in msg.session_key  # never raw phone in session_key
 
 
 # --------------------------------------------------------------------------- #
@@ -263,18 +263,18 @@ async def test_health_check_degraded_when_stale_poll() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 14. session_id uses hashed jid, not raw phone
+# 14. session_key uses hashed jid, not raw phone
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 async def test_session_id_does_not_contain_raw_phone() -> None:
-    """IngressMessage.session_id must not contain the raw phone number."""
+    """IngressMessage.session_key must not contain the raw phone number."""
     adapter = _adapter(allowed=frozenset(["15551234567"]))
     await adapter.handle_message("15551234567@s.whatsapp.net", "private message")
     msg = await adapter._queue.get()
-    assert "15551234567" not in msg.session_id
-    assert msg.session_id.startswith("whatsapp:")
+    assert "15551234567" not in msg.session_key
+    assert msg.session_key.startswith("whatsapp:")
 
 
 # --------------------------------------------------------------------------- #

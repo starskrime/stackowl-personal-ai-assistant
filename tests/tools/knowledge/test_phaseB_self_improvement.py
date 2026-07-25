@@ -128,7 +128,7 @@ async def _seed_reflectable_outcome(db: DbPool, *, trace_id: str) -> None:
     """
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id=trace_id, session_id="s", owl_name="secretary", channel="cli",
+        trace_id=trace_id, session_key="s", owl_name="secretary", channel="cli",
         success=True, latency_ms=10.0, tool_call_count=0,
         failure_class=None, step_durations={}, input_text="do a thing",
         response_text="solid answer",
@@ -146,7 +146,7 @@ async def _seed_success_cluster(
     for i in range(n):
         tid = f"trace-{sequence[0]}-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=True, latency_ms=50.0, tool_call_count=len(sequence),
             failure_class=None, step_durations={},
             input_text=f"do the thing {i}", response_text="done",
@@ -281,7 +281,7 @@ async def test_synthesize_skills_denied_consent_reports_created_zero(
     """Reviewer Finding 1b: invoked mid-turn (an interactive TraceContext — the
     live path), a DENIED consent must make the on-demand tool report
     created:0, never a stale/incorrect success. Also proves (Finding 1a,
-    end-to-end) the inner gate call used the LIVE identity/channel/session_id
+    end-to-end) the inner gate call used the LIVE identity/channel/session_key
     — not the scheduled fallback — by recording the request kwargs."""
     services, skills_root = synth_services
     await _seed_success_cluster(tmp_db, sequence=("web_fetch", "shell"), n=3)
@@ -315,7 +315,7 @@ async def test_synthesize_skills_denied_consent_reports_created_zero(
     assert len(calls) == 1
     assert calls[0]["tool_name"] == _CONSENT_TOOL_NAME_LIVE
     assert calls[0]["channel"] == "telegram"
-    assert calls[0]["session_id"] == "live-session-2"
+    assert calls[0]["session_key"] == "live-session-2"
 
 
 async def test_synthesize_skills_missing_service_degrades_structurally(
@@ -510,7 +510,7 @@ async def test_agent_triggers_reflect_now_through_gateway(
 
     msg = IngressMessage(
         text="please reflect on your recent work",
-        session_id="sess-reflect-gw", channel="cli", trace_id="trace-reflect-gw-1",
+        session_key="sess-reflect-gw", channel="cli", trace_id="trace-reflect-gw-1",
     )
     decision = scanner.scan(msg)
     assert decision.route == "owl"
@@ -518,7 +518,7 @@ async def test_agent_triggers_reflect_now_through_gateway(
 
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
-        trace_id=msg.trace_id, session_id="sess-reflect-gw", input_text=input_text,
+        trace_id=msg.trace_id, session_key="sess-reflect-gw", input_text=input_text,
         channel=msg.channel, owl_name=decision.target,
         pipeline_step="start", interactive=True,
     )

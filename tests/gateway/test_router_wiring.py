@@ -71,7 +71,7 @@ class _MockClassifier:
 async def _register_running(reg: TurnRegistry, *, rid: str, sid: str, ask: str):
     """Register a long-lived RUNNING turn (a sleeping task stands in for the loop)."""
     task = asyncio.create_task(asyncio.sleep(5.0))
-    turn = await reg.register(rid, session_id=sid, task=task, target=None, original_input=ask)
+    turn = await reg.register(rid, session_key=sid, task=task, target=None, original_input=ask)
     return turn, task
 
 
@@ -86,7 +86,7 @@ async def _intake_new_path(reg: TurnRegistry, *, sid: str, text: str, rid: str) 
         if reg.running(sid) is None:
             # The running turn finished between route and re-acquire → dispatch now.
             await reg.register(
-                rid, session_id=sid, task=asyncio.create_task(asyncio.sleep(0.01)),
+                rid, session_key=sid, task=asyncio.create_task(asyncio.sleep(0.01)),
                 target=None, original_input=text,
             )
             return "dispatched"
@@ -125,7 +125,7 @@ async def test_explicit_steer_folds_body_into_running_turn() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="/steer use tabs not spaces", session_id="s1",
+                text="/steer use tabs not spaces", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,
@@ -158,11 +158,11 @@ async def test_string_target_forwards_into_try_steer() -> None:
     captured: dict[str, object] = {}
     real_try_steer = reg.try_steer
 
-    async def _spy_try_steer(request_id, text, *, session_id, request_id_new, target):  # type: ignore[no-untyped-def]
+    async def _spy_try_steer(request_id, text, *, session_key, request_id_new, target):  # type: ignore[no-untyped-def]
         captured["target"] = target
         return await real_try_steer(
             request_id, text,
-            session_id=session_id, request_id_new=request_id_new, target=target,
+            session_key=session_key, request_id_new=request_id_new, target=target,
         )
 
     reg.try_steer = _spy_try_steer  # type: ignore[method-assign]
@@ -170,7 +170,7 @@ async def test_string_target_forwards_into_try_steer() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="/steer also handle slack", session_id="s1",
+                text="/steer also handle slack", session_key="s1",
                 request_id_new="r2", target="C123-1700000000.000100",
             ),
             2.0,
@@ -197,7 +197,7 @@ async def test_explicit_stop_sets_stop_flag() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="/stop", session_id="s1", request_id_new="r2", target=None,
+                text="/stop", session_key="s1", request_id_new="r2", target=None,
             ),
             2.0,
         )
@@ -221,7 +221,7 @@ async def test_explicit_new_returns_enqueue_new_and_caller_queues() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="/new draft the email", session_id="s1",
+                text="/new draft the email", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,
@@ -254,7 +254,7 @@ async def test_unsignaled_high_conf_steer_folds() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="actually also handle the empty case", session_id="s1",
+                text="actually also handle the empty case", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,
@@ -282,7 +282,7 @@ async def test_unsignaled_new_returns_enqueue_new() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="what's the weather in Paris", session_id="s1",
+                text="what's the weather in Paris", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,
@@ -310,7 +310,7 @@ async def test_classifier_error_fail_safe_queued_new() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="ambiguous mid-turn message", session_id="s1",
+                text="ambiguous mid-turn message", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,
@@ -355,7 +355,7 @@ async def test_slow_route_race_steer_on_finished_turn_becomes_queued_new() -> No
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="please also add logging", session_id="s1",
+                text="please also add logging", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,

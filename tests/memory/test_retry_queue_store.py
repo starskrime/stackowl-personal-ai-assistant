@@ -31,7 +31,7 @@ async def test_insert_pending_then_get_due_returns_deserialized_row(tmp_db: DbPo
     store = RetryQueueStore(tmp_db)
 
     retry_id = await store.insert_pending(
-        trace_id="trace-1", session_id="sess-1", goal="do the thing",
+        trace_id="trace-1", session_key="sess-1", goal="do the thing",
         banned_capabilities=["cronjob"],
     )
     assert isinstance(retry_id, str)
@@ -50,11 +50,11 @@ async def test_insert_pending_then_get_due_returns_deserialized_row(tmp_db: DbPo
 async def test_backfill_channel_message_updates_only_that_trace(tmp_db: DbPool) -> None:
     store = RetryQueueStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-2", session_id="sess-1", goal="do the thing",
+        trace_id="trace-2", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
     other_id = await store.insert_pending(
-        trace_id="trace-other", session_id="sess-1", goal="unrelated",
+        trace_id="trace-other", session_key="sess-1", goal="unrelated",
         banned_capabilities=[],
     )
 
@@ -76,7 +76,7 @@ async def test_get_latest_pending_for_session_returns_stringified_backfill(
 ) -> None:
     store = RetryQueueStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-3", session_id="sess-solo", goal="do the thing",
+        trace_id="trace-3", session_key="sess-solo", goal="do the thing",
         banned_capabilities=[],
     )
     await store.backfill_channel_message(
@@ -101,7 +101,7 @@ async def test_mark_attempt_failed_below_cap_stays_pending_and_appends_capabilit
 ) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-4", session_id="sess-1", goal="do the thing",
+        trace_id="trace-4", session_key="sess-1", goal="do the thing",
         banned_capabilities=["a"],
     )
 
@@ -120,7 +120,7 @@ async def test_mark_attempt_failed_never_reaches_a_terminal_cap(tmp_db: DbPool) 
     "failed"."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-5", session_id="sess-1", goal="do the thing",
+        trace_id="trace-5", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -140,7 +140,7 @@ async def test_mark_attempt_failed_next_retry_at_grows_with_attempt_count(
 
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-backoff", session_id="sess-1", goal="do the thing",
+        trace_id="trace-backoff", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -173,7 +173,7 @@ async def test_mark_attempt_failed_does_not_duplicate_banned_capability(
 ) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-6", session_id="sess-1", goal="do the thing",
+        trace_id="trace-6", session_key="sess-1", goal="do the thing",
         banned_capabilities=["shell"],
     )
 
@@ -190,7 +190,7 @@ async def test_mark_attempt_failed_truncates_last_error_to_2000_chars(
 ) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-7", session_id="sess-1", goal="do the thing",
+        trace_id="trace-7", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -207,7 +207,7 @@ async def test_mark_completed_sets_status_and_excludes_from_get_due(
 ) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-8", session_id="sess-1", goal="do the thing",
+        trace_id="trace-8", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -222,7 +222,7 @@ async def test_queries_are_owner_scoped(tmp_db: DbPool) -> None:
     store_b = RetryQueueStore(tmp_db, owner_id="owner-b")
 
     await store_a.insert_pending(
-        trace_id="trace-owner-a", session_id="sess-1", goal="do the thing",
+        trace_id="trace-owner-a", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -243,7 +243,7 @@ async def test_mark_attempt_failed_concurrent_calls_do_not_lose_an_increment(
     """
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-race", session_id="sess-1", goal="do the thing",
+        trace_id="trace-race", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -265,7 +265,7 @@ async def test_mark_attempt_failed_on_raced_terminal_row_raises_value_error(
     concurrent caller raced into a terminal state some other way."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-9", session_id="sess-1", goal="do the thing",
+        trace_id="trace-9", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
     await tmp_db.execute(
@@ -283,7 +283,7 @@ async def test_mark_attempt_failed_on_completed_row_raises_value_error(
 ) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-10", session_id="sess-1", goal="do the thing",
+        trace_id="trace-10", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
     await store.mark_completed(retry_id)
@@ -315,10 +315,10 @@ async def test_backfill_channel_message_duplicate_trace_id_stamps_only_one_row(
     """
     store = RetryQueueStore(tmp_db)
     id_1 = await store.insert_pending(
-        trace_id="trace-dup", session_id="sess-1", goal="first", banned_capabilities=[],
+        trace_id="trace-dup", session_key="sess-1", goal="first", banned_capabilities=[],
     )
     id_2 = await store.insert_pending(
-        trace_id="trace-dup", session_id="sess-1", goal="second", banned_capabilities=[],
+        trace_id="trace-dup", session_key="sess-1", goal="second", banned_capabilities=[],
     )
 
     await store.backfill_channel_message(
@@ -342,7 +342,7 @@ async def test_get_due_rejects_non_positive_limit(tmp_db: DbPool) -> None:
 async def test_insert_pending_truncates_goal_to_4000_chars(tmp_db: DbPool) -> None:
     store = RetryQueueStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-long-goal", session_id="sess-1", goal="x" * 9000,
+        trace_id="trace-long-goal", session_key="sess-1", goal="x" * 9000,
         banned_capabilities=[],
     )
 
@@ -357,7 +357,7 @@ async def test_reschedule_pushes_row_out_of_due_window(tmp_db: DbPool) -> None:
     still-banned channel."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-flood", session_id="sess-1", goal="do the thing",
+        trace_id="trace-flood", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
 
@@ -370,7 +370,7 @@ async def test_reschedule_pushes_row_out_of_due_window(tmp_db: DbPool) -> None:
 async def test_reschedule_does_not_touch_attempt_count_or_banned(tmp_db: DbPool) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-flood-2", session_id="sess-1", goal="do the thing",
+        trace_id="trace-flood-2", session_key="sess-1", goal="do the thing",
         banned_capabilities=["cronjob"],
     )
 
@@ -397,7 +397,7 @@ async def test_supersede_repoints_trace_id_and_goal(tmp_db: DbPool) -> None:
     session, tracking the freshest ask."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-old", session_id="sess-1", goal="Yes review",
+        trace_id="trace-old", session_key="sess-1", goal="Yes review",
         banned_capabilities=["cronjob"],
     )
 
@@ -420,7 +420,7 @@ async def test_supersede_resets_attempt_count_and_last_error(tmp_db: DbPool) -> 
     one — attempt_count/last_error must not carry over."""
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-old", session_id="sess-1", goal="do the thing",
+        trace_id="trace-old", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
     await store.mark_attempt_failed(
@@ -441,7 +441,7 @@ async def test_supersede_resets_attempt_count_and_last_error(tmp_db: DbPool) -> 
 async def test_supersede_ignores_non_pending_row(tmp_db: DbPool) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-done", session_id="sess-1", goal="do the thing",
+        trace_id="trace-done", session_key="sess-1", goal="do the thing",
         banned_capabilities=[],
     )
     await store.mark_completed(retry_id)
@@ -458,7 +458,7 @@ async def test_supersede_ignores_non_pending_row(tmp_db: DbPool) -> None:
 async def test_supersede_truncates_goal_to_4000_chars(tmp_db: DbPool) -> None:
     store = RetryQueueStore(tmp_db)
     retry_id = await store.insert_pending(
-        trace_id="trace-old", session_id="sess-1", goal="short",
+        trace_id="trace-old", session_key="sess-1", goal="short",
         banned_capabilities=[],
     )
 

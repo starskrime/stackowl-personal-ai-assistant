@@ -33,7 +33,7 @@ async def test_floored_turn_marks_message_ledger_failed(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-floor", session_id="sess-x", input_text="do the thing",
+        trace_id="trace-floor", session_key="sess-x", input_text="do the thing",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(
@@ -65,7 +65,7 @@ async def test_clean_turn_marks_message_ledger_completed(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-clean", session_id="sess-x", input_text="hello",
+        trace_id="trace-clean", session_key="sess-x", input_text="hello",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(
@@ -95,7 +95,7 @@ async def test_missing_message_ledger_store_is_a_noop(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-none", session_id="sess-x", input_text="hello",
+        trace_id="trace-none", session_key="sess-x", input_text="hello",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(

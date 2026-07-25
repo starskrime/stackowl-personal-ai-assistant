@@ -27,7 +27,7 @@ from stackowl.providers.registry import ProviderRegistry
 
 def _state(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
-        trace_id="t", session_id="s", input_text="hi", owl_name="secretary",
+        trace_id="t", session_key="s", input_text="hi", owl_name="secretary",
         channel="cli", pipeline_step="start",
     )
     base.update(kw)
@@ -68,13 +68,13 @@ async def test_fresh_session_calls_router_then_bypasses_on_followup() -> None:
     services = _build_services(owl_registry, mock)
     token = set_services(services)
     try:
-        first = await triage_step.run(_state(session_id="sess-1", input_text="hey there"))
+        first = await triage_step.run(_state(session_key="sess-1", input_text="hey there"))
         assert first.owl_name == "research_owl"
         assert first.intent_class == "conversational"
         assert mock.call_count == 1
         assert services.sticky_route_cache.get("sess-1") == ("research_owl", "conversational")
 
-        second = await triage_step.run(_state(session_id="sess-1", input_text="thanks!"))
+        second = await triage_step.run(_state(session_key="sess-1", input_text="thanks!"))
         assert mock.call_count == 1  # bypassed — no second router call
         assert second.owl_name == "research_owl"
         assert second.intent_class == "conversational"
@@ -98,12 +98,12 @@ async def test_standard_result_never_cached_or_reused() -> None:
     services = _build_services(owl_registry, mock)
     token = set_services(services)
     try:
-        first = await triage_step.run(_state(session_id="sess-std", input_text="find me a recipe"))
+        first = await triage_step.run(_state(session_key="sess-std", input_text="find me a recipe"))
         assert first.intent_class == "standard"
         assert mock.call_count == 1
         assert services.sticky_route_cache.get("sess-std") is None  # never written
 
-        await triage_step.run(_state(session_id="sess-std", input_text="and another one"))
+        await triage_step.run(_state(session_key="sess-std", input_text="and another one"))
         assert mock.call_count == 2  # not bypassed — cache was never populated
     finally:
         reset_services(token)
@@ -121,7 +121,7 @@ async def test_standard_entry_in_cache_is_never_reused_even_if_present() -> None
     token = set_services(services)
     try:
         services.sticky_route_cache.set("sess-std2", "research_owl", "standard")
-        out = await triage_step.run(_state(session_id="sess-std2", input_text="hi again"))
+        out = await triage_step.run(_state(session_key="sess-std2", input_text="hi again"))
         assert mock.call_count == 1  # router still called — cached "standard" ignored
         assert out.owl_name == "research_owl"
     finally:
@@ -140,11 +140,11 @@ async def test_long_followup_bypasses_length_ceiling_calls_router() -> None:
     services = _build_services(owl_registry, mock)
     token = set_services(services)
     try:
-        await triage_step.run(_state(session_id="sess-2", input_text="hey there"))
+        await triage_step.run(_state(session_key="sess-2", input_text="hey there"))
         assert mock.call_count == 1
 
         long_text = "x" * 200  # not < 200 chars
-        await triage_step.run(_state(session_id="sess-2", input_text=long_text))
+        await triage_step.run(_state(session_key="sess-2", input_text=long_text))
         assert mock.call_count == 2
     finally:
         reset_services(token)
@@ -167,11 +167,11 @@ async def test_stale_cache_entry_calls_router(monkeypatch: pytest.MonkeyPatch) -
         "stackowl.owls.sticky_route_cache.time.monotonic", lambda: clock["now"]
     )
     try:
-        await triage_step.run(_state(session_id="sess-3", input_text="hey there"))
+        await triage_step.run(_state(session_key="sess-3", input_text="hey there"))
         assert mock.call_count == 1
 
         clock["now"] += TTL_SECONDS + 1  # advance past the TTL
-        await triage_step.run(_state(session_id="sess-3", input_text="thanks!"))
+        await triage_step.run(_state(session_key="sess-3", input_text="thanks!"))
         assert mock.call_count == 2
     finally:
         reset_services(token)
@@ -190,7 +190,7 @@ async def test_cached_owl_removed_falls_through_to_router() -> None:
     token = set_services(services)
     try:
         services.sticky_route_cache.set("sess-4", "ghost_owl", "conversational")
-        out = await triage_step.run(_state(session_id="sess-4", input_text="hi again"))
+        out = await triage_step.run(_state(session_key="sess-4", input_text="hi again"))
         assert mock.call_count == 1
         assert out.owl_name == "research_owl"
     finally:
@@ -210,12 +210,12 @@ async def test_clarify_result_never_cached() -> None:
     services = _build_services(owl_registry, mock)
     token = set_services(services)
     try:
-        first = await triage_step.run(_state(session_id="sess-5", input_text="huh"))
+        first = await triage_step.run(_state(session_key="sess-5", input_text="huh"))
         assert first.intent_class == "clarify"
         assert mock.call_count == 1
         assert services.sticky_route_cache.get("sess-5") is None
 
-        await triage_step.run(_state(session_id="sess-5", input_text="still confused"))
+        await triage_step.run(_state(session_key="sess-5", input_text="still confused"))
         assert mock.call_count == 2  # not bypassed — cache was never populated
     finally:
         reset_services(token)
@@ -250,14 +250,14 @@ async def test_direct_address_never_writes_or_reads_cache() -> None:
     token = set_services(services)
     try:
         direct = await triage_step.run(
-            _state(session_id="sess-6", owl_name="research_owl", input_text="@research_owl hi")
+            _state(session_key="sess-6", owl_name="research_owl", input_text="@research_owl hi")
         )
         assert direct.owl_name == "research_owl"
         assert mock.call_count == 0  # direct address never calls the router
         assert services.sticky_route_cache.get("sess-6") is None  # nor writes the cache
 
         followup = await triage_step.run(
-            _state(session_id="sess-6", owl_name="secretary", input_text="hi")
+            _state(session_key="sess-6", owl_name="secretary", input_text="hi")
         )
         assert mock.call_count == 1  # NOT sticky-bypassed off the direct address
         assert followup.owl_name == "research_owl"

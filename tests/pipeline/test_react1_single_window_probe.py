@@ -34,7 +34,7 @@ class _FakeProvider:
 
 def _state(model_window: int | None) -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id="s", input_text="do it", channel="cli",
+        trace_id="t", session_key="s", input_text="do it", channel="cli",
         owl_name="o", pipeline_step="execute", model_window=model_window,
     )
 

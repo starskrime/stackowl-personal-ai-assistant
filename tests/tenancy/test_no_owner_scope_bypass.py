@@ -360,7 +360,7 @@ _SELECT = """
     SELECT m.role, m.content
       FROM messages m
       JOIN conversations c ON c.id = m.conversation_id
-     WHERE c.session_id = ?
+     WHERE c.session_key = ?
 """
 _SCOPED = "DELETE FROM pellets WHERE owner_id = ? AND id = ?"
 '''

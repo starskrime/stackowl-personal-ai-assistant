@@ -27,7 +27,7 @@ tests/gateway/test_completion_finalize_drain.py.
 Signature reconciliation: the plan's draft test used ``request_id=`` as the
 new-turn id kwarg, which collides with the positional ``request_id`` (the turn
 being steered). Reconciled to ``request_id_new=`` (the impl spec's name) for a
-single coherent signature: ``try_steer(request_id, text, *, session_id,
+single coherent signature: ``try_steer(request_id, text, *, session_key,
 request_id_new, target)``.
 """
 
@@ -53,7 +53,7 @@ async def _one_interleaving(seed: int) -> None:
     """
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r1", session_id="s1", task=t, target=None, original_input="orig")
+    await reg.register("r1", session_key="s1", task=t, target=None, original_input="orig")
     accepted: list[str] = []
     queued_new: list[str] = []
 
@@ -63,7 +63,7 @@ async def _one_interleaving(seed: int) -> None:
         for _ in range(random.randint(0, 3)):
             await asyncio.sleep(0)
         outcome = await reg.try_steer(
-            "r1", "corr", session_id="s1", request_id_new="r2", target=None
+            "r1", "corr", session_key="s1", request_id_new="r2", target=None
         )
         (accepted if outcome == "STEER" else queued_new).append("corr")
 
@@ -102,10 +102,10 @@ async def test_try_steer_running_puts_and_returns_steer() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        "req-run", session_id="s1", task=t, target=None, original_input="orig"
+        "req-run", session_key="s1", task=t, target=None, original_input="orig"
     )
     outcome = await reg.try_steer(
-        "req-run", "more detail", session_id="s1", request_id_new="new-1", target=None
+        "req-run", "more detail", session_key="s1", request_id_new="new-1", target=None
     )
     assert outcome == "STEER"
     # the text landed on the live mailbox
@@ -119,11 +119,11 @@ async def test_try_steer_running_puts_and_returns_steer() -> None:
 async def test_try_steer_finalizing_returns_new_and_enqueues() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("req-fin", session_id="s1", task=t, target=None, original_input="orig")
+    await reg.register("req-fin", session_key="s1", task=t, target=None, original_input="orig")
     # advance to FINALIZING
     assert await reg.cas_status("req-fin", TurnStatus.RUNNING, TurnStatus.FINALIZING)
     outcome = await reg.try_steer(
-        "req-fin", "too late", session_id="s1", request_id_new="new-2", target=7
+        "req-fin", "too late", session_key="s1", request_id_new="new-2", target=7
     )
     assert outcome == "NEW"
     turn = reg.get("req-fin")
@@ -143,11 +143,11 @@ async def test_try_steer_finalizing_returns_new_and_enqueues() -> None:
 async def test_try_steer_done_returns_new_and_enqueues() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("req-done", session_id="s1", task=t, target=None, original_input="orig")
+    await reg.register("req-done", session_key="s1", task=t, target=None, original_input="orig")
     assert await reg.cas_status("req-done", TurnStatus.RUNNING, TurnStatus.FINALIZING)
     assert await reg.cas_status("req-done", TurnStatus.FINALIZING, TurnStatus.DONE)
     outcome = await reg.try_steer(
-        "req-done", "way too late", session_id="s1", request_id_new="new-3", target=None
+        "req-done", "way too late", session_key="s1", request_id_new="new-3", target=None
     )
     assert outcome == "NEW"
     nxt = reg.pop_next("s1")
@@ -161,7 +161,7 @@ async def test_try_steer_missing_turn_returns_new() -> None:
     # (never silently dropped, never an exception).
     reg = TurnRegistry()
     outcome = await reg.try_steer(
-        "ghost", "hello", session_id="s9", request_id_new="new-g", target=None
+        "ghost", "hello", session_key="s9", request_id_new="new-g", target=None
     )
     assert outcome == "NEW"
     nxt = reg.pop_next("s9")

@@ -19,7 +19,7 @@ async def test_insert_pending_then_get_pending_returns_row(tmp_db: DbPool) -> No
     store = MessageLedgerStore(tmp_db)
 
     await store.insert_pending(
-        trace_id="trace-1", session_id="sess-1", channel="telegram",
+        trace_id="trace-1", session_key="sess-1", channel="telegram",
         input_text="hello", chat_id=555,
     )
 
@@ -37,10 +37,10 @@ async def test_insert_pending_is_idempotent_on_duplicate_trace_id(tmp_db: DbPool
     store = MessageLedgerStore(tmp_db)
 
     await store.insert_pending(
-        trace_id="trace-dup", session_id="sess-1", channel="telegram", input_text="first",
+        trace_id="trace-dup", session_key="sess-1", channel="telegram", input_text="first",
     )
     await store.insert_pending(
-        trace_id="trace-dup", session_id="sess-1", channel="telegram", input_text="second",
+        trace_id="trace-dup", session_key="sess-1", channel="telegram", input_text="second",
     )
 
     pending = await store.get_pending()
@@ -51,7 +51,7 @@ async def test_insert_pending_is_idempotent_on_duplicate_trace_id(tmp_db: DbPool
 async def test_mark_completed_flips_status_and_excludes_from_pending(tmp_db: DbPool) -> None:
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-2", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="trace-2", session_key="sess-1", channel="cli", input_text="hi",
     )
 
     won = await store.mark_completed("trace-2")
@@ -63,7 +63,7 @@ async def test_mark_completed_flips_status_and_excludes_from_pending(tmp_db: DbP
 async def test_mark_failed_flips_status_with_reason(tmp_db: DbPool) -> None:
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-3", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="trace-3", session_key="sess-1", channel="cli", input_text="hi",
     )
 
     won = await store.mark_failed("trace-3", reason="ProviderTimeout")
@@ -75,7 +75,7 @@ async def test_mark_failed_flips_status_with_reason(tmp_db: DbPool) -> None:
 async def test_mark_absorbed_flips_status(tmp_db: DbPool) -> None:
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-4", session_id="sess-1", channel="telegram", input_text="steer",
+        trace_id="trace-4", session_key="sess-1", channel="telegram", input_text="steer",
     )
 
     won = await store.mark_absorbed("trace-4")
@@ -90,7 +90,7 @@ async def test_flip_is_cas_guarded_second_call_is_noop(tmp_db: DbPool) -> None:
     double-write — this is what makes the two-writer pattern safe."""
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-5", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="trace-5", session_key="sess-1", channel="cli", input_text="hi",
     )
 
     first = await store.mark_completed("trace-5")
@@ -108,7 +108,7 @@ async def test_mark_completed_on_missing_row_returns_false(tmp_db: DbPool) -> No
 async def test_mark_failed_with_long_reason_does_not_raise(tmp_db: DbPool) -> None:
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-6", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="trace-6", session_key="sess-1", channel="cli", input_text="hi",
     )
 
     won = await store.mark_failed("trace-6", reason="x" * 5000)
@@ -119,7 +119,7 @@ async def test_mark_failed_with_long_reason_does_not_raise(tmp_db: DbPool) -> No
 async def test_insert_pending_truncates_input_text_to_4000_chars(tmp_db: DbPool) -> None:
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-7", session_id="sess-1", channel="cli", input_text="x" * 9000,
+        trace_id="trace-7", session_key="sess-1", channel="cli", input_text="x" * 9000,
     )
 
     pending = await store.get_pending()
@@ -131,7 +131,7 @@ async def test_queries_are_owner_scoped(tmp_db: DbPool) -> None:
     store_b = MessageLedgerStore(tmp_db, owner_id="owner-b")
 
     await store_a.insert_pending(
-        trace_id="trace-owner-a", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="trace-owner-a", session_key="sess-1", channel="cli", input_text="hi",
     )
 
     assert await store_b.get_pending() == []
@@ -151,7 +151,7 @@ async def test_get_pending_rejects_non_positive_limit(tmp_db: DbPool) -> None:
 async def test_chat_id_none_for_single_terminal_channel(tmp_db: DbPool) -> None:
     store = MessageLedgerStore(tmp_db)
     await store.insert_pending(
-        trace_id="trace-cli", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="trace-cli", session_key="sess-1", channel="cli", input_text="hi",
     )
 
     row = (await store.get_pending())[0]

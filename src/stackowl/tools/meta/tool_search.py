@@ -158,7 +158,7 @@ class ToolSearchTool(Tool):
             # FX-07 — promote these hits into the NEXT turn's presented schema
             # (see pipeline/steps/execute.py's build_tool_schemas) instead of
             # making the model re-discover the same tool every turn.
-            hydrated_tools.record(TraceContext.get()["session_id"], [e.name for e in ranked])
+            hydrated_tools.record(TraceContext.get()["session_key"], [e.name for e in ranked])
         else:
             # Distinguish "catalog empty" from "catalog had tools but none matched"
             # so a debugging operator can tell a wiring gap from a genuine miss.

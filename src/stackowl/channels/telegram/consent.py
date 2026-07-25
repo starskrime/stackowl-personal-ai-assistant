@@ -95,15 +95,15 @@ class TelegramConsentPrompter:
             "[telegram] consent.prompt: entry",
             extra={"_fields": {"tool": req.tool_name, "relax": req.allow_relaxation}},
         )
-        # 2. DECISION — target the INITIATING user's chat (session_id == Telegram
+        # 2. DECISION — target the INITIATING user's chat (session_key == Telegram
         # user id), never a shared/last chat (prevents a confused-deputy where a
         # different user sees/answers the prompt). Fail closed if unresolvable.
         try:
-            chat_id = int(req.session_id)
+            chat_id = int(req.session_key)
         except (TypeError, ValueError):
             log.telegram.error(
-                "[telegram] consent.prompt: session_id is not a chat id — denying (fail closed)",
-                extra={"_fields": {"tool": req.tool_name, "session": req.session_id}},
+                "[telegram] consent.prompt: session_key is not a chat id — denying (fail closed)",
+                extra={"_fields": {"tool": req.tool_name, "session": req.session_key}},
             )
             return ConsentScope.DENY
 

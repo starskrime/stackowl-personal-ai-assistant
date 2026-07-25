@@ -79,7 +79,7 @@ class FindCommand(SlashCommand):
         query = args.strip()
         log.gateway.debug(
             "[commands] find.handle: entry",
-            extra={"_fields": {"query_len": len(query), "session": state.session_id}},
+            extra={"_fields": {"query_len": len(query), "session": state.session_key}},
         )
         if not query:
             return render_usage("find", _FIND_META)

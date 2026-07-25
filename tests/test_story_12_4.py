@@ -218,7 +218,7 @@ class TestPermissionsCommand:
         cmd = self._make_command()
         state = PipelineState(
             trace_id="t1",
-            session_id="s1",
+            session_key="s1",
             input_text="",
             channel="cli",
             owl_name="test-owl",
@@ -236,7 +236,7 @@ class TestPermissionsCommand:
         cmd = self._make_command()
         state = PipelineState(
             trace_id="t1",
-            session_id="s1",
+            session_key="s1",
             input_text="",
             channel="cli",
             owl_name="test-owl",

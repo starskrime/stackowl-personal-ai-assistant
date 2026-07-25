@@ -100,7 +100,7 @@ class LangGraphBackend(OrchestratorBackend):
             extra={
                 "_fields": {
                     "trace_id": state.trace_id,
-                    "session_id": state.session_id,
+                    "session_key": state.session_key,
                     "total_steps": len(PIPELINE_STEPS) + 1,
                 }
             },
@@ -116,9 +116,9 @@ class LangGraphBackend(OrchestratorBackend):
             # its resume replays the right checkpoint. Falls back to the plain
             # session id (exact prior behavior) when no task_id is set.
             thread_id = (
-                f"{state.session_id}::{state.task_id}"
+                f"{state.session_key}::{state.task_id}"
                 if state.task_id
-                else state.session_id
+                else state.session_key
             )
             config: dict[str, Any] = {
                 "configurable": {"thread_id": thread_id},
@@ -148,7 +148,7 @@ class LangGraphBackend(OrchestratorBackend):
                 extra={
                     "_fields": {
                         "trace_id": state.trace_id,
-                        "session_id": state.session_id,
+                        "session_key": state.session_key,
                         "duration_ms": duration_ms,
                     }
                 },

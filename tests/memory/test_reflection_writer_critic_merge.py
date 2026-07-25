@@ -97,7 +97,7 @@ async def test_execute_scores_then_reflects_a_fresh_outcome_in_one_run(
     # alone would skip it forever (list_pending requires quality_score >= 0.6).
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id="merge-1", session_id="s", owl_name="secretary", channel="cli",
+        trace_id="merge-1", session_key="s", owl_name="secretary", channel="cli",
         success=True, latency_ms=10.0, tool_call_count=0,
         failure_class=None, step_durations={}, input_text="do a thing",
         response_text="solid answer",
@@ -143,7 +143,7 @@ async def test_critic_failure_does_not_block_reflection_of_already_scored_rows(
     all-or-nothing job, per the merge design decision."""
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id="merge-2", session_id="s", owl_name="secretary", channel="cli",
+        trace_id="merge-2", session_key="s", owl_name="secretary", channel="cli",
         success=True, latency_ms=10.0, tool_call_count=0,
         failure_class=None, step_durations={}, input_text="do a thing",
         response_text="solid answer",
@@ -190,7 +190,7 @@ async def test_critic_phase_deferred_when_turn_registry_reports_active_load(
     reversing a deliberate prior design decision (FR-4 gap fix)."""
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id="merge-3", session_id="s", owl_name="secretary", channel="cli",
+        trace_id="merge-3", session_key="s", owl_name="secretary", channel="cli",
         success=True, latency_ms=10.0, tool_call_count=0,
         failure_class=None, step_durations={}, input_text="do a thing",
         response_text="solid answer",
@@ -223,7 +223,7 @@ async def test_critic_phase_runs_when_no_active_turns(db: DbPool) -> None:
     scheduler's own no-turn-registry-wired behavior (never skip)."""
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id="merge-4", session_id="s", owl_name="secretary", channel="cli",
+        trace_id="merge-4", session_key="s", owl_name="secretary", channel="cli",
         success=True, latency_ms=10.0, tool_call_count=0,
         failure_class=None, step_durations={}, input_text="do a thing",
         response_text="solid answer",

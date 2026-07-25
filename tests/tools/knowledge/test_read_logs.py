@@ -30,7 +30,7 @@ def _line(
         "trace_id": trace_id,
         "span_id": None,
         "parent_span_id": None,
-        "session_id": "s-1",
+        "session_key": "s-1",
         "duration_ms": duration_ms,
         "fields": fields or {},
     })

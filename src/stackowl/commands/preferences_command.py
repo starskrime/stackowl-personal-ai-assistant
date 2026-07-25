@@ -9,7 +9,7 @@ path in ``feedback.py`` (never keyword-matched here), matching the PRD's
 "no keyword matching" out-of-scope note for FR-2.
 
 Follows ``style_command.py``'s shape: same ``preference_store`` constructor
-dep, same owner_key resolution (``state.identity_key or state.session_id`` —
+dep, same owner_key resolution (``state.identity_key or state.session_key`` —
 mirrors the delivery seam's scope key exactly).
 """
 
@@ -67,11 +67,11 @@ class PreferencesCommand(SlashCommand):
         # 1. ENTRY
         log.gateway.debug(
             "[commands] preferences.handle: entry",
-            extra={"_fields": {"session": state.session_id, "args_len": len(args)}},
+            extra={"_fields": {"session": state.session_key, "args_len": len(args)}},
         )
         if self._store is None:
             return "/preferences: not configured (no preference store)."
-        owner_key = state.identity_key or state.session_id
+        owner_key = state.identity_key or state.session_key
         parts = args.strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "list"
         # 2. DECISION — dispatch on subcommand

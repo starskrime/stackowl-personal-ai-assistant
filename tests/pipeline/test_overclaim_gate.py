@@ -36,7 +36,7 @@ from stackowl.tools.base import ToolManifest
 def _state(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
         trace_id="t-gate",
-        session_id="s",
+        session_key="s",
         input_text="send my report",
         channel="cli",
         owl_name="o",

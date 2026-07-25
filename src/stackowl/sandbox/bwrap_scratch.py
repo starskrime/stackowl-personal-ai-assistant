@@ -26,13 +26,13 @@ class BwrapScratch:
     """Creates / writes / cleans up a per-run scratch under ~/.stackowl/sandbox."""
 
     @staticmethod
-    def session_tag(session_id: str) -> str:
+    def session_tag(session_key: str) -> str:
         """A filesystem-safe, collision-resistant tag for the scratch + cgroup unit."""
-        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:32]
+        safe = "".join(c for c in session_key if c.isalnum() or c in "-_")[:32]
         return f"{safe}-{uuid.uuid4().hex[:8]}" if safe else uuid.uuid4().hex[:16]
 
     @classmethod
-    def make(cls, session_id: str) -> Path:
+    def make(cls, session_key: str) -> Path:
         """Create the 0700 scratch + ``workspace`` subdir; return the scratch ROOT.
 
         The scratch ROOT holds ``workspace/`` and the cgroup marker; the code goes in
@@ -40,7 +40,7 @@ class BwrapScratch:
         """
         root = StackowlHome.home() / "sandbox"
         root.mkdir(parents=True, exist_ok=True)
-        scratch = root / cls.session_tag(session_id)
+        scratch = root / cls.session_tag(session_key)
         (scratch / "workspace").mkdir(parents=True, exist_ok=True)
         for d in (scratch, scratch / "workspace"):
             with contextlib.suppress(OSError):

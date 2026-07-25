@@ -300,7 +300,7 @@ async def _drive(tools: list[Tool], provider: Any) -> PipelineState:
         ),
     ))
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="make me a chart",
+        trace_id="t", session_key="s", input_text="make me a chart",
         channel="telegram", owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(
@@ -394,7 +394,7 @@ async def test_refusal_spiral_contained_and_floors() -> None:
         bounds=BoundsSpec(tools=frozenset({tool.name}), caps=ResourceCaps(max_steps=50)),
     ))
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="make me a chart",
+        trace_id="t", session_key="s", input_text="make me a chart",
         channel="telegram", owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     svc_token = set_services(StepServices(

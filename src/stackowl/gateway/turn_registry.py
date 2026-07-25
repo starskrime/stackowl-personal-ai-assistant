@@ -96,7 +96,7 @@ class PendingIntake:
 @dataclass
 class Turn:
     turn_id: str  # == request_id
-    session_id: str
+    session_key: str
     task: asyncio.Task[None] | None
     # String targets for Slack (channel id / thread_ts); int for Telegram chat_id.
     target: int | str | None
@@ -131,7 +131,7 @@ class TurnRegistry:
             default_global_running_max() if global_running_max is None else max(1, global_running_max)
         )
         self._turns: dict[str, Turn] = {}            # request_id -> Turn
-        self._running: dict[str, str] = {}           # session_id -> request_id
+        self._running: dict[str, str] = {}           # session_key -> request_id
         self._queues: dict[str, deque[PendingIntake]] = {}
         # Per-session intake lock (lazily created, stable per session). It makes
         # the "decide dispatch-vs-enqueue and claim the running slot" critical
@@ -202,17 +202,17 @@ class TurnRegistry:
             )
         return at_cap
 
-    def session_intake_lock(self, session_id: str) -> asyncio.Lock:
+    def session_intake_lock(self, session_key: str) -> asyncio.Lock:
         """Return the stable per-session intake lock (created on first use).
 
         Must be created lazily on the running event loop (an ``asyncio.Lock``
         binds to the loop where it is first awaited), so it is built here on
         demand rather than eagerly in ``__init__``.
         """
-        lock = self._intake_locks.get(session_id)
+        lock = self._intake_locks.get(session_key)
         if lock is None:
             lock = asyncio.Lock()
-            self._intake_locks[session_id] = lock
+            self._intake_locks[session_key] = lock
         return lock
 
     def get(self, request_id: str) -> Turn | None:
@@ -243,11 +243,11 @@ class TurnRegistry:
         turn.stop_requested = True
         log.gateway.info(
             "[turn] request_stop: stop flag set (cooperative, NOT cancel)",
-            extra={"_fields": {"request_id": request_id, "session_id": turn.session_id}},
+            extra={"_fields": {"request_id": request_id, "session_key": turn.session_key}},
         )
 
-    def running(self, session_id: str) -> Turn | None:
-        rid = self._running.get(session_id)
+    def running(self, session_key: str) -> Turn | None:
+        rid = self._running.get(session_key)
         return self._turns.get(rid) if rid else None
 
     @staticmethod
@@ -289,7 +289,7 @@ class TurnRegistry:
             "[turn] steering mailbox full — superseding oldest steer (§5.4)",
             extra={"_fields": {
                 "request_id": turn.turn_id,
-                "session_id": turn.session_id,
+                "session_key": turn.session_key,
                 "superseded": superseded is not None,
                 "maxsize": turn.steering_mailbox.maxsize,
             }},
@@ -304,7 +304,7 @@ class TurnRegistry:
                 "[turn] steering mailbox still full after supersede — newest steer DROPPED",
                 exc_info=exc,
                 extra={"_fields": {
-                    "request_id": turn.turn_id, "session_id": turn.session_id,
+                    "request_id": turn.turn_id, "session_key": turn.session_key,
                 }},
             )
 
@@ -345,23 +345,23 @@ class TurnRegistry:
         self,
         request_id: str,
         *,
-        session_id: str,
+        session_key: str,
         task: asyncio.Task[None] | None,
         target: int | str | None,
         original_input: str,
     ) -> Turn:
         turn = Turn(
             turn_id=request_id,
-            session_id=session_id,
+            session_key=session_key,
             task=task,
             target=target,
             original_input=original_input,
         )
         self._turns[request_id] = turn
-        self._running[session_id] = request_id
+        self._running[session_key] = request_id
         log.gateway.debug(
             "[turn] register",
-            extra={"_fields": {"request_id": request_id, "session_id": session_id}},
+            extra={"_fields": {"request_id": request_id, "session_key": session_key}},
         )
         return turn
 
@@ -370,7 +370,7 @@ class TurnRegistry:
         request_id: str,
         text: str,
         *,
-        session_id: str,
+        session_key: str,
         request_id_new: str,
         target: int | str | None,
     ) -> str:
@@ -406,11 +406,11 @@ class TurnRegistry:
                 "[turn] try_steer: no live turn — converting to queued-new",
                 extra={"_fields": {
                     "request_id": request_id, "request_id_new": request_id_new,
-                    "session_id": session_id,
+                    "session_key": session_key,
                 }},
             )
             self.enqueue(
-                session_id, original_input=text, request_id=request_id_new, target=target
+                session_key, original_input=text, request_id=request_id_new, target=target
             )
             return "NEW"
         async with turn.lock:
@@ -425,7 +425,7 @@ class TurnRegistry:
                 self._put_steer_superseding(turn, text)
                 log.gateway.debug(
                     "[turn] try_steer: accepted by RUNNING turn (supersede-oldest if full)",
-                    extra={"_fields": {"request_id": request_id, "session_id": session_id}},
+                    extra={"_fields": {"request_id": request_id, "session_key": session_key}},
                 )
                 return "STEER"
             # FINALIZING / DONE — past the finalization line; never enqueue onto
@@ -434,11 +434,11 @@ class TurnRegistry:
                 "[turn] try_steer: turn past finalization — converting to queued-new",
                 extra={"_fields": {
                     "request_id": request_id, "request_id_new": request_id_new,
-                    "session_id": session_id, "status": turn.status.value,
+                    "session_key": session_key, "status": turn.status.value,
                 }},
             )
             self.enqueue(
-                session_id, original_input=text, request_id=request_id_new, target=target
+                session_key, original_input=text, request_id=request_id_new, target=target
             )
             return "NEW"
 
@@ -447,7 +447,7 @@ class TurnRegistry:
 
         MUST be called with ``turn.lock`` HELD (it mutates the intake queue as part
         of the same atomic teardown critical section). Each survivor becomes a
-        queued-new turn (FIFO, inheriting the turn's ``session_id``/``target``) with
+        queued-new turn (FIFO, inheriting the turn's ``session_key``/``target``) with
         a fresh request id derived from the turn id + ordinal so the orchestrator's
         queued-new dispatch keys them uniquely. Used by ``finalize_and_drain`` (the
         SOLE lost-steer completion-seam guard) so the enqueue-as-queued-new logic
@@ -458,7 +458,7 @@ class TurnRegistry:
         for i, text in enumerate(survivors):
             try:
                 self.enqueue(
-                    turn.session_id,
+                    turn.session_key,
                     original_input=text,
                     request_id=f"{turn.turn_id}-survivor-{i}",
                     target=turn.target,
@@ -466,7 +466,7 @@ class TurnRegistry:
                 log.gateway.info(
                     "[turn] survivor steer re-routed as queued-new",
                     extra={"_fields": {
-                        "request_id": turn.turn_id, "session_id": turn.session_id,
+                        "request_id": turn.turn_id, "session_key": turn.session_key,
                         "survivor_index": i,
                     }},
                 )
@@ -480,7 +480,7 @@ class TurnRegistry:
                     "[turn] survivor steer re-route failed — intake queue full, DROPPED",
                     exc_info=exc,
                     extra={"_fields": {
-                        "request_id": turn.turn_id, "session_id": turn.session_id,
+                        "request_id": turn.turn_id, "session_key": turn.session_key,
                         "survivor_index": i,
                     }},
                 )
@@ -567,7 +567,7 @@ class TurnRegistry:
             log.gateway.debug(
                 "[turn] finalize_and_drain: finalized + drained survivors",
                 extra={"_fields": {
-                    "request_id": request_id, "session_id": turn.session_id,
+                    "request_id": request_id, "session_key": turn.session_key,
                     "status": turn.status.value, "survivors": len(survivors),
                 }},
             )
@@ -585,13 +585,13 @@ class TurnRegistry:
 
     def enqueue(
         self,
-        session_id: str,
+        session_key: str,
         *,
         original_input: str,
         request_id: str,
         target: int | str | None,
     ) -> None:
-        q = self._queues.setdefault(session_id, deque())
+        q = self._queues.setdefault(session_key, deque())
         if len(q) >= self._per_session_queue_max:
             # Loud overflow: reject-with-notice (orchestrator catches QueueFull and
             # tells the user). Never silently grow the queue unbounded.
@@ -599,7 +599,7 @@ class TurnRegistry:
                 "[turn] per-session intake queue full — rejecting",
                 extra={
                     "_fields": {
-                        "session_id": session_id,
+                        "session_key": session_key,
                         "request_id": request_id,
                         "queue_depth": len(q),
                         "per_session_queue_max": self._per_session_queue_max,
@@ -607,15 +607,15 @@ class TurnRegistry:
                 },
             )
             raise QueueFull(
-                f"session {session_id} intake queue full "
+                f"session {session_key} intake queue full "
                 f"({len(q)}/{self._per_session_queue_max})"
             )
         q.append(
             PendingIntake(request_id=request_id, original_input=original_input, target=target)
         )
 
-    def pop_next(self, session_id: str) -> PendingIntake | None:
-        q = self._queues.get(session_id)
+    def pop_next(self, session_key: str) -> PendingIntake | None:
+        q = self._queues.get(session_key)
         if not q:
             return None
         return q.popleft()
@@ -641,8 +641,8 @@ class TurnRegistry:
         turn = self._turns.pop(request_id, None)
         if turn is None:
             return
-        if self._running.get(turn.session_id) == request_id:
-            self._running.pop(turn.session_id, None)
+        if self._running.get(turn.session_key) == request_id:
+            self._running.pop(turn.session_key, None)
         log.gateway.debug(
             "[turn] deregister",
             extra={"_fields": {"request_id": request_id}},
@@ -707,7 +707,7 @@ class TurnRegistry:
             log.gateway.error(
                 "[turn] wedged turn exhausted re-dispatch budget — goal given up",
                 extra={"_fields": {
-                    "request_id": turn.turn_id, "session_id": turn.session_id,
+                    "request_id": turn.turn_id, "session_key": turn.session_key,
                     "generation": gen, "max": _MAX_WEDGE_REDISPATCH,
                 }},
             )
@@ -715,7 +715,7 @@ class TurnRegistry:
         new_rid = f"{turn.turn_id}{_REDISPATCH_SUFFIX}{gen + 1}"
         try:
             self.enqueue(
-                turn.session_id,
+                turn.session_key,
                 original_input=turn.original_input,
                 request_id=new_rid,
                 target=turn.target,
@@ -724,7 +724,7 @@ class TurnRegistry:
                 "[turn] wedged turn re-dispatched — goal not lost (F-67)",
                 extra={"_fields": {
                     "request_id": turn.turn_id, "new_request_id": new_rid,
-                    "session_id": turn.session_id, "generation": gen + 1,
+                    "session_key": turn.session_key, "generation": gen + 1,
                 }},
             )
         except QueueFull as exc:
@@ -735,7 +735,7 @@ class TurnRegistry:
                 "[turn] wedged turn re-dispatch failed — intake queue full, goal DROPPED",
                 exc_info=exc,
                 extra={"_fields": {
-                    "request_id": turn.turn_id, "session_id": turn.session_id,
+                    "request_id": turn.turn_id, "session_key": turn.session_key,
                 }},
             )
 
@@ -765,7 +765,7 @@ class TurnRegistry:
             # done AND not-yet-DONE → the wedge; expired only ever NARROWS the
             # done-set, never reaps a not-done turn (the bare-expired foot-gun).
             if done and (turn.status is not TurnStatus.DONE or expired):
-                was_running = self._running.get(turn.session_id) == rid
+                was_running = self._running.get(turn.session_key) == rid
                 wedged = turn.status is not TurnStatus.DONE
                 await self.deregister(rid)
                 if was_running:
@@ -775,7 +775,7 @@ class TurnRegistry:
                     "[turn] sweeper reaped",
                     extra={"_fields": {
                         "request_id": rid,
-                        "session_id": turn.session_id,
+                        "session_key": turn.session_key,
                         "reason": "done_not_DONE" if wedged else "expired_done",
                     }},
                 )

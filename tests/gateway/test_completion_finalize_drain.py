@@ -77,7 +77,7 @@ async def _one_interleaving(seed: int, *, fixed: bool) -> bool:
     """
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r1", session_id="s1", task=t, target=3, original_input="orig")
+    await reg.register("r1", session_key="s1", task=t, target=3, original_input="orig")
 
     accepted_running: list[str] = []
     converted_new: list[str] = []
@@ -88,7 +88,7 @@ async def _one_interleaving(seed: int, *, fixed: bool) -> bool:
         for _ in range(random.randint(0, 3)):
             await asyncio.sleep(0)
         outcome = await reg.try_steer(
-            "r1", "corr", session_id="s1", request_id_new="r2", target=3
+            "r1", "corr", session_key="s1", request_id_new="r2", target=3
         )
         (accepted_running if outcome == "STEER" else converted_new).append("corr")
 
@@ -165,14 +165,14 @@ async def test_finalize_and_drain_flips_finalizing_then_converts_concurrent_stee
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        "req-f", session_id="s1", task=t, target=5, original_input="orig"
+        "req-f", session_key="s1", task=t, target=5, original_input="orig"
     )
     survivors = await asyncio.wait_for(reg.finalize_and_drain("req-f"), 1.0)
     assert survivors == []
     assert turn.status is TurnStatus.FINALIZING
     # A steer arriving now sees FINALIZING -> converts to queued-new.
     outcome = await asyncio.wait_for(
-        reg.try_steer("req-f", "late", session_id="s1", request_id_new="new-late", target=5),
+        reg.try_steer("req-f", "late", session_key="s1", request_id_new="new-late", target=5),
         1.0,
     )
     assert outcome == "NEW"
@@ -192,11 +192,11 @@ async def test_finalize_and_drain_reroutes_accepted_survivor() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        "req-s", session_id="s1", task=t, target=8, original_input="orig"
+        "req-s", session_key="s1", task=t, target=8, original_input="orig"
     )
     # A steer accepted onto the RUNNING turn just before teardown.
     outcome = await reg.try_steer(
-        "req-s", "accepted", session_id="s1", request_id_new="r-new", target=8
+        "req-s", "accepted", session_key="s1", request_id_new="r-new", target=8
     )
     assert outcome == "STEER"
     survivors = await asyncio.wait_for(reg.finalize_and_drain("req-s"), 1.0)
@@ -225,7 +225,7 @@ async def test_finalize_and_drain_idempotent_on_finalizing_turn() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        "req-i", session_id="s1", task=t, target=None, original_input="orig"
+        "req-i", session_key="s1", task=t, target=None, original_input="orig"
     )
     assert await reg.cas_status("req-i", TurnStatus.RUNNING, TurnStatus.FINALIZING)
     turn.steering_mailbox.put_nowait("leftover")

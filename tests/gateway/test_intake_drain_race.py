@@ -4,7 +4,7 @@ The detached ``_drain_next`` task (scheduled by the producer ``_on_done``
 done-callback) runs this sequence on the shared :class:`TurnRegistry`::
 
     await deregister(finished_request_id)       # session looks IDLE
-    nxt = pop_next(session_id)
+    nxt = pop_next(session_key)
     consumed, text = await resolve_or_rewrite()  # AWAITS the LLM classifier -> YIELDS
     await dispatch_turn(...)                      # re-register happens only HERE
 
@@ -77,7 +77,7 @@ class _RaceHarness:
         """Mirror _dispatch_turn: create a slow task, register the running slot."""
         task = asyncio.create_task(asyncio.sleep(0.05))
         await self._reg.register(
-            request_id, session_id="s1", task=task,
+            request_id, session_key="s1", task=task,
             target=None, original_input=original_input,
         )
         self.dispatched.append(original_input)
@@ -132,7 +132,7 @@ async def _run_interleaving(*, use_lock: bool) -> _RaceHarness:
     # req-1 is the running turn; req-2 is already queued behind it (the message
     # the drain will pop + resolve).
     t1 = asyncio.create_task(asyncio.sleep(0.05))
-    await reg.register("req-1", session_id="s1", task=t1, target=None, original_input="first")
+    await reg.register("req-1", session_key="s1", task=t1, target=None, original_input="first")
     reg.enqueue("s1", original_input="second", request_id="req-2", target=None)
 
     # req-1 completed -> drain starts. It deregisters (session now looks idle),

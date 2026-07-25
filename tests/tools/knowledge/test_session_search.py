@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
 async def _seed_session(
     db: DbPool,
     *,
-    session_id: str,
+    session_key: str,
     owl_name: str,
     turns: list[tuple[str, str]],
 ) -> list[str]:
@@ -44,9 +44,9 @@ async def _seed_session(
     conv_id = uuid.uuid4().hex
     base = datetime(2026, 1, 1, tzinfo=UTC)
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
-        (conv_id, session_id, owl_name, base.isoformat(), len(turns)),
+        (conv_id, session_key, owl_name, base.isoformat(), len(turns)),
     )
     ids: list[str] = []
     for i, (role, content) in enumerate(turns):
@@ -72,9 +72,9 @@ def services_with_db(tmp_db: DbPool) -> Iterator[DbPool]:
         reset_services(token)
 
 
-def _in_session(session_id: str) -> object:
-    """Start a TraceContext as if the caller is currently in ``session_id``."""
-    return TraceContext.start(session_id=session_id)
+def _in_session(session_key: str) -> object:
+    """Start a TraceContext as if the caller is currently in ``session_key``."""
+    return TraceContext.start(session_key=session_key)
 
 
 # ---------------------------------------------------------------------- manifest
@@ -102,7 +102,7 @@ async def test_browse_paginates_own_session(services_with_db: DbPool) -> None:
     db = services_with_db
     await _seed_session(
         db,
-        session_id="s1",
+        session_key="s1",
         owl_name="scout",
         turns=[("user", f"line {i}") for i in range(10)],
     )
@@ -126,7 +126,7 @@ async def test_discover_returns_matching_turns(services_with_db: DbPool) -> None
     db = services_with_db
     await _seed_session(
         db,
-        session_id="s1",
+        session_key="s1",
         owl_name="scout",
         turns=[
             ("user", "how do I configure nginx"),
@@ -169,7 +169,7 @@ async def test_scroll_returns_neighbors_with_capped_radius(
     anchor_idx = total // 2
     ids = await _seed_session(
         db,
-        session_id="s1",
+        session_key="s1",
         owl_name="scout",
         turns=[("user", f"turn {i}") for i in range(total)],
     )
@@ -221,7 +221,7 @@ async def test_redaction_masks_secret_in_returned_turn(
     secret = "sk-ABCDEFGHIJKLMNOPQRSTUVWX1234567890"
     await _seed_session(
         db,
-        session_id="s1",
+        session_key="s1",
         owl_name="scout",
         turns=[("user", f"my key is {secret} please use nginx")],
     )
@@ -243,18 +243,18 @@ async def test_cross_session_blocked_for_different_owner(
 ) -> None:
     db = services_with_db
     await _seed_session(
-        db, session_id="s1", owl_name="scout",
+        db, session_key="s1", owl_name="scout",
         turns=[("user", "scout secrets")],
     )
     await _seed_session(
-        db, session_id="s2", owl_name="oracle",
+        db, session_key="s2", owl_name="oracle",
         turns=[("user", "oracle private notes")],
     )
     # Caller is in s1 (owner scout); tries to read s2 (owner oracle).
     token = _in_session("s1")
     try:
         res = await SessionSearchTool().execute(
-            mode="browse", session_id="s2", limit=10,
+            mode="browse", session_key="s2", limit=10,
         )
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
@@ -268,15 +268,15 @@ async def test_cross_session_allowed_for_same_owner(
 ) -> None:
     db = services_with_db
     await _seed_session(
-        db, session_id="s1", owl_name="scout", turns=[("user", "current")],
+        db, session_key="s1", owl_name="scout", turns=[("user", "current")],
     )
     await _seed_session(
-        db, session_id="s2", owl_name="scout", turns=[("user", "earlier scout work")],
+        db, session_key="s2", owl_name="scout", turns=[("user", "earlier scout work")],
     )
     token = _in_session("s1")
     try:
         res = await SessionSearchTool().execute(
-            mode="browse", session_id="s2", limit=10,
+            mode="browse", session_key="s2", limit=10,
         )
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
@@ -315,8 +315,8 @@ async def test_unknown_mode_is_structured(services_with_db: DbPool) -> None:
 async def test_no_current_session_cross_session_refused(services_with_db) -> None:  # noqa: ANN001
     # Fail-closed: with NO current session, a cross-session read must be refused.
     db = services_with_db
-    await _seed_session(db, session_id="s2", owl_name="oracle", turns=[("user", "oracle private")])
-    res = await SessionSearchTool().execute(mode="browse", session_id="s2", limit=10)
+    await _seed_session(db, session_key="s2", owl_name="oracle", turns=[("user", "oracle private")])
+    res = await SessionSearchTool().execute(mode="browse", session_key="s2", limit=10)
     assert res.success is False
     assert "oracle private" not in res.output
 
@@ -325,12 +325,12 @@ async def test_ambiguous_target_owner_cross_session_refused(services_with_db) ->
     # A DIFFERENT session whose owner is ambiguous (spans >1 owl_name) cannot be
     # authorized → fail-closed refusal. (Reading your OWN session is always allowed.)
     db = services_with_db
-    await _seed_session(db, session_id="mine", owl_name="scout", turns=[("user", "x")])
-    await _seed_session(db, session_id="shared", owl_name="scout", turns=[("user", "a-secret")])
-    await _seed_session(db, session_id="shared", owl_name="oracle", turns=[("user", "b-secret")])
+    await _seed_session(db, session_key="mine", owl_name="scout", turns=[("user", "x")])
+    await _seed_session(db, session_key="shared", owl_name="scout", turns=[("user", "a-secret")])
+    await _seed_session(db, session_key="shared", owl_name="oracle", turns=[("user", "b-secret")])
     token = _in_session("mine")
     try:
-        res = await SessionSearchTool().execute(mode="browse", session_id="shared", limit=10)
+        res = await SessionSearchTool().execute(mode="browse", session_key="shared", limit=10)
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
     assert res.success is False
@@ -340,7 +340,7 @@ async def test_ambiguous_target_owner_cross_session_refused(services_with_db) ->
 async def test_discover_like_wildcard_escaped(services_with_db) -> None:  # noqa: ANN001
     # A discover query of '%' must match only the literal-'%' turn, not everything.
     db = services_with_db
-    await _seed_session(db, session_id="s1", owl_name="scout",
+    await _seed_session(db, session_key="s1", owl_name="scout",
                         turns=[("user", "alpha"), ("assistant", "100%done")])
     token = _in_session("s1")
     try:
@@ -358,7 +358,7 @@ async def test_redacts_aws_slack_pem_basicauth(services_with_db) -> None:  # noq
         "creds: AKIAIOSFODNN7EXAMPLE and xoxb-123456789012-abcdefghijkl and "
         "https://user:p4ssw0rdSecret@host/x"
     )
-    await _seed_session(db, session_id="s1", owl_name="scout", turns=[("user", secret_turn)])
+    await _seed_session(db, session_key="s1", owl_name="scout", turns=[("user", secret_turn)])
     token = _in_session("s1")
     try:
         res = await SessionSearchTool().execute(mode="browse", limit=10)

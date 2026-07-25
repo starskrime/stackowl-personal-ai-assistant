@@ -60,7 +60,7 @@ def _state(input_text: str, render: str, *, store: FakeStore,
     services = StepServices(preference_store=store, db_pool=None)  # type: ignore[arg-type]
     services.feedback_classifier = classifier  # type: ignore[assignment]
     state = PipelineState(
-        trace_id="t-fb-prefilter", session_id="sess-fb", input_text=input_text,
+        trace_id="t-fb-prefilter", session_key="sess-fb", input_text=input_text,
         channel="telegram", owl_name="secretary", pipeline_step="feedback",
         identity_key=OWNER,
         history=(Message(role="assistant", content=render),),
@@ -111,7 +111,7 @@ async def test_no_prior_render_guard_skips_without_creating_task() -> None:
     services = StepServices(preference_store=store, db_pool=None)  # type: ignore[arg-type]
     services.feedback_classifier = classifier  # type: ignore[assignment]
     state = PipelineState(
-        trace_id="t-fb-no-render", session_id="sess-fb", input_text="nice",
+        trace_id="t-fb-no-render", session_key="sess-fb", input_text="nice",
         channel="telegram", owl_name="secretary", pipeline_step="feedback",
         identity_key=OWNER,
         # no history → no prior assistant render to react to

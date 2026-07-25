@@ -33,7 +33,7 @@ async def test_pellet_generator_with_real_bridge_calls_stage() -> None:
     bridge = FakeBridge()
     gen = KnowledgePelletGenerator(memory_bridge=bridge)
     session = ParliamentSession(
-        topic="topic", owl_names=["a", "b"], session_id="sess-real"
+        topic="topic", owl_names=["a", "b"], session_key="sess-real"
     )
     synthesis = SynthesisResult(
         consensus="we agree X",
@@ -57,7 +57,7 @@ async def test_pellet_generator_with_none_bridge_uses_null_bridge() -> None:
     """T15 — KnowledgePelletGenerator(memory_bridge=None) does not raise."""
     gen = KnowledgePelletGenerator(memory_bridge=None)
     session = ParliamentSession(
-        topic="topic", owl_names=["a"], session_id="sess-null"
+        topic="topic", owl_names=["a"], session_key="sess-null"
     )
     synthesis = SynthesisResult(
         consensus="x",
@@ -90,7 +90,7 @@ async def test_parliament_orchestrator_passes_bridge_to_pellet_generator(
     assert orch._pellet_gen is not None
     # Confirm dispatch uses the bridge by calling from_parliament directly
     session = ParliamentSession(
-        topic="topic", owl_names=["a"], session_id="sess-orch"
+        topic="topic", owl_names=["a"], session_key="sess-orch"
     )
     synthesis = SynthesisResult(
         consensus="C",

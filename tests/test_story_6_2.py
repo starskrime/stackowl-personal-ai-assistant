@@ -261,7 +261,7 @@ async def test_sqlite_bridge_retrieve_formats_context(
         "INSERT INTO committed_facts_fts(rowid, content) VALUES (?, ?)",
         (rid, "boss likes verification before completion"),
     )
-    out = await bridge.retrieve("verification", session_id="sess-x")
+    out = await bridge.retrieve("verification", session_key="sess-x")
     # Task 10: trust-aware renderer. This fact carries no explicit trust column,
     # so it defaults to 'untrusted' (fail-safe) and renders in the FENCED
     # External-reference region — never as a bare "Prior context:" bullet.
@@ -271,14 +271,14 @@ async def test_sqlite_bridge_retrieve_formats_context(
 
 
 async def test_sqlite_bridge_retrieve_empty_when_no_matches(bridge: SqliteMemoryBridge) -> None:
-    out = await bridge.retrieve("absolutely nothing here", session_id="s")
+    out = await bridge.retrieve("absolutely nothing here", session_key="s")
     assert out == ""
 
 
 async def test_sqlite_bridge_store_creates_staged_fact(
     bridge: SqliteMemoryBridge,
 ) -> None:
-    await bridge.store("a thing the user said", session_id="sess-store")
+    await bridge.store("a thing the user said", session_key="sess-store")
     staged = await bridge.list_staged()
     assert len(staged) == 1
     assert staged[0].source_type == "conversation"

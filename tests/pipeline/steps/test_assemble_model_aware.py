@@ -63,7 +63,7 @@ class _FakeProvider:
 def _make_state(owl_name: str = "test_owl") -> PipelineState:
     return PipelineState(
         trace_id="t-model-aware",
-        session_id="s-model-aware",
+        session_key="s-model-aware",
         input_text="hello",
         channel="cli",
         owl_name=owl_name,

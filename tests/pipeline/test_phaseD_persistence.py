@@ -695,12 +695,12 @@ def _build_services(
 
 
 def _state_from_decision(
-    decision: Any, *, trace_id: str, session_id: str, channel: str, raw_text: str
+    decision: Any, *, trace_id: str, session_key: str, channel: str, raw_text: str
 ) -> PipelineState:
     input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel=channel,
         owl_name=decision.target,
@@ -744,12 +744,12 @@ async def _drive_gateway(
     scanner = GatewayScanner(owl_registry=owl_registry)
 
     msg = IngressMessage(
-        text="please do the work", session_id="sess-D", channel="cli",
+        text="please do the work", session_key="sess-D", channel="cli",
         trace_id="trace-D-1",
     )
     decision = scanner.scan(msg)
     state = _state_from_decision(
-        decision, trace_id=msg.trace_id, session_id="sess-D",
+        decision, trace_id=msg.trace_id, session_key="sess-D",
         channel=msg.channel, raw_text=msg.text,
     )
     if not with_persistence:

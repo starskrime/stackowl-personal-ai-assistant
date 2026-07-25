@@ -48,7 +48,7 @@ def test_0090_retry_event_count_defaults_zero_retry_lineage_id_defaults_null(
         conn.execute(
             """
             INSERT INTO task_outcomes
-                (trace_id, session_id, owl_name, channel, success, latency_ms, captured_at)
+                (trace_id, session_key, owl_name, channel, success, latency_ms, captured_at)
             VALUES
                 ('trace-1', 'session-1', 'owl-1', 'telegram', 1, 12.5, 0.0)
             """
@@ -56,7 +56,7 @@ def test_0090_retry_event_count_defaults_zero_retry_lineage_id_defaults_null(
         conn.execute(
             """
             INSERT INTO task_outcomes
-                (trace_id, session_id, owl_name, channel, success, latency_ms, captured_at,
+                (trace_id, session_key, owl_name, channel, success, latency_ms, captured_at,
                  retry_lineage_id, retry_event_count)
             VALUES
                 ('trace-2', 'session-2', 'owl-1', 'telegram', 1, 12.5, 0.0,

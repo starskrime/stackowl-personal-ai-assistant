@@ -124,7 +124,7 @@ async def _drive(provider: Any) -> PipelineState:
 
     state = PipelineState(
         trace_id="trace-floor",
-        session_id="sess-floor",
+        session_key="sess-floor",
         input_text="please finish my task",
         channel="telegram",
         owl_name="o",
@@ -265,7 +265,7 @@ def _make_floor_harness(
 
     state = PipelineState(
         trace_id="trace-floor-intent",
-        session_id="sess-floor-intent",
+        session_key="sess-floor-intent",
         input_text="please do this",
         channel="cli",
         owl_name="o",

@@ -84,7 +84,7 @@ async def _seed_outcomes(
     for i in range(n):
         tid = f"trace-{sequence[0]}-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=True, latency_ms=50.0, tool_call_count=len(sequence),
             failure_class=None, step_durations={},
             input_text=f"do the thing {i}", response_text="done",

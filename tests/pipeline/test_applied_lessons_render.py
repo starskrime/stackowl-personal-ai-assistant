@@ -8,7 +8,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 
 def _state(*, responses):
     return PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="o", pipeline_step="deliver", responses=responses,
     )
 

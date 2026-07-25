@@ -78,7 +78,7 @@ async def test_reversible_transactional_tool_auto_allows_without_prompt() -> Non
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
     tool = _Consequential("rev_tool", commit_coupling="transactional")
 
-    allowed = await gate.check(tool, channel="cli", session_id="s1")
+    allowed = await gate.check(tool, channel="cli", session_key="s1")
 
     assert allowed is True
     assert prompter.asked is False  # auto-allowed-with-undo, never prompted
@@ -89,7 +89,7 @@ async def test_irreversible_unconfirmed_tool_still_prompts() -> None:
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
     tool = _Consequential("send", commit_coupling="unconfirmed")
 
-    allowed = await gate.check(tool, channel="cli", session_id="s1")
+    allowed = await gate.check(tool, channel="cli", session_key="s1")
 
     assert allowed is False
     assert prompter.asked is True  # no reversibility ⇒ ALWAYS_ASK
@@ -100,7 +100,7 @@ async def test_undeclared_coupling_tool_still_prompts() -> None:
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
     tool = _Consequential("mystery")  # commit_coupling=None ⇒ fail-safe to ask
 
-    allowed = await gate.check(tool, channel="cli", session_id="s1")
+    allowed = await gate.check(tool, channel="cli", session_key="s1")
 
     assert allowed is False
     assert prompter.asked is True
@@ -115,7 +115,7 @@ async def test_dangerous_category_tool_never_relaxed_by_reversibility() -> None:
         "wipe", commit_coupling="transactional", consent_category="destructive"
     )
 
-    allowed = await gate.check(tool, channel="cli", session_id="s1")
+    allowed = await gate.check(tool, channel="cli", session_key="s1")
 
     assert allowed is False
     assert prompter.asked is True
@@ -127,7 +127,7 @@ async def test_always_ask_tool_name_never_relaxed_by_reversibility() -> None:
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
     tool = _Consequential("execute_code", commit_coupling="transactional")
 
-    allowed = await gate.check(tool, channel="cli", session_id="s1")
+    allowed = await gate.check(tool, channel="cli", session_key="s1")
 
     assert allowed is False
     assert prompter.asked is True
@@ -140,7 +140,7 @@ async def test_policy_request_default_reversible_false_is_unchanged() -> None:
     policy = ConsentPolicy(prompter=prompter)
 
     allowed = await policy.request(
-        tool_name="x", channel="cli", session_id="s1"
+        tool_name="x", channel="cli", session_key="s1"
     )
 
     assert allowed is True
@@ -160,7 +160,7 @@ async def test_reversible_auto_allow_holds_when_resolver_flag_on(monkeypatch) ->
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
     tool = _Consequential("rev_tool", commit_coupling="transactional")
 
-    allowed = await gate.check(tool, channel="cli", session_id="s1")
+    allowed = await gate.check(tool, channel="cli", session_key="s1")
 
     assert allowed is True
     assert prompter.asked is False
@@ -187,7 +187,7 @@ async def test_reversible_auto_allow_consults_authority_when_on(monkeypatch) -> 
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
     tool = _Consequential("rev_tool", commit_coupling="transactional")
 
-    await gate.check(tool, channel="cli", session_id="s1")
+    await gate.check(tool, channel="cli", session_key="s1")
 
     assert len(calls) == 1
     assert calls[0].reversibility.is_reversible

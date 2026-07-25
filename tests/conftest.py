@@ -44,7 +44,7 @@ def _restore_test_mode_guard() -> Generator[None, None, None]:
 def _reset_hydrated_tools() -> Generator[None]:
     """Prevent the process-global HydratedToolStore (FX-07) from leaking a
     session's hydrated tool names across tests — same rationale as
-    ``_restore_test_mode_guard``: many tests share ``session_id="test-session"``
+    ``_restore_test_mode_guard``: many tests share ``session_key="test-session"``
     via the ``trace_context`` fixture, and this store is keyed on that string.
     """
     from stackowl.infra import hydrated_tools
@@ -118,7 +118,7 @@ def capture_logs() -> Generator[list[dict[str, Any]], None, None]:
 @pytest.fixture()
 def trace_context() -> Generator[None, None, None]:
     """Start a fresh TraceContext for the test and reset it on teardown."""
-    token = TraceContext.start(session_id="test-session")
+    token = TraceContext.start(session_key="test-session")
     try:
         yield
     finally:

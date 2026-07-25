@@ -95,8 +95,8 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         # race (e.g. two overlapping health-sweep ticks), mirroring
         # CamoufoxRuntime's lock-guarded recycle.
         self._heal_lock = asyncio.Lock()
-        # Session→target map (MANDATORY — the session_id is a lossy hash of the
-        # JID, so it is NOT itself a send target). Maps session_id ->
+        # Session→target map (MANDATORY — the session_key is a lossy hash of the
+        # JID, so it is NOT itself a send target). Maps session_key ->
         # the raw JID this session's replies route to. ``_last_target`` is the
         # proactive-only fallback, NEVER the primary on-turn path (preserves the
         # concurrent cross-deliver fix).
@@ -118,15 +118,15 @@ class WhatsAppChannelAdapter(ChannelAdapter):
     def channel_name(self) -> str:
         return "whatsapp"
 
-    def resolve_target(self, session_id: str) -> str | int | None:
-        """Resolve the raw JID for ``session_id`` (mirror Slack's _targets map).
+    def resolve_target(self, session_key: str) -> str | int | None:
+        """Resolve the raw JID for ``session_key`` (mirror Slack's _targets map).
 
-        The WhatsApp ``session_id`` is ``whatsapp:{hash_jid(jid)}`` — a LOSSY
+        The WhatsApp ``session_key`` is ``whatsapp:{hash_jid(jid)}`` — a LOSSY
         hash, so the map is mandatory: a JID can never be reconstructed from it.
         Returns ``None`` honestly on a miss (never guesses ``_last_target``), so
         the caller records the send as undeliverable rather than cross-delivering.
         """
-        target = self._targets.get(session_id)
+        target = self._targets.get(session_key)
         log.whatsapp.debug(
             "[whatsapp] adapter.resolve_target: resolved",
             extra={"_fields": {"resolved": target is not None}},
@@ -207,15 +207,15 @@ class WhatsAppChannelAdapter(ChannelAdapter):
             extra={"_fields": {"jid_hash": hash_jid(jid), "text_len": len(text)}},
         )
 
-        session_id = f"whatsapp:{hash_jid(jid)}"
+        session_key = f"whatsapp:{hash_jid(jid)}"
         ingress = IngressMessage(
             text=text,
-            session_id=session_id,
+            session_key=session_key,
             channel=self.channel_name,
             trace_id=uuid4().hex,
             # Stamp the raw JID as the per-turn target so this turn replies to ITS
             # OWN chat — never the shared `_last_target` a newer concurrent inbound
-            # may overwrite. The session_id is a lossy hash, so the JID itself
+            # may overwrite. The session_key is a lossy hash, so the JID itself
             # rides the chunk (resolved back from `_targets` on the proactive path).
             chat_id=jid,
             # ADR-D — a WhatsApp group jid ends with "@g.us"; a 1:1 chat does not.
@@ -224,7 +224,7 @@ class WhatsAppChannelAdapter(ChannelAdapter):
         )
         self._queue.put_nowait(ingress)
         # Record the session→JID map + proactive-only fallback.
-        self._targets[session_id] = jid
+        self._targets[session_key] = jid
         self._last_target = jid
         self._last_poll_at = time.monotonic()
 

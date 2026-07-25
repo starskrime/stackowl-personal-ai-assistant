@@ -14,10 +14,10 @@ from stackowl.pipeline.steps import classify
 pytestmark = pytest.mark.asyncio
 
 
-def _make_state(session_id: str = "sess-X") -> PipelineState:
+def _make_state(session_key: str = "sess-X") -> PipelineState:
     return PipelineState(
-        trace_id=f"trace-{session_id}",
-        session_id=session_id,
+        trace_id=f"trace-{session_key}",
+        session_key=session_key,
         input_text="hi",
         channel="cli",
         owl_name="secretary",
@@ -36,7 +36,7 @@ async def test_preferences_appear_in_classify_memory_context(tmp_db: DbPool) -> 
         preference_store=store,
     ))
     try:
-        out = await classify.run(_make_state(session_id="sess-X"))
+        out = await classify.run(_make_state(session_key="sess-X"))
     finally:
         reset_services(token)
 
@@ -55,7 +55,7 @@ async def test_global_preference_visible_to_any_session(tmp_db: DbPool) -> None:
 
     token = set_services(StepServices(memory_bridge=bridge, preference_store=store))
     try:
-        out = await classify.run(_make_state(session_id="sess-fresh"))
+        out = await classify.run(_make_state(session_key="sess-fresh"))
     finally:
         reset_services(token)
 
@@ -75,7 +75,7 @@ async def test_no_preferences_section_when_owner_has_none(tmp_db: DbPool) -> Non
         preference_store=store,
     ))
     try:
-        out = await classify.run(_make_state(session_id="sess-empty"))
+        out = await classify.run(_make_state(session_key="sess-empty"))
     finally:
         reset_services(token)
 
@@ -101,7 +101,7 @@ async def test_preferences_pinned_to_top_of_memory_context(tmp_db: DbPool) -> No
         preference_store=store,
     ))
     try:
-        out = await classify.run(_make_state(session_id="sess-A"))
+        out = await classify.run(_make_state(session_key="sess-A"))
     finally:
         reset_services(token)
 

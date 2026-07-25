@@ -44,7 +44,7 @@ def make_state() -> PipelineState:
     """Minimal :class:`PipelineState` for slash-command tests."""
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="",
         channel="cli",
         owl_name="secretary",
@@ -96,10 +96,10 @@ class FakeBridge(MemoryBridge):
     def seed(self, status: str, fact: StagedFact) -> None:
         self._by_status[status].append(fact)
 
-    async def retrieve(self, query: str, session_id: str) -> str:  # pragma: no cover
+    async def retrieve(self, query: str, session_key: str) -> str:  # pragma: no cover
         return ""
 
-    async def store(self, content: str, session_id: str) -> None:  # pragma: no cover
+    async def store(self, content: str, session_key: str) -> None:  # pragma: no cover
         return None
 
     async def stage(self, fact: StagedFact) -> None:

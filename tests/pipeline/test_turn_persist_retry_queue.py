@@ -10,7 +10,7 @@ async def test_floored_turn_creates_retry_queue_row(monkeypatch):
     inserted = {}
 
     class FakeRetryQueueStore:
-        async def get_latest_pending_for_session(self, session_id):
+        async def get_latest_pending_for_session(self, session_key):
             return None
 
         async def insert_pending(self, **kwargs):
@@ -26,7 +26,7 @@ async def test_floored_turn_creates_retry_queue_row(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-x", session_id="sess-x", input_text="prepare me for the interview",
+        trace_id="trace-x", session_key="sess-x", input_text="prepare me for the interview",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(
@@ -39,7 +39,7 @@ async def test_floored_turn_creates_retry_queue_row(monkeypatch):
     await persist_turn(state)
 
     assert inserted["trace_id"] == "trace-x"
-    assert inserted["session_id"] == "sess-x"
+    assert inserted["session_key"] == "sess-x"
     assert inserted["goal"] == "prepare me for the interview"
 
 
@@ -65,7 +65,7 @@ async def test_floored_turn_supersedes_existing_pending_row(monkeypatch):
         id = "retry-existing-1"
 
     class FakeRetryQueueStore:
-        async def get_latest_pending_for_session(self, session_id):
+        async def get_latest_pending_for_session(self, session_key):
             return _ExistingRow()
 
         async def insert_pending(self, **kwargs):
@@ -86,7 +86,7 @@ async def test_floored_turn_supersedes_existing_pending_row(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-y", session_id="sess-x", input_text="what's the latest AI news",
+        trace_id="trace-y", session_key="sess-x", input_text="what's the latest AI news",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(
@@ -117,8 +117,8 @@ async def test_floored_turn_evicts_sticky_route_cache(monkeypatch):
     evicted = []
 
     class FakeStickyRouteCache:
-        def evict(self, session_id):
-            evicted.append(session_id)
+        def evict(self, session_key):
+            evicted.append(session_key)
 
     class FakeServices:
         memory_bridge = None
@@ -130,7 +130,7 @@ async def test_floored_turn_evicts_sticky_route_cache(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-z", session_id="sess-brain", input_text="Yes review",
+        trace_id="trace-z", session_key="sess-brain", input_text="Yes review",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(
@@ -152,8 +152,8 @@ async def test_clean_turn_does_not_evict_sticky_route_cache(monkeypatch):
     evicted = []
 
     class FakeStickyRouteCache:
-        def evict(self, session_id):
-            evicted.append(session_id)
+        def evict(self, session_key):
+            evicted.append(session_key)
 
     class FakeServices:
         memory_bridge = None
@@ -165,7 +165,7 @@ async def test_clean_turn_does_not_evict_sticky_route_cache(monkeypatch):
     )
 
     state = PipelineState(
-        trace_id="trace-ok", session_id="sess-brain", input_text="thanks!",
+        trace_id="trace-ok", session_key="sess-brain", input_text="thanks!",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=(
             ResponseChunk(
@@ -203,7 +203,7 @@ async def test_retry_replay_floor_does_not_create_new_retry_queue_row(monkeypatc
     )
 
     state = PipelineState(
-        trace_id="retry-x", session_id="sess-x", input_text="prepare me for the interview",
+        trace_id="retry-x", session_key="sess-x", input_text="prepare me for the interview",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         retry_replay=True,
         responses=(

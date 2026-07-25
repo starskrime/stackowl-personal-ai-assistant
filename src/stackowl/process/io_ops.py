@@ -29,7 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover
         _lock: Lock
 
         def _get_scoped(
-            self, process_id: str, session_id: str | None
+            self, process_id: str, session_key: str | None
         ) -> ProcessHandle | None: ...
 
     _Base = _RegistryState
@@ -41,9 +41,9 @@ class ProcessIoMixin(_Base):
     """stdin/stdout I/O operations mixed into :class:`ProcessRegistry`."""
 
     # ------------------------------------------------------------------- log
-    def read_log(self, process_id: str, session_id: str | None = None) -> tuple[str, str] | None:
+    def read_log(self, process_id: str, session_key: str | None = None) -> tuple[str, str] | None:
         """Return ``(stdout, stderr)`` snapshots for a scoped process, or ``None``."""
-        handle = self._get_scoped(process_id, session_id)
+        handle = self._get_scoped(process_id, session_key)
         if handle is None:
             return None
         handle.last_active = self._clock.monotonic()
@@ -51,10 +51,10 @@ class ProcessIoMixin(_Base):
 
     # ------------------------------------------------------------ write stdin
     async def write_stdin(
-        self, process_id: str, data: str, session_id: str | None = None
+        self, process_id: str, data: str, session_key: str | None = None
     ) -> bool:
         """Write ``data`` to a running process's stdin. False if unavailable. B5-safe."""
-        handle = self._get_scoped(process_id, session_id)
+        handle = self._get_scoped(process_id, session_key)
         if handle is None or not handle.is_running or handle.transport is None:
             return False
         stdin = handle.transport.stdin
@@ -73,9 +73,9 @@ class ProcessIoMixin(_Base):
             return False
 
     # ----------------------------------------------------------------- close
-    async def close(self, process_id: str, session_id: str | None = None) -> bool:
+    async def close(self, process_id: str, session_key: str | None = None) -> bool:
         """Close a process's stdin (send EOF) without killing it. B5-safe."""
-        handle = self._get_scoped(process_id, session_id)
+        handle = self._get_scoped(process_id, session_key)
         if handle is None or handle.transport is None or handle.transport.stdin is None:
             return False
         try:

@@ -250,7 +250,8 @@ class StagedRcaSession:
         )
         state = PipelineState(
             trace_id=str(uuid.uuid4()),
-            session_id=evidence.incident_id,
+            # The incident is this analysis run's lane — RCA is not a user chat.
+            session_key=evidence.incident_id,
             input_text=prompt,
             channel="rca",
             owl_name=owl_name,

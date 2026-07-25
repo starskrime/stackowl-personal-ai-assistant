@@ -1,7 +1,7 @@
 """QuietHoursCommand — ``/quiet`` slash command (Story 7.4).
 
 Inserts a **global** row into ``notification_overrides`` (the table has no
-``session_id`` column — the override applies process-wide, not per session).
+``session_key`` column — the override applies process-wide, not per session).
 The override is honoured by the :class:`NotificationRouter` until
 ``expires_at`` (default: 24 hours from now).
 
@@ -66,7 +66,7 @@ class QuietHoursCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] quiet.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         if self._db is None:
             return "✗ /quiet: not configured"

@@ -11,7 +11,7 @@ from stackowl.tui.messages._base import FrozenMessage
 class ParliamentRoundMessage(FrozenMessage):
     """Emitted when a parliament round completes with per-owl responses."""
 
-    session_id: str
+    session_key: str
     round_number: int
     owl_responses: dict[str, str] = field(default_factory=dict)
 
@@ -36,7 +36,7 @@ class EvolutionBadgeMessage(FrozenMessage):
 class ParliamentStartedMessage(FrozenMessage):
     """Emitted when a Parliament session begins — drives roll-call display."""
 
-    session_id: str
+    session_key: str
     owl_names: tuple[str, ...] = ()
     trigger: str = "explicit"
 
@@ -45,7 +45,7 @@ class ParliamentStartedMessage(FrozenMessage):
 class ParliamentRoundStartedMessage(FrozenMessage):
     """Emitted at the start of each Parliament round (before any responses)."""
 
-    session_id: str
+    session_key: str
     round_number: int = 1
 
 
@@ -53,7 +53,7 @@ class ParliamentRoundStartedMessage(FrozenMessage):
 class SynthesisArrivedMessage(FrozenMessage):
     """Emitted when ParliamentSynthesizer publishes a final synthesis result."""
 
-    session_id: str
+    session_key: str
     consensus: str = ""
     recommendation: str = ""
     confidence: float = 0.0
@@ -64,4 +64,4 @@ class SynthesisArrivedMessage(FrozenMessage):
 class ParliamentClosedMessage(FrozenMessage):
     """Emitted when the Parliament session has fully wrapped — hide panel."""
 
-    session_id: str
+    session_key: str

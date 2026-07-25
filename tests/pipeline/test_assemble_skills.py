@@ -58,7 +58,7 @@ class _Sk:
 
 
 def _state(**kw):
-    base = dict(trace_id="t", session_id="s", input_text="hi",
+    base = dict(trace_id="t", session_key="s", input_text="hi",
                 channel="cli", owl_name="rsr", pipeline_step="start")
     base.update(kw)
     return PipelineState(**base)

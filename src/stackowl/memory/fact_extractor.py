@@ -102,13 +102,13 @@ class FactExtractor:
         log.memory.debug("[memory] fact_extractor.init: exit")
 
     async def extract(
-        self, conversation: list[Message], session_id: str
+        self, conversation: list[Message], session_key: str
     ) -> list[StagedFact]:
         """Extract :class:`StagedFact` items from a conversation."""
         # 1. ENTRY
         log.memory.debug(
             "[memory] fact_extractor.extract: entry",
-            extra={"_fields": {"session_id": session_id, "n_messages": len(conversation)}},
+            extra={"_fields": {"session_key": session_key, "n_messages": len(conversation)}},
         )
         TestModeGuard.assert_not_test_mode("fact_extractor.extract")
 
@@ -116,7 +116,7 @@ class FactExtractor:
         messages = self._build_prompt(conversation)
         log.memory.debug(
             "[memory] fact_extractor.extract: prompt built",
-            extra={"_fields": {"session_id": session_id, "prompt_messages": len(messages)}},
+            extra={"_fields": {"session_key": session_key, "prompt_messages": len(messages)}},
         )
 
         # 3. STEP — provider call. The provider strips the <think> trace and the
@@ -126,7 +126,7 @@ class FactExtractor:
             "[memory] fact_extractor.extract: provider response received",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "response_len": len(result.content),
                     "provider": result.provider_name,
                 }
@@ -137,7 +137,7 @@ class FactExtractor:
         drafts = self._parse_response(result.content)
         log.memory.debug(
             "[memory] fact_extractor.extract: parsed drafts",
-            extra={"_fields": {"session_id": session_id, "draft_count": len(drafts)}},
+            extra={"_fields": {"session_key": session_key, "draft_count": len(drafts)}},
         )
 
         # 3. STEP — filter sensitive
@@ -146,7 +146,7 @@ class FactExtractor:
             "[memory] fact_extractor.extract: sensitive filter applied",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "kept": len(kept),
                     "dropped": len(drafts) - len(kept),
                 }
@@ -164,7 +164,7 @@ class FactExtractor:
             "[memory] fact_extractor.extract: batch trust determined",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "has_tool_role": has_tool_role,
                     "batch_trust": batch_trust,
                 }
@@ -174,15 +174,15 @@ class FactExtractor:
         # Re-key the source_ref through the identity resolver so that facts from
         # different channels belonging to the same user reinforce each other.
         # When no resolver is configured (or handles are unmapped) resolve() returns
-        # the session_id unchanged — byte-identical to today's behaviour.
-        identity_ref = self._identity_resolver.resolve(session_id)
+        # the session_key unchanged — byte-identical to today's behaviour.
+        identity_ref = self._identity_resolver.resolve(session_key)
         log.memory.debug(
             "[memory] fact_extractor.extract: identity ref resolved",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "identity_ref": identity_ref,
-                    "cross_channel": identity_ref != session_id,
+                    "cross_channel": identity_ref != session_key,
                 }
             },
         )
@@ -206,12 +206,12 @@ class FactExtractor:
         # 4. EXIT
         log.memory.info(
             "[memory] fact_extractor.extract: exit",
-            extra={"_fields": {"session_id": session_id, "fact_count": len(facts)}},
+            extra={"_fields": {"session_key": session_key, "fact_count": len(facts)}},
         )
         if self._event_bus is not None:
             self._event_bus.emit(
                 "memory.facts_extracted",
-                {"session_id": session_id, "count": len(facts)},
+                {"session_key": session_key, "count": len(facts)},
             )
         return facts
 

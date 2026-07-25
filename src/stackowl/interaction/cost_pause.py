@@ -149,7 +149,7 @@ class CostPauseGuard:
         self,
         *,
         trace_id: str,
-        session_id: str,
+        session_key: str,
         channel: str,
         interactive: bool,
     ) -> bool:
@@ -195,7 +195,7 @@ class CostPauseGuard:
             return True
 
         gateway = self._clarify_gateway
-        if gateway is None or not session_id or not channel:
+        if gateway is None or not session_key or not channel:
             # Self-healing fail-OPEN: no way to ask → never wedge the turn.
             log.gateway.warning(
                 "cost_pause.gate: cannot ask (no gateway/channel) — fail-open continue",
@@ -203,7 +203,7 @@ class CostPauseGuard:
                     "_fields": {
                         "trace_id": trace_id,
                         "has_gateway": gateway is not None,
-                        "has_session": bool(session_id),
+                        "has_session": bool(session_key),
                         "has_channel": bool(channel),
                     }
                 },
@@ -256,7 +256,7 @@ class CostPauseGuard:
         return await self._ask(
             gateway=gateway,
             trace_id=trace_id,
-            session_id=session_id,
+            session_key=session_key,
             channel=channel,
             cost=cost,
         )
@@ -287,7 +287,7 @@ class CostPauseGuard:
         *,
         gateway: ClarifyGateway,
         trace_id: str,
-        session_id: str,
+        session_key: str,
         channel: str,
         cost: float,
     ) -> bool:
@@ -301,7 +301,7 @@ class CostPauseGuard:
             # 3. STEP — register + deliver the pause as a BLOCKING ask, then park
             # on the waiter until the user taps (or we time out → fail-open).
             clarify_id = await gateway.ask(
-                session_id,
+                session_key,
                 channel,
                 question,
                 choices=(_CHOICE_CONTINUE, _CHOICE_STOP),
@@ -350,7 +350,7 @@ async def gate_or_continue(services: StepServices, *, action: str) -> bool:
     """Shared cost-pause gate for the expensive-op tools (B2: one site, two callers).
 
     Resolves the soft per-turn :class:`CostPauseGuard` off ``services`` and reads
-    the live ``trace_id``/``session_id``/``channel``/``interactive`` off
+    the live ``trace_id``/``session_key``/``channel``/``interactive`` off
     :class:`TraceContext` (tools never touch ``PipelineState``). Returns ``True`` to
     continue the expensive op (``action`` — e.g. ``"delegation"`` / ``"fan-out"``)
     and ``False`` ONLY when the user explicitly chose **Stop** at the pause.
@@ -367,7 +367,7 @@ async def gate_or_continue(services: StepServices, *, action: str) -> bool:
     trace_id = str(ctx.get("trace_id") or "")
     proceed = await guard.gate(
         trace_id=trace_id,
-        session_id=str(ctx.get("session_id") or ""),
+        session_key=str(ctx.get("session_key") or ""),
         channel=str(ctx.get("channel") or ""),
         interactive=bool(ctx.get("interactive", False)),
     )

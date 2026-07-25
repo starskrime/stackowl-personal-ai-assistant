@@ -33,7 +33,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 def _state(text: str = "send both emails") -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text=text,
         channel="cli",
         owl_name="secretary",

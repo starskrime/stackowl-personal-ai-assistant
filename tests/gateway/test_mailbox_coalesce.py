@@ -11,7 +11,7 @@ from stackowl.gateway.turn_registry import TurnRegistry
 async def test_mailbox_bounded_and_coalesces_under_spam() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register("r1", session_id="s1", task=t, target=None, original_input="x")
+    turn = await reg.register("r1", session_key="s1", task=t, target=None, original_input="x")
     for i in range(50):
         reg.put_steer("r1", f"steer-{i}")  # bounded + supersede-oldest
     assert turn.steering_mailbox.qsize() <= turn.steering_mailbox.maxsize
@@ -34,7 +34,7 @@ async def test_put_steer_unknown_request_is_noop() -> None:
 async def test_full_mailbox_supersede_drops_only_oldest() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register("r2", session_id="s2", task=t, target=None, original_input="x")
+    turn = await reg.register("r2", session_key="s2", task=t, target=None, original_input="x")
     maxsize = turn.steering_mailbox.maxsize
     total = maxsize + 5
     for i in range(total):
@@ -60,11 +60,11 @@ async def test_try_steer_running_supersedes_on_full_mailbox() -> None:
     """
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register("r3", session_id="s3", task=t, target=None, original_input="x")
+    turn = await reg.register("r3", session_key="s3", task=t, target=None, original_input="x")
     maxsize = turn.steering_mailbox.maxsize
     for i in range(maxsize + 10):
         verdict = await reg.try_steer(
-            "r3", f"st-{i}", session_id="s3", request_id_new=f"new-{i}", target=None
+            "r3", f"st-{i}", session_key="s3", request_id_new=f"new-{i}", target=None
         )
         assert verdict == "STEER"  # RUNNING always accepts (supersede, never NEW)
     assert turn.steering_mailbox.qsize() == maxsize

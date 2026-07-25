@@ -152,7 +152,7 @@ async def test_next_contact_banner_surfaces_once_then_clears(tmp_db: DbPool) -> 
     set_services(StepServices(db_pool=tmp_db))
     state = PipelineState(
         trace_id="t1",
-        session_id="turn-user-1",
+        session_key="turn-user-1",
         input_text="hi",
         channel="cli",
         owl_name="secretary",
@@ -189,7 +189,7 @@ async def test_delegated_child_turn_does_not_surface_banner(tmp_db: DbPool) -> N
     set_services(StepServices(db_pool=tmp_db))
     state = PipelineState(
         trace_id="t2",
-        session_id="turn-user-2",
+        session_key="turn-user-2",
         input_text="hi",
         channel="cli",
         owl_name="secretary",
@@ -726,7 +726,7 @@ async def test_banner_surfaces_row_written_under_different_identity_key(
     tmp_db: DbPool,
 ) -> None:
     """A row written under an identity_key that does NOT match the turn's
-    session_id/identity_key must still surface on a real top-level turn —
+    session_key/identity_key must still surface on a real top-level turn —
     the "Slack row surfaces on a telegram turn" proof without a Slack adapter."""
     outbox = UndeliveredOutbox(tmp_db)
     ok = await outbox.record_undelivered(
@@ -740,7 +740,7 @@ async def test_banner_surfaces_row_written_under_different_identity_key(
     set_services(StepServices(db_pool=tmp_db))
     state = PipelineState(
         trace_id="t-pb7c-1",
-        session_id="turn-user-pb7c",  # does not match "some-other-channels-address"
+        session_key="turn-user-pb7c",  # does not match "some-other-channels-address"
         input_text="hi",
         channel="cli",
         owl_name="secretary",

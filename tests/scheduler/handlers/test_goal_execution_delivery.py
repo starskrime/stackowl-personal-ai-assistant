@@ -120,8 +120,8 @@ class TestGoalExecutionDelivery:
         assert state.defer_delivery is True
         assert state.channel == "telegram"
         # FULL job_id in the session, not a truncated prefix (collision fix).
-        assert state.session_id == f"goal-{job.job_id}"
-        assert job.job_id in state.session_id
+        assert state.session_key == f"goal-{job.job_id}"
+        assert job.job_id in state.session_key
         # The handler does NOT set reply_target on a goal state.
         assert state.reply_target is None
 

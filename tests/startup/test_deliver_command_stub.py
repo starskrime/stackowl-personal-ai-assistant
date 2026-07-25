@@ -42,7 +42,7 @@ def _reset_registry() -> None:
 
 
 async def _deliver_command_stub(
-    cmd: str, session_id: str, state: PipelineState, args: str, trace_id: str,
+    cmd: str, session_key: str, state: PipelineState, args: str, trace_id: str,
     *, stream_registry: StreamRegistry,
 ) -> None:
     """Mirrors src/stackowl/startup/orchestrator.py::_deliver_command_stub.
@@ -128,7 +128,7 @@ class _BoomCommand(SlashCommand):
 
 def _state(trace_id: str) -> PipelineState:
     return PipelineState(
-        trace_id=trace_id, session_id="s1", input_text="/x",
+        trace_id=trace_id, session_key="s1", input_text="/x",
         channel="cli", owl_name="system", pipeline_step="start",
     )
 

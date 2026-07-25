@@ -16,12 +16,12 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_state(
-    *, session_id: str = "sess-1", input_text: str = "hello",
+    *, session_key: str = "sess-1", input_text: str = "hello",
     responses: tuple = (),
 ) -> PipelineState:
     return PipelineState(
-        trace_id=f"trace-{session_id}",
-        session_id=session_id,
+        trace_id=f"trace-{session_key}",
+        session_key=session_key,
         input_text=input_text,
         channel="cli",
         owl_name="secretary",
@@ -75,7 +75,7 @@ async def test_consolidate_persist_failure_does_not_raise(tmp_db: DbPool) -> Non
     """Bridge that raises on store must not propagate up."""
 
     class _BoomBridge(SqliteMemoryBridge):
-        async def store(self, content: str, session_id: str, *, trust: object = None) -> None:
+        async def store(self, content: str, session_key: str, *, trust: object = None) -> None:
             raise RuntimeError("simulated DB outage")
 
     bridge = _BoomBridge(db=tmp_db)
@@ -109,7 +109,7 @@ async def test_classify_loads_recent_session_turns(tmp_db: DbPool) -> None:
 
     token = set_services(StepServices(memory_bridge=bridge))
     try:
-        state = _make_state(session_id="sess-Z", input_text="follow-up")
+        state = _make_state(session_key="sess-Z", input_text="follow-up")
         out = await classify.run(state)
     finally:
         reset_services(token)
@@ -128,7 +128,7 @@ async def test_classify_loads_recent_session_turns(tmp_db: DbPool) -> None:
 async def test_classify_handles_bridge_None_gracefully() -> None:
     token = set_services(StepServices(memory_bridge=None))
     try:
-        state = _make_state(session_id="sess-N", input_text="hi")
+        state = _make_state(session_key="sess-N", input_text="hi")
         out = await classify.run(state)
         assert out.memory_context is None or out.memory_context == ""
     finally:

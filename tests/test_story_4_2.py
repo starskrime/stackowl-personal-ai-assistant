@@ -40,11 +40,11 @@ def _make_state(
     input_text: str = "do the thing",
     owl_name: str = "secretary",
     trace_id: str = "trace-test",
-    session_id: str = "session-test",
+    session_key: str = "session-test",
 ) -> PipelineState:
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel="cli",
         owl_name=owl_name,
@@ -55,7 +55,7 @@ def _make_state(
 def _make_ingress(text: str) -> IngressMessage:
     return IngressMessage(
         text=text,
-        session_id="session-test",
+        session_key="session-test",
         channel="cli",
         trace_id="trace-test",
     )

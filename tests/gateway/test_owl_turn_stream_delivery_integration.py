@@ -1,15 +1,15 @@
 """Real owl-turn delivery regression: dispatch → backend.run → deliver → send.
 
 Why this exists (the regression it locks):
-  ``ffa6a90`` re-keyed the response stream from ``session_id`` → ``request_id``
+  ``ffa6a90`` re-keyed the response stream from ``session_key`` → ``request_id``
   (== ``trace_id``) in ``pipeline/streaming.py`` and made ``pipeline/steps/deliver.py``
   resolve the writer by ``state.trace_id``. The 42 TEST harnesses were updated to
   register streams by ``trace_id``, but the PRODUCTION gateway
   (``startup/orchestrator.py`` + ``gateway/clarify_pump.py``) still
-  registered/looked-up/removed the stream by ``session_id``. Because
-  ``session_id != trace_id`` in every adapter, every successful owl turn would
+  registered/looked-up/removed the stream by ``session_key``. Because
+  ``session_key != trace_id`` in every adapter, every successful owl turn would
   stream-MISS in ``deliver`` (no writer for ``trace_id``) → the writer registered
-  under ``session_id`` was NEVER closed → no sentinel → ``adapter.send(reader)``
+  under ``session_key`` was NEVER closed → no sentinel → ``adapter.send(reader)``
   hangs forever → the session wedges. Tests were green only because the harnesses
   were swapped to ``trace_id``; production was silently broken.
 
@@ -32,8 +32,8 @@ REACHES the channel adapter (it is delivered, not stream-missed) WITHOUT hanging
 instead of wedging the suite.
 
 Catches-the-hang proof: ``deliver`` looks the writer up by ``state.trace_id``.
-If the gateway registered the stream by ``session_id`` (the regression) while
-``session_id != trace_id``, ``deliver`` stream-misses, never closes the writer,
+If the gateway registered the stream by ``session_key`` (the regression) while
+``session_key != trace_id``, ``deliver`` stream-misses, never closes the writer,
 the sentinel never arrives, and the ``wait_for`` around the send TIMES OUT →
 this test FAILS. It passes only when the gateway registers/looks-up/removes the
 stream by the SAME key ``deliver`` uses (``trace_id``).
@@ -164,7 +164,7 @@ async def test_real_owl_turn_delivers_to_channel_without_hanging(tmp_db: DbPool)
 
     Drives the production wiring: the gateway registers the stream by the SAME
     key ``deliver`` looks it up by (``trace_id``) and the real ``ClarifyPump``
-    drains it into the channel adapter. If the gateway re-keyed by ``session_id``
+    drains it into the channel adapter. If the gateway re-keyed by ``session_key``
     (the regression) the ``wait_for`` below would time out and FAIL.
     """
     stream_registry = StreamRegistry()
@@ -183,13 +183,13 @@ async def test_real_owl_turn_delivers_to_channel_without_hanging(tmp_db: DbPool)
     # The two keys DIFFER, just like every real adapter (CLI: session UUID vs
     # per-msg id; Telegram: str(user_id) vs uuid4). If the gateway uses the wrong
     # one, deliver stream-misses.
-    session_id = "sess-ABC"
+    session_key = "sess-ABC"
     trace_id = "trace-XYZ"
-    assert session_id != trace_id
+    assert session_key != trace_id
 
     msg = IngressMessage(
         text="hello owl",
-        session_id=session_id,
+        session_key=session_key,
         channel="cli",
         trace_id=trace_id,
     )
@@ -203,7 +203,7 @@ async def test_real_owl_turn_delivers_to_channel_without_hanging(tmp_db: DbPool)
 
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=decision.stripped_text if decision.stripped_text is not None else msg.text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -217,7 +217,7 @@ async def test_real_owl_turn_delivers_to_channel_without_hanging(tmp_db: DbPool)
     pump.spawn_send(
         channel_adapter=adapter,
         reader=reader,
-        session_id=msg.session_id,   # the serialize-gate key (unchanged)
+        session_key=msg.session_key,   # the serialize-gate key (unchanged)
         request_id=msg.trace_id,     # the STREAM key (== deliver's lookup key)
         producer=producer,
         writer=writer,
@@ -226,7 +226,7 @@ async def test_real_owl_turn_delivers_to_channel_without_hanging(tmp_db: DbPool)
     # The owl turn must DELIVER — a chunk reaches the adapter — without hanging.
     # wait_for makes a hang FAIL the test instead of wedging the suite.
     await asyncio.wait_for(producer, timeout=5)
-    send_task = pump._inflight.get(msg.session_id)  # type: ignore[attr-defined]
+    send_task = pump._inflight.get(msg.session_key)  # type: ignore[attr-defined]
     assert send_task is not None
     await asyncio.wait_for(send_task, timeout=5)
     await asyncio.sleep(0)  # let the send task's done-callback (_cleanup) run
@@ -236,13 +236,13 @@ async def test_real_owl_turn_delivers_to_channel_without_hanging(tmp_db: DbPool)
         "owl turn did NOT deliver to the channel — stream-missed. "
         f"adapter.received={adapter.received!r}"
     )
-    # The stream was reaped under the STREAM key (trace_id), not session_id.
+    # The stream was reaped under the STREAM key (trace_id), not session_key.
     assert stream_registry.get_writer(msg.trace_id) is None
-    assert msg.session_id not in pump._inflight  # type: ignore[attr-defined]
+    assert msg.session_key not in pump._inflight  # type: ignore[attr-defined]
 
 
 class _NullGateway:
     """A clarify gateway the pump never consults in this test (spawn_send only)."""
 
-    def peek_for_session(self, session_id: str, channel: str) -> None:  # pragma: no cover
+    def peek_for_session(self, session_key: str, channel: str) -> None:  # pragma: no cover
         return None

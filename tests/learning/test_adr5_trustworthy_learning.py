@@ -28,7 +28,7 @@ def _outcome(trace: str, tool: str, failure_class: str | None) -> TaskOutcome:
     return TaskOutcome(
         outcome_id=0,
         trace_id=trace,
-        session_id="s",
+        session_key="s",
         owl_name="o",
         channel="cli",
         success=failure_class is None,

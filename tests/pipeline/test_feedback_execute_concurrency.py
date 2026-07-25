@@ -125,7 +125,7 @@ def _make_services(*, classifier: object, store: FakeStore) -> StepServices:
 
 def _reaction_state(input_text: str, render: str) -> PipelineState:
     return PipelineState(
-        trace_id="t-lat3", session_id="sess-lat3", input_text=input_text,
+        trace_id="t-lat3", session_key="sess-lat3", input_text=input_text,
         channel="cli", owl_name="secretary", pipeline_step="feedback",
         identity_key=OWNER, intent_class="conversational",
         history=(Message(role="assistant", content=render),),

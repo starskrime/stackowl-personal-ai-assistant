@@ -88,7 +88,7 @@ async def _seed_pre_scored_outcomes(db: DbPool, n: int) -> None:
     for i in range(n):
         trace_id = f"chunk-{i}"
         await store.record(
-            trace_id=trace_id, session_id="s", owl_name="secretary", channel="cli",
+            trace_id=trace_id, session_key="s", owl_name="secretary", channel="cli",
             success=True, latency_ms=10.0, tool_call_count=0,
             failure_class=None, step_durations={}, input_text="do a thing",
             response_text="solid answer",

@@ -77,7 +77,7 @@ class ConsequentialActionGate:
         tool: Tool,
         *,
         channel: str | None = None,
-        session_id: str | None = None,
+        session_key: str | None = None,
         category: str | None = None,
         call_args: dict[str, object] | None = None,
     ) -> bool:
@@ -113,7 +113,7 @@ class ConsequentialActionGate:
         allowed = await self._policy.request(
             tool_name=tool.name,
             channel=channel or "",
-            session_id=session_id or "",
+            session_key=session_key or "",
             category=effective_category,
             summary=summary,
             reversible=reversible,

@@ -138,7 +138,7 @@ async def test_send_returns_reply_and_persists_turn_to_bridge(tmp_db: DbPool) ->
     handle = sessions.get("worker")
     assert handle is not None
     assert not hasattr(handle, "history")
-    turns = await bridge.recent_conversation_turns(session_id="session:worker", limit=10)
+    turns = await bridge.recent_conversation_turns(session_key="session:worker", limit=10)
     assert len(turns) == 1
     assert "hello" in turns[0].content
 
@@ -159,7 +159,7 @@ async def test_second_send_sees_first_turn_continuity_through_bridge(tmp_db: DbP
     rec = _record(res2.output)
     assert "saw 2 prior turns" in str(rec["reply"])
     # Both turns persisted under the session id; the handle carries no history.
-    turns = await bridge.recent_conversation_turns(session_id="session:worker", limit=10)
+    turns = await bridge.recent_conversation_turns(session_key="session:worker", limit=10)
     assert len(turns) == 2
 
 
@@ -200,7 +200,7 @@ async def test_wait_false_sends_without_reply_text(tmp_db: DbPool) -> None:
     assert rec["status"] == "sent"
     assert "reply" not in rec
     # The run still happened (no async actor) — the turn persisted to the BRIDGE.
-    turns = await bridge.recent_conversation_turns(session_id="session:worker", limit=10)
+    turns = await bridge.recent_conversation_turns(session_key="session:worker", limit=10)
     assert len(turns) == 1
 
 

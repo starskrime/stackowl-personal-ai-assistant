@@ -329,7 +329,7 @@ class SecretaryRouter:
             extra={
                 "_fields": {
                     "trace_id": state.trace_id,
-                    "session_id": state.session_id,
+                    "session_key": state.session_key,
                     "input_len": len(state.input_text),
                 }
             },

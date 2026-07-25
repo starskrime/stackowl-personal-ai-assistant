@@ -56,7 +56,7 @@ async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
 def _state(**kwargs: object) -> PipelineState:
     base: dict[str, object] = {
         "trace_id": "tr",
-        "session_id": "se",
+        "session_key": "se",
         "input_text": "do the thing",
         "channel": "cli",
         "owl_name": "secretary",

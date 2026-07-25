@@ -48,7 +48,7 @@ class _SpyActuator:
 
 def _msg() -> IngressMessage:
     return IngressMessage(
-        text="hi", session_id="s1", channel="cli", trace_id="t-hi", chat_id=None
+        text="hi", session_key="s1", channel="cli", trace_id="t-hi", chat_id=None
     )
 
 

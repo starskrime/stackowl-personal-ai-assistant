@@ -1,10 +1,10 @@
-"""Per-adapter resolve_target(session_id) (C1 / F104).
+"""Per-adapter resolve_target(session_key) (C1 / F104).
 
-The session_id is NOT the send target. Resolution must live IN the adapter that
+The session_key is NOT the send target. Resolution must live IN the adapter that
 owns the destination map (asymmetry honored by construction):
 
 * base ChannelAdapter.resolve_target -> None (text-only / single-terminal).
-* Telegram -> its numeric private-chat convention (session_id == chat_id).
+* Telegram -> its numeric private-chat convention (session_key == chat_id).
 * Slack -> delegates to its existing target_for_session / _targets map.
 """
 
@@ -45,7 +45,7 @@ def test_telegram_resolve_target_parses_private_chat_session() -> None:
     adapter = TelegramChannelAdapter(
         TelegramSettings(bot_token="x", allowed_user_ids=[12345])
     )
-    # Telegram private chat: session_id == str(user_id) == chat_id (int).
+    # Telegram private chat: session_key == str(user_id) == chat_id (int).
     assert adapter.resolve_target("12345") == 12345
 
 
@@ -56,7 +56,7 @@ def test_telegram_resolve_target_non_numeric_is_none() -> None:
     adapter = TelegramChannelAdapter(
         TelegramSettings(bot_token="x", allowed_user_ids=[12345])
     )
-    # A group chat session_id (not the chat id) must NOT be guessed.
+    # A group chat session_key (not the chat id) must NOT be guessed.
     assert adapter.resolve_target("group:abc") is None
     assert adapter.resolve_target("") is None
 

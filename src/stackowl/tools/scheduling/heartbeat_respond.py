@@ -158,7 +158,7 @@ class HeartbeatRespondTool(Tool):
         ctx = TraceContext.get()
         trace_id = str(ctx.get("trace_id") or "")
         channel = ctx.get("channel")
-        session_id = str(ctx.get("session_id") or "")
+        session_key = str(ctx.get("session_key") or "")
 
         # 2. DECISION — once-per-turn guard: a 2nd call in this trace is refused.
         if trace_id and trace_id in self._responded:
@@ -185,7 +185,7 @@ class HeartbeatRespondTool(Tool):
             return self._ok(record, t0, note="recorded; no notification requested")
 
         urgency = clamp_agent_urgency(args.priority or "normal")
-        delivery_status = await self._deliver(args, urgency, channel, session_id)
+        delivery_status = await self._deliver(args, urgency, channel, session_key)
         if trace_id and delivery_status in ("delivered", "batched", "suppressed"):
             self._remember(trace_id)
         record = self._record(args, delivery_status=delivery_status, urgency=urgency)
@@ -204,13 +204,13 @@ class HeartbeatRespondTool(Tool):
         args: HeartbeatRespondArgs,
         urgency: AgentUrgency,
         channel: object,
-        session_id: str,
+        session_key: str,
     ) -> str:
         """Build + hand the notification to the S0 deliverer; never raises.
 
         Returns the transport ``DeliveryStatus`` string, ``"skipped"`` when there is
         no message body, or ``"deferred"`` when no deliverer is wired / an unexpected
-        error occurs (self-healing, B5). The originating ``session_id`` resolves to
+        error occurs (self-healing, B5). The originating ``session_key`` resolves to
         the recipient ``chat_id`` (where the channel makes that valid — telegram
         private chats) so the heartbeat ping reaches THAT chat, not the adapter's
         shared mutable ``_last_chat_id``.
@@ -233,7 +233,7 @@ class HeartbeatRespondTool(Tool):
             urgency=urgency,
             category=_CATEGORY,
             channel_name=channel_name,
-            target_chat_id=resolve_target_chat_id(channel_name, session_id),
+            target_chat_id=resolve_target_chat_id(channel_name, session_key),
         )
         try:
             status = await deliverer.deliver(notification)

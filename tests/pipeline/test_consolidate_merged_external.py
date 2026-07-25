@@ -22,7 +22,7 @@ pytestmark = pytest.mark.asyncio
 def _state(*, responses: tuple = (), tool_calls: tuple = ()) -> PipelineState:
     return PipelineState(
         trace_id="t-me",
-        session_id="sess-me",
+        session_key="sess-me",
         input_text="run a tool",
         channel="cli",
         owl_name="secretary",

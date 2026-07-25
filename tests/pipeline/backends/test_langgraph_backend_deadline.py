@@ -33,7 +33,7 @@ def _settings(timeout_s: float) -> Settings:
 
 def _state(*, interactive: bool) -> PipelineState:
     return PipelineState(
-        trace_id="tr-deadline", session_id="s", input_text="hi", channel="cli",
+        trace_id="tr-deadline", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="", interactive=interactive,
     )
 

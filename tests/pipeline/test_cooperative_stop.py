@@ -43,7 +43,7 @@ from stackowl.providers.openai_provider import OpenAIProvider
 async def test_stop_flag_finalizes_at_boundary_not_cancel() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register("r1", session_id="s1", task=t, target=None, original_input="x")
+    turn = await reg.register("r1", session_key="s1", task=t, target=None, original_input="x")
     reg.request_stop("r1")
     assert turn.stop_requested is True
     # the execute closure surfaces stop to the loop; the loop finalizes gracefully.
@@ -163,7 +163,7 @@ async def test_stop_flag_raises_turnstopped_at_iteration_boundary() -> None:
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
     await reg.register(
-        request_id, session_id="s1", task=bg, target=None, original_input="research X"
+        request_id, session_key="s1", task=bg, target=None, original_input="research X"
     )
     steering_cb = make_steering_callback(reg, request_id)
     assert steering_cb is not None
@@ -228,7 +228,7 @@ async def test_execute_run_finalizes_with_stopped_chunk_no_cancel() -> None:
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
     await reg.register(
-        request_id, session_id="s1", task=bg, target=None, original_input="research X"
+        request_id, session_key="s1", task=bg, target=None, original_input="research X"
     )
 
     # Scripted client: iter 0 issues a tool call; iter 1 would draft a final answer.
@@ -246,7 +246,7 @@ async def test_execute_run_finalizes_with_stopped_chunk_no_cancel() -> None:
     try:
         state = PipelineState(
             trace_id=request_id,
-            session_id="s1",
+            session_key="s1",
             input_text="research X",
             channel="cli",
             owl_name="default",

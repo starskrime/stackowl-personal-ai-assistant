@@ -104,7 +104,7 @@ async def seed_outcome(
     """
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id=trace_id, session_id="s", owl_name=owl_name, channel="cli",
+        trace_id=trace_id, session_key="s", owl_name=owl_name, channel="cli",
         success=success, latency_ms=10.0, tool_call_count=0,
         failure_class=failure_class, step_durations={},
         input_text=input_text, response_text="did the thing",

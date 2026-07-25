@@ -27,16 +27,16 @@ class _FakeAdapter:
         self._targets = targets
         self.sent: list[tuple[str, str]] = []
 
-    def resolve_target(self, session_id: str) -> str | int | None:
-        return self._targets.get(session_id)
+    def resolve_target(self, session_key: str) -> str | int | None:
+        return self._targets.get(session_key)
 
     async def send_text(self, text: str, *, target: str | None = None) -> None:
         self.sent.append((target or "", text))
 
 
-def _req(session_id: str = "whatsapp:abc", relax: bool = True) -> ConsentRequest:
+def _req(session_key: str = "whatsapp:abc", relax: bool = True) -> ConsentRequest:
     return ConsentRequest(
-        tool_name="shell", channel="whatsapp", session_id=session_id,
+        tool_name="shell", channel="whatsapp", session_key=session_key,
         summary="rm -rf /tmp/x", allow_relaxation=relax,
     )
 

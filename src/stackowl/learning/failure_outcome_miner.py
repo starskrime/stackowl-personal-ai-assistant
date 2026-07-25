@@ -415,7 +415,7 @@ class FailureOutcomeMiner:
             )
             body = _render_incident_body(verdict)
             skill_md_text = _render_skill_md(manifest, body)
-            tool_name, channel, session_id = resolve_consent_identity(
+            tool_name, channel, session_key = resolve_consent_identity(
                 live_tool_name=_CONSENT_TOOL_NAME_LIVE,
                 scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
             )
@@ -428,7 +428,7 @@ class FailureOutcomeMiner:
                     f"(capability={cluster.capability_class}, "
                     f"failure_class={cluster.failure_class})"
                 ),
-                tool_name=tool_name, channel=channel, session_id=session_id,
+                tool_name=tool_name, channel=channel, session_key=session_key,
                 category="incident",
             )
         except Exception as exc:  # B5 — never raise out of a mining pass

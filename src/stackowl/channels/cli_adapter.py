@@ -90,12 +90,12 @@ class CLIAdapter(ChannelAdapter):
 
     def __init__(
         self,
-        session_id: str | None = None,
+        session_key: str | None = None,
         *,
         tui_components: TuiComponents | None = None,
         event_bus: EventBus | None = None,
     ) -> None:
-        self._session_id = session_id or str(uuid.uuid4())
+        self._session_key = session_key or str(uuid.uuid4())
         self._trace_counter = 0
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
 
@@ -115,7 +115,7 @@ class CLIAdapter(ChannelAdapter):
 
         log.cli.debug(
             "[cli] CLIAdapter.init: ready",
-            extra={"_fields": {"session_id": self._session_id, "mode": self._mode}},
+            extra={"_fields": {"session_key": self._session_key, "mode": self._mode}},
         )
 
     @property
@@ -130,14 +130,14 @@ class CLIAdapter(ChannelAdapter):
         ``cli--{n}`` id) so a degenerate id can't reintroduce cross-delivery
         once routing keys on request_id.
         """
-        if not self._session_id or not self._session_id.strip():
+        if not self._session_key or not self._session_key.strip():
             log.gateway.error(
-                "[mint] cli request_id invalid: empty session_id",
-                extra={"_fields": {"session_id": self._session_id}},
+                "[mint] cli request_id invalid: empty session_key",
+                extra={"_fields": {"session_key": self._session_key}},
             )
-            raise ValueError("empty/invalid request_id: empty session_id")
+            raise ValueError("empty/invalid request_id: empty session_key")
         self._trace_counter += 1
-        rid = f"cli-{self._session_id[:8]}-{self._trace_counter}"
+        rid = f"cli-{self._session_key[:8]}-{self._trace_counter}"
         if not rid:
             log.gateway.error("[mint] cli request_id invalid", extra={"_fields": {"rid": rid}})
             raise ValueError("empty/invalid request_id")
@@ -162,19 +162,19 @@ class CLIAdapter(ChannelAdapter):
         log.cli.info(
             "[cli] receive: got input",
             extra={"_fields": {
-                "session_id": self._session_id, "text_len": len(text), "trace_id": trace_id,
+                "session_key": self._session_key, "text_len": len(text), "trace_id": trace_id,
             }},
         )
         return IngressMessage(
             text=text,
-            session_id=self._session_id,
+            session_key=self._session_key,
             channel=self.channel_name,
             trace_id=trace_id,
             is_direct=True,  # ADR-D — the CLI is inherently a private 1:1 terminal.
         )
 
     async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:
-        log.cli.info("[cli] send: streaming chunks", extra={"_fields": {"session_id": self._session_id}})
+        log.cli.info("[cli] send: streaming chunks", extra={"_fields": {"session_key": self._session_key}})
         buffer = ""
         chunk_idx = 0
         last_is_final = False
@@ -225,13 +225,13 @@ class CLIAdapter(ChannelAdapter):
             self._app.write("\n")
         log.cli.info(
             "[cli] send: exit",
-            extra={"_fields": {"session_id": self._session_id, "total_len": len(buffer)}},
+            extra={"_fields": {"session_key": self._session_key, "total_len": len(buffer)}},
         )
 
     async def send_text(self, text: str) -> None:
         log.cli.debug(
             "[cli] send_text: entry",
-            extra={"_fields": {"session_id": self._session_id, "text_len": len(text)}},
+            extra={"_fields": {"session_key": self._session_key, "text_len": len(text)}},
         )
         if self._mode == "fullzone" and self._event_bus is not None:
             self._event_bus.emit(_RESPONSE_EVENT, {

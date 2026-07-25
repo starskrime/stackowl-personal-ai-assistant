@@ -4,7 +4,7 @@ from stackowl.owls.dna_attribution import _filter_scored_outcomes
 
 def _outcome(**overrides):
     defaults = dict(
-        outcome_id=1, trace_id="t1", session_id="s1", owl_name="secretary", channel="telegram",
+        outcome_id=1, trace_id="t1", session_key="s1", owl_name="secretary", channel="telegram",
         success=True, latency_ms=100.0, tool_call_count=1, failure_class=None,
         quality_score=0.8, step_durations={}, input_text="hi", response_text="hello",
         captured_at=0.0, scored_at=0.0, dna_snapshot={"trait": 0.5}, approach_rating=None,

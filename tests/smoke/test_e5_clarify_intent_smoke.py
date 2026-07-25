@@ -102,7 +102,7 @@ def _park_a_clarify_turn(owl: _OwlProvider, gateway: ClarifyGateway) -> tuple[As
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id=SESSION, input_text="help", channel="cli",
+        trace_id="t", session_key=SESSION, input_text="help", channel="cli",
         owl_name="default", pipeline_step="start", interactive=True,
     )
 
@@ -133,7 +133,7 @@ async def test_new_request_during_park_cancels_clarify_and_runs_fresh() -> None:
 
     # The user pivots to an unrelated request instead of answering.
     consumed, text = await pump.resolve_or_rewrite(
-        session_id=SESSION, channel="cli", route="owl", target="default",
+        session_key=SESSION, channel="cli", route="owl", target="default",
         input_text="actually, what's the weather?",
     )
     assert consumed is False                              # not swallowed as the answer
@@ -166,7 +166,7 @@ async def test_answer_during_park_resolves_turn() -> None:
     assert parked and not run_task.done()
 
     consumed, _text = await pump.resolve_or_rewrite(
-        session_id=SESSION, channel="cli", route="owl", target="default", input_text="blue",
+        session_key=SESSION, channel="cli", route="owl", target="default", input_text="blue",
     )
     assert consumed is True  # blocking resume — the parked turn handles it
 

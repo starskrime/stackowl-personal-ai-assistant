@@ -101,7 +101,7 @@ class AsyncioBackend(OrchestratorBackend):
             extra={
                 "_fields": {
                     "trace_id": state.trace_id,
-                    "session_id": state.session_id,
+                    "session_key": state.session_key,
                     "total_steps": len(PIPELINE_STEPS) + 1,
                 }
             },

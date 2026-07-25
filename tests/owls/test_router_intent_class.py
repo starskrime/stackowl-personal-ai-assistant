@@ -68,7 +68,7 @@ class _RouterEnv:
     def state(self, input_text: str) -> PipelineState:
         return PipelineState(
             trace_id="trace-test",
-            session_id="session-test",
+            session_key="session-test",
             input_text=input_text,
             channel="cli",
             owl_name="secretary",
@@ -177,7 +177,7 @@ async def test_route_threads_resolved_fast_model_to_provider_complete() -> None:
     router = SecretaryRouter(provider_registry=providers, owl_registry=registry)
     state = PipelineState(
         trace_id="trace-model-thread",
-        session_id="session-model-thread",
+        session_key="session-model-thread",
         input_text="do a task",
         channel="cli",
         owl_name="secretary",
@@ -336,7 +336,7 @@ async def test_route_falls_back_to_secretary_on_provider_timeout() -> None:
     )
     state = PipelineState(
         trace_id="trace-timeout",
-        session_id="session-timeout",
+        session_key="session-timeout",
         input_text="do a task",
         channel="cli",
         owl_name="secretary",

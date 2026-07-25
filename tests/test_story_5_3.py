@@ -452,7 +452,7 @@ class TestPelletGenerator:
         # All carry source_type=parliament and the session id
         for fact in bridge.staged:
             assert fact.source_type == "parliament"
-            assert fact.source_ref == f"parliament:{session.session_id}"
+            assert fact.source_ref == f"parliament:{session.session_key}"
 
     async def test_bridge_failure_continues(
         self,

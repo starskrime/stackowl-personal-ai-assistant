@@ -32,14 +32,14 @@ class PtcToolInvoker:
         *,
         registry: object,
         workspace: object,
-        session_id: str,
+        session_key: str,
         trace_id: str | None,
         audit_logger: object | None,
         limits: PtcLimits,
     ) -> None:
         self._registry = registry
         self._workspace = workspace
-        self._session_id = session_id
+        self._session_key = session_key
         self._trace_id = trace_id
         self._audit = audit_logger
         self._limits = limits
@@ -85,7 +85,7 @@ class PtcToolInvoker:
                 }
             call_args["path"] = str(safe)
 
-        token = TraceContext.start(session_id=self._session_id, trace_id=self._trace_id)
+        token = TraceContext.start(session_key=self._session_key, trace_id=self._trace_id)
         try:
             if tool in PTC_WRITE_TOOLS:
                 with sandbox_write_root(self._workspace):  # type: ignore[arg-type]
@@ -121,7 +121,7 @@ class PtcToolInvoker:
         with contextlib.suppress(Exception):  # B5 — audit failure never breaks a call
             append(
                 "ptc_call",
-                f"sandbox:{self._session_id or '-'}",
+                f"sandbox:{self._session_key or '-'}",
                 tool,
                 {"allowed": allowed, "reason": reason, "arg_keys": sorted(args.keys())},
             )

@@ -110,7 +110,7 @@ class _FakeProviderRegistry:
 def _make_state(intent: str) -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="hi",
         channel="cli",
         owl_name="secretary",

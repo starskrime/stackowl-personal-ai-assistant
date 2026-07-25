@@ -214,7 +214,7 @@ async def _drive_turn(
     """Drive one standard (non-conversational) secretary turn end-to-end."""
     msg = IngressMessage(
         text="please summarize the latest research on neural scaling laws",
-        session_id="sess-budget-journey",
+        session_key="sess-budget-journey",
         channel="cli",
         trace_id="trace-budget-journey",
     )
@@ -222,7 +222,7 @@ async def _drive_turn(
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,

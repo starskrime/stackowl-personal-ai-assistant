@@ -3,7 +3,7 @@
 KEY DESIGN — this is a CONTINUE-RUN, not a mailbox-post. A spawned session (E8-S3)
 is a registry entry ``label → (owl_name, …)``, not a running actor — there is no
 per-session reader loop to post to. So ``sessions_send`` looks the session up by
-label and runs its owl pipeline ONCE with ``session_id=f"session:{label}"`` + the
+label and runs its owl pipeline ONCE with ``session_key=f"session:{label}"`` + the
 new message (under the shared ``delegation_governor``, ``delegation_depth=1`` so it
 is depth-gated and cannot itself spawn/delegate), then returns the reply. Continuity
 flows THROUGH the MemoryBridge: ``classify`` reads prior turns by ``session:{label}``
@@ -145,7 +145,7 @@ class SessionsSendTool(Tool):
             return _failed(f"sessions_send: invalid arguments — {exc.errors()!r}", t0)
 
         ctx = TraceContext.get()
-        trace_id = str(ctx.get("trace_id") or ctx.get("session_id") or "sessions-send")
+        trace_id = str(ctx.get("trace_id") or ctx.get("session_key") or "sessions-send")
         # Origin is SERVER-STAMPED (the true caller owl) — never a tool arg.
         caller = str(ctx.get("owl_name") or _DEFAULT_CALLER)
         channel = str(ctx.get("channel") or "internal")
@@ -221,13 +221,13 @@ class SessionsSendTool(Tool):
         structured; the session is PRESERVED.
         """
         # Continue-run state: history is EMPTY — classify reads the session's prior
-        # turns from the bridge by session_id and OVERWRITES it. depth=1, non-
+        # turns from the bridge by session_key and OVERWRITES it. depth=1, non-
         # interactive (no user channel binding to answer a clarify — clarify
         # default-denies, never parks).
         services = get_services()
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-send",
-            session_id=f"session:{label}",
+            session_key=f"session:{label}",
             input_text=message,
             channel=channel,
             owl_name=owl_name,

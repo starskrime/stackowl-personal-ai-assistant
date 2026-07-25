@@ -166,7 +166,7 @@ async def test_slack_consent_approve_round_trip() -> None:
     # The acting pipeline coroutine: ask for consent and park on the Future.
     req = ConsentRequest(
         channel="slack",
-        session_id="slack:sess1",
+        session_key="slack:sess1",
         tool_name="execute_code",
         summary="run a shell command",
         allow_relaxation=True,
@@ -206,7 +206,7 @@ async def test_slack_consent_deny_round_trip() -> None:
     on_action = _bolt_action_closure(router)
 
     req = ConsentRequest(
-        channel="slack", session_id="slack:sess1",
+        channel="slack", session_key="slack:sess1",
         tool_name="execute_code", summary="rm -rf", allow_relaxation=True,
     )
     prompt_task = asyncio.ensure_future(consent_routing.prompt(req))
@@ -230,7 +230,7 @@ async def test_slack_consent_no_prompter_registered_fails_closed() -> None:
     """
     consent_routing = RoutingPrompter()  # nothing registered for "slack"
     req = ConsentRequest(
-        channel="slack", session_id="slack:sess1",
+        channel="slack", session_key="slack:sess1",
         tool_name="execute_code", summary="x", allow_relaxation=False,
     )
     scope = await asyncio.wait_for(consent_routing.prompt(req), timeout=_WAIT)

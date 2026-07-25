@@ -83,7 +83,7 @@ def _stub_claude(tmp_path: Path, *, writes_file: bool = True) -> Path:
         body += "echo done > story_output.txt\n"
     body += (
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "s"}\'\n'
+        '"session_key": "s"}\'\n'
     )
     stub.write_text(body)
     os.chmod(stub, 0o755)

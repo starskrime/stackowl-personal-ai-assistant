@@ -22,7 +22,7 @@ from stackowl.tools.registry import ToolRegistry
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id="s", input_text="",
+        trace_id="t", session_key="s", input_text="",
         channel="cli", owl_name="system", pipeline_step="start",
     )
 

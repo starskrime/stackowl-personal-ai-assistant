@@ -282,7 +282,7 @@ class ProviderCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.config.debug(
             "[commands] provider.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         parts = args.strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "list"

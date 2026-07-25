@@ -165,7 +165,7 @@ def _ok() -> ExecResult:
 
 def _spec() -> ExecSpec:
     return ExecSpec(code="print(1)", language="python", network=False,
-                    caps=ResourceCaps(), session_id="t")
+                    caps=ResourceCaps(), session_key="t")
 
 
 async def test_run_under_slot_none_governor_runs_ungated() -> None:

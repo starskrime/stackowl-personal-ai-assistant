@@ -39,7 +39,7 @@ async def test_full_token_display_loop(tmp_db: DbPool, monkeypatch: pytest.Monke
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="trace-e2e", session_id="s1", input_text="prepare me for the interview",
+        trace_id="trace-e2e", session_key="s1", input_text="prepare me for the interview",
         channel="telegram", owl_name="secretary", pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="here's your interview prep plan", is_final=False, chunk_index=0,

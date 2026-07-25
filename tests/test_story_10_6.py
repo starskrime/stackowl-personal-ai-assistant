@@ -63,7 +63,7 @@ def _make_state() -> object:
 
     return PipelineState(
         trace_id="trace-test",
-        session_id="session-test",
+        session_key="session-test",
         input_text="/plugins list",
         channel="cli",
         owl_name="default",

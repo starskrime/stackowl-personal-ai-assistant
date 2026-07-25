@@ -1057,7 +1057,7 @@ async def _run_with_tools(
     # into this turn's presented set instead of the model re-discovering the
     # same tool by name every turn. Session-scoped, not turn-scoped (survives
     # across turns) — see infra/hydrated_tools.py.
-    _hydrated = hydrated_tools.get(state.session_id)
+    _hydrated = hydrated_tools.get(state.session_key)
     _fixed_cost = _est_tokens(state.system_prompt) + sum(
         _est_tokens(getattr(m, "content", "")) for m in state.history
     )
@@ -1397,7 +1397,7 @@ async def _run_with_tools(
                 # consent_summary() can show WHAT will run (e.g. execute_code's
                 # code + language + network), not just the static description.
                 allowed = await gate.check(
-                    t, channel=state.channel, session_id=state.session_id, call_args=args
+                    t, channel=state.channel, session_key=state.session_key, call_args=args
                 )
             except Exception as exc:
                 log.engine.error(
@@ -1420,7 +1420,7 @@ async def _run_with_tools(
             denied_this_run.add(name)
             log.engine.info(
                 "[pipeline] execute: consequential action declined by gate",
-                extra={"_fields": {"tool": name, "trace_id": state.trace_id, "session_id": state.session_id}},
+                extra={"_fields": {"tool": name, "trace_id": state.trace_id, "session_key": state.session_key}},
             )
             return (
                 f"The action '{name}' requires your approval and was not run because consent "
@@ -1796,7 +1796,7 @@ async def _run_with_tools(
         _governor,
         interactive=(state.interactive and not _default_backstop),
         clarify=_services.clarify_gateway,
-        session_id=state.session_id, channel=state.channel,
+        session_key=state.session_key, channel=state.channel,
         wait_timeout_s=_clarify_wait_s,
     )
 
@@ -2450,7 +2450,7 @@ async def _maybe_clarify(state: PipelineState, services: object) -> PipelineStat
     if gateway is not None:
         try:
             await gateway.ask(
-                state.session_id,
+                state.session_key,
                 state.channel,
                 state.clarify_question,
                 blocking=False,

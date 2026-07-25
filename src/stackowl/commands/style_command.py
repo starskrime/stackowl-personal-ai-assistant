@@ -46,14 +46,14 @@ class StyleCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] style.handle: entry",
-            extra={"_fields": {"session": state.session_id, "channel": state.channel}},
+            extra={"_fields": {"session": state.session_key, "channel": state.channel}},
         )
         if self._store is None:
             return "/style: not configured (no preference store)."
         # Mirror the delivery seam's scope key exactly: cross-channel identity when
         # resolved, else the per-channel session — so what /style reports is the
         # same record the next reply is enforced against.
-        owner_key = state.identity_key or state.session_id
+        owner_key = state.identity_key or state.session_key
         style = await load_output_style(self._store, owner_key)
         rules = style.describe_rules()
         channel = (state.channel or "this channel").capitalize()

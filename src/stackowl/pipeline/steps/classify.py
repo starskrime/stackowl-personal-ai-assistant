@@ -116,7 +116,7 @@ async def _gather_preferences(owner_key: str) -> str:
 
     ``owner_key`` is the resolved identity key: ``state.identity_key`` when set
     (cross-channel identity threading has landed), falling back to
-    ``state.session_id`` for unconfigured channels (byte-identical to prior
+    ``state.session_key`` for unconfigured channels (byte-identical to prior
     behaviour).
 
     Failures (store missing, DB error) return ``""`` — preferences are
@@ -276,7 +276,7 @@ async def _gather_recent_reflections(
 
 
 async def _gather_recent_actions(
-    session_id: str, trace_id: str, limit: int = 3,
+    session_key: str, trace_id: str, limit: int = 3,
 ) -> str:
     """Best-effort: surface what the agent DID on recent turns this session.
 
@@ -291,7 +291,7 @@ async def _gather_recent_actions(
     # 1. ENTRY
     log.engine.debug(
         "[pipeline] classify._gather_recent_actions: entry",
-        extra={"_fields": {"session_id": session_id, "limit": limit}},
+        extra={"_fields": {"session_key": session_key, "limit": limit}},
     )
     services = get_services()
     db = services.db_pool
@@ -307,19 +307,19 @@ async def _gather_recent_actions(
 
         store = TaskOutcomeStore(db)
         outcomes = await store.recent_for_session(
-            session_id, limit=limit, exclude_trace_id=trace_id,
+            session_key, limit=limit, exclude_trace_id=trace_id,
         )
     except Exception as exc:  # B5 — never crash classify on a recall hiccup
         log.engine.warning(
             "[pipeline] classify._gather_recent_actions: lookup failed — skipping",
-            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+            exc_info=exc, extra={"_fields": {"session_key": session_key}},
         )
         return ""
     # 2. DECISION — nothing to surface
     if not outcomes:
         log.engine.debug(
             "[pipeline] classify._gather_recent_actions: exit — no outcomes",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
         return ""
     # 4. EXIT — fixed ascii header; user content sliced by codepoint (never tokenised)
@@ -336,7 +336,7 @@ async def _gather_recent_actions(
     log.engine.debug(
         "[pipeline] classify._gather_recent_actions: exit",
         extra={"_fields": {
-            "session_id": session_id, "n_outcomes": len(outcomes),
+            "session_key": session_key, "n_outcomes": len(outcomes),
             "block_len": len(result),
         }},
     )
@@ -576,7 +576,7 @@ def _dedup_assistant_history(messages: list[Message]) -> list[Message]:
     return out
 
 
-async def _gather_history(session_id: str, limit: int) -> list[Message]:
+async def _gather_history(session_key: str, limit: int) -> list[Message]:
     """Fetch the last ``limit`` staged conversation turns as real Message objects.
 
     Returns oldest-first user/assistant Message pairs for direct injection into
@@ -587,11 +587,11 @@ async def _gather_history(session_id: str, limit: int) -> list[Message]:
     if bridge is None or limit <= 0:
         return []
     try:
-        turns = await bridge.recent_conversation_turns(session_id=session_id, limit=limit)
+        turns = await bridge.recent_conversation_turns(session_key=session_key, limit=limit)
     except Exception as exc:
         log.engine.error(
             "[pipeline] classify: history fetch FAILED — short-term memory degraded",
-            exc_info=exc, extra={"_fields": {"session_id": session_id}},
+            exc_info=exc, extra={"_fields": {"session_key": session_key}},
         )
         return []
     return _dedup_assistant_history(_parse_turns_to_messages([t.content for t in turns]))
@@ -607,7 +607,7 @@ async def run(state: PipelineState) -> PipelineState:
         log.engine.debug("[pipeline] classify: no memory_bridge — pass-through")
         return state
     # Long-term committed-fact context (FTS or semantic).
-    context = await bridge.retrieve(state.input_text, state.session_id)
+    context = await bridge.retrieve(state.input_text, state.session_key)
     # Short-term: last N turns of the current session.
     try:
         from stackowl.config.settings import Settings
@@ -615,7 +615,7 @@ async def run(state: PipelineState) -> PipelineState:
         short_term_window = Settings().memory.short_term_window
     except Exception:
         short_term_window = 6
-    history = await _gather_history(state.session_id, short_term_window)
+    history = await _gather_history(state.session_key, short_term_window)
     # No lean gate (owner decision 2026-07-22): a "conversational"-classified
     # turn used to skip lessons/graph-context/skill-relevance entirely — but
     # the router's intent_class is coarser than "greetings/small-talk" (e.g.
@@ -627,8 +627,8 @@ async def run(state: PipelineState) -> PipelineState:
     graph_context = await _gather_graph_context(state.input_text)
     # Persisted user preferences (high priority — pin to top, always included).
     # Use identity_key when resolved (cross-channel identity) so preferences
-    # follow the user across channels; fall back to session_id when unconfigured.
-    prefs_block = await _gather_preferences(state.identity_key or state.session_id)
+    # follow the user across channels; fall back to session_key when unconfigured.
+    prefs_block = await _gather_preferences(state.identity_key or state.session_key)
     # FR-3 (de-complication PRD): reflections are surfaced ONCE per turn, via
     # lessons_block (`_gather_lessons` → the unified LanceDB lessons_index,
     # which reflection_writer_handler already publishes reflections into).
@@ -642,7 +642,7 @@ async def run(state: PipelineState) -> PipelineState:
     # Live action recall — what the agent DID on prior turns this session
     # (excludes the in-flight turn). Lets it answer "what did you just do?".
     actions_block = await _gather_recent_actions(
-        state.session_id, state.trace_id, limit=3,
+        state.session_key, state.trace_id, limit=3,
     ) if _surface_failures else ""
     # Voyager-style skills relevant to this query (Commit 3 sub-phase 3d).
     # Suppress owned skills so they don't appear at two altitudes.

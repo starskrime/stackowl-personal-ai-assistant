@@ -27,7 +27,7 @@ class _Clarify:
     def __init__(self, answer: str | None) -> None:
         self._answer = answer
 
-    async def ask(self, session_id, channel, question, *, choices=(), blocking=False):  # noqa: ANN001
+    async def ask(self, session_key, channel, question, *, choices=(), blocking=False):  # noqa: ANN001
         return "cid"
 
     async def wait_for_answer(self, clarify_id, timeout):  # noqa: ANN001
@@ -40,14 +40,14 @@ _ITER = ReActIterationState(iteration=1, messages=[{"role": "assistant", "conten
 
 async def test_no_breach_is_passthrough() -> None:
     cb = make_budget_callback(_GovStub(None), interactive=False, clarify=None,
-                              session_id="s", channel="cli")
+                              session_key="s", channel="cli")
     await cb(_ITER)
 
 
 async def test_non_interactive_breach_raises() -> None:
     breach = BudgetBreach("steps", 2, 2)
     cb = make_budget_callback(_GovStub(breach), interactive=False, clarify=None,
-                              session_id="s", channel="cli")
+                              session_key="s", channel="cli")
     with pytest.raises(BudgetBreach) as ei:
         await cb(_ITER)
     assert ei.value.cap == "steps"
@@ -58,20 +58,20 @@ async def test_non_interactive_breach_raises() -> None:
 async def test_interactive_raise_continues() -> None:
     gov = _GovStub(BudgetBreach("steps", 2, 2))
     cb = make_budget_callback(gov, interactive=True, clarify=_Clarify("Raise"),
-                              session_id="s", channel="cli")
+                              session_key="s", channel="cli")
     await cb(_ITER)
     assert gov.raised == ["steps"]
 
 
 async def test_interactive_stop_raises() -> None:
     cb = make_budget_callback(_GovStub(BudgetBreach("steps", 2, 2)), interactive=True,
-                              clarify=_Clarify("Stop"), session_id="s", channel="cli")
+                              clarify=_Clarify("Stop"), session_key="s", channel="cli")
     with pytest.raises(BudgetBreach):
         await cb(_ITER)
 
 
 async def test_interactive_timeout_fails_closed() -> None:
     cb = make_budget_callback(_GovStub(BudgetBreach("cost", 1, 2)), interactive=True,
-                              clarify=_Clarify(None), session_id="s", channel="cli")
+                              clarify=_Clarify(None), session_key="s", channel="cli")
     with pytest.raises(BudgetBreach):
         await cb(_ITER)

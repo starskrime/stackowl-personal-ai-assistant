@@ -35,7 +35,7 @@ _RICH_CLAIM = "✅ Done! I've sent your weekly report to the whole team."
 def _state(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
         trace_id="t-lying",
-        session_id="s",
+        session_key="s",
         input_text="send my report to the team",
         channel="cli",
         owl_name="o",

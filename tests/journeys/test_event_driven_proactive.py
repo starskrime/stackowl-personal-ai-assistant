@@ -66,7 +66,7 @@ async def test_perch_file_landed_is_removed_dead_vocabulary() -> None:
 
 async def test_proactive_candidates_are_intentionally_deferred_not_subscribed() -> None:
     """FX-10: ``parliament.completed`` stays DELIBERATELY off the allow-list —
-    its payload is a bare session_id (not a dict), and unlike the now-unblocked
+    its payload is a bare session_key (not a dict), and unlike the now-unblocked
     budget alerts it has no single obvious recipient (see the deferral comment
     at ``_DEFERRED_PROACTIVE_CANDIDATES``). This pins that as an explicit,
     reasoned decision rather than an undocumented gap."""

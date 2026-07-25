@@ -46,7 +46,7 @@ class PermissionsCommand(SlashCommand):
         # 1. ENTRY
         log.gateway.debug(
             "[commands] permissions.handle: entry",
-            extra={"_fields": {"session": state.session_id}},
+            extra={"_fields": {"session": state.session_key}},
         )
         try:
             # 2. DECISION — gather all data sources

@@ -98,7 +98,7 @@ async def _call(tool: SendMessageTool, status: str, **kwargs: Any) -> Any:
     services = StepServices(proactive_deliverer=_FakeDeliverer(status))
     stoken = set_services(services)
     ttoken = TraceContext.start(
-        session_id="s", trace_id="t", interactive=True, channel="cli"
+        session_key="s", trace_id="t", interactive=True, channel="cli"
     )
     try:
         return await tool(action="send", text="hi", target="cli", **kwargs)

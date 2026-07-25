@@ -51,7 +51,7 @@ class FakeAdapter:
 
 
 def _msg(text: str = "hello", trace_id: str = "t1") -> IngressMessage:
-    return IngressMessage(text=text, session_id="s1", channel="cli", trace_id=trace_id)
+    return IngressMessage(text=text, session_key="s1", channel="cli", trace_id=trace_id)
 
 
 async def _run_split(socket_path, dispatch, adapter):
@@ -284,7 +284,7 @@ async def test_submit_unregistered_channel_is_noop(socket_path) -> None:
     link, stop = await _run_split(socket_path, never, adapter)
     try:
         # channel "telegram" not registered → submit logs + drops, no crash.
-        await link.submit(IngressMessage(text="x", session_id="s", channel="telegram", trace_id="z"))
+        await link.submit(IngressMessage(text="x", session_key="s", channel="telegram", trace_id="z"))
     finally:
         await stop()
     assert adapter.chunks == []

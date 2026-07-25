@@ -47,7 +47,7 @@ async def test_redispatch_decision_routes_through_actuator_when_unify_on(monkeyp
     reg = TurnRegistry(recovery=spy)  # type: ignore[arg-type]
     task = await _done_task()
     turn = await reg.register(
-        "wedged-1", session_id="s1", task=task, target=99, original_input="do the thing"
+        "wedged-1", session_key="s1", task=task, target=99, original_input="do the thing"
     )
     assert turn.status is not TurnStatus.DONE
 
@@ -72,7 +72,7 @@ async def test_redispatch_decision_inline_when_unify_off(monkeypatch) -> None:  
     reg = TurnRegistry(recovery=spy)  # type: ignore[arg-type]
     task = await _done_task()
     await reg.register(
-        "wedged-1", session_id="s1", task=task, target=99, original_input="do the thing"
+        "wedged-1", session_key="s1", task=task, target=99, original_input="do the thing"
     )
 
     reaped = await reg.sweep(ttl_seconds=0.0)

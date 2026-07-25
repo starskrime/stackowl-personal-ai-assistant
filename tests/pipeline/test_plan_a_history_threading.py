@@ -70,7 +70,7 @@ async def test_execute_tool_loop_passes_history_and_system_prompt(monkeypatch):
     token = set_services(services)
     try:
         state = PipelineState(
-            trace_id="t1", session_id="s1", input_text="now",
+            trace_id="t1", session_key="s1", input_text="now",
             channel="cli", owl_name="secretary", pipeline_step="execute",
             system_prompt="SYS-PERSONA",
             history=(Message(role="user", content="earlier turn"),),
@@ -129,7 +129,7 @@ async def test_execute_streaming_branch_builds_history_messages(monkeypatch):
     token = set_services(services)
     try:
         state = PipelineState(
-            trace_id="t2", session_id="s2", input_text="current",
+            trace_id="t2", session_key="s2", input_text="current",
             channel="cli", owl_name="secretary", pipeline_step="execute",
             system_prompt="SYS-PERSONA",
             history=(Message(role="assistant", content="prior response"),),
@@ -163,7 +163,7 @@ async def test_gather_history_logs_error_on_fetch_failure(caplog):
     from stackowl.pipeline.steps.classify import _gather_history
 
     class _BrokenBridge:
-        async def recent_conversation_turns(self, session_id, limit):
+        async def recent_conversation_turns(self, session_key, limit):
             raise RuntimeError("simulated bridge failure")
 
     token = set_services(StepServices(memory_bridge=_BrokenBridge()))

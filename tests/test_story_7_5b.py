@@ -27,7 +27,7 @@ from tests._story_7_5_helpers import (
 def _state() -> PipelineState:
     return PipelineState(
         trace_id="t-1",
-        session_id="s-1",
+        session_key="s-1",
         input_text="",
         channel="cli",
         owl_name="secretary",

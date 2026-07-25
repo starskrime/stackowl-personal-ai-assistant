@@ -69,7 +69,7 @@ class FocusCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] focus.handle: entry",
-            extra={"_fields": {"args": args[:40], "session": state.session_id}},
+            extra={"_fields": {"args": args[:40], "session": state.session_key}},
         )
         if self._router is None or self._event_bus is None:
             return "✗ /focus: not configured"

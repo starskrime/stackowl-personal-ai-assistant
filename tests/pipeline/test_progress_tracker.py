@@ -76,7 +76,7 @@ def test_scoped_per_tool() -> None:
 
 
 def test_state_progress_defaults_are_byte_identical() -> None:
-    s = PipelineState(trace_id="t", session_id="s", input_text="x", channel="cli",
+    s = PipelineState(trace_id="t", session_key="s", input_text="x", channel="cli",
                       owl_name="o", pipeline_step="execute")
     # Default True ⇒ a turn that never entered the tracker is NEVER floored by it.
     assert s.turn_made_progress is True
@@ -237,7 +237,7 @@ async def _run(
     ))
     provider = _SeqProvider(calls)
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="x", channel="telegram",
+        trace_id="t", session_key="s", input_text="x", channel="telegram",
         owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(
@@ -313,7 +313,7 @@ async def test_refusal_failures_advance_streak_and_bounce() -> None:
     ))
     provider = _SeqProvider(calls)
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="x", channel="telegram",
+        trace_id="t", session_key="s", input_text="x", channel="telegram",
         owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(

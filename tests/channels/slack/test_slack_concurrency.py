@@ -1,7 +1,7 @@
 """CONC-1 (F010) + CONC-2 (F011) — Slack per-turn state must be turn-owned, not
 clobbered by a newer concurrent same-user / same-channel event.
 
-F010: inbound file ids were keyed by ``session_id`` (``slack:{hash(user)}`` — the
+F010: inbound file ids were keyed by ``session_key`` (``slack:{hash(user)}`` — the
 SAME for every message from a user across channels/threads). A later FILELESS
 event from the same user popped the earlier turn's ids before it fetched them.
 Fix: key inbound files by ``trace_id`` (the turn owns it).
@@ -67,7 +67,7 @@ async def test_second_fileless_event_does_not_wipe_first_turns_files() -> None:
     )
     msg1 = await asyncio.wait_for(adapter.receive(), timeout=1.0)
 
-    # Turn 2: SAME user (same session_id), NO file — must not clear turn 1's ids.
+    # Turn 2: SAME user (same session_key), NO file — must not clear turn 1's ids.
     await adapter.handle_event(
         {"type": "message", "channel": "C1", "ts": "2.0"},
         user_id="Ualice", text="now a plain message",

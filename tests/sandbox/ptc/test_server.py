@@ -94,7 +94,7 @@ def _server(
     registry = _FakeRegistry(tools or {})
     server = PtcServer(
         registry=registry, workspace=ws, socket_path=tmp_path / "ptc.sock",
-        session_id="sess-1", audit_logger=audit, limits=limits,
+        session_key="sess-1", audit_logger=audit, limits=limits,
     )
     return server, registry
 

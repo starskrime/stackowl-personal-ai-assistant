@@ -55,7 +55,7 @@ async def test_consequential_action_approved_grants_scope() -> None:
         req = ConsentRequest(
             tool_name="shell",
             channel="discord",
-            session_id="11",
+            session_key="11",
             summary="rm -rf /tmp/x",
             allow_relaxation=True,
         )
@@ -84,7 +84,7 @@ async def test_consequential_action_denied_blocks() -> None:
         await _seed_inbound(adapter, user_id=11, channel_id=4242)
         prompter = DiscordConsentPrompter(adapter)
         req = ConsentRequest(
-            tool_name="shell", channel="discord", session_id="11",
+            tool_name="shell", channel="discord", session_key="11",
             summary="danger", allow_relaxation=True,
         )
         task = asyncio.create_task(prompter.prompt(req))
@@ -105,7 +105,7 @@ async def test_consent_fails_closed_when_no_channel_resolves() -> None:
         adapter = _adapter()
         prompter = DiscordConsentPrompter(adapter)
         req = ConsentRequest(
-            tool_name="shell", channel="discord", session_id="unknown",
+            tool_name="shell", channel="discord", session_key="unknown",
             summary="x", allow_relaxation=True,
         )
         scope = await prompter.prompt(req)

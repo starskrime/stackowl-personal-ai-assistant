@@ -168,7 +168,7 @@ def _make_services(
 def _make_state(owl_name: str) -> PipelineState:
     return PipelineState(
         trace_id=f"trace-{owl_name}",
-        session_id=f"sess-{owl_name}",
+        session_key=f"sess-{owl_name}",
         input_text="run many steps",
         channel="cli",
         owl_name=owl_name,

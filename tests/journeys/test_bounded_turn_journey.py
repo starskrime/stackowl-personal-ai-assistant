@@ -258,7 +258,7 @@ async def _run_turn(
     """Drive one IngressMessage through the REAL AsyncioBackend."""
     msg = IngressMessage(
         text=text,
-        session_id="sess-bounded-turn",
+        session_key="sess-bounded-turn",
         channel="cli",
         trace_id=f"trace-bounded-turn-{text[:8]}",
     )
@@ -266,7 +266,7 @@ async def _run_turn(
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,

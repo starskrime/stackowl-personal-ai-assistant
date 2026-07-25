@@ -27,7 +27,7 @@ from stackowl.pipeline.state import PipelineState
 def _make_state(**kwargs: Any) -> PipelineState:
     defaults: dict[str, Any] = {
         "trace_id": "trace-3-5",
-        "session_id": "sess-3-5",
+        "session_key": "sess-3-5",
         "input_text": "hello",
         "channel": "cli",
         "owl_name": "secretary",
@@ -151,7 +151,7 @@ async def test_langgraph_backend_sqlite_checkpointer(tmp_path: Any) -> None:
     db_path = tmp_path / "lg_test.db"
     backend = LangGraphBackend(db_path=db_path, use_memory_checkpoint=False)
     try:
-        result = await backend.run(_make_state(session_id="sess-sqlite"))
+        result = await backend.run(_make_state(session_key="sess-sqlite"))
         assert result.pipeline_step == "deliver"
         assert db_path.exists(), "AsyncSqliteSaver should have created the db file"
     finally:

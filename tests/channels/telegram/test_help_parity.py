@@ -38,7 +38,7 @@ def _registry() -> CommandRegistry:
 def _state() -> PipelineState:
     return PipelineState(
         trace_id="t-help",
-        session_id="42",
+        session_key="42",
         input_text="/help",
         channel="telegram",
         owl_name="system",

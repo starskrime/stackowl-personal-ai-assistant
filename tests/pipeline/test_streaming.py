@@ -81,7 +81,7 @@ async def test_conversational_empty_stream_surfaces_as_owl_timeout_error() -> No
     )
     state = PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="hi",
         channel="cli",
         owl_name="secretary",

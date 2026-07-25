@@ -245,7 +245,7 @@ def _run_state(backend_input: str, session: str, trace: str) -> tuple[GatewaySca
     scanner = GatewayScanner(owl_registry=OwlRegistry.with_default_secretary())
     msg = IngressMessage(
         text=backend_input,
-        session_id=session,
+        session_key=session,
         channel="cli",
         trace_id=trace,
     )
@@ -331,7 +331,7 @@ async def test_substitution_route_around_delivers_sibling_data_end_to_end(
     )
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -451,7 +451,7 @@ async def test_substitution_never_auto_runs_consequential_sibling_end_to_end(
     )
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,

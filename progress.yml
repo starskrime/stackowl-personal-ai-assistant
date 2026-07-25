@@ -342,6 +342,47 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-9
+    found: 2026-07-25
+    what: "Three tests fail whenever the live platform is running, because they build real components against the user's real ~/.stackowl instead of a temp HOME."
+    evidence: >
+      tests/memory/test_assembly.py::test_build_wires_all_eleven_components and
+      tests/memory/test_dur5_kuzu_degrade.py::test_healthy_kuzu_reports_ok both fail with
+      "RuntimeError: IO exception: Could not set lock on file : /home/boss/.stackowl/kuzu/graph.kuzu"
+      -> kuzu_adapter is None -> assertion fails. `pgrep -af stackowl` confirms
+      `python -m stackowl start` (pid 2257012) and its core hold that lock.
+      tests/channels/telegram/test_command_buttons.py::test_provider_guided_add_flow_via_real_button_taps
+      also fails; not yet root-caused, tracked here so it is not lost.
+    proven_pre_existing: >
+      All three fail IDENTICALLY in a clean `git worktree` checkout of HEAD with none of the
+      D01.7 rename applied. That is how they were shown not to be caused by this work — a
+      worktree rather than `git stash`, which is banned on this box.
+    why_it_matters: >
+      A test that depends on whether the platform happens to be running is a coin flip, and it
+      trains everyone to ignore red. It also violates the standing rule that all state lives
+      under a StackowlHome the test controls.
+    decision: "NOT fixed during D01.7 — unrelated to the item and fixing it mid-item violates minimal-diffs. Own pass: point these at a temp HOME."
+    status: open
+  - id: DEBT-8
+    found: 2026-07-25
+    what: "78 pre-existing mypy strict errors in 15 src/ files, against a stated standard of 'mypy strict clean'."
+    evidence: >
+      `uv run mypy src/` -> Found 78 errors in 15 files (checked 786 source files), on a clean
+      tree before any D01.7 slice-3 edit. Concentrated in scheduler/assembly.py (19),
+      mcp/client.py (13), mcp/server.py (11), plugins/context.py (7), export/exporter.py (5),
+      channels/telegram/notifications.py (5).
+    why_it_matters: >
+      CLAUDE.md and the engineering rules both treat `mypy src/` as a gate. It has not been
+      green for some time, so "mypy clean" has silently meant "clean on touched files" — which
+      is what the tonyStyle gate actually enforces. Worth saying out loud rather than leaving
+      two different meanings of the same claim in circulation.
+    used_as: >
+      The 78-error signature set was captured to scratch BEFORE the D01.7 rename and diffed
+      after it, which is how "zero new errors" could be stated as a measurement rather than an
+      impression. The rename briefly added 4 — all four at the parliament/lane seam — and the
+      diff is what found them.
+    decision: "NOT fixed during D01.7 — unrelated files, and fixing them mid-item violates minimal-diffs. Own cleanup pass, alongside DEBT-1."
+    status: open
   - id: DEBT-1
     found: 2026-07-25
     what: "46 pre-existing ruff errors in src/, in files unrelated to any current item."
@@ -1087,6 +1128,61 @@ items:
           - "5 — the one-line reset notice + the transcript writer (conversations/messages)."
           - "3b — session.rollover on the EventBus, durable consumer tasks, standard-tier summary."
     changes:
+      - date: 2026-07-25
+        slice: "3a.1 of 3 — the identity rename: session_id -> session_key, code and schema together"
+        files:
+          - "571 files rewritten mechanically (2829 lane occurrences) across src/ and tests/"
+          - "src/stackowl/db/migrations/0093_session_key_rename.sql (new) — 7 tables"
+          - "src/stackowl/commands/parliament_command.py — 8 sites restored to the DEBATE id by hand"
+          - "src/stackowl/parliament/round_runner.py, staged_rca.py — PipelineState(session_key=...)"
+          - "src/stackowl/commands/parliament_helpers.py — ParliamentSession keeps session_id"
+          - "CLAUDE.md — the JSONL top-level key is now session_key"
+          - "docs/hermes-mapping/designs/D01.6.md, D01.6-baseline.md — amended, see below"
+        why_code_and_schema_are_ONE_commit: >
+          The approved plan had the code rename as commit 1 and the migration as commit 2. That
+          ordering does not survive contact: renaming the column first breaks the running code,
+          and renaming the code first leaves SQL strings pointing at a column that no longer
+          matches. Either intermediate is red. They are one atomic unit, and the plan was wrong
+          to split them. Stated here rather than quietly re-ordered.
+        classification_not_find_replace: >
+          session_id names three unrelated things. The rename excluded src/stackowl/parliament/
+          (debate ids), src/stackowl/tools/browser/ (page sessions) and src/stackowl/sessions/
+          (already post-rename), and five mixed-domain files were done by hand. The regex used a
+          negative lookahead so `session_idle_timeout_minutes` and `session_idle` could not be
+          corrupted, and it aborted on any file still referencing new_session_id().
+        mypy_found_the_seam: >
+          After the mechanical pass mypy reported exactly 4 errors and every one sat on a
+          parliament/lane boundary — ParliamentSession had no session_key, and PipelineState no
+          longer took session_id. Both would have been runtime AttributeErrors in the debate
+          path. This is the argument for renaming under a strict type checker rather than by eye.
+        verified:
+          compile: "`uv run python -m compileall src tests` — clean."
+          migration: "0093 applied; second run reports already-applied; schema at 0093. All 7 columns renamed, parliament_sessions and sessions untouched, indexes followed the column, 61864 cost_records rows preserved with values intact (sampled: '72055773', a bare Telegram chat id — which is the evidence that this column always held the LANE)."
+          types: "mypy src/ -> 78 errors, byte-identical to the pre-rename baseline signature set. Zero new, zero fixed."
+          lint: "ruff src/ -> 46 (DEBT-1 baseline, zero added). ruff tests/ -> 285 baseline, briefly 287; both new errors were E501 caused by session_key being one character longer than session_id, and both were fixed. Back to 285."
+          tests: "1251 passed in tests/sessions + tests/pipeline + tests/gateway. 1511 passed in tests/channels + tests/memory + tests/providers + tests/interaction, with 3 failures PROVEN pre-existing by re-running them in a clean HEAD worktree — see DEBT-9."
+          doc_amended: >
+            D01.6.md is a CLOSED document whose Verification section cited
+            cost_records.session_id, a column this migration removed. It was amended rather than
+            left to rot, and its main query was re-run against the live DB to confirm it still
+            passes. A closed document that no longer runs is the exact failure DOC_STANDARD
+            rule 3 exists to prevent.
+        live_consequence: >
+          The migration was applied while the platform was RUNNING, so the live core briefly ran
+          old code against renamed columns and logged '[cost_tracker] record: SQLite insert
+          failed' and '[scheduler] retry_sweep: get_due failed'. Self-inflicted and fixed by the
+          restart that follows this commit. Recorded because the next person to run a rename
+          migration against a live box needs to know to restart FIRST.
+        remaining:
+          - "3a.2: ingress wiring — resolve_for on inbound, TraceContext carries the incarnation, the one-line notice."
+          - "3a.3: the turn-end transcript writer (conversations/messages), which is what makes I6 testable."
+          - "3b: session.rollover on the EventBus, durable consumer tasks, standard-tier summary."
+        open_question_found: >
+          `/new` IS ALREADY TAKEN. gateway/turn_router.py:149 treats it as an in-flight routing
+          signal meaning 'abandon steering into the running turn, start a fresh turn' — a
+          concurrency verb. Bakir's Q8 answer assigns /new the session meaning 'archive the
+          conversation and summarise it into memory'. Repurposing the token would silently
+          change an existing feature. MUST be resolved before 3a.2 wires it.
       - date: 2026-07-25
         slice: "2 of 3 — SessionStore + migration 0092 + the derived mirror"
         files:

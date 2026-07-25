@@ -27,7 +27,7 @@ Mirrors ``send_message`` exactly:
 * **Size cap:** files larger than ``max_bytes`` (default 50 MB — the Telegram bot
   API document ceiling) are rejected structured; a bot cannot upload past it.
 * **Per-session flood cap:** a process-lifetime :class:`TokenBucket` keyed by
-  ``session_id`` — a file send counts against it (runaway-loop guard).
+  ``session_key`` — a file send counts against it (runaway-loop guard).
 * **Self-healing:** missing file / outside workspace / too large / no target /
   unknown channel / missing deliverer / ``"failed"`` / a deliverer that raises →
   structured result, logged (B5), NEVER raises out of ``execute``.
@@ -85,7 +85,7 @@ class SendFileTool(Tool):
         max_bytes: int = _MAX_BYTES,
     ) -> None:
         """Construct the singleton tool. The per-session flood cap is a
-        process-lifetime :class:`TokenBucket` keyed by ``session_id``."""
+        process-lifetime :class:`TokenBucket` keyed by ``session_key``."""
         self._bucket = TokenBucket(
             max_tokens=flood_max, window_seconds=flood_window_seconds
         )
@@ -197,7 +197,7 @@ class SendFileTool(Tool):
         assert resolved is not None  # narrowed by file_err is None
 
         ctx = TraceContext.get()
-        session_id = str(ctx.get("session_id") or "")
+        session_key = str(ctx.get("session_key") or "")
         ctx_channel = ctx.get("channel")
         trace_id = ctx.get("trace_id")
 
@@ -212,10 +212,10 @@ class SendFileTool(Tool):
                 t0,
             )
 
-        # Per-session flood cap (runaway-loop guard). Key on session_id; when absent
+        # Per-session flood cap (runaway-loop guard). Key on session_key; when absent
         # (cron/non-interactive), fall back to a single PROCESS-WIDE constant — NOT
         # `target`, which the caller controls and could vary to evade the cap.
-        flood_key = session_id or "_no_session_"
+        flood_key = session_key or "_no_session_"
         if not self._bucket.consume(flood_key):
             log.tool.warning(
                 "send_file.execute: flood cap hit — rejecting send",
@@ -237,7 +237,7 @@ class SendFileTool(Tool):
             )
 
         caption = (args.caption or "").strip()
-        status = await self._deliver(str(resolved), caption, target, trace_id, session_id)
+        status = await self._deliver(str(resolved), caption, target, trace_id, session_key)
         record: dict[str, object] = {
             "action": "send_file",
             "target": target,
@@ -336,14 +336,14 @@ class SendFileTool(Tool):
         caption: str,
         target: str,
         trace_id: object,
-        session_id: str,
+        session_key: str,
     ) -> str:
         """Clamp + hand the file Notification to the S0 deliverer; never raises.
 
         Returns the transport ``DeliveryStatus``, or ``"deferred"`` when no
         deliverer is wired / the deliverer raises (self-healing, B5). The caption
         rides on the Notification's ``message`` field (empty string when none). The
-        originating ``session_id`` resolves to the recipient ``chat_id`` (where the
+        originating ``session_key`` resolves to the recipient ``chat_id`` (where the
         channel makes that valid — telegram private chats) so the file reaches THAT
         chat, not the adapter's shared mutable ``_last_chat_id``.
         """
@@ -362,7 +362,7 @@ class SendFileTool(Tool):
             channel_name=target,
             idempotency_key=str(trace_id) if trace_id else None,
             file_path=file_path,
-            target_chat_id=resolve_target_chat_id(target, session_id),
+            target_chat_id=resolve_target_chat_id(target, session_key),
         )
         try:
             status = await deliverer.deliver(notification)

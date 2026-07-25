@@ -190,19 +190,19 @@ def _relax_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- helpers --------------------------------------------------------------------
 
 
-async def _seed_session(db: DbPool, session_id: str, owl: str = "secretary") -> None:
+async def _seed_session(db: DbPool, session_key: str, owl: str = "secretary") -> None:
     """A ``conversations`` row so CronjobTool's ``resolve_owl`` finds the owner."""
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
-        (uuid.uuid4().hex, session_id, owl, datetime.now(UTC).isoformat(), 0),
+        (uuid.uuid4().hex, session_key, owl, datetime.now(UTC).isoformat(), 0),
     )
 
 
 async def _create_goal_via_tool(
     db: DbPool,
     *,
-    session_id: str,
+    session_key: str,
     channel: str | None,
     reply_target: str | int | None,
 ) -> ToolResult:
@@ -215,7 +215,7 @@ async def _create_goal_via_tool(
     settings = _settings()
     token = set_services(StepServices(db_pool=db, settings=settings))
     ttoken = TraceContext.start(
-        session_id=session_id,
+        session_key=session_key,
         interactive=True,
         channel=channel,
         reply_target=reply_target,
@@ -285,12 +285,12 @@ async def test_scheduled_goal_delivers_answer_to_originating_chat(
     migrated_db: DbPool,
 ) -> None:
     """End-to-end: create from telegram chat 12345 → fire → answer reaches 12345."""
-    session_id = "tg:session-1"
-    await _seed_session(migrated_db, session_id)
+    session_key = "tg:session-1"
+    await _seed_session(migrated_db, session_key)
 
     # --- CREATE HALF (real CronjobTool + real TraceContext) ---
     result = await _create_goal_via_tool(
-        migrated_db, session_id=session_id, channel="telegram", reply_target=_CHAT_ID
+        migrated_db, session_key=session_key, channel="telegram", reply_target=_CHAT_ID
     )
     assert result.success, f"create failed: {result.error!r}"
     body = json.loads(result.output)
@@ -342,12 +342,12 @@ async def test_scheduled_goal_with_no_target_is_undeliverable_not_completed(
     ``result_text`` — but NOTHING is sent and the status is the honest
     ``undeliverable`` (never a dressed-up ``completed``).
     """
-    session_id = "cli:session-1"
-    await _seed_session(migrated_db, session_id)
+    session_key = "cli:session-1"
+    await _seed_session(migrated_db, session_key)
 
     # CREATE from a target-less surface: cli channel, no reply_target.
     result = await _create_goal_via_tool(
-        migrated_db, session_id=session_id, channel="cli", reply_target=None
+        migrated_db, session_key=session_key, channel="cli", reply_target=None
     )
     assert result.success, f"create failed: {result.error!r}"
     body = json.loads(result.output)

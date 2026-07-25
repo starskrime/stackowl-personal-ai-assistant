@@ -142,13 +142,13 @@ class _StubExtractor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
 
-    async def extract(self, messages: list[object], session_id: str) -> list[StagedFact]:
-        self.calls.append((session_id, len(messages)))
+    async def extract(self, messages: list[object], session_key: str) -> list[StagedFact]:
+        self.calls.append((session_key, len(messages)))
         return [
             StagedFact(
                 content=_FIXED_FACT_CONTENT,
                 source_type="conversation_fact",
-                source_ref=session_id,
+                source_ref=session_key,
                 confidence=0.95,
             )
         ]
@@ -191,13 +191,13 @@ def _build_services(
 
 
 def _state_from_decision(
-    decision, *, trace_id: str, session_id: str, channel: str, raw_text: str
+    decision, *, trace_id: str, session_key: str, channel: str, raw_text: str
 ) -> PipelineState:
     """Build PipelineState exactly as startup/orchestrator.py does for an owl route."""
     input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel=channel,
         owl_name=decision.target,
@@ -218,11 +218,11 @@ def _make_job() -> Job:
     )
 
 
-async def _staged_conversation_fact_rows(db: DbPool, session_id: str):
+async def _staged_conversation_fact_rows(db: DbPool, session_key: str):
     return await db.fetch_all(
         "SELECT content, reinforcement_count, status FROM staged_facts "
         "WHERE source_type='conversation_fact' AND source_ref=?",
-        (session_id,),
+        (session_key,),
     )
 
 
@@ -243,11 +243,11 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
     backend = AsyncioBackend(services=services)
     scanner = GatewayScanner(owl_registry=owl_registry)
 
-    session_id = "sess-rca-e2e"
+    session_key = "sess-rca-e2e"
 
     msg = IngressMessage(
         text="I live in Baku",
-        session_id=session_id,
+        session_key=session_key,
         channel="cli",
         trace_id="trace-rca-1",
     )
@@ -258,7 +258,7 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
     state = _state_from_decision(
         decision,
         trace_id=msg.trace_id,
-        session_id=session_id,
+        session_key=session_key,
         channel=msg.channel,
         raw_text=msg.text,
     )
@@ -267,7 +267,7 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
     # The consolidate step must have written a REAL staged 'conversation' row.
     conv_rows = await tmp_db.fetch_all(
         "SELECT content FROM staged_facts WHERE source_type='conversation' AND source_ref=?",
-        (session_id,),
+        (session_key,),
     )
     assert conv_rows, (
         "consolidate did not persist a staged 'conversation' turn — the real "
@@ -308,7 +308,7 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
     assert result1.success, f"dream pass 1 failed: {result1.error}"
     assert extractor.calls, "miner.extract was never called — _mine() did not run in execute()"
 
-    rows_after_1 = await _staged_conversation_fact_rows(tmp_db, session_id)
+    rows_after_1 = await _staged_conversation_fact_rows(tmp_db, session_key)
     assert len(rows_after_1) == 1, f"expected exactly one staged fact, got {rows_after_1}"
     assert rows_after_1[0]["content"] == _FIXED_FACT_CONTENT
     assert rows_after_1[0]["reinforcement_count"] == 0, (
@@ -330,7 +330,7 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
     remaining_staged = await tmp_db.fetch_all(
         "SELECT 1 FROM staged_facts WHERE source_type='conversation_fact' "
         "AND source_ref=? AND content=? AND status='staged'",
-        (session_id, _FIXED_FACT_CONTENT),
+        (session_key, _FIXED_FACT_CONTENT),
     )
     assert not remaining_staged, (
         "after pass 2 the reinforced fact must have been promoted out of the staged queue"

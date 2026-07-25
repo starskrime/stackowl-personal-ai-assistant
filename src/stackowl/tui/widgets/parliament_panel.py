@@ -69,7 +69,7 @@ class ParliamentPanel(Widget):
             "[tui] parliament_panel.__init__: entry",
             extra={"_fields": {"onboarding": onboarding_store is not None}},
         )
-        self._session_id: str = ""
+        self._session_key: str = ""
         self._round_panels: dict[str, OwlRoundPanel] = {}
         self._current_round: int = 0
         self._onboarding_tip_shown: bool = False
@@ -77,8 +77,8 @@ class ParliamentPanel(Widget):
 
     # ------------------------------------------------------------------ access
     @property
-    def session_id(self) -> str:
-        return self._session_id
+    def session_key(self) -> str:
+        return self._session_key
 
     @property
     def current_round(self) -> int:
@@ -102,13 +102,13 @@ class ParliamentPanel(Widget):
             "[tui] parliament_panel.on_parliament_started_message: entry",
             extra={
                 "_fields": {
-                    "session_id": msg.session_id,
+                    "session_key": msg.session_key,
                     "owl_count": len(msg.owl_names),
                     "trigger": msg.trigger,
                 }
             },
         )
-        self._session_id = msg.session_id
+        self._session_key = msg.session_key
         self._current_round = 1
         self._round_panels = {name: OwlRoundPanel(name) for name in msg.owl_names}
         line = format_rollcall(msg.owl_names, str(GLYPH_PARLIAMENT))
@@ -124,7 +124,7 @@ class ParliamentPanel(Widget):
             "[tui] parliament_panel.on_parliament_round_started_message: entry",
             extra={
                 "_fields": {
-                    "session_id": msg.session_id,
+                    "session_key": msg.session_key,
                     "round": msg.round_number,
                 }
             },
@@ -142,7 +142,7 @@ class ParliamentPanel(Widget):
             "[tui] parliament_panel.on_parliament_round_message: entry",
             extra={
                 "_fields": {
-                    "session_id": msg.session_id,
+                    "session_key": msg.session_key,
                     "round": msg.round_number,
                     "owls": len(msg.owl_responses),
                 }
@@ -161,7 +161,7 @@ class ParliamentPanel(Widget):
             "[tui] parliament_panel.on_synthesis_arrived_message: entry",
             extra={
                 "_fields": {
-                    "session_id": msg.session_id,
+                    "session_key": msg.session_key,
                     "confidence": msg.confidence,
                     "disagreements": len(msg.disagreements),
                 }
@@ -183,7 +183,7 @@ class ParliamentPanel(Widget):
         """Hide the panel."""
         log.tui.debug(
             "[tui] parliament_panel.on_parliament_closed_message: entry",
-            extra={"_fields": {"session_id": msg.session_id}},
+            extra={"_fields": {"session_key": msg.session_key}},
         )
         self.display = False
 
@@ -230,7 +230,7 @@ class ParliamentPanel(Widget):
         """Binding action — dismiss the parliament panel."""
         log.tui.debug(
             "[tui] parliament_panel.action_close_parliament: entry",
-            extra={"_fields": {"session_id": self._session_id}},
+            extra={"_fields": {"session_key": self._session_key}},
         )
         try:
             self.display = False
@@ -238,5 +238,5 @@ class ParliamentPanel(Widget):
             log.tui.warning(
                 "[tui] parliament_panel.action_close_parliament: hide failed",
                 exc_info=exc,
-                extra={"_fields": {"session_id": self._session_id}},
+                extra={"_fields": {"session_key": self._session_key}},
             )

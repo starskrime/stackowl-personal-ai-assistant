@@ -224,7 +224,7 @@ class OwlsCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "[commands] owls.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         parts = args.strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "list"
@@ -329,7 +329,7 @@ class OwlsCommand(SlashCommand):
         from stackowl.tools.meta.owl_build import OwlBuildTool
 
         token = TraceContext.start(
-            session_id=state.session_id,
+            session_key=state.session_key,
             trace_id=state.trace_id,
             interactive=True,
             channel=state.channel,
@@ -994,7 +994,7 @@ class OwlCommand(OwlsCommand):
     async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "[commands] owl.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         parts = args.strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "list"
@@ -1062,7 +1062,7 @@ class OwlCommand(OwlsCommand):
         from stackowl.tools.meta.owl_build import OwlBuildTool
 
         token = TraceContext.start(
-            session_id=state.session_id,
+            session_key=state.session_key,
             trace_id=state.trace_id,
             interactive=True,
             channel=state.channel,

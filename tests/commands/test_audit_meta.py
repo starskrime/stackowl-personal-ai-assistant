@@ -16,7 +16,7 @@ def _state():  # type: ignore[no-untyped-def]
 
     return PipelineState(
         trace_id="trace-1",
-        session_id="test-session",
+        session_key="test-session",
         input_text="",
         channel="cli",
         owl_name="Daria",

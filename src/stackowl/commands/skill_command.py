@@ -222,7 +222,7 @@ class SkillCommand(SlashCommand):
         # 1. ENTRY
         log.skills.debug(
             "[commands] skill.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         if self._store is None or self._loader is None or self._root is None:
             return "✗ /skill: not configured"

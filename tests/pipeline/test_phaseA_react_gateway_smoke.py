@@ -278,13 +278,13 @@ def _build_services(
 
 
 def _state_from_decision(
-    decision: Any, *, trace_id: str, session_id: str, channel: str, raw_text: str
+    decision: Any, *, trace_id: str, session_key: str, channel: str, raw_text: str
 ) -> PipelineState:
     """Build PipelineState exactly as startup/orchestrator.py does for an owl route."""
     input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel=channel,
         owl_name=decision.target,
@@ -351,12 +351,12 @@ async def test_weak_model_react_tool_dispatch_through_gateway(
     backend = AsyncioBackend(services=services)
     scanner = GatewayScanner(owl_registry=owl_registry)
 
-    session_id = "sess-react-gw"
+    session_key = "sess-react-gw"
 
     # --- Drive the request THROUGH the gateway scanner -------------------------
     msg = IngressMessage(
         text="what's the latest?",
-        session_id=session_id,
+        session_key=session_key,
         channel="cli",
         trace_id="trace-react-gw-1",
     )
@@ -367,7 +367,7 @@ async def test_weak_model_react_tool_dispatch_through_gateway(
     state = _state_from_decision(
         decision,
         trace_id=msg.trace_id,
-        session_id=session_id,
+        session_key=session_key,
         channel=msg.channel,
         raw_text=msg.text,
     )

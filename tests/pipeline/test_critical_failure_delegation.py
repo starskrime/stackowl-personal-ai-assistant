@@ -62,7 +62,7 @@ def _state(status: str, response_text: str = "") -> PipelineState:
     chunks: tuple[ResponseChunk, ...] = (_chunk(response_text),) if response_text else ()
     return PipelineState(
         trace_id="trace-t9",
-        session_id="sess-t9",
+        session_key="sess-t9",
         input_text="do a task",
         channel="cli",
         owl_name="secretary",
@@ -120,7 +120,7 @@ def test_nonempty_answer_ok_does_not_trip() -> None:
 def test_no_tool_calls_does_not_trip() -> None:
     """No tool calls at all — predicate must not crash."""
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="execute",
     )
     assert _delegation_failed_with_no_answer(state) is False
@@ -136,7 +136,7 @@ def test_unparseable_tool_result_does_not_crash() -> None:
         duration_ms=0.0,
     )
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="execute",
         tool_calls=(tc,),
     )
@@ -153,7 +153,7 @@ def test_none_result_does_not_crash() -> None:
         duration_ms=0.0,
     )
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="execute",
         tool_calls=(tc,),
     )
@@ -172,7 +172,7 @@ def test_bare_json_array_result_does_not_crash() -> None:
         duration_ms=0.0,
     )
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="execute",
         tool_calls=(tc,),
     )
@@ -189,7 +189,7 @@ def test_non_delegation_tool_result_skipped() -> None:
         duration_ms=0.0,
     )
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="execute",
         tool_calls=(tc,),
     )

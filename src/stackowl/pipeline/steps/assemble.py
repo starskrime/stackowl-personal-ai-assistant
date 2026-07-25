@@ -181,10 +181,10 @@ async def run(state: PipelineState) -> PipelineState:
             scores = None
             turn = None
             if owned and state.query_embedding is not None:
-                turn = FOCUS_TRACKER.begin_turn(state.owl_name, state.session_id)
+                turn = FOCUS_TRACKER.begin_turn(state.owl_name, state.session_key)
                 scores = score_owned_skills(
                     owned, query_embedding=state.query_embedding, tracker=FOCUS_TRACKER,
-                    owl=state.owl_name, session=state.session_id, turn=turn,
+                    owl=state.owl_name, session=state.session_key, turn=turn,
                 )
             tiered = assign_tiers(owned, scores, pinned=pinned)
             # Append OTHER relevant skills as CATALOG entries — three-tier
@@ -225,7 +225,7 @@ async def run(state: PipelineState) -> PipelineState:
                 skills_block = _skill_injector.render(state.owl_name, tiered)
             if scores is not None and turn is not None:
                 full_names = [sk.name for sk, tier, _p in tiered if tier is SkillTier.FULL]
-                FOCUS_TRACKER.mark_active(state.owl_name, state.session_id, full_names, turn)
+                FOCUS_TRACKER.mark_active(state.owl_name, state.session_key, full_names, turn)
             log.engine.debug(
                 "[pipeline] assemble: skills block rendered",
                 extra={"_fields": {
@@ -320,7 +320,7 @@ async def run(state: PipelineState) -> PipelineState:
         "[pipeline] assemble: exit",
         extra={"_fields": {
             "trace_id": state.trace_id,
-            "session_id": state.session_id,
+            "session_key": state.session_key,
             "base_len": len(base),
             "persona_len": len(persona),
             "banner_len": len(banner),

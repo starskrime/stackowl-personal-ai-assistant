@@ -52,9 +52,9 @@ async def test_whatsapp_stamps_jid_and_resolves_target() -> None:
     await adapter.handle_message(_USER_JID, "hi")
     ingress = await adapter._queue.get()
     assert ingress.chat_id == _USER_JID  # raw JID stamped as the target
-    assert ingress.session_id.startswith("whatsapp:")
-    assert "15551234567" not in ingress.session_id  # session stays hashed
-    assert adapter.resolve_target(ingress.session_id) == _USER_JID
+    assert ingress.session_key.startswith("whatsapp:")
+    assert "15551234567" not in ingress.session_key  # session stays hashed
+    assert adapter.resolve_target(ingress.session_key) == _USER_JID
     assert adapter.resolve_target("whatsapp:unknown") is None
 
 

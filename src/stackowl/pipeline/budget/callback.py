@@ -66,7 +66,7 @@ def make_budget_callback(
     *,
     interactive: bool,
     clarify: Any,
-    session_id: str,
+    session_key: str,
     channel: str,
     wait_timeout_s: float = _WAIT_TIMEOUT_S,
 ) -> Callable[[ReActIterationState], Awaitable[list[dict[str, Any]] | None]]:
@@ -78,7 +78,7 @@ def make_budget_callback(
             clarify prompt (e.g. CLI/Telegram session, not a headless run).
         clarify: ClarifyGateway instance or None.  Must be non-None when
             interactive=True to enable the Raise/Stop round-trip.
-        session_id: Propagated to clarify.ask() for routing.
+        session_key: Propagated to clarify.ask() for routing.
         channel: Channel identifier propagated to clarify.ask().
         wait_timeout_s: Seconds to wait for a human answer before failing closed.
 
@@ -107,7 +107,7 @@ def make_budget_callback(
         if interactive and clarify is not None:
             try:
                 cid = await clarify.ask(
-                    session_id,
+                    session_key,
                     channel,
                     f"Budget cap '{breach.cap}' reached (limit {breach.limit}, used "
                     f"{breach.actual}). Raise or Stop?",

@@ -116,7 +116,7 @@ class JsonlFormatter(logging.Formatter):
             "trace_id": ctx["trace_id"],
             "span_id": ctx["span_id"],
             "parent_span_id": ctx["parent_span_id"],
-            "session_id": ctx["session_id"],
+            "session_key": ctx["session_key"],
             "duration_ms": duration_ms,
             "fields": fields,
         }

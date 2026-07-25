@@ -24,7 +24,7 @@ Security (shared with ``transcripts`` via :mod:`session_access`):
   :func:`redact_secrets`, so a secret a user once pasted into a turn is masked
   before it re-enters the model's context. Applied even to partial results.
 * VISIBILITY GUARD — :func:`resolve_visibility` limits cross-session access:
-  by default the caller's CURRENT session; a different ``session_id`` is allowed
+  by default the caller's CURRENT session; a different ``session_key`` is allowed
   only if it shares the same owner (``owl_name``). Cross-owner reads are refused.
 
 Operations: every shape is LIMIT-bounded and the scroll radius is hard-capped,
@@ -69,7 +69,7 @@ _BROWSE_SQL = """
 SELECT m.id, m.role, m.content, m.created_at
 FROM messages m
 JOIN conversations c ON c.id = m.conversation_id
-WHERE c.session_id = ?
+WHERE c.session_key = ?
 ORDER BY m.created_at ASC, m.id ASC
 LIMIT ? OFFSET ?
 """
@@ -78,7 +78,7 @@ _DISCOVER_SQL = """
 SELECT m.id, m.role, m.content, m.created_at
 FROM messages m
 JOIN conversations c ON c.id = m.conversation_id
-WHERE c.session_id = ? AND m.content LIKE ? ESCAPE '\\'
+WHERE c.session_key = ? AND m.content LIKE ? ESCAPE '\\'
 ORDER BY m.created_at ASC, m.id ASC
 LIMIT ?
 """
@@ -89,13 +89,13 @@ _ORDERED_SQL = """
 SELECT m.id, m.role, m.content, m.created_at
 FROM messages m
 JOIN conversations c ON c.id = m.conversation_id
-WHERE c.session_id = ?
+WHERE c.session_key = ?
 ORDER BY m.created_at ASC, m.id ASC
 """
 
 # Locate which session an anchor message belongs to (so scroll can scope itself).
 _ANCHOR_SESSION_SQL = """
-SELECT c.session_id
+SELECT c.session_key
 FROM messages m
 JOIN conversations c ON c.id = m.conversation_id
 WHERE m.id = ?
@@ -117,7 +117,7 @@ class SessionSearchTool(Tool):
             "(verbatim recall). mode='browse' paginates a session's turns in "
             "order; mode='discover' finds turns whose text matches a query; "
             "mode='scroll' returns the turns around an anchor message id. "
-            "By default reads the CURRENT session; pass session_id to read "
+            "By default reads the CURRENT session; pass session_key to read "
             "another session of the SAME owner (cross-owner reads are refused). "
             "Secrets in returned turns are masked. "
             "LANE: recalling the exact words of a prior conversation ('what did "
@@ -137,7 +137,7 @@ class SessionSearchTool(Tool):
                     "enum": list(_VALID_MODES),
                     "description": "browse | discover | scroll",
                 },
-                "session_id": {
+                "session_key": {
                     "type": "string",
                     "description": (
                         "Session to read (browse/discover). Defaults to the "
@@ -215,34 +215,34 @@ class SessionSearchTool(Tool):
     # -------------------------------------------------------------------- shapes
 
     async def _browse(self, db: DbPool, kwargs: dict[str, object], t0: float) -> ToolResult:
-        vis = await self._guard(db, kwargs.get("session_id"))
+        vis = await self._guard(db, kwargs.get("session_key"))
         if not vis.allowed:
             return self._err(vis.reason, t0)
         limit = self._coerce(kwargs.get("limit"), _DEFAULT_LIMIT, _MAX_LIMIT)
         offset = max(0, self._coerce(kwargs.get("offset"), 0, 10**9, lo=0))
-        rows = await db.fetch_all(_BROWSE_SQL, (vis.session_id, limit, offset))
+        rows = await db.fetch_all(_BROWSE_SQL, (vis.session_key, limit, offset))
         # 3. STEP
         log.tool.debug(
             "session_search.execute: browse fetched",
             extra={"_fields": {"rows": len(rows), "offset": offset}},
         )
-        return self._ok(self._render(rows, header=f"session {vis.session_id}"), t0, len(rows))
+        return self._ok(self._render(rows, header=f"session {vis.session_key}"), t0, len(rows))
 
     async def _discover(self, db: DbPool, kwargs: dict[str, object], t0: float) -> ToolResult:
         query = str(kwargs.get("query", "")).strip()
         if not query:
             return self._err("mode='discover' requires a non-empty 'query'.", t0)
-        vis = await self._guard(db, kwargs.get("session_id"))
+        vis = await self._guard(db, kwargs.get("session_key"))
         if not vis.allowed:
             return self._err(vis.reason, t0)
         limit = self._coerce(kwargs.get("limit"), _DEFAULT_LIMIT, _MAX_LIMIT)
         like = f"%{self._escape_like(query)}%"
-        rows = await db.fetch_all(_DISCOVER_SQL, (vis.session_id, like, limit))
+        rows = await db.fetch_all(_DISCOVER_SQL, (vis.session_key, like, limit))
         log.tool.debug(
             "session_search.execute: discover matched",
             extra={"_fields": {"matches": len(rows)}},
         )
-        header = f"{len(rows)} match(es) for {query!r} in session {vis.session_id}"
+        header = f"{len(rows)} match(es) for {query!r} in session {vis.session_key}"
         return self._ok(self._render(rows, header=header), t0, len(rows))
 
     async def _scroll(self, db: DbPool, kwargs: dict[str, object], t0: float) -> ToolResult:
@@ -253,13 +253,13 @@ class SessionSearchTool(Tool):
         anchor_rows = await db.fetch_all(_ANCHOR_SESSION_SQL, (anchor_id,))
         if not anchor_rows:
             return self._err(f"no message found with id '{anchor_id}'.", t0)
-        anchor_session = anchor_rows[0].get("session_id")
+        anchor_session = anchor_rows[0].get("session_key")
         vis = await self._guard(db, anchor_session)
         if not vis.allowed:
             return self._err(vis.reason, t0)
         radius = self._coerce(kwargs.get("radius"), _DEFAULT_RADIUS, _MAX_RADIUS)
 
-        ordered = await db.fetch_all(_ORDERED_SQL, (vis.session_id,))
+        ordered = await db.fetch_all(_ORDERED_SQL, (vis.session_key,))
         idx = next((i for i, r in enumerate(ordered) if r.get("id") == anchor_id), None)
         if idx is None:  # pragma: no cover — anchor located above; defensive
             return self._err(f"anchor '{anchor_id}' not in session.", t0)
@@ -270,13 +270,13 @@ class SessionSearchTool(Tool):
             "session_search.execute: scroll window",
             extra={"_fields": {"idx": idx, "radius": radius, "window": len(window)}},
         )
-        header = f"turns around {anchor_id} (±{radius}) in session {vis.session_id}"
+        header = f"turns around {anchor_id} (±{radius}) in session {vis.session_key}"
         return self._ok(self._render(window, header=header), t0, len(window))
 
     # -------------------------------------------------------------------- guard
 
-    async def _guard(self, db: DbPool, session_id: object) -> VisibilityDecision:
-        sid = str(session_id).strip() if isinstance(session_id, str) else None
+    async def _guard(self, db: DbPool, session_key: object) -> VisibilityDecision:
+        sid = str(session_key).strip() if isinstance(session_key, str) else None
         return await resolve_visibility(db, sid)
 
     # ------------------------------------------------------------------ helpers

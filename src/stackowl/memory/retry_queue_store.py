@@ -72,7 +72,7 @@ class RetryQueueRow:
 
     id: str
     trace_id: str
-    session_id: str
+    session_key: str
     goal: str
     banned_capabilities: list[str] = field(default_factory=list)
     attempt_count: int = 0
@@ -110,7 +110,7 @@ def _row_to_model(row: dict[str, Any]) -> RetryQueueRow:
     return RetryQueueRow(
         id=str(row["id"]),
         trace_id=str(row["trace_id"]),
-        session_id=str(row["session_id"]),
+        session_key=str(row["session_key"]),
         goal=str(row["goal"]),
         banned_capabilities=banned_capabilities,
         attempt_count=int(row["attempt_count"]),
@@ -138,7 +138,7 @@ def _cursor_row_to_dict(cursor: Any, raw: Any) -> dict[str, Any]:
 
 
 _SELECT_COLUMNS = (
-    "id, trace_id, session_id, goal, banned_capabilities, attempt_count, "
+    "id, trace_id, session_key, goal, banned_capabilities, attempt_count, "
     "status, next_retry_at, last_error, channel, channel_chat_id, "
     "channel_message_id, created_at, updated_at"
 )
@@ -166,7 +166,7 @@ class RetryQueueStore(OwnedRepository):
         self,
         *,
         trace_id: str,
-        session_id: str,
+        session_key: str,
         goal: str,
         banned_capabilities: list[str],
         channel: str = "telegram",
@@ -180,7 +180,7 @@ class RetryQueueStore(OwnedRepository):
         log.memory.debug(
             "retry_queue_store.insert_pending: entry",
             extra={"_fields": {
-                "trace_id": trace_id, "session_id": session_id, "channel": channel,
+                "trace_id": trace_id, "session_key": session_key, "channel": channel,
                 "n_banned": len(banned_capabilities),
             }},
         )
@@ -200,12 +200,12 @@ class RetryQueueStore(OwnedRepository):
             # 3. STEP
             await self._db.execute(
                 """INSERT INTO retry_queue
-                   (id, trace_id, session_id, goal, banned_capabilities, attempt_count,
+                   (id, trace_id, session_key, goal, banned_capabilities, attempt_count,
                     status, next_retry_at, last_error, channel, channel_chat_id,
                     channel_message_id, owner_id, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, 0, 'pending', ?, NULL, ?, NULL, NULL, ?, ?, ?)""",
                 (
-                    retry_id, trace_id, session_id, truncated_goal,
+                    retry_id, trace_id, session_key, truncated_goal,
                     json.dumps(banned_capabilities, separators=(",", ":")),
                     now, channel, self._owner_id, now, now,
                 ),
@@ -214,7 +214,7 @@ class RetryQueueStore(OwnedRepository):
             log.memory.error(
                 "retry_queue_store.insert_pending: insert failed",
                 exc_info=exc,
-                extra={"_fields": {"trace_id": trace_id, "session_id": session_id}},
+                extra={"_fields": {"trace_id": trace_id, "session_key": session_key}},
             )
             raise
         # 4. EXIT
@@ -380,32 +380,32 @@ class RetryQueueStore(OwnedRepository):
         )
         return results
 
-    async def get_latest_pending_for_session(self, session_id: str) -> RetryQueueRow | None:
-        """Return the most recently created pending row for ``session_id``, or None."""
+    async def get_latest_pending_for_session(self, session_key: str) -> RetryQueueRow | None:
+        """Return the most recently created pending row for ``session_key``, or None."""
         # 1. ENTRY
         log.memory.debug(
             "retry_queue_store.get_latest_pending_for_session: entry",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
         # 3. STEP — rowid DESC breaks ties when two rows share the same
         # created_at timestamp (same-millisecond concurrent inserts).
         rows = await self._db.fetch_all(
             f"""SELECT {_SELECT_COLUMNS} FROM retry_queue
-                WHERE owner_id = ? AND session_id = ? AND status = 'pending'
+                WHERE owner_id = ? AND session_key = ? AND status = 'pending'
                 ORDER BY created_at DESC, rowid DESC LIMIT 1""",
-            (self._owner_id, session_id),
+            (self._owner_id, session_key),
         )
         # 2. DECISION + 4. EXIT
         if not rows:
             log.memory.debug(
                 "retry_queue_store.get_latest_pending_for_session: exit — miss",
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"session_key": session_key}},
             )
             return None
         result = _row_to_model(rows[0])
         log.memory.debug(
             "retry_queue_store.get_latest_pending_for_session: exit — hit",
-            extra={"_fields": {"session_id": session_id, "retry_id": result.id}},
+            extra={"_fields": {"session_key": session_key, "retry_id": result.id}},
         )
         return result
 
@@ -590,7 +590,7 @@ class RetryQueueStore(OwnedRepository):
             raise
 
         result = RetryQueueRow(
-            id=current.id, trace_id=current.trace_id, session_id=current.session_id,
+            id=current.id, trace_id=current.trace_id, session_key=current.session_key,
             goal=current.goal, banned_capabilities=banned, attempt_count=attempt_count,
             status=status, next_retry_at=next_retry_at, last_error=truncated_error,
             channel=current.channel, channel_chat_id=current.channel_chat_id,

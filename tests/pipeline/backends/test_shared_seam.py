@@ -58,7 +58,7 @@ async def test_langgraph_backend_verifies_acceptance_and_refutes_false_win(
     services = StepServices(db_pool=object())  # type: ignore[arg-type]
     backend = LangGraphBackend(services=services, use_memory_checkpoint=True)
     state = PipelineState(
-        trace_id="t-parity", session_id="s-parity", input_text="do the thing",
+        trace_id="t-parity", session_key="s-parity", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="",
         expected_outcome=ExpectedOutcome(kind="artifact", artifact_dir=str(missing)),
         responses=(ResponseChunk(
@@ -109,7 +109,7 @@ async def test_asyncio_backend_captures_recovered_via_substitution_past_context_
     services = StepServices(db_pool=object())  # type: ignore[arg-type]
     backend = AsyncioBackend(services=services)
     state = PipelineState(
-        trace_id="t-recov", session_id="s-recov", input_text="do the thing",
+        trace_id="t-recov", session_key="s-recov", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="",
     )
     await backend.run(state)
@@ -144,7 +144,7 @@ async def test_asyncio_backend_captures_retry_event_count_past_context_reset(
     services = StepServices(db_pool=object())  # type: ignore[arg-type]
     backend = AsyncioBackend(services=services)
     state = PipelineState(
-        trace_id="t-retry-ledger", session_id="s-retry-ledger", input_text="do the thing",
+        trace_id="t-retry-ledger", session_key="s-retry-ledger", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="",
         retry_lineage_id="row-99",
     )
@@ -174,7 +174,7 @@ async def test_langgraph_backend_captures_retry_event_count_past_context_reset(
     services = StepServices(db_pool=object())  # type: ignore[arg-type]
     backend = LangGraphBackend(services=services, use_memory_checkpoint=True)
     state = PipelineState(
-        trace_id="t-retry-ledger-lg", session_id="s-retry-ledger-lg", input_text="do the thing",
+        trace_id="t-retry-ledger-lg", session_key="s-retry-ledger-lg", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="",
         retry_lineage_id="row-100",
     )
@@ -224,7 +224,7 @@ async def test_langgraph_backend_persists_decisions_recorded_inside_a_node(
     services = StepServices(db_pool=object())  # type: ignore[arg-type]
     backend = LangGraphBackend(services=services, use_memory_checkpoint=True)
     state = PipelineState(
-        trace_id="t-decision-lg", session_id="s-decision-lg", input_text="do the thing",
+        trace_id="t-decision-lg", session_key="s-decision-lg", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="",
     )
     try:
@@ -232,7 +232,7 @@ async def test_langgraph_backend_persists_decisions_recorded_inside_a_node(
     finally:
         await backend.shutdown()
 
-    assert saved.get("session_id") == "s-decision-lg"
+    assert saved.get("session_key") == "s-decision-lg"
     decisions = saved.get("decisions")
     assert decisions is not None and len(decisions) == 1
     assert decisions[0].point == "probe"

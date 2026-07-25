@@ -51,7 +51,7 @@ class ConnectCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "connect_command.handle: entry",
-            extra={"_fields": {"args": args[:40], "session": state.session_id}},
+            extra={"_fields": {"args": args[:40], "session": state.session_key}},
         )
         if self._registry is None:
             log.gateway.warning("connect_command.handle: integration_registry not configured")

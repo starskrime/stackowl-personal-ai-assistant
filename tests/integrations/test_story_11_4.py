@@ -172,7 +172,7 @@ def _make_disconnect_command(adapters: dict[str, Any] | None = None) -> Any:
 
 def _make_pipeline_state() -> MagicMock:
     state = MagicMock()
-    state.session_id = "sess-test"
+    state.session_key = "sess-test"
     return state
 
 

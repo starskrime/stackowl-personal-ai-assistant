@@ -51,14 +51,14 @@ class PipelineState(BaseModel, frozen=True):
     """
 
     trace_id: str
-    session_id: str
+    session_key: str
     input_text: str
     channel: str
     owl_name: str
     pipeline_step: str
     #: Stable cross-channel identity for durable-knowledge scoping (preferences,
     #: extracted facts). Resolved at the gateway from the channel handle via the
-    #: IdentityResolver. Empty ⇒ consumers fall back to session_id (per-channel),
+    #: IdentityResolver. Empty ⇒ consumers fall back to session_key (per-channel),
     #: i.e. unconfigured behavior is byte-identical.
     identity_key: str = ""
     # A human-readable routing-correction notice from the scanner (e.g. a fuzzy

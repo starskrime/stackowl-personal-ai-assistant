@@ -125,7 +125,7 @@ async def route_inflight_message(
     registry: TurnRegistry,
     running: Turn,
     text: str,
-    session_id: str,
+    session_key: str,
     request_id_new: str,
     target: int | str | None,
     is_reply_to_inflight: bool = False,
@@ -160,7 +160,7 @@ async def route_inflight_message(
         "[router] route_inflight_message: entry",
         extra={
             "_fields": {
-                "session_id": session_id,
+                "session_key": session_key,
                 "running_request_id": running.turn_id,
                 "text_len": len(text),
                 "is_reply": is_reply_to_inflight,
@@ -183,12 +183,12 @@ async def route_inflight_message(
             # during the slow route it converts to queued-new ("NEW") itself.
             steer_result = await registry.try_steer(
                 running.turn_id, body,
-                session_id=session_id, request_id_new=request_id_new, target=target,
+                session_key=session_key, request_id_new=request_id_new, target=target,
             )
             log.gateway.info(
                 "[router] route_inflight_message: STEER → try_steer",
                 extra={"_fields": {
-                    "session_id": session_id, "running_request_id": running.turn_id,
+                    "session_key": session_key, "running_request_id": running.turn_id,
                     "try_steer_result": steer_result,
                 }},
             )
@@ -204,7 +204,7 @@ async def route_inflight_message(
             log.gateway.info(
                 "[router] route_inflight_message: STOP → request_stop",
                 extra={"_fields": {
-                    "session_id": session_id, "running_request_id": running.turn_id,
+                    "session_key": session_key, "running_request_id": running.turn_id,
                 }},
             )
             return InflightOutcome(
@@ -216,7 +216,7 @@ async def route_inflight_message(
         log.gateway.info(
             "[router] route_inflight_message: NEW → enqueue queued-new",
             extra={"_fields": {
-                "session_id": session_id, "running_request_id": running.turn_id,
+                "session_key": session_key, "running_request_id": running.turn_id,
             }},
         )
         return InflightOutcome(
@@ -226,7 +226,7 @@ async def route_inflight_message(
         log.gateway.error(
             "[router] route_inflight_message: failed — fail-safe queued-new",
             exc_info=exc,
-            extra={"_fields": {"session_id": session_id, "text_len": len(text)}},
+            extra={"_fields": {"session_key": session_key, "text_len": len(text)}},
         )
         return InflightOutcome(
             action=InflightAction.ENQUEUE_NEW,

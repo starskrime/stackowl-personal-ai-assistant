@@ -89,7 +89,7 @@ async def _seed_outcomes_with_failures(
     for i in range(n_fail):
         tid = f"fail-{tool}-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=False, latency_ms=5000.0, tool_call_count=1,
             failure_class=failure_class, step_durations={},
             input_text=f"task {i}", response_text="(error)",
@@ -100,7 +100,7 @@ async def _seed_outcomes_with_failures(
     for i in range(n_success):
         tid = f"ok-{tool}-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=True, latency_ms=200.0, tool_call_count=1,
             failure_class=None, step_durations={},
             input_text=f"task {i}", response_text="done",
@@ -152,7 +152,7 @@ async def test_miner_skips_disliked_approach_positive_only(tmp_db: DbPool) -> No
     for i in range(3):
         tid = f"disliked-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=True, latency_ms=200.0, tool_call_count=1,
             failure_class=None, step_durations={},
             input_text=f"task {i}", response_text="done",
@@ -198,7 +198,7 @@ async def test_miner_heuristic_lesson_metadata_includes_mean_quality(
     for i in range(3):
         tid = f"mq-ok-{i}"
         await store.record(
-            trace_id=tid, session_id="s", owl_name="scout", channel="cli",
+            trace_id=tid, session_key="s", owl_name="scout", channel="cli",
             success=True, latency_ms=300.0, tool_call_count=1,
             failure_class=None, step_durations={},
             input_text=f"task {i}", response_text="(done)",

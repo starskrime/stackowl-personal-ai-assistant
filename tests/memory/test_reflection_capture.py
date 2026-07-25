@@ -76,7 +76,7 @@ def test_parse_reflection_response_handles_fenced_block() -> None:
 def test_reflection_prompt_is_positive_and_includes_trace() -> None:
     # POSITIVE-ONLY: the prompt coaches on what WORKED, never on failure.
     outcome = TaskOutcome(
-        outcome_id=1, trace_id="t1", session_id="s", owl_name="scout",
+        outcome_id=1, trace_id="t1", session_key="s", owl_name="scout",
         channel="cli", success=True, latency_ms=800.0, tool_call_count=3,
         failure_class=None, quality_score=0.9,
         step_durations={"execute": 700.0}, input_text="research stuff",
@@ -105,7 +105,7 @@ async def _make_outcome(
     """Helper: insert one outcome via TaskOutcomeStore + optionally set quality_score."""
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id=trace_id, session_id="s", owl_name="secretary", channel="cli",
+        trace_id=trace_id, session_key="s", owl_name="secretary", channel="cli",
         success=success, latency_ms=10.0, tool_call_count=0,
         failure_class=failure_class, step_durations={},
         input_text="hi", response_text="hello",

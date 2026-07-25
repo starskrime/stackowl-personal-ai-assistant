@@ -36,7 +36,7 @@ class ByeCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.info(
             "[commands] bye.handle: shutdown requested",
-            extra={"_fields": {"channel": state.channel, "session": state.session_id}},
+            extra={"_fields": {"channel": state.channel, "session": state.session_key}},
         )
         if self._shutdown_event is None:
             # Honest degradation — no wire to the orchestrator's stop_event.

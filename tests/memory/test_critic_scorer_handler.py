@@ -93,7 +93,7 @@ async def _seed_unscored_outcomes(db: DbPool, n: int) -> None:
     store = TaskOutcomeStore(db)
     for i in range(n):
         await store.record(
-            trace_id=f"critic-row-{i}", session_id="s", owl_name="secretary", channel="cli",
+            trace_id=f"critic-row-{i}", session_key="s", owl_name="secretary", channel="cli",
             success=True, latency_ms=10.0, tool_call_count=0,
             failure_class=None, step_durations={}, input_text="do a thing",
             response_text="solid answer",

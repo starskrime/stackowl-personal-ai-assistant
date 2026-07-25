@@ -357,8 +357,8 @@ class ToolBuildTool(Tool):
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
-        if not interactive or not channel or not session_id:
+        session_key = ctx.get("session_key")
+        if not interactive or not channel or not session_key:
             log.tool.error(
                 "tool_build.execute: no user present to approve — refused (fail closed)",
                 extra={"_fields": {"tool": name, "interactive": interactive}},
@@ -378,7 +378,7 @@ class ToolBuildTool(Tool):
             allowed = await gate.policy.request(
                 tool_name=self.name,
                 channel=channel,
-                session_id=session_id,
+                session_key=session_key,
                 category=_CONSENT_CATEGORY,
                 summary=f"Register new tool {name}",
                 # Graded self-authorization (Task 8): a learned tool has a genuine

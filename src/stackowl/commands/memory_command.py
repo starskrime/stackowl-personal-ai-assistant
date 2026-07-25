@@ -188,7 +188,7 @@ class MemoryCommand(SlashCommand):
         # 1. ENTRY
         log.memory.debug(
             "[commands] memory.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         if self._bridge is None or self._settings is None or self._db is None or self._bus is None:
             return "✗ /memory: not configured"

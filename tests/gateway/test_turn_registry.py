@@ -11,7 +11,7 @@ from stackowl.gateway.turn_registry import Turn, TurnRegistry, TurnStatus
 async def test_status_cas_is_one_way() -> None:
     reg = TurnRegistry()
     task = asyncio.create_task(asyncio.sleep(0))
-    turn = await reg.register("req-1", session_id="s1", task=task, target=None, original_input="hi")
+    turn = await reg.register("req-1", session_key="s1", task=task, target=None, original_input="hi")
     assert turn.status is TurnStatus.RUNNING
     assert await reg.cas_status("req-1", TurnStatus.RUNNING, TurnStatus.FINALIZING) is True
     # backward / skip transitions rejected
@@ -24,7 +24,7 @@ async def test_status_cas_is_one_way() -> None:
 async def test_one_running_per_session_plus_fifo_queue() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("req-1", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("req-1", session_key="s1", task=t, target=None, original_input="a")
     assert reg.running("s1") is not None
     reg.enqueue("s1", original_input="b", request_id="req-2", target=None)
     reg.enqueue("s1", original_input="c", request_id="req-3", target=None)
@@ -40,7 +40,7 @@ async def test_one_running_per_session_plus_fifo_queue() -> None:
 async def test_deregister_clears_running() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("req-1", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("req-1", session_key="s1", task=t, target=None, original_input="a")
     await reg.deregister("req-1")
     assert reg.running("s1") is None
     assert reg.get("req-1") is None
@@ -55,7 +55,7 @@ async def test_sweeper_snapshots_then_acts_and_reaps_done_without_status() -> No
         return None
 
     t = asyncio.create_task(quick())
-    await reg.register("req-1", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("req-1", session_key="s1", task=t, target=None, original_input="a")
     await t  # task done, status still RUNNING (lost the finally race)
     reaped = await reg.sweep(ttl_seconds=0.0)
     assert "req-1" in reaped
@@ -66,7 +66,7 @@ async def test_sweeper_snapshots_then_acts_and_reaps_done_without_status() -> No
 async def test_cas_full_rejection_matrix() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("req-1", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("req-1", session_key="s1", task=t, target=None, original_input="a")
 
     # RUNNING -> FINALIZING : legal one-way step
     assert await reg.cas_status("req-1", TurnStatus.RUNNING, TurnStatus.DONE) is False  # skip rejected
@@ -90,7 +90,7 @@ async def test_concurrent_cas_exactly_one_winner() -> None:
     for _ in range(20):
         reg = TurnRegistry()
         t = asyncio.create_task(asyncio.sleep(0))
-        await reg.register("req-1", session_id="s1", task=t, target=None, original_input="a")
+        await reg.register("req-1", session_key="s1", task=t, target=None, original_input="a")
 
         results = await asyncio.gather(
             reg.cas_status("req-1", TurnStatus.RUNNING, TurnStatus.FINALIZING),
@@ -109,11 +109,11 @@ async def test_sweeper_selectivity_spares_live_within_ttl() -> None:
     # dead turn: task already completed, status still RUNNING -> must be reaped
     dead = asyncio.create_task(asyncio.sleep(0))
     await dead
-    await reg.register("dead", session_id="s-dead", task=dead, target=None, original_input="a")
+    await reg.register("dead", session_key="s-dead", task=dead, target=None, original_input="a")
 
     # live turn: task NOT done, within TTL -> must be spared
     live = asyncio.create_task(asyncio.sleep(60))
-    await reg.register("live", session_id="s-live", task=live, target=None, original_input="b")
+    await reg.register("live", session_key="s-live", task=live, target=None, original_input="b")
 
     reaped = await reg.sweep(ttl_seconds=120.0)
 
@@ -136,7 +136,7 @@ async def test_sweep_does_not_reap_live_running_turn() -> None:
     # the OR'd ``expired``-alone leg.
     reg = TurnRegistry()
     live = asyncio.create_task(asyncio.sleep(60))
-    await reg.register("live", session_id="s1", task=live, target=None, original_input="a")
+    await reg.register("live", session_key="s1", task=live, target=None, original_input="a")
 
     reaped = await reg.sweep(ttl_seconds=0.0)  # started_at already past → expired True
 
@@ -156,7 +156,7 @@ async def test_sweep_reaps_done_not_DONE_turn() -> None:
     # legitimate wedge — reap it and free _running.
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("stuck", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("stuck", session_key="s1", task=t, target=None, original_input="a")
     await t  # done, status still RUNNING
 
     reaped = await reg.sweep(ttl_seconds=999_999.0)  # not expired — done-leg must fire
@@ -179,7 +179,7 @@ async def test_sweep_fires_stranded_drain_after_reap() -> None:
     reg = TurnRegistry()
     reg.set_stranded_drainer(_drainer)
     t = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("stuck", session_id="s1", task=t, target=None, original_input="a")
+    await reg.register("stuck", session_key="s1", task=t, target=None, original_input="a")
     await t
 
     await reg.sweep(ttl_seconds=0.0)
@@ -197,7 +197,7 @@ async def test_sweep_no_reap_does_not_fire_drainer() -> None:
     reg = TurnRegistry()
     reg.set_stranded_drainer(_drainer)
     live = asyncio.create_task(asyncio.sleep(60))
-    await reg.register("live", session_id="s1", task=live, target=None, original_input="a")
+    await reg.register("live", session_key="s1", task=live, target=None, original_input="a")
 
     await reg.sweep(ttl_seconds=0.0)  # nothing reaped
 
@@ -217,7 +217,7 @@ async def test_sweeper_reaps_all_multi_entry_without_raising() -> None:
     for i, rid in enumerate(rids):
         t = asyncio.create_task(asyncio.sleep(0))
         await t  # done -> reapable
-        await reg.register(rid, session_id=f"s{i}", task=t, target=None, original_input="x")
+        await reg.register(rid, session_key=f"s{i}", task=t, target=None, original_input="x")
         tasks.append(t)
 
     reaped = await reg.sweep(ttl_seconds=0.0)
@@ -231,7 +231,7 @@ async def test_sweeper_reaps_all_multi_entry_without_raising() -> None:
 async def test_steering_mailbox_is_bounded() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
-    turn: Turn = await reg.register("req-1", session_id="s1", task=t, target=None, original_input="a")
+    turn: Turn = await reg.register("req-1", session_key="s1", task=t, target=None, original_input="a")
     assert isinstance(turn.steering_mailbox, asyncio.Queue)
     assert turn.steering_mailbox.maxsize == 8
     assert turn.stop_requested is False

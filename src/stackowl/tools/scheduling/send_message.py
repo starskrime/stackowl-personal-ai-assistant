@@ -14,7 +14,7 @@ cannot raise a critical alert).
   off-TTY (cron / non-interactive denial). The tool does NOT call the gate itself
   (mirrors ``knowledge/skill_manage.py``).
 * **Per-session flood cap:** a process-lifetime :class:`TokenBucket` keyed by
-  ``session_id`` (10 sends / 60s) — the runaway-loop guard. Over cap → "rate
+  ``session_key`` (10 sends / 60s) — the runaway-loop guard. Over cap → "rate
   limited", no send.
 * **Self-healing:** no target / blank text / unknown channel / missing deliverer
   / ``"failed"`` / a deliverer that raises → structured result, logged (B5),
@@ -70,7 +70,7 @@ class SendMessageTool(Tool):
         flood_window_seconds: int = _FLOOD_WINDOW_SEC,
     ) -> None:
         """Construct the singleton tool. The per-session flood cap is a
-        process-lifetime :class:`TokenBucket` keyed by ``session_id``."""
+        process-lifetime :class:`TokenBucket` keyed by ``session_key``."""
         self._bucket = TokenBucket(
             max_tokens=flood_max, window_seconds=flood_window_seconds
         )
@@ -187,7 +187,7 @@ class SendMessageTool(Tool):
     async def _send(self, args: SendMessageArgs, t0: float) -> ToolResult:
         """Resolve target + flood-cap + deliver via the S0 chokepoint; never raises."""
         ctx = TraceContext.get()
-        session_id = str(ctx.get("session_id") or "")
+        session_key = str(ctx.get("session_key") or "")
         ctx_channel = ctx.get("channel")
         trace_id = ctx.get("trace_id")
 
@@ -207,11 +207,11 @@ class SendMessageTool(Tool):
         if not text:
             return self._err("blank text: provide a non-empty 'text' to send.", t0)
 
-        # Per-session flood cap (runaway-loop guard). Key on session_id; when absent
+        # Per-session flood cap (runaway-loop guard). Key on session_key; when absent
         # (cron/non-interactive), fall back to a single PROCESS-WIDE constant — NOT
         # `target`, which the caller controls and could vary to mint a fresh bucket
         # per channel and evade the cap.
-        flood_key = session_id or "_no_session_"
+        flood_key = session_key or "_no_session_"
         if not self._bucket.consume(flood_key):
             log.tool.warning(
                 "send_message.execute: flood cap hit — rejecting send",
@@ -232,7 +232,7 @@ class SendMessageTool(Tool):
                 f"unknown channel {target!r}: use action='list' to see options.", t0
             )
 
-        status = await self._deliver(text, target, trace_id, session_id)
+        status = await self._deliver(text, target, trace_id, session_key)
         record: dict[str, object] = {
             "action": "send", "target": target, "text": text,
             "urgency": "normal", "delivery_status": status,
@@ -258,13 +258,13 @@ class SendMessageTool(Tool):
         )
 
     async def _deliver(
-        self, text: str, target: str, trace_id: object, session_id: str
+        self, text: str, target: str, trace_id: object, session_key: str
     ) -> str:
         """Clamp + hand the Notification to the S0 deliverer; never raises.
 
         Returns the transport ``DeliveryStatus``, or ``"deferred"`` when no
         deliverer is wired / the deliverer raises (self-healing, B5). The
-        originating ``session_id`` resolves to the recipient ``chat_id`` (where the
+        originating ``session_key`` resolves to the recipient ``chat_id`` (where the
         channel makes that valid — telegram private chats) so the send targets THAT
         chat, not the adapter's shared mutable ``_last_chat_id``.
         """
@@ -282,7 +282,7 @@ class SendMessageTool(Tool):
             category=_CATEGORY,
             channel_name=target,
             idempotency_key=str(trace_id) if trace_id else None,
-            target_chat_id=resolve_target_chat_id(target, session_id),
+            target_chat_id=resolve_target_chat_id(target, session_key),
         )
         try:
             status = await deliverer.deliver(notification)

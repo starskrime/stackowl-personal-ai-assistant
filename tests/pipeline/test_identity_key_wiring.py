@@ -2,7 +2,7 @@
 
 (a) Field tests: the field exists, defaults to "", and round-trips.
 (b) Gateway resolution: with an IdentityResolver wired into StepServices,
-    a mapped session_id resolves to its identity_key; an unmapped one stays as itself.
+    a mapped session_key resolves to its identity_key; an unmapped one stays as itself.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from stackowl.tenancy.identity import IdentityResolver
 def _state(**kw: object) -> PipelineState:
     base = dict(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="hi",
         channel="telegram",
         owl_name="secretary",
@@ -69,20 +69,20 @@ def test_resolver_returns_handle_for_unknown_session() -> None:
 
 
 def test_gateway_state_build_with_resolver_known_handle() -> None:
-    """When resolver maps session_id, state.identity_key == identity key."""
+    """When resolver maps session_key, state.identity_key == identity key."""
     resolver = IdentityResolver({"owner-primary": ["telegram:123"]})
-    session_id = "telegram:123"
-    state = _state(session_id=session_id, identity_key=resolver.resolve(session_id))
+    session_key = "telegram:123"
+    state = _state(session_key=session_key, identity_key=resolver.resolve(session_key))
     assert state.identity_key == "owner-primary"
 
 
 def test_gateway_state_build_with_resolver_unknown_handle() -> None:
-    """When resolver does not map session_id, identity_key == session_id (itself)."""
+    """When resolver does not map session_key, identity_key == session_key (itself)."""
     resolver = IdentityResolver({"owner-primary": ["telegram:123"]})
-    session_id = "telegram:999"
-    state = _state(session_id=session_id, identity_key=resolver.resolve(session_id))
+    session_key = "telegram:999"
+    state = _state(session_key=session_key, identity_key=resolver.resolve(session_key))
     # Unmapped: falls back to the handle itself
-    assert state.identity_key == session_id
+    assert state.identity_key == session_key
 
 
 def test_empty_resolver_leaves_identity_key_as_handle() -> None:
@@ -118,11 +118,11 @@ class TestResolveIdentityKey:
     """Drive resolve_identity_key — the REAL seam the orchestrator calls.
 
     These tests have teeth: if a build site hardcoded ``identity_key=""`` or
-    returned ``session_id`` unconditionally, the mapped-handle case would fail.
+    returned ``session_key`` unconditionally, the mapped-handle case would fail.
     """
 
     def test_none_resolver_returns_empty_string(self) -> None:
-        """Returns '' when no resolver is wired (consumers fall back to session_id)."""
+        """Returns '' when no resolver is wired (consumers fall back to session_key)."""
         from stackowl.pipeline.services import StepServices, resolve_identity_key
 
         svc = StepServices(identity_resolver=None)
@@ -136,7 +136,7 @@ class TestResolveIdentityKey:
         svc = StepServices(identity_resolver=resolver)
         assert resolve_identity_key(svc, "telegram:123") == "owner-primary"
 
-    def test_unmapped_session_returns_session_id(self) -> None:
+    def test_unmapped_session_returns_session_key(self) -> None:
         """An unknown handle falls back to itself (byte-identical passthrough)."""
         from stackowl.pipeline.services import StepServices, resolve_identity_key
 

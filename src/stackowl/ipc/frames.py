@@ -63,7 +63,7 @@ class IngressFrame(_Frame):
 
     type: Literal["ingress"] = "ingress"
     text: str
-    session_id: str
+    session_key: str
     channel: str
     trace_id: str
     chat_id: int | str | None = None
@@ -113,7 +113,7 @@ class QueryRunningFrame(_Frame):
     """Gateway -> core: is a turn running for this session? (authoritative check)."""
 
     type: Literal["query_running"] = "query_running"
-    session_id: str
+    session_key: str
     query_id: str
 
 
@@ -208,7 +208,7 @@ class ClarifyAskFrame(_Frame):
 
     type: Literal["clarify_ask"] = "clarify_ask"
     clarify_id: str
-    session_id: str
+    session_key: str
     question: str
     trace_id: str
     channel: str = ""
@@ -236,7 +236,7 @@ class ConsentRequestFrame(_Frame):
     consent_id: str
     channel: str
     tool_name: str
-    session_id: str
+    session_key: str
     category: str | None = None
     summary: str = ""
     allow_relaxation: bool = True

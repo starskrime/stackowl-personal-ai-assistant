@@ -58,7 +58,7 @@ class SlackSlashCommandBridge:
 
         state = PipelineState(
             trace_id=f"slack-slash-{uuid.uuid4().hex[:12]}",
-            session_id=f"slack:{hash_user_id(user_id)}",
+            session_key=f"slack:{hash_user_id(user_id)}",
             input_text=f"/{name} {text}".strip(),
             channel="slack",
             owl_name="secretary",

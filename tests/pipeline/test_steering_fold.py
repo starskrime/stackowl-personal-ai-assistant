@@ -14,7 +14,7 @@ async def test_steering_drain_folds_pending_message() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        "req-1", session_id="s1", task=t, target=None, original_input="research X"
+        "req-1", session_key="s1", task=t, target=None, original_input="research X"
     )
     turn.steering_mailbox.put_nowait("also include Y")
     cb = make_steering_callback(reg, "req-1")
@@ -37,7 +37,7 @@ async def test_steering_coalesces_multiple_pending() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     turn = await reg.register(
-        "req-2", session_id="s2", task=t, target=None, original_input="do A"
+        "req-2", session_key="s2", task=t, target=None, original_input="do A"
     )
     turn.steering_mailbox.put_nowait("first hint")
     turn.steering_mailbox.put_nowait("second hint")
@@ -77,7 +77,7 @@ async def test_steering_empty_mailbox_returns_none() -> None:
     reg = TurnRegistry()
     t = asyncio.create_task(asyncio.sleep(0))
     await reg.register(
-        "req-3", session_id="s3", task=t, target=None, original_input="task"
+        "req-3", session_key="s3", task=t, target=None, original_input="task"
     )
     cb = make_steering_callback(reg, "req-3")
     folded = await asyncio.wait_for(

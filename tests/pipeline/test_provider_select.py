@@ -49,7 +49,7 @@ def _make_reg_services_state() -> tuple[ProviderRegistry, StepServices, Pipeline
     services = StepServices(provider_registry=reg)
     state = PipelineState(
         trace_id="t",
-        session_id="s1",
+        session_key="s1",
         input_text="hi",
         channel="cli",
         owl_name="some_owl",
@@ -143,7 +143,7 @@ def test_plan_session_tier_is_pinned_to_that_tier() -> None:
     reg, services, state = _make_reg_services_state()
     reg.register_mock("standard_a", MockProvider(name="standard_a"), tier="standard")
     tier_command.reset_session_tiers()
-    tier_command._fallback_prefs[state.session_id] = "standard"
+    tier_command._fallback_prefs[state.session_key] = "standard"
     token = rc.bind()
     try:
         plan = select_tool_provider_plan(reg, services, state)
@@ -226,7 +226,7 @@ def test_choice_floor_tier_tracks_intent_when_enabled() -> None:
     settings_on = Settings().model_copy(update={"answer_floor_by_intent": True})
     services = StepServices(provider_registry=reg, settings=settings_on)
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="some_owl", pipeline_step="execute", intent_class="standard",
     )
     token = rc.bind()
@@ -238,7 +238,7 @@ def test_choice_floor_tier_tracks_intent_when_enabled() -> None:
 
     # conversational intent => floor "fast".
     state_conv = PipelineState(
-        trace_id="t2", session_id="s", input_text="hi", channel="cli",
+        trace_id="t2", session_key="s", input_text="hi", channel="cli",
         owl_name="some_owl", pipeline_step="execute", intent_class="conversational",
     )
     token = rc.bind()
@@ -282,7 +282,7 @@ class TestToolProviderChoiceModel:
             owl_registry=_FakeOwlReg(_FakeManifest(model_tier="standard")),
         )
         state = PipelineState(
-            trace_id="t", session_id="s1", input_text="hi", channel="cli",
+            trace_id="t", session_key="s1", input_text="hi", channel="cli",
             owl_name="some_owl", pipeline_step="execute",
         )
         token = rc.bind()
@@ -302,7 +302,7 @@ def test_choice_floor_tier_is_fast_when_flag_off() -> None:
     settings_off = Settings().model_copy(update={"answer_floor_by_intent": False})
     services = StepServices(provider_registry=reg, settings=settings_off)
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="some_owl", pipeline_step="execute", intent_class="standard",
     )
     token = rc.bind()

@@ -170,7 +170,9 @@ class RoundRunner:
         )
         state = PipelineState(
             trace_id=str(uuid.uuid4()),
-            session_id=session.session_id,
+            # The debate's own id doubles as this sub-pipeline's lane: every owl in
+            # the round shares one lane, which is what keeps their turns grouped.
+            session_key=session.session_id,
             input_text=prompt,
             channel="parliament",
             owl_name=owl_name,

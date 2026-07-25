@@ -38,7 +38,7 @@ async def test_save_then_latest_roundtrips(pool: DbPool) -> None:
             evidence={"verified": True, "score": 0.91},  # non-str values
         ),
     )
-    await store.save(session_id="s-1", trace_id="t-1", decisions=decisions)
+    await store.save(session_key="s-1", trace_id="t-1", decisions=decisions)
     loaded = await store.latest("s-1")
     assert loaded is not None
     assert len(loaded) == 2
@@ -55,11 +55,11 @@ async def test_save_then_latest_roundtrips(pool: DbPool) -> None:
 async def test_save_upserts_latest_only(pool: DbPool) -> None:
     store = TurnDecisionStore(pool)
     await store.save(
-        session_id="s-2", trace_id="t-a",
+        session_key="s-2", trace_id="t-a",
         decisions=(Decision(point="router", verdict="ask"),),
     )
     await store.save(
-        session_id="s-2", trace_id="t-b",
+        session_key="s-2", trace_id="t-b",
         decisions=(Decision(point="router", verdict="act"),),
     )
     loaded = await store.latest("s-2")

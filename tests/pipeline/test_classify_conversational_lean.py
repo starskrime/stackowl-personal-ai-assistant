@@ -31,7 +31,7 @@ from stackowl.pipeline.steps import classify
 def _state(intent: str) -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="hi",
         channel="cli",
         owl_name="secretary",
@@ -43,10 +43,10 @@ def _state(intent: str) -> PipelineState:
 class _StubBridge:
     """Minimal MemoryBridge: no long-term facts, no history."""
 
-    async def retrieve(self, query: str, session_id: str) -> str:  # noqa: ARG002
+    async def retrieve(self, query: str, session_key: str) -> str:  # noqa: ARG002
         return ""
 
-    async def recent_conversation_turns(self, session_id: str, limit: int):  # noqa: ARG002
+    async def recent_conversation_turns(self, session_key: str, limit: int):  # noqa: ARG002
         return []
 
 
@@ -135,7 +135,7 @@ async def test_standard_still_gathers(monkeypatch: pytest.MonkeyPatch) -> None:
     # without it the fail-closed gate suppresses the failure-history blocks.
     classified_standard = PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="hi",
         channel="cli",
         owl_name="secretary",

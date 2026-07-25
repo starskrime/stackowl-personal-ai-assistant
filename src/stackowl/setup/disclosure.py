@@ -49,32 +49,32 @@ class AiActDisclosure:
         )
         return text
 
-    def was_shown_this_session(self, session_id: str) -> bool:
-        """Return True if the disclosure was already shown in *session_id*."""
+    def was_shown_this_session(self, session_key: str) -> bool:
+        """Return True if the disclosure was already shown in *session_key*."""
         # 1. ENTRY
         log.setup.debug(
             "[disclosure] was_shown_this_session: entry",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
-        result = session_id in self._shown_sessions
+        result = session_key in self._shown_sessions
         # 4. EXIT
         log.setup.debug(
             "[disclosure] was_shown_this_session: exit",
-            extra={"_fields": {"session_id": session_id, "result": result}},
+            extra={"_fields": {"session_key": session_key, "result": result}},
         )
         return result
 
-    def mark_shown(self, session_id: str) -> None:
-        """Record that the disclosure was shown in *session_id*."""
+    def mark_shown(self, session_key: str) -> None:
+        """Record that the disclosure was shown in *session_key*."""
         # 1. ENTRY
         log.setup.debug(
             "[disclosure] mark_shown: entry",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
         # 2. DECISION — add to in-memory set
-        self._shown_sessions.add(session_id)
+        self._shown_sessions.add(session_key)
         # 4. EXIT
         log.setup.debug(
             "[disclosure] mark_shown: exit",
-            extra={"_fields": {"session_id": session_id, "total_shown": len(self._shown_sessions)}},
+            extra={"_fields": {"session_key": session_key, "total_shown": len(self._shown_sessions)}},
         )

@@ -62,7 +62,7 @@ def build_ptc_factory(spec: ExecSpec) -> PtcFactory | None:
         return None
     audit = services.audit_logger
     trace = TraceContext.get()
-    session_id = str(trace.get("session_id") or spec.session_id or "")
+    session_key = str(trace.get("session_key") or spec.session_key or "")
     trace_id = trace.get("trace_id")
     trace_id_str = str(trace_id) if trace_id is not None else None
 
@@ -71,13 +71,13 @@ def build_ptc_factory(spec: ExecSpec) -> PtcFactory | None:
             registry=registry,
             workspace=workspace,
             socket_path=socket_path,
-            session_id=session_id,
+            session_key=session_key,
             trace_id=trace_id_str,
             audit_logger=audit,
         )
 
     log.tool.debug(
         "execute_code.execute: PTC factory built (host-tool callback enabled)",
-        extra={"_fields": {"session": session_id or "-"}},
+        extra={"_fields": {"session": session_key or "-"}},
     )
     return _factory

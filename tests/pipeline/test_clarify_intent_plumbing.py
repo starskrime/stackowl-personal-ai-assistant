@@ -18,7 +18,7 @@ class _NoToolsProvider:
 def _state(**kw):
     return PipelineState(
         input_text="x",
-        session_id="s",
+        session_key="s",
         channel="cli",
         trace_id="t",
         owl_name="secretary",

@@ -12,7 +12,7 @@ def _entry(pid: int | None, *, process_id: str = "p1") -> CheckpointEntry:
         process_id=process_id,
         pid=pid,
         command=["echo", "hi"],
-        session_id="s1",
+        session_key="s1",
         created_at=1000.0,
         status="running",
     )

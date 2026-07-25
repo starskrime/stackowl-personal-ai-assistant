@@ -56,7 +56,7 @@ class _FakeRegistry:
 def _state_for_terse() -> PipelineState:
     trace_id = "t-terse"
     return PipelineState(
-        trace_id=trace_id, session_id="local", input_text="x", channel="cli",
+        trace_id=trace_id, session_key="local", input_text="x", channel="cli",
         owl_name="secretary", pipeline_step="deliver",
     )
 
@@ -84,7 +84,7 @@ def _state_with_table() -> PipelineState:
         content=_TABLE, is_final=False, chunk_index=0, trace_id="t", owl_name="secretary",
     )
     return PipelineState(
-        trace_id="t", session_id="local", input_text="x", channel="cli",
+        trace_id="t", session_key="local", input_text="x", channel="cli",
         owl_name="secretary", pipeline_step="deliver", responses=(chunk,),
     )
 
@@ -186,7 +186,7 @@ async def test_enforce_output_prefs_runs_terse_summarizer_end_to_end() -> None:
         content=long_text, is_final=False, chunk_index=0, trace_id="t", owl_name="secretary",
     )
     state = PipelineState(
-        trace_id="t", session_id="local", input_text="x", channel="cli",
+        trace_id="t", session_key="local", input_text="x", channel="cli",
         owl_name="secretary", pipeline_step="deliver", responses=(chunk,),
     )
     provider = _FakeProvider("compressed reply")

@@ -45,7 +45,7 @@ def _scan(text: str, reg: OwlRegistry, *, is_direct: bool = True) -> RouteDecisi
     return scanner.scan(
         IngressMessage(
             text=text,
-            session_id="sess",
+            session_key="sess",
             channel="cli",
             trace_id="trace",
             is_direct=is_direct,

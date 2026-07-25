@@ -56,7 +56,7 @@ def _req(allow_relaxation: bool = True) -> ConsentRequest:
     return ConsentRequest(
         tool_name="danger",
         channel="telegram",
-        session_id="100",
+        session_key="100",
         summary="run the dangerous thing",
         allow_relaxation=allow_relaxation,
     )

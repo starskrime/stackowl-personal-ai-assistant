@@ -62,9 +62,9 @@ def compute_message_hash(message: str) -> str:
     return digest[:16]
 
 
-# Channels on which the originating ``session_id`` IS the recipient ``chat_id``.
-# For a Telegram PRIVATE chat the session_id (== str(user_id)) equals the chat_id
-# (private chat_id == user_id), so a numeric session_id resolves directly to the
+# Channels on which the originating ``session_key`` IS the recipient ``chat_id``.
+# For a Telegram PRIVATE chat the session_key (== str(user_id)) equals the chat_id
+# (private chat_id == user_id), so a numeric session_key resolves directly to the
 # send target. Group chats break this (chat_id != user_id), so a non-numeric or
 # non-private session is intentionally NOT resolved (returns None → back-compat
 # ``_last_chat_id`` fallback). Other channels are text-only / single-terminal and
@@ -72,20 +72,20 @@ def compute_message_hash(message: str) -> str:
 _SESSION_IS_CHAT_ID_CHANNELS = frozenset({"telegram"})
 
 
-def resolve_target_chat_id(channel: str | None, session_id: str | None) -> int | None:
+def resolve_target_chat_id(channel: str | None, session_key: str | None) -> int | None:
     """Resolve the explicit recipient ``chat_id`` for a proactive/heartbeat send.
 
     A proactive send with no recipient rides the channel adapter's shared mutable
     ``_last_chat_id`` and, under concurrency, can cross-deliver to whoever messaged
     last. This pure helper recovers the genuine recipient from the originating
-    ``session_id`` WHERE that is safe to do — i.e. only on channels where the
-    session id is the chat id (Telegram private chats: session_id == str(user_id)
+    ``session_key`` WHERE that is safe to do — i.e. only on channels where the
+    session id is the chat id (Telegram private chats: session_key == str(user_id)
     == chat_id). It returns:
 
-    * the numeric ``chat_id`` when ``channel`` is such a channel and ``session_id``
+    * the numeric ``chat_id`` when ``channel`` is such a channel and ``session_key``
       is a clean integer (the common, correct case), or
-    * ``None`` for any other channel, a missing/blank ``session_id``, or a
-      non-numeric ``session_id`` (e.g. a Telegram group, whose chat_id != user_id)
+    * ``None`` for any other channel, a missing/blank ``session_key``, or a
+      non-numeric ``session_key`` (e.g. a Telegram group, whose chat_id != user_id)
       — the deliverer then falls back to ``_last_chat_id`` (back-compat), and that
       AMBIGUITY is logged loudly (no silent guess at the target).
 
@@ -93,10 +93,10 @@ def resolve_target_chat_id(channel: str | None, session_id: str | None) -> int |
     """
     if not channel or channel not in _SESSION_IS_CHAT_ID_CHANNELS:
         return None
-    sid = (session_id or "").strip()
+    sid = (session_key or "").strip()
     if not sid:
         log.notifications.warning(
-            "[notifications] resolve_target_chat_id: no session_id on a "
+            "[notifications] resolve_target_chat_id: no session_key on a "
             "chat-addressable channel — recipient unknown, falling back to "
             "_last_chat_id (possible cross-delivery under concurrency)",
             extra={"_fields": {"channel": channel}},
@@ -108,10 +108,10 @@ def resolve_target_chat_id(channel: str | None, session_id: str | None) -> int |
         # Non-numeric session id on a chat-addressable channel (e.g. a group chat
         # whose session id is not the user/chat id). Do NOT guess a target.
         log.notifications.warning(
-            "[notifications] resolve_target_chat_id: session_id is not a chat id "
+            "[notifications] resolve_target_chat_id: session_key is not a chat id "
             "— recipient unresolved, falling back to _last_chat_id (possible "
             "cross-delivery under concurrency)",
-            extra={"_fields": {"channel": channel, "session_id": sid}},
+            extra={"_fields": {"channel": channel, "session_key": sid}},
         )
         return None
 

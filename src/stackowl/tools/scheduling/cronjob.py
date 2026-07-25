@@ -289,9 +289,9 @@ class CronjobTool(Tool):
         scheduler = JobScheduler(db=db)
 
         ctx = TraceContext.get()
-        session_id = ctx.get("session_id")
+        session_key = ctx.get("session_key")
         channel = ctx.get("channel")
-        owl = await resolve_owl(db, session_id if isinstance(session_id, str) else None)
+        owl = await resolve_owl(db, session_key if isinstance(session_key, str) else None)
 
         try:
             return await self._dispatch(args, scheduler, owl, channel, t0)

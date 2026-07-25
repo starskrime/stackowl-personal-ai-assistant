@@ -73,7 +73,7 @@ def _services(tmp_db: DbPool, registry: OwlRegistry) -> StepServices:
 
 
 class _State:
-    session_id = "s1"
+    session_key = "s1"
     trace_id = "t1"
     channel = "cli"
     reply_target = None
@@ -100,7 +100,7 @@ async def test_owl_create_report_flag_end_to_end_no_capability_or_specialty(
     registry = OwlRegistry.with_default_secretary()
     token = set_services(_services(tmp_db, registry))
     trace = TraceContext.start(
-        session_id="s1", trace_id="t1", interactive=True, channel="cli",
+        session_key="s1", trace_id="t1", interactive=True, channel="cli",
         delegation_depth=0, owl_name="secretary",
     )
     try:

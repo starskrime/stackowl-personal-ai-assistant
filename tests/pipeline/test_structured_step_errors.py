@@ -41,7 +41,7 @@ def test_critical_failure_reads_structured_step_error() -> None:
     # A REFORMATTED error string the old parser would no longer recognize
     # (prefixed with a trace id) — but the structured record names the step.
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="do it", channel="cli",
+        trace_id="t", session_key="s", input_text="do it", channel="cli",
         owl_name="o", pipeline_step="deliver",
         errors=("[trace=abc] execute failed >> ValueError: boom",),
         step_errors=(StepError(step="execute", exc_type="ValueError", message="boom"),),
@@ -55,7 +55,7 @@ def test_critical_failure_string_fallback_still_works() -> None:
     from stackowl.pipeline.delivery_gate import detect_critical_failure
 
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="do it", channel="cli",
+        trace_id="t", session_key="s", input_text="do it", channel="cli",
         owl_name="o", pipeline_step="deliver",
         errors=("execute: RuntimeError: kaboom",),
     )
@@ -66,7 +66,7 @@ def test_no_critical_failure_when_non_critical_step_errored() -> None:
     from stackowl.pipeline.delivery_gate import detect_critical_failure
 
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="do it", channel="cli",
+        trace_id="t", session_key="s", input_text="do it", channel="cli",
         owl_name="o", pipeline_step="deliver",
         errors=("assemble: KeyError: x",),
         step_errors=(StepError(step="assemble", exc_type="KeyError", message="x"),),
@@ -86,7 +86,7 @@ async def test_giveup_floor_reads_state_snapshot_without_ledger_binding() -> Non
 
     # No tool_outcome_ledger.bind() here — the ContextVar is at its empty default.
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="send the email", channel="cli",
+        trace_id="t", session_key="s", input_text="send the email", channel="cli",
         owl_name="o", pipeline_step="execute",
         responses=(),
         consequential_failures=("send_email",),
@@ -104,7 +104,7 @@ async def test_giveup_floor_snapshot_respects_substitution_recovery() -> None:
     from stackowl.pipeline.delivery_gate import surface_consequential_giveup_floor
 
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="send the email", channel="cli",
+        trace_id="t", session_key="s", input_text="send the email", channel="cli",
         owl_name="o", pipeline_step="execute",
         responses=(),
         consequential_failures=("send_email",),

@@ -92,7 +92,7 @@ class CoreSink:
         self,
         *,
         clarify_id: str,
-        session_id: str,
+        session_key: str,
         question: str,
         trace_id: str,
         target: int | str | None = None,
@@ -100,7 +100,7 @@ class CoreSink:
         await self._conn.send(
             ClarifyAskFrame(
                 clarify_id=clarify_id,
-                session_id=session_id,
+                session_key=session_key,
                 question=question,
                 trace_id=trace_id,
                 target=target,
@@ -144,7 +144,7 @@ class CoreLink:
             log.gateway.error(
                 "[ipc] core link: dispatch failed",
                 exc_info=exc,
-                extra={"_fields": {"request_id": msg.trace_id, "session_id": msg.session_id}},
+                extra={"_fields": {"request_id": msg.trace_id, "session_key": msg.session_key}},
             )
             # F-39 — surface a visible failure on the stream so the channel does
             # not deliver a silently truncated/empty answer. Best-effort: a notice

@@ -513,7 +513,7 @@ class SkillSynthesizer:
         # via the shared gate (fixes the direct-write bypass). A blocked scan
         # or a denied consent leaves NOTHING on disk and NOTHING indexed.
         skill_md = _emit_skill_md(manifest, parsed["body"])
-        tool_name, channel, session_id = resolve_consent_identity(
+        tool_name, channel, session_key = resolve_consent_identity(
             live_tool_name=_CONSENT_TOOL_NAME_LIVE,
             scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
         )
@@ -525,7 +525,7 @@ class SkillSynthesizer:
                 f"{cluster.size}-outcome success cluster "
                 f"(tools: {', '.join(cluster.sequence)})"
             ),
-            tool_name=tool_name, channel=channel, session_id=session_id,
+            tool_name=tool_name, channel=channel, session_key=session_key,
         )
         result = await gated_skill_write(
             request, store=self._skills, consent_gate=self._consent_gate,
@@ -727,7 +727,7 @@ class SkillSynthesizer:
         # Task 4 — security_scan_gate -> consent -> write -> store.upsert, all
         # via the shared gate (fixes the direct-write bypass). A blocked scan
         # or a denied consent leaves the existing SKILL.md untouched.
-        tool_name, channel, session_id = resolve_consent_identity(
+        tool_name, channel, session_key = resolve_consent_identity(
             live_tool_name=_CONSENT_TOOL_NAME_LIVE,
             scheduled_tool_name=_CONSENT_TOOL_NAME_SCHEDULED,
         )
@@ -739,7 +739,7 @@ class SkillSynthesizer:
                 f"(success_rate={skill.success_rate:.2f}, "
                 f"n_executions={skill.n_executions})"
             ),
-            tool_name=tool_name, channel=channel, session_id=session_id,
+            tool_name=tool_name, channel=channel, session_key=session_key,
         )
         result = await gated_skill_write(
             request, store=self._skills, consent_gate=self._consent_gate,

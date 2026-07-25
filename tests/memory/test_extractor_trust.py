@@ -93,7 +93,7 @@ async def test_empty_model_output_returns_no_facts_not_crash() -> None:
         Message(role="user", content="I love hiking."),
         Message(role="assistant", content="That's great!"),
     ]
-    facts = await extractor.extract(convo, session_id="sess-empty")
+    facts = await extractor.extract(convo, session_key="sess-empty")
     assert facts == [], f"empty output must extract zero facts, got {facts!r}"
 
 
@@ -105,7 +105,7 @@ async def test_extracted_facts_untrusted_when_batch_has_tool_role() -> None:
         Message(role="user", content="What did the API return?"),
         Message(role="tool", content="external tool output: 42"),
     ]
-    facts = await extractor.extract(convo, session_id="sess-tool")
+    facts = await extractor.extract(convo, session_key="sess-tool")
     assert facts, "extractor must return at least one fact"
     assert all(f.trust == "untrusted" for f in facts), (
         f"expected all facts untrusted, got: {[f.trust for f in facts]}"
@@ -120,7 +120,7 @@ async def test_extracted_facts_self_when_no_tool_role() -> None:
         Message(role="user", content="I love hiking."),
         Message(role="assistant", content="That's great!"),
     ]
-    facts = await extractor.extract(convo, session_id="sess-clean")
+    facts = await extractor.extract(convo, session_key="sess-clean")
     assert facts, "extractor must return at least one fact"
     expected_trust = trust_for_source("conversation_fact")  # == "self"
     assert all(f.trust == expected_trust for f in facts), (
@@ -184,7 +184,7 @@ async def test_extract_threads_constructor_model_to_provider_complete() -> None:
         Message(role="user", content="I love hiking."),
         Message(role="assistant", content="That's great!"),
     ]
-    facts = await extractor.extract(convo, session_id="sess-model")
+    facts = await extractor.extract(convo, session_key="sess-model")
     assert facts, "extractor must return at least one fact"
     assert provider.seen_models == ["fact-extractor-resolved-model"], (
         f"expected provider.complete to receive the constructor model, got: {provider.seen_models!r}"
@@ -201,7 +201,7 @@ async def test_extract_default_model_is_empty_string_when_unset() -> None:
         Message(role="user", content="I love hiking."),
         Message(role="assistant", content="That's great!"),
     ]
-    await extractor.extract(convo, session_id="sess-default-model")
+    await extractor.extract(convo, session_key="sess-default-model")
     assert provider.seen_models == [""], (
         f"expected default model='', got: {provider.seen_models!r}"
     )

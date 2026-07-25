@@ -29,9 +29,9 @@ async def test_streamed_token_chunks_persist_as_flowing_text(monkeypatch) -> Non
     stored: dict = {}
 
     class FakeBridge:
-        async def store(self, content, session_id, *, trust=None):
+        async def store(self, content, session_key, *, trust=None):
             stored["content"] = content
-            stored["session_id"] = session_id
+            stored["session_key"] = session_key
 
     class FakeServices:
         memory_bridge = FakeBridge()
@@ -43,7 +43,7 @@ async def test_streamed_token_chunks_persist_as_flowing_text(monkeypatch) -> Non
 
     # Streamed shape: one chunk per token, whitespace carried inside the chunks.
     state = PipelineState(
-        trace_id="trace-s", session_id="sess-s", input_text="hello",
+        trace_id="trace-s", session_key="sess-s", input_text="hello",
         channel="telegram", owl_name="secretary", pipeline_step="respond",
         responses=tuple(
             _chunk(t, i) for i, t in enumerate(["The ", "quick ", "brown ", "fox."])

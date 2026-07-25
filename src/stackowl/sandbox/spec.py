@@ -103,7 +103,7 @@ class ExecSpec(BaseModel):
     stdin: str | None = None
     # Correlation id for the consent prompt + audit trail (set by the execute_code
     # tool from the turn's session; backends log it, never use it for isolation).
-    session_id: str = ""
+    session_key: str = ""
 
     @field_validator("timeout_s")
     @classmethod

@@ -20,10 +20,10 @@ from stackowl.pipeline.streaming import ResponseChunk
 
 def test_ingress_message_carries_optional_chat_id() -> None:
     m = IngressMessage(
-        text="hi", session_id="s1", channel="telegram", trace_id="req-1", chat_id=999
+        text="hi", session_key="s1", channel="telegram", trace_id="req-1", chat_id=999
     )
     assert m.chat_id == 999
-    m2 = IngressMessage(text="hi", session_id="s1", channel="cli", trace_id="req-2")
+    m2 = IngressMessage(text="hi", session_key="s1", channel="cli", trace_id="req-2")
     assert m2.chat_id is None
 
 

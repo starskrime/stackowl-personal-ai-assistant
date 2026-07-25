@@ -428,7 +428,7 @@ class DurableTaskRecoverer:
             )
         base = PipelineState(
             trace_id=f"recover-{task_id[:12]}",
-            session_id=f"recover-{task_id[:12]}",
+            session_key=f"recover-{task_id[:12]}",
             input_text=task.goal,
             channel=channel,
             owl_name=owl_name,
@@ -599,7 +599,7 @@ class MessageLedgerRecoverer:
     def _launch_drive(self, row: MessageLedgerRow) -> None:
         state = PipelineState(
             trace_id=row.trace_id,
-            session_id=row.session_id,
+            session_key=row.session_key,
             input_text=row.input_text,
             channel=row.channel,
             owl_name=_DEFAULT_OWL,

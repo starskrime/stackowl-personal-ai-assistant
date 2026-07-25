@@ -12,7 +12,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 
 def _row(**overrides):
     defaults = dict(
-        id="retry-1", trace_id="trace-orig", session_id="sess-1",
+        id="retry-1", trace_id="trace-orig", session_key="sess-1",
         goal="prepare me for the interview", banned_capabilities=["cronjob"],
         attempt_count=0, status="pending", next_retry_at="", last_error=None,
         channel="telegram", channel_chat_id="555", channel_message_id="999",
@@ -27,7 +27,7 @@ async def test_attempt_retry_success_edits_message():
     row = _row()
 
     success_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         responses=(
             ResponseChunk(
@@ -68,7 +68,7 @@ async def test_attempt_retry_shares_one_retry_lineage_id_across_attempts():
     row = _row()
 
     success_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         responses=(
             ResponseChunk(
@@ -109,7 +109,7 @@ async def test_attempt_retry_success_joins_streamed_chunks_without_newlines():
     row = _row()
 
     success_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         responses=tuple(
             ResponseChunk(
@@ -143,7 +143,7 @@ async def test_attempt_retry_failure_marks_attempt(monkeypatch: pytest.MonkeyPat
     row = _row()
 
     floored_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         responses=(
             ResponseChunk(
@@ -192,7 +192,7 @@ async def test_attempt_retry_pins_newly_failed_capability_not_already_banned():
     row = _row(banned_capabilities=["cronjob"])
 
     floored_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         consequential_snapshot_taken=True,
         consequential_failures=("web_search",),
@@ -234,7 +234,7 @@ async def test_attempt_retry_budget_capped_partial_is_not_success():
     row = _row()
 
     budget_capped_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         budget_capped=True,
         responses=(
@@ -278,7 +278,7 @@ async def test_attempt_retry_overclaim_blocked_is_not_success():
     row = _row()
 
     overclaim_blocked_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         overclaim_blocked=True,
         responses=(
@@ -324,7 +324,7 @@ async def test_attempt_retry_reschedules_by_telegram_retry_after_on_flood_contro
     row = _row(channel_message_id=None)
 
     success_state = PipelineState(
-        trace_id="trace-new", session_id="sess-1", input_text=row.goal,
+        trace_id="trace-new", session_key="sess-1", input_text=row.goal,
         channel="telegram", owl_name="secretary", pipeline_step="",
         responses=(
             ResponseChunk(

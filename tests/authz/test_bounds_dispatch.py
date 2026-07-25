@@ -65,7 +65,7 @@ class _TwoToolProvider:
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="trace-bounds", session_id="sess-1", input_text="go",
+        trace_id="trace-bounds", session_key="sess-1", input_text="go",
         channel="telegram", owl_name="bounded_owl", pipeline_step="execute",
     )
 
@@ -81,7 +81,7 @@ class _RecordingConsentGate:
 
     Matches the real ConsequentialActionGate.check() positional + keyword
     signature as called by the dispatch seam:
-      gate.check(t, channel=..., session_id=..., call_args=...)
+      gate.check(t, channel=..., session_key=..., call_args=...)
     """
 
     def __init__(self) -> None:
@@ -92,7 +92,7 @@ class _RecordingConsentGate:
         tool: object,
         *,
         channel: str | None = None,
-        session_id: str | None = None,
+        session_key: str | None = None,
         category: str | None = None,
         call_args: dict[str, object] | None = None,
     ) -> bool:
@@ -235,7 +235,7 @@ async def test_empty_allowlist_blocks_even_discovery_meta_tools() -> None:
     owl_registry.register(_manifest("locked_owl", BoundsSpec(tools=frozenset())))
     provider = _MetaToolProvider()
     state = PipelineState(
-        trace_id="trace-locked", session_id="sess-2", input_text="go",
+        trace_id="trace-locked", session_key="sess-2", input_text="go",
         channel="telegram", owl_name="locked_owl", pipeline_step="execute",
     )
     token = set_services(StepServices(tool_registry=registry, owl_registry=owl_registry))

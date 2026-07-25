@@ -146,7 +146,7 @@ async def _run(
     ))
     provider = _SeqProvider(calls)
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="x", channel="telegram",
+        trace_id="t", session_key="s", input_text="x", channel="telegram",
         owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(

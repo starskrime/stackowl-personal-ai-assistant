@@ -480,12 +480,12 @@ def _build_services(
 
 
 def _state_from_decision(
-    decision: Any, *, trace_id: str, session_id: str, channel: str, raw_text: str
+    decision: Any, *, trace_id: str, session_key: str, channel: str, raw_text: str
 ) -> PipelineState:
     input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel=channel,
         owl_name=decision.target,
@@ -519,7 +519,7 @@ async def test_giant_tool_result_through_gateway_stays_under_budget(
     scanner = GatewayScanner(owl_registry=owl_registry)
 
     msg = IngressMessage(
-        text="look it up", session_id="sess-giant", channel="cli", trace_id="trace-giant-1"
+        text="look it up", session_key="sess-giant", channel="cli", trace_id="trace-giant-1"
     )
     decision = scanner.scan(msg)
     assert decision.route == "owl"
@@ -527,7 +527,7 @@ async def test_giant_tool_result_through_gateway_stays_under_budget(
     state = _state_from_decision(
         decision,
         trace_id=msg.trace_id,
-        session_id="sess-giant",
+        session_key="sess-giant",
         channel=msg.channel,
         raw_text=msg.text,
     )

@@ -21,7 +21,7 @@ def _clarify_state(**kw) -> PipelineState:
     """Minimal interactive clarify state."""
     defaults = dict(
         input_text="can you help me with pictures",
-        session_id="sess-1",
+        session_key="sess-1",
         channel="cli",
         interactive=True,
         intent_class="clarify",
@@ -90,8 +90,8 @@ async def test_maybe_clarify_registers_and_emits_question():
     asked: dict = {}
 
     class _GW:
-        async def ask(self, session_id, channel, question, **kw):
-            asked.update(session_id=session_id, channel=channel, question=question, kw=kw)
+        async def ask(self, session_key, channel, question, **kw):
+            asked.update(session_key=session_key, channel=channel, question=question, kw=kw)
             return "cid-1"
 
     class _Services:
@@ -161,8 +161,8 @@ async def test_clarify_branch_emits_question_and_registers_no_tool_loop(monkeypa
     asked: dict = {}
 
     class _GW:
-        async def ask(self, session_id, channel, question, **kw):
-            asked.update(session_id=session_id, question=question, kw=kw)
+        async def ask(self, session_key, channel, question, **kw):
+            asked.update(session_key=session_key, question=question, kw=kw)
             return "cid"
 
     class _Services:
@@ -249,7 +249,7 @@ async def test_maybe_clarify_still_surfaces_genuine_first_time():
     asked: dict = {}
 
     class _GW:
-        async def ask(self, session_id, channel, question, **kw):
+        async def ask(self, session_key, channel, question, **kw):
             asked["question"] = question
             return "cid"
 
@@ -280,7 +280,7 @@ async def test_maybe_clarify_parks_unresolvable_when_resolver_on(monkeypatch):
     asked: dict = {}
 
     class _GW:
-        async def ask(self, session_id, channel, question, **kw):
+        async def ask(self, session_key, channel, question, **kw):
             asked.update(question=question)
             return "cid-1"
 

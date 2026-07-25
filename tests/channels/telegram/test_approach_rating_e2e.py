@@ -34,7 +34,7 @@ async def test_full_approach_rating_loop(tmp_path: Path) -> None:
     try:
         store = TaskOutcomeStore(db)
         await store.record(
-            trace_id="trace-e2e", session_id="s1", owl_name="secretary", channel="telegram",
+            trace_id="trace-e2e", session_key="s1", owl_name="secretary", channel="telegram",
             success=True, latency_ms=50.0, tool_call_count=0, failure_class=None,
             step_durations={}, input_text="prepare me for the interview",
             response_text="here's your plan...",

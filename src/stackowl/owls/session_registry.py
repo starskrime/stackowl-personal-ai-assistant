@@ -10,7 +10,7 @@ messages don't leak (the queue has no eviction of its own).
 
 Continuity is NOT stored on the handle. A session's conversation is threaded
 THROUGH the existing Plan A history system: ``sessions_spawn`` / ``sessions_send``
-run the pipeline with ``session_id=f"session:{label}"``; ``classify`` reads prior
+run the pipeline with ``session_key=f"session:{label}"``; ``classify`` reads prior
 turns from the MemoryBridge by that id (overwriting any seed) and ``consolidate``
 writes each turn back to the bridge under that id. The handle therefore carries
 ONLY identity + activity — no ``history`` (a duplicated handle-history would be

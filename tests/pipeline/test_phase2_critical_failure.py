@@ -174,7 +174,7 @@ def _delivered_text(state: PipelineState) -> str:
 def _state(owl_name: str = "secretary", *, session: str = "sess-crit") -> PipelineState:
     return PipelineState(
         trace_id="trace-crit",
-        session_id=session,
+        session_key=session,
         input_text="¿Cuál es la capital de Francia?",
         channel="cli",
         owl_name=owl_name,
@@ -229,7 +229,7 @@ async def test_execute_failure_surfaces_user_message(tmp_db: DbPool) -> None:
     scanner = GatewayScanner(owl_registry=owl_registry)
     msg = IngressMessage(
         text="¿Cuál es la capital de Francia?",
-        session_id="sess-crit-gw",
+        session_key="sess-crit-gw",
         channel="cli",
         trace_id="trace-crit-gw",
     )
@@ -239,7 +239,7 @@ async def test_execute_failure_surfaces_user_message(tmp_db: DbPool) -> None:
 
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=decision.stripped_text if decision.stripped_text is not None else msg.text,
         channel=msg.channel,
         owl_name=decision.target,

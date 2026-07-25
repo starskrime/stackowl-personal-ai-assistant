@@ -13,7 +13,7 @@ Two modes (ONE tool, mutually-exclusive validated args):
 
 Severity ``read`` — ``wait`` never spends and is never consent-gated. It is a
 THIN surface over the S0 substrate: it resolves ``get_services().process_registry``
-at execute time (never building one) and reads the caller's ``session_id`` from
+at execute time (never building one) and reads the caller's ``session_key`` from
 :class:`TraceContext` so a ``wait`` on another session's ``process_id`` sees
 ``None`` → a structured "no such process" (Fork E scoping).
 
@@ -188,7 +188,7 @@ class WaitTool(Tool):
             return self._err("process substrate unavailable (no process registry configured)", t0)
 
         pid = args.for_process or ""
-        session_id = self._session_id()
+        session_key = self._session_key()
         timeout = _clamp(args.timeout if args.timeout is not None else WAIT_MAX_TIMEOUT_SECONDS)
 
         # Deadline via the INJECTED clock (ARCH-99) — no wall-time literal here.
@@ -200,7 +200,7 @@ class WaitTool(Tool):
         )
 
         while True:
-            handle = await registry.poll(pid, session_id)
+            handle = await registry.poll(pid, session_key)
             if handle is None:
                 # Unknown / absent / another session's id (Fork E) — structured, never raise.
                 return self._err(f"no such process: {pid!r}", t0)
@@ -230,9 +230,9 @@ class WaitTool(Tool):
 
     # ---------------------------------------------------------------- helpers
     @staticmethod
-    def _session_id() -> str:
+    def _session_key() -> str:
         """The caller's session id from TraceContext (scopes the registry poll)."""
-        sid = TraceContext.get().get("session_id")
+        sid = TraceContext.get().get("session_key")
         return str(sid) if sid else ""
 
     def _ok(self, payload: dict[str, object], t0: float) -> ToolResult:

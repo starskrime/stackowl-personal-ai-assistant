@@ -45,7 +45,7 @@ class FakeClock:
 def _make_state(**kwargs: Any) -> PipelineState:
     defaults: dict[str, Any] = {
         "trace_id": "trace-001",
-        "session_id": "sess-001",
+        "session_key": "sess-001",
         "input_text": "hello",
         "channel": "cli",
         "owl_name": "secretary",
@@ -211,7 +211,7 @@ async def test_asyncio_backend_step_error_captured(monkeypatch: pytest.MonkeyPat
 async def test_asyncio_backend_deliver_writes_to_registry() -> None:
     registry = StreamRegistry()
     # DELIBERATE re-key (§4.1): deliver resolves the writer by request_id
-    # (state.trace_id), not session_id. Register under the turn's trace_id and tag
+    # (state.trace_id), not session_key. Register under the turn's trace_id and tag
     # the chunk with the same request_id so it is delivered (not hard-dropped).
     request_id = "trace-001"  # == _make_state default trace_id
     writer, reader = registry.create(request_id)
@@ -219,7 +219,7 @@ async def test_asyncio_backend_deliver_writes_to_registry() -> None:
     chunk = ResponseChunk(
         content="world", is_final=False, chunk_index=0, trace_id=request_id, owl_name="secretary"
     )
-    state = _make_state(session_id="sess-deliver", responses=(chunk,))
+    state = _make_state(session_key="sess-deliver", responses=(chunk,))
 
     backend = AsyncioBackend(services=StepServices(stream_registry=registry))
     await backend.run(state)
@@ -232,7 +232,7 @@ async def test_asyncio_backend_deliver_writes_to_registry() -> None:
 
 async def test_asyncio_backend_deliver_no_writer_logs_warning(capture_logs: list[dict]) -> None:
     registry = StreamRegistry()
-    state = _make_state(session_id="sess-no-writer")
+    state = _make_state(session_key="sess-no-writer")
     backend = AsyncioBackend(services=StepServices(stream_registry=registry))
     result = await backend.run(state)
     assert result.errors == ()

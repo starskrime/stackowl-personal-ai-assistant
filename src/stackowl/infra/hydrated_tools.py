@@ -27,7 +27,7 @@ _lock = threading.Lock()
 _by_session: dict[str, OrderedDict[str, None]] = {}
 
 
-def record(session_id: str | None, names: list[str]) -> None:
+def record(session_key: str | None, names: list[str]) -> None:
     """Record tools surfaced this turn; most-recently-seen evicts oldest.
 
     ``names`` is assumed best-match-first (tool_search's own ranking order).
@@ -36,10 +36,10 @@ def record(session_id: str | None, names: list[str]) -> None:
     the front, which is exactly what ``popitem(last=False)`` evicts first when
     a single call surfaces more than ``_MAX_PER_SESSION`` names.
     """
-    if not session_id or not names:
+    if not session_key or not names:
         return
     with _lock:
-        bucket = _by_session.setdefault(session_id, OrderedDict())
+        bucket = _by_session.setdefault(session_key, OrderedDict())
         for name in reversed(names):
             bucket.pop(name, None)
             bucket[name] = None
@@ -47,16 +47,16 @@ def record(session_id: str | None, names: list[str]) -> None:
             bucket.popitem(last=False)
 
 
-def get(session_id: str | None) -> set[str]:
+def get(session_key: str | None) -> set[str]:
     """Return the current hydrated-tool names for a session (empty if none)."""
-    if not session_id:
+    if not session_key:
         return set()
     with _lock:
-        bucket = _by_session.get(session_id)
+        bucket = _by_session.get(session_key)
         return set(bucket) if bucket else set()
 
 
-def clear(session_id: str) -> None:
+def clear(session_key: str) -> None:
     """Drop a session's hydrated set entirely (e.g. on session close)."""
     with _lock:
-        _by_session.pop(session_id, None)
+        _by_session.pop(session_key, None)

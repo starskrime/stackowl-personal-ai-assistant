@@ -184,11 +184,11 @@ def _build_services(
 
 async def _execute_turn(text: str, session: str, trace: str, backend: AsyncioBackend) -> str:
     scanner = GatewayScanner(owl_registry=OwlRegistry.with_default_secretary())
-    msg = IngressMessage(text=text, session_id=session, channel="cli", trace_id=trace)
+    msg = IngressMessage(text=text, session_key=session, channel="cli", trace_id=trace)
     decision = scanner.scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start", interactive=True,
     )
     final_state = await backend.run(state)

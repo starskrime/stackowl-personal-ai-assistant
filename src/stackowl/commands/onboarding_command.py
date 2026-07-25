@@ -51,7 +51,7 @@ class OnboardingCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
         log.gateway.debug(
             "[commands] onboarding.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         step, params = _parse_step(args)
         if step == "":

@@ -20,7 +20,7 @@ directly in ``workdir`` — Claude Code's edits land on a scratch branch, never
 directly on the repo's checked-out branch. The worktree/branch are left in
 place for review (git diff/log against it) and are NEVER auto-merged or
 auto-removed — that is a separate, explicit step (via the ``git`` tool).
-``resume_session_id`` skips isolation (falls back to direct ``workdir``): a
+``resume_session_key`` skips isolation (falls back to direct ``workdir``): a
 resumed run must see the same files its earlier turn edited, and there is no
 session→worktree mapping (yet — Task #4 owns chaining worktrees across a
 story's steps). A non-git ``workdir`` also skips isolation unchanged.
@@ -92,7 +92,7 @@ class ClaudeCodeTool(Tool):
             "conversation; 'workdir' (defaults to the StackOwl workspace) the "
             "repo/directory it operates in; 'permission_mode' (default "
             "'acceptEdits') maps to the CLI's --permission-mode; "
-            "'resume_session_id' to continue a prior claude_code run instead of "
+            "'resume_session_key' to continue a prior claude_code run instead of "
             f"starting fresh; 'timeout' seconds (default {int(_TIMEOUT_SEC)}, max "
             f"{int(_TIMEOUT_CEILING_SEC)}). CONSEQUENTIAL: the user approves "
             "before every call. Not installed → returns 'unavailable'."
@@ -130,10 +130,10 @@ class ClaudeCodeTool(Tool):
                         "here (no TTY to answer) — avoid."
                     ),
                 },
-                "resume_session_id": {
+                "resume_session_key": {
                     "type": "string",
                     "description": (
-                        "A prior claude_code session_id (from an earlier call's "
+                        "A prior claude_code session_key (from an earlier call's "
                         "output) to continue that session instead of starting new."
                     ),
                 },
@@ -213,7 +213,7 @@ class ClaudeCodeTool(Tool):
                 extra={"_fields": {"requested": mode, "using": _DEFAULT_PERMISSION_MODE}},
             )
             mode = _DEFAULT_PERMISSION_MODE
-        resume = str(kwargs.get("resume_session_id", "")) or None
+        resume = str(kwargs.get("resume_session_key", "")) or None
         timeout_sec = _resolve_timeout(kwargs.get("timeout"))
 
         workdir, isolation = await self._resolve_workdir(target_workdir, resume=resume)
@@ -295,7 +295,7 @@ class ClaudeCodeTool(Tool):
         not a precondition for running at all).
         """
         if resume:
-            return target_workdir, {"isolated": False, "reason": "resume_session_id set"}
+            return target_workdir, {"isolated": False, "reason": "resume_session_key set"}
         if not await is_git_repo(target_workdir):
             return target_workdir, {"isolated": False, "reason": "workdir is not a git repo"}
 

@@ -99,7 +99,7 @@ async def _open_pool(db_path: Path) -> DbPool:
 def _fb_state(render: str, owner_key: str) -> PipelineState:
     """A pipeline state whose last render is ``render`` (the thing being reacted to)."""
     return PipelineState(
-        trace_id="t-acc", session_id="sess-acc", input_text="(user reaction)",
+        trace_id="t-acc", session_key="sess-acc", input_text="(user reaction)",
         channel="telegram", owl_name="secretary", pipeline_step="feedback",
         identity_key=owner_key,
         history=(Message(role="assistant", content=render),),

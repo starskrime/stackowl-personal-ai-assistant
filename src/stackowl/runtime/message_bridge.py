@@ -13,7 +13,7 @@ from stackowl.ipc.frames import IngressFrame
 def ingress_to_frame(msg: IngressMessage) -> IngressFrame:
     return IngressFrame(
         text=msg.text,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         channel=msg.channel,
         trace_id=msg.trace_id,
         chat_id=msg.chat_id,
@@ -25,7 +25,7 @@ def ingress_to_frame(msg: IngressMessage) -> IngressFrame:
 def frame_to_ingress(frame: IngressFrame) -> IngressMessage:
     return IngressMessage(
         text=frame.text,
-        session_id=frame.session_id,
+        session_key=frame.session_key,
         channel=frame.channel,
         trace_id=frame.trace_id,
         chat_id=frame.chat_id,

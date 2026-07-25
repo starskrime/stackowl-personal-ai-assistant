@@ -132,7 +132,7 @@ async def _drive_capped(
 
     state = PipelineState(
         trace_id="trace-budget",
-        session_id="sess-budget",
+        session_key="sess-budget",
         input_text="run many steps",
         channel="telegram",
         owl_name="o",

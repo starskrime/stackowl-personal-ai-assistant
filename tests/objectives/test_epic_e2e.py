@@ -70,7 +70,7 @@ def _stub_claude(tmp_path: Path) -> Path:
         # clean worktree and epic_runner reports "claude_code made no changes".
         "echo done-$$-$(date +%s%N) > story_output.txt\n"
         'echo \'{"type": "result", "is_error": false, "result": "done", '
-        '"session_id": "s"}\'\n'
+        '"session_key": "s"}\'\n'
     )
     os.chmod(stub, 0o755)
     return stub

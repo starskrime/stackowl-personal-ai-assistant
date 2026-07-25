@@ -17,10 +17,10 @@ from stackowl.process.registry import ProcessRegistry, ProcessRegistryError
 from .conftest import FakeClock, py
 
 
-async def _await_exit(reg: ProcessRegistry, handle, *, session_id="s1", tries=200):
+async def _await_exit(reg: ProcessRegistry, handle, *, session_key="s1", tries=200):
     """Poll until the handle reaches a terminal state (bounded, never sleeps long)."""
     for _ in range(tries):
-        polled = await reg.poll(handle.process_id, session_id)
+        polled = await reg.poll(handle.process_id, session_key)
         if polled is not None and not polled.is_running:
             return polled
         await asyncio.sleep(0.02)
@@ -37,7 +37,7 @@ def _registry(clock: FakeClock, tmp_path, **kw) -> ProcessRegistry:
 
 async def test_start_then_poll_reaps_zombie(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
-    handle = await reg.start(py("print('hi')"), session_id="s1")
+    handle = await reg.start(py("print('hi')"), session_key="s1")
     assert handle.is_running or handle.status in {"exited", "running"}
     polled = await _await_exit(reg, handle)
     # Eager-reap ran: exit_code set, status exited, transport awaited (no zombie).
@@ -50,7 +50,7 @@ async def test_start_then_poll_reaps_zombie(clock, tmp_path) -> None:
 
 async def test_nonzero_exit_is_failed(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
-    handle = await reg.start(py("import sys; sys.exit(3)"), session_id="s1")
+    handle = await reg.start(py("import sys; sys.exit(3)"), session_key="s1")
     polled = await _await_exit(reg, handle)
     assert polled.status == "failed"
     assert polled.exit_code == 3
@@ -59,14 +59,14 @@ async def test_nonzero_exit_is_failed(clock, tmp_path) -> None:
 async def test_concurrency_cap_refuses_structured(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path, max_processes=2)
     # Two long-lived sleepers fill the cap.
-    h1 = await reg.start(py("import time; time.sleep(30)"), session_id="s1")
-    h2 = await reg.start(py("import time; time.sleep(30)"), session_id="s1")
+    h1 = await reg.start(py("import time; time.sleep(30)"), session_key="s1")
+    h2 = await reg.start(py("import time; time.sleep(30)"), session_key="s1")
     with pytest.raises(ProcessRegistryError) as exc:
-        await reg.start(py("print(1)"), session_id="s1")
+        await reg.start(py("print(1)"), session_key="s1")
     assert exc.value.reason == "too_many_processes"
     # Kill is always allowed — frees a slot.
     assert await reg.kill(h1.process_id, "s1") is True
-    h3 = await reg.start(py("print(1)"), session_id="s1")
+    h3 = await reg.start(py("print(1)"), session_key="s1")
     assert h3 is not None
     await reg.kill(h2.process_id, "s1")
     await reg.kill(h3.process_id, "s1")
@@ -74,7 +74,7 @@ async def test_concurrency_cap_refuses_structured(clock, tmp_path) -> None:
 
 async def test_kill_reaps_and_is_idempotent(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
-    handle = await reg.start(py("import time; time.sleep(30)"), session_id="s1")
+    handle = await reg.start(py("import time; time.sleep(30)"), session_key="s1")
     assert await reg.kill(handle.process_id, "s1") is True
     assert handle.status == "killed"
     assert handle.transport.returncode is not None  # zombie reaped
@@ -84,7 +84,7 @@ async def test_kill_reaps_and_is_idempotent(clock, tmp_path) -> None:
 
 async def test_mandatory_ttl_auto_kill_via_fake_clock(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path, max_lifetime_seconds=100.0)
-    handle = await reg.start(py("import time; time.sleep(30)"), session_id="s1")
+    handle = await reg.start(py("import time; time.sleep(30)"), session_key="s1")
     # Not yet past the deadline — sweep leaves it running.
     counts = await reg.sweep()
     assert counts["auto_killed"] == 0
@@ -97,25 +97,25 @@ async def test_mandatory_ttl_auto_kill_via_fake_clock(clock, tmp_path) -> None:
 
 async def test_session_scoping_hides_other_sessions(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
-    h_a = await reg.start(py("import time; time.sleep(30)"), session_id="A")
-    await reg.start(py("import time; time.sleep(30)"), session_id="B")
+    h_a = await reg.start(py("import time; time.sleep(30)"), session_key="A")
+    await reg.start(py("import time; time.sleep(30)"), session_key="B")
     # Session A sees only its own process by default.
-    a_view = reg.list(session_id="A")
-    assert {h.session_id for h in a_view} == {"A"}
+    a_view = reg.list(session_key="A")
+    assert {h.session_key for h in a_view} == {"A"}
     # A cannot poll B's process (scoping returns None).
-    b_proc = reg.list(session_id="B")[0]
+    b_proc = reg.list(session_key="B")[0]
     assert await reg.poll(b_proc.process_id, "A") is None
     # all=True is the audited cross-session view.
-    everyone = reg.list(session_id="A", all=True)
-    assert {h.session_id for h in everyone} == {"A", "B"}
+    everyone = reg.list(session_key="A", all=True)
+    assert {h.session_key for h in everyone} == {"A", "B"}
     for h in everyone:
-        await reg.kill(h.process_id, h.session_id)
+        await reg.kill(h.process_id, h.session_key)
     assert h_a.status == "killed"
 
 
 async def test_dead_handle_prune_after_ttl(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path, dead_prune_seconds=50.0)
-    handle = await reg.start(py("print('bye')"), session_id="s1")
+    handle = await reg.start(py("print('bye')"), session_key="s1")
     await _await_exit(reg, handle)
     # Still within the prune window — retained so the agent can poll it.
     assert await reg.sweep() == {"auto_killed": 0, "pruned": 0, "evicted": 0}
@@ -130,9 +130,9 @@ async def test_dead_handle_prune_after_ttl(clock, tmp_path) -> None:
 async def test_aggregate_buffer_eviction(clock, tmp_path) -> None:
     # Tiny aggregate cap forces eviction of the oldest process's capture.
     reg = _registry(clock, tmp_path, aggregate_buffer_bytes=8)
-    h_old = await reg.start(py("print('A' * 50)"), session_id="s1")
+    h_old = await reg.start(py("print('A' * 50)"), session_key="s1")
     clock.advance(1.0)
-    h_new = await reg.start(py("print('B' * 50)"), session_id="s1")
+    h_new = await reg.start(py("print('B' * 50)"), session_key="s1")
     await _await_exit(reg, h_old)
     await _await_exit(reg, h_new)
     counts = await reg.sweep()
@@ -145,7 +145,7 @@ async def test_write_stdin_to_running_process(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
     handle = await reg.start(
         py("import sys; data = sys.stdin.readline(); print('got:' + data.strip())"),
-        session_id="s1",
+        session_key="s1",
     )
     assert await reg.write_stdin(handle.process_id, "ping\n", "s1") is True
     polled = await _await_exit(reg, handle)
@@ -156,8 +156,8 @@ async def test_write_stdin_to_running_process(clock, tmp_path) -> None:
 
 async def test_clear_all_terminates_everything(clock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
-    h1 = await reg.start(py("import time; time.sleep(30)"), session_id="s1")
-    h2 = await reg.start(py("import time; time.sleep(30)"), session_id="s2")
+    h1 = await reg.start(py("import time; time.sleep(30)"), session_key="s1")
+    h2 = await reg.start(py("import time; time.sleep(30)"), session_key="s2")
     cleared = await reg.clear_all()
     assert cleared == 2
     assert h1.status == "killed"
@@ -171,7 +171,7 @@ async def test_reconcile_dead_pid_starts_clean(clock, tmp_path) -> None:
 
     ckpt.save([CheckpointEntry(
         process_id="ghost", pid=999_999_999, command=["x"],
-        session_id="s1", created_at=1.0, status="running",
+        session_key="s1", created_at=1.0, status="running",
     )])
     reg = ProcessRegistry(clock=clock, checkpoint=ckpt)
     reg.reconcile()
@@ -231,7 +231,7 @@ async def test_concurrent_starts_respect_cap(clock, tmp_path, monkeypatch) -> No
 
     async def _start(i: int):
         try:
-            await reg.start(py("print(1)"), session_id=f"s{i}")
+            await reg.start(py("print(1)"), session_key=f"s{i}")
             return "ok"
         except ProcessRegistryError as exc:
             return exc.reason
@@ -256,9 +256,9 @@ async def test_failed_spawn_rolls_back_reservation(clock, tmp_path, monkeypatch)
     # permanently shrunk to refuse-everything (leak-DOWN is the top risk).
     _patch_spawn(monkeypatch, fail_pids=(1,))
     with pytest.raises(ProcessRegistryError) as exc:
-        await reg.start(py("print(1)"), session_id="s1")
+        await reg.start(py("print(1)"), session_key="s1")
     assert exc.value.reason == "spawn_failed"
     assert reg._reserved == 0  # rolled back
     # A subsequent start at-cap still succeeds (the slot was freed, not leaked down).
-    h = await reg.start(py("print(1)"), session_id="s1")
+    h = await reg.start(py("print(1)"), session_key="s1")
     assert h is not None

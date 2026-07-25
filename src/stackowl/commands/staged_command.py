@@ -110,7 +110,7 @@ class StagedCommand(SlashCommand):
         # 1. ENTRY
         log.memory.debug(
             "[commands] staged.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         if self._bridge is None:
             log.memory.warning("[commands] staged.handle: bridge not configured")

@@ -34,7 +34,7 @@ async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
 
 def _cluster(owner: str) -> ToolSequenceCluster:
     outcome = TaskOutcome(
-        outcome_id=1, trace_id="t1", session_id="s1", owl_name=owner,
+        outcome_id=1, trace_id="t1", session_key="s1", owl_name=owner,
         channel="cli", success=True, latency_ms=100.0, tool_call_count=1,
         failure_class=None, quality_score=0.9, step_durations={},
         input_text="do the thing", response_text="done",

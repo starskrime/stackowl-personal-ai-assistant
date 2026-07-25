@@ -89,7 +89,7 @@ class _FlakyRca:
 
 def _outcome(trace: str, failure_class: str, tool: str) -> TaskOutcome:
     return TaskOutcome(
-        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace, session_key="s", owl_name="o",
         channel="cli", success=False, latency_ms=1.0, tool_call_count=1,
         failure_class=failure_class, quality_score=None, step_durations={},
         input_text="do the thing", response_text="", captured_at=0.0,
@@ -101,7 +101,7 @@ def _recovered_outcome(trace: str, recovered_via_tool: str) -> TaskOutcome:
     """A turn a substitution BRIDGED — trustworthy SUCCESS, failure_class=NULL,
     invisible to list_failed_global. This is the masked-chronic-outage shape."""
     return TaskOutcome(
-        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace, session_key="s", owl_name="o",
         channel="cli", success=True, latency_ms=1.0, tool_call_count=1,
         failure_class=None, quality_score=None, step_durations={},
         input_text="do the thing", response_text="ok", captured_at=0.0,
@@ -240,7 +240,7 @@ def _sprawling_outcome(trace: str, *, tools: tuple[str, ...]) -> TaskOutcome:
     tool (``failed_capability`` stays unset/None) — the shape that produced
     the 2026-07-08 false skill_view incident."""
     return TaskOutcome(
-        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace, session_key="s", owl_name="o",
         channel="cli", success=False, latency_ms=1.0, tool_call_count=len(tools),
         failure_class="unachieved_effect", quality_score=None, step_durations={},
         input_text="do the thing", response_text="", captured_at=0.0,
@@ -304,7 +304,7 @@ async def test_single_tool_turns_still_open_a_real_incident() -> None:
 def _precise_outcome(trace: str, tool: str, *, failure_class: str = "unachieved_effect") -> TaskOutcome:
     """A row with ``failed_capability`` genuinely pinned — real evidence."""
     return TaskOutcome(
-        outcome_id=0, trace_id=trace, session_id="s", owl_name="o",
+        outcome_id=0, trace_id=trace, session_key="s", owl_name="o",
         channel="cli", success=False, latency_ms=1.0, tool_call_count=1,
         failure_class=failure_class, quality_score=None, step_durations={},
         input_text="do the thing", response_text="", captured_at=0.0,

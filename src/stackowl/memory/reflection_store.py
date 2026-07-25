@@ -65,7 +65,7 @@ class Reflection:
 _HIGH_QUALITY_THRESHOLD = 0.6
 
 _LIST_PENDING_SQL = f"""
-SELECT o.trace_id, o.session_id, o.owl_name, o.channel,
+SELECT o.trace_id, o.session_key, o.owl_name, o.channel,
        o.success, o.latency_ms, o.tool_call_count, o.failure_class,
        o.quality_score, o.step_durations, o.input_text, o.response_text,
        o.captured_at, o.scored_at, o.outcome_id, o.tool_sequence,
@@ -152,7 +152,7 @@ class ReflectionStore(OwnedRepository):
             results.append(TaskOutcome(
                 outcome_id=int(str(r["outcome_id"])),
                 trace_id=str(r["trace_id"]),
-                session_id=str(r["session_id"]),
+                session_key=str(r["session_key"]),
                 owl_name=str(r["owl_name"]),
                 channel=str(r["channel"]),
                 success=bool(r["success"]),

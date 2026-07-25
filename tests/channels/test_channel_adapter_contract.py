@@ -40,7 +40,7 @@ class _StubAdapter(ChannelAdapter):
     async def receive(self) -> IngressMessage:
         return IngressMessage(
             text="hello",
-            session_id="s",
+            session_key="s",
             channel=self._name,
             trace_id="t",
         )

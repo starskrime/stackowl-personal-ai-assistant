@@ -152,7 +152,7 @@ async def _inbound(env: _Env, text: str) -> object:
 
 def _state_for(msg: object) -> PipelineState:
     return PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=msg.text,  # type: ignore[attr-defined]
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=msg.text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name="default", pipeline_step="start",  # type: ignore[attr-defined]
         interactive=True,  # simulates a real Telegram user present to answer clarify
     )
@@ -185,7 +185,7 @@ async def test_smoke_clarify_blocks_then_resumes_in_turn() -> None:
     assert not run_task.done(), "turn should be parked awaiting the user's answer"
 
     # The pump's resolve-router fires on the user's reply -> wakes the parked turn.
-    resolved = env.gateway.try_resolve(msg.session_id, "telegram", "blue")  # type: ignore[attr-defined]
+    resolved = env.gateway.try_resolve(msg.session_key, "telegram", "blue")  # type: ignore[attr-defined]
     assert resolved is not None
     assert resolved.event is not None and resolved.event.is_set()  # blocking resolve
 

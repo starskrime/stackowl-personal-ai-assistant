@@ -44,7 +44,7 @@ async def _seed(store: SkillIndexStore, name: str, source: SkillSource = "learne
 
 def _state(*viewed_names: str) -> PipelineState:
     return PipelineState(
-        trace_id="t-1", session_id="s-1", input_text="hi",
+        trace_id="t-1", session_key="s-1", input_text="hi",
         channel="cli", owl_name="secretary", pipeline_step="",
         tool_calls=tuple(
             ToolCall(

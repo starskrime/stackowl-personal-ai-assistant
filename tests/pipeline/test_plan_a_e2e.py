@@ -13,7 +13,7 @@ Turn 1: "I am learning AWS"  → runs, consolidate persists the staged turn.
 Turn 2: "what am I learning?" → classify reads back turn 1, assemble adds the
         secretary persona; execute receives BOTH in system_text + history.
 
-Assertions (same session_id across turns):
+Assertions (same session_key across turns):
   RC-B: turn-2 system_text contains the secretary persona text.
   RC-C: turn-2 history contains turn-1 user text "I am learning AWS".
   Persist: at least one staged conversation row exists after turn 1.
@@ -107,10 +107,10 @@ class _RecordingProvider(ModelProvider):
 # ---- Helpers ----------------------------------------------------------------
 
 
-def _make_state(*, session_id: str, input_text: str) -> PipelineState:
+def _make_state(*, session_key: str, input_text: str) -> PipelineState:
     return PipelineState(
         trace_id=f"trace-{input_text[:8]}",
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel="cli",
         owl_name="secretary",
@@ -148,7 +148,7 @@ async def test_turn1_persists_staged_conversation_row(tmp_db: DbPool) -> None:
     services = _build_services(bridge, provider, registry)
     backend = AsyncioBackend(services=services)
 
-    state = _make_state(session_id="sess-e2e", input_text="I am learning AWS")
+    state = _make_state(session_key="sess-e2e", input_text="I am learning AWS")
     await backend.run(state)
 
     staged = await bridge.list_staged()
@@ -168,11 +168,11 @@ async def test_turn2_history_contains_turn1_user_text(tmp_db: DbPool) -> None:
     backend = AsyncioBackend(services=services)
 
     # Turn 1
-    t1 = _make_state(session_id="sess-rc-c", input_text="I am learning AWS")
+    t1 = _make_state(session_key="sess-rc-c", input_text="I am learning AWS")
     await backend.run(t1)
 
-    # Turn 2 — same session_id so classify fetches turn-1 from staged_facts
-    t2 = _make_state(session_id="sess-rc-c", input_text="what am I learning?")
+    # Turn 2 — same session_key so classify fetches turn-1 from staged_facts
+    t2 = _make_state(session_key="sess-rc-c", input_text="what am I learning?")
     await backend.run(t2)
 
     # At least one prior history entry must carry turn-1 user text.
@@ -192,11 +192,11 @@ async def test_turn2_system_text_contains_secretary_persona(tmp_db: DbPool) -> N
     backend = AsyncioBackend(services=services)
 
     # Turn 1
-    t1 = _make_state(session_id="sess-rc-b", input_text="I am learning AWS")
+    t1 = _make_state(session_key="sess-rc-b", input_text="I am learning AWS")
     await backend.run(t1)
 
     # Turn 2
-    t2 = _make_state(session_id="sess-rc-b", input_text="what am I learning?")
+    t2 = _make_state(session_key="sess-rc-b", input_text="what am I learning?")
     await backend.run(t2)
 
     assert provider.last_system_text is not None, (

@@ -88,12 +88,12 @@ class SqliteMemoryBridge(MemoryBridge):
 
     # --- pipeline contract ------------------------------------------------------------
 
-    async def retrieve(self, query: str, session_id: str) -> str:
+    async def retrieve(self, query: str, session_key: str) -> str:
         """Return formatted committed-fact context for the classify pipeline step."""
         # 1. ENTRY
         log.memory.debug(
             "[memory] sqlite_bridge.retrieve: entry",
-            extra={"_fields": {"session_id": session_id, "query_len": len(query)}},
+            extra={"_fields": {"session_key": session_key, "query_len": len(query)}},
         )
         # MEM-1 (F073) — over-fetch a candidate pool in raw relevance order, then
         # apply the SINGLE blended rank (relevance × recency × reinforcement ×
@@ -106,7 +106,7 @@ class SqliteMemoryBridge(MemoryBridge):
         if not records:
             log.memory.debug(
                 "[memory] sqlite_bridge.retrieve: exit — no matches",
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"session_key": session_key}},
             )
             return ""
         # 3. STEP — TRUST-AWARE render (SECURITY-CRITICAL: this fence is the primary
@@ -149,7 +149,7 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.retrieve: exit",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "context_len": len(out),
                     "n_records": len(records),
                 }
@@ -157,7 +157,7 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return out
 
-    async def store(self, content: str, session_id: str, *, trust: Trust | None = None) -> None:
+    async def store(self, content: str, session_key: str, *, trust: Trust | None = None) -> None:
         """Store conversation content as a staged fact (source_type=conversation).
 
         ``trust`` overrides the default trust level for this source type.  When
@@ -167,13 +167,13 @@ class SqliteMemoryBridge(MemoryBridge):
         # 1. ENTRY
         log.memory.debug(
             "[memory] sqlite_bridge.store: entry",
-            extra={"_fields": {"session_id": session_id, "content_len": len(content), "trust_override": trust}},
+            extra={"_fields": {"session_key": session_key, "content_len": len(content), "trust_override": trust}},
         )
         resolved_trust = trust if trust is not None else trust_for_source("conversation")
         fact = StagedFact(
             content=content,
             source_type="conversation",
-            source_ref=session_id,
+            source_ref=session_key,
             confidence=0.5,
             trust=resolved_trust,
         )
@@ -182,7 +182,7 @@ class SqliteMemoryBridge(MemoryBridge):
         # 4. EXIT
         log.memory.debug(
             "[memory] sqlite_bridge.store: exit",
-            extra={"_fields": {"fact_id": fact.fact_id, "session_id": session_id}},
+            extra={"_fields": {"fact_id": fact.fact_id, "session_key": session_key}},
         )
 
     # --- knowledge-pipeline contract --------------------------------------------------
@@ -436,9 +436,9 @@ class SqliteMemoryBridge(MemoryBridge):
         return fact
 
     async def recent_conversation_turns(
-        self, session_id: str, limit: int = 6, staged_before: str | None = None,
+        self, session_key: str, limit: int = 6, staged_before: str | None = None,
     ) -> list[StagedFact]:
-        """Return last ``limit`` conversation staged facts for ``session_id``, oldest-first.
+        """Return last ``limit`` conversation staged facts for ``session_key``, oldest-first.
 
         Provides short-term memory inside the current session — the agent sees
         recent turns even before the dream worker promotes them to committed_facts.
@@ -451,7 +451,7 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.recent_conversation_turns: entry",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "limit": limit,
                     "staged_before": staged_before,
                 }
@@ -466,7 +466,7 @@ class SqliteMemoryBridge(MemoryBridge):
                    WHERE source_type = 'conversation' AND source_ref = ?
                    ORDER BY staged_at DESC
                    LIMIT ?""",
-                (session_id, limit),
+                (session_key, limit),
             )
         else:
             rows = await self._db.fetch_all(
@@ -478,41 +478,41 @@ class SqliteMemoryBridge(MemoryBridge):
                      AND staged_at <= ?
                    ORDER BY staged_at DESC
                    LIMIT ?""",
-                (session_id, staged_before, limit),
+                (session_key, staged_before, limit),
             )
         results = [row_to_staged(row) for row in rows]
         # Reverse so the prompt reads oldest-first (chronological).
         results.reverse()
         log.memory.debug(
             "[memory] sqlite_bridge.recent_conversation_turns: exit",
-            extra={"_fields": {"session_id": session_id, "n_results": len(results)}},
+            extra={"_fields": {"session_key": session_key, "n_results": len(results)}},
         )
         return results
 
-    async def clear_session(self, session_id: str) -> int:
-        """Delete all conversation staged facts for *session_id*.
+    async def clear_session(self, session_key: str) -> int:
+        """Delete all conversation staged facts for *session_key*.
 
         Returns the number of rows deleted so the caller can report reality.
         """
         # 1. ENTRY
         log.memory.debug(
             "[memory] sqlite_bridge.clear_session: entry",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
-        # 2. DECISION — scoped to source_type='conversation' AND source_ref=session_id
+        # 2. DECISION — scoped to source_type='conversation' AND source_ref=session_key
         log.memory.debug(
             "[memory] sqlite_bridge.clear_session: deleting conversation turns for session",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
         # 3. STEP — delete and capture rowcount atomically
         count = await self._db.execute_returning_rowcount(
             "DELETE FROM staged_facts WHERE source_type = 'conversation' AND source_ref = ?",
-            (session_id,),
+            (session_key,),
         )
         # 4. EXIT
         log.memory.info(
             "[memory] sqlite_bridge.clear_session: exit",
-            extra={"_fields": {"session_id": session_id, "deleted": count}},
+            extra={"_fields": {"session_key": session_key, "deleted": count}},
         )
         return count
 

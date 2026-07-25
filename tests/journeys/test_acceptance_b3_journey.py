@@ -192,7 +192,7 @@ async def test_objective_tool_persists_declared_acceptance_end_to_end(
         tier="standard",
     )
     token = set_services(StepServices(db_pool=db, provider_registry=pr))
-    ttoken = TraceContext.start(session_id="sess-acc", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-acc", interactive=True, channel="cli")
     try:
         created = await ObjectiveTool().execute(intent="download the video and notify")
     finally:

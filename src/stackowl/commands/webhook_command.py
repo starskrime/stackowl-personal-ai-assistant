@@ -137,7 +137,7 @@ class WebhookCommand(SlashCommand):
         # 1. ENTRY
         log.webhook.debug(
             "[webhook] command.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         usage = render_usage("webhook", _WEBHOOK_META)
         parts = args.strip().split()
@@ -382,7 +382,7 @@ class WebhookCommand(SlashCommand):
             self._db,
             event_type=f"webhook_{verb}d",
             target=source,
-            actor=state.session_id or "user",
+            actor=state.session_key or "user",
             details={"reason": "user_requested"},
         )
         if self._bus is not None:

@@ -9,7 +9,7 @@ from stackowl.channels.telegram.adapter import _mint_request_id  # extracted hel
 
 
 def test_cli_request_ids_are_unique_and_non_empty() -> None:
-    adapter = CLIAdapter(session_id="abc12345")
+    adapter = CLIAdapter(session_key="abc12345")
     ids = {adapter._next_request_id() for _ in range(1000)}
     assert len(ids) == 1000, "CLI request ids must be unique within a session"
     assert all(rid for rid in ids), "CLI request id must be non-empty"
@@ -37,11 +37,11 @@ def test_telegram_mint_raises_and_logs_on_empty_id() -> None:
 def test_cli_mint_raises_and_logs_on_empty_session() -> None:
     """The empty-session guard must raise ValueError AND log the failure.
 
-    The ctor coerces a falsy session_id into a fresh uuid, so we force the
+    The ctor coerces a falsy session_key into a fresh uuid, so we force the
     degenerate state directly to exercise the reachable guard.
     """
-    adapter = CLIAdapter(session_id="abc12345")
-    adapter._session_id = ""  # degenerate state the guard defends against
+    adapter = CLIAdapter(session_key="abc12345")
+    adapter._session_key = ""  # degenerate state the guard defends against
     with patch("stackowl.channels.cli_adapter.log.gateway.error") as logerr:
         with pytest.raises(ValueError):
             adapter._next_request_id()

@@ -52,7 +52,7 @@ async def _seed_messages(db: DbPool, owl_name: str, count: int) -> None:
     conv_id = uuid.uuid4().hex
     now = datetime.now(UTC).isoformat()
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
         (conv_id, f"sess-{owl_name}", owl_name, now, count),
     )

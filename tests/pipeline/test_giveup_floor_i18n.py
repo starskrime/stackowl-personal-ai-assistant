@@ -24,7 +24,7 @@ from stackowl.setup.localize import localize
 
 def test_state_language_defaults_to_en() -> None:
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="default", pipeline_step="triage",
     )
     assert state.language == "en"
@@ -32,7 +32,7 @@ def test_state_language_defaults_to_en() -> None:
 
 def test_state_language_survives_evolve() -> None:
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="default", pipeline_step="triage", language="ru",
     )
     evolved = state.evolve(owl_name="x")

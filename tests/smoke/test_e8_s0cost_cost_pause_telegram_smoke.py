@@ -280,7 +280,7 @@ async def _drive_to_pause(env: _Env):  # noqa: ANN202
 
     _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
         interactive=True,
     )
@@ -314,7 +314,7 @@ async def test_cost_pause_stop_aborts_the_expensive_op() -> None:
     answer_msg = await _inbound(env, "Stop")
     answer_decision = env.scanner.scan(answer_msg)
     consumed, _rw = await env.pump.resolve_or_rewrite(
-        session_id=answer_msg.session_id,  # type: ignore[attr-defined]
+        session_key=answer_msg.session_key,  # type: ignore[attr-defined]
         channel=answer_msg.channel,  # type: ignore[attr-defined]
         route=answer_decision.route,
         target=answer_decision.target,
@@ -350,7 +350,7 @@ async def test_cost_pause_continue_proceeds_with_the_op() -> None:
     answer_msg = await _inbound(env, "Continue")
     answer_decision = env.scanner.scan(answer_msg)
     consumed, _rw = await env.pump.resolve_or_rewrite(
-        session_id=answer_msg.session_id,  # type: ignore[attr-defined]
+        session_key=answer_msg.session_key,  # type: ignore[attr-defined]
         channel=answer_msg.channel,  # type: ignore[attr-defined]
         route=answer_decision.route,
         target=answer_decision.target,

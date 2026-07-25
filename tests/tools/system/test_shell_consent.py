@@ -278,7 +278,7 @@ async def test_catastrophic_denied_never_spawns(monkeypatch: pytest.MonkeyPatch)
     services, prompter = _services_with_gate(allow=False)
 
     token = set_services(services)
-    trace = TraceContext.start(session_id="123", interactive=True, channel="telegram")
+    trace = TraceContext.start(session_key="123", interactive=True, channel="telegram")
     try:
         result = await ShellTool().execute(command="rm -rf /")
     finally:
@@ -300,7 +300,7 @@ async def test_catastrophic_approved_proceeds(monkeypatch: pytest.MonkeyPatch) -
     services, prompter = _services_with_gate(allow=True)
 
     token = set_services(services)
-    trace = TraceContext.start(session_id="123", interactive=True, channel="telegram")
+    trace = TraceContext.start(session_key="123", interactive=True, channel="telegram")
     try:
         result = await ShellTool().execute(command="rm -rf /etc")
     finally:
@@ -321,7 +321,7 @@ async def test_catastrophic_non_interactive_fails_closed(
     services, prompter = _services_with_gate(allow=True)  # gate WOULD allow
 
     token = set_services(services)
-    trace = TraceContext.start(session_id="123", interactive=False, channel="telegram")
+    trace = TraceContext.start(session_key="123", interactive=False, channel="telegram")
     try:
         result = await ShellTool().execute(command="rm -rf /")
     finally:
@@ -341,7 +341,7 @@ async def test_catastrophic_no_gate_fails_closed(monkeypatch: pytest.MonkeyPatch
     captured = _patch_subprocess(monkeypatch)
 
     token = set_services(StepServices(consent_gate=None))
-    trace = TraceContext.start(session_id="123", interactive=True, channel="telegram")
+    trace = TraceContext.start(session_key="123", interactive=True, channel="telegram")
     try:
         result = await ShellTool().execute(command="rm -rf /")
     finally:
@@ -360,7 +360,7 @@ async def test_benign_command_skips_gate_entirely(monkeypatch: pytest.MonkeyPatc
     services, prompter = _services_with_gate(allow=False)  # would deny IF consulted
 
     token = set_services(services)
-    trace = TraceContext.start(session_id="123", interactive=True, channel="telegram")
+    trace = TraceContext.start(session_key="123", interactive=True, channel="telegram")
     try:
         result = await ShellTool().execute(command="rm -rf ./build")
     finally:
@@ -401,7 +401,7 @@ async def test_consent_prompt_sent_as_plain_text() -> None:
     req = ConsentRequest(
         tool_name="shell",
         channel="telegram",
-        session_id="424242",
+        session_key="424242",
         summary="Run shell command: yt-dlp https://x.com/a-b.mp4 -o /tmp/f.mp4",
     )
     await prompter.prompt(req)  # times out to deny, but the send was attempted

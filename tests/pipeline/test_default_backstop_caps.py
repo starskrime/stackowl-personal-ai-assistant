@@ -162,7 +162,7 @@ async def test_default_backstop_stops_loop_before_hard_cap() -> None:
 
     state = PipelineState(
         trace_id="trace-backstop-test",
-        session_id="sess-backstop-test",
+        session_key="sess-backstop-test",
         input_text="run many steps",
         channel="cli",
         owl_name="nocaps_owl",
@@ -234,7 +234,7 @@ async def test_default_backstop_uses_larger_cap_for_deferred_scheduled_turn() ->
 
     state = PipelineState(
         trace_id="trace-scheduled-backstop-test",
-        session_id="sess-scheduled-backstop-test",
+        session_key="sess-scheduled-backstop-test",
         input_text="run many steps",
         channel="cli",
         owl_name="nocaps_owl",

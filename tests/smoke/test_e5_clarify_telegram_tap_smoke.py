@@ -148,7 +148,7 @@ async def _inbound(env: _Env, text: str) -> object:
 
 def _state_for(msg: object) -> PipelineState:
     return PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=msg.text,  # type: ignore[attr-defined]
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=msg.text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name="default", pipeline_step="start",  # type: ignore[attr-defined]
         interactive=True,
     )

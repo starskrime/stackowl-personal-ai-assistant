@@ -22,7 +22,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 def _state(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
         trace_id="t-ground",
-        session_id="s",
+        session_key="s",
         input_text="what's new in AI?",
         channel="cli",
         owl_name="o",

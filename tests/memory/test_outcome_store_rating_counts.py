@@ -13,7 +13,7 @@ from stackowl.memory.outcome_store import TaskOutcomeStore
 _SCHEMA = """
     CREATE TABLE task_outcomes (
         outcome_id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL,
-        session_id TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
+        session_key TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
         success INTEGER NOT NULL, latency_ms REAL NOT NULL,
         tool_call_count INTEGER NOT NULL DEFAULT 0, failure_class TEXT,
         quality_score REAL, step_durations TEXT NOT NULL DEFAULT '{}',
@@ -39,23 +39,23 @@ async def _make_store(tmp_path) -> tuple[DbPool, TaskOutcomeStore]:
 async def test_counts_only_rated_outcomes_for_the_named_owl(tmp_path) -> None:
     db, store = await _make_store(tmp_path)
     await store.record(
-        trace_id="t1", session_id="s", owl_name="scout", channel="telegram",
+        trace_id="t1", session_key="s", owl_name="scout", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="", response_text="",
     )
     await store.record(
-        trace_id="t2", session_id="s", owl_name="scout", channel="telegram",
+        trace_id="t2", session_key="s", owl_name="scout", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="", response_text="",
     )
     await store.record(
-        trace_id="t3", session_id="s", owl_name="scout", channel="telegram",
+        trace_id="t3", session_key="s", owl_name="scout", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="", response_text="",
     )
     # A different owl's dislike must not count toward "scout".
     await store.record(
-        trace_id="t4", session_id="s", owl_name="sage", channel="telegram",
+        trace_id="t4", session_key="s", owl_name="sage", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="", response_text="",
     )
@@ -75,7 +75,7 @@ async def test_uncritic_scored_votes_still_count(tmp_path) -> None:
     unlike list_scored_for_owl which requires quality_score IS NOT NULL."""
     db, store = await _make_store(tmp_path)
     await store.record(
-        trace_id="t1", session_id="s", owl_name="scout", channel="telegram",
+        trace_id="t1", session_key="s", owl_name="scout", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="", response_text="",
     )

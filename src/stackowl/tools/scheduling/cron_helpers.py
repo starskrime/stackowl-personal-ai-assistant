@@ -17,7 +17,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
 
 _DEFAULT_OWL = "secretary"
-_OWNER_SQL = "SELECT DISTINCT owl_name FROM conversations WHERE session_id = ? LIMIT 2"
+_OWNER_SQL = "SELECT DISTINCT owl_name FROM conversations WHERE session_key = ? LIMIT 2"
 
 # Tag written into a tool-created job's params so list/cap can find them again.
 CREATED_BY_TAG = "cronjob"
@@ -254,22 +254,22 @@ def find_owned_job(jobs: list[Job], job_id: str, owl: str) -> Job | None:
     return None
 
 
-async def resolve_owl(db: DbPool, session_id: str | None) -> str:
+async def resolve_owl(db: DbPool, session_key: str | None) -> str:
     """Derive the owning owl from the session, defaulting to ``secretary``.
 
     Same provenance the session-access tools use (``conversations.owl_name``);
     fail-soft to the default owl so a missing/ambiguous/error session still
     attributes the job rather than dropping the action.
     """
-    if not session_id:
+    if not session_key:
         return _DEFAULT_OWL
     try:
-        rows = await db.fetch_all(_OWNER_SQL, (session_id,))
+        rows = await db.fetch_all(_OWNER_SQL, (session_key,))
     except Exception as exc:  # B5 — never silent
         log.tool.warning(
             "cron_helpers.resolve_owl: owner lookup failed — defaulting",
             exc_info=exc,
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
         return _DEFAULT_OWL
     if len(rows) == 1:

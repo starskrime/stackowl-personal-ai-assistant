@@ -27,7 +27,7 @@ from stackowl.pipeline.state import PipelineState
 def _state(session: str = "sess-1") -> PipelineState:
     return PipelineState(
         trace_id="trace-1",
-        session_id=session,
+        session_key=session,
         input_text="hello",
         channel="cli",
         owl_name="Daria",

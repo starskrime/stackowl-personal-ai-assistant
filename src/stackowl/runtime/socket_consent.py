@@ -52,7 +52,7 @@ class SocketConsentPrompter:
                     consent_id=consent_id,
                     channel=req.channel,
                     tool_name=req.tool_name,
-                    session_id=req.session_id,
+                    session_key=req.session_key,
                     category=req.category,
                     summary=req.summary,
                     allow_relaxation=req.allow_relaxation,

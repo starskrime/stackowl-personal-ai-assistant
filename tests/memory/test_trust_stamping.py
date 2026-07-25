@@ -201,10 +201,10 @@ async def test_pellet_generator_stages_self(tmp_db: Any) -> None:
         async def stage(self, fact: StagedFact) -> None:  # type: ignore[override]
             staged_facts.append(fact)
 
-        async def retrieve(self, query: str, session_id: str) -> str:
+        async def retrieve(self, query: str, session_key: str) -> str:
             return ""
 
-        async def store(self, content: str, session_id: str) -> None:
+        async def store(self, content: str, session_key: str) -> None:
             pass
 
         async def recall(self, query: str, limit: int = 10) -> list[Any]:  # type: ignore[override]
@@ -217,7 +217,7 @@ async def test_pellet_generator_stages_self(tmp_db: Any) -> None:
             return []
 
     session = MagicMock()
-    session.session_id = "parl-sess-1"
+    session.session_key = "parl-sess-1"
     synthesis = SynthesisResult(
         consensus="Tabs are better than spaces.",
         disagreements=[],

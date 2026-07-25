@@ -101,7 +101,7 @@ class _RecordingClarifyGateway:
         self.asks: list[dict[str, Any]] = []
         self._answer = answer
 
-    async def ask(self, session_id: str, channel: str, question: str, **kwargs: Any) -> str:  # noqa: ANN401
+    async def ask(self, session_key: str, channel: str, question: str, **kwargs: Any) -> str:  # noqa: ANN401
         self.asks.append({"question": question, "choices": kwargs.get("choices")})
         return f"cid-{len(self.asks)}"
 
@@ -135,7 +135,7 @@ async def test_real_completion_cost_crosses_threshold_and_pause_fires() -> None:
     # into THIS turn's running total. NO pre-seed: the total starts at zero.
     assert tracker.turn_cost_usd(trace_id) == 0.0, "precondition: nothing recorded yet"
     token = TraceContext.start(
-        session_id="s", trace_id=trace_id, interactive=True, channel="telegram",
+        session_key="s", trace_id=trace_id, interactive=True, channel="telegram",
     )
     try:
         provider = registry.get("main")
@@ -176,7 +176,7 @@ async def test_continue_tap_proceeds_after_real_recorded_cost() -> None:
     registry, tracker, guard, gateway = _build(answer="Continue")
     trace_id = "trace-func-2"
     token = TraceContext.start(
-        session_id="s", trace_id=trace_id, interactive=True, channel="telegram",
+        session_key="s", trace_id=trace_id, interactive=True, channel="telegram",
     )
     try:
         await registry.get("main").complete([Message(role="user", content="x")], model="")
@@ -208,7 +208,7 @@ async def test_under_threshold_real_cost_does_not_pause() -> None:
     )
     trace_id = "trace-func-3"
     token = TraceContext.start(
-        session_id="s", trace_id=trace_id, interactive=True, channel="telegram",
+        session_key="s", trace_id=trace_id, interactive=True, channel="telegram",
     )
     try:
         await registry.get("main").complete([Message(role="user", content="x")], model="")

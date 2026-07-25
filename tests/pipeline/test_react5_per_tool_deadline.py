@@ -96,7 +96,7 @@ class _OneToolThenDoneProvider:
 
 def _state(request_id: str) -> PipelineState:
     return PipelineState(
-        trace_id=request_id, session_id="s1", input_text="run the hanging tool",
+        trace_id=request_id, session_key="s1", input_text="run the hanging tool",
         channel="cli", owl_name="default", pipeline_step="execute", interactive=True,
     )
 
@@ -152,7 +152,7 @@ async def test_stop_short_circuits_not_yet_started_tool(monkeypatch: pytest.Monk
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
     request_id = "trace-stop-precheck"
-    await reg.register(request_id, session_id="s1", task=bg, target=None, original_input="x")
+    await reg.register(request_id, session_key="s1", task=bg, target=None, original_input="x")
     reg.request_stop(request_id)  # stop already pending when the tool is dispatched
 
     provider = _OneToolThenDoneProvider()

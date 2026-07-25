@@ -158,14 +158,14 @@ async def test_reflect_recall_chain_surfaces_in_live_turn_memory_context(
 
     msg = IngressMessage(
         text="what do you know about AWS billing?",
-        session_id="sess-reflect-recall-gw", channel="cli", trace_id="trace-gw-recall",
+        session_key="sess-reflect-recall-gw", channel="cli", trace_id="trace-gw-recall",
     )
     decision = scanner.scan(msg)
     assert decision.route == "owl", f"expected owl route, got {decision.route!r}"
 
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
         interactive=True,
     )

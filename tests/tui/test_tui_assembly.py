@@ -96,7 +96,7 @@ async def test_cli_adapter_receive_picks_up_compose_event() -> None:
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus, command_names=[], owl_names=[])
     adapter = CLIAdapter(
-        session_id="test-cli", tui_components=components, event_bus=bus,
+        session_key="test-cli", tui_components=components, event_bus=bus,
     )
 
     # Simulate ComposeArea submitting via the app's republish path.
@@ -105,7 +105,7 @@ async def test_cli_adapter_receive_picks_up_compose_event() -> None:
     msg = await adapter.receive()
     assert msg.text == "from compose area"
     assert msg.channel == "cli"
-    assert msg.session_id == "test-cli"
+    assert msg.session_key == "test-cli"
     assert msg.trace_id.startswith("cli-")
 
 
@@ -117,7 +117,7 @@ async def test_cli_adapter_send_publishes_response_chunk_events() -> None:
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus, command_names=[], owl_names=[])
     adapter = CLIAdapter(
-        session_id="test-send", tui_components=components, event_bus=bus,
+        session_key="test-send", tui_components=components, event_bus=bus,
     )
 
     received: list[dict[str, object]] = []
@@ -147,7 +147,7 @@ async def test_cli_adapter_legacy_mode_when_no_tui_components() -> None:
     """Without tui_components, CLIAdapter falls back to legacy RichLog mode."""
     from stackowl.channels.cli_adapter import CLIAdapter, _LegacyStackOwlApp
 
-    adapter = CLIAdapter(session_id="test-legacy")
+    adapter = CLIAdapter(session_key="test-legacy")
     assert adapter._mode == "raw"
     assert isinstance(adapter._app, _LegacyStackOwlApp)
 
@@ -159,7 +159,7 @@ def test_cli_adapter_full_mode_when_tui_components_given() -> None:
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus)
     adapter = CLIAdapter(
-        session_id="test-full", tui_components=components, event_bus=bus,
+        session_key="test-full", tui_components=components, event_bus=bus,
     )
     assert adapter._mode == "fullzone"
     assert adapter._app is components.app
@@ -173,7 +173,7 @@ async def test_cli_adapter_compose_event_text_drives_queue() -> None:
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus)
     adapter = CLIAdapter(
-        session_id="test-q", tui_components=components, event_bus=bus,
+        session_key="test-q", tui_components=components, event_bus=bus,
     )
 
     # Two messages — must be received in order.

@@ -33,9 +33,9 @@ class _FakeAdapter:
         return self._name
 
     async def send_clarify(
-        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_key: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((session_id, question, tuple(choices), clarify_id))
+        self.calls.append((session_key, question, tuple(choices), clarify_id))
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def with_gateway(gateway: ClarifyGateway) -> Iterator[ClarifyGateway]:
 
 
 async def test_interactive_blocks_then_returns_answer(with_gateway: ClarifyGateway) -> None:
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         # Launch the blocking execute as a task (it inherits this context).
         task = asyncio.ensure_future(
@@ -82,7 +82,7 @@ async def test_interactive_blocks_then_returns_answer(with_gateway: ClarifyGatew
 
 
 async def test_interactive_graceful_timeout(with_gateway: ClarifyGateway) -> None:
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         # Tiny timeout, no reply → graceful in-turn timeout result.
         result = await ClarifyTool(timeout_s=0.05).execute(question="X or Y?")
@@ -103,7 +103,7 @@ async def test_timeout_auto_resumes_with_declared_default_reversible(
     assumption (the default) instead of waiting the full TTL and returning the
     "ABORT or guess" punt text.
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool(timeout_s=0.05).execute(
             question="Which environment?",
@@ -128,7 +128,7 @@ async def test_timeout_high_stakes_default_still_aborts(
     Even with a menu-consistent default supplied, ``high_stakes=True`` keeps the
     ABORT-on-consequential punt (never assume consent for an irreversible action).
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool(timeout_s=0.05).execute(
             question="Delete which database?",
@@ -151,7 +151,7 @@ async def test_timeout_default_not_in_menu_aborts(
 
     to the ABORT/punt path rather than auto-resuming on a bogus assumption.
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool(timeout_s=0.05).execute(
             question="Which environment?",
@@ -176,7 +176,7 @@ async def test_pre_park_one_item_menu_proceeds_without_asking(
 
     WITHOUT parking the turn or routing anything to the human.
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool().execute(
             question="Use the default profile?", choices=["default"],
@@ -201,7 +201,7 @@ async def test_pre_park_declared_default_proceeds_without_asking(
 
     on the assumption immediately — it never parks the turn up to the full TTL.
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool().execute(
             question="Which environment?",
@@ -227,7 +227,7 @@ async def test_pre_park_high_stakes_still_parks(with_gateway: ClarifyGateway) ->
 
     on the human even with a menu-consistent default (never assume consent).
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             ClarifyTool().execute(
@@ -258,7 +258,7 @@ async def test_pre_park_ambiguous_multi_choice_still_parks(
 
     human — the pre-park gate only fires for a clear most-likely answer.
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             ClarifyTool().execute(question="X or Y?", choices=["X", "Y"]),
@@ -282,7 +282,7 @@ async def test_interactive_pivot_returns_cancelled(with_gateway: ClarifyGateway)
     aside" text — NOT the ``_TIMED_OUT`` assumption text — so the model never
     best-guesses an answer to the abandoned (possibly consequential) question.
     """
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             ClarifyTool().execute(question="delete which file?"),
@@ -304,7 +304,7 @@ async def test_interactive_pivot_returns_cancelled(with_gateway: ClarifyGateway)
 
 async def test_choices_passed_through_unchanged(with_gateway: ClarifyGateway) -> None:
     """Choices are passed through verbatim — no synthetic 'Other' is appended."""
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             ClarifyTool().execute(question="pick?", choices=["A", "B"]),
@@ -324,7 +324,7 @@ async def test_choices_capped_at_max(with_gateway: ClarifyGateway) -> None:
     """More than _MAX_CHOICES are capped; still no synthetic option added."""
     from stackowl.tools.interaction.clarify import _MAX_CHOICES
 
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         many = [f"opt{i}" for i in range(_MAX_CHOICES + 3)]
         task = asyncio.ensure_future(
@@ -343,7 +343,7 @@ async def test_choices_capped_at_max(with_gateway: ClarifyGateway) -> None:
 
 
 async def test_non_interactive_sentinel_no_ask(with_gateway: ClarifyGateway) -> None:
-    trace = TraceContext.start(session_id="s1", interactive=False, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=False, channel="cli")
     try:
         result = await ClarifyTool().execute(question="should I?")
     finally:
@@ -362,7 +362,7 @@ async def test_non_interactive_sentinel_no_ask(with_gateway: ClarifyGateway) -> 
 
 async def test_missing_channel_or_session_is_structured(with_gateway: ClarifyGateway) -> None:
     # Interactive but no channel/session in context.
-    trace = TraceContext.start(session_id=None, interactive=True, channel=None)
+    trace = TraceContext.start(session_key=None, interactive=True, channel=None)
     try:
         result = await ClarifyTool().execute(question="hmm?")
     finally:
@@ -374,7 +374,7 @@ async def test_missing_channel_or_session_is_structured(with_gateway: ClarifyGat
 
 
 async def test_empty_question_is_structured(with_gateway: ClarifyGateway) -> None:
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool().execute(question="   ")
     finally:
@@ -385,7 +385,7 @@ async def test_empty_question_is_structured(with_gateway: ClarifyGateway) -> Non
 
 async def test_gateway_none_is_unavailable() -> None:
     token = set_services(StepServices(clarify_gateway=None))
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await ClarifyTool().execute(question="q?")
     finally:

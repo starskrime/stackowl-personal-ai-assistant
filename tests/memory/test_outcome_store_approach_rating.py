@@ -11,7 +11,7 @@ async def test_set_approach_rating_updates_existing_row(tmp_path):
     await db.execute("""
         CREATE TABLE task_outcomes (
             outcome_id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL,
-            session_id TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
+            session_key TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
             success INTEGER NOT NULL, latency_ms REAL NOT NULL,
             tool_call_count INTEGER NOT NULL DEFAULT 0, failure_class TEXT,
             quality_score REAL, step_durations TEXT NOT NULL DEFAULT '{}',
@@ -26,7 +26,7 @@ async def test_set_approach_rating_updates_existing_row(tmp_path):
     """)
     store = TaskOutcomeStore(db)
     await store.record(
-        trace_id="trace-1", session_id="s1", owl_name="secretary", channel="telegram",
+        trace_id="trace-1", session_key="s1", owl_name="secretary", channel="telegram",
         success=True, latency_ms=100.0, tool_call_count=1, failure_class=None,
         step_durations={}, input_text="hi", response_text="hello",
     )
@@ -45,7 +45,7 @@ async def test_set_approach_rating_missing_row_returns_false(tmp_path):
     await db.execute("""
         CREATE TABLE task_outcomes (
             outcome_id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL,
-            session_id TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
+            session_key TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
             success INTEGER NOT NULL, latency_ms REAL NOT NULL,
             tool_call_count INTEGER NOT NULL DEFAULT 0, failure_class TEXT,
             quality_score REAL, step_durations TEXT NOT NULL DEFAULT '{}',

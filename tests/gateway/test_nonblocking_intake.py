@@ -35,7 +35,7 @@ async def test_midturn_same_session_enqueues_without_blocking() -> None:
         await gate.wait()
 
     t = asyncio.create_task(slow_turn())
-    await reg.register("req-1", session_id="s1", task=t, target=None, original_input="first")
+    await reg.register("req-1", session_key="s1", task=t, target=None, original_input="first")
 
     # A second message arrives while req-1 runs — intake must NOT block on it.
     assert reg.running("s1") is not None
@@ -67,7 +67,7 @@ async def test_fifo_drain_after_completion() -> None:
 
         task = asyncio.create_task(_run())
         await reg.register(
-            intake.request_id, session_id="s1", task=task,
+            intake.request_id, session_key="s1", task=task,
             target=intake.target, original_input=intake.original_input,
         )
         dispatched.append(intake.original_input)
@@ -84,7 +84,7 @@ async def test_fifo_drain_after_completion() -> None:
         await gate.wait()
 
     t0 = asyncio.create_task(first())
-    await reg.register("req-0", session_id="s1", task=t0, target=None, original_input="zero")
+    await reg.register("req-0", session_key="s1", task=t0, target=None, original_input="zero")
     reg.enqueue("s1", original_input="one", request_id="req-1", target=None)
     reg.enqueue("s1", original_input="two", request_id="req-2", target=None)
 
@@ -113,8 +113,8 @@ async def test_cross_session_runs_concurrently() -> None:
 
     ta = asyncio.create_task(turn(a_started))
     tb = asyncio.create_task(turn(b_started))
-    await reg.register("req-a", session_id="sA", task=ta, target=None, original_input="a")
-    await reg.register("req-b", session_id="sB", task=tb, target=None, original_input="b")
+    await reg.register("req-a", session_key="sA", task=ta, target=None, original_input="a")
+    await reg.register("req-b", session_key="sB", task=tb, target=None, original_input="b")
 
     # BOTH sessions have a running turn at the same time (no serialization).
     assert reg.running("sA") is not None
@@ -138,7 +138,7 @@ async def test_deliver_stamps_reply_target_from_state() -> None:
 
     state = PipelineState(
         trace_id=trace_id,
-        session_id="telegram:123",
+        session_key="telegram:123",
         input_text="hi",
         channel="telegram",
         owl_name="secretary",
@@ -179,7 +179,7 @@ async def test_deliver_leaves_target_none_for_cli() -> None:
 
     state = PipelineState(
         trace_id=trace_id,
-        session_id="cli",
+        session_key="cli",
         input_text="hi",
         channel="cli",
         owl_name="secretary",

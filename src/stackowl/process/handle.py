@@ -2,7 +2,7 @@
 
 A handle bundles the asyncio subprocess transport with everything the registry
 and the (S1) tools need: a stable opaque ``process_id``, the host ``pid``, the
-originating ``session_id`` (Fork E scoping), lifecycle ``status`` + ``exit_code``,
+originating ``session_key`` (Fork E scoping), lifecycle ``status`` + ``exit_code``,
 activity timestamps, the MANDATORY ``ttl_deadline`` (Fork D), and the two
 :class:`RollingStreamBuffer` captures. Background reader tasks drain stdout/stderr
 into those buffers so a poller always sees the latest tail.
@@ -36,7 +36,7 @@ class ProcessHandle:
         self,
         *,
         command: list[str],
-        session_id: str,
+        session_key: str,
         transport: asyncio.subprocess.Process | None,
         pid: int | None,
         created_at: float,
@@ -46,11 +46,11 @@ class ProcessHandle:
         # 1. ENTRY
         log.tool.debug(
             "process.handle.__init__: entry",
-            extra={"_fields": {"pid": pid, "session_id": session_id, "argv": command[:3]}},
+            extra={"_fields": {"pid": pid, "session_key": session_key, "argv": command[:3]}},
         )
         self.process_id: str = secrets.token_urlsafe(9)
         self.command: list[str] = command
-        self.session_id: str = session_id
+        self.session_key: str = session_key
         self.transport: asyncio.subprocess.Process | None = transport
         self.pid: int | None = pid
         self.cwd: str | None = cwd
@@ -146,7 +146,7 @@ class ProcessHandle:
         """A JSON-friendly status snapshot (used by poll/list in S1)."""
         return {
             "process_id": self.process_id,
-            "session_id": self.session_id,
+            "session_key": self.session_key,
             "command": self.rendered_command,
             "pid": self.pid,
             "status": self.status,

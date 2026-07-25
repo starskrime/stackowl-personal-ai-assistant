@@ -52,17 +52,17 @@ class _FakeAdapter:
 class _Intake:
     """Base harness: dispatch a slow turn, mirror the intake decision under lock."""
 
-    def __init__(self, reg: TurnRegistry, adapter: _FakeAdapter, session_id: str) -> None:
+    def __init__(self, reg: TurnRegistry, adapter: _FakeAdapter, session_key: str) -> None:
         self._reg = reg
         self._adapter = adapter
-        self._sid = session_id
+        self._sid = session_key
         self.dispatched: list[str] = []
         self.dropped: list[str] = []
 
     async def _dispatch(self, request_id: str, text: str) -> None:
         task = asyncio.create_task(asyncio.sleep(3600))  # long-lived running turn
         await self._reg.register(
-            request_id, session_id=self._sid, task=task,
+            request_id, session_key=self._sid, task=task,
             target=None, original_input=text,
         )
         self.dispatched.append(text)

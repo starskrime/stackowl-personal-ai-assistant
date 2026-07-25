@@ -50,7 +50,7 @@ def test_capture_logs_fixture(capture_logs: list[dict[str, Any]]) -> None:
 def test_trace_context_fixture(trace_context: None) -> None:
     ctx = TraceContext.get()
     assert ctx["trace_id"] is not None
-    assert ctx["session_id"] == "test-session"
+    assert ctx["session_key"] == "test-session"
     assert ctx["span_id"] is not None
 
 
@@ -68,7 +68,7 @@ def test_observability_jsonl_format(capture_logs: list[dict[str, Any]], trace_co
     log.info("test structured log")
     assert capture_logs
     record = capture_logs[-1]
-    required = {"ts", "level", "module", "msg", "trace_id", "span_id", "parent_span_id", "session_id", "duration_ms", "fields"}
+    required = {"ts", "level", "module", "msg", "trace_id", "span_id", "parent_span_id", "session_key", "duration_ms", "fields"}
     assert required.issubset(record.keys()), f"missing fields: {required - record.keys()}"
     assert record["trace_id"] is not None
     parsed = json.dumps(record)

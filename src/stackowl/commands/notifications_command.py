@@ -63,7 +63,7 @@ class NotificationsMissedCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.notifications.debug(
             "[notifications] notifications.handle: entry",
-            extra={"_fields": {"args": args[:40], "session": state.session_id}},
+            extra={"_fields": {"args": args[:40], "session": state.session_key}},
         )
         if self._db is None:
             return "✗ /notifications: not configured"

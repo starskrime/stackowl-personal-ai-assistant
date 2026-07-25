@@ -349,7 +349,7 @@ def _backend(pool: DbPool, provider: object, tool: _SideEffectTool) -> AsyncioBa
 def _durable_state() -> PipelineState:
     return PipelineState(
         trace_id="kill-resume",
-        session_id="kill-resume",
+        session_key="kill-resume",
         input_text=_GOAL,
         channel="cli",
         owl_name="secretary",

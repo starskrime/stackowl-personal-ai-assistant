@@ -40,7 +40,7 @@ def _write_spec(directory: Path, name: str) -> Path:
 async def _record(store: TaskOutcomeStore, trace: str, tool: str, *, success: bool,
                   failure_class: str | None) -> None:
     await store.record(
-        trace_id=trace, session_id="s", owl_name="secretary", channel="cli",
+        trace_id=trace, session_key="s", owl_name="secretary", channel="cli",
         success=success, latency_ms=1.0, tool_call_count=1, failure_class=failure_class,
         step_durations={}, input_text="x", response_text="y", tool_sequence=(tool,),
     )

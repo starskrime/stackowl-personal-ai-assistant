@@ -915,7 +915,7 @@ class SchedulerAssembly:
         )
         # F050 — turn sweep is the BACKSTOP reaper for a turn left RUNNING after a
         # missed completion hook (task done() but status never reached DONE), which
-        # wedges TurnRegistry._running[session_id] forever and jams all later
+        # wedges TurnRegistry._running[session_key] forever and jams all later
         # same-session routing. Every 10m (well under the host-scaled TTL) it
         # deregisters such wedged turns and surfaces any reaped-but-stranded session
         # to the drain seam. The handler is registered in the gateway assembly (it

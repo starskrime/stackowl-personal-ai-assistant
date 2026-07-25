@@ -163,7 +163,7 @@ class SkillViewTool(Tool):
             # Hysteresis: record this view so the skill stays stickier next turn.
             ctx = TraceContext.get()
             owl = ctx.get("owl_name")
-            session = ctx.get("session_id")
+            session = ctx.get("session_key")
             if owl and session:
                 turn = FOCUS_TRACKER.current_turn(owl, session)
                 FOCUS_TRACKER.mark_viewed(owl, session, skill.name, turn)

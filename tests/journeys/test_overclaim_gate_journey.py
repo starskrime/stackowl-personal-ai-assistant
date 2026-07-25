@@ -237,7 +237,7 @@ async def _drive_to_post_floor(
         ),
     ))
     state = PipelineState(
-        trace_id="t-oc-journey", session_id="s", input_text="send my report",
+        trace_id="t-oc-journey", session_key="s", input_text="send my report",
         channel="telegram", owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     svc_token = set_services(StepServices(

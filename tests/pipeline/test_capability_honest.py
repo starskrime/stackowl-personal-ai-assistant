@@ -291,7 +291,7 @@ async def _drive(tool: _AlwaysFailTool, model_window: int | None) -> PipelineSta
     )
     state = PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="make me a chart",
         channel="telegram",
         owl_name=_OWL,

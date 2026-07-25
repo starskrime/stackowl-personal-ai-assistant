@@ -38,7 +38,7 @@ def _chunk(content: str) -> ResponseChunk:
 def _state(**kw: Any) -> PipelineState:
     base = dict(
         trace_id="t1",
-        session_id="s1",
+        session_key="s1",
         input_text="do the thing",
         channel="cli",
         owl_name="secretary",

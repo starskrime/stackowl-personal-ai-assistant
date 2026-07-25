@@ -32,7 +32,7 @@ async def test_full_retry_loop_success(tmp_db: DbPool) -> None:
 
     # 1. A floored turn inserts a pending row (turn_persist.py's hook).
     await store.insert_pending(
-        trace_id="trace-1", session_id="sess-1", goal="prepare me for the interview",
+        trace_id="trace-1", session_key="sess-1", goal="prepare me for the interview",
         banned_capabilities=["cronjob"],
     )
     # 2. The Telegram adapter's send resolves and backfills the sent message ref.
@@ -41,7 +41,7 @@ async def test_full_retry_loop_success(tmp_db: DbPool) -> None:
     )
 
     success_state = PipelineState(
-        trace_id="trace-2", session_id="sess-1", input_text="prepare me for the interview",
+        trace_id="trace-2", session_key="sess-1", input_text="prepare me for the interview",
         channel="telegram", owl_name="secretary", pipeline_step="",
         responses=(
             ResponseChunk(

@@ -106,26 +106,26 @@ def build_message(event_name: str, payload: dict[str, Any]) -> Message | None:
     if event_name == "parliament_started":
         owl_names = payload.get("owl_names", ())
         return ParliamentStartedMessage(
-            session_id=str(payload.get("session_id", "")),
+            session_key=str(payload.get("session_key", "")),
             owl_names=tuple(str(n) for n in owl_names) if owl_names else (),
             trigger=str(payload.get("trigger", "explicit")),
         )
     if event_name == "parliament_round_started":
         return ParliamentRoundStartedMessage(
-            session_id=str(payload.get("session_id", "")),
+            session_key=str(payload.get("session_key", "")),
             round_number=int(payload.get("round_number", 1)),
         )
     if event_name == "parliament_round_complete":
         responses = payload.get("owl_responses", {})
         return ParliamentRoundMessage(
-            session_id=str(payload.get("session_id", "")),
+            session_key=str(payload.get("session_key", "")),
             round_number=int(payload.get("round_number", 0)),
             owl_responses=dict(responses) if isinstance(responses, dict) else {},
         )
     if event_name == "synthesis_arrived":
         disagreements = payload.get("disagreements", ())
         return SynthesisArrivedMessage(
-            session_id=str(payload.get("session_id", "")),
+            session_key=str(payload.get("session_key", "")),
             consensus=str(payload.get("consensus", "")),
             recommendation=str(payload.get("recommendation", "")),
             confidence=float(payload.get("confidence", 0.0)),
@@ -135,7 +135,7 @@ def build_message(event_name: str, payload: dict[str, Any]) -> Message | None:
         )
     if event_name == "parliament_session_closed":
         return ParliamentClosedMessage(
-            session_id=str(payload.get("session_id", "")),
+            session_key=str(payload.get("session_key", "")),
         )
     if event_name == "memory_fact_updated":
         return MemoryFactMessage(

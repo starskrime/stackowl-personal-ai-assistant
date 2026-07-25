@@ -281,7 +281,7 @@ async def test_lying_judge_giveup_is_vetoed_end_to_end(
 
     msg = IngressMessage(
         text="please summarize that page for me",
-        session_id="sess-lying-judge",
+        session_key="sess-lying-judge",
         channel="cli",
         trace_id="trace-lying-judge-1",
     )
@@ -291,7 +291,7 @@ async def test_lying_judge_giveup_is_vetoed_end_to_end(
     )
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,

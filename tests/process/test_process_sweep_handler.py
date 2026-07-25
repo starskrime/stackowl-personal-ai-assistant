@@ -59,7 +59,7 @@ def test_factory_registers_on_handler_registry(clock: FakeClock, tmp_path) -> No
 @pytest.mark.asyncio
 async def test_execute_drives_sweep_and_auto_kills_overdue(clock: FakeClock, tmp_path) -> None:
     reg = _registry(clock, tmp_path)
-    handle = await reg.start(py("import time; time.sleep(30)"), session_id="s1")
+    handle = await reg.start(py("import time; time.sleep(30)"), session_key="s1")
     handler = ProcessSweepHandler(reg)
 
     # Before the mandatory TTL elapses, the sweep kills nothing.

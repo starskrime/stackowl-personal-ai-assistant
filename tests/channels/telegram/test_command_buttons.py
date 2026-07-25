@@ -75,7 +75,7 @@ async def test_resolver_dispatches_non_destructive_action():
         async def dispatch(self, name, args, state):
             dispatched["name"] = name
             dispatched["args"] = args
-            dispatched["session_id"] = state.session_id
+            dispatched["session_key"] = state.session_key
             return CommandResponse(text="✓ removed")
 
     adapter = _FakeAdapter()
@@ -89,7 +89,7 @@ async def test_resolver_dispatches_non_destructive_action():
 
     assert dispatched["name"] == "provider"
     assert dispatched["args"] == "remove acme"
-    assert dispatched["session_id"] == "555"
+    assert dispatched["session_key"] == "555"
     # Went through the single-call chokepoint, not a bare send_text.
     assert adapter.sent_actions == [(555, "✓ removed", ())]
     assert adapter.sent_text == [(555, "✓ removed")]

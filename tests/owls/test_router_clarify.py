@@ -53,7 +53,7 @@ def _make_router(canned_reply: str) -> tuple[SecretaryRouter, MockProvider]:
 def _state(input_text: str) -> PipelineState:
     return PipelineState(
         trace_id="trace-test",
-        session_id="session-test",
+        session_key="session-test",
         input_text=input_text,
         channel="cli",
         owl_name="secretary",

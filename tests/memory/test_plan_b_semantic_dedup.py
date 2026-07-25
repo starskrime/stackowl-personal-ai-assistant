@@ -36,17 +36,17 @@ class _ScriptedExtractor:
         self._scripts = scripts
         self._call = 0
 
-    async def extract(self, messages: list[object], session_id: str) -> list[StagedFact]:
+    async def extract(self, messages: list[object], session_key: str) -> list[StagedFact]:
         facts = self._scripts[self._call]
         self._call += 1
         return facts
 
 
-async def _staged_rows(db: DbPool, session_id: str) -> list[dict]:
+async def _staged_rows(db: DbPool, session_key: str) -> list[dict]:
     return await db.fetch_all(
         "SELECT content, reinforcement_count FROM staged_facts "
         "WHERE source_type='conversation_fact' AND source_ref=? ORDER BY staged_at",
-        (session_id,),
+        (session_key,),
     )
 
 

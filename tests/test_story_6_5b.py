@@ -125,7 +125,7 @@ async def test_pipeline_classify_calls_kuzu_traverse(
             return [{"name": "Spy", "entity_type": "TOPIC"}]
 
     class _NullBridge:
-        async def retrieve(self, query: str, session_id: str) -> str:
+        async def retrieve(self, query: str, session_key: str) -> str:
             return ""
 
     services = StepServices(
@@ -136,7 +136,7 @@ async def test_pipeline_classify_calls_kuzu_traverse(
     try:
         state = PipelineState(
             trace_id="t",
-            session_id="s",
+            session_key="s",
             input_text="tell me about Berlin and Alice",
             channel="cli",
             owl_name="secretary",

@@ -50,7 +50,7 @@ class BriefCommand(SlashCommand):
                 "_fields": {
                     "args_len": len(args),
                     "channel": state.channel,
-                    "session_id": state.session_id,
+                    "session_key": state.session_key,
                 }
             },
         )

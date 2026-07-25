@@ -218,7 +218,7 @@ async def test_failure_history_gate(
 
     # Gate logic: classified standard → True (would admit).
     classified_state = PipelineState(
-        trace_id="gate-pos", session_id="s", input_text="x",
+        trace_id="gate-pos", session_key="s", input_text="x",
         channel="cli", owl_name=_OWL, pipeline_step="start",
         intent_class="standard", intent_classified=True,
     )
@@ -228,7 +228,7 @@ async def test_failure_history_gate(
 
     # Gate logic: unclassified (direct-address default) → False (would suppress).
     unclassified_state = PipelineState(
-        trace_id="gate-neg", session_id="s", input_text="hi",
+        trace_id="gate-neg", session_key="s", input_text="hi",
         channel="cli", owl_name=_OWL, pipeline_step="start",
         intent_class="standard", intent_classified=False,
     )
@@ -249,7 +249,7 @@ async def test_failure_history_gate(
     # Simulate what GatewayScanner produces for "@scout hi" (direct address).
     state = PipelineState(
         trace_id="neg-direct-trace",
-        session_id="neg-direct-session",
+        session_key="neg-direct-session",
         input_text="hi",          # stripped text after "@scout" is removed
         channel="cli",
         owl_name=_OWL,            # scanner set this from the @mention

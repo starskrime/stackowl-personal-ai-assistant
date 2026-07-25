@@ -15,7 +15,7 @@ from stackowl.pipeline.steps.classify import _should_surface_failure_history
 
 def _s(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
-        trace_id="t", session_id="s", input_text="x",
+        trace_id="t", session_key="s", input_text="x",
         owl_name="secretary", channel="cli", pipeline_step="start",
     )
     base.update(kw)

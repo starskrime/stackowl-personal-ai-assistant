@@ -20,7 +20,7 @@ def _row() -> RetryQueueRow:
     return RetryQueueRow(
         id="r1",
         trace_id="t1",
-        session_id="s1",
+        session_key="s1",
         goal="prepare me for the interview",
         banned_capabilities=[],
         attempt_count=0,
@@ -61,7 +61,7 @@ async def test_triage_triggers_manual_retry():
     )
     try:
         state = PipelineState(
-            trace_id="t2", session_id="s1", input_text="do it again",
+            trace_id="t2", session_key="s1", input_text="do it again",
             channel="telegram", owl_name="secretary", pipeline_step="triage",
             interactive=True,  # C2 fix — hook is gated on a real (interactive) user turn
         )
@@ -96,7 +96,7 @@ async def test_triage_no_pending_row_falls_through_to_normal_routing():
         # owl_name != secretary -> direct-address path; no owl_registry wired
         # so it accepts as-is and returns quickly without touching the router.
         state = PipelineState(
-            trace_id="t3", session_id="s1", input_text="what's the weather",
+            trace_id="t3", session_key="s1", input_text="what's the weather",
             channel="telegram", owl_name="max", pipeline_step="triage",
         )
         result = await triage.run(state)
@@ -127,7 +127,7 @@ async def test_triage_pending_row_but_not_retry_intent_falls_through():
     )
     try:
         state = PipelineState(
-            trace_id="t4", session_id="s1", input_text="what's the weather",
+            trace_id="t4", session_key="s1", input_text="what's the weather",
             channel="telegram", owl_name="max", pipeline_step="triage",
             interactive=True,  # C2 fix — hook is gated on a real (interactive) user turn
         )
@@ -148,7 +148,7 @@ async def test_triage_no_retry_store_is_noop():
     token = set_services(StepServices())
     try:
         state = PipelineState(
-            trace_id="t5", session_id="s1", input_text="do it again",
+            trace_id="t5", session_key="s1", input_text="do it again",
             channel="telegram", owl_name="max", pipeline_step="triage",
         )
         result = await triage.run(state)

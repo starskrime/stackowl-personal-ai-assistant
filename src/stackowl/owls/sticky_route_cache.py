@@ -1,6 +1,6 @@
 """StickyRouteCache — FR-9 per-session sticky-routing cache.
 
-A small in-memory, per-session TTL cache mapping ``session_id -> (owl_name,
+A small in-memory, per-session TTL cache mapping ``session_key -> (owl_name,
 intent_class, resolved_at)``. Consulted by ``pipeline/steps/triage.py`` to
 skip the LLM :class:`~stackowl.owls.router.SecretaryRouter` call on short,
 same-session follow-ups (FR-9) — the mechanical bypass rule PRD FR-9
@@ -54,17 +54,17 @@ class StickyRouteCache:
     def __init__(self) -> None:
         self._entries: dict[str, tuple[str, str, float]] = {}
 
-    def get(self, session_id: str) -> tuple[str, str] | None:
+    def get(self, session_key: str) -> tuple[str, str] | None:
         """Return ``(owl_name, intent_class)`` if a fresh entry exists, else None."""
         log.engine.debug(
             "[sticky_route_cache] get: entry",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
-        entry = self._entries.get(session_id)
+        entry = self._entries.get(session_key)
         if entry is None:
             log.engine.debug(
                 "[sticky_route_cache] get: miss",
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"session_key": session_key}},
             )
             return None
         owl_name, intent_class, resolved_at = entry
@@ -72,14 +72,14 @@ class StickyRouteCache:
         if age >= TTL_SECONDS:
             log.engine.debug(
                 "[sticky_route_cache] get: stale — expired",
-                extra={"_fields": {"session_id": session_id, "age_s": age}},
+                extra={"_fields": {"session_key": session_key, "age_s": age}},
             )
             return None
         log.engine.debug(
             "[sticky_route_cache] get: hit",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "owl": owl_name,
                     "intent_class": intent_class,
                     "age_s": age,
@@ -88,8 +88,8 @@ class StickyRouteCache:
         )
         return owl_name, intent_class
 
-    def evict(self, session_id: str) -> None:
-        """Drop ``session_id``'s cached entry, if any.
+    def evict(self, session_key: str) -> None:
+        """Drop ``session_key``'s cached entry, if any.
 
         Called when a turn floors: the cached "conversational" routing just
         produced a turn with no tools and nothing to back up what it said, so
@@ -98,28 +98,28 @@ class StickyRouteCache:
         """
         log.engine.debug(
             "[sticky_route_cache] evict: entry",
-            extra={"_fields": {"session_id": session_id}},
+            extra={"_fields": {"session_key": session_key}},
         )
-        removed = self._entries.pop(session_id, None) is not None
+        removed = self._entries.pop(session_key, None) is not None
         log.engine.debug(
             "[sticky_route_cache] evict: exit",
-            extra={"_fields": {"session_id": session_id, "removed": removed}},
+            extra={"_fields": {"session_key": session_key, "removed": removed}},
         )
 
-    def set(self, session_id: str, owl_name: str, intent_class: str) -> None:
-        """Write/overwrite ``session_id``'s entry with the current monotonic time."""
+    def set(self, session_key: str, owl_name: str, intent_class: str) -> None:
+        """Write/overwrite ``session_key``'s entry with the current monotonic time."""
         log.engine.debug(
             "[sticky_route_cache] set: entry",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "owl": owl_name,
                     "intent_class": intent_class,
                 }
             },
         )
-        self._entries[session_id] = (owl_name, intent_class, time.monotonic())
+        self._entries[session_key] = (owl_name, intent_class, time.monotonic())
         log.engine.debug(
             "[sticky_route_cache] set: exit",
-            extra={"_fields": {"session_id": session_id, "live": len(self._entries)}},
+            extra={"_fields": {"session_key": session_key, "live": len(self._entries)}},
         )

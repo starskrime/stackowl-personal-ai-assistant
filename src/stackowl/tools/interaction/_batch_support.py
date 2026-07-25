@@ -139,7 +139,7 @@ class BatchAuditor:
         self._actor = actor
         self._clock = clock
 
-    def _append(self, event_type: str, session_id: str, details: dict[str, object]) -> None:
+    def _append(self, event_type: str, session_key: str, details: dict[str, object]) -> None:
         if self._logger is None:
             log.tool.debug(
                 "batch_approve.execute: no audit_logger wired — skipping audit",
@@ -150,37 +150,37 @@ class BatchAuditor:
             self._logger.append(
                 event_type=event_type,
                 actor=self._actor,
-                target=session_id,
+                target=session_key,
                 details={**details, "ts": self._clock()},
             )
         except Exception as exc:  # B5 — auditing must never crash the batch
             log.tool.error(
                 "batch_approve.execute: audit append failed — continuing",
                 exc_info=exc,
-                extra={"_fields": {"event_type": event_type, "session_id": session_id}},
+                extra={"_fields": {"event_type": event_type, "session_key": session_key}},
             )
 
-    def grant(self, session_id: str, args: BatchApproveArgs) -> None:
+    def grant(self, session_key: str, args: BatchApproveArgs) -> None:
         """Open the bounded, audited window."""
         self._append(
             AUDIT_GRANT,
-            session_id,
+            session_key,
             {"intro": args.intro, "n_actions": len(args.actions),
              "tools": [a.tool for a in args.actions]},
         )
 
-    def reject(self, session_id: str, args: BatchApproveArgs, outcome: str, answer: str | None) -> None:
+    def reject(self, session_key: str, args: BatchApproveArgs, outcome: str, answer: str | None) -> None:
         self._append(
             AUDIT_REJECT,
-            session_id,
+            session_key,
             {"intro": args.intro, "n_actions": len(args.actions),
              "outcome": outcome, "answer": answer},
         )
 
-    def action(self, session_id: str, action: BatchAction, *, success: bool, error: str | None) -> None:
+    def action(self, session_key: str, action: BatchAction, *, success: bool, error: str | None) -> None:
         self._append(
             AUDIT_ACTION,
-            session_id,
+            session_key,
             {"tool": action.tool, "summary": action.summary,
              "success": success, "error": error or ""},
         )
@@ -194,7 +194,7 @@ class BatchExecutor:
         self._auditor = auditor
 
     async def run(
-        self, args: BatchApproveArgs, session_id: str,
+        self, args: BatchApproveArgs, session_key: str,
     ) -> tuple[list[dict[str, object]], int, int]:
         """Execute every action; return ``(outcomes, n_succeeded, n_failed)``.
 
@@ -204,11 +204,11 @@ class BatchExecutor:
         is caught, logged (B5), surfaced in ``outcomes``, and audited — the other
         actions still run and nothing raises.
         """
-        self._auditor.grant(session_id, args)
+        self._auditor.grant(session_key, args)
         outcomes: list[dict[str, object]] = []
         n_succeeded = 0
         for i, action in enumerate(args.actions, start=1):
-            outcome = await self._run_one(i, action, session_id)
+            outcome = await self._run_one(i, action, session_key)
             if outcome["success"]:
                 n_succeeded += 1
             outcomes.append(outcome)
@@ -221,7 +221,7 @@ class BatchExecutor:
         return outcomes, n_succeeded, n_failed
 
     async def _run_one(
-        self, n: int, action: BatchAction, session_id: str,
+        self, n: int, action: BatchAction, session_key: str,
     ) -> dict[str, object]:
         # SEC-3 / F164 — DEFENSE-IN-DEPTH: an approved batch executes each action
         # DIRECTLY (pre-consented, bypassing the per-action dispatch consent gate).
@@ -239,12 +239,12 @@ class BatchExecutor:
                 "batch_approve.execute: action refused — child-excluded at depth",
                 extra={"_fields": {"n": n, "tool": action.tool}},
             )
-            self._auditor.action(session_id, action, success=False, error=excl_err)
+            self._auditor.action(session_key, action, success=False, error=excl_err)
             return {"n": n, "tool": action.tool, "summary": action.summary,
                     "success": False, "error": excl_err}
         tool = self._registry.get(action.tool)
         if tool is None:  # defensive — validated earlier, but never trust drift
-            self._auditor.action(session_id, action, success=False, error="tool no longer registered")
+            self._auditor.action(session_key, action, success=False, error="tool no longer registered")
             return {"n": n, "tool": action.tool, "summary": action.summary,
                     "success": False, "error": "tool no longer registered"}
         try:
@@ -255,7 +255,7 @@ class BatchExecutor:
                 exc_info=exc,
                 extra={"_fields": {"n": n, "tool": action.tool}},
             )
-            self._auditor.action(session_id, action, success=False, error=str(exc))
+            self._auditor.action(session_key, action, success=False, error=str(exc))
             return {"n": n, "tool": action.tool, "summary": action.summary,
                     "success": False, "error": str(exc)}
         if not result.success:
@@ -264,7 +264,7 @@ class BatchExecutor:
                 extra={"_fields": {"n": n, "tool": action.tool, "error": result.error}},
             )
         err = None if result.success else (result.error or "")
-        self._auditor.action(session_id, action, success=result.success, error=err)
+        self._auditor.action(session_key, action, success=result.success, error=err)
         return {"n": n, "tool": action.tool, "summary": action.summary,
                 "success": result.success,
                 "output": result.output if result.success else "",

@@ -69,7 +69,7 @@ async def test_timeout_does_not_mark_durable_child_failed(pool: DbPool) -> None:
     delegator = _SlowSpecialistDelegator(A2AQueue(), services, timeout_seconds=0.05)
 
     parent_state = PipelineState(
-        trace_id="tr", session_id="s", input_text="sub", channel="internal",
+        trace_id="tr", session_key="s", input_text="sub", channel="internal",
         owl_name="secretary", pipeline_step="dispatch",
         task_id=child_id, durable_owner_id=DEFAULT_PRINCIPAL_ID,
     )
@@ -107,7 +107,7 @@ async def test_break_a_child_scope_does_not_leak_into_parent_frame(pool: DbPool)
     delegator = _SlowSpecialistDelegator(A2AQueue(), services, timeout_seconds=0.05)
 
     parent_state = PipelineState(
-        trace_id="tr", session_id="s", input_text="sub", channel="internal",
+        trace_id="tr", session_key="s", input_text="sub", channel="internal",
         owl_name="secretary", pipeline_step="dispatch",
         task_id=child_id, durable_owner_id=DEFAULT_PRINCIPAL_ID,
     )

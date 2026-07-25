@@ -551,8 +551,8 @@ class OwlBuildTool(Tool):
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
-        if not interactive or not channel or not session_id:
+        session_key = ctx.get("session_key")
+        if not interactive or not channel or not session_key:
             log.tool.error(
                 "owl_build.execute: no user present to approve — refused (fail closed)",
                 exc_info=None,
@@ -574,7 +574,7 @@ class OwlBuildTool(Tool):
             allowed = await gate.policy.request(
                 tool_name=self.name,
                 channel=channel,
-                session_id=session_id,
+                session_key=session_key,
                 category=_CONSENT_CATEGORY,
                 summary=summary,
                 reversible=reversible,
@@ -631,11 +631,11 @@ class OwlBuildTool(Tool):
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
+        session_key = ctx.get("session_key")
 
         # 2. DECISION — fail closed off-TTY (no user to ask). Return the gap as an
         # error so the turn ends cleanly instead of hanging (current behavior).
-        if not interactive or not channel or not session_id:
+        if not interactive or not channel or not session_key:
             log.tool.info(
                 "owl_build.execute: underspecified create off-TTY — fail closed (no ask)",
                 extra={"_fields": {"missing": list(missing.fields), "interactive": interactive}},
@@ -663,7 +663,7 @@ class OwlBuildTool(Tool):
             try:
                 # 3. STEP — blocking ask + park until the user replies (or times out).
                 clarify_id = await gateway.ask(
-                    str(session_id), str(channel), question,
+                    str(session_key), str(channel), question,
                     awaiting_text=True, blocking=True,
                 )
                 answer, outcome = await gateway.wait_for_answer(

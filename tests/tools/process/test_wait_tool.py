@@ -61,15 +61,15 @@ class _Ctx:
     """A real registry + trace session for a test, torn down on exit. The wait
     tool can be given a custom clock for the deterministic timeout path."""
 
-    def __init__(self, session_id: str = "sess-1", *, clock=None) -> None:
-        self._session_id = session_id
+    def __init__(self, session_key: str = "sess-1", *, clock=None) -> None:
+        self._session_key = session_key
         self.registry = ProcessRegistry()
         self.process = ProcessTool()
         self.wait = WaitTool(clock=clock)
 
     async def __aenter__(self) -> _Ctx:
         self._token = set_services(StepServices(process_registry=self.registry))
-        self._trace = TraceContext.start(self._session_id, trace_id="tr-wait", channel="cli")
+        self._trace = TraceContext.start(self._session_key, trace_id="tr-wait", channel="cli")
         return self
 
     async def __aexit__(self, *exc) -> None:
@@ -170,9 +170,9 @@ async def test_wait_does_not_busy_spin_polls_bounded() -> None:
         real_poll = ctx.registry.poll
         calls = {"n": 0}
 
-        async def _counting_poll(process_id, session_id=None):  # noqa: ANN001, ANN202
+        async def _counting_poll(process_id, session_key=None):  # noqa: ANN001, ANN202
             calls["n"] += 1
-            return await real_poll(process_id, session_id)
+            return await real_poll(process_id, session_key)
 
         ctx.registry.poll = _counting_poll  # type: ignore[assignment]
         data = await _payload(await ctx.wait.execute(for_process=pid, timeout=10.0))
@@ -195,7 +195,7 @@ async def test_wait_unknown_process_is_structured_error() -> None:
 async def test_wait_other_session_process_is_hidden_no_such_process() -> None:
     async with _Ctx("sess-A") as ctx:
         # A process owned by a DIFFERENT session — Fork E scoping hides it.
-        other = await ctx.registry.start(py("import time; time.sleep(30)"), session_id="sess-B")
+        other = await ctx.registry.start(py("import time; time.sleep(30)"), session_key="sess-B")
         res = await ctx.wait.execute(for_process=other.process_id, timeout=1.0)
         assert not res.success
         assert "no such process" in (res.error or "")

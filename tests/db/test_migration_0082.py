@@ -22,7 +22,7 @@ _MIGRATION_SQL = (
 _EXPECTED_COLUMNS = {
     "id",
     "trace_id",
-    "session_id",
+    "session_key",
     "goal",
     "banned_capabilities",
     "attempt_count",
@@ -104,7 +104,7 @@ def test_0082_insert_applies_defaults_and_enforces_status_check(tmp_path: Path) 
         conn.execute(
             """
             INSERT INTO retry_queue
-                (id, trace_id, session_id, goal, status, next_retry_at,
+                (id, trace_id, session_key, goal, status, next_retry_at,
                  owner_id, created_at, updated_at)
             VALUES
                 ('id-1', 'trace-1', 'session-1', 'do the thing', 'pending',
@@ -121,7 +121,7 @@ def test_0082_insert_applies_defaults_and_enforces_status_check(tmp_path: Path) 
             conn.execute(
                 """
                 INSERT INTO retry_queue
-                    (id, trace_id, session_id, goal, status, next_retry_at,
+                    (id, trace_id, session_key, goal, status, next_retry_at,
                      owner_id, created_at, updated_at)
                 VALUES
                     ('id-2', 'trace-2', 'session-2', 'do another thing', 'bogus-status',

@@ -129,7 +129,7 @@ class ParliamentCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] parliament.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         stripped = args.strip()
         if not stripped:
@@ -169,7 +169,7 @@ class ParliamentCommand(SlashCommand):
         """Start a new Parliament debate on ``topic``."""
         log.gateway.debug(
             "[commands] parliament.start: entry",
-            extra={"_fields": {"topic_len": len(topic), "session": state.session_id}},
+            extra={"_fields": {"topic_len": len(topic), "session": state.session_key}},
         )
         if self._orchestrator is None:
             return _NO_ORCH
@@ -182,7 +182,7 @@ class ParliamentCommand(SlashCommand):
         session = await self._orchestrator.run(
             topic,
             owl_names,
-            session_id=state.session_id,
+            session_id=state.session_key,
         )
         rollcall = format_rollcall(owl_names)
         if session.synthesis:
@@ -277,7 +277,7 @@ class ParliamentCommand(SlashCommand):
         session = await self._orchestrator.run(
             claim,
             previous.owl_names,
-            session_id=state.session_id,
+            session_id=state.session_key,
         )
         rollcall = format_rollcall(previous.owl_names)
         body = session.synthesis or "[expanded — no synthesis produced]"

@@ -36,7 +36,7 @@ async def run(state: PipelineState) -> PipelineState:
         extra={
             "_fields": {
                 "trace_id": state.trace_id,
-                "session_id": state.session_id,
+                "session_key": state.session_key,
                 "owl": state.owl_name,
             }
         },
@@ -71,7 +71,7 @@ async def run(state: PipelineState) -> PipelineState:
         and services.retry_intent_classifier is not None
         and services.retry_actuator is not None
     ):
-        pending = await retry_store.get_latest_pending_for_session(state.session_id)
+        pending = await retry_store.get_latest_pending_for_session(state.session_key)
         if pending is not None:
             is_retry = await services.retry_intent_classifier.classify(
                 user_message=state.input_text, prior_goal=pending.goal,
@@ -80,7 +80,7 @@ async def run(state: PipelineState) -> PipelineState:
                 log.engine.info(
                     "[pipeline] triage: manual retry-intent detected — dispatching now",
                     extra={"_fields": {
-                        "trace_id": state.trace_id, "session_id": state.session_id,
+                        "trace_id": state.trace_id, "session_key": state.session_key,
                         "retry_id": pending.id,
                     }},
                 )
@@ -146,7 +146,7 @@ async def run(state: PipelineState) -> PipelineState:
     # Purely mechanical (no new-topic detection); ALL conditions must hold.
     sticky_cache = services.sticky_route_cache
     if sticky_cache is not None and len(state.input_text) < _STICKY_MAX_CHARS:
-        cached = sticky_cache.get(state.session_id)
+        cached = sticky_cache.get(state.session_key)
         # Adversarial review (2026-07-01) — restrict reuse to "conversational"
         # cached entries only. A "standard" (work-turn) resolution is the one
         # most likely to be stale by the time a short follow-up arrives, and
@@ -222,7 +222,7 @@ async def run(state: PipelineState) -> PipelineState:
     # adversarial-review comment there; "standard"/"clarify" results are
     # deliberately never cached, not just never read).
     if sticky_cache is not None and result.intent_class == "conversational":
-        sticky_cache.set(state.session_id, result.owl_name, result.intent_class)
+        sticky_cache.set(state.session_key, result.owl_name, result.intent_class)
     return state.evolve(
         owl_name=result.owl_name,
         intent_class=result.intent_class,

@@ -15,7 +15,7 @@ from stackowl.tools.base import ToolResult
 
 
 class _State:
-    session_id = "s1"
+    session_key = "s1"
     trace_id = "t1"
     channel = "cli"
     reply_target = None

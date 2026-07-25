@@ -9,7 +9,7 @@ from stackowl.runtime.turn_client import LocalTurnClient, UnregisteredChannelErr
 
 
 def _msg(channel: str) -> IngressMessage:
-    return IngressMessage(text="hi", session_id="s1", channel=channel, trace_id="t1")
+    return IngressMessage(text="hi", session_key="s1", channel=channel, trace_id="t1")
 
 
 async def test_submit_routes_to_registered_channel() -> None:

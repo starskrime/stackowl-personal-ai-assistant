@@ -3,8 +3,8 @@
 Two surfaces:
 
 * ``TelegramChannelAdapter.send_clarify`` — builds one inline button per choice
-  with ``callback_data`` ``clarify:{id}:{idx}``, targets ``int(session_id)``;
-  a non-int session_id and a no-choices question both degrade to plain text.
+  with ``callback_data`` ``clarify:{id}:{idx}``, targets ``int(session_key)``;
+  a non-int session_key and a no-choices question both degrade to plain text.
 * ``TelegramClarifyResolver.handle_callback`` — a tap maps ``idx`` → choice text
   and resolves the parked clarify via a REAL gateway (a parked
   ``wait_for_answer`` wakes with the chosen text). Malformed / stale / out-of-range
@@ -228,11 +228,11 @@ async def test_tap_resolves_by_id_independent_of_cap_one() -> None:
 
     gw = ClarifyGateway()
     entry_a = PendingClarify(
-        clarify_id="CID_A", session_id=str(USER_ID), channel="telegram",
+        clarify_id="CID_A", session_key=str(USER_ID), channel="telegram",
         question="A?", choices=("a0", "a1"), event=_asyncio.Event(),
     )
     entry_b = PendingClarify(
-        clarify_id="CID_B", session_id=str(USER_ID), channel="telegram",
+        clarify_id="CID_B", session_key=str(USER_ID), channel="telegram",
         question="B?", choices=("b0", "b1"), event=_asyncio.Event(),
     )
     # Insert B FIRST so a session+channel re-match would hit B, not the tapped A.

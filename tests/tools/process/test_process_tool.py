@@ -57,14 +57,14 @@ async def _wait_terminal(tool: ProcessTool, pid: str, timeout: float = 5.0) -> d
 class _Ctx:
     """Set up a real registry + trace session for a test, tearing both down."""
 
-    def __init__(self, session_id: str = "sess-1") -> None:
-        self._session_id = session_id
+    def __init__(self, session_key: str = "sess-1") -> None:
+        self._session_key = session_key
         self.registry = ProcessRegistry()
         self.tool = ProcessTool()
 
     async def __aenter__(self) -> _Ctx:
         self._token = set_services(StepServices(process_registry=self.registry))
-        self._trace = TraceContext.start(self._session_id, trace_id="tr-proc", channel="cli")
+        self._trace = TraceContext.start(self._session_key, trace_id="tr-proc", channel="cli")
         return self
 
     async def __aexit__(self, *exc) -> None:
@@ -165,7 +165,7 @@ async def test_list_session_scoped_vs_all_cross_session() -> None:
     async with _Ctx("sess-A") as ctx:
         mine = await _payload(await ctx.tool.execute(action="start", command=py("import time; time.sleep(30)")))
         # A second process owned by a DIFFERENT session, inserted into the same registry.
-        other = await ctx.registry.start(py("import time; time.sleep(30)"), session_id="sess-B")
+        other = await ctx.registry.start(py("import time; time.sleep(30)"), session_key="sess-B")
         # Default list → only the caller's session.
         scoped = await _payload(await ctx.tool.execute(action="list"))
         ids = {row["process_id"] for row in scoped["processes"]}

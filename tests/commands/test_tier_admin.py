@@ -22,7 +22,7 @@ from stackowl.pipeline.state import PipelineState
 @pytest.fixture(autouse=True)
 def _reset_session_tier_cache() -> None:
     """The preference job's in-memory cache is module-level global state,
-    keyed by session_id — without a reset, a preference set by one test
+    keyed by session_key — without a reset, a preference set by one test
     (e.g. "fast" for the shared _state() session id) leaks into every test
     that runs after it in the same process, including the admin tests below
     that don't touch preferences at all but share the same default session."""
@@ -36,7 +36,7 @@ def _reset_session_tier_cache() -> None:
 def _state(session: str = "sess-1") -> PipelineState:
     return PipelineState(
         trace_id="trace-1",
-        session_id=session,
+        session_key=session,
         input_text="hello",
         channel="cli",
         owl_name="Daria",

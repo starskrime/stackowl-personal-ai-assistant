@@ -81,7 +81,7 @@ def _factory(registry: object, host_secret: Path):  # noqa: ANN202
     def _make(workspace: Path, socket_path: Path) -> PtcServer:
         return PtcServer(
             registry=registry, workspace=workspace,
-            socket_path=socket_path, session_id="ptc-it",
+            socket_path=socket_path, session_key="ptc-it",
         )
     return _make
 

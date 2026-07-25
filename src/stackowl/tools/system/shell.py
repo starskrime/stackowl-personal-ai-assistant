@@ -361,14 +361,14 @@ async def _gate_catastrophic(
     ctx = TraceContext.get()
     interactive = bool(ctx.get("interactive", False))
     channel = ctx.get("channel")
-    session_id = ctx.get("session_id")
+    session_key = ctx.get("session_key")
     log.tool.warning(
         "shell.execute: catastrophic command — requiring consent",
         extra={"_fields": {"reason": reason, "interactive": interactive, "channel": channel}},
     )
 
     # No interactive user to approve → fail closed (deny). Never auto-run.
-    if not interactive or not session_id or not channel:
+    if not interactive or not session_key or not channel:
         log.tool.error(
             "shell.execute: catastrophic command and no user present — refused (fail closed)",
             extra={"_fields": {"reason": reason, "interactive": interactive}},
@@ -404,7 +404,7 @@ async def _gate_catastrophic(
         allowed = await gate.policy.request(
             tool_name=tool_name,
             channel=channel,
-            session_id=session_id,
+            session_key=session_key,
             category="catastrophic",
             summary=f"Run shell command: {command}",
         )

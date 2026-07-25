@@ -50,7 +50,7 @@ class MessageLedgerRow:
     """Read-side projection of one message_ledger row."""
 
     trace_id: str
-    session_id: str
+    session_key: str
     channel: str
     input_text: str
     chat_id: str | None = None
@@ -63,7 +63,7 @@ class MessageLedgerRow:
 def _row_to_model(row: dict[str, Any]) -> MessageLedgerRow:
     return MessageLedgerRow(
         trace_id=str(row["trace_id"]),
-        session_id=str(row["session_id"]),
+        session_key=str(row["session_key"]),
         channel=str(row["channel"]),
         input_text=str(row["input_text"]),
         chat_id=str(row["chat_id"]) if row.get("chat_id") is not None else None,
@@ -77,7 +77,7 @@ def _row_to_model(row: dict[str, Any]) -> MessageLedgerRow:
 
 
 _SELECT_COLUMNS = (
-    "trace_id, session_id, channel, chat_id, input_text, status, failure_reason, "
+    "trace_id, session_key, channel, chat_id, input_text, status, failure_reason, "
     "created_at, updated_at"
 )
 
@@ -100,7 +100,7 @@ class MessageLedgerStore(OwnedRepository):
         )
 
     async def insert_pending(
-        self, *, trace_id: str, session_id: str, channel: str, input_text: str,
+        self, *, trace_id: str, session_key: str, channel: str, input_text: str,
         chat_id: int | str | None = None,
     ) -> None:
         """Insert a new pending row. Idempotent: a duplicate trace_id is a no-op.
@@ -115,7 +115,7 @@ class MessageLedgerStore(OwnedRepository):
         log.memory.debug(
             "message_ledger_store.insert_pending: entry",
             extra={"_fields": {
-                "trace_id": trace_id, "session_id": session_id, "channel": channel,
+                "trace_id": trace_id, "session_key": session_key, "channel": channel,
             }},
         )
         # 2. DECISION — truncate free-text input, same rule as retry_queue.goal.
@@ -126,11 +126,11 @@ class MessageLedgerStore(OwnedRepository):
             # 3. STEP
             await self._db.execute(
                 """INSERT OR IGNORE INTO message_ledger
-                   (trace_id, session_id, channel, chat_id, input_text, status,
+                   (trace_id, session_key, channel, chat_id, input_text, status,
                     failure_reason, owner_id, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?)""",
                 (
-                    trace_id, session_id, channel, chat_id_str, truncated_input,
+                    trace_id, session_key, channel, chat_id_str, truncated_input,
                     self._owner_id, now, now,
                 ),
             )
@@ -138,7 +138,7 @@ class MessageLedgerStore(OwnedRepository):
             log.memory.error(
                 "message_ledger_store.insert_pending: insert failed",
                 exc_info=exc,
-                extra={"_fields": {"trace_id": trace_id, "session_id": session_id}},
+                extra={"_fields": {"trace_id": trace_id, "session_key": session_key}},
             )
             raise
         # 4. EXIT

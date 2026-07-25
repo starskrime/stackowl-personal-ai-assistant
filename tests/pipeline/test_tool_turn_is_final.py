@@ -60,7 +60,7 @@ async def test_consolidate_merged_chunk_is_not_swallowed() -> None:
     """consolidate merges successful tool output when responses is empty; that
     merged chunk must be DELIVERABLE (is_final=False), not swallowed by the reader."""
     state = PipelineState(
-        trace_id="trace-final", session_id="s1", input_text="hi", channel="cli",
+        trace_id="trace-final", session_key="s1", input_text="hi", channel="cli",
         owl_name="o", pipeline_step="consolidate",
         tool_calls=(ToolCall(tool_name="t", args={}, result="TOOL OUTPUT", error=None, duration_ms=1.0),),
     )

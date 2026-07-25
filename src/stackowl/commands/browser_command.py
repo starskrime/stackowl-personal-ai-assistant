@@ -74,8 +74,8 @@ _BROWSER_META = CommandMeta(
 
 def _owner_key_for_session(state: PipelineState) -> str:
     """Resolve the owner_key for this conversation. Mirrors tools.py logic."""
-    if state.channel == "telegram" and state.session_id:
-        return f"telegram:{state.session_id}"
+    if state.channel == "telegram" and state.session_key:
+        return f"telegram:{state.session_key}"
     return "local"
 
 
@@ -106,7 +106,7 @@ class BrowserCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] browser.handle: entry",
-            extra={"_fields": {"session": state.session_id, "args_len": len(args)}},
+            extra={"_fields": {"session": state.session_key, "args_len": len(args)}},
         )
         services = get_services()
         runtime = services.browser_runtime
@@ -179,7 +179,7 @@ class BrowserCommand(SlashCommand):
             profile = info.profile_name or "(incognito)"
             last_url = info.last_url_path or "—"
             lines.append(
-                f"  {info.session_id[:12]}  profile={profile:<16}  "
+                f"  {info.session_key[:12]}  profile={profile:<16}  "
                 f"pages={info.page_count}  age={_fmt_age(info.age_seconds)}  last={last_url}"
             )
         return "\n".join(lines)
@@ -188,20 +188,20 @@ class BrowserCommand(SlashCommand):
         if sessions is None:
             return "Browser sessions registry unavailable."
         if not args:
-            return "Usage: /browser close <session_id_prefix> | /browser close all"
+            return "Usage: /browser close <session_key_prefix> | /browser close all"
         target = args[0]
         if target == "all":
             count = await sessions.close_all_for_owner(owner_key)  # type: ignore[attr-defined]
             return f"Closed {count} session(s) for {owner_key}."
         # Match by prefix.
         infos = await sessions.list_for_owner(owner_key)  # type: ignore[attr-defined]
-        matches = [i for i in infos if i.session_id.startswith(target)]
+        matches = [i for i in infos if i.session_key.startswith(target)]
         if not matches:
             return f"No session matches prefix '{target}' for {owner_key}."
         if len(matches) > 1:
             return f"Prefix '{target}' is ambiguous ({len(matches)} matches). Be more specific."
-        await sessions.close(matches[0].session_id)  # type: ignore[attr-defined]
-        return f"Closed session {matches[0].session_id[:12]}."
+        await sessions.close(matches[0].session_key)  # type: ignore[attr-defined]
+        return f"Closed session {matches[0].session_key[:12]}."
 
     async def _fetch_binary(self) -> str:
         from stackowl.startup.browser_probe import BrowserProbe

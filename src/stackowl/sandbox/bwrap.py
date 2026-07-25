@@ -115,7 +115,7 @@ class BwrapSandbox(SandboxBackend):
                     "code_len": len(spec.code),
                     "network": spec.network,
                     "timeout_s": spec.timeout_s,
-                    "session": spec.session_id or "-",
+                    "session": spec.session_key or "-",
                 }
             },
         )
@@ -131,7 +131,7 @@ class BwrapSandbox(SandboxBackend):
         scratch: Path | None = None
         channel: PtcRunChannel | None = None
         try:
-            scratch = BwrapScratch.make(spec.session_id)
+            scratch = BwrapScratch.make(spec.session_key)
             BwrapScratch.write_code(scratch, spec.code)
             # PTC (optional): inject the stub + start the per-run callback server in
             # the RW workspace. No-op when ptc_factory is None (unchanged behaviour).
@@ -164,7 +164,7 @@ class BwrapSandbox(SandboxBackend):
         # PTC is live the SINGLE extra relaxation is binding the short host socket to
         # the fixed in-sandbox path + the OWL_PTC_SOCK env; net stays denied.
         bwrap_argv = self._argv.build(spec, scratch / "workspace", ptc_sock=ptc_sock)
-        unit = f"stackowl-sbx-{BwrapScratch.session_tag(spec.session_id)}"
+        unit = f"stackowl-sbx-{BwrapScratch.session_tag(spec.session_key)}"
         argv = CgroupRecipe.build_command(
             caps=spec.caps, unit=unit, marker_path=marker, bwrap_argv=bwrap_argv
         )

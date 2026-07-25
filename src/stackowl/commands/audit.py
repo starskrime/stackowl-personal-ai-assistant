@@ -89,7 +89,7 @@ class AuditCommand(SlashCommand):
         # 1. ENTRY
         log.gateway.debug(
             "[commands] audit.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
 
         stripped = args.strip()

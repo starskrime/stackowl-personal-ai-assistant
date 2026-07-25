@@ -115,7 +115,7 @@ class SlackClarifyResolver:
                 "_fields": {
                     "clarify_id": clarify_id,
                     "idx": idx,
-                    "session_id": entry.session_id,
+                    "session_key": entry.session_key,
                     "channel": entry.channel,
                 }
             },

@@ -26,7 +26,7 @@ async def test_qualifying_answer_gets_rating_keyboard(monkeypatch):
 
     long_answer = "x" * 250
     state = PipelineState(
-        trace_id="t1", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
+        trace_id="t1", session_key="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content=long_answer, is_final=False, chunk_index=0,
@@ -53,7 +53,7 @@ async def test_non_telegram_channel_gets_no_keyboard(monkeypatch):
 
     long_answer = "x" * 250
     state = PipelineState(
-        trace_id="t4", session_id="s1", input_text="hi", channel="cli", owl_name="secretary",
+        trace_id="t4", session_key="s1", input_text="hi", channel="cli", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content=long_answer, is_final=False, chunk_index=0,
@@ -77,7 +77,7 @@ async def test_short_answer_gets_no_keyboard(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t2", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
+        trace_id="t2", session_key="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="ok", is_final=False, chunk_index=0,
@@ -101,7 +101,7 @@ async def test_floor_answer_gets_no_keyboard(monkeypatch):
     monkeypatch.setattr("stackowl.pipeline.steps.consolidate.get_services", lambda: FakeServices())
 
     state = PipelineState(
-        trace_id="t3", session_id="s1", input_text="hi", channel="telegram", owl_name="secretary",
+        trace_id="t3", session_key="s1", input_text="hi", channel="telegram", owl_name="secretary",
         pipeline_step="consolidate",
         responses=(ResponseChunk(
             content="x" * 250, is_final=False, chunk_index=0,

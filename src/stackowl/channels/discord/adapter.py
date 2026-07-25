@@ -59,8 +59,8 @@ class DiscordChannelAdapter(ChannelAdapter):
         self._bot_id: int = 0
         # Session→target maps (mirror Slack's _targets; the asymmetry is honored
         # by keeping resolution in the adapter that owns the map). ``_targets``
-        # maps session_id (== str(user_id)) → the originating channel id; the
-        # session_id is NOT itself a send target on Discord (a guild reply must
+        # maps session_key (== str(user_id)) → the originating channel id; the
+        # session_key is NOT itself a send target on Discord (a guild reply must
         # go to message.channel.id, not the user's DM). ``_channels`` holds the
         # live discord.py channel object keyed by channel id — Discord sends via
         # ``channel.send()`` not a raw id, and the object captured off the
@@ -103,16 +103,16 @@ class DiscordChannelAdapter(ChannelAdapter):
     def contributor_name(self) -> str:
         return "discord"
 
-    def resolve_target(self, session_id: str) -> str | int | None:
-        """Resolve the originating channel id for ``session_id`` (mirror Slack).
+    def resolve_target(self, session_key: str) -> str | int | None:
+        """Resolve the originating channel id for ``session_key`` (mirror Slack).
 
-        The Discord ``session_id`` (== ``str(user_id)``) is NOT itself a send
+        The Discord ``session_key`` (== ``str(user_id)``) is NOT itself a send
         target — a guild reply must reach ``message.channel.id``, not the user.
         Reads the adapter-owned ``_targets`` map; returns ``None`` honestly on a
         miss (never guesses ``_last_channel_id``), so the caller records the send
         as undeliverable rather than cross-delivering.
         """
-        target = self._targets.get(session_id)
+        target = self._targets.get(session_key)
         log.discord.debug(
             "[discord] adapter.resolve_target: resolved",
             extra={"_fields": {"resolved": target is not None}},
@@ -451,15 +451,15 @@ class DiscordChannelAdapter(ChannelAdapter):
 
     async def send_clarify(
         self,
-        session_id: str,
+        session_key: str,
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,
     ) -> None:
         """Deliver a clarify question as tap-buttons (one per choice).
 
-        The Discord destination is resolved from ``resolve_target(session_id)`` —
-        the ``str(user_id)`` session_id is NOT itself a send target. Each non-blank
+        The Discord destination is resolved from ``resolve_target(session_key)`` —
+        the ``str(user_id)`` session_key is NOT itself a send target. Each non-blank
         choice becomes a button whose ``custom_id`` is ``clarify:{clarify_id}:{idx}``,
         PRESERVING each choice's ORIGINAL index across blanks (so the tap maps to
         ``entry.choices[idx]`` even with blanks present — mirrors Telegram/Slack).
@@ -473,13 +473,13 @@ class DiscordChannelAdapter(ChannelAdapter):
             "[discord] adapter.send_clarify: entry",
             extra={"_fields": {"n_choices": n_nonblank, "clarify_id": clarify_id}},
         )
-        dest = self.resolve_target(session_id)
+        dest = self.resolve_target(session_key)
         if not isinstance(dest, int) or not n_nonblank:
             log.discord.debug(
                 "[discord] adapter.send_clarify: decision base_text_fallback",
                 extra={"_fields": {"has_target": isinstance(dest, int), "n": n_nonblank}},
             )
-            await super().send_clarify(session_id, question, choices, clarify_id)
+            await super().send_clarify(session_key, question, choices, clarify_id)
             return
         try:
             builder = InlineKeyboardBuilder()
@@ -502,7 +502,7 @@ class DiscordChannelAdapter(ChannelAdapter):
                 exc_info=exc,
                 extra={"_fields": {"clarify_id": clarify_id}},
             )
-            await super().send_clarify(session_id, question, choices, clarify_id)
+            await super().send_clarify(session_key, question, choices, clarify_id)
             return
         log.discord.debug("[discord] adapter.send_clarify: exit")
 
@@ -543,12 +543,12 @@ class DiscordChannelAdapter(ChannelAdapter):
 
         # Stamp the ORIGINATING channel id (NOT author.id): a guild reply must go
         # back to message.channel.id, else it misroutes to the user's DM or
-        # nowhere. session_id stays str(user_id) for memory/identity.
+        # nowhere. session_key stays str(user_id) for memory/identity.
         channel = getattr(message, "channel", None)
         channel_id = int(getattr(channel, "id", 0) or 0)
         ingress = IngressMessage(
             text=stripped,
-            session_id=str(user_id),
+            session_key=str(user_id),
             channel=self.channel_name,
             trace_id=uuid4().hex,
             chat_id=channel_id,

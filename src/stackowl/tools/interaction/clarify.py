@@ -217,19 +217,19 @@ class ClarifyTool(Tool):
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
+        session_key = ctx.get("session_key")
 
         # 2. DECISION — non-interactive contexts cannot ask anyone. Sentinel
         # (aborts on a consequential gate); never pauses, never assumes consent.
         if not interactive:
             log.tool.info(
                 "clarify.execute: non-interactive context — sentinel deny",
-                extra={"_fields": {"channel": channel, "session_id": session_id}},
+                extra={"_fields": {"channel": channel, "session_key": session_key}},
             )
             return self._ok(_NON_INTERACTIVE_SENTINEL, t0, extra={"denied": "non_interactive"})
 
         # Need both a channel to deliver on and a session to bind the resolution.
-        if not session_id or not channel:
+        if not session_key or not channel:
             return self._err(
                 "Cannot ask the user: no channel context (missing session/channel). "
                 "Proceed with your best assumption and state it.",
@@ -271,7 +271,7 @@ class ClarifyTool(Tool):
             # 3. STEP — register + deliver as a BLOCKING ask, then park on the
             # waiter until the user's reply wakes us in-turn (or we time out).
             clarify_id = await gateway.ask(
-                str(session_id),
+                str(session_key),
                 str(channel),
                 question,
                 choices=choices,
@@ -285,7 +285,7 @@ class ClarifyTool(Tool):
             log.tool.error(
                 "clarify.execute: gateway ask/wait failed — degrading",
                 exc_info=exc,
-                extra={"_fields": {"channel": channel, "session_id": session_id}},
+                extra={"_fields": {"channel": channel, "session_key": session_key}},
             )
             return self._unavailable(t0)
 

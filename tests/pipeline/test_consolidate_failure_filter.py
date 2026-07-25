@@ -20,7 +20,7 @@ pytestmark = pytest.mark.asyncio
 def _state(*tool_calls: ToolCall) -> PipelineState:
     return PipelineState(
         trace_id="t-merge",
-        session_id="sess-merge",
+        session_key="sess-merge",
         input_text="run a tool",
         channel="cli",
         owl_name="secretary",

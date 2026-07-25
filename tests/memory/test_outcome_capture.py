@@ -49,7 +49,7 @@ def test_classify_failure_falls_back_to_truncated_string_when_unparseable() -> N
 async def test_record_inserts_one_row_and_starts_unscored(tmp_db: DbPool) -> None:
     store = TaskOutcomeStore(db=tmp_db)
     await store.record(
-        trace_id="t1", session_id="s1", owl_name="secretary", channel="cli",
+        trace_id="t1", session_key="s1", owl_name="secretary", channel="cli",
         success=True, latency_ms=42.0, tool_call_count=2, failure_class=None,
         step_durations={"triage": 10.0, "execute": 30.0},
         input_text="hi", response_text="hello",
@@ -68,7 +68,7 @@ async def test_record_is_idempotent_on_trace_id(tmp_db: DbPool) -> None:
     store = TaskOutcomeStore(db=tmp_db)
     for _ in range(3):
         await store.record(
-            trace_id="dup", session_id="s", owl_name="x", channel="cli",
+            trace_id="dup", session_key="s", owl_name="x", channel="cli",
             success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
             step_durations={}, input_text="a", response_text="b",
         )
@@ -82,7 +82,7 @@ async def test_list_pending_critic_returns_only_unscored(tmp_db: DbPool) -> None
     store = TaskOutcomeStore(db=tmp_db)
     for tid in ("a", "b", "c"):
         await store.record(
-            trace_id=tid, session_id="s", owl_name="x", channel="cli",
+            trace_id=tid, session_key="s", owl_name="x", channel="cli",
             success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
             step_durations={}, input_text="", response_text="",
         )
@@ -99,7 +99,7 @@ async def test_list_pending_critic_returns_only_unscored(tmp_db: DbPool) -> None
 async def test_set_quality_score_sets_scored_at(tmp_db: DbPool) -> None:
     store = TaskOutcomeStore(db=tmp_db)
     await store.record(
-        trace_id="t", session_id="s", owl_name="x", channel="cli",
+        trace_id="t", session_key="s", owl_name="x", channel="cli",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="", response_text="",
     )
@@ -119,7 +119,7 @@ async def test_recent_for_session_returns_newest_first(tmp_db: DbPool) -> None:
     # Insert oldest -> newest; captured_at is time.time() so insert order = age.
     for tid in ("old", "mid", "new"):
         await store.record(
-            trace_id=tid, session_id="sess", owl_name="x", channel="cli",
+            trace_id=tid, session_key="sess", owl_name="x", channel="cli",
             success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
             step_durations={}, input_text=f"in-{tid}", response_text=f"out-{tid}",
         )
@@ -131,7 +131,7 @@ async def test_recent_for_session_excludes_in_flight_trace(tmp_db: DbPool) -> No
     store = TaskOutcomeStore(db=tmp_db)
     for tid in ("prior", "inflight"):
         await store.record(
-            trace_id=tid, session_id="sess", owl_name="x", channel="cli",
+            trace_id=tid, session_key="sess", owl_name="x", channel="cli",
             success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
             step_durations={}, input_text=f"in-{tid}", response_text="r",
         )
@@ -144,7 +144,7 @@ async def test_recent_for_session_excludes_in_flight_trace(tmp_db: DbPool) -> No
 async def test_recent_for_session_empty_for_unknown_session(tmp_db: DbPool) -> None:
     store = TaskOutcomeStore(db=tmp_db)
     await store.record(
-        trace_id="t", session_id="known", owl_name="x", channel="cli",
+        trace_id="t", session_key="known", owl_name="x", channel="cli",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="i", response_text="r",
     )
@@ -154,7 +154,7 @@ async def test_recent_for_session_empty_for_unknown_session(tmp_db: DbPool) -> N
 async def test_recent_for_session_empty_for_nonpositive_limit(tmp_db: DbPool) -> None:
     store = TaskOutcomeStore(db=tmp_db)
     await store.record(
-        trace_id="t", session_id="sess", owl_name="x", channel="cli",
+        trace_id="t", session_key="sess", owl_name="x", channel="cli",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
         step_durations={}, input_text="i", response_text="r",
     )
@@ -166,7 +166,7 @@ async def test_recent_for_session_empty_for_nonpositive_limit(tmp_db: DbPool) ->
 
 def test_critic_prompt_builds_two_messages_with_trace_summary() -> None:
     outcome = TaskOutcome(
-        outcome_id=1, trace_id="t", session_id="s", owl_name="secretary",
+        outcome_id=1, trace_id="t", session_key="s", owl_name="secretary",
         channel="cli", success=True, latency_ms=120.0, tool_call_count=1,
         failure_class=None, quality_score=None,
         step_durations={"triage": 10.0}, input_text="what is 2+2?",
@@ -230,7 +230,7 @@ class _StubProvider(ModelProvider):
 async def test_capture_outcome_writes_row_with_step_durations(tmp_db: DbPool) -> None:
     services = StepServices(db_pool=tmp_db)
     state = PipelineState(
-        trace_id="t-cap", session_id="s-cap", input_text="hi",
+        trace_id="t-cap", session_key="s-cap", input_text="hi",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         responses=(
             ResponseChunk(content="hello", is_final=True, chunk_index=0,
@@ -259,7 +259,7 @@ async def test_capture_outcome_writes_row_with_step_durations(tmp_db: DbPool) ->
 async def test_capture_outcome_records_failure_when_errors_present(tmp_db: DbPool) -> None:
     services = StepServices(db_pool=tmp_db)
     state = PipelineState(
-        trace_id="t-err", session_id="s-err", input_text="hi",
+        trace_id="t-err", session_key="s-err", input_text="hi",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         errors=("execute: OwlTimeoutError: deadline exceeded",),
     )
@@ -274,7 +274,7 @@ async def test_capture_outcome_records_failure_when_errors_present(tmp_db: DbPoo
 async def test_capture_outcome_is_noop_when_no_db_pool() -> None:
     services = StepServices(db_pool=None)
     state = PipelineState(
-        trace_id="t-nodb", session_id="s", input_text="hi",
+        trace_id="t-nodb", session_key="s", input_text="hi",
         channel="cli", owl_name="x", pipeline_step="deliver",
     )
     # Must not raise.
@@ -298,7 +298,7 @@ async def test_failed_outcome_stages_a_low_trust_memory_fact_when_health_loop_on
     bridge = _RecordingBridge()
     services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
     state = PipelineState(
-        trace_id="t-single-fail", session_id="s-fail", input_text="do the thing",
+        trace_id="t-single-fail", session_key="s-fail", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         errors=("execute: OwlTimeoutError: deadline exceeded",),
     )
@@ -321,7 +321,7 @@ async def test_failed_outcome_skips_memory_stage_when_health_loop_off(
     bridge = _RecordingBridge()
     services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
     state = PipelineState(
-        trace_id="t-single-fail-off", session_id="s-fail", input_text="do the thing",
+        trace_id="t-single-fail-off", session_key="s-fail", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         errors=("execute: OwlTimeoutError: deadline exceeded",),
     )
@@ -338,7 +338,7 @@ async def test_successful_outcome_does_not_stage_a_memory_fact(
     bridge = _RecordingBridge()
     services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
     state = PipelineState(
-        trace_id="t-clean", session_id="s-clean", input_text="hi",
+        trace_id="t-clean", session_key="s-clean", input_text="hi",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         responses=(
             ResponseChunk(content="hello", is_final=True, chunk_index=0,
@@ -362,7 +362,7 @@ async def test_failed_outcome_stage_failure_never_blocks_outcome_capture(
 
     services = StepServices(db_pool=tmp_db, memory_bridge=_BoomingBridge())  # type: ignore[arg-type]
     state = PipelineState(
-        trace_id="t-fail-boom", session_id="s-fail", input_text="do the thing",
+        trace_id="t-fail-boom", session_key="s-fail", input_text="do the thing",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         errors=("execute: OwlTimeoutError: deadline exceeded",),
     )
@@ -392,7 +392,7 @@ async def test_backend_run_populates_step_durations_on_state(tmp_db: DbPool) -> 
     try:
         backend = AsyncioBackend(services=StepServices(db_pool=tmp_db))
         state = PipelineState(
-            trace_id="t-dur", session_id="s", input_text="hi",
+            trace_id="t-dur", session_key="s", input_text="hi",
             channel="cli", owl_name="secretary", pipeline_step="start",
         )
         final = await backend.run(state)

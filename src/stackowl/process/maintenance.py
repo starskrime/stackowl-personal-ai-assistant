@@ -36,7 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover
         _lock: Lock
         _terminal_at: dict[str, float]
 
-        async def kill(self, process_id: str, session_id: str | None = None) -> bool: ...
+        async def kill(self, process_id: str, session_key: str | None = None) -> bool: ...
 
     _Base = _RegistryState
 else:
@@ -68,7 +68,7 @@ class ProcessMaintenanceMixin(_Base):
                 "process.registry.sweep: process exceeded max lifetime — auto-killing",
                 extra={"_fields": {"process_id": handle.process_id, "pid": handle.pid}},
             )
-            if await self.kill(handle.process_id, handle.session_id):
+            if await self.kill(handle.process_id, handle.session_key):
                 auto_killed += 1
         # 2) Dead-handle prune: drop terminal handles retained past the prune TTL.
         with self._lock:
@@ -124,7 +124,7 @@ class ProcessMaintenanceMixin(_Base):
             for entry in result.adopted:
                 handle = ProcessHandle(
                     command=entry.command,
-                    session_id=entry.session_id,
+                    session_key=entry.session_key,
                     transport=None,  # detached — survived restart, no live pipe
                     pid=entry.pid,
                     created_at=now,
@@ -150,7 +150,7 @@ class ProcessMaintenanceMixin(_Base):
         for handle in handles:
             if handle.is_running:
                 try:
-                    await self.kill(handle.process_id, handle.session_id)
+                    await self.kill(handle.process_id, handle.session_key)
                 except Exception as exc:  # B5 — one bad kill must not stop shutdown
                     log.tool.error(
                         "process.registry.clear_all: kill error during shutdown — continuing",
@@ -173,7 +173,7 @@ class ProcessMaintenanceMixin(_Base):
                     process_id=h.process_id,
                     pid=h.pid,
                     command=h.command,
-                    session_id=h.session_id,
+                    session_key=h.session_key,
                     created_at=h.created_at,
                     status=h.status,
                 )

@@ -17,7 +17,7 @@ def _open_breaker(reg, name):
 
 
 def _state(owl="someowl", session="s1"):
-    return PipelineState(trace_id="t", session_id=session, input_text="hi",
+    return PipelineState(trace_id="t", session_key=session, input_text="hi",
                          channel="cli", owl_name=owl, pipeline_step="execute")
 
 

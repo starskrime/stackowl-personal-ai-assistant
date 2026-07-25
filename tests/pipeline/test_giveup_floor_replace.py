@@ -6,7 +6,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 
 
 def _state(text):
-    return PipelineState(trace_id="t", session_id="s", input_text="send the email", channel="cli",
+    return PipelineState(trace_id="t", session_key="s", input_text="send the email", channel="cli",
                          owl_name="secretary", pipeline_step="deliver",
                          responses=(ResponseChunk(content=text, is_final=False, chunk_index=0,
                                                   trace_id="t", owl_name="secretary"),))
@@ -54,7 +54,7 @@ async def test_honest_floor_cites_real_error_text_from_snapshot():
     production — execute._snapshot_consequential stamps this onto state
     instead of leaving the honesty decision on the live ledger)."""
     s = PipelineState(
-        trace_id="t", session_id="s", input_text="create the owl", channel="cli",
+        trace_id="t", session_key="s", input_text="create the owl", channel="cli",
         owl_name="secretary", pipeline_step="deliver",
         responses=(ResponseChunk(content="Done — created the owl.", is_final=False,
                                   chunk_index=0, trace_id="t", owl_name="secretary"),),

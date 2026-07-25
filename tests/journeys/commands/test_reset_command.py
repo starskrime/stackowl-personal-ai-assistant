@@ -49,12 +49,12 @@ def _reset_registry() -> None:
     CommandRegistry.reset()
 
 
-async def _stage_conversation_turn(bridge: SqliteMemoryBridge, session_id: str, content: str) -> None:
+async def _stage_conversation_turn(bridge: SqliteMemoryBridge, session_key: str, content: str) -> None:
     """Helper — stage one conversation turn for a given session."""
     fact = StagedFact(
         content=content,
         source_type="conversation",
-        source_ref=session_id,
+        source_ref=session_key,
         confidence=0.9,
     )
     await bridge.stage(fact)
@@ -67,20 +67,20 @@ async def _stage_conversation_turn(bridge: SqliteMemoryBridge, session_id: str, 
 
 async def test_reset_clears_turns_and_reports_count(bridge: SqliteMemoryBridge) -> None:
     """dispatch('reset') deletes conversation turns and reports the real count."""
-    session_id = "sess-reset-test"
+    session_key = "sess-reset-test"
 
     # Stage 2 conversation turns for our session
-    await _stage_conversation_turn(bridge, session_id, "Turn one")
-    await _stage_conversation_turn(bridge, session_id, "Turn two")
+    await _stage_conversation_turn(bridge, session_key, "Turn one")
+    await _stage_conversation_turn(bridge, session_key, "Turn two")
 
     # Confirm turns exist before reset
-    turns_before = await bridge.recent_conversation_turns(session_id, limit=10)
+    turns_before = await bridge.recent_conversation_turns(session_key, limit=10)
     assert len(turns_before) == 2
 
     deps = CommandDeps(bridge=bridge)
     register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
-    state = state.model_copy(update={"session_id": session_id})
+    state = state.model_copy(update={"session_key": session_key})
 
     result = (await CommandRegistry.instance().dispatch("reset", "", state)).text
 
@@ -89,7 +89,7 @@ async def test_reset_clears_turns_and_reports_count(bridge: SqliteMemoryBridge) 
     assert "turn" in result.lower()
 
     # Side-effect: turns are actually gone
-    turns_after = await bridge.recent_conversation_turns(session_id, limit=10)
+    turns_after = await bridge.recent_conversation_turns(session_key, limit=10)
     assert turns_after == []
 
 
@@ -105,7 +105,7 @@ async def test_reset_scoped_to_session(bridge: SqliteMemoryBridge) -> None:
     deps = CommandDeps(bridge=bridge)
     register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
-    state = state.model_copy(update={"session_id": session_a})
+    state = state.model_copy(update={"session_key": session_a})
 
     await CommandRegistry.instance().dispatch("reset", "", state)
 
@@ -121,7 +121,7 @@ async def test_reset_empty_session_returns_nothing_to_clear(bridge: SqliteMemory
     deps = CommandDeps(bridge=bridge)
     register_all_commands(deps, registry=CommandRegistry.instance())
     state = make_state()
-    state = state.model_copy(update={"session_id": "sess-empty"})
+    state = state.model_copy(update={"session_key": "sess-empty"})
 
     result = (await CommandRegistry.instance().dispatch("reset", "", state)).text
 

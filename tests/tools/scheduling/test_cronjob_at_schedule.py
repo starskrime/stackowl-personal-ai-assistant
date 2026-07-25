@@ -37,20 +37,20 @@ async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
         await pool.close()
 
 
-async def _seed_session(db: DbPool, session_id: str = _SESSION, owl: str = _OWL) -> None:
+async def _seed_session(db: DbPool, session_key: str = _SESSION, owl: str = _OWL) -> None:
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
-        (uuid.uuid4().hex, session_id, owl, datetime.now(UTC).isoformat(), 0),
+        (uuid.uuid4().hex, session_key, owl, datetime.now(UTC).isoformat(), 0),
     )
 
 
 async def _run(
-    db: DbPool, *, interactive: bool = True, session_id: str = _SESSION, **kwargs: object
+    db: DbPool, *, interactive: bool = True, session_key: str = _SESSION, **kwargs: object
 ) -> ToolResult:
     token = set_services(StepServices(db_pool=db))
     ttoken = TraceContext.start(
-        session_id=session_id, interactive=interactive, channel="cli"
+        session_key=session_key, interactive=interactive, channel="cli"
     )
     try:
         return await CronjobTool().execute(**kwargs)

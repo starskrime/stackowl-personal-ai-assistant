@@ -17,7 +17,7 @@ from stackowl.pipeline.state import PipelineState
 def _state(session: str = "sess-1") -> PipelineState:
     return PipelineState(
         trace_id="trace-1",
-        session_id=session,
+        session_key=session,
         input_text="why?",
         channel="cli",
         owl_name="Daria",
@@ -40,7 +40,7 @@ async def test_explain_renders_persisted_snapshot(_temp_db: Path) -> None:
     await pool.open()
     try:
         await TurnDecisionStore(pool).save(
-            session_id="sess-1", trace_id="trace-1",
+            session_key="sess-1", trace_id="trace-1",
             decisions=(
                 Decision(point="router", verdict="act", reason="task detected"),
                 Decision(point="acceptance", verdict="accepted"),

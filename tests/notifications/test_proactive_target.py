@@ -62,7 +62,7 @@ async def test_proactive_no_chat_id_omits_kwarg_for_backcompat() -> None:
 
 
 def test_resolve_target_chat_id_telegram_numeric_session() -> None:
-    """A numeric session_id on telegram (private chat: session_id == chat_id)
+    """A numeric session_key on telegram (private chat: session_key == chat_id)
     resolves to that chat_id — the genuine recipient."""
     from stackowl.notifications.router_helpers import resolve_target_chat_id
 

@@ -8,9 +8,9 @@ posts a two-button (Approve / Deny) ``discord.ui.View`` and suspends on an
 ``consent:`` ``custom_id`` to :meth:`handle_callback`, which resolves the Future
 with the chosen :class:`~stackowl.tools.consent.ConsentScope`.
 
-The Discord ``session_id`` (``str(user_id)``) is NOT itself a send target — a
+The Discord ``session_key`` (``str(user_id)``) is NOT itself a send target — a
 guild reply must reach ``message.channel.id``. So the destination is resolved via
-``adapter.resolve_target(session_id)`` (the adapter-owned session→channel map);
+``adapter.resolve_target(session_key)`` (the adapter-owned session→channel map);
 an unresolved channel fails CLOSED without a send — silence is never consent.
 
 Fail-closed everywhere: an unresolved target, a send failure, a malformed
@@ -69,7 +69,7 @@ class _SupportsInlineKeyboard(Protocol):
         channel_id: int | None = None,
     ) -> Any: ...
 
-    def resolve_target(self, session_id: str) -> str | int | None: ...
+    def resolve_target(self, session_key: str) -> str | int | None: ...
 
     async def edit_message_to_text(self, message: Any, text: str) -> None: ...
 
@@ -97,9 +97,9 @@ class DiscordConsentPrompter:
             extra={"_fields": {"tool": req.tool_name, "relax": req.allow_relaxation}},
         )
         # 2. DECISION — resolve the INITIATING user's channel from the adapter's
-        # session→channel map. The session_id is NOT itself a target, so never
+        # session→channel map. The session_key is NOT itself a target, so never
         # guess: an unresolved channel fails CLOSED (deny) without a send.
-        dest = self._adapter.resolve_target(req.session_id)
+        dest = self._adapter.resolve_target(req.session_key)
         if not isinstance(dest, int):
             log.discord.error(
                 "[discord] consent.prompt: no channel for session — denying (fail closed)",

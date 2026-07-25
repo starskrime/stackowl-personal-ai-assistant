@@ -47,7 +47,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # single allowed telegram user configured), same as any other producer.
 _ALLOWED_EVENTS: frozenset[str] = frozenset({"budget_exceeded", "budget_80pct_alert"})
 # ``parliament.completed`` (orchestrator) stays DEFERRED — its payload is a bare
-# ``session_id`` (not a dict; _build_notification would drop it as malformed),
+# ``session_key`` (not a dict; _build_notification would drop it as malformed),
 # and unlike the budget alerts it has no obvious single recipient: a session
 # triggered by a live interactive turn already delivers its result through the
 # normal turn path, so ping-ing the owner again here would double-notify. Only

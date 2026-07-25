@@ -84,7 +84,7 @@ async def test_send_forwards_is_final_and_synthesizes_terminal_marker() -> None:
 
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus, command_names=[], owl_names=[])
-    adapter = CLIAdapter(session_id="t", tui_components=components, event_bus=bus)
+    adapter = CLIAdapter(session_key="t", tui_components=components, event_bus=bus)
     received: list[dict[str, object]] = []
     bus.subscribe("response_chunk", lambda p: received.append(p))
 
@@ -102,7 +102,7 @@ async def test_send_no_synthetic_marker_when_last_chunk_final() -> None:
 
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus, command_names=[], owl_names=[])
-    adapter = CLIAdapter(session_id="t", tui_components=components, event_bus=bus)
+    adapter = CLIAdapter(session_key="t", tui_components=components, event_bus=bus)
     received: list[dict[str, object]] = []
     bus.subscribe("response_chunk", lambda p: received.append(p))
 

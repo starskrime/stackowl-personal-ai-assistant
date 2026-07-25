@@ -1621,16 +1621,16 @@ class StartupOrchestrator:
 
         # WS-D AI lanes for the local terminal. A stable CLI session id ties the
         # suggested-lane owner_key to the SAME identity the command-stub records
-        # under (state.identity_key or session_id), so "after A you usually B"
+        # under (state.identity_key or session_key), so "after A you usually B"
         # surfaces within the session. Both lanes are None unless their config
         # flag is on → the dropdown stays byte-identical to the deterministic
         # baseline (honesty spine).
-        cli_session_id = "cli-local"
+        cli_session_key = "cli-local"
         sequence_provider = None
         if sequence_store is not None:
             from stackowl.commands.sequence_store import SequenceSuggestionProvider
 
-            owner_key = resolve_identity_key(services, cli_session_id) or cli_session_id
+            owner_key = resolve_identity_key(services, cli_session_key) or cli_session_key
             sequence_provider = SequenceSuggestionProvider(sequence_store, owner_key)
         # ONE CommandResolver (indexed over the command tree) shared by the TUI
         # semantic panel (issue 2) and the pre-delivery NL→command hint (issue 3),
@@ -1715,7 +1715,7 @@ class StartupOrchestrator:
                 stt_selector=tui_stt_selector,
             )
             adapter = CLIAdapter(
-                session_id=cli_session_id,
+                session_key=cli_session_key,
                 tui_components=tui_components, event_bus=event_bus,
             )
         # E5 — let the clarify gateway deliver questions back over the CLI.
@@ -1723,11 +1723,13 @@ class StartupOrchestrator:
 
         # 2. DECISION — define the message processing loop
         async def _deliver_parliament(
-            topic: str, owl_names: list[str], session_id: str, trace_id: str,
+            topic: str, owl_names: list[str], session_key: str, trace_id: str,
         ) -> None:
             """Run parliament and deliver the synthesis to the stream writer."""
             try:
-                session = await parliament.run(topic=topic, owl_names=owl_names, session_id=session_id)
+                # `session_id` here is PARLIAMENT's own debate id, a different concept
+                # from the conversation lane — it just happens to be seeded from it.
+                session = await parliament.run(topic=topic, owl_names=owl_names, session_id=session_key)
                 synthesis = session.synthesis or "Parliament session completed with no synthesis."
             except Exception as exc:
                 log.error("[startup] gateway: parliament session failed", exc_info=exc)
@@ -1764,7 +1766,7 @@ class StartupOrchestrator:
         # unreachable from outside _phase_gateway, so the test hand-copies it) —
         # keep both in sync on any change here.
         async def _deliver_command_stub(
-            cmd: str, session_id: str, state: PipelineState, args: str, trace_id: str,
+            cmd: str, session_key: str, state: PipelineState, args: str, trace_id: str,
         ) -> None:
             """Dispatch a slash command and stream its reply back to the user."""
             registry = CommandRegistry.instance()
@@ -1801,7 +1803,7 @@ class StartupOrchestrator:
 
                     cmd_obj = registry.get(cmd)
                     if cmd_obj is not None:
-                        owner_key = state.identity_key or session_id
+                        owner_key = state.identity_key or session_key
                         await record_dispatch(
                             sequence_store, cmd, cmd_obj.meta, args, owner_key
                         )
@@ -1872,7 +1874,7 @@ class StartupOrchestrator:
                 # skip parliament/backend entirely rather than hang on a dead call.
                 log.warning(
                     "[startup] gateway: providers degraded — flooring turn",
-                    extra={"_fields": {"route": decision.route, "session_id": msg.session_id}},
+                    extra={"_fields": {"route": decision.route, "session_key": msg.session_key}},
                 )
                 producer: asyncio.Task[object] = asyncio.create_task(
                     _deliver_no_provider_notice(msg.trace_id)
@@ -1880,46 +1882,46 @@ class StartupOrchestrator:
             elif decision.route == "parliament" and decision.parliament_owls:
                 log.info(
                     "[startup] gateway: routing to parliament",
-                    extra={"_fields": {"owls": decision.parliament_owls, "session_id": msg.session_id}},
+                    extra={"_fields": {"owls": decision.parliament_owls, "session_key": msg.session_key}},
                 )
                 producer = asyncio.create_task(
                     _deliver_parliament(
-                        input_text, decision.parliament_owls, msg.session_id, msg.trace_id,
+                        input_text, decision.parliament_owls, msg.session_key, msg.trace_id,
                     )
                 )
             elif decision.route == "command":
                 log.info(
                     "[startup] gateway: command route",
-                    extra={"_fields": {"cmd": decision.target, "session_id": msg.session_id}},
+                    extra={"_fields": {"cmd": decision.target, "session_key": msg.session_key}},
                 )
                 cmd_state = PipelineState(
                     trace_id=msg.trace_id,
-                    session_id=msg.session_id,
+                    session_key=msg.session_key,
                     input_text=input_text,
                     channel=msg.channel,
                     owl_name="system",
                     pipeline_step="start",
                     interactive=True,  # real user typed a slash command
                     reply_target=msg.chat_id,
-                    identity_key=resolve_identity_key(services, msg.session_id),
+                    identity_key=resolve_identity_key(services, msg.session_key),
                 )
                 cmd_args = input_text.split(" ", 1)[1] if " " in input_text else ""
                 producer = asyncio.create_task(
                     _deliver_command_stub(
-                        decision.target, msg.session_id, cmd_state, cmd_args, msg.trace_id,
+                        decision.target, msg.session_key, cmd_state, cmd_args, msg.trace_id,
                     )
                 )
             else:
                 state = PipelineState(
                     trace_id=msg.trace_id,
-                    session_id=msg.session_id,
+                    session_key=msg.session_key,
                     input_text=input_text,
                     channel=msg.channel,
                     owl_name=decision.target,
                     pipeline_step="start",
                     interactive=True,  # real user turn
                     reply_target=msg.chat_id,  # §4.5 — route the reply to ITS chat
-                    identity_key=resolve_identity_key(services, msg.session_id),
+                    identity_key=resolve_identity_key(services, msg.session_key),
                     # WS-D issue 3 — carry the scanner's fuzzy routing correction so
                     # the pre-delivery hint surfacer can show it (else it's dead).
                     route_suggestion=decision.suggestion,
@@ -1954,7 +1956,7 @@ class StartupOrchestrator:
             # Task[object] producer (backend.run returns the state; the deliver
             # stubs return None) is safe under the Task[None] slot.
             await turn_registry.register(
-                msg.trace_id, session_id=msg.session_id,
+                msg.trace_id, session_key=msg.session_key,
                 task=cast("asyncio.Task[None]", producer),
                 target=msg.chat_id, original_input=input_text,
             )
@@ -1965,7 +1967,7 @@ class StartupOrchestrator:
             # message that was enqueued mid-turn runs next. Scheduled as a task
             # because the done-callback is sync but drain is async; the task is
             # held in a strong ref so it isn't GC'd mid-flight.
-            def _on_done(_prod: asyncio.Task[object], sid: str = msg.session_id,
+            def _on_done(_prod: asyncio.Task[object], sid: str = msg.session_key,
                          rid: str = msg.trace_id) -> None:
                 drain_task = asyncio.create_task(_drain_next(pump, channel_adapter, sid, rid))
                 _drain_tasks.add(drain_task)
@@ -1979,14 +1981,14 @@ class StartupOrchestrator:
             # send can never wedge the session.
             pump.spawn_send(
                 channel_adapter=channel_adapter, reader=reader,
-                session_id=msg.session_id, request_id=msg.trace_id,
+                session_key=msg.session_key, request_id=msg.trace_id,
                 producer=producer, writer=writer,
             )
 
         async def _drain_next(
             pump: ClarifyPump,
             channel_adapter: _IntakeAdapter,
-            session_id: str,
+            session_key: str,
             finished_request_id: str,
         ) -> None:
             """Deregister the finished turn, then dispatch the next queued intake.
@@ -2008,7 +2010,7 @@ class StartupOrchestrator:
             # running turn per session); cross-session uses a different lock and is
             # untouched. _dispatch_turn/register do NOT re-acquire this lock (no
             # re-entrancy — acquisition lives only here and in _intake).
-            intake_lock = turn_registry.session_intake_lock(session_id)
+            intake_lock = turn_registry.session_intake_lock(session_key)
             # Trace id to recurse-drain on (the consumed-clarify case): None means
             # no same-session recursion. Captured here so the post-lock recurse does
             # NOT dereference the possibly-None `parked` (mypy-narrowing safe).
@@ -2054,7 +2056,7 @@ class StartupOrchestrator:
                                 survivor_rid = f"{finished_request_id}-survivor-{i}"
                                 _parked_intakes.put(survivor_rid, IngressMessage(
                                     text=text,
-                                    session_id=session_id,
+                                    session_key=session_key,
                                     channel=channel_adapter.channel_name,
                                     trace_id=survivor_rid,
                                     chat_id=survivor_target,
@@ -2062,7 +2064,7 @@ class StartupOrchestrator:
                             log.info(
                                 "[startup] gateway: completion seam drained survivor steers",
                                 extra={"_fields": {
-                                    "session_id": session_id,
+                                    "session_key": session_key,
                                     "request_id": finished_request_id,
                                     "survivors": len(survivors),
                                 }},
@@ -2075,18 +2077,18 @@ class StartupOrchestrator:
                             "[startup] gateway: finalize_and_drain backstop caught — survivor steers may be lost",
                             exc_info=exc,
                             extra={"_fields": {
-                                "session_id": session_id,
+                                "session_key": session_key,
                                 "request_id": finished_request_id,
                             }},
                         )
                     await turn_registry.deregister(finished_request_id)
-                    nxt = turn_registry.pop_next(session_id)
+                    nxt = turn_registry.pop_next(session_key)
                     if nxt is not None:
                         parked = _parked_intakes.get_and_pop(nxt.request_id)
                         if parked is None:
                             log.error(
                                 "[startup] gateway: queued intake lost its raw message — dropping",
-                                extra={"_fields": {"request_id": nxt.request_id, "session_id": session_id}},
+                                extra={"_fields": {"request_id": nxt.request_id, "session_key": session_key}},
                             )
                         else:
                             decision = scanner.scan(parked)
@@ -2094,7 +2096,7 @@ class StartupOrchestrator:
                                 decision.stripped_text if decision.stripped_text is not None else parked.text
                             )
                             consumed, input_text = await pump.resolve_or_rewrite(
-                                session_id=parked.session_id, channel=parked.channel,
+                                session_key=parked.session_key, channel=parked.channel,
                                 route=decision.route, target=decision.target, input_text=input_text,
                             )
                             if consumed:
@@ -2107,12 +2109,12 @@ class StartupOrchestrator:
                             else:
                                 await _dispatch_turn(pump, channel_adapter, parked, decision, input_text)
                 if recurse_trace_id is not None:
-                    await _drain_next(pump, channel_adapter, session_id, recurse_trace_id)
+                    await _drain_next(pump, channel_adapter, session_key, recurse_trace_id)
             except Exception as exc:  # noqa: BLE001 — detached drain guard
                 log.error(
                     "[startup] gateway: drain-next failed — session may stall",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": session_id}},
+                    extra={"_fields": {"session_key": session_key}},
                 )
             # §4.7 global-cap WAKE: this turn's completion freed a global slot. A
             # turn HELD earlier because the host was at the global cap was enqueued
@@ -2131,7 +2133,7 @@ class StartupOrchestrator:
                 log.error(
                     "[startup] gateway: _wake_global_held backstop caught — a globally-held turn may stay parked",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": session_id}},
+                    extra={"_fields": {"session_key": session_key}},
                 )
 
         async def _wake_global_held(
@@ -2167,7 +2169,7 @@ class StartupOrchestrator:
                 if parked is None:
                     log.error(
                         "[startup] gateway: held intake lost its raw message — dropping",
-                        extra={"_fields": {"request_id": nxt.request_id, "session_id": sid}},
+                        extra={"_fields": {"request_id": nxt.request_id, "session_key": sid}},
                     )
                     return
                 decision = scanner.scan(parked)
@@ -2175,7 +2177,7 @@ class StartupOrchestrator:
                     decision.stripped_text if decision.stripped_text is not None else parked.text
                 )
                 consumed, input_text = await pump.resolve_or_rewrite(
-                    session_id=parked.session_id, channel=parked.channel,
+                    session_key=parked.session_key, channel=parked.channel,
                     route=decision.route, target=decision.target, input_text=input_text,
                 )
                 if not consumed:
@@ -2248,8 +2250,8 @@ class StartupOrchestrator:
             ack_kind = ""
             running_turn = None
             routed_signal = None  # the router's STEER/STOP/NEW verdict (if routed)
-            async with turn_registry.session_intake_lock(msg.session_id):
-                running_turn = turn_registry.running(msg.session_id)
+            async with turn_registry.session_intake_lock(msg.session_key):
+                running_turn = turn_registry.running(msg.session_key)
                 session_idle = running_turn is None
                 # Idle + capacity → dispatch a fresh turn now (unchanged §4.3/§4.7).
                 if session_idle and not turn_registry.at_global_capacity():
@@ -2268,7 +2270,7 @@ class StartupOrchestrator:
                     _parked_intakes.put(msg.trace_id, msg)
                     try:
                         turn_registry.enqueue(
-                            msg.session_id, original_input=input_text,
+                            msg.session_key, original_input=input_text,
                             request_id=msg.trace_id, target=msg.chat_id,
                         )
                     except QueueFull as exc:
@@ -2277,7 +2279,7 @@ class StartupOrchestrator:
                         log.warning(
                             "[startup] gateway: intake queue full — dropping with notice",
                             extra={"_fields": {
-                                "session_id": msg.session_id,
+                                "session_key": msg.session_key,
                                 "request_id": msg.trace_id,
                                 "reason": str(exc),
                             }},
@@ -2291,7 +2293,7 @@ class StartupOrchestrator:
                         log.info(
                             "[startup] gateway: turn held — global cap (busy)",
                             extra={"_fields": {
-                                "session_id": msg.session_id,
+                                "session_key": msg.session_key,
                                 "request_id": msg.trace_id,
                                 "hold_reason": ack_kind,
                             }},
@@ -2322,7 +2324,7 @@ class StartupOrchestrator:
                     registry=turn_registry,
                     running=running_turn,
                     text=input_text,
-                    session_id=msg.session_id,
+                    session_key=msg.session_key,
                     request_id_new=msg.trace_id,
                     target=msg.chat_id,
                     is_reply_to_inflight=resolve_reply_to_inflight(
@@ -2345,7 +2347,7 @@ class StartupOrchestrator:
                     # (its text is the body) — never the raw "/new …" message.
                     routed_msg = IngressMessage(
                         text=outcome.routed_text,
-                        session_id=msg.session_id,
+                        session_key=msg.session_key,
                         channel=msg.channel,
                         trace_id=msg.trace_id,
                         chat_id=msg.chat_id,
@@ -2360,9 +2362,9 @@ class StartupOrchestrator:
                     # Re-acquire the intake lock + RE-CHECK running() (the turn may
                     # have finished during the slow route → dispatch immediately
                     # instead of enqueueing behind nothing).
-                    async with turn_registry.session_intake_lock(msg.session_id):
+                    async with turn_registry.session_intake_lock(msg.session_key):
                         if (
-                            turn_registry.running(msg.session_id) is None
+                            turn_registry.running(msg.session_key) is None
                             and not turn_registry.at_global_capacity()
                         ):
                             await _dispatch_turn(
@@ -2373,7 +2375,7 @@ class StartupOrchestrator:
                             _parked_intakes.put(msg.trace_id, routed_msg)
                             try:
                                 turn_registry.enqueue(
-                                    msg.session_id, original_input=routed_input,
+                                    msg.session_key, original_input=routed_input,
                                     request_id=msg.trace_id, target=msg.chat_id,
                                 )
                             except QueueFull as exc:
@@ -2381,7 +2383,7 @@ class StartupOrchestrator:
                                 log.warning(
                                     "[startup] gateway: intake queue full — dropping with notice",
                                     extra={"_fields": {
-                                        "session_id": msg.session_id,
+                                        "session_key": msg.session_key,
                                         "request_id": msg.trace_id,
                                         "reason": str(exc),
                                     }},
@@ -2392,7 +2394,7 @@ class StartupOrchestrator:
                                 log.info(
                                     "[startup] gateway: routed NEW — queued intake",
                                     extra={"_fields": {
-                                        "session_id": msg.session_id,
+                                        "session_key": msg.session_key,
                                         "request_id": msg.trace_id,
                                     }},
                                 )
@@ -2459,7 +2461,7 @@ class StartupOrchestrator:
             if message_ledger_store is not None:
                 try:
                     await message_ledger_store.insert_pending(
-                        trace_id=msg.trace_id, session_id=msg.session_id,
+                        trace_id=msg.trace_id, session_key=msg.session_key,
                         channel=msg.channel, input_text=msg.text, chat_id=msg.chat_id,
                     )
                 except Exception as exc:  # B5 — ledger bookkeeping must never block intake
@@ -2475,7 +2477,7 @@ class StartupOrchestrator:
             # E5 — a reply to a pending clarify resumes its turn (or seeds a
             # fresh resume turn in the turn-yield fallback).
             consumed, input_text = await pump.resolve_or_rewrite(
-                session_id=msg.session_id, channel=msg.channel,
+                session_key=msg.session_key, channel=msg.channel,
                 route=decision.route, target=decision.target, input_text=input_text,
             )
             if consumed:
@@ -2574,7 +2576,7 @@ class StartupOrchestrator:
                     try:
                         log.info(
                             "[startup] gateway: message received",
-                            extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                            extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                         )
                         await turn_client.submit(msg)
                     except asyncio.CancelledError:
@@ -2583,7 +2585,7 @@ class StartupOrchestrator:
                         log.error(
                             "[startup] gateway: message processing failed — continuing",
                             exc_info=exc,
-                            extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                            extra={"_fields": {"session_key": getattr(msg, "session_key", "?")}},
                         )
                         # Clean up the stream so it doesn't leak. §4.1: keyed by
                         # trace_id (the stream key), matching create/spawn_send.
@@ -2674,7 +2676,7 @@ class StartupOrchestrator:
                         log.error(
                             "[startup] core: turn submission failed — continuing",
                             exc_info=exc,
-                            extra={"_fields": {"session_id": msg.session_id}},
+                            extra={"_fields": {"session_key": msg.session_key}},
                         )
                         with contextlib.suppress(Exception):
                             stream_registry.remove(msg.trace_id)
@@ -2874,7 +2876,7 @@ class StartupOrchestrator:
                             try:
                                 log.info(
                                     "[startup] gateway: telegram message received",
-                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                    extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
                                 await turn_client.submit(msg)
                             except asyncio.CancelledError:
@@ -2883,7 +2885,7 @@ class StartupOrchestrator:
                                 log.error(
                                     "[startup] gateway: telegram message processing failed — continuing",
                                     exc_info=exc,
-                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                    extra={"_fields": {"session_key": getattr(msg, "session_key", "?")}},
                                 )
                                 # §4.1: keyed by trace_id (the stream key).
                                 with contextlib.suppress(Exception):
@@ -3190,7 +3192,7 @@ class StartupOrchestrator:
                             try:
                                 log.info(
                                     "[startup] gateway: slack message received",
-                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                    extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
                                 await turn_client.submit(msg)
                             except asyncio.CancelledError:
@@ -3199,7 +3201,7 @@ class StartupOrchestrator:
                                 log.error(
                                     "[startup] gateway: slack message processing failed — continuing",
                                     exc_info=exc,
-                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                    extra={"_fields": {"session_key": getattr(msg, "session_key", "?")}},
                                 )
                                 # §4.1: keyed by trace_id (the stream key).
                                 with contextlib.suppress(Exception):
@@ -3310,7 +3312,7 @@ class StartupOrchestrator:
                             try:
                                 log.info(
                                     "[startup] gateway: discord message received",
-                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                    extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
                                 await turn_client.submit(msg)
                             except asyncio.CancelledError:
@@ -3319,7 +3321,7 @@ class StartupOrchestrator:
                                 log.error(
                                     "[startup] gateway: discord message processing failed — continuing",
                                     exc_info=exc,
-                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                    extra={"_fields": {"session_key": getattr(msg, "session_key", "?")}},
                                 )
                                 with contextlib.suppress(Exception):
                                     stream_registry.remove(getattr(msg, "trace_id", ""))
@@ -3385,7 +3387,7 @@ class StartupOrchestrator:
                             try:
                                 log.info(
                                     "[startup] gateway: whatsapp message received",
-                                    extra={"_fields": {"session_id": msg.session_id, "text_len": len(msg.text)}},
+                                    extra={"_fields": {"session_key": msg.session_key, "text_len": len(msg.text)}},
                                 )
                                 decision = scanner.scan(msg)
                                 input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
@@ -3396,7 +3398,7 @@ class StartupOrchestrator:
                                 # scan/resolve/intake tail goes through the shared seam
                                 # (which re-scans — scanner.scan is pure/idempotent).
                                 if await whatsapp_consent_prompter.resolve_reply(
-                                    msg.session_id, input_text
+                                    msg.session_key, input_text
                                 ):
                                     continue
                                 await turn_client.submit(msg)
@@ -3406,7 +3408,7 @@ class StartupOrchestrator:
                                 log.error(
                                     "[startup] gateway: whatsapp message processing failed — continuing",
                                     exc_info=exc,
-                                    extra={"_fields": {"session_id": getattr(msg, "session_id", "?")}},
+                                    extra={"_fields": {"session_key": getattr(msg, "session_key", "?")}},
                                 )
                                 with contextlib.suppress(Exception):
                                     stream_registry.remove(getattr(msg, "trace_id", ""))

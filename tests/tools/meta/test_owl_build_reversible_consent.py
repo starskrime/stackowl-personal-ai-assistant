@@ -70,7 +70,7 @@ def _services(tmp_db: DbPool, registry: OwlRegistry, gate: ConsequentialActionGa
 async def _run(services: StepServices, args: dict) -> object:
     svc_token = set_services(services)
     trace_token = TraceContext.start(
-        session_id="s-owl", trace_id="t-owl", interactive=True, channel="cli",
+        session_key="s-owl", trace_id="t-owl", interactive=True, channel="cli",
         delegation_depth=0, owl_name="secretary",
     )
     try:

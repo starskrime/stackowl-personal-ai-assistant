@@ -87,11 +87,11 @@ class _StubBackend:
         return None
 
 
-async def _seed_session(db: DbPool, session_id: str = _SESSION, owl: str = _OWL) -> None:
+async def _seed_session(db: DbPool, session_key: str = _SESSION, owl: str = _OWL) -> None:
     await db.execute(
-        "INSERT INTO conversations (id, session_id, owl_name, started_at, message_count) "
+        "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count) "
         "VALUES (?, ?, ?, ?, ?)",
-        (uuid.uuid4().hex, session_id, owl, datetime.now(UTC).isoformat(), 0),
+        (uuid.uuid4().hex, session_key, owl, datetime.now(UTC).isoformat(), 0),
     )
 
 
@@ -100,11 +100,11 @@ def _register_handler(backend: _StubBackend | None, db: DbPool) -> None:
 
 
 async def _run(
-    db: DbPool, *, interactive: bool = True, session_id: str = _SESSION, **kwargs: object
+    db: DbPool, *, interactive: bool = True, session_key: str = _SESSION, **kwargs: object
 ) -> ToolResult:
     token = set_services(StepServices(db_pool=db))
     ttoken = TraceContext.start(
-        session_id=session_id, interactive=interactive, channel="cli"
+        session_key=session_key, interactive=interactive, channel="cli"
     )
     try:
         return await CronjobTool().execute(**kwargs)
@@ -370,7 +370,7 @@ async def test_soft_cap_nudge_past_cap(migrated_db: DbPool) -> None:
             params={"goal": f"g{i}", "created_by": "cronjob", "owl": _OWL},
         )
     token = set_services(StepServices(db_pool=migrated_db))
-    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
     try:
         result = await CronjobTool(soft_cap=2).execute(
             action="create", prompt="one too many", schedule="daily@09:00"
@@ -398,7 +398,7 @@ async def test_unknown_job_id_structured_not_raise(migrated_db: DbPool) -> None:
 async def test_db_unavailable_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
     # No db_pool in services → structured "scheduling unavailable", no raise.
     token = set_services(StepServices(db_pool=None))
-    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
     try:
         result = await CronjobTool().execute(
             action="create", prompt="x", schedule="daily@09:00"
@@ -431,7 +431,7 @@ async def test_clarify_inside_cron_run_does_not_park(migrated_db: DbPool) -> Non
 
         async def run(self, state: PipelineState) -> PipelineState:
             ttoken = TraceContext.start(
-                session_id=state.session_id,
+                session_key=state.session_key,
                 interactive=state.interactive,
                 channel=state.channel,
             )
@@ -485,7 +485,7 @@ async def test_create_captures_reply_target_into_durable_addresses(
     await _seed_session(migrated_db)
     token = set_services(StepServices(db_pool=migrated_db))
     ttoken = TraceContext.start(
-        session_id=_SESSION,
+        session_key=_SESSION,
         interactive=True,
         channel="telegram",
         reply_target=12345,
@@ -520,7 +520,7 @@ async def test_create_without_target_signals_unreachable(
     # channel="cli" + no reply_target + no telegram owner → unresolvable.
     token = set_services(StepServices(db_pool=migrated_db))
     ttoken = TraceContext.start(
-        session_id=_SESSION, interactive=True, channel="cli"
+        session_key=_SESSION, interactive=True, channel="cli"
     )
     try:
         result = await CronjobTool().execute(
@@ -553,7 +553,7 @@ async def test_watch_creates_website_watch_job_with_durable_target(
     await _seed_session(migrated_db)
     token = set_services(StepServices(db_pool=migrated_db))
     ttoken = TraceContext.start(
-        session_id=_SESSION,
+        session_key=_SESSION,
         interactive=True,
         channel="telegram",
         reply_target=12345,
@@ -653,7 +653,7 @@ async def test_cross_owl_cannot_hijack_anothers_job(migrated_db: DbPool) -> None
         kwargs: dict[str, object] = {"action": action, "job_id": job_id}
         if action == "update":
             kwargs["prompt"] = "hijacked goal"
-        result = await _run(migrated_db, session_id=_OTHER_SESSION, **kwargs)
+        result = await _run(migrated_db, session_key=_OTHER_SESSION, **kwargs)
         assert result.success is False, f"{action} should be rejected for foreign owl"
         assert result.error is not None and "no such job" in result.error
 
@@ -774,7 +774,7 @@ async def test_verify_create_observes_persisted_job(migrated_db: DbPool) -> None
         "action": "create", "prompt": "x", "schedule": "daily@09:00"
     }
     token = set_services(StepServices(db_pool=migrated_db))
-    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
     try:
         tool = CronjobTool()
         result = await tool.execute(**args)
@@ -796,7 +796,7 @@ async def test_verify_watch_observes_persisted_job(migrated_db: DbPool) -> None:
         "schedule": "every 5m",
     }
     token = set_services(StepServices(db_pool=migrated_db))
-    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
     try:
         tool = CronjobTool()
         result = await tool.execute(**args)
@@ -1138,7 +1138,7 @@ async def test_call_seam_runs_verify_and_stamps_verified_true(migrated_db: DbPoo
     (the seam ran verify() and observed the row). This is the lying-success guard."""
     await _seed_session(migrated_db)
     token = set_services(StepServices(db_pool=migrated_db))
-    ttoken = TraceContext.start(session_id=_SESSION, interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key=_SESSION, interactive=True, channel="cli")
     try:
         result = await CronjobTool()(
             action="create", prompt="ping me", schedule="daily@09:00"

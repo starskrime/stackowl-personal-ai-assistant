@@ -54,7 +54,7 @@ async def _run(
     services = StepServices(proactive_deliverer=deliverer)
     stoken = set_services(services)
     ttoken = TraceContext.start(
-        session_id="sess-hb", trace_id=trace_id, interactive=False, channel=channel
+        session_key="sess-hb", trace_id=trace_id, interactive=False, channel=channel
     )
     try:
         return await tool.execute(**kwargs)

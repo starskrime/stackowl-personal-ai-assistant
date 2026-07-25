@@ -352,7 +352,7 @@ async def _execute_turn(
     scanner = GatewayScanner(owl_registry=OwlRegistry.with_default_secretary())
     msg = IngressMessage(
         text=text,
-        session_id=session,
+        session_key=session,
         channel="cli",
         trace_id=trace,
     )
@@ -360,7 +360,7 @@ async def _execute_turn(
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -636,7 +636,7 @@ class _NoOpClarifyAdapter:
 
     async def send_clarify(
         self,
-        session_id: str,
+        session_key: str,
         question: str,
         choices: list[str] | None,
         clarify_id: str,

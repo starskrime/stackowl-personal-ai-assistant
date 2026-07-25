@@ -283,7 +283,7 @@ class TestOwlResourceGuard:
 def _base_state(owl_name: str = "guarded") -> PipelineState:
     return PipelineState(
         trace_id="trace-1",
-        session_id="sess-1",
+        session_key="sess-1",
         input_text="hello",
         channel="cli",
         owl_name=owl_name,

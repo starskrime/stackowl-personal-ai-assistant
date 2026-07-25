@@ -116,11 +116,11 @@ class ProcessTool(Tool):
             return self._err(
                 "process substrate unavailable (no process registry configured)", t0, committed=False,
             )
-        session_id = self._session_id()
+        session_key = self._session_key()
 
         # 3. STEP — dispatch; any registry error degrades to a structured result (B5).
         try:
-            return await self._dispatch(args, registry, session_id, t0)
+            return await self._dispatch(args, registry, session_key, t0)
         except ProcessRegistryError as exc:
             # Structured refusal from start (too_many_processes / catastrophic_denied /
             # spawn_failed / empty_command) — surface cleanly, never a raise.
@@ -140,34 +140,34 @@ class ProcessTool(Tool):
 
     # --------------------------------------------------------------- dispatch
     async def _dispatch(
-        self, args: ProcessArgs, registry: ProcessRegistry, session_id: str, t0: float
+        self, args: ProcessArgs, registry: ProcessRegistry, session_key: str, t0: float
     ) -> ToolResult:
         if args.action == "start":
-            return await self._start(args, registry, session_id, t0)
+            return await self._start(args, registry, session_key, t0)
         if args.action == "list":
-            return self._list(args, registry, session_id, t0)
+            return self._list(args, registry, session_key, t0)
         # All remaining actions are by-process_id.
         if not args.process_id:
             return self._err(f"{args.action} requires 'process_id'", t0, committed=False)
         pid = args.process_id
         if args.action == "poll":
-            return await self._poll(registry, pid, session_id, t0)
+            return await self._poll(registry, pid, session_key, t0)
         if args.action == "log":
-            return self._log(args, registry, pid, session_id, t0)
+            return self._log(args, registry, pid, session_key, t0)
         if args.action == "kill":
-            return await self._kill(registry, pid, session_id, t0)
+            return await self._kill(registry, pid, session_key, t0)
         if args.action == "close":
-            return await self._close(registry, pid, session_id, t0)
+            return await self._close(registry, pid, session_key, t0)
         # write / submit
-        return await self._write(args, registry, pid, session_id, t0)
+        return await self._write(args, registry, pid, session_key, t0)
 
     async def _start(
-        self, args: ProcessArgs, registry: ProcessRegistry, session_id: str, t0: float
+        self, args: ProcessArgs, registry: ProcessRegistry, session_key: str, t0: float
     ) -> ToolResult:
         if not args.command:
             return self._err("start requires a non-empty 'command' argv list", t0, committed=False)
         handle = await registry.start(
-            args.command, session_id=session_id, cwd=args.cwd, env=args.env
+            args.command, session_key=session_key, cwd=args.cwd, env=args.env
         )
         log.tool.info(
             "process.start: launched",
@@ -179,9 +179,9 @@ class ProcessTool(Tool):
         )
 
     async def _poll(
-        self, registry: ProcessRegistry, pid: str, session_id: str, t0: float
+        self, registry: ProcessRegistry, pid: str, session_key: str, t0: float
     ) -> ToolResult:
-        handle = await registry.poll(pid, session_id)
+        handle = await registry.poll(pid, session_key)
         if handle is None:
             return self._err(f"no such process: {pid!r}", t0, committed=False)
         return self._ok(
@@ -194,9 +194,9 @@ class ProcessTool(Tool):
         )
 
     def _log(
-        self, args: ProcessArgs, registry: ProcessRegistry, pid: str, session_id: str, t0: float
+        self, args: ProcessArgs, registry: ProcessRegistry, pid: str, session_key: str, t0: float
     ) -> ToolResult:
-        snapshot = registry.read_log(pid, session_id)
+        snapshot = registry.read_log(pid, session_key)
         if snapshot is None:
             return self._err(f"no such process: {pid!r}", t0, committed=False)
         stdout, stderr = snapshot
@@ -212,7 +212,7 @@ class ProcessTool(Tool):
         return self._ok(payload, t0)
 
     async def _write(
-        self, args: ProcessArgs, registry: ProcessRegistry, pid: str, session_id: str, t0: float
+        self, args: ProcessArgs, registry: ProcessRegistry, pid: str, session_key: str, t0: float
     ) -> ToolResult:
         # submit is a convenience over write: append a newline to feed a line to a REPL.
         if args.action == "submit":
@@ -223,7 +223,7 @@ class ProcessTool(Tool):
             if args.data is None:
                 return self._err("write requires 'data'", t0, committed=False)
             data = args.data
-        ok = await registry.write_stdin(pid, data, session_id)
+        ok = await registry.write_stdin(pid, data, session_key)
         if not ok:
             return self._err(
                 f"could not write to {pid!r} (unknown, terminated, or stdin closed)",
@@ -232,26 +232,26 @@ class ProcessTool(Tool):
         return self._ok({"action": args.action, "process_id": pid, "written": len(data)}, t0)
 
     async def _kill(
-        self, registry: ProcessRegistry, pid: str, session_id: str, t0: float
+        self, registry: ProcessRegistry, pid: str, session_key: str, t0: float
     ) -> ToolResult:
-        existed = await registry.kill(pid, session_id)
+        existed = await registry.kill(pid, session_key)
         if not existed:
             return self._err(f"no such process: {pid!r}", t0, committed=False)
         return self._ok({"action": "kill", "process_id": pid, "killed": True}, t0)
 
     async def _close(
-        self, registry: ProcessRegistry, pid: str, session_id: str, t0: float
+        self, registry: ProcessRegistry, pid: str, session_key: str, t0: float
     ) -> ToolResult:
-        ok = await registry.close(pid, session_id)
+        ok = await registry.close(pid, session_key)
         if not ok:
             return self._err(f"could not close stdin of {pid!r} (unknown or no stdin)", t0, committed=False)
         return self._ok({"action": "close", "process_id": pid, "closed": True}, t0)
 
     def _list(
-        self, args: ProcessArgs, registry: ProcessRegistry, session_id: str, t0: float
+        self, args: ProcessArgs, registry: ProcessRegistry, session_key: str, t0: float
     ) -> ToolResult:
         # all=True is the AUDITED cross-session view (the registry audit-logs it).
-        handles = registry.list(session_id, all=args.all)
+        handles = registry.list(session_key, all=args.all)
         rows = [self._row(h) for h in handles]
         return self._ok({"action": "list", "all": args.all, "count": len(rows), "processes": rows}, t0)
 
@@ -263,7 +263,7 @@ class ProcessTool(Tool):
             "process_id": handle.process_id,
             "status": handle.status,
             "command": handle.rendered_command,
-            "session_id": handle.session_id,
+            "session_key": handle.session_key,
             "pid": handle.pid,
         }
 
@@ -278,9 +278,9 @@ class ProcessTool(Tool):
         return f"...[{len(raw) - max_bytes} earlier bytes omitted]...\n{clipped}"
 
     @staticmethod
-    def _session_id() -> str:
+    def _session_key() -> str:
         """The caller's session id from TraceContext (scopes every registry call)."""
-        sid = TraceContext.get().get("session_id")
+        sid = TraceContext.get().get("session_key")
         return str(sid) if sid else ""
 
     def _ok(self, payload: dict[str, object], t0: float) -> ToolResult:

@@ -110,15 +110,15 @@ class ConversationMiner:
         total = 0
         failed = 0
         for row in rows:
-            session_id = row["source_ref"]
+            session_key = row["source_ref"]
             try:
-                total += await self.mine_session(session_id)
+                total += await self.mine_session(session_key)
             except Exception as exc:  # B5
                 failed += 1
                 log.memory.error(
                     "[memory] conversation_miner.mine_all: session failed — skipping",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": session_id}},
+                    extra={"_fields": {"session_key": session_key}},
                 )
         # 4. EXIT
         if failed > 0:
@@ -133,15 +133,15 @@ class ConversationMiner:
             )
         return total
 
-    async def mine_session(self, session_id: str) -> int:
+    async def mine_session(self, session_key: str) -> int:
         """Mine one session. Returns count of NEWLY staged facts (0 on re-mine; reinforcements not counted)."""
         # 1. ENTRY
         log.memory.debug(
             "[memory] conversation_miner.mine_session: entry",
-            extra={"_fields": {"session_id": session_id, "message_limit": self._message_limit}},
+            extra={"_fields": {"session_key": session_key, "message_limit": self._message_limit}},
         )
         turns = await self._bridge.recent_conversation_turns(
-            session_id=session_id,
+            session_key=session_key,
             limit=self._message_limit,
             staged_before=self._settle_cutoff(),
         )
@@ -149,21 +149,21 @@ class ConversationMiner:
         if not turns:
             log.memory.debug(
                 "[memory] conversation_miner.mine_session: no turns — exit early",
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"session_key": session_key}},
             )
             return 0
         messages = _parse_turns([t.content for t in turns])
         if not messages:
             log.memory.debug(
                 "[memory] conversation_miner.mine_session: no parseable messages — exit early",
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"session_key": session_key}},
             )
             return 0
         # 3. STEP — extract facts via injected extractor
-        facts = await self._extractor.extract(messages, session_id)
+        facts = await self._extractor.extract(messages, session_key)
         log.memory.debug(
             "[memory] conversation_miner.mine_session: extracted facts",
-            extra={"_fields": {"session_id": session_id, "fact_count": len(facts)}},
+            extra={"_fields": {"session_key": session_key, "fact_count": len(facts)}},
         )
         staged = 0
         reinforced = 0
@@ -173,7 +173,7 @@ class ConversationMiner:
                 # Already in committed_facts — no action needed.
                 log.memory.debug(
                     "[memory] conversation_miner.mine_session: fact already committed — skip",
-                    extra={"_fields": {"session_id": session_id}},
+                    extra={"_fields": {"session_key": session_key}},
                 )
                 continue
             # Semantic dedup: reinforce an existing staged fact whose embedding is
@@ -181,19 +181,19 @@ class ConversationMiner:
             # content match when this fact has no embedding. Per-fact try/except so a
             # single malformed candidate never aborts the session (self-heal).
             try:
-                reinforced_existing = await self._reinforce_if_duplicate(fact, session_id)
+                reinforced_existing = await self._reinforce_if_duplicate(fact, session_key)
             except Exception as exc:  # B5 — never silently drop; degrade to staging.
                 log.memory.error(
                     "[memory] conversation_miner.mine_session: dedup check FAILED — staging anyway",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": session_id, "fact_id": fact.fact_id}},
+                    extra={"_fields": {"session_key": session_key, "fact_id": fact.fact_id}},
                 )
                 reinforced_existing = False
             if reinforced_existing:
                 reinforced += 1
                 log.memory.debug(
                     "[memory] conversation_miner.mine_session: fact reinforced",
-                    extra={"_fields": {"session_id": session_id, "reinforced": reinforced}},
+                    extra={"_fields": {"session_key": session_key, "reinforced": reinforced}},
                 )
                 continue
             try:
@@ -209,16 +209,16 @@ class ConversationMiner:
                 log.memory.error(
                     "[memory] conversation_miner: stage FAILED — skipping fact",
                     exc_info=exc,
-                    extra={"_fields": {"session_id": session_id, "fact_id": fact.fact_id}},
+                    extra={"_fields": {"session_key": session_key, "fact_id": fact.fact_id}},
                 )
         # 4. EXIT
         log.memory.info(
             "[memory] conversation_miner.mine_session: exit",
-            extra={"_fields": {"session_id": session_id, "staged": staged, "reinforced": reinforced}},
+            extra={"_fields": {"session_key": session_key, "staged": staged, "reinforced": reinforced}},
         )
         return staged
 
-    async def _reinforce_if_duplicate(self, fact: StagedFact, session_id: str) -> bool:
+    async def _reinforce_if_duplicate(self, fact: StagedFact, session_key: str) -> bool:
         """Reinforce an existing staged conversation_fact this fact duplicates.
 
         Strategy:
@@ -251,7 +251,7 @@ class ConversationMiner:
                     "[memory] conversation_miner.dedup: semantic match reinforced",
                     extra={
                         "_fields": {
-                            "session_id": session_id,
+                            "session_key": session_key,
                             "matched_fact_id": best_id,
                             "similarity": round(best_sim, 4),
                             "threshold": self._dedup_similarity,
@@ -265,7 +265,7 @@ class ConversationMiner:
                 "[memory] conversation_miner.dedup: no semantic match — checking exact content",
                 extra={
                     "_fields": {
-                        "session_id": session_id,
+                        "session_key": session_key,
                         "best_similarity": round(best_sim, 4) if best_id else None,
                         "threshold": self._dedup_similarity,
                     }
@@ -275,7 +275,7 @@ class ConversationMiner:
             # 2. FALLBACK trigger — embedding unavailable for this fact.
             log.memory.debug(
                 "[memory] conversation_miner.dedup: no embedding — falling back to exact match",
-                extra={"_fields": {"session_id": session_id, "fact_id": fact.fact_id}},
+                extra={"_fields": {"session_key": session_key, "fact_id": fact.fact_id}},
             )
 
         # Exact-content fallback (the original behaviour).

@@ -262,13 +262,13 @@ class ShadowValidator:
         """Run one held-out input through the REAL pipeline, side-effect-free.
 
         Mirrors tests/pipeline/test_plan_a_gateway_integration.py's isolated
-        state-construction + AsyncioBackend.run pattern. A synthetic session_id +
+        state-construction + AsyncioBackend.run pattern. A synthetic session_key +
         interactive=False so nothing attempts a live delivery/clarify side-channel.
         """
         replay_id = uuid4().hex
         state = PipelineState(
             trace_id=f"shadow-validate-{replay_id}",
-            session_id=f"shadow-validate-{replay_id}",
+            session_key=f"shadow-validate-{replay_id}",
             input_text=outcome.input_text,
             channel=outcome.channel,
             owl_name=owl_name,
@@ -291,7 +291,7 @@ class ShadowValidator:
         replay_outcome = TaskOutcome(
             outcome_id=0,
             trace_id=result_state.trace_id,
-            session_id=result_state.session_id,
+            session_key=result_state.session_key,
             owl_name=result_state.owl_name,
             channel=result_state.channel,
             success=not result_state.errors,

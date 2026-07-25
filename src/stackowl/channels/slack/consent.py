@@ -6,9 +6,9 @@ posts a two-button (Approve / Deny) Block Kit message and then suspends on an
 handler calls :meth:`handle_action`, which resolves the Future with the chosen
 :class:`~stackowl.tools.consent.ConsentScope`.
 
-Slack-specific target resolution: the ``slack:{hash}`` ``session_id`` is NOT a
+Slack-specific target resolution: the ``slack:{hash}`` ``session_key`` is NOT a
 send target. The destination channel is resolved via
-``adapter.target_for_session(session_id)`` (the session→channel map populated by
+``adapter.target_for_session(session_key)`` (the session→channel map populated by
 the adapter on inbound events). When that returns ``None`` the prompt fails
 CLOSED — never guess a channel.
 
@@ -96,13 +96,13 @@ class SlackConsentPrompter:
             extra={"_fields": {"tool": req.tool_name, "relax": req.allow_relaxation}},
         )
         # 2. DECISION — resolve the Slack destination from the session→channel map.
-        # The session_id (``slack:{hash}``) is NOT itself a target, so we never
+        # The session_key (``slack:{hash}``) is NOT itself a target, so we never
         # guess: an unresolved channel fails CLOSED (deny) without a send.
-        dest = self._adapter.target_for_session(req.session_id)
+        dest = self._adapter.target_for_session(req.session_key)
         if dest is None:
             log.slack.error(
                 "[slack] consent.prompt: no Slack target for session — denying (fail closed)",
-                extra={"_fields": {"tool": req.tool_name, "session": req.session_id}},
+                extra={"_fields": {"tool": req.tool_name, "session": req.session_key}},
             )
             return ConsentScope.DENY
 

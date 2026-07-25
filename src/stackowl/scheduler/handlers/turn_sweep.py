@@ -1,7 +1,7 @@
 """TurnSweepHandler — periodically drive the TurnRegistry backstop sweep (F050).
 
 A turn left RUNNING after a missed ``_on_done`` (its task is ``done()`` but its
-status never reached ``DONE``) wedges ``TurnRegistry._running[session_id]`` forever,
+status never reached ``DONE``) wedges ``TurnRegistry._running[session_key]`` forever,
 jamming ALL later same-session routing (silent per-session unresponsiveness —
 "Jarvis goes deaf" for that chat). :meth:`TurnRegistry.sweep` is the backstop reaper
 for exactly this wedge, but had no production caller. This handler drives it on a

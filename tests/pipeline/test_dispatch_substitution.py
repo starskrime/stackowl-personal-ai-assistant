@@ -590,7 +590,7 @@ async def _build_real_dispatch(
     )
 
     class _Gate:
-        async def check(self, tool, *, channel=None, session_id=None, call_args=None):  # noqa: ANN001
+        async def check(self, tool, *, channel=None, session_key=None, call_args=None):  # noqa: ANN001
             return True  # approve all → the primary runs and fails
 
     class _Services:
@@ -615,7 +615,7 @@ async def _build_real_dispatch(
             return ("", [])
 
     state = PipelineState(
-        input_text="hi", owl_name="secretary", session_id="s1",
+        input_text="hi", owl_name="secretary", session_key="s1",
         channel="cli", trace_id="t1", pipeline_step="execute",
         language=language,
     )

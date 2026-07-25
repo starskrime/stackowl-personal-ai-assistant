@@ -6,14 +6,14 @@ Invariants under test:
   1. CROSS-CHANNEL REINFORCEMENT — the same fact content stated from telegram and
      from slack (both resolving to "owner-primary") shares a single staged row with
      source_ref="owner-primary" and reinforcement_count incremented — NOT two rows
-     under two separate session_ids.
+     under two separate session_keys.
   2. NEGATIVE CONTROL — conversation rows (source_type='conversation') staged under
      telegram:123 are NOT visible to recent_conversation_turns("slack:U0"); live
      conversation stays per-channel.
   3. POSITIVE CONTROL — those same conversation rows ARE visible to
      recent_conversation_turns("telegram:123").
   4. FALLBACK BYTE-IDENTICAL — with an empty/no resolver, extract() stamps
-     source_ref=session_id unchanged (today's behavior).
+     source_ref=session_key unchanged (today's behavior).
 """
 
 from __future__ import annotations
@@ -101,13 +101,13 @@ async def test_cross_channel_fact_shares_source_ref_under_identity(
     convo = [Message(role="user", content="I love hiking.")]
 
     # Stage a fact from the telegram session
-    telegram_facts = await extractor.extract(convo, session_id="telegram:123")
+    telegram_facts = await extractor.extract(convo, session_key="telegram:123")
     assert telegram_facts, "extractor must return at least one fact"
     for f in telegram_facts:
         await bridge.stage(f)
 
     # Stage the same fact again from the slack session (same user, same identity)
-    slack_facts = await extractor.extract(convo, session_id="slack:U0")
+    slack_facts = await extractor.extract(convo, session_key="slack:U0")
     assert slack_facts, "extractor must return at least one fact from slack session"
 
     # The slack fact should share source_ref="owner-primary" — will trigger
@@ -203,27 +203,27 @@ async def test_conversation_rows_visible_to_same_session(
 # ---------------------------------------------------------------------------
 
 
-async def test_fallback_no_resolver_leaves_source_ref_as_session_id(
+async def test_fallback_no_resolver_leaves_source_ref_as_session_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With no identity_resolver (or empty resolver), extract() stamps source_ref=session_id."""
+    """With no identity_resolver (or empty resolver), extract() stamps source_ref=session_key."""
     _bypass_test_mode(monkeypatch)
 
     extractor = FactExtractor(provider=_StubProvider())  # no resolver
     convo = [Message(role="user", content="I prefer dark mode.")]
-    facts = await extractor.extract(convo, session_id="telegram:9")
+    facts = await extractor.extract(convo, session_key="telegram:9")
 
     assert facts, "extractor must return at least one fact"
     for f in facts:
         assert f.source_ref == "telegram:9", (
-            f"With no resolver, source_ref must equal session_id 'telegram:9', got: {f.source_ref!r}"
+            f"With no resolver, source_ref must equal session_key 'telegram:9', got: {f.source_ref!r}"
         )
 
 
-async def test_fallback_empty_resolver_leaves_source_ref_as_session_id(
+async def test_fallback_empty_resolver_leaves_source_ref_as_session_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With an empty IdentityResolver (no aliases), source_ref==session_id (unconfigured = today's behavior)."""
+    """With an empty IdentityResolver (no aliases), source_ref==session_key (unconfigured = today's behavior)."""
     _bypass_test_mode(monkeypatch)
 
     extractor = FactExtractor(
@@ -231,7 +231,7 @@ async def test_fallback_empty_resolver_leaves_source_ref_as_session_id(
         identity_resolver=IdentityResolver({}),  # empty — resolve(x)==x
     )
     convo = [Message(role="user", content="I prefer dark mode.")]
-    facts = await extractor.extract(convo, session_id="telegram:9")
+    facts = await extractor.extract(convo, session_key="telegram:9")
 
     assert facts, "extractor must return at least one fact"
     for f in facts:

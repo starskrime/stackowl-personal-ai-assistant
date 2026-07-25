@@ -111,7 +111,7 @@ async def _run(
     context the tool reads (TTY/channel/session/owl/depth/ceiling + get_services)."""
     svc_token = set_services(services)
     trace_token = TraceContext.start(
-        session_id="s-owl-build" if (interactive and channel) else None,
+        session_key="s-owl-build" if (interactive and channel) else None,
         trace_id="t-owl-build",
         interactive=interactive,
         channel=channel,

@@ -12,7 +12,7 @@ turns or between concurrent turns.
 What this carries and why:
 
 * ``prompt_hash`` — SHA-256[:16] of the exact system prompt sent. The D01.1
-  stability invariant is ``COUNT(DISTINCT prompt_hash) per session_id == 1``.
+  stability invariant is ``COUNT(DISTINCT prompt_hash) per session_key == 1``.
   Before D01.1 it will equal the turn count, which IS the CONFLICT, measured.
 * ``system_prompt_chars`` — size in characters, so prompt growth stays visible
   independently of tokenizer behaviour.

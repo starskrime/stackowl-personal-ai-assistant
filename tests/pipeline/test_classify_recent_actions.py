@@ -21,10 +21,10 @@ pytestmark = pytest.mark.asyncio
 class _StubBridge:
     """Minimal MemoryBridge: no long-term facts, no history."""
 
-    async def retrieve(self, query: str, session_id: str) -> str:  # noqa: ARG002
+    async def retrieve(self, query: str, session_key: str) -> str:  # noqa: ARG002
         return ""
 
-    async def recent_conversation_turns(self, session_id: str, limit: int):  # noqa: ARG002
+    async def recent_conversation_turns(self, session_key: str, limit: int):  # noqa: ARG002
         return []
 
 
@@ -32,7 +32,7 @@ async def test_classify_surfaces_recent_actions_excluding_in_flight(tmp_db: DbPo
     store = TaskOutcomeStore(db=tmp_db)
     # A prior completed turn in this session.
     await store.record(
-        trace_id="prior-trace", session_id="sess-1", owl_name="secretary",
+        trace_id="prior-trace", session_key="sess-1", owl_name="secretary",
         channel="cli", success=True, latency_ms=10.0, tool_call_count=1,
         failure_class=None, step_durations={},
         input_text="deploy the staging server",
@@ -41,7 +41,7 @@ async def test_classify_surfaces_recent_actions_excluding_in_flight(tmp_db: DbPo
     )
     # The in-flight turn — already captured under its own trace_id, must NOT echo.
     await store.record(
-        trace_id="inflight-trace", session_id="sess-1", owl_name="secretary",
+        trace_id="inflight-trace", session_key="sess-1", owl_name="secretary",
         channel="cli", success=True, latency_ms=1.0, tool_call_count=0,
         failure_class=None, step_durations={},
         input_text="what did you just do?",
@@ -51,7 +51,7 @@ async def test_classify_surfaces_recent_actions_excluding_in_flight(tmp_db: DbPo
     token = set_services(StepServices(db_pool=tmp_db, memory_bridge=_StubBridge()))
     try:
         state = PipelineState(
-            trace_id="inflight-trace", session_id="sess-1",
+            trace_id="inflight-trace", session_key="sess-1",
             input_text="what did you just do?", channel="cli",
             owl_name="secretary", pipeline_step="classify",
             intent_class="standard", intent_classified=True,

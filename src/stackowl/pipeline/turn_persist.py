@@ -99,7 +99,7 @@ async def persist_turn(state: PipelineState) -> None:
         # its own retry replay, which then had no tools either).
         sticky_cache = getattr(services, "sticky_route_cache", None)
         if sticky_cache is not None:
-            sticky_cache.evict(state.session_id)
+            sticky_cache.evict(state.session_key)
 
         retry_store = getattr(services, "retry_queue_store", None)
         # retry_replay=True means THIS turn is already RetryActuator's own replay
@@ -123,7 +123,7 @@ async def persist_turn(state: PipelineState) -> None:
                 # and nothing ever retried it). Repoint the existing row at
                 # THIS turn's trace_id/goal instead — still one row per
                 # session, now tracking the freshest ask.
-                existing = await retry_store.get_latest_pending_for_session(state.session_id)
+                existing = await retry_store.get_latest_pending_for_session(state.session_key)
                 if existing is not None:
                     log.scheduler.info(
                         "[pipeline] persist_turn: retry already pending for session — "
@@ -141,7 +141,7 @@ async def persist_turn(state: PipelineState) -> None:
                 else:
                     await retry_store.insert_pending(
                         trace_id=state.trace_id,
-                        session_id=state.session_id,
+                        session_key=state.session_key,
                         goal=state.input_text,
                         banned_capabilities=list(banned) if banned else [],
                     )
@@ -208,7 +208,7 @@ async def persist_turn(state: PipelineState) -> None:
         trust_override: Trust | None = "untrusted"
         log.memory.info(
             "[pipeline] persist_turn: floored turn — persisting user utterance only (no draft)",
-            extra={"_fields": {"trace_id": state.trace_id, "session_id": state.session_id}},
+            extra={"_fields": {"trace_id": state.trace_id, "session_key": state.session_key}},
         )
     else:
         content = f"User: {state.input_text}\n\nAssistant: {assistant_text}"
@@ -219,19 +219,19 @@ async def persist_turn(state: PipelineState) -> None:
             "[pipeline] persist_turn: clean turn — persisting user+assistant",
             extra={"_fields": {
                 "trace_id": state.trace_id,
-                "session_id": state.session_id,
+                "session_key": state.session_key,
                 "merged_external": state.merged_external,
             }},
         )
 
     # 3. STEP — best-effort store (B5: never raise; never block delivery).
     try:
-        await bridge.store(content, state.session_id, trust=trust_override)
+        await bridge.store(content, state.session_key, trust=trust_override)
     except Exception as exc:  # B5 — memory persistence must not break the turn
         log.memory.warning(
             "[pipeline] persist_turn: store failed — skipping",
             exc_info=exc,
-            extra={"_fields": {"trace_id": state.trace_id, "session_id": state.session_id}},
+            extra={"_fields": {"trace_id": state.trace_id, "session_key": state.session_key}},
         )
         return
     # 4. EXIT

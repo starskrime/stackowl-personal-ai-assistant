@@ -179,7 +179,7 @@ class SocketChannelAdapter(ChannelAdapter):
 
     async def send_clarify(
         self,
-        session_id: str,
+        session_key: str,
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,
@@ -193,7 +193,7 @@ class SocketChannelAdapter(ChannelAdapter):
         await self._conn.send(
             ClarifyAskFrame(
                 clarify_id=clarify_id,
-                session_id=session_id,
+                session_key=session_key,
                 question=question,
                 trace_id="",
                 channel=self._channel,

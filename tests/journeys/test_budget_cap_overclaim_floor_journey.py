@@ -264,7 +264,7 @@ async def _drive(
     provider = _ScriptedProvider(calls, partial)
 
     state = PipelineState(
-        trace_id="t-pics", session_id="s-pics", input_text="can you help me with pictures",
+        trace_id="t-pics", session_key="s-pics", input_text="can you help me with pictures",
         channel="telegram", owl_name=_OWL_NAME, pipeline_step="execute", interactive=False,
     )
     token = set_services(StepServices(
@@ -397,7 +397,7 @@ def test_non_cap_path_reads_full_success_tally_byte_identical() -> None:
     from stackowl.pipeline.delivery_gate import is_consequential_giveup_now
 
     base_kwargs: dict[str, Any] = dict(
-        trace_id="t", session_id="s", input_text="x", channel="cli",
+        trace_id="t", session_key="s", input_text="x", channel="cli",
         owl_name=_OWL_NAME, pipeline_step="execute", interactive=False,
         consequential_snapshot_taken=True,
         consequential_failures=("send_image",),

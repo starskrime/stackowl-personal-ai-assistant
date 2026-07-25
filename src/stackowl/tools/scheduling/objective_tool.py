@@ -284,8 +284,8 @@ class ObjectiveTool(Tool):
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
-        if not interactive or not session_id or not channel:
+        session_key = ctx.get("session_key")
+        if not interactive or not session_key or not channel:
             log.tool.warning(
                 "objective.execute: epic creation with no interactive user — refused",
                 extra={"_fields": {"repo": repo}},
@@ -306,7 +306,7 @@ class ObjectiveTool(Tool):
             allowed = await gate.policy.request(
                 tool_name="objective",
                 channel=channel,
-                session_id=session_id,
+                session_key=session_key,
                 category="epic_execution",
                 summary=self.consent_summary(intent=intent, repo=repo) or "",
             )

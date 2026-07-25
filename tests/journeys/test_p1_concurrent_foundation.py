@@ -16,7 +16,7 @@ Why this exists (the P1 merge-gate, concurrent-msg §9):
 Three proofs (the P1 OUTCOMES a user cares about):
 
   1. Cross-session parallel + correlated. Two turns in DIFFERENT sessions
-     (``session_id != trace_id``, like every real adapter) dispatched
+     (``session_key != trace_id``, like every real adapter) dispatched
      concurrently run truly in parallel and each reply correlates to its OWN
      ``request_id`` stream — no cross-read. Proven by gating BOTH providers on a
      barrier that only releases once BOTH turns are simultaneously in flight (so
@@ -283,7 +283,7 @@ def _build_services(
 class _NullGateway:
     """A clarify gateway the pump never consults (spawn_send-only slice)."""
 
-    def peek_for_session(self, session_id: str, channel: str) -> None:  # pragma: no cover
+    def peek_for_session(self, session_key: str, channel: str) -> None:  # pragma: no cover
         return None
 
 
@@ -312,7 +312,7 @@ async def _dispatch_turn(
     writer, reader = stream_registry.create(msg.trace_id)
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -323,7 +323,7 @@ async def _dispatch_turn(
     producer: asyncio.Task[object] = asyncio.create_task(backend.run(state))
     await turn_registry.register(
         msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         task=cast("asyncio.Task[None]", producer),
         target=msg.chat_id,
         original_input=input_text,
@@ -331,14 +331,14 @@ async def _dispatch_turn(
     pump.spawn_send(
         channel_adapter=adapter,
         reader=reader,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         request_id=msg.trace_id,
         producer=producer,
         writer=writer,
     )
     # Capture the send task NOW (before the producer finishes and _cleanup reaps
     # the _inflight slot), so the caller can await delivery deterministically.
-    send_task = pump._inflight[msg.session_id]  # type: ignore[attr-defined]
+    send_task = pump._inflight[msg.session_key]  # type: ignore[attr-defined]
     return producer, send_task
 
 
@@ -374,12 +374,12 @@ async def test_cross_session_runs_parallel_and_each_reply_correlates(
     adapter_a = _CapturingAdapter()
     adapter_b = _CapturingAdapter()
 
-    # session_id != trace_id in BOTH, like every real adapter.
+    # session_key != trace_id in BOTH, like every real adapter.
     msg_a = IngressMessage(
-        text="alpha question", session_id="sess-A", channel="cli", trace_id="trace-A"
+        text="alpha question", session_key="sess-A", channel="cli", trace_id="trace-A"
     )
     msg_b = IngressMessage(
-        text="bravo question", session_id="sess-B", channel="cli", trace_id="trace-B"
+        text="bravo question", session_key="sess-B", channel="cli", trace_id="trace-B"
     )
 
     prod_a, send_a = await _dispatch_turn(
@@ -431,15 +431,15 @@ async def _intake_same_session(
     completion→drain hook (below) dispatches the queued head when the running
     turn finishes — exactly as orchestrator._drain_next does.
     """
-    async with turn_registry.session_intake_lock(msg.session_id):
-        if turn_registry.running(msg.session_id) is None:
+    async with turn_registry.session_intake_lock(msg.session_key):
+        if turn_registry.running(msg.session_key) is None:
             await _dispatch_turn(
                 backend=backend, scanner=scanner, stream_registry=stream_registry,
                 turn_registry=turn_registry, pump=pump, adapter=adapter, msg=msg,
             )
             return "dispatched"
         turn_registry.enqueue(
-            msg.session_id, original_input=msg.text,
+            msg.session_key, original_input=msg.text,
             request_id=msg.trace_id, target=msg.chat_id,
         )
         return "queued"
@@ -473,8 +473,8 @@ async def test_same_session_second_message_non_blocking_and_queued_fifo(
     adapter = _CapturingAdapter()
 
     sid = "sess-CHAT"
-    msg1 = IngressMessage(text="first", session_id=sid, channel="cli", trace_id="trace-1")
-    msg2 = IngressMessage(text="second", session_id=sid, channel="cli", trace_id="trace-2")
+    msg1 = IngressMessage(text="first", session_key=sid, channel="cli", trace_id="trace-1")
+    msg2 = IngressMessage(text="second", session_key=sid, channel="cli", trace_id="trace-2")
 
     # --- Completion→drain hook (faithful to orchestrator._drain_next FIFO) -----
     async def _drain_next(finished_request_id: str) -> None:
@@ -484,7 +484,7 @@ async def test_same_session_second_message_non_blocking_and_queued_fifo(
             if nxt is None:
                 return
             parked = IngressMessage(
-                text=nxt.original_input, session_id=sid, channel="cli",
+                text=nxt.original_input, session_key=sid, channel="cli",
                 trace_id=nxt.request_id, chat_id=nxt.target,
             )
             await _dispatch_turn(
@@ -598,11 +598,11 @@ async def test_telegram_two_chats_no_cross_deliver(tmp_db: DbPool) -> None:
 
     chat_x, chat_y = 111, 222
     msg_x = IngressMessage(
-        text="weather please", session_id="tg-X", channel="telegram",
+        text="weather please", session_key="tg-X", channel="telegram",
         trace_id="trace-X", chat_id=chat_x,
     )
     msg_y = IngressMessage(
-        text="news please", session_id="tg-Y", channel="telegram",
+        text="news please", session_key="tg-Y", channel="telegram",
         trace_id="trace-Y", chat_id=chat_y,
     )
 

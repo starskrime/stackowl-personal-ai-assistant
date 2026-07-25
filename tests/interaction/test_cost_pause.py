@@ -51,12 +51,12 @@ class _FakeClarifyGateway:
         self._outcome = outcome
         self._next_id = 0
 
-    async def ask(self, session_id: str, channel: str, question: str, **kwargs: Any) -> str:  # noqa: ANN401
+    async def ask(self, session_key: str, channel: str, question: str, **kwargs: Any) -> str:  # noqa: ANN401
         self._next_id += 1
         clarify_id = f"cid-{self._next_id}"
         self.asks.append(
             {
-                "session_id": session_id,
+                "session_key": session_key,
                 "channel": channel,
                 "question": question,
                 "choices": kwargs.get("choices"),
@@ -160,7 +160,7 @@ async def test_gate_threshold_none_never_asks() -> None:
     await _seed_turn_cost(tracker, "t", 1.00)
     gw = _FakeClarifyGateway(answer="Stop")
     guard = _guard(tracker=tracker, gateway=gw, threshold=None)
-    assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True) is True
     assert gw.asks == []
 
 
@@ -169,7 +169,7 @@ async def test_gate_under_threshold_never_asks() -> None:
     # No cost recorded → turn_cost is 0, threshold is high.
     gw = _FakeClarifyGateway(answer="Stop")
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.50)
-    assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True) is True
     assert gw.asks == []
 
 
@@ -178,7 +178,7 @@ async def test_gate_non_interactive_never_asks() -> None:
     await _seed_turn_cost(tracker, "t", 1.00)
     gw = _FakeClarifyGateway(answer="Stop")
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
-    assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=False) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=False) is True
     assert gw.asks == []
 
 
@@ -190,14 +190,14 @@ async def test_gate_over_threshold_interactive_asks_and_stop_returns_false() -> 
     await _seed_turn_cost(tracker, "t", 0.10)
     gw = _FakeClarifyGateway(answer="Stop")
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
-    result = await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True)
+    result = await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True)
     assert result is False
     # It ASKED — with the Continue/Stop choices, blocking, on the right channel.
     assert len(gw.asks) == 1
     ask = gw.asks[0]
     assert ask["choices"] == ("Continue", "Stop")
     assert ask["blocking"] is True
-    assert ask["session_id"] == "s"
+    assert ask["session_key"] == "s"
     assert ask["channel"] == "telegram"
     assert "$" in ask["question"] and "Continue?" in ask["question"]
 
@@ -207,11 +207,11 @@ async def test_gate_continue_returns_true_and_does_not_reask_same_trace() -> Non
     await _seed_turn_cost(tracker, "t", 0.10)
     gw = _FakeClarifyGateway(answer="Continue")
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
-    first = await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True)
+    first = await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True)
     assert first is True
     assert len(gw.asks) == 1
     # Second expensive op in the SAME turn → no re-ask (asked-once), still True.
-    second = await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True)
+    second = await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True)
     assert second is True
     assert len(gw.asks) == 1
 
@@ -221,7 +221,7 @@ async def test_gate_timeout_no_answer_fails_open() -> None:
     await _seed_turn_cost(tracker, "t", 0.10)
     gw = _FakeClarifyGateway(answer=None, outcome=OUTCOME_TIMED_OUT)
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
-    assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True) is True
     assert len(gw.asks) == 1
 
 
@@ -232,7 +232,7 @@ async def test_gate_no_gateway_fails_open() -> None:
     tracker = _tracker()
     await _seed_turn_cost(tracker, "t", 0.10)
     guard = _guard(tracker=tracker, gateway=None, threshold=0.10)
-    assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True) is True
 
 
 async def test_gate_missing_channel_fails_open() -> None:
@@ -241,7 +241,7 @@ async def test_gate_missing_channel_fails_open() -> None:
     gw = _FakeClarifyGateway(answer="Stop")
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
     # No channel → cannot ask → fail-OPEN, no ask recorded.
-    assert await guard.gate(trace_id="t", session_id="s", channel="", interactive=True) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="", interactive=True) is True
     assert gw.asks == []
 
 
@@ -251,7 +251,7 @@ async def test_gate_gateway_error_fails_open() -> None:
     gw = _ExplodingGateway()
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.10)
     # ask() raises inside the guard → it logs (B5) + fails OPEN (True), never raises.
-    assert await guard.gate(trace_id="t", session_id="s", channel="telegram", interactive=True) is True
+    assert await guard.gate(trace_id="t", session_key="s", channel="telegram", interactive=True) is True
 
 
 # --- F-70: continue-and-notify for reversible spend under the hard cap -------
@@ -270,7 +270,7 @@ async def test_gate_soft_crossed_under_block_threshold_continues_without_asking(
         block_threshold_usd=1.00,  # near-hard-limit block point (NOT reached)
     )
     result = await guard.gate(
-        trace_id="t", session_id="s", channel="telegram", interactive=True
+        trace_id="t", session_key="s", channel="telegram", interactive=True
     )
     assert result is True
     assert gw.asks == []  # no blocking ask — decided autonomously
@@ -288,7 +288,7 @@ async def test_gate_near_hard_limit_still_blocks_and_stop_aborts() -> None:
         block_threshold_usd=0.20,  # reached → blocks
     )
     result = await guard.gate(
-        trace_id="t", session_id="s", channel="telegram", interactive=True
+        trace_id="t", session_key="s", channel="telegram", interactive=True
     )
     assert result is False
     assert len(gw.asks) == 1
@@ -310,7 +310,7 @@ async def test_gate_block_threshold_derived_from_hard_cap() -> None:
     # 0.10 < 0.40 → continue-and-notify, no ask.
     assert (
         await guard.gate(
-            trace_id="t", session_id="s", channel="telegram", interactive=True
+            trace_id="t", session_key="s", channel="telegram", interactive=True
         )
         is True
     )
@@ -326,7 +326,7 @@ async def test_gate_no_hard_cap_preserves_legacy_blocking() -> None:
     guard = _guard(tracker=tracker, gateway=gw, threshold=0.05)
     assert (
         await guard.gate(
-            trace_id="t", session_id="s", channel="telegram", interactive=True
+            trace_id="t", session_key="s", channel="telegram", interactive=True
         )
         is False
     )
@@ -354,7 +354,7 @@ async def test_gate_under_block_threshold_continues_when_resolver_on(monkeypatch
         block_threshold_usd=1.00,  # not reached → continue-and-notify
     )
     result = await guard.gate(
-        trace_id="t", session_id="s", channel="telegram", interactive=True
+        trace_id="t", session_key="s", channel="telegram", interactive=True
     )
     assert result is True
     assert gw.asks == []
@@ -377,7 +377,7 @@ async def test_gate_near_hard_limit_still_blocks_when_resolver_on(monkeypatch) -
         block_threshold_usd=0.20,  # reached → blocks
     )
     result = await guard.gate(
-        trace_id="t", session_id="s", channel="telegram", interactive=True
+        trace_id="t", session_key="s", channel="telegram", interactive=True
     )
     assert result is False
     assert len(gw.asks) == 1

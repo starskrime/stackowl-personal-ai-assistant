@@ -22,7 +22,7 @@ from stackowl.tools.registry import ToolRegistry
 def _state(**kwargs: object) -> PipelineState:
     base: dict[str, object] = {
         "trace_id": "t",
-        "session_id": "s",
+        "session_key": "s",
         "input_text": "hi",
         "channel": "cli",
         "owl_name": "secretary",

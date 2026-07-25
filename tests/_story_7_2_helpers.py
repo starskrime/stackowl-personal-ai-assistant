@@ -46,11 +46,11 @@ def make_job(
     return Job(**defaults)
 
 
-def make_state(session_id: str = "test-session") -> PipelineState:
+def make_state(session_key: str = "test-session") -> PipelineState:
     """Return a minimal :class:`PipelineState` for command-surface tests."""
     return PipelineState(
         trace_id="trace-test",
-        session_id=session_id,
+        session_key=session_key,
         input_text="",
         channel="cli",
         owl_name="secretary",

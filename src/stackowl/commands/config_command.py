@@ -112,7 +112,7 @@ class ConfigCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.config.debug(
             "[commands] config.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         parts = args.strip().split(maxsplit=1)
         if not parts:

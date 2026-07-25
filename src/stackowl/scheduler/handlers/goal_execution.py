@@ -156,7 +156,7 @@ class GoalExecutionHandler(JobHandler):
         # job id truncated to 8 chars is always "goal_exe" for EVERY goal job —
         # a collision that conflated distinct goals' sessions. The full id is
         # unique per job.
-        session_id = f"goal-{job.job_id}"
+        session_key = f"goal-{job.job_id}"
         # A recurring job sends the IDENTICAL raw goal text to the pipeline on
         # every run — no date, no "this is a fresh check" signal. Reported
         # symptom: scheduled jobs returning stale/old information instead of
@@ -178,7 +178,7 @@ class GoalExecutionHandler(JobHandler):
         )
         state = PipelineState(
             trace_id=trace_id,
-            session_id=session_id,
+            session_key=session_key,
             input_text=dated_goal,
             # Deliver to the channel the goal was scheduled from (persisted on
             # the job row), not a hardcoded "cli" that drops the answer.
@@ -211,7 +211,7 @@ class GoalExecutionHandler(JobHandler):
                 "_fields": {
                     "job_id": job.job_id,
                     "trace_id": trace_id,
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "durable": durable,
                 }
             },

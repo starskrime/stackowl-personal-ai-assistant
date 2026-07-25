@@ -29,7 +29,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 def _state(**kw: object) -> PipelineState:
     base: dict[str, object] = dict(
         trace_id="t-corr",
-        session_id="s",
+        session_key="s",
         input_text="what's the latest on GOOGL?",
         channel="cli",
         owl_name="o",

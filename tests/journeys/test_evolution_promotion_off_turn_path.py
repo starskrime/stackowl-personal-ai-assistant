@@ -114,13 +114,13 @@ def _build_services(
 
 
 def _state_from_decision(
-    decision, *, trace_id: str, session_id: str, channel: str, raw_text: str
+    decision, *, trace_id: str, session_key: str, channel: str, raw_text: str
 ) -> PipelineState:
     """Build PipelineState exactly as startup/orchestrator.py does for an owl route."""
     input_text = decision.stripped_text if decision.stripped_text is not None else raw_text
     return PipelineState(
         trace_id=trace_id,
-        session_id=session_id,
+        session_key=session_key,
         input_text=input_text,
         channel=channel,
         owl_name=decision.target,
@@ -165,9 +165,9 @@ async def test_concurrent_turns_do_not_inline_evolution_or_promotion(
     store_calls: list[str] = []
     real_store = SqliteMemoryBridge.store
 
-    async def _counting_store(self, content, session_id, *, trust=None):  # noqa: ANN001
-        store_calls.append(session_id)
-        return await real_store(self, content, session_id, trust=trust)
+    async def _counting_store(self, content, session_key, *, trust=None):  # noqa: ANN001
+        store_calls.append(session_key)
+        return await real_store(self, content, session_key, trust=trust)
 
     monkeypatch.setattr(SqliteMemoryBridge, "store", _counting_store, raising=True)
 
@@ -184,10 +184,10 @@ async def test_concurrent_turns_do_not_inline_evolution_or_promotion(
     # --- Build two concurrent cross-session turns (same owl, distinct sessions) ---
     sessions = ("sess-off-path-1", "sess-off-path-2")
     states: list[PipelineState] = []
-    for idx, session_id in enumerate(sessions):
+    for idx, session_key in enumerate(sessions):
         msg = IngressMessage(
             text="what am I learning?",
-            session_id=session_id,
+            session_key=session_key,
             channel="cli",
             trace_id=f"trace-off-path-{idx}",
         )
@@ -198,7 +198,7 @@ async def test_concurrent_turns_do_not_inline_evolution_or_promotion(
             _state_from_decision(
                 decision,
                 trace_id=msg.trace_id,
-                session_id=session_id,
+                session_key=session_key,
                 channel=msg.channel,
                 raw_text=msg.text,
             )

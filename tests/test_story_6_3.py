@@ -232,7 +232,7 @@ async def test_fact_extractor_returns_staged_facts() -> None:
     provider = _MockProvider()
     extractor = FactExtractor(provider=provider, sensitive_categories=[])
     facts = await extractor.extract(
-        [Message(role="user", content="Hello")], session_id="s1"
+        [Message(role="user", content="Hello")], session_key="s1"
     )
     assert len(facts) == 1
     assert isinstance(facts[0], StagedFact)
@@ -244,7 +244,7 @@ async def test_fact_extractor_sets_source_type_conversation() -> None:
     provider = _MockProvider()
     extractor = FactExtractor(provider=provider)
     facts = await extractor.extract(
-        [Message(role="user", content="anything")], session_id="sess-A"
+        [Message(role="user", content="anything")], session_key="sess-A"
     )
     # Extracted facts are tagged conversation_fact (commit 6c6ec0c) — distinct from raw
     # 'conversation' turns so they don't pollute Plan A short-term history. Assert against
@@ -530,12 +530,12 @@ async def test_memory_pruner_keeps_reinforced(db: DbPool) -> None:
 async def test_extraction_handler_extracts_and_stages(db: DbPool) -> None:
     # Seed a conversation row + a couple of messages.
     conv_id = "conv-extract-1"
-    session_id = "sess-extract-1"
+    session_key = "sess-extract-1"
     now = datetime.now(UTC).isoformat()
     await db.execute(
-        """INSERT INTO conversations (id, session_id, owl_name, started_at, message_count)
+        """INSERT INTO conversations (id, session_key, owl_name, started_at, message_count)
            VALUES (?, ?, ?, ?, ?)""",
-        (conv_id, session_id, "secretary", now, 1),
+        (conv_id, session_key, "secretary", now, 1),
     )
     await db.execute(
         """INSERT INTO messages (id, conversation_id, role, content, created_at)
@@ -554,7 +554,7 @@ async def test_extraction_handler_extracts_and_stages(db: DbPool) -> None:
         job_id="j1",
         handler_name="fact_extraction",
         schedule="manual",
-        idempotency_key=f"fact_extraction:{session_id}",
+        idempotency_key=f"fact_extraction:{session_key}",
         last_run_at=None,
         next_run_at=now,
         status="pending",

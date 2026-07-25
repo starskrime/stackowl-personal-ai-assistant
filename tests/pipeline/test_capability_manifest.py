@@ -141,7 +141,7 @@ async def test_manifest_injected_into_assembled_prompt() -> None:
         OwlAgentManifest(name="cap", role="r", system_prompt="P", model_tier="fast")
     )
     state = PipelineState(
-        trace_id="t", session_id="s", input_text="hi", channel="cli",
+        trace_id="t", session_key="s", input_text="hi", channel="cli",
         owl_name="cap", pipeline_step="start",
     )
     from stackowl.pipeline.steps import assemble

@@ -18,7 +18,7 @@ async def run(state: PipelineState) -> PipelineState:
     Retrieves the StreamRegistry from pipeline services context.
     Discards gracefully if no writer is registered — never raises.
     """
-    # A delegated sub-pipeline (delegation_depth>0) shares the parent's session_id
+    # A delegated sub-pipeline (delegation_depth>0) shares the parent's session_key
     # but has NO user stream of its own — its result returns to the parent via the
     # A2A response (final_state.responses), not the user's StreamWriter. Delivering
     # here would write the child's raw text to the PARENT's stream and close it,
@@ -26,7 +26,7 @@ async def run(state: PipelineState) -> PipelineState:
     if state.delegation_depth > 0:
         log.gateway.debug(
             "[pipeline] deliver: delegated sub-pipeline — skip user-stream delivery",
-            extra={"_fields": {"session_id": state.session_id,
+            extra={"_fields": {"session_key": state.session_key,
                                "delegation_depth": state.delegation_depth}},
         )
         return state
@@ -41,7 +41,7 @@ async def run(state: PipelineState) -> PipelineState:
     if state.defer_delivery:
         log.gateway.debug(
             "[pipeline] deliver: defer_delivery — producer owns delivery, skipping",
-            extra={"_fields": {"session_id": state.session_id}},
+            extra={"_fields": {"session_key": state.session_key}},
         )
         return state
 
@@ -54,12 +54,12 @@ async def run(state: PipelineState) -> PipelineState:
     registry = services.stream_registry
     log.gateway.info(
         "[pipeline] deliver: entry",
-        extra={"_fields": {"session_id": state.session_id, "chunk_count": len(state.responses)}},
+        extra={"_fields": {"session_key": state.session_key, "chunk_count": len(state.responses)}},
     )
     if registry is None:
         log.gateway.warning(
             "[pipeline] deliver: no registry in services — discarding responses",
-            extra={"_fields": {"session_id": state.session_id}},
+            extra={"_fields": {"session_key": state.session_key}},
         )
         return state
 
@@ -102,7 +102,7 @@ async def run(state: PipelineState) -> PipelineState:
 
     log.gateway.info(
         "[pipeline] deliver: exit",
-        extra={"_fields": {"session_id": state.session_id, "chunks_written": len(state.responses)}},
+        extra={"_fields": {"session_key": state.session_key, "chunks_written": len(state.responses)}},
     )
     return state
 
@@ -124,7 +124,7 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     transform actually rewrites the text, the response chunks are collapsed into
     one transformed content chunk (preserving the turn's owl, target, and floor
     marker). owner_key mirrors classify: ``identity_key`` when set, else
-    ``session_id``.
+    ``session_key``.
     """
     store = services.preference_store
     if store is None or not state.responses:
@@ -132,7 +132,7 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     try:
         from stackowl.memory.preferences import GLOBAL_OWNER_KEY
 
-        owner_key = state.identity_key or state.session_id
+        owner_key = state.identity_key or state.session_key
         # Merge the cross-channel GLOBAL prefs UNDER the per-owner prefs so a
         # globally-set preference (e.g. output_tables=off) is enforced on every
         # channel, while a per-owner pref still overrides it. No global pref →
@@ -168,7 +168,7 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     except Exception as exc:  # B5 — enforcement must never crash delivery
         log.gateway.error(
             "[pipeline] deliver: output preference enforcement failed — sending as-is",
-            exc_info=exc, extra={"_fields": {"session_id": state.session_id}},
+            exc_info=exc, extra={"_fields": {"session_key": state.session_key}},
         )
         return state
 
@@ -267,7 +267,7 @@ async def _proactive_fallback(state: PipelineState, services: StepServices) -> N
             extra={
                 "_fields": {
                     "request_id": state.trace_id,
-                    "session_id": state.session_id,
+                    "session_key": state.session_key,
                     "has_deliverer": deliverer is not None,
                     "has_target": state.reply_target is not None,
                     "body_len": len(body),
@@ -293,7 +293,7 @@ async def _proactive_fallback(state: PipelineState, services: StepServices) -> N
         log.gateway.error(
             "[deliver] stream-miss: proactive fallback raised — answer not delivered",
             exc_info=exc,
-            extra={"_fields": {"request_id": state.trace_id, "session_id": state.session_id}},
+            extra={"_fields": {"request_id": state.trace_id, "session_key": state.session_key}},
         )
         return
     log.gateway.warning(
@@ -301,7 +301,7 @@ async def _proactive_fallback(state: PipelineState, services: StepServices) -> N
         extra={
             "_fields": {
                 "request_id": state.trace_id,
-                "session_id": state.session_id,
+                "session_key": state.session_key,
                 "channel": state.channel,
                 "status": status,
                 "body_len": len(body),

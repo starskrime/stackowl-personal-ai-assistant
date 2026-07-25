@@ -194,7 +194,7 @@ async def _drive_turn(
     """Drive one standard secretary turn end-to-end; return the final PipelineState."""
     msg = IngressMessage(
         text="What is the capital of France?",
-        session_id="sess-charter-journey",
+        session_key="sess-charter-journey",
         channel="cli",
         trace_id="trace-charter-journey",
     )
@@ -202,7 +202,7 @@ async def _drive_turn(
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,

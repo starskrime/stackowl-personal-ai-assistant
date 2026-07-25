@@ -47,7 +47,7 @@ def test_0083_accepts_positive_negative_and_null_rejects_other_values(tmp_path: 
         conn.execute(
             """
             INSERT INTO task_outcomes
-                (trace_id, session_id, owl_name, channel, success, latency_ms, captured_at,
+                (trace_id, session_key, owl_name, channel, success, latency_ms, captured_at,
                  approach_rating)
             VALUES
                 ('trace-1', 'session-1', 'owl-1', 'telegram', 1, 12.5, 0.0, 'positive')
@@ -56,7 +56,7 @@ def test_0083_accepts_positive_negative_and_null_rejects_other_values(tmp_path: 
         conn.execute(
             """
             INSERT INTO task_outcomes
-                (trace_id, session_id, owl_name, channel, success, latency_ms, captured_at,
+                (trace_id, session_key, owl_name, channel, success, latency_ms, captured_at,
                  approach_rating)
             VALUES
                 ('trace-2', 'session-2', 'owl-1', 'telegram', 1, 12.5, 0.0, 'negative')
@@ -65,7 +65,7 @@ def test_0083_accepts_positive_negative_and_null_rejects_other_values(tmp_path: 
         conn.execute(
             """
             INSERT INTO task_outcomes
-                (trace_id, session_id, owl_name, channel, success, latency_ms, captured_at)
+                (trace_id, session_key, owl_name, channel, success, latency_ms, captured_at)
             VALUES
                 ('trace-3', 'session-3', 'owl-1', 'telegram', 1, 12.5, 0.0)
             """
@@ -83,7 +83,7 @@ def test_0083_accepts_positive_negative_and_null_rejects_other_values(tmp_path: 
             conn.execute(
                 """
                 INSERT INTO task_outcomes
-                    (trace_id, session_id, owl_name, channel, success, latency_ms, captured_at,
+                    (trace_id, session_key, owl_name, channel, success, latency_ms, captured_at,
                      approach_rating)
                 VALUES
                     ('trace-4', 'session-4', 'owl-1', 'telegram', 1, 12.5, 0.0, 'bogus')

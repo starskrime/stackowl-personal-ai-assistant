@@ -72,7 +72,7 @@ def resolve_consent_identity(
     fallback_channel: str = "scheduler",
     fallback_session: str = "scheduler",
 ) -> tuple[str, str, str]:
-    """(tool_name, channel, session_id) for a gated write.
+    """(tool_name, channel, session_key) for a gated write.
 
     Skill-authoring can be reached two ways: an unattended scheduled job (the
     daily ``SkillSynthesizer`` pass — no live turn, no ``TraceContext``) OR a
@@ -82,7 +82,7 @@ def resolve_consent_identity(
     approved "run synthesis now" before ``execute()`` ran at all).
 
     When a live, interactive turn IS in flight, return ``live_tool_name`` with
-    ITS real channel/session_id, so the SAME per-channel prompter
+    ITS real channel/session_key, so the SAME per-channel prompter
     (Telegram/Slack/CLI) that could gate the outer tool call can also gate
     this inner write — a real human can approve it live, subject to normal
     consent (no special trust tier).
@@ -97,9 +97,9 @@ def resolve_consent_identity(
     """
     ctx = TraceContext.get()
     channel = ctx.get("channel")
-    session_id = ctx.get("session_id")
-    if ctx.get("interactive") and channel and session_id:
-        return live_tool_name, str(channel), str(session_id)
+    session_key = ctx.get("session_key")
+    if ctx.get("interactive") and channel and session_key:
+        return live_tool_name, str(channel), str(session_key)
     return scheduled_tool_name, fallback_channel, fallback_session
 
 
@@ -122,7 +122,7 @@ class SkillWriteRequest:
     consent_summary: str
     tool_name: str
     channel: str = "scheduler"
-    session_id: str = "scheduler"
+    session_key: str = "scheduler"
     category: str | None = None
     tools_registered: int = 0
     owls_registered: int = 0
@@ -247,7 +247,7 @@ async def _consent_or_refuse(
         allowed = await consent_gate.policy.request(
             tool_name=request.tool_name,
             channel=request.channel,
-            session_id=request.session_id,
+            session_key=request.session_key,
             category=request.category,
             summary=request.consent_summary,
         )

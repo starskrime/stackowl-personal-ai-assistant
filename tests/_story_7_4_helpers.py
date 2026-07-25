@@ -67,7 +67,7 @@ def make_settings_dict(**kwargs: Any) -> dict[str, Any]:
 def make_state() -> PipelineState:
     return PipelineState(
         trace_id="t-1",
-        session_id="s-1",
+        session_key="s-1",
         input_text="",
         channel="cli",
         owl_name="secretary",

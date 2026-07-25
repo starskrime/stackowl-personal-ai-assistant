@@ -270,7 +270,7 @@ async def _turn(env: _Env, text: str) -> str:
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
     )
     before = len(env.bot.messages)
@@ -309,7 +309,7 @@ async def test_owl_builder_journey_build_route_enforce_persist(
     reply = await cmd.handle(
         f"add {_OWL} --role research --tier fast --preset researcher",
         PipelineState(
-            trace_id="build", session_id="build", input_text="", channel="cli",
+            trace_id="build", session_key="build", input_text="", channel="cli",
             owl_name="secretary", pipeline_step="start",
         ),
     )
@@ -394,7 +394,7 @@ async def test_unbounded_owl_runs_shell_proving_bounds_is_the_blocker(
     reply = await cmd.handle(
         f"add {_OWL} --role research --tier fast",
         PipelineState(
-            trace_id="build", session_id="build", input_text="", channel="cli",
+            trace_id="build", session_key="build", input_text="", channel="cli",
             owl_name="secretary", pipeline_step="start",
         ),
     )

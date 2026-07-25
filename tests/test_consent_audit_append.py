@@ -34,7 +34,7 @@ async def test_consent_decision_is_durably_audited_on_fresh_db(tmp_path: Path) -
     audit = AuditLogger(db_path)
     policy = ConsentPolicy(prompter=_AllowPrompter(), audit_logger=audit)
 
-    allowed = await policy.request(tool_name="shell", channel="cli", session_id="s1")
+    allowed = await policy.request(tool_name="shell", channel="cli", session_key="s1")
 
     assert allowed is True
     rows = audit.tail(10)

@@ -60,14 +60,14 @@ class PtcServer:
         registry: object,
         workspace: Path,
         socket_path: Path,
-        session_id: str = "",
+        session_key: str = "",
         trace_id: str | None = None,
         audit_logger: object | None = None,
         limits: PtcLimits | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._socket_path = socket_path
-        self._session_id = session_id
+        self._session_key = session_key
         self._limits = limits if limits is not None else PtcLimits()
         self._clock = clock if clock is not None else WallClock()
         self._server: asyncio.AbstractServer | None = None
@@ -78,7 +78,7 @@ class PtcServer:
         self._invoker = PtcToolInvoker(
             registry=registry,
             workspace=workspace,
-            session_id=session_id,
+            session_key=session_key,
             trace_id=trace_id,
             audit_logger=audit_logger,
             limits=self._limits,
@@ -104,7 +104,7 @@ class PtcServer:
         """Bind the per-run UDS at ``socket_path`` with 0600 perms. Never raises."""
         log.tool.debug(
             "[sandbox.ptc] start: entry",
-            extra={"_fields": {"session": self._session_id or "-", "max_calls": self._limits.max_calls}},
+            extra={"_fields": {"session": self._session_key or "-", "max_calls": self._limits.max_calls}},
         )
         # Remove any stale socket from a crashed prior run; bind under a tight umask so
         # the socket is created 0600 (no other user can connect to the host channel).
@@ -139,7 +139,7 @@ class PtcServer:
                     self._socket_path.unlink()
             log.tool.debug(
                 "[sandbox.ptc] aclose: torn down",
-                extra={"_fields": {"calls": self._call_count, "session": self._session_id or "-"}},
+                extra={"_fields": {"calls": self._call_count, "session": self._session_key or "-"}},
             )
 
     # ----------------------------------------------------------------- serving
@@ -186,7 +186,7 @@ class PtcServer:
         # 1. ENTRY — log SHAPE only (tool + arg KEY names), never arg VALUES (secrets).
         log.tool.info(
             "[sandbox.ptc] call: entry",
-            extra={"_fields": {"tool": tool, "arg_keys": sorted(args.keys()), "session": self._session_id or "-"}},
+            extra={"_fields": {"tool": tool, "arg_keys": sorted(args.keys()), "session": self._session_key or "-"}},
         )
 
         # 2. DECISION (allowlist, default-DENY) — refuse anything not in the 5 names

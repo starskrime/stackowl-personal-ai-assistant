@@ -424,7 +424,7 @@ def _backend(services: StepServices) -> AsyncioBackend:
 def _root_state() -> PipelineState:
     return PipelineState(
         trace_id="durable-deleg",
-        session_id="durable-deleg",
+        session_key="durable-deleg",
         input_text=_PARENT_GOAL,
         channel="cli",
         owl_name="secretary",

@@ -92,7 +92,7 @@ class _RepeatingProvider:
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="trace-1", session_id="sess-1", input_text="run it",
+        trace_id="trace-1", session_key="sess-1", input_text="run it",
         channel="telegram", owl_name="owl", pipeline_step="execute",
     )
 

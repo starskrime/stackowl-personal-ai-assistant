@@ -128,13 +128,13 @@ class _EmptyMemoryBridge:
     under test (memory recall is empty by design), so it is a harness double in the
     same category as the Telegram transport stubs."""
 
-    async def retrieve(self, query: str, session_id: str) -> str:
+    async def retrieve(self, query: str, session_key: str) -> str:
         return ""
 
-    async def recent_conversation_turns(self, *, session_id: str, limit: int) -> list:
+    async def recent_conversation_turns(self, *, session_key: str, limit: int) -> list:
         return []
 
-    async def store(self, content: str, session_id: str) -> None:
+    async def store(self, content: str, session_key: str) -> None:
         return None
 
 
@@ -335,7 +335,7 @@ def _build(
     )
 
 
-async def _turn(env: _Env, text: str, *, session_id: str | None = None) -> str:
+async def _turn(env: _Env, text: str, *, session_key: str | None = None) -> str:
     update = SimpleNamespace(
         effective_message=SimpleNamespace(text=text),
         effective_user=SimpleNamespace(id=USER_ID),
@@ -347,12 +347,12 @@ async def _turn(env: _Env, text: str, *, session_id: str | None = None) -> str:
 
     decision = GatewayScanner(owl_registry=env.owl_registry).scan(msg)
     input_text = decision.stripped_text if decision.stripped_text is not None else msg.text
-    sid = session_id if session_id is not None else msg.session_id
+    sid = session_key if session_key is not None else msg.session_key
     # DELIBERATE re-key (§4.1): the stream registry is keyed by request_id
-    # (== trace_id), not session_id — deliver resolves the writer by state.trace_id.
+    # (== trace_id), not session_key — deliver resolves the writer by state.trace_id.
     _writer, reader = env.stream_registry.create(msg.trace_id)
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=sid, input_text=input_text,
+        trace_id=msg.trace_id, session_key=sid, input_text=input_text,
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",
     )
     before = len(env.bot.messages)
@@ -482,7 +482,7 @@ async def test_j_sec_fence_holds_in_every_tier(
     ):
         FOCUS_TRACKER.clear_all()  # isolate tiers — no hysteresis carryover
         emb.set_query_vector(qvec)
-        _ = await _turn(env, f"@{_OWL} do the thing", session_id=f"sec-{label}")
+        _ = await _turn(env, f"@{_OWL} do the thing", session_key=f"sec-{label}")
         sys_text = provider.system_text
 
         # The skill landed in the EXPECTED tier (so we are proving the fence at
@@ -543,7 +543,7 @@ async def test_j_pin_pinned_skill_stays_active_over_more_relevant_peer(
     env = _build(provider, skill_store=store, owl_registry=owl_registry, embedding_registry=emb)
 
     emb.set_query_vector(_unit((0, 1.0)))  # favors beta, NOT alpha
-    _ = await _turn(env, f"@{_OWL} do beta-ish work", session_id="pin")
+    _ = await _turn(env, f"@{_OWL} do beta-ish work", session_key="pin")
     sys_text = provider.system_text
 
     assert _ACTIVE_HEADER in sys_text, f"no ACTIVE section rendered; got: {sys_text!r}"
@@ -583,7 +583,7 @@ async def test_j_pin_on_non_owned_skill_never_injects_it(
     env = _build(provider, skill_store=store, owl_registry=owl_registry, embedding_registry=emb)
 
     emb.set_query_vector(_unit((0, 1.0)))
-    _ = await _turn(env, f"@{_OWL} go", session_id="pin-ghost")
+    _ = await _turn(env, f"@{_OWL} go", session_key="pin-ghost")
     sys_text = provider.system_text
 
     # The owned, pinned skill is injected into the owl's ACTIVE playbook...
@@ -634,7 +634,7 @@ async def test_j_fallback_no_semantic_embedder_injects_full_and_fenced(
     env = _build(provider, skill_store=store, owl_registry=owl_registry, embedding_registry=emb)
 
     emb.set_query_vector(_unit((1, 1.0)))  # irrelevant — gate is False
-    _ = await _turn(env, f"@{_OWL} please proceed", session_id="fallback")
+    _ = await _turn(env, f"@{_OWL} please proceed", session_key="fallback")
     sys_text = provider.system_text
 
     assert _ACTIVE_HEADER in sys_text, (
@@ -669,7 +669,7 @@ async def test_j_hysteresis_keeps_then_decays(
       turns 3+: truly off-topic queries (raw cosine 0.0); with no
               re-mark the bonus decays and alpha leaves ACTIVE     -> alpha DROPS
 
-    The SAME session_id is used so the tracker accumulates.
+    The SAME session_key is used so the tracker accumulates.
     """
     FOCUS_TRACKER.clear_all()
     emb = _ControlledEmbeddingRegistry(is_semantic=True)
@@ -689,7 +689,7 @@ async def test_j_hysteresis_keeps_then_decays(
 
     # --- turn 1: clearly relevant -> ACTIVE -----------------------------------
     emb.set_query_vector(_Q_FULL)  # cosine 1.0
-    _ = await _turn(env, f"@{_OWL} alpha task", session_id=sid)
+    _ = await _turn(env, f"@{_OWL} alpha task", session_key=sid)
     active1 = _active_section(provider.system_text)
     assert "alpha" in active1, (
         f"turn1: alpha should be ACTIVE (cosine 1.0); ACTIVE={active1!r}"
@@ -706,7 +706,7 @@ async def test_j_hysteresis_keeps_then_decays(
         f"[{SUMMARY_FLOOR}, {FULL_FLOOR})"
     )
     emb.set_query_vector(_Q_STICKY)
-    _ = await _turn(env, f"@{_OWL} still alpha-ish", session_id=sid)
+    _ = await _turn(env, f"@{_OWL} still alpha-ish", session_key=sid)
     active2 = _active_section(provider.system_text)
     assert "alpha" in active2, (
         f"turn2: HYSTERESIS FAILED — alpha dropped out of ACTIVE even though the "
@@ -719,7 +719,7 @@ async def test_j_hysteresis_keeps_then_decays(
     dropped = False
     last_active = active2
     for n in range(3, 7):
-        _ = await _turn(env, f"@{_OWL} unrelated topic {n}", session_id=sid)
+        _ = await _turn(env, f"@{_OWL} unrelated topic {n}", session_key=sid)
         last_active = _active_section(provider.system_text)
         if "alpha" not in last_active:
             dropped = True

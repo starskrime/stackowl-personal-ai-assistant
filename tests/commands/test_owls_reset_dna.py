@@ -37,7 +37,7 @@ from stackowl.providers.registry import ProviderRegistry
 def _state() -> PipelineState:
     return PipelineState(
         trace_id="trace-test",
-        session_id="sess-test",
+        session_key="sess-test",
         input_text="hello",
         channel="cli",
         owl_name="secretary",

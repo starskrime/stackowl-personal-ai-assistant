@@ -694,7 +694,7 @@ class ObjectiveDriverHandler(JobHandler):
         trace_id = f"objgoal-{uuid.uuid4().hex[:8]}"
         state = PipelineState(
             trace_id=trace_id,
-            session_id=f"objective-{objective.objective_id}",
+            session_key=f"objective-{objective.objective_id}",
             input_text=description,
             channel=objective.channel or "cli",
             owl_name="secretary",

@@ -32,7 +32,7 @@ from stackowl.providers.react_callback import ReActIterationState
 async def test_callback_carries_drained_steers_on_stop() -> None:
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r1", session_id="s1", task=bg, target=None, original_input="x")
+    await reg.register("r1", session_key="s1", task=bg, target=None, original_input="x")
     turn = reg.get("r1")
     assert turn is not None
     turn.steering_mailbox.put_nowait("also check the logs")  # a co-arriving steer
@@ -58,7 +58,7 @@ async def test_callback_carries_drained_steers_on_stop() -> None:
 async def test_registry_requeues_drained_steers_as_new() -> None:
     reg = TurnRegistry()
     bg = asyncio.create_task(asyncio.sleep(0))
-    await reg.register("r1", session_id="s1", task=bg, target=None, original_input="x")
+    await reg.register("r1", session_key="s1", task=bg, target=None, original_input="x")
 
     await reg.requeue_steers_as_new("r1", ["follow up please"])
 
@@ -109,7 +109,7 @@ async def test_execute_reroutes_steer_on_stop_end_to_end() -> None:
     bg = asyncio.create_task(asyncio.sleep(0))
     request_id = "trace-stop-steer"
     await reg.register(
-        request_id, session_id="s1", task=bg, target=None, original_input="research X"
+        request_id, session_key="s1", task=bg, target=None, original_input="research X"
     )
     turn = reg.get(request_id)
     assert turn is not None
@@ -120,7 +120,7 @@ async def test_execute_reroutes_steer_on_stop_end_to_end() -> None:
     token = set_services(StepServices(tool_registry=tool_reg, turn_registry=reg))
     try:
         state = PipelineState(
-            trace_id=request_id, session_id="s1", input_text="research X",
+            trace_id=request_id, session_key="s1", input_text="research X",
             channel="cli", owl_name="default", pipeline_step="execute",
             interactive=True,
         )

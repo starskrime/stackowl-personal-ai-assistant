@@ -47,7 +47,7 @@ def _state(
     )
     return PipelineState(
         trace_id="t1",
-        session_id="s1",
+        session_key="s1",
         input_text=input_text,
         channel="cli",
         owl_name="secretary",

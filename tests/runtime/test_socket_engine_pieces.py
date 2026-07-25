@@ -82,7 +82,7 @@ async def test_adapter_feed_then_receive() -> None:
     from stackowl.gateway.scanner import IngressMessage
 
     adapter = SocketChannelAdapter(FakeConn(), channel_name="cli")  # type: ignore[arg-type]
-    msg = IngressMessage(text="hi", session_id="s1", channel="cli", trace_id="t1")
+    msg = IngressMessage(text="hi", session_key="s1", channel="cli", trace_id="t1")
     adapter.feed(msg)
     assert await adapter.receive() is msg
     assert adapter.channel_name == "cli"

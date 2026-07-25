@@ -64,7 +64,7 @@ class _FakeStreamRegistry:
 def _state(**over: Any) -> PipelineState:
     base: dict[str, Any] = dict(
         trace_id="t1",
-        session_id="s1",
+        session_key="s1",
         input_text="hi",
         channel="telegram",
         owl_name="Athena",

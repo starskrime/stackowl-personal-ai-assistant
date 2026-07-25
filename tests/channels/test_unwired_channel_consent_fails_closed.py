@@ -29,7 +29,7 @@ class _GrantingPrompter:
 
 def _req(channel: str) -> ConsentRequest:
     return ConsentRequest(
-        tool_name="shell", channel=channel, session_id="s",
+        tool_name="shell", channel=channel, session_key="s",
         summary="x", allow_relaxation=True,
     )
 

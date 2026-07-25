@@ -140,7 +140,7 @@ async def _drive_live_trace_turn() -> PipelineState:
         ),
     ))
     state = PipelineState(
-        trace_id="t-live-6f9d6ed7", session_id="s", input_text="make me a new owl",
+        trace_id="t-live-6f9d6ed7", session_key="s", input_text="make me a new owl",
         channel="telegram", owl_name=_OWL, pipeline_step="execute", interactive=False,
     )
     svc_token = set_services(StepServices(

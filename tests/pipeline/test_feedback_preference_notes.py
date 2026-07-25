@@ -66,7 +66,7 @@ def _state(input_text: str, render: str, *, store: FakeStore, classifier: object
     services = StepServices(preference_store=store)  # type: ignore[arg-type]
     services.feedback_classifier = classifier  # type: ignore[assignment]
     state = PipelineState(
-        trace_id="t-fb", session_id="sess-fb", input_text=input_text,
+        trace_id="t-fb", session_key="sess-fb", input_text=input_text,
         channel="telegram", owl_name="secretary", pipeline_step="feedback",
         identity_key=OWNER,
         history=(Message(role="assistant", content=render),),

@@ -81,7 +81,7 @@ class ConsentRequest:
 
     tool_name: str
     channel: str
-    session_id: str
+    session_key: str
     category: str | None = None
     summary: str = ""
     # When False, the prompter must NOT offer batch/window relaxation buttons
@@ -200,7 +200,7 @@ class ConsentPolicy:
         *,
         tool_name: str,
         channel: str,
-        session_id: str,
+        session_key: str,
         category: str | None = None,
         summary: str = "",
         reversible: bool = False,
@@ -219,7 +219,7 @@ class ConsentPolicy:
         log.tool.debug(
             "[consent] policy.request: entry",
             extra={"_fields": {
-                "tool": tool_name, "channel": channel, "session": session_id,
+                "tool": tool_name, "channel": channel, "session": session_key,
                 "category": category, "reversible": reversible,
             }},
         )
@@ -228,14 +228,14 @@ class ConsentPolicy:
 
         # 2. DECISION — hard tiers and standing grants short-circuit the prompt.
         if tier is TrustTier.NEVER:
-            return self._finalize(False, tool_name, channel, session_id, category, "tier_never", None)
+            return self._finalize(False, tool_name, channel, session_key, category, "tier_never", None)
 
-        if session_id and tool_name in self._session_deny.get(session_id, set()):
-            return self._finalize(False, tool_name, channel, session_id, category, "session_deny", None)
+        if session_key and tool_name in self._session_deny.get(session_key, set()):
+            return self._finalize(False, tool_name, channel, session_key, category, "session_deny", None)
 
         if not excluded:
             if tier is TrustTier.AUTO:
-                return self._finalize(True, tool_name, channel, session_id, category, "tier_auto", None)
+                return self._finalize(True, tool_name, channel, session_key, category, "tier_auto", None)
             # F-27 — a low-blast-radius REVERSIBLE effect (locally owned + undo-able)
             # is auto-allowed-with-undo rather than re-prompted. Only reaches here for
             # NON-excluded tools, so dangerous categories stay on ALWAYS_ASK.
@@ -250,21 +250,21 @@ class ConsentPolicy:
                         Decision(reversibility=Reversibility.reversible(via="undo_write"))
                     ):
                         return self._finalize(
-                            True, tool_name, channel, session_id, category,
+                            True, tool_name, channel, session_key, category,
                             "reversible_auto", None,
                         )
                 else:
-                    return self._finalize(True, tool_name, channel, session_id, category, "reversible_auto", None)
-            if self._window_active(session_id, tool_name):
-                return self._finalize(True, tool_name, channel, session_id, category, "window_grant", None)
-            if tool_name in self._session_batch.get(session_id, set()):
-                return self._finalize(True, tool_name, channel, session_id, category, "session_batch", None)
+                    return self._finalize(True, tool_name, channel, session_key, category, "reversible_auto", None)
+            if self._window_active(session_key, tool_name):
+                return self._finalize(True, tool_name, channel, session_key, category, "window_grant", None)
+            if tool_name in self._session_batch.get(session_key, set()):
+                return self._finalize(True, tool_name, channel, session_key, category, "session_batch", None)
 
         # 3. STEP — must ask the user (fail closed if the prompter errors).
         req = ConsentRequest(
             tool_name=tool_name,
             channel=channel,
-            session_id=session_id,
+            session_key=session_key,
             category=category,
             summary=summary,
             allow_relaxation=not excluded,
@@ -278,39 +278,39 @@ class ConsentPolicy:
                 exc_info=exc,
                 extra={"_fields": {"tool": tool_name, "channel": channel}},
             )
-            return self._finalize(False, tool_name, channel, session_id, category, "prompt_error", None)
+            return self._finalize(False, tool_name, channel, session_key, category, "prompt_error", None)
 
         if scope is ConsentScope.DENY:
-            return self._finalize(False, tool_name, channel, session_id, category, "user_denied", scope)
+            return self._finalize(False, tool_name, channel, session_key, category, "user_denied", scope)
 
         if scope is ConsentScope.DENY_SESSION:
-            if session_id:
-                self._session_deny.setdefault(session_id, set()).add(tool_name)
+            if session_key:
+                self._session_deny.setdefault(session_key, set()).add(tool_name)
                 log.tool.debug(
                     "[consent] policy.request: recorded session-deny grant",
-                    extra={"_fields": {"tool": tool_name, "session": session_id}},
+                    extra={"_fields": {"tool": tool_name, "session": session_key}},
                 )
-            return self._finalize(False, tool_name, channel, session_id, category, "user_deny_session", scope)
+            return self._finalize(False, tool_name, channel, session_key, category, "user_deny_session", scope)
 
         # Record any standing grant — but NEVER for excluded tools/categories,
-        # and never under an empty session_id (which would collapse every
+        # and never under an empty session_key (which would collapse every
         # anonymous caller into one shared grant bucket).
-        if not excluded and session_id:
+        if not excluded and session_key:
             if scope is ConsentScope.SESSION or tier is TrustTier.ASK_ONCE_SESSION:
-                self._session_batch.setdefault(session_id, set()).add(tool_name)
+                self._session_batch.setdefault(session_key, set()).add(tool_name)
                 log.tool.debug(
                     "[consent] policy.request: recorded session-batch grant",
-                    extra={"_fields": {"tool": tool_name, "session": session_id}},
+                    extra={"_fields": {"tool": tool_name, "session": session_key}},
                 )
             elif scope is ConsentScope.WINDOW:
                 self._prune_expired_windows()
-                self._windows[(session_id, tool_name)] = self.clock.monotonic() + self.window_seconds
+                self._windows[(session_key, tool_name)] = self.clock.monotonic() + self.window_seconds
                 log.tool.debug(
                     "[consent] policy.request: recorded time-window grant",
-                    extra={"_fields": {"tool": tool_name, "session": session_id, "window_s": self.window_seconds}},
+                    extra={"_fields": {"tool": tool_name, "session": session_key, "window_s": self.window_seconds}},
                 )
 
-        return self._finalize(True, tool_name, channel, session_id, category, f"user_{scope.value}", scope)
+        return self._finalize(True, tool_name, channel, session_key, category, f"user_{scope.value}", scope)
 
     # ------------------------------------------------------------------
     # internals
@@ -328,8 +328,8 @@ class ConsentPolicy:
         for key in expired:
             del self._windows[key]
 
-    def _window_active(self, session_id: str, tool_name: str) -> bool:
-        key = (session_id, tool_name)
+    def _window_active(self, session_key: str, tool_name: str) -> bool:
+        key = (session_key, tool_name)
         expiry = self._windows.get(key)
         if expiry is None:
             return False
@@ -344,7 +344,7 @@ class ConsentPolicy:
         allowed: bool,
         tool_name: str,
         channel: str,
-        session_id: str,
+        session_key: str,
         category: str | None,
         reason: str,
         scope: ConsentScope | None,
@@ -355,7 +355,7 @@ class ConsentPolicy:
             try:
                 self.audit_logger.append(  # type: ignore[attr-defined]
                     "consent.decision",
-                    actor=session_id or "unknown",
+                    actor=session_key or "unknown",
                     target=tool_name,
                     details={
                         "channel": channel,

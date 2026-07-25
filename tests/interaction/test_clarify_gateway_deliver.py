@@ -13,8 +13,8 @@ from stackowl.interaction.clarify_gateway import ClarifyGateway
 class _SpyAdapter:
     def __init__(self): self.sent = []
 
-    async def send_clarify(self, session_id, question, choices, clarify_id):
-        self.sent.append((session_id, question, clarify_id))
+    async def send_clarify(self, session_key, question, choices, clarify_id):
+        self.sent.append((session_key, question, clarify_id))
 
 
 @pytest.mark.asyncio

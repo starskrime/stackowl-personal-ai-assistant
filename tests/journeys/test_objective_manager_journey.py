@@ -84,7 +84,7 @@ async def test_objective_runs_to_completion_across_ticks(db: DbPool) -> None:
         tier="standard",
     )
     token = set_services(StepServices(db_pool=db, provider_registry=pr))
-    ttoken = TraceContext.start(session_id="sess-j", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-j", interactive=True, channel="cli")
     try:
         created = await ObjectiveTool().execute(intent="keep an eye on the data and report")
     finally:

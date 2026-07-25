@@ -158,7 +158,7 @@ def make_state() -> PipelineState:
     """Minimal :class:`PipelineState` for slash-command tests."""
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="",
         channel="cli",
         owl_name="secretary",

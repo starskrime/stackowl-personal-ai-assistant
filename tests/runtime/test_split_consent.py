@@ -81,7 +81,7 @@ async def test_consent_granted_round_trip(socket_path) -> None:
     prompter, _link, stop = await _wire(socket_path, router)
     try:
         req = ConsentRequest(
-            tool_name="shell", channel="telegram", session_id="123", summary="run ls"
+            tool_name="shell", channel="telegram", session_key="123", summary="run ls"
         )
         scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
     finally:
@@ -96,7 +96,7 @@ async def test_consent_denied_round_trip(socket_path) -> None:
     router = _FakeRouter(ConsentScope.DENY)
     prompter, _link, stop = await _wire(socket_path, router)
     try:
-        req = ConsentRequest(tool_name="shell", channel="telegram", session_id="9")
+        req = ConsentRequest(tool_name="shell", channel="telegram", session_key="9")
         scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
     finally:
         await stop()
@@ -107,7 +107,7 @@ async def test_consent_fails_closed_when_router_missing(socket_path) -> None:
     # No consent_router on the gateway -> DENY returned (never granted by default).
     prompter, _link, stop = await _wire(socket_path, None)
     try:
-        req = ConsentRequest(tool_name="shell", channel="telegram", session_id="9")
+        req = ConsentRequest(tool_name="shell", channel="telegram", session_key="9")
         scope = await asyncio.wait_for(prompter.prompt(req), timeout=5)
     finally:
         await stop()

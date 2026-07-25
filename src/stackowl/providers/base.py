@@ -163,10 +163,10 @@ class ModelProvider(ABC):
             return
         ctx = TraceContext.get()
         trace_id = str(ctx.get("trace_id") or "")
-        # D01.6 — session_id already rides TraceContext, and the prompt's identity
+        # D01.6 — session_key already rides TraceContext, and the prompt's identity
         # rides its own turn-scoped carrier. Both are read here rather than passed
         # in, so no provider signature has to grow to make a turn measurable.
-        session_id = str(ctx.get("session_id") or "")
+        session_key = str(ctx.get("session_key") or "")
         prompt_hash, system_prompt_chars = prompt_metrics.current()
         try:
             await tracker.record(
@@ -177,7 +177,7 @@ class ModelProvider(ABC):
                 duration_ms=duration_ms,
                 trace_id=trace_id,
                 is_local=self._is_local_backend,
-                session_id=session_id,
+                session_key=session_key,
                 cached_input_tokens=cached_input_tokens,
                 prompt_hash=prompt_hash,
                 system_prompt_chars=system_prompt_chars,

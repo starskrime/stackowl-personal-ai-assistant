@@ -73,14 +73,14 @@ async def _run(
     *,
     deliverer: Any,
     channel: str | None = "telegram",
-    session_id: str | None = "sess-sm",
+    session_key: str | None = "sess-sm",
     trace_id: str | None = _TRACE,
     **kwargs: Any,
 ) -> Any:
     services = StepServices(proactive_deliverer=deliverer)
     stoken = set_services(services)
     ttoken = TraceContext.start(
-        session_id=session_id, trace_id=trace_id, interactive=True, channel=channel
+        session_key=session_key, trace_id=trace_id, interactive=True, channel=channel
     )
     try:
         return await tool.execute(**kwargs)
@@ -211,14 +211,14 @@ async def test_flood_cap_rejects_over_limit() -> None:
 
 
 async def test_flood_cap_no_session_varying_target_still_caps() -> None:
-    """MAJOR-2 regression: with no session_id, varying the target must NOT mint a
+    """MAJOR-2 regression: with no session_key, varying the target must NOT mint a
     fresh bucket per channel — all no-session sends share one process-wide bucket."""
     deliverer = _FakeDeliverer()
     tool = SendMessageTool(flood_max=1, flood_window_seconds=60)
-    ok = await _run(tool, deliverer=deliverer, session_id=None,
+    ok = await _run(tool, deliverer=deliverer, session_key=None,
                     action="send", text="one", target="cli")
     # Different target, still no session → SAME bucket → rejected (target can't evade).
-    rejected = await _run(tool, deliverer=deliverer, session_id=None,
+    rejected = await _run(tool, deliverer=deliverer, session_key=None,
                           action="send", text="two", target="telegram")
     assert ok.success is True
     assert rejected.success is False

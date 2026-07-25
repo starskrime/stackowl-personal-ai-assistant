@@ -210,7 +210,7 @@ def select_tool_provider_plan(
        (F031/REACT-3): the owl-name binding still wins, but the shadowed pin is visible.
     1. Owl manifest ``provider_name`` pin — if set and registered, use it directly.
        PINNED. On ProviderNotFoundError warn and fall through to tier routing.
-    2. Desired tier = get_session_tier(session_id) OR manifest.model_tier OR "powerful".
+    2. Desired tier = get_session_tier(session_key) OR manifest.model_tier OR "powerful".
        Session pref beats manifest; manifest beats default. An explicit SESSION tier is
        PINNED (the user chose it via /tier); a manifest/default tier is the CEILING for
        fast→…→ceiling escalation (NOT pinned).
@@ -224,7 +224,7 @@ def select_tool_provider_plan(
     """
     log.engine.debug(
         "[pipeline] execute: _select_tool_provider: entry",
-        extra={"_fields": {"owl": state.owl_name, "session": state.session_id}},
+        extra={"_fields": {"owl": state.owl_name, "session": state.session_key}},
     )
 
     # --- Step 0: A provider registered under the owl's own name wins (a
@@ -316,8 +316,8 @@ def select_tool_provider_plan(
 
     # --- Step 3: Determine desired tier (session pref > manifest > default) ---
     # Use identity_key when set so cross-channel /tier takes effect: the tier
-    # is written under identity_key or session_id (see tier_command._owner_key_for_state).
-    session_tier = get_session_tier(state.identity_key or state.session_id)
+    # is written under identity_key or session_key (see tier_command._owner_key_for_state).
+    session_tier = get_session_tier(state.identity_key or state.session_key)
     if session_tier:
         desired = session_tier
         tier_source = "session"

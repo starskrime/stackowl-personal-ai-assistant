@@ -23,7 +23,7 @@ _FETCH_SESSION_MESSAGES_SQL = """
 SELECT m.role, m.content
 FROM messages m
 JOIN conversations c ON c.id = m.conversation_id
-WHERE c.session_id = ?
+WHERE c.session_key = ?
 ORDER BY m.created_at DESC
 LIMIT ?
 """
@@ -34,7 +34,7 @@ class FactExtractionJobHandler(JobHandler):
 
     The job's session identifier is carried in
     ``Job.idempotency_key`` using the convention
-    ``"fact_extraction:<session_id>"``. The handler fetches the most recent
+    ``"fact_extraction:<session_key>"``. The handler fetches the most recent
     ``limit`` messages for that session from the ``messages`` table, runs
     :class:`FactExtractor`, then stages each fact via the
     :class:`MemoryBridge`.
@@ -86,9 +86,9 @@ class FactExtractionJobHandler(JobHandler):
         )
         t0 = time.monotonic()
 
-        # 2. DECISION — parse session_id from idempotency_key
-        session_id = self._parse_session_id(job.idempotency_key)
-        if session_id is None:
+        # 2. DECISION — parse session_key from idempotency_key
+        session_key = self._parse_session_key(job.idempotency_key)
+        if session_key is None:
             duration_ms = (time.monotonic() - t0) * 1000.0
             log.memory.warning(
                 "[memory] fact_extraction_handler.execute: invalid idempotency_key",
@@ -110,14 +110,14 @@ class FactExtractionJobHandler(JobHandler):
 
         # 3. STEP — fetch messages for the session
         try:
-            messages = await self._fetch_messages(session_id)
+            messages = await self._fetch_messages(session_key)
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000.0
             # B5
             log.memory.error(
                 "[memory] fact_extraction_handler.execute: fetch failed",
                 exc_info=exc,
-                extra={"_fields": {"job_id": job.job_id, "session_id": session_id}},
+                extra={"_fields": {"job_id": job.job_id, "session_key": session_key}},
             )
             return JobResult(
                 job_id=job.job_id,
@@ -132,7 +132,7 @@ class FactExtractionJobHandler(JobHandler):
             duration_ms = (time.monotonic() - t0) * 1000.0
             log.memory.info(
                 "[memory] fact_extraction_handler.execute: no messages — skipping",
-                extra={"_fields": {"job_id": job.job_id, "session_id": session_id}},
+                extra={"_fields": {"job_id": job.job_id, "session_key": session_key}},
             )
             return JobResult(
                 job_id=job.job_id,
@@ -145,14 +145,14 @@ class FactExtractionJobHandler(JobHandler):
 
         # 3. STEP — extract facts
         try:
-            facts = await self._extractor.extract(messages, session_id)
+            facts = await self._extractor.extract(messages, session_key)
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000.0
             # B5
             log.memory.error(
                 "[memory] fact_extraction_handler.execute: extraction failed",
                 exc_info=exc,
-                extra={"_fields": {"job_id": job.job_id, "session_id": session_id}},
+                extra={"_fields": {"job_id": job.job_id, "session_key": session_key}},
             )
             return JobResult(
                 job_id=job.job_id,
@@ -191,7 +191,7 @@ class FactExtractionJobHandler(JobHandler):
             extra={
                 "_fields": {
                     "job_id": job.job_id,
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "extracted": len(facts),
                     "staged": staged_count,
                     "duration_ms": duration_ms,
@@ -209,15 +209,15 @@ class FactExtractionJobHandler(JobHandler):
 
     # ------------------------------------------------------------------ helpers
 
-    def _parse_session_id(self, idempotency_key: str) -> str | None:
+    def _parse_session_key(self, idempotency_key: str) -> str | None:
         if not idempotency_key.startswith(_IDEMPOTENCY_PREFIX):
             return None
-        session_id = idempotency_key[len(_IDEMPOTENCY_PREFIX):]
-        return session_id or None
+        session_key = idempotency_key[len(_IDEMPOTENCY_PREFIX):]
+        return session_key or None
 
-    async def _fetch_messages(self, session_id: str) -> list[Message]:
+    async def _fetch_messages(self, session_key: str) -> list[Message]:
         rows = await self._db.fetch_all(
-            _FETCH_SESSION_MESSAGES_SQL, (session_id, self._message_limit)
+            _FETCH_SESSION_MESSAGES_SQL, (session_key, self._message_limit)
         )
         # Reverse so oldest is first (DB returned DESC for limit purposes)
         rows = list(reversed(rows))

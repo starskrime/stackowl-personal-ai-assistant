@@ -258,7 +258,7 @@ async def _run_gateway_turn(
     provider: OpenAIProvider,
     tool_registry: ToolRegistry,
     user_text: str,
-    session_id: str,
+    session_key: str,
     trace_id: str,
 ) -> str:
     """Drive the REAL AsyncioBackend (scanner → triage → execute → deliver) end to
@@ -269,7 +269,7 @@ async def _run_gateway_turn(
     scanner = GatewayScanner(owl_registry=owl_registry)
 
     msg = IngressMessage(
-        text=user_text, session_id=session_id, channel="cli", trace_id=trace_id
+        text=user_text, session_key=session_key, channel="cli", trace_id=trace_id
     )
     decision = scanner.scan(msg)
     input_text = (
@@ -277,7 +277,7 @@ async def _run_gateway_turn(
     )
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -326,7 +326,7 @@ async def test_knowledge_answer_after_failed_search_stands_unchanged(
         provider=provider,
         tool_registry=tool_registry,
         user_text="what is the capital of France?",
-        session_id="sess-fp-knowledge",
+        session_key="sess-fp-knowledge",
         trace_id="trace-fp-knowledge-1",
     )
 
@@ -392,7 +392,7 @@ async def test_file_not_found_negative_answer_stands_unchanged(
         provider=provider,
         tool_registry=tool_registry,
         user_text="does the file /does/not/exist.txt exist?",
-        session_id="sess-fp-notfound",
+        session_key="sess-fp-notfound",
         trace_id="trace-fp-notfound-1",
     )
 
@@ -454,7 +454,7 @@ class _CapturingAdapter(ChannelAdapter):
 
 
 class _NullGateway:
-    def peek_for_session(self, session_id: str, channel: str) -> None:  # pragma: no cover
+    def peek_for_session(self, session_key: str, channel: str) -> None:  # pragma: no cover
         return None
 
 
@@ -584,7 +584,7 @@ async def test_steer_abandoned_call_does_not_reroute_old_goal(tmp_db: DbPool) ->
 
         sid = "sess-fp-steer"
         msg = IngressMessage(
-            text="research the OLD goal", session_id=sid, channel="cli",
+            text="research the OLD goal", session_key=sid, channel="cli",
             trace_id="trace-fp-steer",
         )
 
@@ -596,7 +596,7 @@ async def test_steer_abandoned_call_does_not_reroute_old_goal(tmp_db: DbPool) ->
         writer, reader = stream_registry.create(msg.trace_id)
         state = PipelineState(
             trace_id=msg.trace_id,
-            session_id=msg.session_id,
+            session_key=msg.session_key,
             input_text=input_text,
             channel=msg.channel,
             owl_name=decision.target,
@@ -605,15 +605,15 @@ async def test_steer_abandoned_call_does_not_reroute_old_goal(tmp_db: DbPool) ->
         )
         producer: asyncio.Task[object] = asyncio.create_task(backend.run(state))
         await turn_registry.register(
-            msg.trace_id, session_id=msg.session_id,
+            msg.trace_id, session_key=msg.session_key,
             task=cast("asyncio.Task[None]", producer), target=None,
             original_input=input_text,
         )
         pump.spawn_send(
-            channel_adapter=adapter, reader=reader, session_id=msg.session_id,
+            channel_adapter=adapter, reader=reader, session_key=msg.session_key,
             request_id=msg.trace_id, producer=producer, writer=writer,
         )
-        send_task = pump._inflight[msg.session_id]  # type: ignore[attr-defined]
+        send_task = pump._inflight[msg.session_key]  # type: ignore[attr-defined]
 
         await asyncio.wait_for(completions.in_flight.wait(), timeout=_WAIT)
         running = turn_registry.running(sid)
@@ -625,7 +625,7 @@ async def test_steer_abandoned_call_does_not_reroute_old_goal(tmp_db: DbPool) ->
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=turn_registry, running=running,
-                text=steer_msg, session_id=sid,
+                text=steer_msg, session_key=sid,
                 request_id_new="trace-fp-steer-new", target=None,
             ),
             timeout=_WAIT,

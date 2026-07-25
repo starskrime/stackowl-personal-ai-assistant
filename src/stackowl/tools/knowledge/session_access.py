@@ -16,7 +16,7 @@ live here so there is exactly one implementation of each:
   keys, ``key=…`` / ``token: …`` assignments, ``Bearer`` headers) so the two
   surfaces agree on what "a secret" looks like.
 * :func:`resolve_visibility` — the cross-session visibility guard. By default a
-  caller may only read its OWN current session (``TraceContext.session_id``).
+  caller may only read its OWN current session (``TraceContext.session_key``).
   Reading a *different* session is permitted only when that session has the
   SAME owner (``conversations.owl_name``) as the caller's current session;
   cross-owner reads are refused. This stops one owl replaying another owl's (or
@@ -125,21 +125,21 @@ class VisibilityDecision:
 
     ``allowed`` is the only field a caller must branch on; ``reason`` is a
     short, user-surfaceable refusal the tool folds into its structured result.
-    ``session_id`` is the (possibly defaulted-to-current) session the caller is
+    ``session_key`` is the (possibly defaulted-to-current) session the caller is
     cleared to read.
     """
 
     allowed: bool
-    session_id: str | None = None
+    session_key: str | None = None
     reason: str = ""
 
 
-_OWNER_SQL = "SELECT DISTINCT owl_name FROM conversations WHERE session_id = ? LIMIT 2"
+_OWNER_SQL = "SELECT DISTINCT owl_name FROM conversations WHERE session_key = ? LIMIT 2"
 
 
-async def _session_owner(db: DbPool, session_id: str) -> str | None:
-    """Return the single owning owl for ``session_id``, or None if unknown/ambiguous."""
-    rows = await db.fetch_all(_OWNER_SQL, (session_id,))
+async def _session_owner(db: DbPool, session_key: str) -> str | None:
+    """Return the single owning owl for ``session_key``, or None if unknown/ambiguous."""
+    rows = await db.fetch_all(_OWNER_SQL, (session_key,))
     if len(rows) != 1:
         # 0 rows → unknown session; >1 owner → ambiguous, fail closed.
         return None
@@ -148,38 +148,38 @@ async def _session_owner(db: DbPool, session_id: str) -> str | None:
 
 
 async def resolve_visibility(
-    db: DbPool, requested_session_id: str | None,
+    db: DbPool, requested_session_key: str | None,
 ) -> VisibilityDecision:
-    """Decide whether the caller may read ``requested_session_id``.
+    """Decide whether the caller may read ``requested_session_key``.
 
     Policy (fail-closed, owner-scoped):
 
-    * No ``requested_session_id`` → default to the caller's CURRENT session
-      (``TraceContext.session_id``). If there is no current session either,
+    * No ``requested_session_key`` → default to the caller's CURRENT session
+      (``TraceContext.session_key``). If there is no current session either,
       refuse — there is nothing to scope a read to.
-    * ``requested_session_id`` == current session → always allowed (own data).
+    * ``requested_session_key`` == current session → always allowed (own data).
     * A different session → allowed ONLY if it has the SAME owner
       (``owl_name``) as the caller's current session. Cross-owner and
       unknown-owner reads are refused.
     """
-    current = TraceContext.get().get("session_id")
-    requested = (requested_session_id or "").strip() or None
+    current = TraceContext.get().get("session_key")
+    requested = (requested_session_key or "").strip() or None
 
     target = requested or current
     if not target:
         return VisibilityDecision(
             allowed=False,
-            reason="no session in scope (no session_id given and no current session).",
+            reason="no session in scope (no session_key given and no current session).",
         )
 
     # Reading own current session is always fine.
     if current is not None and target == current:
-        return VisibilityDecision(allowed=True, session_id=target)
+        return VisibilityDecision(allowed=True, session_key=target)
 
     # Cross-session: require same owner as the caller's current session.
     if current is None:
         return VisibilityDecision(
-            allowed=False, session_id=target,
+            allowed=False, session_key=target,
             reason=(
                 f"refusing cross-session read of '{target}': no current session "
                 "to authorize against."
@@ -190,7 +190,7 @@ async def resolve_visibility(
     target_owner = await _session_owner(db, target)
     if current_owner is None or target_owner is None:
         return VisibilityDecision(
-            allowed=False, session_id=target,
+            allowed=False, session_key=target,
             reason=(
                 f"refusing cross-session read of '{target}': owner could not be "
                 "determined (unknown or ambiguous session)."
@@ -202,10 +202,10 @@ async def resolve_visibility(
             extra={"_fields": {"current_owner": current_owner, "target": target}},
         )
         return VisibilityDecision(
-            allowed=False, session_id=target,
+            allowed=False, session_key=target,
             reason=(
                 f"refusing cross-session read of '{target}': it belongs to a "
                 "different owner than the current session."
             ),
         )
-    return VisibilityDecision(allowed=True, session_id=target)
+    return VisibilityDecision(allowed=True, session_key=target)

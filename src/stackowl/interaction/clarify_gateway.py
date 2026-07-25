@@ -15,7 +15,7 @@ Two pause modes share one registry:
   inbound message; the matching entry is popped and that message becomes the
   answer to a fresh resume turn.
 
-:meth:`try_resolve` matches the first non-expired entry for BOTH ``session_id``
+:meth:`try_resolve` matches the first non-expired entry for BOTH ``session_key``
 AND ``channel``. Pop ownership is split by mode so resolution is
 ORDER-INDEPENDENT (resolve-before-park AND park-before-resolve both deliver the
 answer): a TURN-YIELD entry (no event) is popped by ``try_resolve``; a BLOCKING
@@ -101,7 +101,7 @@ class PendingClarify:
     """
 
     clarify_id: str
-    session_id: str
+    session_key: str
     channel: str
     question: str
     choices: tuple[str, ...] = ()
@@ -201,7 +201,7 @@ class ClarifyGateway:
 
     async def ask(
         self,
-        session_id: str,
+        session_key: str,
         channel: str,
         question: str,
         *,
@@ -212,7 +212,7 @@ class ClarifyGateway:
         default: str | None = None,
         high_stakes: bool = False,
     ) -> str:
-        """Register a pending clarify for ``session_id`` and deliver it.
+        """Register a pending clarify for ``session_key`` and deliver it.
 
         Mints a non-sequential ``clarify_id``, stores the entry (CAP ONE per
         session — an existing pending entry is REPLACED, never accumulated), and
@@ -250,7 +250,7 @@ class ClarifyGateway:
             "clarify_gateway.ask: entry",
             extra={
                 "_fields": {
-                    "session_id": session_id,
+                    "session_key": session_key,
                     "channel": channel,
                     "clarify_id": clarify_id,
                     "n_choices": len(choices),
@@ -274,7 +274,7 @@ class ClarifyGateway:
                 "assumed default — not routed to the human",
                 extra={
                     "_fields": {
-                        "session_id": session_id,
+                        "session_key": session_key,
                         "channel": channel,
                         "clarify_id": clarify_id,
                         "assumed": assumed,
@@ -290,7 +290,7 @@ class ClarifyGateway:
                 resolved_event.set()
                 self._pending[clarify_id] = PendingClarify(
                     clarify_id=clarify_id,
-                    session_id=session_id,
+                    session_key=session_key,
                     channel=channel,
                     question=question,
                     choices=tuple(choices),
@@ -309,7 +309,7 @@ class ClarifyGateway:
         # parked waiter on a replaced blocking entry is woken (timed_out) first so
         # it cannot leak forever.
         replaced = [
-            cid for cid, e in self._pending.items() if e.session_id == session_id
+            cid for cid, e in self._pending.items() if e.session_key == session_key
         ]
         for cid in replaced:
             prior = self._pending.pop(cid, None)
@@ -318,7 +318,7 @@ class ClarifyGateway:
         if replaced:
             log.gateway.info(
                 "clarify_gateway.ask: replacing prior pending clarify (cap=1/session)",
-                extra={"_fields": {"session_id": session_id, "replaced": replaced}},
+                extra={"_fields": {"session_key": session_key, "replaced": replaced}},
             )
 
         # Create the Event inside this coroutine so it binds to the running loop.
@@ -326,7 +326,7 @@ class ClarifyGateway:
 
         self._pending[clarify_id] = PendingClarify(
             clarify_id=clarify_id,
-            session_id=session_id,
+            session_key=session_key,
             channel=channel,
             question=question,
             choices=tuple(choices),
@@ -353,7 +353,7 @@ class ClarifyGateway:
             )
         else:
             try:
-                await adapter.send_clarify(session_id, question, choices, clarify_id)
+                await adapter.send_clarify(session_key, question, choices, clarify_id)
             except Exception as exc:  # self-healing — delivery must not crash the turn
                 log.gateway.error(
                     "clarify_gateway.ask: delivery failed — entry kept",
@@ -490,9 +490,9 @@ class ClarifyGateway:
     # ------------------------------------------------------------- try_resolve
 
     def try_resolve(
-        self, session_id: str, channel: str, answer: str,  # noqa: ARG002 — answer is the caller's, returned via entry
+        self, session_key: str, channel: str, answer: str,  # noqa: ARG002 — answer is the caller's, returned via entry
     ) -> PendingClarify | None:
-        """Resolve the pending clarify matching ``session_id`` AND ``channel``.
+        """Resolve the pending clarify matching ``session_key`` AND ``channel``.
 
         Returns the matched :class:`PendingClarify` on a match, or ``None`` if
         there is no non-expired entry for this exact session+channel pair.
@@ -526,14 +526,14 @@ class ClarifyGateway:
                 (
                     e
                     for e in self._pending.values()
-                    if e.session_id == session_id and e.channel == channel
+                    if e.session_key == session_key and e.channel == channel
                 ),
                 None,
             )
             if match is None:
                 log.gateway.debug(
                     "clarify_gateway.try_resolve: no match",
-                    extra={"_fields": {"session_id": session_id, "channel": channel}},
+                    extra={"_fields": {"session_key": session_key, "channel": channel}},
                 )
                 return None
             blocking = self._resolve_entry(match, answer)
@@ -541,7 +541,7 @@ class ClarifyGateway:
                 "clarify_gateway.try_resolve: resolved",
                 extra={
                     "_fields": {
-                        "session_id": session_id,
+                        "session_key": session_key,
                         "channel": channel,
                         "clarify_id": match.clarify_id,
                         "answer_len": len(answer),
@@ -554,7 +554,7 @@ class ClarifyGateway:
             log.gateway.error(
                 "clarify_gateway.try_resolve: failed — treating as no match",
                 exc_info=exc,
-                extra={"_fields": {"session_id": session_id, "channel": channel}},
+                extra={"_fields": {"session_key": session_key, "channel": channel}},
             )
             return None
 
@@ -651,7 +651,7 @@ class ClarifyGateway:
         or never minted). NEVER pops the entry and NEVER touches its event —
         unlike :meth:`try_resolve` this is a pure read. Used by the inline-button
         callback resolver to map a tapped button index → the choice text + the
-        entry's ``session_id``/``channel``, and to detect a stale/superseded tap
+        entry's ``session_key``/``channel``, and to detect a stale/superseded tap
         (``None``). Never raises.
         """
         try:
@@ -672,9 +672,9 @@ class ClarifyGateway:
     # ------------------------------------------------------- peek_for_session
 
     def peek_for_session(
-        self, session_id: str, channel: str,
+        self, session_key: str, channel: str,
     ) -> PendingClarify | None:
-        """Read-only lookup of the pending entry for ``session_id`` AND ``channel``.
+        """Read-only lookup of the pending entry for ``session_key`` AND ``channel``.
 
         Mirrors :meth:`try_resolve`'s session+channel matching exactly (first
         non-popped entry bound to BOTH keys) but is a PURE read — it NEVER pops
@@ -691,7 +691,7 @@ class ClarifyGateway:
                 (
                     e
                     for e in self._pending.values()
-                    if e.session_id == session_id and e.channel == channel
+                    if e.session_key == session_key and e.channel == channel
                 ),
                 None,
             )
@@ -699,7 +699,7 @@ class ClarifyGateway:
                 "clarify_gateway.peek_for_session: lookup",
                 extra={
                     "_fields": {
-                        "session_id": session_id,
+                        "session_key": session_key,
                         "channel": channel,
                         "found": match is not None,
                     }
@@ -710,14 +710,14 @@ class ClarifyGateway:
             log.gateway.error(
                 "clarify_gateway.peek_for_session: failed — treating as not found",
                 exc_info=exc,
-                extra={"_fields": {"session_id": session_id, "channel": channel}},
+                extra={"_fields": {"session_key": session_key, "channel": channel}},
             )
             return None
 
     # ----------------------------------------------------------- cancel_pending
 
-    def cancel_pending(self, session_id: str, channel: str) -> str | None:
-        """Cancel the pending clarify for ``session_id`` AND ``channel`` (a PIVOT).
+    def cancel_pending(self, session_key: str, channel: str) -> str | None:
+        """Cancel the pending clarify for ``session_key`` AND ``channel`` (a PIVOT).
 
         Called by the pump when a during-park typed reply is classified
         NEW_REQUEST: the user moved on, so the parked question must be SET ASIDE —
@@ -734,14 +734,14 @@ class ClarifyGateway:
                 (
                     e
                     for e in self._pending.values()
-                    if e.session_id == session_id and e.channel == channel
+                    if e.session_key == session_key and e.channel == channel
                 ),
                 None,
             )
             if match is None:
                 log.gateway.debug(
                     "clarify_gateway.cancel_pending: no pending clarify",
-                    extra={"_fields": {"session_id": session_id, "channel": channel}},
+                    extra={"_fields": {"session_key": session_key, "channel": channel}},
                 )
                 return None
             match.cancelled = True
@@ -751,7 +751,7 @@ class ClarifyGateway:
                 "clarify_gateway.cancel_pending: cancelled pending clarify (pivot)",
                 extra={
                     "_fields": {
-                        "session_id": session_id,
+                        "session_key": session_key,
                         "channel": channel,
                         "clarify_id": match.clarify_id,
                     }
@@ -762,7 +762,7 @@ class ClarifyGateway:
             log.gateway.error(
                 "clarify_gateway.cancel_pending: failed — treating as no pending",
                 exc_info=exc,
-                extra={"_fields": {"session_id": session_id, "channel": channel}},
+                extra={"_fields": {"session_key": session_key, "channel": channel}},
             )
             return None
 
@@ -790,8 +790,8 @@ class ClarifyGateway:
 
     # ------------------------------------------------------------ clear_session
 
-    def clear_session(self, session_id: str) -> list[str]:
-        """Drop all pending entries for ``session_id``; return their ids.
+    def clear_session(self, session_key: str) -> list[str]:
+        """Drop all pending entries for ``session_key``; return their ids.
 
         Wired into ``/new``, shutdown, and cached-agent eviction so an abandoned
         clarify never lingers (party Operations). Any parked blocking waiter is
@@ -799,7 +799,7 @@ class ClarifyGateway:
         """
         try:
             dropped = [
-                cid for cid, e in self._pending.items() if e.session_id == session_id
+                cid for cid, e in self._pending.items() if e.session_key == session_key
             ]
             for cid in dropped:
                 entry = self._pending.pop(cid, None)
@@ -808,14 +808,14 @@ class ClarifyGateway:
             if dropped:
                 log.gateway.info(
                     "clarify_gateway.clear_session: dropped pending clarifies",
-                    extra={"_fields": {"session_id": session_id, "dropped": dropped}},
+                    extra={"_fields": {"session_key": session_key, "dropped": dropped}},
                 )
             return dropped
         except Exception as exc:  # self-healing
             log.gateway.error(
                 "clarify_gateway.clear_session: failed",
                 exc_info=exc,
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"session_key": session_key}},
             )
             return []
 

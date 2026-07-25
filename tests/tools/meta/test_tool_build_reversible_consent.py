@@ -77,7 +77,7 @@ def _services(tmp_db: DbPool, gate: ConsequentialActionGate) -> StepServices:
 async def _run(services: StepServices, args: dict) -> object:
     svc_token = set_services(services)
     trace_token = TraceContext.start(
-        session_id="s-tb", trace_id="t-tb", interactive=True, channel="cli",
+        session_key="s-tb", trace_id="t-tb", interactive=True, channel="cli",
         owl_name="secretary",
     )
     try:

@@ -31,7 +31,7 @@ async def test_langgraph_backend_propagates_durable_scope(monkeypatch: pytest.Mo
     monkeypatch.setattr(mod, "PIPELINE_STEPS", [("probe", _probe_step)])
     backend = LangGraphBackend(services=StepServices(), use_memory_checkpoint=True)
     state = PipelineState(
-        trace_id="tr", session_id="s", input_text="hi", channel="cli",
+        trace_id="tr", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="", interactive=False,
         task_id="child-9", durable_owner_id="owner-z",
     )
@@ -51,7 +51,7 @@ async def test_langgraph_backend_no_durable_scope_is_none(monkeypatch: pytest.Mo
     monkeypatch.setattr(mod, "PIPELINE_STEPS", [("probe", _probe_step)])
     backend = LangGraphBackend(services=StepServices(), use_memory_checkpoint=True)
     state = PipelineState(
-        trace_id="tr", session_id="s", input_text="hi", channel="cli",
+        trace_id="tr", session_key="s", input_text="hi", channel="cli",
         owl_name="secretary", pipeline_step="", interactive=False,
     )
     try:

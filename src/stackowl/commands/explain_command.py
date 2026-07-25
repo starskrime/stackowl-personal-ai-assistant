@@ -43,7 +43,7 @@ class ExplainCommand(SlashCommand):
         # 1. ENTRY
         log.engine.debug(
             "[commands] explain.handle: entry",
-            extra={"_fields": {"session": state.session_id}},
+            extra={"_fields": {"session": state.session_key}},
         )
         from stackowl.db.pool import DbPool
         from stackowl.pipeline.decision_store import TurnDecisionStore
@@ -55,7 +55,7 @@ class ExplainCommand(SlashCommand):
             log.engine.error("[commands] explain.handle: db open failed", exc_info=exc)
             return _EMPTY
         try:
-            decisions = await TurnDecisionStore(db).latest(state.session_id)
+            decisions = await TurnDecisionStore(db).latest(state.session_key)
         finally:
             await db.close()
 

@@ -29,7 +29,7 @@ RAW_TOKEN = "sk-super-secret-RAW-TOKEN-12345"
 def _state(session: str = "sess-1") -> PipelineState:
     return PipelineState(
         trace_id="trace-1",
-        session_id=session,
+        session_key=session,
         input_text="hello",
         channel="cli",
         owl_name="Daria",

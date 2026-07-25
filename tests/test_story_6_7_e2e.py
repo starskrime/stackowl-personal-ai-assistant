@@ -146,7 +146,7 @@ async def test_full_memory_pipeline_end_to_end(db: DbPool) -> None:
     session = ParliamentSession(
         topic="should we adopt FastAPI?",
         owl_names=["secretary", "critic"],
-        session_id="parl-e2e-1",
+        session_key="parl-e2e-1",
     )
     synthesis = SynthesisResult(
         consensus="FastAPI is a strong fit for our async I/O profile.",

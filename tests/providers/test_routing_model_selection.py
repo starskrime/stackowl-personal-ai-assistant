@@ -53,10 +53,10 @@ def _make_manifest(
     )
 
 
-def _make_state(*, session_id: str = "sess-test", owl_name: str = "testowl") -> PipelineState:
+def _make_state(*, session_key: str = "sess-test", owl_name: str = "testowl") -> PipelineState:
     return PipelineState(
         trace_id="trace-test",
-        session_id=session_id,
+        session_key=session_key,
         input_text="hi",
         channel="cli",
         owl_name=owl_name,
@@ -92,10 +92,10 @@ def _clear_session_tiers() -> None:
     reset_session_tiers()
 
 
-def _set_session_tier(session_id: str, tier: str) -> None:
+def _set_session_tier(session_key: str, tier: str) -> None:
     import stackowl.commands.tier_command as tc
 
-    tc._fallback_prefs[session_id] = tier
+    tc._fallback_prefs[session_key] = tier
 
 
 # ---------------------------------------------------------------------------
@@ -147,14 +147,14 @@ class TestSelectToolProvider:
         manifest = _make_manifest(model_tier="powerful", provider_name="powerful-p")
         services = _FakeServices(reg, manifest)
         _set_session_tier("sess-x", "powerful")
-        provider = self._select()(reg, services, _make_state(owl_name="secretary", session_id="sess-x"))
+        provider = self._select()(reg, services, _make_state(owl_name="secretary", session_key="sess-x"))
         assert provider is reg.get("secretary")
 
     def test_uses_pinned_provider_name_when_registered(self) -> None:
         reg = _make_registry(("pinned-fast", "fast"), ("fallback-powerful", "powerful"))
         manifest = _make_manifest(model_tier="powerful", provider_name="pinned-fast")
         services = _FakeServices(reg, manifest)
-        provider = self._select()(reg, services, _make_state(session_id="no-tier"))
+        provider = self._select()(reg, services, _make_state(session_key="no-tier"))
         assert provider is reg.get("pinned-fast")
 
     def test_pin_beats_session_tier(self) -> None:
@@ -163,7 +163,7 @@ class TestSelectToolProvider:
         manifest = _make_manifest(model_tier="powerful", provider_name="pinned-standard")
         services = _FakeServices(reg, manifest)
         _set_session_tier("sess-fast", "fast")
-        provider = self._select()(reg, services, _make_state(session_id="sess-fast"))
+        provider = self._select()(reg, services, _make_state(session_key="sess-fast"))
         assert provider is reg.get("pinned-standard")
 
     def test_falls_back_to_tier_when_provider_name_not_registered(
@@ -173,7 +173,7 @@ class TestSelectToolProvider:
         manifest = _make_manifest(model_tier="powerful", provider_name="nonexistent-provider")
         services = _FakeServices(reg, manifest)
         with caplog.at_level(logging.WARNING, logger="stackowl.engine"):
-            provider = self._select()(reg, services, _make_state(session_id="no-tier"))
+            provider = self._select()(reg, services, _make_state(session_key="no-tier"))
         assert provider is reg.get("powerful-p")
         warnings = " ".join(r.message for r in caplog.records if r.levelno >= logging.WARNING)
         assert "not registered" in warnings.lower() or "manifest" in warnings.lower()
@@ -183,20 +183,20 @@ class TestSelectToolProvider:
         manifest = _make_manifest(model_tier="powerful", provider_name=None)
         services = _FakeServices(reg, manifest)
         _set_session_tier("sess-fast", "fast")
-        provider = self._select()(reg, services, _make_state(session_id="sess-fast"))
+        provider = self._select()(reg, services, _make_state(session_key="sess-fast"))
         assert provider is reg.get("fast-p")
 
     def test_manifest_tier_used_when_no_session_pref(self) -> None:
         reg = _make_registry(("fast-p", "fast"), ("standard-p", "standard"))
         manifest = _make_manifest(model_tier="standard", provider_name=None)
         services = _FakeServices(reg, manifest)
-        provider = self._select()(reg, services, _make_state(session_id="no-tier"))
+        provider = self._select()(reg, services, _make_state(session_key="no-tier"))
         assert provider is reg.get("standard-p")
 
     def test_defaults_to_powerful_when_no_manifest_no_session(self) -> None:
         reg = _make_registry(("powerful-p", "powerful"))
         services = _FakeServices(reg, None)  # unknown owl → no manifest
-        provider = self._select()(reg, services, _make_state(owl_name="unknown", session_id="no-tier"))
+        provider = self._select()(reg, services, _make_state(owl_name="unknown", session_key="no-tier"))
         assert provider is reg.get("powerful-p")
 
     def test_degrades_and_warns_when_desired_tier_absent(
@@ -207,7 +207,7 @@ class TestSelectToolProvider:
         manifest = _make_manifest(model_tier="powerful", provider_name=None)
         services = _FakeServices(reg, manifest)
         with caplog.at_level(logging.WARNING, logger="stackowl.engine"):
-            provider = self._select()(reg, services, _make_state(session_id="no-tier"))
+            provider = self._select()(reg, services, _make_state(session_key="no-tier"))
         assert provider is reg.get("fast-p")
         warnings = " ".join(r.message for r in caplog.records if r.levelno >= logging.WARNING)
         assert "degraded" in warnings.lower()
@@ -217,6 +217,6 @@ class TestSelectToolProvider:
         manifest = _make_manifest(model_tier="powerful", provider_name=None)
         services = _FakeServices(reg, manifest)
         with caplog.at_level(logging.INFO, logger="stackowl.engine"):
-            self._select()(reg, services, _make_state(session_id="no-tier"))
+            self._select()(reg, services, _make_state(session_key="no-tier"))
         info = " ".join(r.message for r in caplog.records if r.levelno >= logging.INFO)
         assert "tool provider selected" in info.lower()

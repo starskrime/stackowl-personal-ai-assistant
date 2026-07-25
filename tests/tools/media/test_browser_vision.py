@@ -82,7 +82,7 @@ class _FakeSessions:
         self._page = page
         self.get_page_calls = 0
 
-    async def get_page(self, session_id: str, page_handle: str | None = None):  # noqa: ANN201
+    async def get_page(self, session_key: str, page_handle: str | None = None):  # noqa: ANN201
         self.get_page_calls += 1
         return object(), self._page, "ph1"
 
@@ -168,7 +168,7 @@ async def test_describe_returns_description_and_screenshot_path(tmp_path, monkey
     reg, mock = _registry_with(locality="local")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234", question="what's here?")
+        res = await BrowserVisionTool().execute(session_key="sess1234", question="what's here?")
     finally:
         reset_services(token)
     assert res.success is True
@@ -191,7 +191,7 @@ async def test_no_browser_runtime_is_structured_no_vision_call(tmp_path, monkeyp
     reg, mock = _registry_with(locality="local")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234")
+        res = await BrowserVisionTool().execute(session_key="sess1234")
     finally:
         reset_services(token)
     assert res.success is False
@@ -205,7 +205,7 @@ async def test_screenshot_failure_is_structured_no_vision_call(tmp_path, monkeyp
     reg, mock = _registry_with(locality="local")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234")  # must NOT raise
+        res = await BrowserVisionTool().execute(session_key="sess1234")  # must NOT raise
     finally:
         reset_services(token)
     assert res.success is False
@@ -220,7 +220,7 @@ async def test_oversize_screenshot_is_refused_no_vision_call(tmp_path, monkeypat
     reg, mock = _registry_with(locality="local")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234")
+        res = await BrowserVisionTool().execute(session_key="sess1234")
     finally:
         reset_services(token)
     assert res.success is False
@@ -236,7 +236,7 @@ async def test_no_vision_provider_is_actionable(tmp_path, monkeypatch) -> None:
     reg.register_mock("text", MockProvider("text"), tier="fast", base_url="http://localhost:1/v1")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234")
+        res = await BrowserVisionTool().execute(session_key="sess1234")
     finally:
         reset_services(token)
     assert res.success is False
@@ -250,7 +250,7 @@ async def test_cloud_backend_prepends_egress_header(tmp_path, monkeypatch) -> No
     reg, mock = _registry_with(locality="cloud", description="a checkout page")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234", question="what is this?")
+        res = await BrowserVisionTool().execute(session_key="sess1234", question="what is this?")
     finally:
         reset_services(token)
     assert res.success is True
@@ -272,7 +272,7 @@ async def test_local_backend_has_no_egress_header(tmp_path, monkeypatch) -> None
     reg, mock = _registry_with(locality="local", description="a checkout page")
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234", question="describe")
+        res = await BrowserVisionTool().execute(session_key="sess1234", question="describe")
     finally:
         reset_services(token)
     assert res.success is True
@@ -288,7 +288,7 @@ async def test_provider_raise_degrades_never_raises(tmp_path, monkeypatch) -> No
     reg, _mock = _registry_with(locality="local", raises=True)
     token = _services(reg)
     try:
-        res = await BrowserVisionTool().execute(session_id="sess1234")  # must NOT raise
+        res = await BrowserVisionTool().execute(session_key="sess1234")  # must NOT raise
     finally:
         reset_services(token)
     assert res.success is False

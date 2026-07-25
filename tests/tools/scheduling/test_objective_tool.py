@@ -51,7 +51,7 @@ async def _run(
     db: DbPool | None, *, provider_registry: ProviderRegistry | None = None, **kwargs: object
 ) -> ToolResult:
     token = set_services(StepServices(db_pool=db, provider_registry=provider_registry))
-    ttoken = TraceContext.start(session_id="sess-obj-1", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-obj-1", interactive=True, channel="cli")
     try:
         return await ObjectiveTool().execute(**kwargs)
     finally:
@@ -174,7 +174,7 @@ async def test_plain_objective_call_untouched(migrated_db: DbPool) -> None:
     token = set_services(
         StepServices(db_pool=migrated_db, provider_registry=pr, consent_gate=_ExplodingGate())  # type: ignore[arg-type]
     )
-    ttoken = TraceContext.start(session_id="sess-obj-plain", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-obj-plain", interactive=True, channel="cli")
     try:
         result = await ObjectiveTool().execute(intent="plain objective, no repo")
     finally:
@@ -211,7 +211,7 @@ async def test_repo_bearing_call_non_interactive_refused(
     token = set_services(
         StepServices(db_pool=migrated_db, provider_registry=pr, consent_gate=_FakeGate(True))
     )
-    ttoken = TraceContext.start(session_id="sess-obj-noninteractive", interactive=False, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-obj-noninteractive", interactive=False, channel="cli")
     try:
         result = await ObjectiveTool().execute(intent="build a feature", repo=str(repo))
     finally:
@@ -238,7 +238,7 @@ async def test_repo_bearing_call_gate_raises_refused(
             consent_gate=_FakeGate(RuntimeError("policy exploded")),
         )
     )
-    ttoken = TraceContext.start(session_id="sess-obj-raise", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-obj-raise", interactive=True, channel="cli")
     try:
         result = await ObjectiveTool().execute(intent="build a feature", repo=str(repo))
     finally:
@@ -261,7 +261,7 @@ async def test_repo_bearing_call_gate_declined_refused(
     token = set_services(
         StepServices(db_pool=migrated_db, provider_registry=pr, consent_gate=_FakeGate(False))
     )
-    ttoken = TraceContext.start(session_id="sess-obj-declined", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-obj-declined", interactive=True, channel="cli")
     try:
         result = await ObjectiveTool().execute(intent="build a feature", repo=str(repo))
     finally:
@@ -285,7 +285,7 @@ async def test_repo_bearing_call_gate_approved_creates_epic(
     token = set_services(
         StepServices(db_pool=migrated_db, provider_registry=pr, consent_gate=_FakeGate(True))
     )
-    ttoken = TraceContext.start(session_id="sess-obj-approved", interactive=True, channel="cli")
+    ttoken = TraceContext.start(session_key="sess-obj-approved", interactive=True, channel="cli")
     try:
         result = await ObjectiveTool().execute(intent="build a feature", repo=str(repo))
     finally:

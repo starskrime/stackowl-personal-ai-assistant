@@ -83,7 +83,7 @@ class _TwoToolProvider:
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="trace-drift", session_id="sess-drift", input_text="go",
+        trace_id="trace-drift", session_key="sess-drift", input_text="go",
         channel="telegram", owl_name="bounded_owl", pipeline_step="execute",
     )
 

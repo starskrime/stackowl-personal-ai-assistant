@@ -35,7 +35,7 @@ async def test_reaped_wedged_turn_re_enqueues_original_input_once() -> None:
     reg = TurnRegistry()
     task = await _done_task()
     turn = await reg.register(
-        "wedged-1", session_id="s1", task=task, target=99, original_input="do the thing"
+        "wedged-1", session_key="s1", task=task, target=99, original_input="do the thing"
     )
     assert turn.status is not TurnStatus.DONE  # the wedge shape
 
@@ -57,7 +57,7 @@ async def test_normally_completed_turn_is_not_re_enqueued() -> None:
     reg = TurnRegistry()
     task = await _done_task()
     await reg.register(
-        "ok-1", session_id="s1", task=task, target=None, original_input="finished work"
+        "ok-1", session_key="s1", task=task, target=None, original_input="finished work"
     )
     # Drive it to DONE the legal way (RUNNING->FINALIZING->DONE).
     assert await reg.cas_status("ok-1", TurnStatus.RUNNING, TurnStatus.FINALIZING)
@@ -80,7 +80,7 @@ async def test_re_dispatch_is_bounded_so_a_poisonous_turn_cannot_loop() -> None:
     for _ in range(10):
         task = await _done_task()
         await reg.register(
-            rid, session_id="s1", task=task, target=target, original_input=text
+            rid, session_key="s1", task=task, target=target, original_input=text
         )
         reaped = await reg.sweep(ttl_seconds=0.0)
         assert rid in reaped

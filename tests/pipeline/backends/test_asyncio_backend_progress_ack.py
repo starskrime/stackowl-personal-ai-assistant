@@ -53,7 +53,7 @@ def _settings(*, live: bool) -> Any:
 def _state(**over: Any) -> PipelineState:
     base: dict[str, Any] = dict(
         trace_id="t1",
-        session_id="s1",
+        session_key="s1",
         input_text="hi",
         channel="cli",
         owl_name="Athena",
@@ -150,7 +150,7 @@ async def test_execute_reuses_bound_turn_callback_for_continuity() -> None:
     bus = _FakeBus()
     registry = ToolRegistry()
     state = PipelineState(
-        trace_id="trace-cont", session_id="sess-cont", input_text="go",
+        trace_id="trace-cont", session_key="sess-cont", input_text="go",
         channel="cli", owl_name="owl", pipeline_step="execute", interactive=True,
     )
     services = StepServices(event_bus=bus, tool_registry=registry, settings=_settings(live=True))

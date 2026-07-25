@@ -35,9 +35,9 @@ class _FakeAdapter:
         return self._name
 
     async def send_clarify(
-        self, session_id: str, question: str, choices: tuple[str, ...], clarify_id: str,
+        self, session_key: str, question: str, choices: tuple[str, ...], clarify_id: str,
     ) -> None:
-        self.calls.append((session_id, question, tuple(choices), clarify_id))
+        self.calls.append((session_key, question, tuple(choices), clarify_id))
 
 
 class _RecordingTool(Tool):
@@ -136,7 +136,7 @@ def _adapter(gw: ClarifyGateway) -> _FakeAdapter:
 
 async def test_approve_all_executes_every_action_and_audits(env) -> None:  # noqa: ANN001
     gw, _reg, audit, a, b, c = env
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             BatchApproveTool().execute(intro="Morning routine", actions=_PLAN)
@@ -172,7 +172,7 @@ async def test_approve_all_executes_every_action_and_audits(env) -> None:  # noq
 
 async def test_reject_executes_nothing_and_audits_rejection(env) -> None:  # noqa: ANN001
     gw, _reg, audit, a, b, c = env
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             BatchApproveTool().execute(intro="Morning routine", actions=_PLAN)
@@ -191,7 +191,7 @@ async def test_reject_executes_nothing_and_audits_rejection(env) -> None:  # noq
 
 async def test_timeout_executes_nothing(env) -> None:  # noqa: ANN001
     gw, _reg, audit, a, b, c = env
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         # No tap → bounded timeout → nothing runs (rejection audited).
         result = await BatchApproveTool(timeout_s=0.05).execute(
@@ -218,7 +218,7 @@ async def test_failing_action_surfaced_others_still_run(env) -> None:  # noqa: A
         {"tool": "act_boom", "args": {}, "summary": "do boom"},
         {"tool": "act_c", "args": {}, "summary": "do C"},
     ]
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             BatchApproveTool().execute(intro="Routine", actions=plan)
@@ -251,7 +251,7 @@ async def test_failing_result_action_surfaced(env) -> None:  # noqa: ANN001
         {"tool": "act_a", "args": {}, "summary": "do A"},
         {"tool": "act_flop", "args": {}, "summary": "do flop"},
     ]
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             BatchApproveTool().execute(intro="Routine", actions=plan)
@@ -271,7 +271,7 @@ async def test_failing_result_action_surfaced(env) -> None:  # noqa: ANN001
 
 async def test_non_interactive_fail_closed_no_execution(env) -> None:  # noqa: ANN001
     gw, _reg, audit, a, b, c = env
-    trace = TraceContext.start(session_id="s1", interactive=False, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=False, channel="cli")
     try:
         result = await BatchApproveTool().execute(intro="Routine", actions=_PLAN)
     finally:
@@ -290,7 +290,7 @@ async def test_non_interactive_fail_closed_no_execution(env) -> None:  # noqa: A
 
 async def test_unknown_tool_is_structured_no_prompt(env) -> None:  # noqa: ANN001
     gw, _reg, _audit, a, _b, _c = env
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await BatchApproveTool().execute(
             intro="Routine",
@@ -313,7 +313,7 @@ async def test_prompt_surfaces_the_real_tool_not_just_summary(env) -> None:  # n
     gw, _reg, _audit, *_ = env
     # A deliberately misleading summary paired with a real tool.
     misleading = [{"tool": "act_a", "args": {"x": 1}, "summary": "send a friendly reminder"}]
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         task = asyncio.ensure_future(
             BatchApproveTool().execute(intro="Routine", actions=misleading)
@@ -335,7 +335,7 @@ async def test_batch_refuses_to_nest_a_consent_tool(env) -> None:  # noqa: ANN00
     gw, reg, _audit, *_ = env
     # Register a tool named 'batch_approve' so the NESTED check (not unknown) fires.
     reg.register(_RecordingTool("batch_approve"))
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await BatchApproveTool().execute(
             intro="Routine",
@@ -349,7 +349,7 @@ async def test_batch_refuses_to_nest_a_consent_tool(env) -> None:  # noqa: ANN00
 
 
 async def test_empty_actions_is_structured(env) -> None:  # noqa: ANN001
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await BatchApproveTool().execute(intro="Routine", actions=[])
     finally:
@@ -361,7 +361,7 @@ async def test_empty_actions_is_structured(env) -> None:  # noqa: ANN001
 
 async def test_over_cap_is_structured(env) -> None:  # noqa: ANN001
     over = [{"tool": "act_a", "args": {}, "summary": f"s{i}"} for i in range(_MAX_ACTIONS + 1)]
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await BatchApproveTool().execute(intro="Routine", actions=over)
     finally:
@@ -371,7 +371,7 @@ async def test_over_cap_is_structured(env) -> None:  # noqa: ANN001
 
 
 async def test_missing_intro_is_structured(env) -> None:  # noqa: ANN001
-    trace = TraceContext.start(session_id="s1", interactive=True, channel="cli")
+    trace = TraceContext.start(session_key="s1", interactive=True, channel="cli")
     try:
         result = await BatchApproveTool().execute(actions=_PLAN)
     finally:

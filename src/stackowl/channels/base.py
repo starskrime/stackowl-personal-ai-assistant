@@ -78,12 +78,12 @@ class ChannelAdapter(ABC):
         """
         ...
 
-    def resolve_target(self, session_id: str) -> str | int | None:
-        """Resolve THIS channel's native send destination for ``session_id``.
+    def resolve_target(self, session_key: str) -> str | int | None:
+        """Resolve THIS channel's native send destination for ``session_key``.
 
-        The ``session_id`` is NOT itself a send target on every channel (the
-        session_id != send-target asymmetry): a Slack ``slack:{hash}`` session
-        is not a channel id, while a Telegram private chat's session_id IS the
+        The ``session_key`` is NOT itself a send target on every channel (the
+        session_key != send-target asymmetry): a Slack ``slack:{hash}`` session
+        is not a channel id, while a Telegram private chat's session_key IS the
         numeric chat id. Resolution therefore lives in the adapter that OWNS the
         destination map for its channel.
 
@@ -123,7 +123,7 @@ class ChannelAdapter(ABC):
 
     async def send_clarify(
         self,
-        session_id: str,  # noqa: ARG002 — chat-targeting id used only by rich channels
+        session_key: str,  # noqa: ARG002 — chat-targeting id used only by rich channels
         question: str,
         choices: tuple[str, ...] | list[str],
         clarify_id: str,  # noqa: ARG002 — id carried for rich (button) channels
@@ -133,7 +133,7 @@ class ChannelAdapter(ABC):
         Default behaviour: render a NUMBERED LIST via ``send_text`` — the
         question, then ``1. choice`` / ``2. choice`` / … followed by a prompt to
         reply, or just the question when no choices are given. All channels
-        inherit this text-only delivery (``session_id`` is unused here — a CLI
+        inherit this text-only delivery (``session_key`` is unused here — a CLI
         has one terminal); Telegram overrides this to render tap-buttons whose
         callbacks resolve the parked turn.
 

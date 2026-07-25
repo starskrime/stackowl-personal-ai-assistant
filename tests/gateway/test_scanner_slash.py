@@ -24,7 +24,7 @@ from stackowl.gateway.scanner import GatewayScanner, IngressMessage, RouteDecisi
 def _msg(text: str) -> IngressMessage:
     return IngressMessage(
         text=text,
-        session_id="sess-test",
+        session_key="sess-test",
         channel="cli",
         trace_id="trace-test",
     )

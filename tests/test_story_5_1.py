@@ -90,7 +90,7 @@ class TestParliamentSession:
         assert session.rounds == []
         assert session.interjections == []
         assert session.completed_at is None
-        assert session.session_id  # uuid auto-generated
+        assert session.session_key  # uuid auto-generated
 
     def test_add_round_returns_new_session(self) -> None:
         session = ParliamentSession(topic="t", owl_names=["a"])
@@ -144,9 +144,9 @@ class TestSessionStore:
         store = SessionStore(parliament_db)
         original = ParliamentSession(topic="ship it", owl_names=["a", "b"])
         await store.create(original)
-        fetched = await store.get_by_id(original.session_id)
+        fetched = await store.get_by_id(original.session_key)
         assert fetched is not None
-        assert fetched.session_id == original.session_id
+        assert fetched.session_key == original.session_key
         assert fetched.topic == "ship it"
         assert fetched.owl_names == ["a", "b"]
         assert fetched.status == "running"
@@ -159,7 +159,7 @@ class TestSessionStore:
         round_ = ParliamentRound(round_number=1, responses={"a": "hi"}, truncated={"a": False})
         updated = session.add_round(round_)
         await store.update_rounds(updated)
-        fetched = await store.get_by_id(session.session_id)
+        fetched = await store.get_by_id(session.session_key)
         assert fetched is not None
         assert len(fetched.rounds) == 1
         assert fetched.rounds[0].responses == {"a": "hi"}
@@ -278,7 +278,7 @@ class TestParliamentOrchestrator:
             max_rounds=1,
         )
         result = await orch.run("topic", ["a", "b"])
-        fetched = await store.get_by_id(result.session_id)
+        fetched = await store.get_by_id(result.session_key)
         assert fetched is not None
         assert fetched.status == "completed"
         assert len(fetched.rounds) == 1

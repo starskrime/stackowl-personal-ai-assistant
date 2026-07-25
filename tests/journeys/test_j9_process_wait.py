@@ -232,9 +232,9 @@ def _build() -> _Env:
     poll_calls = {"n": 0}
     real_poll = registry.poll
 
-    async def _counting_poll(process_id, session_id=None):  # noqa: ANN001, ANN202
+    async def _counting_poll(process_id, session_key=None):  # noqa: ANN001, ANN202
         poll_calls["n"] += 1
-        return await real_poll(process_id, session_id)
+        return await real_poll(process_id, session_key)
 
     registry.poll = _counting_poll  # type: ignore[assignment]
 
@@ -276,7 +276,7 @@ async def test_j9_run_wait_then_read_output_through_the_gateway() -> None:
 
     _writer, reader = env.stream_registry.create(msg.trace_id)  # type: ignore[attr-defined]
     state = PipelineState(
-        trace_id=msg.trace_id, session_id=msg.session_id, input_text=input_text,  # type: ignore[attr-defined]
+        trace_id=msg.trace_id, session_key=msg.session_key, input_text=input_text,  # type: ignore[attr-defined]
         channel=msg.channel, owl_name=decision.target, pipeline_step="start",  # type: ignore[attr-defined]
     )
     run_task = asyncio.create_task(env.backend.run(state))

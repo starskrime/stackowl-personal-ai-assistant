@@ -43,7 +43,7 @@ class FakeStore:
 
 def _state() -> PipelineState:
     return PipelineState(
-        trace_id="t", session_id="s", input_text="", channel="telegram",
+        trace_id="t", session_key="s", input_text="", channel="telegram",
         owl_name="secretary", pipeline_step="", identity_key=OWNER,
     )
 

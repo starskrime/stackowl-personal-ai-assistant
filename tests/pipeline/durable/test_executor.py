@@ -234,30 +234,30 @@ async def test_full_result_contains_all_steps_after_resume(pool: DbPool) -> None
 
 def test_pipeline_state_carries_task_id() -> None:
     base = PipelineState(
-        trace_id="tr", session_id="sess", input_text="hi",
+        trace_id="tr", session_key="sess", input_text="hi",
         channel="cli", owl_name="owl", pipeline_step="classify",
     )
     assert base.task_id is None
     evolved = base.evolve(task_id="task-42")
     assert evolved.task_id == "task-42"
     # evolve preserves other fields and is immutable (new instance).
-    assert evolved.session_id == "sess"
+    assert evolved.session_key == "sess"
     assert base.task_id is None
 
 
 def test_langgraph_thread_id_uses_session_and_task() -> None:
     """The per-task thread id is session::task_id, falling back to session."""
     with_task = PipelineState(
-        trace_id="tr", session_id="sess", input_text="hi",
+        trace_id="tr", session_key="sess", input_text="hi",
         channel="cli", owl_name="owl", pipeline_step="classify", task_id="t1",
     )
     without = with_task.evolve(task_id=None)
 
     def _thread_id(state: PipelineState) -> str:
         return (
-            f"{state.session_id}::{state.task_id}"
+            f"{state.session_key}::{state.task_id}"
             if state.task_id
-            else state.session_id
+            else state.session_key
         )
 
     assert _thread_id(with_task) == "sess::t1"

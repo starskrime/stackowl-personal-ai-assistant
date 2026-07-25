@@ -7,7 +7,7 @@ actions rather than parked clarify choices, and mirrors
 pending entry, backfill its ``message_id`` once the send returns) so a later
 tap can rewrite the SAME message in place.
 
-Telegram's chat_id IS the session_id for private chats (the clarify/consent
+Telegram's chat_id IS the session_key for private chats (the clarify/consent
 resolvers make the same assumption) — no separate session lookup is needed.
 
 callback_data is ALWAYS routed through the short-id map below, even when a
@@ -261,7 +261,7 @@ class TelegramCommandButtonResolver:
         name, _, args = action.command.lstrip("/").partition(" ")
         state = PipelineState(
             trace_id=_new_trace_id(),
-            session_id=str(chat_id),
+            session_key=str(chat_id),
             input_text=action.command,
             channel="telegram",
             owl_name="system",

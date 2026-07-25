@@ -277,7 +277,7 @@ class TelegramVoiceHandler:
         # here — only a Send tap injects it (VoiceConfirmHandler).
         rid = self._pending.add(
             chat_id=chat_id,
-            session_id=str(user_id),
+            session_key=str(user_id),
             transcript=transcript,
             is_reply=is_reply,
         )

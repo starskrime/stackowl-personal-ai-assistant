@@ -77,7 +77,7 @@ async def test_a_create_success_is_verified_via_world_reads(
     services = _services(tmp_db, registry)
     token = set_services(services)
     trace = TraceContext.start(
-        session_id="s", trace_id="t", interactive=True, channel="cli",
+        session_key="s", trace_id="t", interactive=True, channel="cli",
         delegation_depth=0, owl_name="secretary",
     )
     try:

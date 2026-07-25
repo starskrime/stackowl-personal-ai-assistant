@@ -45,7 +45,7 @@ async def test_recover_pending_messages_redrives_and_flips_row(pool: DbPool) -> 
     ends up flipped to a terminal status — the crash-recovery round trip."""
     store = MessageLedgerStore(pool)
     await store.insert_pending(
-        trace_id="crash-trace", session_id="crash-sess", channel="telegram",
+        trace_id="crash-trace", session_key="crash-sess", channel="telegram",
         input_text="were you working on this?", chat_id=42,
     )
 
@@ -57,7 +57,7 @@ async def test_recover_pending_messages_redrives_and_flips_row(pool: DbPool) -> 
     assert len(backend.ran_states) == 1
     reconstructed = backend.ran_states[0]
     assert reconstructed.trace_id == "crash-trace"
-    assert reconstructed.session_id == "crash-sess"
+    assert reconstructed.session_key == "crash-sess"
     assert reconstructed.input_text == "were you working on this?"
     assert reconstructed.reply_target == "42"  # chat_id threaded back for delivery
     assert await store.get_pending() == []
@@ -76,7 +76,7 @@ async def test_recover_pending_messages_is_noop_when_nothing_pending(pool: DbPoo
 async def test_recover_pending_messages_ignores_non_pending_rows(pool: DbPool) -> None:
     store = MessageLedgerStore(pool)
     await store.insert_pending(
-        trace_id="already-done", session_id="sess-1", channel="cli", input_text="hi",
+        trace_id="already-done", session_key="sess-1", channel="cli", input_text="hi",
     )
     await store.mark_completed("already-done")
 

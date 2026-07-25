@@ -36,7 +36,7 @@ class TraceContext:
     _trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
     _span_id: ContextVar[str | None] = ContextVar("span_id", default=None)
     _parent_span_id: ContextVar[str | None] = ContextVar("parent_span_id", default=None)
-    _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
+    _session_key: ContextVar[str | None] = ContextVar("session_key", default=None)
     _interactive: ContextVar[bool] = ContextVar("interactive", default=False)
     _channel: ContextVar[str | None] = ContextVar("channel", default=None)
     # Per-turn delivery target (a Telegram chat_id / Slack channel id) mirrored
@@ -97,7 +97,7 @@ class TraceContext:
     @classmethod
     def start(
         cls,
-        session_id: str | None = None,
+        session_key: str | None = None,
         *,
         trace_id: str | None = None,
         interactive: bool = False,
@@ -129,7 +129,7 @@ class TraceContext:
             trace=cls._trace_id.set(trace_id or str(uuid4())),
             span=cls._span_id.set(str(uuid4())),
             parent=cls._parent_span_id.set(None),
-            session=cls._session_id.set(session_id),
+            session=cls._session_key.set(session_key),
             interactive=cls._interactive.set(interactive),
             channel=cls._channel.set(channel),
             reply_target=cls._reply_target.set(reply_target),
@@ -149,7 +149,7 @@ class TraceContext:
         cls._trace_id.reset(token.trace)
         cls._span_id.reset(token.span)
         cls._parent_span_id.reset(token.parent)
-        cls._session_id.reset(token.session)
+        cls._session_key.reset(token.session)
         cls._interactive.reset(token.interactive)
         cls._channel.reset(token.channel)
         cls._reply_target.reset(token.reply_target)
@@ -209,7 +209,7 @@ class TraceContext:
             "trace_id": cls._trace_id.get(),
             "span_id": cls._span_id.get(),
             "parent_span_id": cls._parent_span_id.get(),
-            "session_id": cls._session_id.get(),
+            "session_key": cls._session_key.get(),
             "interactive": cls._interactive.get(),
             "channel": cls._channel.get(),
             "reply_target": cls._reply_target.get(),

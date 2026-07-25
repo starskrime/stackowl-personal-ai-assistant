@@ -124,7 +124,7 @@ def _tool_registry() -> ToolRegistry:
 def _state() -> PipelineState:
     return PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="g",
         channel="cli",
         owl_name="o",

@@ -78,7 +78,7 @@ async def test_send_forwards_actions() -> None:
     action = Action(label="Go", command="/help")
     bus = EventBus()
     components = TuiAssembly.build(event_bus=bus, command_names=[], owl_names=[])
-    adapter = CLIAdapter(session_id="t", tui_components=components, event_bus=bus)
+    adapter = CLIAdapter(session_key="t", tui_components=components, event_bus=bus)
     received: list[dict[str, object]] = []
     bus.subscribe("response_chunk", lambda p: received.append(p))
 

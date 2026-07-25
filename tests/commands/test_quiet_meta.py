@@ -35,7 +35,7 @@ async def test_empty_args_returns_rendered_usage() -> None:
     cmd = QuietHoursCommand(db=object())  # type: ignore[arg-type]
     state = PipelineState(
         trace_id="t",
-        session_id="s",
+        session_key="s",
         input_text="",
         channel="cli",
         owl_name="Daria",

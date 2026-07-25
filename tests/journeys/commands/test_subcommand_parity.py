@@ -112,7 +112,7 @@ async def test_declared_subcommands_do_not_hit_unknown_branch() -> None:
         for sub in cmd.meta.subcommands:
             state = PipelineState(
                 trace_id="trace-1",
-                session_id="parity-probe",
+                session_key="parity-probe",
                 input_text="",
                 channel="cli",
                 owl_name="Daria",

@@ -197,7 +197,7 @@ async def test_hard_exception_floors_message_and_keeps_failure() -> None:
 
     msg = IngressMessage(
         text="please summarize that page for me",
-        session_id="sess-self-heal-invariant",
+        session_key="sess-self-heal-invariant",
         channel="cli",
         trace_id="trace-self-heal-invariant-1",
     )
@@ -207,7 +207,7 @@ async def test_hard_exception_floors_message_and_keeps_failure() -> None:
     )
     state = PipelineState(
         trace_id=msg.trace_id,
-        session_id=msg.session_id,
+        session_key=msg.session_key,
         input_text=input_text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -266,7 +266,7 @@ async def test_durable_task_hard_fail_stays_failed_with_message(tmp_db: DbPool) 
 
     state = PipelineState(
         trace_id="trace-self-heal-durable-1",
-        session_id="sess-self-heal-durable",
+        session_key="sess-self-heal-durable",
         input_text="please finish my task",
         channel="telegram",
         owl_name="secretary",

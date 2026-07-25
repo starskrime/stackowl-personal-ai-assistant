@@ -32,7 +32,7 @@ class ToolsCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.gateway.debug(
             "[commands] tools.handle: entry",
-            extra={"_fields": {"session": state.session_id}},
+            extra={"_fields": {"session": state.session_key}},
         )
         registry = get_services().tool_registry
         if registry is None:

@@ -30,7 +30,7 @@ class TaskOutcome:
 
     outcome_id: int
     trace_id: str
-    session_id: str
+    session_key: str
     owl_name: str
     channel: str
     success: bool
@@ -132,7 +132,7 @@ class TaskOutcomeStore(OwnedRepository):
         self,
         *,
         trace_id: str,
-        session_id: str,
+        session_key: str,
         owl_name: str,
         channel: str,
         success: bool,
@@ -170,7 +170,7 @@ class TaskOutcomeStore(OwnedRepository):
         )
         await self._db.execute(
             """INSERT INTO task_outcomes (
-                   trace_id, session_id, owl_name, channel, success,
+                   trace_id, session_key, owl_name, channel, success,
                    latency_ms, tool_call_count, failure_class,
                    step_durations, input_text, response_text, captured_at,
                    tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
@@ -179,7 +179,7 @@ class TaskOutcomeStore(OwnedRepository):
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
-                trace_id, session_id, owl_name, channel, int(success),
+                trace_id, session_key, owl_name, channel, int(success),
                 latency_ms, tool_call_count, failure_class,
                 json.dumps(step_durations, separators=(",", ":")),
                 input_text[:8000], response_text[:8000], time.time(),
@@ -228,7 +228,7 @@ class TaskOutcomeStore(OwnedRepository):
         # The predicate below is therefore correct and load-bearing — leave as-is.
         # Rationale (memory): feedback_positive_only_learning.
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
@@ -352,7 +352,7 @@ class TaskOutcomeStore(OwnedRepository):
         # to approach_rating=None regardless of the real DB value (unlike
         # list_scored_for_owl below, which already selected it correctly).
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot,
@@ -395,7 +395,7 @@ class TaskOutcomeStore(OwnedRepository):
         )
         # 3. STEP
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot,
@@ -437,7 +437,7 @@ class TaskOutcomeStore(OwnedRepository):
         )
         # 3. STEP
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot,
@@ -476,7 +476,7 @@ class TaskOutcomeStore(OwnedRepository):
             }},
         )
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot,
@@ -518,7 +518,7 @@ class TaskOutcomeStore(OwnedRepository):
         )
         # 3. STEP — quality + recency + non-empty tool_sequence
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
@@ -541,10 +541,10 @@ class TaskOutcomeStore(OwnedRepository):
         return results
 
     async def recent_for_session(
-        self, session_id: str, *, limit: int = 3,
+        self, session_key: str, *, limit: int = 3,
         exclude_trace_id: str | None = None,
     ) -> list[TaskOutcome]:
-        """Return the most recent outcomes for ``session_id``, newest-first.
+        """Return the most recent outcomes for ``session_key``, newest-first.
 
         Powers live action recall ("what did you just do?") — surfaced
         synchronously into the classify-built memory_context. ``exclude_trace_id``
@@ -556,7 +556,7 @@ class TaskOutcomeStore(OwnedRepository):
         log.memory.debug(
             "[outcomes] recent_for_session: entry",
             extra={"_fields": {
-                "session_id": session_id, "limit": limit,
+                "session_key": session_key, "limit": limit,
                 "has_exclude": exclude_trace_id is not None,
             }},
         )
@@ -564,19 +564,19 @@ class TaskOutcomeStore(OwnedRepository):
         if limit <= 0:
             log.memory.debug(
                 "[outcomes] recent_for_session: exit — nonpositive limit",
-                extra={"_fields": {"session_id": session_id, "limit": limit}},
+                extra={"_fields": {"session_key": session_key, "limit": limit}},
             )
             return []
         # 3. STEP — single indexed SELECT against idx_task_outcomes_session
         sql = (
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot
                FROM task_outcomes
-               WHERE owner_id = ? AND session_id = ?"""
+               WHERE owner_id = ? AND session_key = ?"""
         )
-        params: tuple[object, ...] = (self._owner_id, session_id)
+        params: tuple[object, ...] = (self._owner_id, session_key)
         if exclude_trace_id is not None:
             sql += " AND trace_id != ?"
             params += (exclude_trace_id,)
@@ -587,7 +587,7 @@ class TaskOutcomeStore(OwnedRepository):
         # 4. EXIT
         log.memory.debug(
             "[outcomes] recent_for_session: exit",
-            extra={"_fields": {"session_id": session_id, "n": len(results)}},
+            extra={"_fields": {"session_key": session_key, "n": len(results)}},
         )
         return results
 
@@ -636,7 +636,7 @@ class TaskOutcomeStore(OwnedRepository):
             extra={"_fields": {"trace_id": trace_id}},
         )
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_id, owl_name, channel,
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot,
@@ -689,7 +689,7 @@ def _row_to_outcome(row: dict[str, object]) -> TaskOutcome:
     return TaskOutcome(
         outcome_id=int(str(row["outcome_id"])),
         trace_id=str(row["trace_id"]),
-        session_id=str(row["session_id"]),
+        session_key=str(row["session_key"]),
         owl_name=str(row["owl_name"]),
         channel=str(row["channel"]),
         success=bool(row["success"]),

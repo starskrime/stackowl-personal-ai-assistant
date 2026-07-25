@@ -86,7 +86,7 @@ class CostCommand(SlashCommand):
     async def handle(self, args: str, state: PipelineState) -> str:
         log.engine.debug(
             "[commands] cost.handle: entry",
-            extra={"_fields": {"args_len": len(args), "session": state.session_id}},
+            extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
         raw = args.strip()
         if not raw:
@@ -136,7 +136,7 @@ class CostCommand(SlashCommand):
         try:
             rows = await db.fetch_all(
                 """
-                SELECT session_id,
+                SELECT session_key,
                        COUNT(*)                      AS turns,
                        COUNT(DISTINCT prompt_hash)   AS distinct_prompts,
                        SUM(input_tokens)             AS input_tokens,
@@ -146,8 +146,8 @@ class CostCommand(SlashCommand):
                        AVG(ttft_ms)                  AS avg_ttft_ms,
                        SUM(cost_usd)                 AS cost_usd
                 FROM cost_records
-                WHERE session_id != ''
-                GROUP BY session_id
+                WHERE session_key != ''
+                GROUP BY session_key
                 ORDER BY turns DESC
                 LIMIT 10
                 """
@@ -191,7 +191,7 @@ class CostCommand(SlashCommand):
 
             ttft_note = f"{int(ttft)}ms" if ttft is not None else "not measured"
             lines += [
-                f"`{r['session_id']}`",
+                f"`{r['session_key']}`",
                 f"  turns {turns} · ${cost:.4f} · first token {ttft_note}",
                 f"  cache: {cache_note}",
                 f"  prompt: {stability}",

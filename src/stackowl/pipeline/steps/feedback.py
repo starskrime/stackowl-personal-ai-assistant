@@ -110,7 +110,7 @@ async def run(state: PipelineState) -> PipelineState:
     the immediately-preceding agent message. Never raises (B5)."""
     log.gateway.debug(
         "[pipeline] feedback: entry",
-        extra={"_fields": {"trace_id": state.trace_id, "session_id": state.session_id}},
+        extra={"_fields": {"trace_id": state.trace_id, "session_key": state.session_key}},
     )
     services = get_services()
     classifier = services.feedback_classifier
@@ -189,7 +189,7 @@ async def _classify_and_apply(
         )
         return state
 
-    owner_key = state.identity_key or state.session_id
+    owner_key = state.identity_key or state.session_key
 
     # FR-2 — confident content/tone reactions are captured as a durable
     # preference NOTE (verbatim state.input_text, aspect-keyed), independent of
@@ -439,7 +439,7 @@ async def _record_rejection(services: object, state: PipelineState, render: str)
 
         await TaskOutcomeStore(db).record(
             trace_id=state.trace_id,
-            session_id=state.session_id,
+            session_key=state.session_key,
             owl_name=state.owl_name,
             channel=state.channel,
             success=False,

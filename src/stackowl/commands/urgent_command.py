@@ -117,7 +117,7 @@ class UrgentCommand(SlashCommand):
             extra={
                 "_fields": {
                     "args_len": len(args),
-                    "session": state.session_id,
+                    "session": state.session_key,
                     "channel_count": len(channels),
                     "has_deliverer": self._deliverer is not None,
                 }

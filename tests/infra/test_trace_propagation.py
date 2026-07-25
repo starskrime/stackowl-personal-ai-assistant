@@ -23,7 +23,7 @@ def test_trace_context_start_accepts_explicit_trace_id() -> None:
     try:
         ctx = TraceContext.get()
         assert ctx["trace_id"] == "known-trace-id"
-        assert ctx["session_id"] == "sess-1"
+        assert ctx["session_key"] == "sess-1"
         assert ctx["span_id"] is not None  # still minted
     finally:
         TraceContext.reset(token)
@@ -36,7 +36,7 @@ def test_trace_context_start_mints_when_no_id_given() -> None:
     try:
         ctx = TraceContext.get()
         assert ctx["trace_id"] is not None
-        assert ctx["session_id"] == "sess-2"
+        assert ctx["session_key"] == "sess-2"
     finally:
         TraceContext.reset(token)
 
@@ -48,7 +48,7 @@ async def test_asyncio_backend_sets_trace_context_during_run() -> None:
     async def _capturing_step(state: PipelineState) -> PipelineState:
         ctx = TraceContext.get()
         seen["trace_id"] = ctx["trace_id"]
-        seen["session_id"] = ctx["session_id"]
+        seen["session_key"] = ctx["session_key"]
         return state
 
     # In-place mutate PIPELINE_STEPS so `from ... import PIPELINE_STEPS`
@@ -71,7 +71,7 @@ async def test_asyncio_backend_sets_trace_context_during_run() -> None:
         backend = AsyncioBackend(services=StepServices())
         state = PipelineState(
             trace_id="trace-from-channel",
-            session_id="session-from-channel",
+            session_key="session-from-channel",
             input_text="hello",
             channel="cli",
             owl_name="secretary",
@@ -83,7 +83,7 @@ async def test_asyncio_backend_sets_trace_context_during_run() -> None:
         deliver_module.run = orig_deliver_run  # type: ignore[assignment]
 
     assert seen["trace_id"] == "trace-from-channel"
-    assert seen["session_id"] == "session-from-channel"
+    assert seen["session_key"] == "session-from-channel"
     # After run() returns, context is reset.
     assert TraceContext.get()["trace_id"] is None
 
@@ -143,7 +143,7 @@ async def test_asyncio_backend_surfaces_reply_target_during_run() -> None:
         backend = AsyncioBackend(services=StepServices())
         state = PipelineState(
             trace_id="trace-rt",
-            session_id="session-rt",
+            session_key="session-rt",
             input_text="hello",
             channel="telegram",
             owl_name="secretary",
@@ -173,7 +173,7 @@ async def test_jsonl_formatter_writes_trace_id_when_context_is_set() -> None:
         line = formatter.format(rec)
         obj = json.loads(line)
         assert obj["trace_id"] == "trace-fmt-test"
-        assert obj["session_id"] == "sess-fmt"
+        assert obj["session_key"] == "sess-fmt"
         assert obj["span_id"] is not None
         assert obj["msg"] == "hello world"
     finally:
@@ -192,4 +192,4 @@ async def test_jsonl_formatter_writes_null_when_no_context() -> None:
     formatter = JsonlFormatter()
     obj = json.loads(formatter.format(rec))
     assert obj["trace_id"] is None
-    assert obj["session_id"] is None
+    assert obj["session_key"] is None

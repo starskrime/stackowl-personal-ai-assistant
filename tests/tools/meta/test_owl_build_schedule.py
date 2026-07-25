@@ -72,7 +72,7 @@ def _services(tmp_db: DbPool, registry: OwlRegistry) -> StepServices:
 
 def _trace() -> object:
     return TraceContext.start(
-        session_id="s", trace_id="t", interactive=True, channel="cli",
+        session_key="s", trace_id="t", interactive=True, channel="cli",
         delegation_depth=0, owl_name="secretary",
     )
 

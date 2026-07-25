@@ -205,18 +205,18 @@ class BatchApproveTool(Tool):
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
-        session_id = ctx.get("session_id")
+        session_key = ctx.get("session_key")
 
         # 2. DECISION — non-interactive contexts CANNOT ask anyone. Fail CLOSED:
         # execute nothing, return the structured needs-human record. Never assume.
         if not interactive:
             log.tool.info(
                 "batch_approve.execute: non-interactive context — fail closed, no execution",
-                extra={"_fields": {"channel": channel, "session_id": session_id}},
+                extra={"_fields": {"channel": channel, "session_key": session_key}},
             )
             return self._ok(_NON_INTERACTIVE, t0, extra={"approved": False, "reason": "non_interactive"})
 
-        if not session_id or not channel:
+        if not session_key or not channel:
             return self._err(
                 "batch_approve cannot ask the user: no channel context (missing "
                 "session/channel). No actions were executed.",
@@ -235,7 +235,7 @@ class BatchApproveTool(Tool):
         # SUSPEND on the proven clarify round-trip until the user taps.
         try:
             clarify_id = await gateway.ask(
-                str(session_id), str(channel), BatchRenderer.plan(args),
+                str(session_key), str(channel), BatchRenderer.plan(args),
                 choices=(APPROVE, REJECT), blocking=True,
             )
             answer, outcome = await gateway.wait_for_answer(clarify_id, timeout=self._timeout_s)
@@ -243,7 +243,7 @@ class BatchApproveTool(Tool):
             log.tool.error(
                 "batch_approve.execute: gateway ask/wait failed — degrading, no execution",
                 exc_info=exc,
-                extra={"_fields": {"channel": channel, "session_id": session_id}},
+                extra={"_fields": {"channel": channel, "session_key": session_key}},
             )
             return self._err(
                 "batch_approve could not present the plan (gateway error). No actions were executed.",
@@ -256,7 +256,7 @@ class BatchApproveTool(Tool):
         # 4. EXIT — approve-all executes every action (pre-consented + audited);
         # reject/timeout executes nothing (audited).
         if not approved:
-            auditor.reject(str(session_id), args, outcome, answer)
+            auditor.reject(str(session_key), args, outcome, answer)
             log.tool.info(
                 "batch_approve.execute: exit — plan NOT approved, nothing executed",
                 extra={"_fields": {"outcome": outcome, "n_actions": len(args.actions)}},
@@ -267,7 +267,7 @@ class BatchApproveTool(Tool):
             )
 
         executor = BatchExecutor(registry, auditor)
-        outcomes, n_ok, n_fail = await executor.run(args, str(session_id))
+        outcomes, n_ok, n_fail = await executor.run(args, str(session_key))
         log.tool.info(
             "batch_approve.execute: exit — plan approved + executed",
             extra={"_fields": {"executed": len(outcomes), "succeeded": n_ok, "failed": n_fail}},

@@ -28,7 +28,7 @@ class WhoamiCommand(SlashCommand):
         lines = [
             f"Owl: {state.owl_name}",
             f"Channel: {state.channel}",
-            f"Session: {state.session_id}",
+            f"Session: {state.session_key}",
         ]
         if self._owl_registry is not None:
             try:

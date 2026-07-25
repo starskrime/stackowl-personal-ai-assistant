@@ -129,12 +129,12 @@ class DockerSandbox(SandboxBackend):
                     "code_len": len(spec.code),
                     "network": spec.network,
                     "timeout_s": spec.timeout_s,
-                    "session": spec.session_id or "-",
+                    "session": spec.session_key or "-",
                 }
             },
         )
         scratch: Path | None = None
-        container = DockerScratch.container_name(spec.session_id)
+        container = DockerScratch.container_name(spec.session_key)
         channel: PtcRunChannel | None = None
         try:
             # MANDATORY seccomp (load-bearing on a rootful daemon): refuse if absent.
@@ -150,7 +150,7 @@ class DockerSandbox(SandboxBackend):
             if not image_ok:
                 return self._sandbox_error(spec, started, reason)
 
-            scratch = DockerScratch.make(spec.session_id)
+            scratch = DockerScratch.make(spec.session_key)
             DockerScratch.write_code(scratch, spec.code)
             # PTC (optional): inject the ``owl`` stub into the RO-mounted ``code`` dir +
             # start the per-run server on a SHORT host socket (volume-mounted into the

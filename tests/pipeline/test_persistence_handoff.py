@@ -79,7 +79,7 @@ def _state(*, giveup: bool, depth: int = 0, budget_capped: bool = False) -> Pipe
     if giveup:
         tol.record_tool_outcome(name="send_email", action_severity="consequential", success=False)
     return PipelineState(
-        trace_id="t", session_id="s", input_text="research the weather and email it",
+        trace_id="t", session_key="s", input_text="research the weather and email it",
         channel="cli", owl_name="secretary", pipeline_step="deliver",
         delegation_depth=depth, budget_capped=budget_capped,
         query_embedding=(0.1, 0.2, 0.3),
@@ -202,7 +202,7 @@ async def test_child_parent_state_has_giveup_snapshot_cleared():
         delegator = _FakeDelegator(A2AResult(status="ok", content="done by researcher"))
         # A give-up turn whose snapshot is stamped ON state (the production shape).
         s = PipelineState(
-            trace_id="t", session_id="s", input_text="research and email it",
+            trace_id="t", session_key="s", input_text="research and email it",
             channel="cli", owl_name="secretary", pipeline_step="deliver",
             query_embedding=(0.1, 0.2, 0.3),
             consequential_failures=("send_email",),  # parent's failed action
@@ -242,7 +242,7 @@ async def test_successful_handoff_survives_the_next_gate_consequential_path():
         # Production-shaped snapshot: a consequential failure stamped directly on
         # state (not the live ledger), matching how execute() actually stamps it.
         s = PipelineState(
-            trace_id="t", session_id="s", input_text="what's the weather, email it to me",
+            trace_id="t", session_key="s", input_text="what's the weather, email it to me",
             channel="cli", owl_name="secretary", pipeline_step="deliver",
             query_embedding=(0.1, 0.2, 0.3),
             consequential_failures=("send_email",),
@@ -279,7 +279,7 @@ async def test_successful_handoff_survives_the_next_gate_no_progress_path():
     try:
         delegator = _FakeDelegator(A2AResult(status="ok", content="Done via researcher."))
         s = PipelineState(
-            trace_id="t", session_id="s", input_text="research this for me",
+            trace_id="t", session_key="s", input_text="research this for me",
             channel="cli", owl_name="secretary", pipeline_step="deliver",
             query_embedding=(0.1, 0.2, 0.3),
             turn_made_progress=False,

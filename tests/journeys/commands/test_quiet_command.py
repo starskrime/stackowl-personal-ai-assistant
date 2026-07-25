@@ -1,7 +1,7 @@
 """Dispatch tests — /quiet scope matches its wording.
 
 The original code said "session-scoped" / "for the current session" but the
-notification_overrides table has no session_id column — the override is
+notification_overrides table has no session_key column — the override is
 global (process-wide).  The fix corrects the description/docstring to say
 "global".  Tests assert:
   1. The description no longer claims session-scoping.
@@ -87,15 +87,15 @@ async def test_quiet_inserts_override_row(db: DbPool) -> None:
 async def test_quiet_override_is_global_not_per_session(db: DbPool) -> None:
     """The row written by one session is visible without any session filter.
 
-    This confirms the table is global: there is no session_id column — the
+    This confirms the table is global: there is no session_key column — the
     override applies process-wide regardless of which session issued it.
-    We verify this by checking the stored row has no session_id field.
+    We verify this by checking the stored row has no session_key field.
     """
     deps = CommandDeps(db=db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     state_a = make_state()
-    state_b = make_state().model_copy(update={"session_id": "session-B"})
+    state_b = make_state().model_copy(update={"session_key": "session-B"})
 
     await CommandRegistry.instance().dispatch("quiet", "23:00 07:00", state_a)
     # Dispatch from a second session — both land in the same global table
@@ -104,11 +104,11 @@ async def test_quiet_override_is_global_not_per_session(db: DbPool) -> None:
     await CommandRegistry.instance().dispatch("quiet", "01:00 05:00", state_b)
 
     rows = await db.fetch_all("SELECT * FROM notification_overrides")
-    # Two rows (one per call), neither has a session_id column
+    # Two rows (one per call), neither has a session_key column
     assert len(rows) == 2, "Both overrides global — one row per call, no session isolation"
     col_names = set(rows[0].keys())
-    assert "session_id" not in col_names, (
-        "notification_overrides must not have session_id — override is global by schema"
+    assert "session_key" not in col_names, (
+        "notification_overrides must not have session_key — override is global by schema"
     )
 
 
