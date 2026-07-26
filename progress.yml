@@ -723,9 +723,19 @@ known_debt:
       scale: >
         193 events on 2026-07-26 against 221 health sweeps — essentially 1:1,
         two paid calls each (~386 calls/day returning nothing). session_key was
-        NULL on all 193: ZERO user turns. The "3+ times in a 5-message
-        conversation" noted on 2026-07-25 is a different surface, not yet
-        reproduced, and is NOT closed by this fix.
+        NULL on all 193: ZERO user turns.
+      the_original_framing_was_wrong_and_is_corrected_here: >
+        DEBT-6 was written on 2026-07-25 as "seen 3+ times in a 5-message
+        conversation", which read as though user turns were failing. They were
+        not. On that same day the rotated log shows 262 health_sweep runs and
+        261 empty-completion events — 1:1 — and session_key was NULL on ALL 261.
+        The sweep fires every ~5.5 minutes, so any 5-message conversation window
+        naturally contains about three of them. They were observed DURING the
+        conversation, not produced BY it.
+      therefore_this_fix_closes_it_entirely: >
+        There is no second, user-facing surface left to chase. That matters
+        because the hand-off notes flagged DEBT-6 as the highest real-money item
+        open and implied a conversational failure mode that does not exist.
       caller_chain: "health_sweep -> HealthAggregator.collect() -> ProviderRegistry.health_check() (a contributor) -> each provider's health_check() -> complete(ping, max_tokens=1)."
       not_affected: >
         The classifiers are SAFE. interaction/classifier_base.py's
@@ -762,12 +772,61 @@ known_debt:
       verified:
         tests: "9 new in tests/providers/test_health_check_probe.py + 3 extending tests/providers/test_complete_think_strip.py, all RED first. 457 passed across tests/providers + tests/health."
         lint_types: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. ZERO added."
+        live: >
+          Restarted 2026-07-26 21:25 UTC on the fixed code — 0 ERROR/CRITICAL,
+          provider NeraAiRaw ok on both processes. The 21:27:40 health_sweep is
+          the same job that produced the burn, and its window now reads:
+          'provider NeraAiRaw [openai]: ok (661ms)' -> '[cost] $0.000225
+          (13in/2out tokens)' -> 'aggregator.collect: exit — ok=12 total=12'.
+          ZERO empty-completion warnings, ONE paid call instead of two, and
+          13in/2out matches the enable_thinking:False measurement exactly
+          (prompt=13, completion=2, content 'pong'). Compare the 20:16:23 window
+          before the fix: two warnings and '$0.000525 (34in/1out)'.
+        cost_per_sweep: "$0.000525 -> $0.000225 at the fallback rate. Both figures are fallback-derived (DEBT-15), so treat the RATIO as the result, not the dollars."
         one_test_legitimately_broken: >
           test_provider_registry_health.py's _StubProvider returned content="",
           which the new rule correctly reads as degraded. Brought to Bakir
           rather than autonomously rewritten; he chose to fix the STUB and keep
           the assertion, since 'registry reports ok when no breakers are open'
           is still the test's subject and the empty string was incidental.
+  - id: DEBT-15
+    found: 2026-07-26
+    what: >
+      The live model is not in pricing.yaml, so EVERY cost figure on this
+      deployment is a conservative fallback rate presented as a real price —
+      including the D01.6 baseline that was captured and closed on it.
+    evidence: >
+      `grep -n neraai src/stackowl/providers/pricing/pricing.yaml` returns
+      nothing. 1531 occurrences of '[pricing] estimate: UNKNOWN CLOUD MODEL —
+      conservative fallback pricing applied' on 2026-07-26 alone. The cost line
+      it produces reads like a measurement:
+      '[cost] NeraAiRaw/neraai-v1-raw: $0.000525 (34in/1out tokens, 774.1ms)'.
+    found_how: "Noticed in the log window while root-causing DEBT-6 — the fallback warning sits two lines above the cost line it produced."
+    why_it_matters: >
+      D01.6 exists to make prompt economics MEASURABLE, and wave 1's whole
+      justification is cost per turn. A number derived from a placeholder rate
+      but rendered as '$0.000525' is exactly the "confident lie" the doc standard
+      forbids, and it is currently the number every D01 decision would be judged
+      against.
+    decision:
+      date: 2026-07-26
+      by: Bakir
+      answer: >
+        Make the FALLBACK honest rather than inventing prices. Leave pricing
+        absent (the real per-token rates are not known here and must not be
+        guessed) and stop the cost path from emitting a confident dollar figure
+        derived from a placeholder rate — report it as unpriced/estimated so the
+        numbers cannot look more precise than they are.
+      explicitly_rejected: "Adding invented prices to pricing.yaml. The rates are not known and a made-up number is worse than a labelled unknown."
+    scope_note: >
+      NOT implemented in the DEBT-6 pass — Bakir scoped that pass to DEBT-6
+      only. The change needs a `priced` (or `estimated`) signal threaded from
+      PricingTable.estimate() through the cost path to wherever the figure is
+      logged/stored/displayed, since estimate() returns a bare float today and
+      every caller treats it as a real price. That is its own change with its
+      own tests, not a rider.
+    affects: "D01.6 (its captured baseline), DEBT-7 (the budget alert would report fallback-derived costs)."
+    status: open
   - id: DEBT-14
     found: 2026-07-26
     what: "tests/scheduler/test_scheduler_assembly.py HANGS — 25 tests collect in 0.10s, then execution never completes."
