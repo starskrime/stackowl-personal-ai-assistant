@@ -1231,6 +1231,30 @@ items:
         reachable with no migration at all.
     changes:
       - date: 2026-07-25
+        slice: "3a.3 — the transcript writer and the visible boundary"
+        files:
+          - "src/stackowl/memory/transcript_store.py (new) — TranscriptStore.record_turn, 4-point logging"
+          - "src/stackowl/pipeline/turn_persist.py — _record_transcript, called BEFORE the staged-fact store"
+          - "src/stackowl/startup/orchestrator.py — the boundary notice, sent as a separate message before the reply"
+          - "tests/memory/test_transcript_store.py (new) — 7 tests against a real DB"
+        design_notes:
+          - "ONE conversations row per INCARNATION, whose id IS the session_id. Not a shortcut: an incarnation is exactly 'one run of one lane', which is what a conversation row was always trying to describe. It makes the rollover boundary and the transcript boundary the same boundary BY CONSTRUCTION, so they cannot drift apart — and it is what finally makes invariant I6 a test instead of a wish."
+          - "The transcript is written BEFORE the staged-fact store, not after. The staged path returns early when it fails, so appending after it would mean one memory-bridge hiccup silently losing the conversation record too. They are independent records of the same turn: staged facts are what the owl LEARNED, the transcript is what was SAID."
+          - "A floored turn records the user utterance ONLY — the same honesty rule persist_turn already applies to staged facts. A transcript containing 'I did it' for a turn that did not is worse than a gap."
+          - "The notice is CONSUMED at resolution, not at delivery, so it shows exactly once (I5) even if the turn later fails. Shown twice reads as a bug; shown never is amnesia."
+        bug_i_introduced_and_fixed: >
+          The first wiring read `services.db_pool` directly and broke
+          test_turn_persist_streamed_chunks (FakeServices has no db_pool). The fix was
+          in MY code, not the test: this module already reads sticky_route_cache and
+          retry_queue_store via getattr(services, ..., None) for exactly this reason,
+          and I had not followed the local convention. A transcript is never worth an
+          AttributeError on the live turn path.
+        verified:
+          tests: "7 new transcript tests + 65 in tests/sessions and the transcript suite; 68 pass in tests/pipeline -k persist."
+          lint: "ruff clean on all touched files."
+          types: "mypy src/ -> 78, byte-identical to baseline. Zero new."
+        remaining: "Live proof that the notice actually fires — needs a forced rollover, not a wait until 4 AM."
+      - date: 2026-07-25
         slice: "3a.2 part 6 — PipelineState.session_key IS the composite lane"
         commit: 9b571eda
         live_validation:

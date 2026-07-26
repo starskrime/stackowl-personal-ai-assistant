@@ -224,7 +224,11 @@ async def persist_turn(state: PipelineState) -> None:
             }},
         )
 
-    # 3. STEP — best-effort store (B5: never raise; never block delivery).
+    # 3. STEP — the transcript first, because the staged-fact store below returns
+    # early on failure and the two are independent records of the same turn.
+    await _record_transcript(state, floored, assistant_text)
+
+    # 3b. STEP — best-effort store (B5: never raise; never block delivery).
     try:
         # Filed under the OWNER, not the lane: knowledge is about a person, not
         # about which owl happened to hear it. This was the one durable-knowledge
@@ -237,6 +241,53 @@ async def persist_turn(state: PipelineState) -> None:
             extra={"_fields": {"trace_id": state.trace_id, "session_key": state.session_key}},
         )
         return
+    # 4. EXIT
+    log.memory.debug(
+        "[pipeline] persist_turn: exit",
+        extra={"_fields": {"trace_id": state.trace_id, "floored": floored}},
+    )
+
+
+async def _record_transcript(state: PipelineState, floored: bool,
+                             assistant_text: str) -> None:
+    """Write the durable TRANSCRIPT — what was SAID, not what was learned.
+
+    Deliberately independent of the staged-fact store above: that path returns
+    early when it fails, and coupling the transcript to it would mean one
+    memory-bridge hiccup silently losing the conversation record too. Six readers
+    (owl DNA evolution, fact extraction, session search, transcripts, session
+    access, cron owner lookup) query these tables and had been getting an empty
+    set because nothing ever wrote them.
+
+    Best-effort, like everything else on this path: a transcript failure must
+    never cost the user their reply.
+    """
+    # getattr, matching how this module already reads sticky_route_cache and
+    # retry_queue_store: a caller may inject a narrower services object than the
+    # full StepServices, and a transcript is never worth an AttributeError.
+    db_pool = getattr(get_services(), "db_pool", None)
+    if db_pool is not None:
+        try:
+            from stackowl.memory.transcript_store import TranscriptStore
+
+            await TranscriptStore(db_pool).record_turn(
+                session_key=state.session_key,
+                session_id=state.session_id,
+                owl_name=state.owl_name,
+                user_text=state.input_text,
+                # None on a floored turn — the same honesty rule the staged fact
+                # above follows: never record a draft the turn did not deliver.
+                assistant_text=None if floored else assistant_text,
+                trace_id=state.trace_id,
+            )
+        except Exception as exc:
+            log.memory.warning(
+                "[pipeline] persist_turn: transcript write failed — turn unaffected",
+                exc_info=exc,
+                extra={"_fields": {"trace_id": state.trace_id,
+                                   "session_id": state.session_id}},
+            )
+
     # 4. EXIT
     log.memory.debug(
         "[pipeline] persist_turn: exit",

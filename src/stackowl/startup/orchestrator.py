@@ -1871,7 +1871,7 @@ class StartupOrchestrator:
 
         async def _resolve_incarnation(
             msg: IngressMessage, owl_name: str,
-        ) -> tuple[str, str]:
+        ) -> tuple[str, str, str | None]:
             """Resolve which RUN of this conversation the turn belongs to (D01.7).
 
             Called AFTER routing because the lane is keyed on the owl (Bakir's Q1:
@@ -1882,8 +1882,13 @@ class StartupOrchestrator:
             clock passed in is local-aware rather than UTC; a UTC "4 AM" would fire
             in the middle of the afternoon for most of the world.
 
-            Returns ``(session_key, session_id)`` — the composite LANE and the
-            INCARNATION of it this turn belongs to.
+            Returns ``(session_key, session_id, notice)`` — the composite LANE, the
+            INCARNATION of it this turn belongs to, and a one-line boundary notice
+            when this turn crossed an automatic reset (``None`` otherwise).
+
+            The notice is CONSUMED here, so it is shown exactly once (invariant I5)
+            even if the turn later fails: a boundary the user cannot see is one they
+            experience as amnesia, and one they see twice reads as a bug.
 
             FAILS OPEN, LOUDLY: a session-store problem must never cost the user
             their reply. The turn then falls back to the channel-native lane with
@@ -1892,7 +1897,7 @@ class StartupOrchestrator:
             """
             import datetime as _dt
 
-            from stackowl.sessions import ChatType, SessionSource
+            from stackowl.sessions import ChatType, SessionSource, reset_notice
 
             try:
                 source = SessionSource(
@@ -1916,7 +1921,12 @@ class StartupOrchestrator:
                                        "reason": reason.value if reason else None,
                                        "owl": owl_name}},
                 )
-                return entry.session_key, entry.session_id
+                notice = (
+                    reset_notice(entry) if session_settings.notify_on_reset else None
+                )
+                if notice:
+                    entry = await session_store.consume_reset_notice(entry)
+                return entry.session_key, entry.session_id, notice
             except Exception as exc:
                 log.error(
                     "[startup] gateway: session resolution failed — turn continues "
@@ -1924,7 +1934,7 @@ class StartupOrchestrator:
                     exc_info=exc,
                     extra={"_fields": {"owl": owl_name, "channel": msg.channel}},
                 )
-                return msg.session_key, ""
+                return msg.session_key, "", None
 
         async def _dispatch_turn(
             pump: ClarifyPump,
@@ -1995,7 +2005,21 @@ class StartupOrchestrator:
                     )
                 )
             else:
-                lane, incarnation = await _resolve_incarnation(msg, decision.target)
+                lane, incarnation, boundary_notice = await _resolve_incarnation(
+                    msg, decision.target
+                )
+                if boundary_notice:
+                    # A SEPARATE message, sent BEFORE the reply (Bakir's choice over
+                    # prefixing it). Best-effort: failing to announce a boundary must
+                    # never cost the user the answer they actually asked for.
+                    try:
+                        await channel_adapter.send_text(boundary_notice)
+                    except Exception as exc:
+                        log.warning(
+                            "[startup] gateway: boundary notice not delivered",
+                            exc_info=exc,
+                            extra={"_fields": {"session_key": lane}},
+                        )
                 state = PipelineState(
                     trace_id=msg.trace_id,
                     # The composite LANE, not the channel-native chat id. Durable
