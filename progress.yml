@@ -453,8 +453,45 @@ known_debt:
       X3 is preserved); the sweep becomes the durable backstop. Rejected alternative:
       having the sweeper enqueue directly instead of publishing, which would work but
       would lose the one-boundary-many-consumers seam that X3 was resolved by.
-    status: open
+    status: resolved
     blocks: "Nothing structurally — but part 5 cannot be called done while a boundary can silently lose its summary."
+    resolution:
+      date: 2026-07-26
+      slice: "3b part 5c — the summary backstop"
+      how: >
+        Migration 0098 adds sessions.summary_enqueued_for — the INCARNATION whose
+        summary has been queued, not a timestamp, because a bare "when" cannot tell
+        yesterday's boundary from today's and the first marker would silence every
+        later one. SessionStore.lanes_awaiting_summary() answers the recovery
+        question from the ROW (expiry_finalized set, marker not matching the current
+        incarnation), and conversation_sweep — already running every five minutes —
+        enqueues for each and marks it. ONE enqueue implementation
+        (enqueue_rollover_summary) serves both the live event and the backstop, for
+        the same reason /new and the daily boundary share one code path.
+      the_seam_is_preserved: >
+        The EventBus stays the fast path and the boundary D09.1/D09.3 subscribe to,
+        so dedup target X3 remains resolved by architecture. The backstop sits
+        underneath it rather than replacing it.
+      why_the_backstop_can_be_unconditional: >
+        jobs.idempotency_key is UNIQUE on rollover:{lane}:{incarnation}, so
+        re-enqueueing an already-queued boundary simply fails to insert. That is
+        what lets the recovery pass be dumb and run every sweep instead of trying to
+        be clever about when it is needed.
+      failure_handling: "The marker is written ONLY after a successful enqueue, so a failed enqueue stays retryable on the next sweep rather than being silently dropped. A test pins it."
+      honest_scope:
+        covers: "The SWEEPER path — the unattended 4 AM case Q15 was actually written about. The sweeper finalises WITHOUT minting, so the lane still holds the ended incarnation and the boundary stays recoverable from the row."
+        does_not_cover: "The INGRESS path, which mints immediately and moves the lane on. A crash in its publish->enqueue window is not recoverable this way — but a user is present there by definition, which is the case Q15 explicitly was not worried about."
+        this_mornings_loss_is_permanent: >
+          The boundary finalised at 09:03:04Z CANNOT be recovered: the 14:41:55Z
+          message minted a new incarnation, which cleared expiry_finalized, so the
+          row no longer records that a boundary ended unqueued. The fix prevents
+          recurrence; it does not resurrect that summary. Stated rather than left
+          for someone to wonder why the backstop found nothing.
+      verified:
+        tests: "9 new (red first) in tests/sessions/test_summary_backstop.py; 109 passed across tests/sessions + the rollover suite."
+        migration: "0098 applied; second run reports already-applied; schema at 0098."
+        lint: "ruff src/ 46 = DEBT-1 baseline. types: mypy src/ 78 = DEBT-8 baseline. Zero added."
+        live: "Restarted — 'has_summary_backstop: true' on the registration, and conversation_sweep now reports summaries_recovered on every run (0, correctly, since nothing is awaiting)."
   - id: DEBT-10
     found: 2026-07-26
     what: "The ONLY enabled provider is unreachable — llm-gateway.dev.nera.gov does not resolve — so the platform is booting in DEGRADED mode and cannot answer a turn."

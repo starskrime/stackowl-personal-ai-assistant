@@ -384,7 +384,76 @@ class RolloverSummaryHandler(JobHandler):
         )
 
 
-def register_rollover_consumer(event_bus: object, db: object) -> None:
+async def enqueue_rollover_summary(
+    db: object, *, lane: str, ended: str,
+    identity_key: object = None, owl_name: object = None, channel: object = None,
+    reason: object = None, message_count: object = None,
+    completed_turns: object = None,
+) -> bool:
+    """Queue one durable summary job for one boundary. Returns whether it queued.
+
+    ONE enqueue implementation, TWO triggers — the live event and the five-minute
+    backstop — for the same reason ``/new`` and the daily boundary share one code
+    path: two copies would drift into behaving differently, and this one is the
+    step that makes Q15's durability real.
+
+    Idempotency is the DATABASE's. ``jobs.idempotency_key`` is UNIQUE and the key is
+    ``rollover:{lane}:{ended_incarnation}``, so one boundary yields one summary
+    however many times it is announced or recovered. That is what lets the backstop
+    be unconditional instead of clever.
+    """
+    job = Job(
+        job_id=f"{HANDLER_NAME}-{uuid.uuid4().hex[:8]}",
+        handler_name=HANDLER_NAME,
+        schedule="manual",
+        idempotency_key=f"rollover:{lane}:{ended}",
+        last_run_at=None,
+        # Due immediately: the scheduler picks it up on its next poll.
+        next_run_at=datetime.now(UTC).isoformat(),
+        status="pending",
+        params={
+            "session_key": lane,
+            "ended_session_id": ended,
+            "identity_key": identity_key,
+            "owl_name": owl_name,
+            "channel": channel,
+            "reason": reason,
+            "message_count": message_count,
+            "completed_turns": completed_turns,
+            # The scheduler decides recurring-vs-one-shot from this flag
+            # (scheduler._is_recurring). Without it a boundary's job would re-arm
+            # onto a cadence for ever and re-summarise a conversation that ended
+            # once.
+            "run_once": True,
+        },
+    )
+    try:
+        from stackowl.scheduler.scheduler_helpers import insert_job
+
+        await insert_job(db, job)  # type: ignore[arg-type]
+    except Exception as exc:
+        # A UNIQUE violation here is the EXPECTED outcome of a re-announced or
+        # re-recovered boundary, not a fault; anything else is. Both are logged,
+        # because telling them apart by exception text would be guessing at a
+        # driver's message, and neither may break the conversation.
+        log.memory.info(
+            "[memory] rollover_summary.enqueue: not queued (already queued, or the "
+            "queue refused it) — the boundary itself is unaffected",
+            exc_info=exc,
+            extra={"_fields": {"session_key": lane, "ended_session_id": ended,
+                               "idempotency_key": job.idempotency_key}},
+        )
+        return False
+    log.memory.info(
+        "[memory] rollover_summary.enqueue: queued",
+        extra={"_fields": {"session_key": lane, "ended_session_id": ended,
+                           "job_id": job.job_id, "reason": reason}},
+    )
+    return True
+
+
+def register_rollover_consumer(event_bus: object, db: object,
+                               store: object | None = None) -> None:
     """Turn a ``session.rollover`` announcement into DURABLE work.
 
     Bakir's Q15: a rollover fires at 4 AM unattended, which is exactly when nobody
@@ -417,53 +486,29 @@ def register_rollover_consumer(event_bus: object, db: object) -> None:
                 extra={"_fields": {"session_key": lane, "old_session_id": ended}},
             )
             return
-        job = Job(
-            job_id=f"{HANDLER_NAME}-{uuid.uuid4().hex[:8]}",
-            handler_name=HANDLER_NAME,
-            schedule="manual",
-            idempotency_key=f"rollover:{lane}:{ended}",
-            last_run_at=None,
-            # Due immediately: the scheduler picks it up on its next poll.
-            next_run_at=datetime.now(UTC).isoformat(),
-            status="pending",
-            params={
-                "session_key": lane,
-                "ended_session_id": ended,
-                "identity_key": data.get("identity_key"),
-                "owl_name": data.get("owl_name"),
-                "channel": data.get("channel"),
-                "reason": data.get("reason"),
-                "message_count": data.get("message_count"),
-                "completed_turns": data.get("completed_turns"),
-                # The scheduler decides recurring-vs-one-shot from this flag
-                # (scheduler._is_recurring). Without it a boundary's job would
-                # re-arm onto a cadence for ever and re-summarise a conversation
-                # that ended once.
-                "run_once": True,
-            },
+        queued = await enqueue_rollover_summary(
+            db,
+            lane=lane,
+            ended=ended,
+            identity_key=data.get("identity_key"),
+            owl_name=data.get("owl_name"),
+            channel=data.get("channel"),
+            reason=data.get("reason"),
+            message_count=data.get("message_count"),
+            completed_turns=data.get("completed_turns"),
         )
-        try:
-            from stackowl.scheduler.scheduler_helpers import insert_job
-
-            await insert_job(db, job)  # type: ignore[arg-type]
-        except Exception as exc:
-            # A UNIQUE violation here is the EXPECTED outcome of a re-announced
-            # boundary, not a fault; anything else is. Both are logged, because
-            # distinguishing them by exception text would be guessing at a driver's
-            # message, and neither may break the conversation.
-            log.memory.info(
-                "[memory] rollover_consumer: not enqueued (already queued, or the "
-                "queue refused it) — the boundary itself is unaffected",
-                exc_info=exc,
-                extra={"_fields": {"session_key": lane, "ended_session_id": ended,
-                                   "idempotency_key": job.idempotency_key}},
-            )
-            return
-        log.memory.info(
-            "[memory] rollover_consumer: summary enqueued",
-            extra={"_fields": {"session_key": lane, "ended_session_id": ended,
-                               "job_id": job.job_id, "reason": data.get("reason")}},
-        )
+        # Record it so the five-minute backstop does not queue the same boundary a
+        # second time. Only on success: a failed enqueue must stay recoverable.
+        if queued and store is not None:
+            try:
+                await store.mark_summary_enqueued(lane, ended)  # type: ignore[attr-defined]
+            except Exception as exc:
+                log.memory.warning(
+                    "[memory] rollover_consumer: could not record the enqueue — the "
+                    "backstop may queue it again, which the UNIQUE key absorbs",
+                    exc_info=exc,
+                    extra={"_fields": {"session_key": lane, "ended_session_id": ended}},
+                )
 
     event_bus.subscribe(SessionStore.ROLLOVER_EVENT, _on_rollover)  # type: ignore[attr-defined]
     log.memory.info(

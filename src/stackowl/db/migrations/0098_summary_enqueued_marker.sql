@@ -1,0 +1,32 @@
+-- D01.7 slice 5c — a conversation boundary cannot lose its summary (DEBT-11).
+--
+-- THE DEFECT THIS CLOSES. Q15 required the rollover consumer to enqueue DURABLE
+-- work rather than act inline, because a rollover fires at 4 AM unattended. It
+-- does — but the durability begins AT THE ENQUEUE. The window between publishing
+-- `session.rollover` on the EventBus and the consumer's enqueue is in-memory and
+-- fire-and-forget, and `expiry_finalized` makes the double-announce guard suppress
+-- any second announcement of the same boundary. So a rollover published with no
+-- live consumer is lost permanently, and silently.
+--
+-- Observed on the live platform, which is how it was found: the sweeper finalised
+-- a lane at 09:03:04Z and published; nothing was subscribed yet; the 14:41:55Z
+-- message correctly declined to re-announce. Zero jobs, zero summaries, no error
+-- anywhere. The same sequence recurs whenever our core exec-replaces itself (which
+-- it does on every code change) inside that window.
+--
+-- THE FIX. Record WHICH incarnation's summary this lane has already enqueued, so
+-- the recovery question is answerable from the row instead of from a live
+-- subscriber. `conversation_sweep` already runs every five minutes; it enqueues for
+-- any finalised lane whose marker does not match its current incarnation. The
+-- EventBus stays the fast path and the seam D09.1/D09.3 subscribe to — dedup target
+-- X3 stays resolved — and this is the safety net underneath it.
+--
+-- WHY THE INCARNATION AND NOT A TIMESTAMP. A bare `summary_enqueued_at` cannot
+-- distinguish "summarised yesterday's conversation" from "summarised today's": the
+-- first marker would silence every later boundary on that lane. Storing the
+-- session_id makes the record per BOUNDARY, which is what it has to be.
+--
+-- NULL means "no summary has been enqueued for any incarnation of this lane",
+-- which is the correct reading for every existing row.
+
+ALTER TABLE sessions ADD COLUMN summary_enqueued_for TEXT;

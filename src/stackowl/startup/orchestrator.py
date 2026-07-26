@@ -944,6 +944,7 @@ class StartupOrchestrator:
         # store. Same word, different concept — the third such collision in this
         # item, and the reason the rename was worth doing.
         from stackowl.memory.rollover_summary_handler import (
+            enqueue_rollover_summary,
             register_rollover_consumer,
         )
         from stackowl.sessions import SessionStore as ConversationSessionStore
@@ -967,7 +968,7 @@ class StartupOrchestrator:
         # registered by MemoryAssembly. The consumer only ENQUEUES a durable job —
         # a rollover fires at 4 AM unattended, so anything done inline is lost if
         # the process dies mid-summary (Bakir's Q15).
-        register_rollover_consumer(event_bus, db_pool)
+        register_rollover_consumer(event_bus, db_pool, session_store)
 
         notification_components = await NotificationAssembly.build(
             db=db_pool,
@@ -1474,6 +1475,10 @@ class StartupOrchestrator:
             session_store,
             process_registry=process_registry,
             clarify_gateway=clarify_gateway,
+            # DEBT-11's backstop: the same enqueue the live event uses, so a
+            # boundary announced to nobody is recovered from the lane row on the
+            # next five-minute sweep instead of being lost permanently.
+            enqueue_summary=enqueue_rollover_summary,
         )
         # Task 7 — inject the SAME actuator instance back onto services (built
         # after services/backend exist, same reason a2a_delegator is injected

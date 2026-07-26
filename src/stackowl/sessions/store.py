@@ -42,7 +42,7 @@ _COLUMNS = (
     "session_key, session_id, owl_name, channel, created_at, updated_at, "
     "message_count, suspended, resume_pending, resume_reason, was_auto_reset, "
     "auto_reset_reason, is_fresh_reset, expiry_finalized, restart_failures, "
-    "chat_id, completed_turns, identity_key"
+    "chat_id, completed_turns, identity_key, summary_enqueued_for"
 )
 
 
@@ -59,6 +59,7 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
         message_count=int(row["message_count"] or 0),
         completed_turns=int(row["completed_turns"] or 0),
         identity_key=row.get("identity_key"),
+        summary_enqueued_for=row.get("summary_enqueued_for"),
         suspended=bool(row["suspended"]),
         resume_pending=bool(row["resume_pending"]),
         resume_reason=row.get("resume_reason"),
@@ -261,7 +262,7 @@ class SessionStore:
         await self._db.execute(
             f"""
             INSERT INTO sessions ({_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_key) DO UPDATE SET
                 session_id=excluded.session_id, owl_name=excluded.owl_name,
                 channel=excluded.channel, created_at=excluded.created_at,
@@ -282,7 +283,8 @@ class SessionStore:
                 -- Same COALESCE rule, same reason: a turn that cannot state an
                 -- identity must not unlink the lane from its owner, or the next
                 -- rollover summary is filed where recall never looks.
-                identity_key=COALESCE(excluded.identity_key, sessions.identity_key)
+                identity_key=COALESCE(excluded.identity_key, sessions.identity_key),
+                summary_enqueued_for=excluded.summary_enqueued_for
             """,
             (
                 entry.session_key, entry.session_id, entry.owl_name, entry.channel,
@@ -293,6 +295,7 @@ class SessionStore:
                 int(entry.is_fresh_reset), int(entry.expiry_finalized),
                 entry.restart_failures, entry.chat_id,
                 entry.completed_turns, entry.identity_key,
+                entry.summary_enqueued_for,
             ),
         )
         await self._project_mirror()
@@ -349,6 +352,57 @@ class SessionStore:
         if not entry.was_auto_reset:
             return entry
         return await self.save(entry.evolve(was_auto_reset=False))
+
+    async def lanes_awaiting_summary(self) -> list[SessionEntry]:
+        """Lanes whose boundary was announced but whose summary was never queued.
+
+        THE RECOVERY QUERY FOR DEBT-11. Publishing ``session.rollover`` is
+        in-memory and fire-and-forget: if no consumer is listening — or the core
+        exec-replaces itself in the window before one enqueues — the boundary is
+        lost, and ``expiry_finalized`` then makes the double-announce guard suppress
+        any second announcement. Observed live: the sweeper finalised a lane at
+        09:03:04Z with nothing subscribed, and the next message correctly declined
+        to re-announce.
+
+        This makes the question answerable from the ROW instead of from a live
+        subscriber. It reads ``expiry_finalized`` because that is the sweeper's
+        path — the unattended 4 AM case Q15 was actually written about — and the
+        sweeper finalises WITHOUT minting, so the lane still holds the incarnation
+        that ended and the boundary is still recoverable from it.
+
+        Compared per INCARNATION, not per lane: a marker from a previous boundary
+        must never silence the next one.
+        """
+        rows = await self._db.fetch_all(
+            f"SELECT {_COLUMNS} FROM sessions "
+            "WHERE expiry_finalized = 1 "
+            "  AND (summary_enqueued_for IS NULL OR summary_enqueued_for != session_id) "
+            "ORDER BY updated_at ASC"
+        )
+        entries = [_to_entry(r) for r in rows]
+        log.gateway.debug(
+            "session.lanes_awaiting_summary: exit",
+            extra={"_fields": {"count": len(entries)}},
+        )
+        return entries
+
+    async def mark_summary_enqueued(self, session_key: str,
+                                    session_id: str) -> None:
+        """Record that ``session_id``'s summary is queued, so it is queued ONCE.
+
+        Written only after the enqueue actually succeeded. A failed enqueue must
+        leave the lane recoverable, or the retry this backstop exists to provide is
+        thrown away on the first hiccup.
+        """
+        await self._db.execute(
+            "UPDATE sessions SET summary_enqueued_for = ? WHERE session_key = ?",
+            (session_id, session_key),
+        )
+        await self._project_mirror()
+        log.gateway.info(
+            "session.mark_summary_enqueued: recorded",
+            extra={"_fields": {"session_key": session_key, "session_id": session_id}},
+        )
 
     async def record_completed_turn(self, session_key: str) -> None:
         """Count a turn that actually produced a reply.

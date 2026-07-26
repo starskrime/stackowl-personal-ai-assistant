@@ -120,6 +120,11 @@ class SessionEntry:
     #: Who this lane belongs to, after alias resolution. What a rollover summary
     #: is filed under, and the owner the sweeper binds its stores to.
     identity_key: str | None = None
+    #: The incarnation whose rollover summary has already been ENQUEUED. Not a
+    #: timestamp: a bare "when" cannot tell yesterday's boundary from today's, so
+    #: the first marker would silence every later boundary on this lane. ``None``
+    #: means no summary has been enqueued for any incarnation yet (DEBT-11).
+    summary_enqueued_for: str | None = None
     #: Where to SEND to reach this lane, in the channel's own terms. Stored rather
     #: than derived: a composite lane key is not int()-able into a chat id, and
     #: parsing one would couple every delivery path to the key's exact shape.
@@ -242,5 +247,5 @@ ENTRY_FIELDS: tuple[str, ...] = (
     "session_key", "session_id", "owl_name", "channel", "created_at", "updated_at",
     "message_count", "suspended", "resume_pending", "resume_reason", "was_auto_reset",
     "auto_reset_reason", "is_fresh_reset", "expiry_finalized", "restart_failures",
-    "chat_id", "completed_turns", "identity_key",
+    "chat_id", "completed_turns", "identity_key", "summary_enqueued_for",
 )

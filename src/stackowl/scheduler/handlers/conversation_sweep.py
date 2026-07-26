@@ -27,6 +27,7 @@ platform.
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
@@ -44,10 +45,15 @@ class ConversationSweepHandler(JobHandler):
     def __init__(
         self, store: SessionStore, *, process_registry: object | None = None,
         clarify_gateway: object | None = None,
+        enqueue_summary: Callable[..., Awaitable[bool]] | None = None,
     ) -> None:
         self._store = store
         self._process_registry = process_registry
         self._clarify_gateway = clarify_gateway
+        # DEBT-11's backstop. Injected rather than imported so the scheduler does
+        # not depend on memory/, and optional so an unwired backstop degrades to
+        # exactly the previous behaviour instead of breaking expiry.
+        self._enqueue_summary = enqueue_summary
 
     @property
     def handler_name(self) -> str:
@@ -115,37 +121,110 @@ class ConversationSweepHandler(JobHandler):
                 exc_info=exc, extra={"_fields": {"job_id": job.job_id}},
             )
 
+        recovered = await self._recover_lost_summaries(job)
+
         duration_ms = (time.monotonic() - t0) * 1000
         # 4. EXIT
         log.scheduler.info(
             "[scheduler] conversation_sweep.execute: exit",
             extra={"_fields": {"job_id": job.job_id, "finalized": finalized,
-                               "skipped_active": skipped, "duration_ms": duration_ms}},
+                               "skipped_active": skipped,
+                               "summaries_recovered": recovered,
+                               "duration_ms": duration_ms}},
         )
         return JobResult(
             job_id=job.job_id,
             effect_class="state_change",
             success=error is None,
-            output=f"finalized={finalized} skipped_active={skipped}",
+            output=(f"finalized={finalized} skipped_active={skipped} "
+                    f"summaries_recovered={recovered}"),
             error=error,
             duration_ms=duration_ms,
-            metadata={"finalized": finalized, "skipped_active": skipped},
+            metadata={"finalized": finalized, "skipped_active": skipped,
+                      "summaries_recovered": recovered},
         )
+
+    async def _recover_lost_summaries(self, job: Job) -> int:
+        """Queue summaries for boundaries that were announced to nobody (DEBT-11).
+
+        Publishing ``session.rollover`` is in-memory and fire-and-forget, so a
+        boundary announced with no live consumer — or one whose consumer never got
+        to enqueue because the core exec-replaced itself — is lost permanently:
+        ``expiry_finalized`` then makes the double-announce guard suppress any
+        second announcement. This is what makes Q15's durability real rather than
+        conditional on a subscriber being alive at the right instant.
+
+        Runs on EVERY sweep, unconditionally. It is safe to be dumb about it
+        because ``jobs.idempotency_key`` is UNIQUE on
+        ``rollover:{lane}:{incarnation}`` — a boundary already queued simply fails
+        to insert again.
+
+        The marker is written only when the enqueue SUCCEEDED, so a failure stays
+        retryable on the next sweep rather than being silently dropped.
+        """
+        if self._enqueue_summary is None:
+            return 0
+        try:
+            awaiting = await self._store.lanes_awaiting_summary()
+        except Exception as exc:
+            log.scheduler.error(
+                "[scheduler] conversation_sweep: could not look for lost summaries",
+                exc_info=exc, extra={"_fields": {"job_id": job.job_id}},
+            )
+            return 0
+
+        recovered = 0
+        for entry in awaiting:
+            try:
+                queued = await self._enqueue_summary(
+                    lane=entry.session_key,
+                    ended=entry.session_id,
+                    identity_key=entry.identity_key,
+                    owl_name=entry.owl_name,
+                    channel=entry.channel,
+                    reason=(entry.auto_reset_reason.value
+                            if entry.auto_reset_reason else None),
+                    message_count=entry.message_count,
+                    completed_turns=entry.completed_turns,
+                )
+            except Exception as exc:
+                # One bad lane must not stop the others being recovered.
+                log.scheduler.error(
+                    "[scheduler] conversation_sweep: summary recovery failed for a lane",
+                    exc_info=exc,
+                    extra={"_fields": {"session_key": entry.session_key,
+                                       "session_id": entry.session_id}},
+                )
+                continue
+            if not queued:
+                continue
+            await self._store.mark_summary_enqueued(entry.session_key,
+                                                    entry.session_id)
+            recovered += 1
+            log.scheduler.info(
+                "[scheduler] conversation_sweep: recovered a lost summary",
+                extra={"_fields": {"session_key": entry.session_key,
+                                   "session_id": entry.session_id}},
+            )
+        return recovered
 
 
 def register_conversation_sweep_handler(
     store: SessionStore, *, process_registry: object | None = None,
     clarify_gateway: object | None = None,
+    enqueue_summary: Callable[..., Awaitable[bool]] | None = None,
 ) -> ConversationSweepHandler:
     """Construct and register the handler on the process HandlerRegistry."""
     handler = ConversationSweepHandler(
         store, process_registry=process_registry, clarify_gateway=clarify_gateway,
+        enqueue_summary=enqueue_summary,
     )
     HandlerRegistry.instance().register(handler)
     log.scheduler.info(
         "[scheduler] conversation_sweep handler registered",
         extra={"_fields": {"handler": handler.handler_name,
                            "has_process_registry": process_registry is not None,
-                           "has_clarify_gateway": clarify_gateway is not None}},
+                           "has_clarify_gateway": clarify_gateway is not None,
+                           "has_summary_backstop": enqueue_summary is not None}},
     )
     return handler
