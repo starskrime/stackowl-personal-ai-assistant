@@ -785,30 +785,6 @@ class StartupOrchestrator:
         # the deterministic baseline (honesty spine). Built here (after the pool
         # opens, migration 0065 already applied in phase 1) so the command-stub
         # closure below can capture it.
-        # D01.7 — the session lifecycle. Built here, after the pool opens and
-        # migrations 0092/0094 have run, so the dispatch closure below can capture
-        # it. Ships ON: there is no enable flag, because a platform that cannot
-        # start or end a conversation is the state we are fixing.
-        # Aliased: `SessionStore` is already bound above to parliament's DEBATE
-        # store. Same word, different concept — the third time that collision has
-        # shown up in this item, and the reason the rename was worth doing.
-        from stackowl.sessions import SessionStore as ConversationSessionStore
-        from stackowl.sessions import policy_from_settings
-
-        # Captured once here, where `self._settings` is known non-None, so the
-        # dispatch closure below reads a plain value instead of re-deriving it off
-        # an Optional on every single turn.
-        session_settings = self._settings.session
-        session_store = ConversationSessionStore(
-            db_pool, policy_from_settings(session_settings)
-        )
-        log.info(
-            "[startup] gateway: session lifecycle armed",
-            extra={"_fields": {"reset_mode": self._settings.session.reset_mode,
-                               "at_hour": self._settings.session.at_hour,
-                               "idle_minutes": self._settings.session.idle_minutes}},
-        )
-
         sequence_store = None
         if self._settings.ui.command_suggestions:
             from stackowl.commands.sequence_store import CommandSequenceStore
@@ -959,6 +935,30 @@ class StartupOrchestrator:
         from stackowl.notifications.assembly import NotificationAssembly
 
         event_bus = EventBus()
+
+        # D01.7 — the session lifecycle. Built HERE rather than beside the db_pool
+        # because it publishes `session.rollover`, and the bus does not exist until
+        # this point. Ships ON: no enable flag, because a platform that cannot start
+        # or end a conversation is the state this item exists to fix.
+        # Aliased: `SessionStore` is already bound above to parliament's DEBATE
+        # store. Same word, different concept — the third such collision in this
+        # item, and the reason the rename was worth doing.
+        from stackowl.sessions import SessionStore as ConversationSessionStore
+        from stackowl.sessions import policy_from_settings
+
+        # Captured once here, where `self._settings` is known non-None, so the
+        # dispatch closure below reads a plain value instead of re-deriving it off
+        # an Optional on every single turn.
+        session_settings = self._settings.session
+        session_store = ConversationSessionStore(
+            db_pool, policy_from_settings(session_settings), event_bus=event_bus,
+        )
+        log.info(
+            "[startup] gateway: session lifecycle armed",
+            extra={"_fields": {"reset_mode": session_settings.reset_mode,
+                               "at_hour": session_settings.at_hour,
+                               "idle_minutes": session_settings.idle_minutes}},
+        )
 
         notification_components = await NotificationAssembly.build(
             db=db_pool,

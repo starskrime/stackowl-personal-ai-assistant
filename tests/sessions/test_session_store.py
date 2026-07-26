@@ -232,3 +232,99 @@ async def test_a_message_without_a_target_does_not_erase_the_known_one(store) ->
     later, _, _ = await store.resolve_for(
         SessionSource("Brain", "telegram", ChatType.DM, "123"), at(20, 13))
     assert later.chat_id == "456"
+
+
+# --------------------------------------------------------------------------
+# D01.7 slice 3b — the rollover is announced.
+#
+# This is the seam D09.1 (background review), D09.3 (the curator) and Q17's
+# memory summary all subscribe to, instead of each building its own idle
+# detector. Dedup target X3, resolved architecturally.
+# --------------------------------------------------------------------------
+
+
+class _Bus:
+    def __init__(self, boom: bool = False) -> None:
+        self.events: list[tuple[str, object]] = []
+        self._boom = boom
+
+    def emit(self, event: str, payload: object = None) -> None:
+        if self._boom:
+            raise RuntimeError("subscriber exploded")
+        self.events.append((event, payload))
+
+
+@pytest.fixture
+async def bus_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
+    db = DbPool(db_path=tmp_path / "t.db")
+    await db.open()
+    from stackowl.db.migrations.runner import MigrationRunner
+    MigrationRunner(tmp_path / "t.db").run()
+    bus = _Bus()
+    yield SessionStore(db, ResetPolicy(mode=ResetMode.BOTH, at_hour=4),
+                       mirror_dir=tmp_path, event_bus=bus), bus
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_a_rollover_is_published(bus_store) -> None:
+    store, bus = bus_store
+    first, _, _ = await store.resolve_for(src(), at(20, 12))
+    rolled, branch, reason = await store.resolve_for(src(), at(22, 12))
+
+    assert branch is Branch.EXPIRED
+    assert len(bus.events) == 1
+    name, payload = bus.events[0]
+    assert name == "session.rollover"
+    assert payload["old_session_id"] == first.session_id
+    assert payload["new_session_id"] == rolled.session_id
+    assert payload["reason"] == reason.value
+    assert payload["owl_name"] == "Brain"
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_turn_publishes_nothing(bus_store) -> None:
+    """Only a BOUNDARY is an event. A normal turn is not."""
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+    await store.resolve_for(src(), at(20, 13))
+    assert bus.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_first_message_is_not_a_rollover(bus_store) -> None:
+    """A brand-new lane ended nothing, so there is nothing to announce."""
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+    assert bus.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_throwing_subscriber_never_blocks_the_conversation(tmp_path,
+                                                                   monkeypatch) -> None:
+    """A rollover fires at 4 AM unattended. A broken consumer must not be able to
+    stop the user's next conversation from starting."""
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
+    db = DbPool(db_path=tmp_path / "t.db")
+    await db.open()
+    from stackowl.db.migrations.runner import MigrationRunner
+    MigrationRunner(tmp_path / "t.db").run()
+    store = SessionStore(db, ResetPolicy(mode=ResetMode.BOTH, at_hour=4),
+                         mirror_dir=tmp_path, event_bus=_Bus(boom=True))
+    try:
+        await store.resolve_for(src(), at(20, 12))
+        rolled, branch, _ = await store.resolve_for(src(), at(22, 12))
+        assert branch is Branch.EXPIRED
+        assert rolled.session_id  # the new incarnation exists regardless
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_no_bus_is_a_supported_configuration(store) -> None:
+    """The default store has no bus; the boundary is still logged and still happens."""
+    await store.resolve_for(src(), at(20, 12))
+    rolled, branch, _ = await store.resolve_for(src(), at(22, 12))
+    assert branch is Branch.EXPIRED
+    assert rolled.session_id

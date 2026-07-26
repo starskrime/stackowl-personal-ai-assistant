@@ -1231,6 +1231,32 @@ items:
         reachable with no migration at all.
     changes:
       - date: 2026-07-25
+        slice: "3b part 1 — session.rollover is published on the EventBus"
+        files:
+          - "src/stackowl/sessions/store.py — ROLLOVER_EVENT, _publish_rollover, optional event_bus"
+          - "src/stackowl/startup/orchestrator.py — SessionStore construction MOVED to after EventBus"
+          - "tests/sessions/test_session_store.py — 5 new tests"
+        design_notes:
+          - "THE seam of this item. D09.1 (background review), D09.3 (the curator) and Q17's memory summary all need 'an idle moment on this conversation'; this is it. Three items subscribe to ONE boundary instead of each inventing its own idle detector — dedup target X3, resolved architecturally rather than by a later cleanup pass."
+          - "The bus is duck-typed (`object`) so sessions/ does not import events/. None is a supported configuration: the boundary is still logged and still happens, it is simply not announced."
+          - "A throwing subscriber cannot block the conversation from starting. EventBus already isolates handlers; _publish_rollover catches as the second belt, because a rollover fires at 4 AM unattended and a broken consumer must not cost the user their next conversation."
+          - "Payload carries old AND new session_id, the reason, owl, channel and turn_count — everything a consumer needs to enqueue durable work WITHOUT re-reading the store."
+        ordering_change: >
+          SessionStore construction moved from beside db_pool to just after EventBus is
+          created. It has to be built after the bus it publishes on, and the alternative
+          (an attach_event_bus setter) would have allowed a window where the store exists
+          but silently publishes nowhere.
+        verified:
+          tests: "63 passed in tests/sessions (5 new). Cases: a rollover publishes; an ordinary turn does not; a FIRST message does not (it ended nothing); a throwing subscriber still yields a new incarnation; no-bus is supported."
+          lint: "ruff clean."
+          types: "mypy src/ -> 78, byte-identical to baseline. Zero new."
+          live: "Platform restarted after the boot reorder — 1195 log lines, 0 ERROR/CRITICAL, session lifecycle armed."
+        remaining_in_3b:
+          - "Durable consumer tasks (Q15) — subscribers that enqueue rather than work inline."
+          - "The standard-tier rollover summary, gated on notability (Q14)."
+          - "/new -> /queue verb swap."
+          - "The background sweeper, which is where Q12's four never-expire conditions belong."
+      - date: 2026-07-25
         slice: "3a.3 — the transcript writer and the visible boundary"
         files:
           - "src/stackowl/memory/transcript_store.py (new) — TranscriptStore.record_turn, 4-point logging"

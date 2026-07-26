@@ -71,11 +71,22 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
 class SessionStore:
     """Owns lane persistence. One instance, injected — never a module global."""
 
+    #: Published when a lane's incarnation ends. THE seam of this item: `D09.1`
+    #: (background review), `D09.3` (the skill curator) and Q17's memory summary
+    #: all need "an idle moment on this conversation", and this is it. Three items
+    #: subscribe to one boundary instead of each inventing its own idle detector —
+    #: dedup target X3, resolved by architecture rather than by a cleanup pass.
+    ROLLOVER_EVENT = "session.rollover"
+
     def __init__(self, db: DbPool, policy: ResetPolicy | None = None,
-                 mirror_dir: Path | None = None) -> None:
+                 mirror_dir: Path | None = None,
+                 event_bus: object | None = None) -> None:
         self._db = db
         self._policy = policy or ResetPolicy()
         self._mirror_dir = mirror_dir
+        # Duck-typed to keep sessions/ free of an events/ import. None → the
+        # rollover is still logged, just not published; nothing breaks.
+        self._event_bus = event_bus
 
     # ------------------------------------------------------------------ read
 
@@ -178,7 +189,43 @@ class SessionStore:
                     "turn_count": existing.turn_count,
                 }},
             )
+            self._publish_rollover(existing, entry, decision.reason)
         return entry, decision.branch, decision.reason
+
+    def _publish_rollover(self, old: SessionEntry, new: SessionEntry,
+                          reason: ResetReason | None) -> None:
+        """Announce the boundary. Never blocks it.
+
+        Subscribers are expected to enqueue DURABLE work rather than do it here
+        (Bakir's Q15): a rollover fires at 4 AM unattended, which is precisely
+        when nobody is watching, so anything done inline is lost if the process
+        dies mid-handler.
+
+        A subscriber that throws must not prevent the conversation from starting —
+        the EventBus already isolates handlers, and this catch is the second belt.
+        """
+        if self._event_bus is None:
+            return
+        payload = {
+            "session_key": old.session_key,
+            "old_session_id": old.session_id,
+            "new_session_id": new.session_id,
+            "reason": reason.value if reason else None,
+            "owl_name": old.owl_name,
+            "channel": old.channel,
+            "turn_count": old.turn_count,
+            "ended_at": new.created_at.isoformat(),
+        }
+        try:
+            emit = self._event_bus.emit  # type: ignore[attr-defined]
+            emit(self.ROLLOVER_EVENT, payload)
+        except Exception as exc:  # no-hidden-errors: the boundary still stands
+            log.gateway.error(
+                "session.rollover: publication failed — the boundary still happened",
+                exc_info=exc,
+                extra={"_fields": {"session_key": old.session_key,
+                                   "new_session_id": new.session_id}},
+            )
 
     # ----------------------------------------------------------------- write
 
