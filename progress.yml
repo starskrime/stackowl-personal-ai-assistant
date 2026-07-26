@@ -248,28 +248,46 @@ current:
     3a.2 IN PROGRESS. Committed so far: slice 1 (b38e8145), slice 2 (7a319d0f),
     3a.1 the identity rename + migration 0093 (c82ea736), 3a.2 part 1 — the lane
     carries its own send target + migration 0094 (7b145f15).
-  next_action: >
-    SLICE 3a.2 IS COMPLETE AND LIVE-VALIDATED (parts 1-6, commits 7b145f15, 552a7cf3,
-    0baaf7f1/577806f9, eeb140dd, 6a1824b5, 9b571eda). Remaining on D01.7:
-
-    3a.3 — (a) the boundary notice: a SEPARATE message sent BEFORE the reply (Bakir's
-    choice), driven by policy.reset_notice() and cleared once via
-    SessionStore.consume_reset_notice, which already exist and are already tested but
-    have NO caller yet. (b) the turn-end transcript writer: INSERT into
-    conversations/messages, user+assistant roles only, keyed by lane AND incarnation.
-    That is what makes invariant I6 testable and revives the six dead readers listed in
-    the decisions block (owl DNA evolution and fact extraction among them).
-
-    3b — session.rollover on the EventBus with consumers enqueuing DURABLE tasks
-    (Q15: a rollover fires at 4 AM unattended, which is exactly when nobody is
-    watching), the standard-tier summary gated on notability (Q14), the /new -> /queue
-    verb swap, and the background sweeper. Q12's four never-expire conditions belong to
-    the SWEEPER — deliberately not wired at ingress, because a lane only needs
-    protecting from a sweeper expiring it while it is busy; on an inbound message the
-    user is by definition present.
-
-    Then: cleanup, test, validate, document — including folding the 24 brainstorm
-    answers into designs/D01.7.md and re-verifying every path in it.
+  resume_here:
+    read_first: "This block, then docs/hermes-mapping/designs/D01.7.md (its Verification section is copy-pasteable and passes)."
+    one_line: >
+      D01.7 implement is LIVE and verified on the platform. Finish 3b (the rollover
+      summary), then run D01.7's remaining four stages, then D01.1.
+    verify_the_platform_still_works_before_you_start:
+      - "./start.sh   # then confirm 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
+      - "timeout 600 uv run pytest tests/sessions/ -q -p no:randomly   # expect 74 passed"
+      - "uv run python -m stackowl db migrate   # expect: up to date (version 0095)"
+    next_task_in_order:
+      1: >
+        3b — the rollover SUMMARY (Q14/Q17). Subscribe to SessionStore.ROLLOVER_EVENT
+        ("session.rollover"); the consumer must ENQUEUE A DURABLE TASK rather than work
+        inline (Q15: it fires at 4 AM unattended, so inline work is lost if the process
+        dies). Summarise ONLY when something notable happened (Q14's gate keeps cost
+        bounded now that every runner has a lane), and point the call at the STANDARD
+        TIER explicitly — that was Q19's final answer after tier_selector was proven
+        unable to serve it (OA1, resolved NEGATIVE).
+      2: >
+        3b — the two remaining never-expire conditions (Q12). conversation_sweep._is_busy
+        enforces a running background process and a pending clarify; an in-flight DURABLE
+        TASK and an ACTIVE OBJECTIVE are not checked. Use the REAL APIs — the first draft
+        of that method invented two method names that do not exist, which would have made
+        I4 a silent no-op.
+      3: "cleanup — resolve nothing outstanding for X3 (already resolved architecturally); confirm no dead code from the rename."
+      4: "test — gateway-driven integration from business requirements, mocking ONLY the provider."
+      5: "validate — a forced rollover proves I1/I2/I3/I5 live; I6 needs a SECOND rollover now that transcripts accumulate."
+      6: "document — close designs/D01.7.md, stamp date + commit, confirm every Invariant maps to a real test."
+      7: "then D01.1 (implement onward — brainstorm and architect are already done), D01.2, D01.4, D01.5."
+    do_not_be_surprised_by:
+      - "D01.3 is BLOCKED by D05.2/D05.4 (wave 2) and cannot be finished inside D01. That is by design — see waves.1.sequence_reason."
+      - "tests/commands/test_config_meta.py fails — DEBT-3, pre-existing, unrelated."
+      - "Two tests/memory tests fail whenever the platform is RUNNING — DEBT-9, they use the real ~/.stackowl and lose the kuzu lock."
+      - "mypy src/ reports 78 errors and ruff 46 — both are the tracked pre-existing baselines (DEBT-8, DEBT-1). Diff against them; do not chase them to zero."
+      - "The word `session` means FOUR different things in this tree: a conversation lane, a parliament debate, a browser page, and a named owl session. Check which one you are touching."
+    resume_pending_is_not_wired: >
+      The flag, its policy branch, its persistence and its tests all exist, but NOTHING
+      SETS IT. Q6's crash-recovery path (synthesise a message event and auto-continue) is
+      unbuilt, so an interrupted turn is currently lost rather than resumed. Called out
+      because the code reads as though the feature is finished.
   live_state: >
     Platform RESTARTED onto the renamed code at 2026-07-25 and verified: 1199 log lines
     in 3 minutes with ZERO ERROR/CRITICAL, cost_records inserting again, lane values
@@ -365,7 +383,7 @@ documentation:
     - "Every Invariant must map to a real test. If it cannot be tested it is a wish — sharpen it or delete it."
   status:
     written: 4        # D01.1, D01.6, D01.6-baseline, D01.7
-    closed: 1         # D01.6
+    closed: 1         # D01.6 (amended 2026-07-25 when D01.7 renamed a column it cited)
     outstanding: 107
 
 # ---------------------------------------------------------------------------
@@ -551,11 +569,11 @@ summary:
     P2: 56
     P3: 32
   by_status:
-    not_started: 111
-    in_progress: 0
-    done: 0
+    not_started: 108
+    in_progress: 3      # D01.1 (brainstorm+architect), D01.6 (6/7), D01.7 (2/7 + implement live)
+    done: 0             # D01.6 is functionally closed but its brainstorm stage was never run
     blocked: 0
-  stages_completed: 11   # D01.1 brainstorm+architect, D01.6 architect, D01.7 architect
+  stages_completed: 10   # recomputed from items, not hand-maintained
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
