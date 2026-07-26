@@ -38,6 +38,11 @@ class CostRecord(BaseModel):
     # construction site keeps working untouched and an un-threaded caller
     # records a row that is still valid — just without the new dimensions.
     session_key: str = ""
+    # D01.7 — which INCARNATION of that lane produced this call. session_key alone
+    # spans every rollover the lane has ever had, which is why the D01.6 baseline
+    # saw 10 distinct prompts on one "conversation". D01.1's stability invariant
+    # groups by THIS.
+    session_id: str = ""
     # Provider-reported prefix-cache hits. 0 is AMBIGUOUS by construction: it
     # means "no cache hit" OR "provider does not report" (D01.6 I4). Readers
     # must count reporting rows to tell the two apart — see /cost.
@@ -133,6 +138,7 @@ class CostTracker(OwnedRepository):
         trace_id: str = "",
         is_local: bool = False,
         session_key: str = "",
+        session_id: str = "",
         cached_input_tokens: int = 0,
         prompt_hash: str = "",
         system_prompt_chars: int = 0,
@@ -154,6 +160,7 @@ class CostTracker(OwnedRepository):
                 "provider": provider_name, "model": model,
                 "input_tokens": input_tokens, "output_tokens": output_tokens,
                 "duration_ms": duration_ms, "session_key": session_key,
+                "session_id": session_id,
             }},
         )
         # D01.6 DECISION point — which naming the provider used for cache stats,
@@ -190,7 +197,8 @@ class CostTracker(OwnedRepository):
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,
             cost_usd=cost_usd, trace_id=trace_id, recorded_at=now.isoformat(),
-            session_key=session_key, cached_input_tokens=cached_input_tokens,
+            session_key=session_key, session_id=session_id,
+            cached_input_tokens=cached_input_tokens,
             prompt_hash=prompt_hash, system_prompt_chars=system_prompt_chars,
             ttft_ms=ttft_ms,
         )
@@ -201,15 +209,15 @@ class CostTracker(OwnedRepository):
                 INSERT INTO cost_records (
                     provider_name, model, input_tokens, output_tokens,
                     cost_usd, trace_id, recorded_at, owner_id,
-                    session_key, cached_input_tokens, prompt_hash,
+                    session_key, session_id, cached_input_tokens, prompt_hash,
                     system_prompt_chars, ttft_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.provider_name, record.model, record.input_tokens,
                     record.output_tokens, record.cost_usd, record.trace_id,
                     record.recorded_at, self._owner_id,
-                    record.session_key, record.cached_input_tokens,
+                    record.session_key, record.session_id, record.cached_input_tokens,
                     record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
                 ),
             )

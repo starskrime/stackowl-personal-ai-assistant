@@ -95,6 +95,7 @@ def bind_turn_context(state: PipelineState, services: StepServices) -> TurnBindi
     services_token = set_services(services)
     trace_token = TraceContext.start(
         state.session_key,
+        session_id=state.session_id or None,
         trace_id=state.trace_id,
         interactive=state.interactive,
         channel=state.channel,

@@ -52,6 +52,12 @@ class PipelineState(BaseModel, frozen=True):
 
     trace_id: str
     session_key: str
+    #: D01.7 — which INCARNATION of ``session_key`` this turn belongs to, resolved
+    #: at ingress by the SessionStore. Empty for turns that never passed through
+    #: ingress (scheduler handlers, parliament rounds, RCA): they have a lane but
+    #: no conversation run, and saying so honestly beats inventing one. Defaulted
+    #: so every existing construction site is byte-for-byte unaffected.
+    session_id: str = ""
     input_text: str
     channel: str
     owl_name: str

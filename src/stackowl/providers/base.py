@@ -167,6 +167,9 @@ class ModelProvider(ABC):
         # rides its own turn-scoped carrier. Both are read here rather than passed
         # in, so no provider signature has to grow to make a turn measurable.
         session_key = str(ctx.get("session_key") or "")
+        # D01.7 — the incarnation rides the same carrier. Empty for background work
+        # that never passed through ingress: honest, not a fabricated conversation.
+        session_id = str(ctx.get("session_id") or "")
         prompt_hash, system_prompt_chars = prompt_metrics.current()
         try:
             await tracker.record(
@@ -178,6 +181,7 @@ class ModelProvider(ABC):
                 trace_id=trace_id,
                 is_local=self._is_local_backend,
                 session_key=session_key,
+                session_id=session_id,
                 cached_input_tokens=cached_input_tokens,
                 prompt_hash=prompt_hash,
                 system_prompt_chars=system_prompt_chars,

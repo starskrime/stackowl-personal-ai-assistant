@@ -117,6 +117,10 @@ class JsonlFormatter(logging.Formatter):
             "span_id": ctx["span_id"],
             "parent_span_id": ctx["parent_span_id"],
             "session_key": ctx["session_key"],
+            # D01.7 — which RUN of that lane. Together the pair answers "everything
+            # that happened in THIS conversation" from the log alone; the lane on its
+            # own spans every rollover it has ever had.
+            "session_id": ctx["session_id"],
             "duration_ms": duration_ms,
             "fields": fields,
         }
