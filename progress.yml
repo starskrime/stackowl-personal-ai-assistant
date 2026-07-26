@@ -450,9 +450,27 @@ known_debt:
         reachable.
       option_b: "Accept the move for all runners — simplest, and it silently orphans whatever those runners had already staged."
       option_c: "Leave the runner call sites on their ad-hoc keys; runner lanes exist but nothing uses them. Zero risk, and Q9 stays unimplemented in practice."
-    status: open
+    status: decided
     blocks: "D01.7 part 7b only. 7a (the lane model + parent link) is complete, green and live."
+    decision:
+      date: 2026-07-26
+      by: Bakir
+      answer: "OPTION A — runner states INHERIT identity_key from the parent lane."
+      consequence: >
+        Knowledge follows the PERSON for runner work exactly as it does for chat, so
+        an objective started from a conversation stages its facts where that
+        conversation's recall already looks. Part 7a's parent_session_key is what
+        makes the parent's identity reachable, which is why 7a had to land first.
+        Orphan runners (a cron job nobody asked for) have no person: their lane
+        remains the scope and their existing facts make a ONE-TIME move from the
+        ad-hoc string to the composite lane. That move is accepted knowingly.
+      parents_are_already_available: >
+        Part 6 put session_key on tasks and objectives, so two of the four call
+        sites can read their parent straight off the row they already have
+        (objective.session_key, task.session_key). The other two are tools and read
+        it off TraceContext, which already carries the lane.
   - id: DEBT-12
+    scheduled: "2026-07-26 — Bakir chose to pick this up now, after D01.7 part 7b."
     found: 2026-07-26
     what: "tests/smoke/test_e8_s3_sessions_spawn_telegram_smoke.py cannot even be COLLECTED — it imports a constant that no longer exists."
     evidence: >
@@ -668,6 +686,7 @@ known_debt:
     decision: "NOT fixed during D01.6 — unrelated files, and fixing them mid-item violates minimal-diffs. Scheduled as its own cleanup pass."
     status: open
   - id: DEBT-6
+    scheduled: "2026-07-26 — Bakir chose to pick this up now, after D01.7 part 7b."
     found: 2026-07-25
     what: "Empty completions from NeraAiRaw — the model emits reasoning but no visible content."
     evidence: "Log, repeatedly: '[openai] complete: empty after think-strip — retrying once with a varied prompt' then 'still empty after varied retry — returning empty for the downstream floor'."
@@ -675,6 +694,7 @@ known_debt:
     decision: "Tracked. Needs its own root-cause pass — likely a reasoning model spending max_tokens on reasoning_content."
     status: open
   - id: DEBT-7
+    scheduled: "2026-07-26 — Bakir chose to pick this up now, after D01.7 part 7b."
     found: 2026-07-25
     what: "Budget alerting can NEVER fire — 'budget_80pct_alert' and 'budget_exceeded' are subscribed with no publisher."
     evidence: "Boot wiring audit: 'DANGLING event subscription ... subscribed but NO module declares it as a publisher, so the subscriber will NEVER fire.'"
