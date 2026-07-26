@@ -1920,6 +1920,13 @@ class StartupOrchestrator:
                     chat_type=ChatType.DM if msg.is_direct else ChatType.GROUP,
                     chat_id=msg.session_key,
                     chat_target=str(msg.chat_id) if msg.chat_id is not None else None,
+                    # Stamped HERE because this is where the identity is already
+                    # resolved. The sweeper publishes rollovers at 4 AM with no
+                    # ingress context, so a summary consumer that had to re-derive
+                    # the owner would have nothing to derive it from — and a
+                    # summary filed under the owl-prefixed lane is one recall never
+                    # sees. Same resolver the turn itself uses, two calls below.
+                    identity_key=resolve_identity_key(services, msg.session_key),
                 )
                 entry, branch, reason = await session_store.resolve_for(
                     source,

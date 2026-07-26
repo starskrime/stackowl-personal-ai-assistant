@@ -1413,6 +1413,60 @@ items:
         reachable with no migration at all.
     changes:
       - date: 2026-07-25
+        slice: "3b part 4 — the lane row tells the truth (identity + two real counters)"
+        files:
+          - "src/stackowl/db/migrations/0096_session_identity_and_counters.sql (new)"
+          - "src/stackowl/sessions/models.py — SessionSource.identity_key; SessionEntry gains identity_key/message_count/completed_turns"
+          - "src/stackowl/sessions/store.py — counters incremented, identity COALESCEd, record_completed_turn(), payload rewritten"
+          - "src/stackowl/startup/orchestrator.py — identity stamped at ingress"
+          - "src/stackowl/pipeline/turn_persist.py — _count_completed_turn at turn end"
+          - "tests/sessions/test_session_store.py — 8 new tests, written FIRST and red"
+        the_defect_this_fixes: >
+          turn_count COUNTED NOTHING. Minted at 0, reset to 0 on rollover, persisted, read
+          back, and PUBLISHED IN THE session.rollover PAYLOAD — with no code path anywhere
+          incrementing it. Live proof: the only existing lane read turn_count=0 while its
+          transcript held 4 messages. Found by MEASURING the live row against the live
+          transcript rather than by reading the code, which looks entirely correct.
+        why_it_mattered_beyond_itself: >
+          The slice-3b design round nearly built a structural notability gate on top of it —
+          "summarise only if turn_count >= N" — which would have been a permanent no-op with
+          passing tests and a doc claiming the gate was enforced. The same failure class as
+          the invented APIs caught in part 3, and the second time in two slices that a
+          plausible-looking field turned out to be inert.
+        design_notes:
+          - "TWO counters, not a repaired one. message_count rises on every inbound message (resolve_for); completed_turns only when a turn produced a reply (turn end). The DIFFERENCE is the signal — a lane taking messages and answering nothing is a lane that is failing, and one number cannot say that. A floored turn is deliberately NOT counted as completed, or the signal is erased."
+          - "RENAMED rather than kept: the column is 3 days old and nothing outside sessions/ reads it. This item exists because an identifier whose name lied about what it held cost a 571-file rename; keeping a second one would have been the same mistake with the evidence in hand."
+          - "identity_key is stamped AT INGRESS via the same resolve_identity_key() the turn itself uses two calls later — not re-derived at read time. The sweeper publishes rollovers at 4 AM with no ingress context, so a summary consumer that had to reconstruct the owner would have had nothing to reconstruct it from."
+          - "identity follows chat_id's COALESCE rule, enforced twice (in resolve_for for the returned object, and in the upsert for any direct save() caller): the newest message wins, but a message that cannot state an identity never erases a known one. Without it a single CLI turn would unlink the Telegram lane from its owner and file its next summary nowhere."
+          - "record_completed_turn NO-OPS on an unknown lane rather than inserting. It is called from the turn-end path, which also runs for background work that never passed through ingress; inventing a lane there would create conversations nobody had."
+        bug_i_introduced_and_caught: >
+          _COLUMNS gained two columns while the INSERT still bound sixteen —
+          "sqlite3.OperationalError: 16 values for 18 columns", 39 tests red at once. Caught
+          immediately because these tests use a REAL DbPool and REAL migrations rather than a
+          mock; a mocked store would have passed and the drift would have reached the live
+          box. That test design was chosen in slice 2 for exactly this, and this is the first
+          time it has paid.
+        failing_tests_escalated_not_patched:
+          what: "Two existing tests asserted entry.turn_count == 0 and failed on the rename."
+          action: >
+            Re-pointed rather than deleted, and called out rather than folded in silently.
+            They now assert the sharper property the rename made expressible: an AUTOMATIC
+            boundary starts its run at message_count=1 (the message that crossed belongs to
+            the new incarnation), while /new starts at 0 (nothing has arrived yet). The
+            rename was explicitly approved this session, which is what makes this a
+            re-pointing rather than a test edited to make a change pass.
+        verified:
+          tests: "82 passed in tests/sessions (74 + 8 new, all 8 red first). 68 passed in tests/pipeline -k persist."
+          migration: "0096 applied; second run reports already-applied; schema at 0096. sessions now carries message_count, completed_turns, identity_key."
+          lint: "ruff clean on every touched file; src/ total 46 = DEBT-1 baseline, zero added."
+          types: "mypy src/ -> 78, byte-identical to the DEBT-8 baseline. Zero added."
+          live: "Restarted onto the new schema — 1254 log lines in 3 minutes, ZERO ERROR/CRITICAL. conversation_sweep executing cleanly against the renamed column, which proves the read path live."
+        not_yet_proven_live: >
+          The counters read 0/0 and identity_key NULL because no message has arrived since the
+          restart. Stated rather than implied: the WRITE path is proven by tests against a real
+          database, not yet by a real turn. One inbound message closes it, and that belongs to
+          the validate stage.
+      - date: 2026-07-25
         slice: "3b part 3 — the sweeper: a boundary on the CLOCK, not on traffic"
         files:
           - "src/stackowl/sessions/store.py — sweep(), plus the double-announce guard in resolve_for"

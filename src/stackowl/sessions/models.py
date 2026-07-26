@@ -86,6 +86,13 @@ class SessionSource:
     #: a Slack lane is a hash that was never a channel id at all. ``None`` when the
     #: channel cannot state a target (CLI); that is honest, not a failure.
     chat_target: str | None = None
+    #: WHO this message is from, after alias resolution — the key durable
+    #: knowledge is filed under. Carried on the lane so the rollover summary can
+    #: be staged where recall actually looks: facts are about a PERSON, not about
+    #: which owl happened to hear them. ``None`` when the channel has no resolver
+    #: or the lane has no person behind it (a runner lane); fabricating one would
+    #: misattribute somebody's memory.
+    identity_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +110,16 @@ class SessionEntry:
     channel: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
-    turn_count: int = 0
+    #: Inbound messages on THIS incarnation. Replaces ``turn_count``, which was
+    #: never incremented by anything — see migration 0096.
+    message_count: int = 0
+    #: Turns on this incarnation that produced a reply. Kept separate from
+    #: ``message_count`` because the DIFFERENCE is the signal: a lane where the
+    #: two diverge is a lane that is failing to answer.
+    completed_turns: int = 0
+    #: Who this lane belongs to, after alias resolution. What a rollover summary
+    #: is filed under, and the owner the sweeper binds its stores to.
+    identity_key: str | None = None
     #: Where to SEND to reach this lane, in the channel's own terms. Stored rather
     #: than derived: a composite lane key is not int()-able into a chat id, and
     #: parsing one would couple every delivery path to the key's exact shape.
@@ -216,6 +232,7 @@ def new_entry(source: SessionSource, now: datetime.datetime,
         created_at=now,
         updated_at=now,
         chat_id=source.chat_target,
+        identity_key=source.identity_key,
     )
 
 
@@ -223,7 +240,7 @@ def new_entry(source: SessionSource, now: datetime.datetime,
 # store, the migration and the mirror cannot drift apart.
 ENTRY_FIELDS: tuple[str, ...] = (
     "session_key", "session_id", "owl_name", "channel", "created_at", "updated_at",
-    "turn_count", "suspended", "resume_pending", "resume_reason", "was_auto_reset",
+    "message_count", "suspended", "resume_pending", "resume_reason", "was_auto_reset",
     "auto_reset_reason", "is_fresh_reset", "expiry_finalized", "restart_failures",
-    "chat_id",
+    "chat_id", "completed_turns", "identity_key",
 )

@@ -40,9 +40,9 @@ _MIRROR_NAME = "sessions.json"
 
 _COLUMNS = (
     "session_key, session_id, owl_name, channel, created_at, updated_at, "
-    "turn_count, suspended, resume_pending, resume_reason, was_auto_reset, "
+    "message_count, suspended, resume_pending, resume_reason, was_auto_reset, "
     "auto_reset_reason, is_fresh_reset, expiry_finalized, restart_failures, "
-    "chat_id"
+    "chat_id, completed_turns, identity_key"
 )
 
 
@@ -56,7 +56,9 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
         channel=row["channel"],
         created_at=datetime.datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.datetime.fromisoformat(row["updated_at"]),
-        turn_count=int(row["turn_count"] or 0),
+        message_count=int(row["message_count"] or 0),
+        completed_turns=int(row["completed_turns"] or 0),
+        identity_key=row.get("identity_key"),
         suspended=bool(row["suspended"]),
         resume_pending=bool(row["resume_pending"]),
         resume_reason=row.get("resume_reason"),
@@ -146,31 +148,44 @@ class SessionStore:
 
         # The newest message wins on the send target — a Telegram group upgraded to
         # a supergroup re-keys the chat while staying the SAME lane — but a message
-        # that carries no target must not erase one we already have.
+        # that carries no target must not erase one we already have. The identity
+        # follows the same rule for the same reason: a CLI turn that cannot state
+        # one must not unlink the lane from its owner, or the next rollover summary
+        # is filed nowhere.
         target = source.chat_target or (existing.chat_id if existing else None)
+        identity = source.identity_key or (existing.identity_key if existing else None)
 
         if existing is None:
             entry = SessionEntry(
                 session_key=key, session_id=new_session_id(now),
                 owl_name=source.owl_name, channel=source.channel,
                 created_at=now, updated_at=now, chat_id=target,
+                identity_key=identity, message_count=1,
             )
         elif decision.mints_new_incarnation:
             # A rollover ENDS an incarnation; it never destroys a transcript
             # (invariant I6). The old session_id stays referenced by messages/
             # cost_records, so the conversation remains searchable.
+            #
+            # Both counters restart at the boundary: they describe THIS run, not
+            # the lane's lifetime. message_count starts at 1 because the message
+            # that crossed the boundary belongs to the new incarnation.
             entry = existing.evolve(
                 session_id=new_session_id(now),
-                created_at=now, updated_at=now, turn_count=0,
+                created_at=now, updated_at=now,
+                message_count=1, completed_turns=0,
                 suspended=False, resume_pending=False, resume_reason=None,
                 was_auto_reset=decision.reason is not None
                 and decision.reason.is_automatic,
                 auto_reset_reason=decision.reason,
                 is_fresh_reset=False, expiry_finalized=False,
-                restart_failures=0, chat_id=target,
+                restart_failures=0, chat_id=target, identity_key=identity,
             )
         else:
-            entry = existing.evolve(updated_at=now, chat_id=target)
+            entry = existing.evolve(
+                updated_at=now, chat_id=target, identity_key=identity,
+                message_count=existing.message_count + 1,
+            )
 
         await self.save(entry)
         log.gateway.info(
@@ -191,7 +206,8 @@ class SessionStore:
                     "session_key": key, "old_session_id": existing.session_id,
                     "new_session_id": entry.session_id,
                     "reason": decision.reason.value if decision.reason else None,
-                    "turn_count": existing.turn_count,
+                    "message_count": existing.message_count,
+                    "completed_turns": existing.completed_turns,
                 }},
             )
             self._publish_rollover(existing, entry, decision.reason)
@@ -218,7 +234,13 @@ class SessionStore:
             "reason": reason.value if reason else None,
             "owl_name": old.owl_name,
             "channel": old.channel,
-            "turn_count": old.turn_count,
+            # Everything a consumer needs to enqueue durable work WITHOUT
+            # re-reading the store. identity_key is what the summary is filed
+            # under, and it must travel with the event because the sweeper
+            # publishes at 4 AM with no ingress context to re-derive it from.
+            "identity_key": old.identity_key,
+            "message_count": old.message_count,
+            "completed_turns": old.completed_turns,
             "ended_at": new.created_at.isoformat(),
         }
         try:
@@ -239,11 +261,13 @@ class SessionStore:
         await self._db.execute(
             f"""
             INSERT INTO sessions ({_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_key) DO UPDATE SET
                 session_id=excluded.session_id, owl_name=excluded.owl_name,
                 channel=excluded.channel, created_at=excluded.created_at,
-                updated_at=excluded.updated_at, turn_count=excluded.turn_count,
+                updated_at=excluded.updated_at,
+                message_count=excluded.message_count,
+                completed_turns=excluded.completed_turns,
                 suspended=excluded.suspended, resume_pending=excluded.resume_pending,
                 resume_reason=excluded.resume_reason,
                 was_auto_reset=excluded.was_auto_reset,
@@ -254,16 +278,21 @@ class SessionStore:
                 -- COALESCE, not excluded.chat_id: a channel that cannot state a
                 -- target (CLI) must never blank a real one we already know, or a
                 -- single CLI turn would silently unaddress the Telegram lane.
-                chat_id=COALESCE(excluded.chat_id, sessions.chat_id)
+                chat_id=COALESCE(excluded.chat_id, sessions.chat_id),
+                -- Same COALESCE rule, same reason: a turn that cannot state an
+                -- identity must not unlink the lane from its owner, or the next
+                -- rollover summary is filed where recall never looks.
+                identity_key=COALESCE(excluded.identity_key, sessions.identity_key)
             """,
             (
                 entry.session_key, entry.session_id, entry.owl_name, entry.channel,
                 entry.created_at.isoformat(), entry.updated_at.isoformat(),
-                entry.turn_count, int(entry.suspended), int(entry.resume_pending),
+                entry.message_count, int(entry.suspended), int(entry.resume_pending),
                 entry.resume_reason, int(entry.was_auto_reset),
                 entry.auto_reset_reason.value if entry.auto_reset_reason else None,
                 int(entry.is_fresh_reset), int(entry.expiry_finalized),
                 entry.restart_failures, entry.chat_id,
+                entry.completed_turns, entry.identity_key,
             ),
         )
         await self._project_mirror()
@@ -296,7 +325,8 @@ class SessionStore:
             return None
         fresh = existing.evolve(
             session_id=new_session_id(stamp),
-            created_at=stamp, updated_at=stamp, turn_count=0,
+            created_at=stamp, updated_at=stamp,
+            message_count=0, completed_turns=0,
             suspended=False, resume_pending=False, resume_reason=None,
             was_auto_reset=False, auto_reset_reason=reason,
             is_fresh_reset=True, expiry_finalized=False, restart_failures=0,
@@ -307,7 +337,8 @@ class SessionStore:
             extra={"_fields": {
                 "session_key": session_key, "old_session_id": existing.session_id,
                 "new_session_id": fresh.session_id, "reason": reason.value,
-                "turn_count": existing.turn_count,
+                "message_count": existing.message_count,
+                "completed_turns": existing.completed_turns,
             }},
         )
         self._publish_rollover(existing, fresh, reason)
@@ -318,6 +349,29 @@ class SessionStore:
         if not entry.was_auto_reset:
             return entry
         return await self.save(entry.evolve(was_auto_reset=False))
+
+    async def record_completed_turn(self, session_key: str) -> None:
+        """Count a turn that actually produced a reply.
+
+        Kept separate from ``message_count`` (bumped at resolution) because the
+        DIFFERENCE between the two is the signal: a lane receiving messages and
+        completing no turns is a lane that is failing, and one number cannot say
+        that. It is also what a rollover consumer reads to decide whether an
+        incarnation contained a real conversation.
+
+        An UNKNOWN lane is a no-op, never an insert. This is called from the
+        turn-end path, which also runs for background work that never passed
+        through ingress and therefore has no lane; inventing one there would
+        create conversations nobody had.
+        """
+        entry = await self.get(session_key)
+        if entry is None:
+            log.gateway.debug(
+                "session.record_completed_turn: no such lane — not creating one",
+                extra={"_fields": {"session_key": session_key}},
+            )
+            return
+        await self.save(entry.evolve(completed_turns=entry.completed_turns + 1))
 
     async def clear_resume_pending(self, session_key: str) -> None:
         """Called after a resumed turn completes successfully."""
@@ -377,7 +431,8 @@ class SessionStore:
                     "old_session_id": entry.session_id,
                     "new_session_id": None,  # minted lazily on the next message
                     "reason": reason.value if reason else None,
-                    "turn_count": entry.turn_count,
+                    "message_count": entry.message_count,
+                    "completed_turns": entry.completed_turns,
                 }},
             )
             self._publish_rollover(entry, ended, reason)
@@ -435,7 +490,8 @@ class SessionStore:
                         "channel": e.channel,
                         "created_at": e.created_at.isoformat(),
                         "updated_at": e.updated_at.isoformat(),
-                        "turns": e.turn_count,
+                        "messages": e.message_count,
+                        "completed_turns": e.completed_turns,
                     }
                     for e in entries
                 },

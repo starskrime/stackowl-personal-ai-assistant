@@ -288,8 +288,40 @@ async def _record_transcript(state: PipelineState, floored: bool,
                                    "session_id": state.session_id}},
             )
 
+    await _count_completed_turn(state, floored)
+
     # 4. EXIT
     log.memory.debug(
         "[pipeline] persist_turn: exit",
         extra={"_fields": {"trace_id": state.trace_id, "floored": floored}},
     )
+
+
+async def _count_completed_turn(state: PipelineState, floored: bool) -> None:
+    """Record that this lane answered (D01.7 part 4).
+
+    A FLOORED turn is not a completed one. That is the whole point of keeping this
+    separate from ``message_count``: a lane taking messages and completing nothing
+    is a lane that is failing, and the gap between the two counters is the only
+    place that shows. Counting a floored turn here would erase the signal.
+
+    Background work has no incarnation and no lane, so this returns early rather
+    than asking the store about a conversation nobody had.
+    """
+    if floored or not state.session_id:
+        return
+    # getattr for the same reason the transcript above uses it: a caller may
+    # inject a narrower services object, and a counter is never worth an
+    # AttributeError on the live turn path.
+    store = getattr(get_services(), "session_store", None)
+    if store is None:
+        return
+    try:
+        await store.record_completed_turn(state.session_key)
+    except Exception as exc:
+        log.memory.warning(
+            "[pipeline] persist_turn: completed-turn count failed — turn unaffected",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id,
+                               "session_key": state.session_key}},
+        )

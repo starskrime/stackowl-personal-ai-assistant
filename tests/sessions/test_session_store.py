@@ -67,7 +67,11 @@ async def test_i2_a_rollover_keeps_the_key_and_mints_a_new_id(store) -> None:
     assert second.session_key == first.session_key   # lane unchanged (I1)
     assert second.session_id != first.session_id     # incarnation new (I2)
     assert second.was_auto_reset is True
-    assert second.turn_count == 0
+    # Both counters describe THIS run, not the lane's lifetime. message_count is
+    # 1 because the message that crossed the boundary belongs to the new
+    # incarnation; nothing has been answered on it yet.
+    assert second.message_count == 1
+    assert second.completed_turns == 0
 
 
 @pytest.mark.asyncio
@@ -344,7 +348,10 @@ async def test_new_ends_the_incarnation_and_starts_another(bus_store) -> None:
     assert fresh is not None
     assert fresh.session_key == first.session_key, "same lane (I1)"
     assert fresh.session_id != first.session_id, "new incarnation (I2)"
-    assert fresh.turn_count == 0
+    # /new starts an empty run: unlike an automatic boundary, no message crossed
+    # into it — the next one to arrive will be its first.
+    assert fresh.message_count == 0
+    assert fresh.completed_turns == 0
 
 
 @pytest.mark.asyncio
@@ -479,3 +486,130 @@ async def test_the_sweeper_skips_a_lane_awaiting_recovery(bus_store) -> None:
     await store.save(entry.evolve(resume_pending=True))
     assert await store.sweep(at(22, 12)) == (0, 0)
     assert bus.events == []
+
+
+# ---------------------------------------------------------------------------
+# D01.7 slice 3b part 4 — the lane row tells the truth.
+#
+# turn_count counted NOTHING: minted at 0, reset to 0, persisted, read back and
+# published in the rollover payload, with no code path ever incrementing it. The
+# live lane read 0 against a 4-message transcript. These tests pin the two
+# counters that replace it, and the identity the lane must carry so a summary is
+# filed where recall looks.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_message_count_rises_with_every_inbound_message(store) -> None:
+    """The defect, stated as a test: a counter that never counts is a lie."""
+    first, _, _ = await store.resolve_for(src(), at(20, 12))
+    assert first.message_count == 1
+    second, _, _ = await store.resolve_for(src(), at(20, 13))
+    assert second.message_count == 2
+    third, _, _ = await store.resolve_for(src(), at(20, 14))
+    assert third.message_count == 3
+
+
+@pytest.mark.asyncio
+async def test_message_count_survives_the_round_trip(store) -> None:
+    """Persisted, not merely held — the old field round-tripped a constant."""
+    await store.resolve_for(src(), at(20, 12))
+    await store.resolve_for(src(), at(20, 13))
+    reloaded = await store.get(build_key())
+    assert reloaded is not None
+    assert reloaded.message_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_rollover_resets_both_counters(store) -> None:
+    """A new incarnation counts its OWN turns, not the lane's lifetime."""
+    await store.resolve_for(src(), at(20, 22))
+    await store.record_completed_turn(build_key())
+    rolled, branch, _ = await store.resolve_for(src(), at(21, 9))
+    assert branch is Branch.EXPIRED
+    assert rolled.message_count == 1      # this message started the new run
+    assert rolled.completed_turns == 0
+
+
+@pytest.mark.asyncio
+async def test_completed_turns_counts_replies_not_messages(store) -> None:
+    """The difference between the two counters is the health signal."""
+    await store.resolve_for(src(), at(20, 12))
+    await store.resolve_for(src(), at(20, 13))
+    await store.record_completed_turn(build_key())
+    reloaded = await store.get(build_key())
+    assert reloaded is not None
+    assert reloaded.message_count == 2
+    assert reloaded.completed_turns == 1
+
+
+@pytest.mark.asyncio
+async def test_record_completed_turn_on_an_unknown_lane_is_a_no_op(store) -> None:
+    """Never invent a lane from a turn-end hook. It runs on background work too."""
+    await store.record_completed_turn("owl:Nobody:cli:dm:nope")
+    assert await store.get("owl:Nobody:cli:dm:nope") is None
+
+
+@pytest.mark.asyncio
+async def test_the_lane_records_who_it_belongs_to(store) -> None:
+    """identity_key is what makes a rollover summary reachable by recall.
+
+    Facts are filed under the PERSON. A summary filed under the owl-prefixed lane
+    is one recall never sees — the same defect fixed in turn_persist, which this
+    column exists to stop recurring at the boundary.
+    """
+    source = SessionSource("Brain", "telegram", ChatType.DM, "123",
+                           identity_key="bakir")
+    entry, _, _ = await store.resolve_for(source, at(20, 12))
+    assert entry.identity_key == "bakir"
+    reloaded = await store.get(entry.session_key)
+    assert reloaded is not None
+    assert reloaded.identity_key == "bakir"
+
+
+@pytest.mark.asyncio
+async def test_a_message_without_an_identity_never_erases_a_known_one(store) -> None:
+    """Same rule as chat_target: the newest message wins, but silence does not.
+
+    A CLI turn that cannot state an identity must not unlink the lane from its
+    owner, or the next rollover summary is filed nowhere.
+    """
+    known = SessionSource("Brain", "telegram", ChatType.DM, "123",
+                          identity_key="bakir")
+    await store.resolve_for(known, at(20, 12))
+    anonymous = SessionSource("Brain", "telegram", ChatType.DM, "123")
+    entry, _, _ = await store.resolve_for(anonymous, at(20, 13))
+    assert entry.identity_key == "bakir"
+
+
+@pytest.mark.asyncio
+async def test_the_rollover_payload_carries_identity_and_both_counters(store) -> None:
+    """A consumer must not have to re-read the store to enqueue durable work.
+
+    The payload previously published turn_count, which was always 0 — a consumer
+    gating on it read a constant.
+    """
+    seen: list[dict] = []
+
+    class _Bus:
+        def emit(self, event: str, payload: dict) -> None:
+            seen.append(payload)
+
+    store._event_bus = _Bus()
+    source = SessionSource("Brain", "telegram", ChatType.DM, "123",
+                           identity_key="bakir")
+    await store.resolve_for(source, at(20, 22))
+    await store.record_completed_turn(build_key())
+    await store.resolve_for(source, at(21, 9))
+
+    assert len(seen) == 1
+    payload = seen[0]
+    assert payload["identity_key"] == "bakir"
+    assert payload["message_count"] == 1
+    assert payload["completed_turns"] == 1
+    assert "turn_count" not in payload
+
+
+def build_key() -> str:
+    from stackowl.sessions.models import build_session_key
+    return build_session_key(src())
