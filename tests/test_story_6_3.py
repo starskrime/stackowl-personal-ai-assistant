@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import FactExtractionParseError
-from stackowl.memory.extraction_handler import FactExtractionJobHandler
 from stackowl.memory.fact_extractor import (
     EXTRACTED_FACT_SOURCE_TYPE,
     ExtractedFactDraft,
@@ -25,10 +24,8 @@ from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.fact_reinforcer import FactReinforcer
 from stackowl.memory.models import StagedFact
 from stackowl.memory.pruner import MemoryPruner, PruneReport
-from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.memory.sqlite_helpers import pack_embedding
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.scheduler.job import Job
 
 # ---------------------------------------------------------------------------
 # Fixtures & doubles
@@ -521,67 +518,3 @@ async def test_memory_pruner_keeps_reinforced(db: DbPool) -> None:
     rows = await db.fetch_all("SELECT fact_id FROM committed_facts")
     assert any(r["fact_id"] == fact_id for r in rows)
 
-
-# ---------------------------------------------------------------------------
-# FactExtractionJobHandler
-# ---------------------------------------------------------------------------
-
-
-async def test_extraction_handler_extracts_and_stages(db: DbPool) -> None:
-    # Seed a conversation row + a couple of messages.
-    conv_id = "conv-extract-1"
-    session_key = "sess-extract-1"
-    now = datetime.now(UTC).isoformat()
-    await db.execute(
-        """INSERT INTO conversations (id, session_key, owl_name, started_at, message_count)
-           VALUES (?, ?, ?, ?, ?)""",
-        (conv_id, session_key, "secretary", now, 1),
-    )
-    await db.execute(
-        """INSERT INTO messages (id, conversation_id, role, content, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        ("m1", conv_id, "user", "I prefer detailed responses", now),
-    )
-
-    provider = _MockProvider(
-        response='[{"content": "user prefers detail", "confidence": 0.85}]'
-    )
-    extractor = FactExtractor(provider=provider, sensitive_categories=[])
-    bridge = SqliteMemoryBridge(db)
-    handler = FactExtractionJobHandler(extractor, bridge, db)
-
-    job = Job(
-        job_id="j1",
-        handler_name="fact_extraction",
-        schedule="manual",
-        idempotency_key=f"fact_extraction:{session_key}",
-        last_run_at=None,
-        next_run_at=now,
-        status="pending",
-        retry_count=0,
-    )
-    result = await handler.execute(job)
-    assert result.success is True
-    staged = await bridge.list_staged()
-    assert len(staged) == 1
-    assert staged[0].content == "user prefers detail"
-
-
-async def test_extraction_handler_invalid_idempotency_key(db: DbPool) -> None:
-    provider = _MockProvider()
-    extractor = FactExtractor(provider=provider)
-    bridge = SqliteMemoryBridge(db)
-    handler = FactExtractionJobHandler(extractor, bridge, db)
-    job = Job(
-        job_id="j2",
-        handler_name="fact_extraction",
-        schedule="manual",
-        idempotency_key="not-prefixed",
-        last_run_at=None,
-        next_run_at=datetime.now(UTC).isoformat(),
-        status="pending",
-        retry_count=0,
-    )
-    result = await handler.execute(job)
-    assert result.success is False
-    assert result.error is not None

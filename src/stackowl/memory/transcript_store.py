@@ -5,7 +5,9 @@ and **nothing has ever written to them**. Six subsystems read them and have
 therefore been operating on an empty result set:
 
 * ``owls/evolution.py`` — fetches excerpts to evolve owl DNA
-* ``memory/extraction_handler.py`` — extracts facts from a session's messages
+* ``memory/extraction_handler.py`` — extracted facts from a session's messages.
+  DELETED in D01.7 part 5b: it duplicated ``memory/conversation_miner.py`` and
+  nothing had ever enqueued it. The boundary now nudges the miner instead.
 * ``tools/knowledge/session_search.py`` — searches past conversations
 * ``tools/knowledge/transcripts.py`` — reads a transcript back
 * ``tools/knowledge/session_access.py`` — resolves a session's owner, for authz

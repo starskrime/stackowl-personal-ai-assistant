@@ -943,6 +943,9 @@ class StartupOrchestrator:
         # Aliased: `SessionStore` is already bound above to parliament's DEBATE
         # store. Same word, different concept — the third such collision in this
         # item, and the reason the rename was worth doing.
+        from stackowl.memory.rollover_summary_handler import (
+            register_rollover_consumer,
+        )
         from stackowl.sessions import SessionStore as ConversationSessionStore
         from stackowl.sessions import policy_from_settings
 
@@ -959,6 +962,12 @@ class StartupOrchestrator:
                                "at_hour": session_settings.at_hour,
                                "idle_minutes": session_settings.idle_minutes}},
         )
+        # The boundary's memory work (D01.7 part 5b). Subscribed HERE because this
+        # is where the EventBus and the pool meet; the handler that does the work is
+        # registered by MemoryAssembly. The consumer only ENQUEUES a durable job —
+        # a rollover fires at 4 AM unattended, so anything done inline is lost if
+        # the process dies mid-summary (Bakir's Q15).
+        register_rollover_consumer(event_bus, db_pool)
 
         notification_components = await NotificationAssembly.build(
             db=db_pool,

@@ -103,7 +103,7 @@ async def test_build_wires_all_eleven_components(tmp_db: DbPool) -> None:
     assert components.kuzu_sync_handler is not None
     assert components.dream_worker is not None
     assert components.fact_extractor is not None
-    assert components.fact_extraction_handler is not None
+    assert components.rollover_summary_handler is not None
 
 
 async def test_build_registers_dream_worker_with_scheduler(tmp_db: DbPool) -> None:
@@ -116,14 +116,21 @@ async def test_build_registers_dream_worker_with_scheduler(tmp_db: DbPool) -> No
     assert handler.handler_name == "dream_worker"
 
 
-async def test_build_registers_fact_extraction_handler(tmp_db: DbPool) -> None:
+async def test_build_registers_rollover_summary_handler(tmp_db: DbPool) -> None:
+    """Was test_build_registers_fact_extraction_handler.
+
+    The handler it pinned was deleted in D01.7 part 5b: it duplicated
+    conversation_miner and nothing had ever enqueued it, so this test asserted
+    that an unreachable component was reachable. Re-pointed at the handler that
+    replaced it — which IS enqueued, by the session.rollover consumer.
+    """
     settings = Settings(memory=MemorySettings())
     await MemoryAssembly.build(
         db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
     )
-    handler = HandlerRegistry.instance().get("fact_extraction")
+    handler = HandlerRegistry.instance().get("rollover_summary")
     assert handler is not None
-    assert handler.handler_name == "fact_extraction"
+    assert handler.handler_name == "rollover_summary"
 
 
 async def test_build_seeds_dream_worker_schedule(tmp_db: DbPool) -> None:

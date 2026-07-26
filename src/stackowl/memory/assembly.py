@@ -14,9 +14,10 @@ Per the BMad v2 wiring audit (plan: gleaming-finding-puppy.md, Commit A):
   ``register_dream_worker_handler`` factory in
   ``stackowl.scheduler.handlers.dream_worker`` (respects the B9 scheduler
   boundary — handlers register via HandlerRegistry, not direct dispatch).
-* FactExtraction handler is registered the same way and waits for per-session
-  jobs to be enqueued upstream (e.g. by ``consolidate.py`` after N messages —
-  separate wiring not in this commit).
+* RolloverSummaryHandler is registered the same way and waits for the
+  ``session.rollover`` consumer to enqueue one job per conversation boundary
+  (D01.7). It replaced FactExtractionJobHandler, which was registered here, never
+  enqueued by anything, and duplicated ``conversation_miner``.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.contradiction_detector import ContradictionDetector
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
     from stackowl.memory.entity_extractor import EntityExtractor
-    from stackowl.memory.extraction_handler import FactExtractionJobHandler
     from stackowl.memory.fact_extractor import FactExtractor
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.kuzu_adapter import KuzuAdapter
@@ -43,6 +43,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.preferences import PreferenceStore
     from stackowl.memory.pruner import MemoryPruner
+    from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
     from stackowl.providers.registry import ProviderRegistry
     from stackowl.tenancy.identity import IdentityResolver
@@ -71,7 +72,7 @@ class MemoryComponents:
     kuzu_sync_handler: KuzuSyncJobHandler
     dream_worker: DreamWorkerJobHandler
     fact_extractor: FactExtractor
-    fact_extraction_handler: FactExtractionJobHandler
+    rollover_summary_handler: RolloverSummaryHandler
     lessons_index: LessonsIndex
     # Health surface for the knowledge-graph layer (ok / down).
     graph_health: GraphContributor
@@ -106,7 +107,6 @@ class MemoryAssembly:
         from stackowl.embeddings.registry import EmbeddingRegistry
         from stackowl.memory.contradiction_detector import ContradictionDetector
         from stackowl.memory.entity_extractor import EntityExtractor
-        from stackowl.memory.extraction_handler import FactExtractionJobHandler
         from stackowl.memory.fact_extractor import FactExtractor
         from stackowl.memory.fact_promoter import FactPromoter
         from stackowl.memory.kuzu_adapter import KuzuAdapter
@@ -114,6 +114,7 @@ class MemoryAssembly:
         from stackowl.memory.lancedb_adapter import LanceDBAdapter
         from stackowl.memory.preferences import PreferenceStore
         from stackowl.memory.pruner import MemoryPruner
+        from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
         from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
         from stackowl.paths import StackowlHome
         from stackowl.scheduler.base import HandlerRegistry
@@ -281,18 +282,25 @@ class MemoryAssembly:
             db, interval_minutes=mem.dream_worker_interval_minutes
         )
 
-        # 7b) FactExtractionJobHandler — register so the scheduler dispatches
-        # per-session extraction jobs as they get enqueued upstream.
-        fact_extraction_handler = FactExtractionJobHandler(
-            extractor=fact_extractor,
-            memory_bridge=bridge,
+        # 7b) RolloverSummaryHandler — the conversation BOUNDARY's memory work
+        # (D01.7). Enqueued per boundary by the session.rollover consumer, which
+        # the orchestrator subscribes because that is where the EventBus lives.
+        #
+        # This REPLACES FactExtractionJobHandler, which was registered here and
+        # never enqueued by anything, and which duplicated conversation_miner
+        # (same extractor, same job, over a different source table). The miner is
+        # passed in rather than re-created so the boundary NUDGES the existing
+        # pipeline instead of becoming a second one.
+        rollover_summary_handler = RolloverSummaryHandler(
             db=db,
-            message_limit=mem.extraction_after_n_messages * 4,
+            miner=conversation_miner,
+            bridge=bridge,
+            provider_registry=provider_registry,
         )
-        HandlerRegistry.instance().register(fact_extraction_handler)
+        HandlerRegistry.instance().register(rollover_summary_handler)
         log.memory.info(
-            "[memory] assembly: fact_extraction handler registered",
-            extra={"_fields": {"handler": fact_extraction_handler.handler_name}},
+            "[memory] assembly: rollover_summary handler registered",
+            extra={"_fields": {"handler": rollover_summary_handler.handler_name}},
         )
 
         # Learning Commit 5 — LessonsIndex over the LanceDB "lessons" table.
@@ -323,6 +331,6 @@ class MemoryAssembly:
             kuzu_sync_handler=kuzu_sync_handler,
             dream_worker=dream_worker,
             fact_extractor=fact_extractor,
-            fact_extraction_handler=fact_extraction_handler,
+            rollover_summary_handler=rollover_summary_handler,
             graph_health=graph_health,
         )

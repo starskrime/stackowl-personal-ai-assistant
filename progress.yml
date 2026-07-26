@@ -420,6 +420,25 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-10
+    found: 2026-07-26
+    what: "The ONLY enabled provider is unreachable — llm-gateway.dev.nera.gov does not resolve — so the platform is booting in DEGRADED mode and cannot answer a turn."
+    evidence: >
+      Log, on every boot since 2026-07-26T13:00: '[startup] provider_probe.check: all
+      providers unreachable after 3 attempts — NeraAiRaw [openai]: [Errno -5] No address
+      associated with hostname', followed by '[startup] providers: ALL providers
+      unreachable — booting in DEGRADED mode'. `getent hosts llm-gateway.dev.nera.gov`
+      returns nothing. Restarts earlier the same day showed ZERO ERROR/CRITICAL, so this
+      began mid-day.
+    not_caused_by_current_work: >
+      D01.7 part 5b touches no provider configuration. The failure is DNS resolution of an
+      external host, and it first appears BEFORE the restart that carried part 5b.
+    impact: >
+      Bakir's assistant currently answers nothing, and no D01 item can be validated
+      end-to-end (the rollover summary needs a reachable model). The platform itself is
+      behaving correctly — degraded mode with a loud error is the designed response.
+    decision: "SURFACED to Bakir, not fixed: it is an environment/network fact outside the repo, and guessing at a new base_url would be inventing config."
+    status: open
   - id: DEBT-9
     found: 2026-07-25
     what: "Three tests fail whenever the live platform is running, because they build real components against the user's real ~/.stackowl instead of a temp HOME."
@@ -1412,6 +1431,62 @@ items:
         configured, so identity_key equals today's chat id and every existing row stays
         reachable with no migration at all.
     changes:
+      - date: 2026-07-26
+        slice: "3b part 5b — the boundary does the memory work"
+        files:
+          - "src/stackowl/memory/rollover_summary_handler.py (new) — the handler + register_rollover_consumer"
+          - "src/stackowl/memory/prompts/conversation_summary.j2 (new) — language-neutral, structured notability"
+          - "src/stackowl/memory/extraction_handler.py — DELETED (the duplicate)"
+          - "src/stackowl/memory/assembly.py — registers rollover_summary in place of fact_extraction"
+          - "src/stackowl/startup/orchestrator.py — subscribes the consumer where the EventBus and pool meet"
+          - "src/stackowl/memory/transcript_store.py — its 'six dead readers' list corrected"
+          - "tests/memory/test_rollover_summary.py (new) — 18 tests, written FIRST and red"
+          - "tests/memory/test_assembly.py, tests/test_story_6_3.py — re-pointed / removed with the deletion"
+        what_it_does: >
+          session.rollover -> a subscriber enqueues ONE durable scheduler job keyed
+          rollover:{lane}:{ended_incarnation} -> the handler opens a DurableTask row as a
+          checkpoint record, nudges the EXISTING ConversationMiner, and writes ONE
+          narrative artifact (what was decided, what went wrong) at the STANDARD tier,
+          staged as conversation_summary under identity_key so 5a's promoter change
+          commits it and recall finds it.
+        the_duplicate_is_gone: >
+          FactExtractionJobHandler and its registration are DELETED, with Bakir's explicit
+          consent. FactExtractor stays — ConversationMiner uses it. Nothing was lost: the
+          miner already does that job on live data (98k facts) and nothing had ever
+          enqueued the handler.
+        design_notes:
+          - "SCOPING IS THE INVARIANT. ConversationMiner.mine_session's argument is matched against staged_facts.source_ref, which turn_persist fills with the OWNER scope — NOT a session key, despite the parameter name. Passing the owl-prefixed lane would mine a source_ref with no rows: succeeding, reporting 0, and never learning anything. The headline test asserts the identity is passed, not the lane. This is what part 4's identity_key column was FOR."
+          - "The gate is 'the ended incarnation has transcript rows'. A lane that said nothing costs nothing, which is the whole cost control now that Q14's structural gate is withdrawn (its only signal was the counter that counted nothing). Keyed on the INCARNATION, because a conversations row IS one incarnation — so it cannot summarise a previous run of the same lane."
+          - "Notability is carried in a STRUCTURED field ({notable, summary}), never sniffed out of prose. Matching phrases would be an English keyword list, and the prompt asks the model to answer in the conversation's own language."
+          - "notable=true with an empty summary is treated as unusable, not as a summary. Unparseable output stages NOTHING and reports summary_parsed=false — a model that ignores the schema must not have its prose stored as a fact."
+          - "The DurableTask is a CHECKPOINT RECORD driven by the handler, not a goal fed to the ReAct kernel: the kernel drives an agent loop toward an objective, and this is one call. A test asserts a failed summary leaves the row 'failed', never 'running' — a row stuck running for ever is the zombie the record exists to prevent."
+          - "Idempotency is the DATABASE's (jobs.idempotency_key is UNIQUE), not the event's. One boundary produces one summary however many times it is announced, which matters because the sweeper finalises on the clock and the next inbound message resolves the same lane."
+          - "params['run_once']=True — the scheduler's own convention (scheduler._is_recurring). Without it the job would re-arm onto a cadence for ever and re-summarise a conversation that ended once. Found by reading the scheduler rather than assuming 'manual' meant one-shot."
+          - "A miner failure does NOT abort the narrative, and a provider failure still reports what was mined. The two halves are independent; losing both because one failed would be the coupling turn_persist was already careful to avoid."
+        failing_tests_escalated_not_patched:
+          what: >
+            Deleting the handler broke test_story_6_3's two tests of it and
+            test_assembly's registration test + component assertion.
+          action: >
+            The two story_6_3 tests were REMOVED with the handler they tested, and
+            test_assembly's were RE-POINTED at rollover_summary. Called out rather than
+            folded in: test_build_registers_fact_extraction_handler was asserting that an
+            UNREACHABLE component was reachable, which is why it passed for months while
+            the feature did nothing.
+        verified:
+          tests: "38 passed (18 new rollover tests + test_story_6_3 after the removal). 9 passed in tests/memory/test_assembly.py; the 1 failure is DEBT-9 verbatim — kuzu lock held by the running platform, raised inside KuzuAdapter init before components are returned, so a field rename cannot cause it."
+          lint: "src/ 46 = DEBT-1 baseline; tests/ 285 = baseline. Zero added (the one hit in a touched test file is at a line this slice did not modify)."
+          types: "mypy src/ -> 78, byte-identical to the DEBT-8 baseline. One NEW error was introduced and fixed: SUMMARY_SOURCE_TYPE was typed str, so mypy could not check it against StagedFact's Literal — a typo would have surfaced only as a CHECK violation inside a 4 AM job. Now typed as the Literal."
+          live_wiring: "Restarted — 1257 lines. Both boot lines present: '[memory] assembly: rollover_summary handler registered' and '[memory] rollover_consumer: subscribed'."
+        not_proven_live_and_why: >
+          END-TO-END IS UNPROVEN. The 12 ERRORs in the restart window are
+          provider-unreachable, and the cause is environmental, not this change:
+          llm-gateway.dev.nera.gov DOES NOT RESOLVE ("[Errno -5] No address associated
+          with hostname"), first seen at 2026-07-26T13:00 — before this restart. The
+          platform is booting in DEGRADED mode, which is its own self-heal path behaving
+          correctly. A real summary needs a reachable model, so the paid call, the staged
+          artifact and its promotion are proven only against a real database, not against
+          the live gateway. Belongs to the validate stage once the gateway is back.
       - date: 2026-07-26
         slice: "3b part 5a — a fact can be AUTHORED ONCE (the summary's reachability)"
         files:
