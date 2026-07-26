@@ -171,6 +171,104 @@ async def test_empty_after_varied_retry_returns_empty_not_crash(
     assert len(completions.calls) == 2  # exactly one varied retry, no loop
 
 
+class _FakeReasoningStarvedMessage:
+    """A message whose reasoning went to its OWN field, leaving content empty.
+
+    This is the live shape (2026-07-26): the endpoint returns
+    ``reasoning_content`` alongside an empty ``content`` and
+    ``finish_reason="length"`` — the budget ran out mid-reasoning, before any
+    answer was emitted. Nothing was "stripped"; it arrived empty.
+    """
+
+    def __init__(self, content: str | None, reasoning_content: str) -> None:
+        self.content = content
+        self.tool_calls = None
+        self.reasoning_content = reasoning_content
+
+
+class _ReasoningStarvedThenAnswer:
+    """Round 1 starves on reasoning; round 2 returns a real answer.
+
+    Records each call's kwargs so a test can assert HOW the retry differed.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            resp = _FakeResponse(None)
+            resp.choices[0].message = _FakeReasoningStarvedMessage(  # type: ignore[assignment]
+                "", "Here's a thinking process:\n1. Analyze the user input"
+            )
+            resp.choices[0].finish_reason = "length"
+            return resp
+        resp = _FakeResponse("the real answer")
+        resp.choices[0].finish_reason = "stop"
+        return resp
+
+
+@pytest.mark.asyncio
+async def test_empty_retry_disables_thinking_when_reasoning_starved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEBT-6 — the retry must address the CAUSE, not the wording.
+
+    When the response shape says the budget was spent on reasoning
+    (finish_reason == "length", a non-empty reasoning field, empty content), a
+    reworded prompt cannot help: the retry gets the same tiny budget and still
+    reasons first, so it fails identically. Measured live — 193 events in one
+    day, none of which the varied retry ever recovered. The retry must instead
+    turn reasoning OFF and re-ask the SAME question.
+    """
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ReasoningStarvedThenAnswer()
+    provider = _make_provider(_FakeClient(completions))  # type: ignore[arg-type]
+
+    result = await provider.complete([Message(role="user", content="hi")], model="")
+
+    assert result.content == "the real answer"
+    assert len(completions.calls) == 2
+    retry_extra_body = completions.calls[1].get("extra_body", {})
+    assert retry_extra_body.get("chat_template_kwargs") == {"enable_thinking": False}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_starved_retry_does_not_reword_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Law 1 — the cause is the budget, not the wording, so the retry re-asks
+    the IDENTICAL question. Appending a nudge would mutate the prompt for no
+    benefit and cost the cached prefix."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ReasoningStarvedThenAnswer()
+    provider = _make_provider(_FakeClient(completions))  # type: ignore[arg-type]
+
+    await provider.complete([Message(role="user", content="hi")], model="")
+
+    assert completions.calls[1]["messages"] == completions.calls[0]["messages"]
+
+
+@pytest.mark.asyncio
+async def test_wording_nudge_still_used_when_not_reasoning_starved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The existing backstop is preserved for a genuinely empty generation (no
+    reasoning field, not truncated) — that is a different failure with a
+    different remedy, and this fix must not remove it."""
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+    completions = _ScriptedCompletions(["", "recovered answer"])
+    provider = _make_provider(_FakeClient(completions))
+
+    result = await provider.complete([Message(role="user", content="hi")], model="")
+
+    assert result.content == "recovered answer"
+    assert len(completions.calls) == 2
+    # Still the varied-prompt nudge, NOT the thinking-off path.
+    assert len(completions.calls[1]["messages"]) > len(completions.calls[0]["messages"])
+
+
 class _FakeDelta:
     def __init__(self, content: str | None) -> None:
         self.content = content

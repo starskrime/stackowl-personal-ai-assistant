@@ -692,6 +692,100 @@ known_debt:
     evidence: "Log, repeatedly: '[openai] complete: empty after think-strip — retrying once with a varied prompt' then 'still empty after varied retry — returning empty for the downstream floor'."
     impact: "Every occurrence costs a full paid call and yields nothing. Seen 3+ times in a 5-message conversation."
     decision: "Tracked. Needs its own root-cause pass — likely a reasoning model spending max_tokens on reasoning_content."
+    status: resolved
+    root_cause:
+      date: 2026-07-26
+      what: >
+        ModelProvider.health_check() (providers/base.py) sent "ping" with
+        max_tokens=1 and NO disable_thinking. The deployed model emits its
+        chain-of-thought into a SEPARATE reasoning_content field and reaches an
+        answer only after finishing, so content came back empty every single
+        time. The 2026-07-25 hypothesis in this file was correct: a token-budget
+        bug, not a provider fault.
+      measured_against_the_live_gateway: >
+        max_tokens 1 / 16 / 64 all returned finish_reason="length" with empty
+        content and reasoning_content of 4 / 55 / 239 chars. 256 was the first
+        budget that produced any content ('\n\nOK.'). With
+        chat_template_kwargs={"enable_thinking": False} the SAME 1-token budget
+        returned 'pong' with reasoning_len=0 — so the hint is honored by this
+        gateway and was simply never passed on this path.
+      the_misleading_narrative: >
+        The log said "empty after think-strip", which reads as though
+        strip_think() ate the answer. It did not — content arrived empty at the
+        wire and strip_think was a no-op. That misdirection is part of why this
+        survived; the message now says "empty content" and carries
+        finish_reason, reasoning_len, max_tokens_sent and completion_tokens.
+      why_the_retry_could_never_help: >
+        The empty-retry backstop appended a wording nudge ("answer directly,
+        without a reasoning preamble") but kept the SAME tiny budget with
+        thinking still on, so it deterministically failed again. It was the
+        second paid call of every occurrence and recovered none of them.
+      scale: >
+        193 events on 2026-07-26 against 221 health sweeps — essentially 1:1,
+        two paid calls each (~386 calls/day returning nothing). session_key was
+        NULL on all 193: ZERO user turns. The "3+ times in a 5-message
+        conversation" noted on 2026-07-25 is a different surface, not yet
+        reproduced, and is NOT closed by this fix.
+      caller_chain: "health_sweep -> HealthAggregator.collect() -> ProviderRegistry.health_check() (a contributor) -> each provider's health_check() -> complete(ping, max_tokens=1)."
+      not_affected: >
+        The classifiers are SAFE. interaction/classifier_base.py's
+        safe_complete() defaults disable_thinking=True, so the three
+        intent_classifier sites at max_tokens=4 already route the hint —
+        verified live (max_tokens=4 + no-think returns 'NO'). health_check() was
+        the ONE site calling complete() directly and bypassing that discipline.
+    resolution:
+      date: 2026-07-26
+      decided_by: Bakir
+      fix_1_root_cause: >
+        health_check() now passes disable_thinking=True and _PROBE_MAX_TOKENS
+        (16 — a technical floor for a one-word acknowledgement, same class as
+        _MIN_OUTPUT_TOKENS, NOT a shaping cap; measured, because max_tokens=1
+        still truncates even with reasoning off, making a truncated probe
+        indistinguishable from a broken one).
+      fix_2_architecture: >
+        complete()'s empty branch now dispatches on the response SHAPE.
+        Reasoning-starved (finish_reason=="length" AND a non-empty reasoning
+        field AND empty content AND thinking not already off) retries with
+        thinking DISABLED and the IDENTICAL prompt — addressing the cause rather
+        than the wording, and keeping the prefix stable for Law 1. Genuinely
+        empty (no reasoning field, not truncated) keeps the F-22 varied-prompt
+        nudge unchanged. New _reasoning_text() helper walks reasoning_content /
+        reasoning on the message and in the SDK's model_extra bag, so it names
+        no vendor — same pattern as _cached_input_tokens.
+      fix_3_honesty: >
+        An empty completion is now `degraded` with reason "empty completion from
+        the model", not `ok` (Bakir's call). Reaching the socket proves
+        connectivity; a backend that generates nothing is not healthy, and
+        reporting it green is how this stayed invisible for a day. The bare
+        `except` that returned degraded WITHOUT logging now logs with exc_info,
+        per the no-silent-catch rule.
+      verified:
+        tests: "9 new in tests/providers/test_health_check_probe.py + 3 extending tests/providers/test_complete_think_strip.py, all RED first. 457 passed across tests/providers + tests/health."
+        lint_types: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. ZERO added."
+        one_test_legitimately_broken: >
+          test_provider_registry_health.py's _StubProvider returned content="",
+          which the new rule correctly reads as degraded. Brought to Bakir
+          rather than autonomously rewritten; he chose to fix the STUB and keep
+          the assertion, since 'registry reports ok when no breakers are open'
+          is still the test's subject and the empty string was incidental.
+  - id: DEBT-14
+    found: 2026-07-26
+    what: "tests/scheduler/test_scheduler_assembly.py HANGS — 25 tests collect in 0.10s, then execution never completes."
+    evidence: >
+      `timeout 300 uv run pytest tests/scheduler/test_scheduler_assembly.py -q
+      -p no:randomly` exits 143 (SIGTERM at the timeout). `--collect-only`
+      returns 25 tests in 0.10s, so it is execution, not collection. The whole
+      tests/scheduler/ directory also exceeded 600s.
+    proven_pre_existing: >
+      Hangs IDENTICALLY in a `git worktree` checkout of clean HEAD (b948c6bb)
+      with none of the DEBT-6 changes applied. Worktree rather than `git stash`,
+      which is banned on this box.
+    why_it_matters: >
+      This is the file test_provider_registry_health.py's own docstring points
+      at for the wiring half of its coverage ("the wiring is covered separately
+      in tests/scheduler/test_scheduler_assembly.py") — so that wiring is in
+      practice unverified, and has been for some time.
+    decision: "NOT fixed during DEBT-6 — unrelated, and it is a hang needing its own systematic-debugging pass rather than a guess."
     status: open
   - id: DEBT-7
     scheduled: "2026-07-26 — Bakir chose to pick this up now, after D01.7 part 7b."

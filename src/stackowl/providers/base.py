@@ -68,6 +68,15 @@ class CompletionResult(BaseModel):
     duration_ms: float
 
 
+# The liveness probe's output budget. This is a technical floor for a
+# one-word acknowledgement, NOT a shaping cap on real output (same class as
+# openai_provider's _MIN_OUTPUT_TOKENS). Measured 2026-07-26 against the live
+# gateway: with reasoning disabled, max_tokens=1 still returns
+# finish_reason="length", so a truncated probe cannot be told apart from a
+# broken one; 16 returns a complete reply with finish_reason="stop".
+_PROBE_MAX_TOKENS = 16
+
+
 class ModelProvider(ABC):
     """Abstract interface for all AI provider backends.
 
@@ -404,24 +413,60 @@ class ModelProvider(ABC):
         )
 
     async def health_check(self) -> HealthStatus:
-        """Default lightweight health probe — subclasses may override."""
+        """Default lightweight health probe — subclasses may override.
+
+        ``disable_thinking`` is REQUIRED here, not an optimisation. A reasoning
+        endpoint emits its chain-of-thought out-of-band and reaches an answer
+        only after it finishes, so a probe with a deliberately tiny budget and
+        reasoning left ON returns empty EVERY time (DEBT-6, 2026-07-26: 193
+        events in one day, each costing two paid calls — the probe plus
+        ``complete()``'s empty-retry — and still reported ``ok``). Providers
+        that do not understand the kwarg ignore it; every ``complete()`` takes
+        ``**kwargs``.
+
+        An empty completion is ``degraded``, not ``ok``: reaching the socket
+        proves connectivity, but a backend that generates nothing is not
+        healthy, and reporting it green is how the above stayed invisible.
+        """
         t0 = time.monotonic()
         try:
-            await self.complete(
+            result = await self.complete(
                 [Message(role="user", content="ping")],
                 model="",
-                max_tokens=1,
-            )
-            return HealthStatus(
-                name=self.name,
-                status="ok",
-                message=None,
-                latency_ms=(time.monotonic() - t0) * 1000,
+                max_tokens=_PROBE_MAX_TOKENS,
+                disable_thinking=True,
             )
         except Exception as exc:
+            log.engine.warning(
+                "[provider] health_check: probe failed",
+                exc_info=exc,
+                extra={"_fields": {"provider": self.name}},
+            )
             return HealthStatus(
                 name=self.name,
                 status="degraded",
                 message=str(exc),
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
+        latency_ms = (time.monotonic() - t0) * 1000
+        if not result.content.strip():
+            log.engine.warning(
+                "[provider] health_check: probe returned an empty completion",
+                extra={"_fields": {
+                    "provider": self.name,
+                    "max_tokens": _PROBE_MAX_TOKENS,
+                    "latency_ms": round(latency_ms),
+                }},
+            )
+            return HealthStatus(
+                name=self.name,
+                status="degraded",
+                message="empty completion from the model",
+                latency_ms=latency_ms,
+            )
+        return HealthStatus(
+            name=self.name,
+            status="ok",
+            message=None,
+            latency_ms=latency_ms,
+        )

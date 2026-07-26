@@ -240,6 +240,33 @@ _INPUT_TOKEN_SAFETY_MARGIN = 2000
 _MIN_OUTPUT_TOKENS = 16
 
 
+def _reasoning_text(message: object) -> str:
+    """Reasoning the model returned OUT-OF-BAND, in its own response field.
+
+    A reasoning endpoint reports its chain-of-thought separately from the
+    answer, under a field name that varies by backend — so this walks the known
+    shapes (a direct attribute, then the SDK's ``model_extra`` bag for fields it
+    does not model) and returns ``""`` when none is present.
+
+    Dispatches on response SHAPE, never on a provider's name: a new backend
+    reporting any of these works with no code change, and one reporting none
+    reads as "no out-of-band reasoning" honestly rather than guessing. Same
+    pattern as ``_cached_input_tokens`` — see progress.yml's
+    ``provider_agnostic`` constraint.
+    """
+    for attr in ("reasoning_content", "reasoning"):
+        value = getattr(message, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    extra = getattr(message, "model_extra", None)
+    if isinstance(extra, dict):
+        for key in ("reasoning_content", "reasoning"):
+            value = extra.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
 def _message_content_text(message: object) -> str:
     """Extract the plain-text content of a ``Message`` or an OpenAI-shaped dict.
 
@@ -1222,11 +1249,16 @@ class OpenAIProvider(ModelProvider):
         temperature = kwargs.get("temperature")
         if temperature is not None:
             extra_body = {**extra_body, "temperature": temperature}
+        # Hoisted so the empty-completion diagnostic below can report the budget
+        # that was actually sent — the single most useful number when a response
+        # comes back empty, and the one this call site used to omit.
+        sent_max_tokens = _max_tokens(kwargs, default=self._output_cap(resolved_model, oai_msgs))
+
         async def _round() -> Any:
             return await self._client.chat.completions.create(
                 model=resolved_model,
                 messages=oai_msgs,  # type: ignore[arg-type]
-                max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model, oai_msgs)),
+                max_tokens=sent_max_tokens,
                 **extra_body,
             )
 
@@ -1254,24 +1286,57 @@ class OpenAIProvider(ModelProvider):
         # cheap backstop. (With the output cap removed, mid-think truncation no
         # longer empties the content, so this rarely fires.)
         if not content:
-            # F-22 — replaying the IDENTICAL round would just reproduce a
-            # deterministic empty generation. VARY the retry: append a brief,
-            # vendor-neutral continuation nudge so the prompt differs (and steer
-            # the model away from a reasoning preamble that can eat the whole
-            # budget — the documented live cause of an empty draft).
-            retry_msgs = [
-                *oai_msgs,
-                {
-                    "role": "user",
-                    "content": (
-                        "Your previous reply was empty. Please give your answer "
-                        "directly now, without a reasoning preamble."
-                    ),
-                },
-            ]
+            # Two DIFFERENT failures produce an empty answer, and they need
+            # different remedies. Telling them apart is what makes the backstop
+            # able to work at all (DEBT-6, 2026-07-26).
+            #
+            # (a) REASONING-STARVED — the model spent the whole budget on
+            #     out-of-band reasoning and never reached an answer. The shape
+            #     says so: truncated (finish_reason "length"), a non-empty
+            #     reasoning field, no content. Rewording cannot help — the retry
+            #     gets the same budget and reasons again, which is exactly what
+            #     was measured live (193 events in one day, none recovered). The
+            #     fix is to turn reasoning OFF and re-ask the SAME question,
+            #     which also keeps the prompt stable (Law 1).
+            # (b) GENUINELY EMPTY — no reasoning field, nothing truncated. Here
+            #     a varied prompt is a reasonable cheap backstop (F-22), so that
+            #     path is preserved unchanged.
+            #
+            # Detected from the response shape, never from a provider's name.
+            reasoning = _reasoning_text(choice.message)
+            finish_reason = getattr(choice, "finish_reason", None)
+            reasoning_starved = (
+                bool(reasoning) and finish_reason == "length" and not disable_thinking
+            )
+            if reasoning_starved:
+                retry_msgs = oai_msgs
+                retry_extra_body = {
+                    **extra_body,
+                    **self._complete_extra_body(resolved_model, disable_thinking=True),
+                }
+            else:
+                retry_msgs = [
+                    *oai_msgs,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous reply was empty. Please give your answer "
+                            "directly now, without a reasoning preamble."
+                        ),
+                    },
+                ]
+                retry_extra_body = extra_body
             log.engine.warning(
-                "[openai] complete: empty after think-strip — retrying once with a varied prompt",
-                extra={"_fields": {"provider": self._name, "model": resolved_model}},
+                "[openai] complete: empty content — retrying once",
+                extra={"_fields": {
+                    "provider": self._name,
+                    "model": resolved_model,
+                    "strategy": "thinking_off" if reasoning_starved else "varied_prompt",
+                    "finish_reason": finish_reason,
+                    "reasoning_len": len(reasoning),
+                    "max_tokens_sent": sent_max_tokens,
+                    "completion_tokens": usage.completion_tokens if usage else None,
+                }},
             )
 
             async def _varied_round() -> Any:
@@ -1279,7 +1344,7 @@ class OpenAIProvider(ModelProvider):
                     model=resolved_model,
                     messages=retry_msgs,  # type: ignore[arg-type]
                     max_tokens=_max_tokens(kwargs, default=self._output_cap(resolved_model, retry_msgs)),
-                    **extra_body,
+                    **retry_extra_body,
                 )
 
             try:
@@ -1300,9 +1365,13 @@ class OpenAIProvider(ModelProvider):
                 # passing "" off as a confident answer. The downstream give-up
                 # floor turns this into an honest "couldn't produce a reply".
                 log.engine.warning(
-                    "[openai] complete: still empty after varied retry — "
+                    "[openai] complete: still empty after retry — "
                     "returning empty for the downstream floor",
-                    extra={"_fields": {"provider": self._name, "model": resolved_model}},
+                    extra={"_fields": {
+                        "provider": self._name,
+                        "model": resolved_model,
+                        "strategy": "thinking_off" if reasoning_starved else "varied_prompt",
+                    }},
                 )
         result = CompletionResult(
             content=content,

@@ -30,8 +30,13 @@ class _StubProvider(ModelProvider):
         return "openai"
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
+        # Non-empty on purpose: since DEBT-6 (2026-07-26) the default
+        # health_check() reads an empty completion as degraded, so a stub
+        # returning "" would model a BROKEN provider and defeat these tests'
+        # actual subject, which is breaker-state aggregation. The empty string
+        # here was incidental — nothing inspected content when it was written.
         return CompletionResult(
-            content="", input_tokens=0, output_tokens=0,
+            content="pong", input_tokens=0, output_tokens=0,
             model="stub", provider_name="stub", duration_ms=0.0,
         )
 
