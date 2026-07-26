@@ -1412,6 +1412,66 @@ items:
         configured, so identity_key equals today's chat id and every existing row stays
         reachable with no migration at all.
     changes:
+      - date: 2026-07-26
+        slice: "3b part 5a — a fact can be AUTHORED ONCE (the summary's reachability)"
+        files:
+          - "src/stackowl/db/migrations/0097_authored_once_facts.sql (new) — staged_facts rebuilt to widen the source_type CHECK"
+          - "src/stackowl/memory/fact_promoter.py — AUTHORED_ONCE_SOURCE_TYPES + ELIGIBLE_PREDICATE_SQL, defined once"
+          - "src/stackowl/memory/dream_worker_helpers.py — imports the shared predicate instead of duplicating it"
+          - "src/stackowl/memory/models.py — StagedFact.source_type gains conversation_summary"
+          - "tests/memory/test_authored_once_promotion.py (new) — 6 tests, written FIRST and red"
+        why_this_is_its_own_slice: >
+          Part 5 was split because an UNREACHABLE summary is the entire risk of this
+          work. Writing the boundary handler first would have produced a feature that
+          logs success at every step and is never recalled — so reachability is proven
+          before anything is written to be reached.
+        the_third_dormancy_trap: >
+          The promotion gate requires CORROBORATION: reinforcement_count >= 3 for most
+          source types, >= 1 for conversation_fact. That is correct for an EXTRACTED
+          claim — the miner's re-derivation supplies the second sighting, which is how
+          98k conversation_facts got promoted. It is WRONG for an AUTHORED artifact. A
+          rollover summary is written once per boundary and never re-derived, so its
+          reinforcement_count stays 0 for ever. Under any existing source type it would
+          have sat in staged_facts permanently: written, logged as written, and never
+          recalled.
+        why_it_would_have_been_invisible: >
+          Every intermediate step reports success. The job runs, the handler logs a
+          summary, the row appears in staged_facts. Nothing anywhere says "and this will
+          never be promoted". This is the THIRD dormant-feature trap in this one item
+          (after the unenqueued handler and the dead turn_count) and the only one with
+          no observable symptom at all.
+        design_notes:
+          - "AUTHORED_ONCE_SOURCE_TYPES is a named frozenset, not a hardcoded string in a WHERE clause, so the next authored artifact joins a list rather than adding a fourth branch to two queries."
+          - "Exemption is from CORROBORATION ONLY. The confidence gate still applies — a test pins that a low-confidence summary is still refused. Authored-once buys 'no second sighting required', never 'no honesty required'."
+          - "ROOT CAUSE, not the example: the eligibility predicate existed as TWO hand-copied duplicates whose own comment said they were 'kept in lock-step by review'. They are different queries (one SELECTs rows to promote, the other COUNTs rows that should have promoted and did not) that must agree exactly on WHICH rows qualify — and if they drift, the stuck-memory alarm reports on a different population than the promoter acts on, invisibly in both directions. Rather than edit both copies, the WHERE clause is now ONE shared string, and a test asserts the two agree. Editing two copies would have been the smaller diff and would have left the fragility that made this necessary."
+        why_a_table_rebuild: >
+          staged_facts.source_type carries a CHECK constraint and SQLite cannot alter a
+          CHECK in place, so the table is rebuilt to widen the allowed set by one value.
+          The constraint is KEPT rather than dropped because it is what caught this: the
+          first attempt to stage a summary failed loudly at the database instead of
+          writing an unrecognised type that six readers would have silently ignored.
+          Verified safe first: no foreign key references staged_facts, and the runner
+          executes each file inside BEGIN EXCLUSIVE.
+        verified:
+          tests: "11 passed (6 new + the 5 existing promotion tests, which pin that neither existing threshold moved). 19 passed across dream-worker reliability, plan-B mining, force-promote and promoter-embed."
+          migration: "0097 applied; second run reports already-applied; schema at 0097. 110037 rows preserved, all three secondary indexes recreated, conversation_summary now permitted."
+          lint: "ruff clean on all touched files; src/ total 46 = DEBT-1 baseline, zero added."
+          types: "mypy src/ -> 78, byte-identical to the DEBT-8 baseline. No import cycle introduced (verified by importing both modules)."
+        noted_at_the_time: >
+          The 110k-row rebuild ran while the platform was LIVE, and 0097 reported
+          "already applied" on the first manual run because writing the file triggered
+          the core's exec-replace, which applies migrations at boot. Row count grew
+          110005 -> 110037 across the window from live traffic. Recorded because the
+          combination (a table rebuild that a code-change restart applies for you) is
+          not obvious and worked only because the runner is transactional.
+        api_naming_defect_found_not_fixed: >
+          ConversationMiner.mine_session(session_key) does NOT take a session key. Its
+          argument is matched against staged_facts.source_ref, which turn_persist fills
+          with the OWNER SCOPE (identity_key or lane) — mine_all passes row["source_ref"]
+          into it, which is the proof. That is the FIFTH thing called "session" in this
+          tree. Not renamed here: it is unrelated to this slice and renaming it mid-slice
+          violates minimal-diffs. It is why part 5b must pass identity_key rather than the
+          lane, and getting that backwards would silently mine nothing.
       - date: 2026-07-25
         slice: "3b part 4 — the lane row tells the truth (identity + two real counters)"
         files:

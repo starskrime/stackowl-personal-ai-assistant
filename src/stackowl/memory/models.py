@@ -22,7 +22,14 @@ class StagedFact(BaseModel):
     fact_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     content: str
     source_type: Literal[
-        "conversation", "conversation_fact", "parliament", "manual", "webpage", "screenshot", "agent_self",
+        "conversation",
+        "conversation_fact",
+        # AUTHORED ONCE, not extracted — the narrative written at a conversation
+        # boundary (D01.7 Q17). Exempt from the promoter's corroboration gate
+        # because nothing ever re-derives it; see
+        # fact_promoter.AUTHORED_ONCE_SOURCE_TYPES.
+        "conversation_summary",
+        "parliament", "manual", "webpage", "screenshot", "agent_self",
     ]
     source_ref: str
     confidence: float = Field(ge=0.0, le=1.0)

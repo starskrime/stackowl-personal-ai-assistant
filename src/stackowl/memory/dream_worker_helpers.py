@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict
 
 from stackowl.infra.observability import log
+from stackowl.memory.fact_promoter import ELIGIBLE_PREDICATE_SQL
 from stackowl.memory.models import MemoryRecord
 from stackowl.memory.sqlite_helpers import pack_embedding as _pack_embedding
 from stackowl.memory.sqlite_helpers import unpack_embedding
@@ -43,20 +44,20 @@ PHASE_ORDER: tuple[PhaseName, ...] = (
 _RESUME_WINDOW_HOURS = 25
 _AUDIT_EVENT_TYPE = "memory.contradiction"
 
-# Mirrors FactPromoter._SELECT_ELIGIBLE_SQL EXACTLY (same gate: per-source
-# reinforcement, confidence threshold, settle cutoff) but COUNTs rows still
-# status='staged' — the OUTCOME signal that eligible memories never moved
-# short→long. Kept in lock-step with the promoter query by review.
-_COUNT_STUCK_ELIGIBLE_SQL = """
+# COUNTs rows that are eligible but still status='staged' — the OUTCOME signal
+# that eligible memories never moved short→long.
+#
+# The gate is IMPORTED, not copied. This query and the promoter's differ in what
+# they return (rows to promote vs a count of rows that should have promoted and did
+# not) but they must agree exactly on WHICH rows qualify: if they drift, this alarm
+# reports on a different population than the promoter acts on, and the
+# disagreement is invisible from either side. The previous version of this comment
+# said the two were "kept in lock-step by review", which is what a shared string
+# now does instead.
+_COUNT_STUCK_ELIGIBLE_SQL = f"""
 SELECT COUNT(*) AS n
 FROM staged_facts
-WHERE status = 'staged'
-  AND confidence >= ?
-  AND (
-        (source_type = 'conversation_fact' AND reinforcement_count >= ?)
-     OR (source_type != 'conversation_fact' AND reinforcement_count >= ?)
-  )
-  AND staged_at <= ?
+WHERE {ELIGIBLE_PREDICATE_SQL}
 """
 
 _MARK_FAILED_SQL = """

@@ -17,18 +17,49 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.models import StagedFact
 
 
-_SELECT_ELIGIBLE_SQL = """
+#: Source types that are AUTHORED ONCE rather than extracted, and are therefore
+#: exempt from the corroboration requirement.
+#:
+#: Corroboration is the right gate for an EXTRACTED claim: a fact derived twice is
+#: likelier true than one derived once, and the conversation miner's re-derivation
+#: supplies the second sighting. Nothing re-derives a rollover summary — it is
+#: written once at a conversation boundary and never again, so its
+#: reinforcement_count stays 0 for ever. Requiring corroboration of it means it is
+#: never promoted, never recalled, and never visibly broken.
+#:
+#: Exemption is from CORROBORATION ONLY. The confidence gate still applies, so an
+#: authored artifact that is not confident still does not reach memory.
+AUTHORED_ONCE_SOURCE_TYPES: frozenset[str] = frozenset({"conversation_summary"})
+
+#: The eligibility gate, defined ONCE.
+#:
+#: This predicate previously existed as two hand-copied duplicates — here and in
+#: ``dream_worker_helpers._COUNT_STUCK_ELIGIBLE_SQL``, whose comment said they were
+#: "kept in lock-step by review". They are not the same query (one SELECTs rows to
+#: promote, the other COUNTs rows that should have promoted and did not), but they
+#: must share a WHERE clause exactly: if they drift, the stuck-memory alarm reports
+#: on a different population than the promoter acts on, and the disagreement is
+#: invisible in both directions. Sharing the string is what replaces "by review".
+#:
+#: Parameter order: confidence_threshold, conversation_fact_reinforcement_required,
+#: reinforcement_required, settle_cutoff.
+ELIGIBLE_PREDICATE_SQL = f"""
+status = 'staged'
+  AND confidence >= ?
+  AND reinforcement_count >= CASE
+        WHEN source_type = 'conversation_fact' THEN ?
+        WHEN source_type IN ({','.join(f"'{t}'" for t in sorted(AUTHORED_ONCE_SOURCE_TYPES))}) THEN 0
+        ELSE ?
+      END
+  AND staged_at <= ?
+"""
+
+_SELECT_ELIGIBLE_SQL = f"""
 SELECT fact_id, content, source_type, source_ref, confidence,
        staged_at, reinforcement_count, status, embedding, embedding_model, trust,
        scope_key
 FROM staged_facts
-WHERE status = 'staged'
-  AND confidence >= ?
-  AND (
-        (source_type = 'conversation_fact' AND reinforcement_count >= ?)
-     OR (source_type != 'conversation_fact' AND reinforcement_count >= ?)
-  )
-  AND staged_at <= ?
+WHERE {ELIGIBLE_PREDICATE_SQL}
 """
 
 _SELECT_BY_ID_SQL = """
