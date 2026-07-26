@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ from stackowl.sessions.models import (
     build_session_key,
     new_session_id,
 )
-from stackowl.sessions.policy import ResetPolicy, resolve
+from stackowl.sessions.policy import ResetPolicy, expired_reason, resolve
 
 _MIRROR_NAME = "sessions.json"
 
@@ -179,7 +180,11 @@ class SessionStore:
                                "session_id": entry.session_id,
                                "previous_session_id": existing.session_id if existing else None}},
         )
-        if decision.mints_new_incarnation and existing is not None:
+        # A lane the SWEEPER already finalised was announced when it expired, on
+        # the clock. Announcing again now — possibly hours later, when the user
+        # finally speaks — would fire every consumer twice for one boundary.
+        already_announced = existing is not None and existing.expiry_finalized
+        if decision.mints_new_incarnation and existing is not None and not already_announced:
             log.gateway.info(
                 "session.rollover: old incarnation ended",
                 extra={"_fields": {
@@ -320,6 +325,68 @@ class SessionStore:
         if entry is not None and entry.resume_pending:
             await self.save(entry.evolve(resume_pending=False, resume_reason=None,
                                          restart_failures=0))
+
+    async def sweep(
+        self, now: datetime.datetime | None = None,
+        is_busy: Callable[[SessionEntry], Awaitable[bool]] | None = None,
+    ) -> tuple[int, int]:
+        """Finalise lanes whose incarnation expired while nobody was talking.
+
+        Without this, a rollover only happens when the user next sends a message —
+        so the 4 AM boundary would really mean "whenever you next say something",
+        and Q17's overnight summary would never run unattended. This is what makes
+        the boundary a CLOCK event rather than a traffic event.
+
+        It FINALISES rather than mints: the old incarnation is announced as ended
+        and stamped ``expiry_finalized``, and the next inbound message mints the
+        new id through the normal path. Minting here would hand out an incarnation
+        nobody is using and start a conversation the user never opened.
+
+        ``is_busy`` carries Bakir's Q12 rule (invariant I4) and is what the caller
+        composes from its four conditions — a running background process, an
+        in-flight durable task, an active objective, a pending clarify. A busy lane
+        is SKIPPED, not delayed-and-forced: it is re-examined on the next sweep.
+
+        Returns ``(finalized, skipped_active)``.
+        """
+        stamp = now or datetime.datetime.now().astimezone()
+        log.gateway.debug("session.sweep: entry",
+                          extra={"_fields": {"at": stamp.isoformat()}})
+        finalized = skipped = 0
+        for entry in await self.list_all():
+            if entry.expiry_finalized or entry.suspended or entry.resume_pending:
+                continue
+            if expired_reason(entry, stamp, self._policy) is None:
+                continue
+            if is_busy is not None and await is_busy(entry):
+                skipped += 1
+                log.gateway.info(
+                    "session.sweep: lane is busy — expiry skipped (I4)",
+                    extra={"_fields": {"session_key": entry.session_key,
+                                       "session_id": entry.session_id}},
+                )
+                continue
+            reason = expired_reason(entry, stamp, self._policy)
+            ended = entry.evolve(expiry_finalized=True, was_auto_reset=True,
+                                 auto_reset_reason=reason)
+            await self.save(ended)
+            log.gateway.info(
+                "session.rollover: old incarnation ended",
+                extra={"_fields": {
+                    "session_key": entry.session_key,
+                    "old_session_id": entry.session_id,
+                    "new_session_id": None,  # minted lazily on the next message
+                    "reason": reason.value if reason else None,
+                    "turn_count": entry.turn_count,
+                }},
+            )
+            self._publish_rollover(entry, ended, reason)
+            finalized += 1
+        log.gateway.info(
+            "session.sweep: finalized",
+            extra={"_fields": {"count": finalized, "skipped_active": skipped}},
+        )
+        return finalized, skipped
 
     async def prune(self, older_than: datetime.datetime) -> int:
         """Drop lane RECORDS not touched since ``older_than``. Transcripts stay.

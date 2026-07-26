@@ -841,6 +841,14 @@ class SchedulerAssembly:
             db, handler_name="retry_sweep", schedule="every 1m",
             interval_minutes=1,
         )
+        # D01.7 — conversation sweep. Makes the 4 AM boundary a CLOCK event
+        # instead of "whenever the user next says something", so the overnight
+        # summary can run unattended. Every 5m: the boundary is hourly-scale, and
+        # a lane skipped for being busy is simply re-examined next pass.
+        await _seed_minutes_schedule(
+            db, handler_name="conversation_sweep", schedule="every 5m",
+            interval_minutes=5,
+        )
         # F-77 — notification_digest flushes the notification_queue (batched /
         # quiet-hours notifications). The handler is built+registered (in
         # NotificationAssembly), but without a recurring jobs row the scheduler

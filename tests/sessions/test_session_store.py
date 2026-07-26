@@ -385,3 +385,97 @@ async def test_new_on_an_unknown_lane_reports_nothing_happened(bus_store) -> Non
     store, bus = bus_store
     assert await store.start_new_incarnation("owl:Brain:telegram:dm:nope") is None
     assert bus.events == []
+
+
+# --------------------------------------------------------------------------
+# D01.7 slice 3b — the sweeper: a boundary is a CLOCK event, not a traffic event.
+#
+# Without it, "4 AM" really means "whenever you next say something", and Q17's
+# overnight summary never runs unattended — which is precisely when nobody is
+# watching.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_sweeper_finalises_an_expired_lane(bus_store) -> None:
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+    finalized, skipped = await store.sweep(at(22, 12))
+
+    assert (finalized, skipped) == (1, 0)
+    assert len(bus.events) == 1
+    assert bus.events[0][0] == "session.rollover"
+
+
+@pytest.mark.asyncio
+async def test_the_sweeper_leaves_a_live_lane_alone(bus_store) -> None:
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+    assert await store.sweep(at(20, 13)) == (0, 0)
+    assert bus.events == []
+
+
+@pytest.mark.asyncio
+async def test_i4_a_busy_lane_is_never_expired(bus_store) -> None:
+    """Bakir's Q12, extended beyond Hermes: an agent working overnight must not
+    have its conversation cut from under it."""
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+
+    async def always_busy(entry) -> bool:  # noqa: ANN001
+        return True
+
+    finalized, skipped = await store.sweep(at(22, 12), is_busy=always_busy)
+    assert (finalized, skipped) == (0, 1)
+    assert bus.events == [], "a busy lane announces nothing"
+
+
+@pytest.mark.asyncio
+async def test_a_busy_lane_is_retried_on_the_next_sweep(bus_store) -> None:
+    """Skipped, not dropped: the work finishes and the boundary still happens."""
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+    busy = {"value": True}
+
+    async def is_busy(entry) -> bool:  # noqa: ANN001
+        return busy["value"]
+
+    assert await store.sweep(at(22, 12), is_busy=is_busy) == (0, 1)
+    busy["value"] = False
+    assert await store.sweep(at(22, 13), is_busy=is_busy) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_lane_is_only_finalised_once(bus_store) -> None:
+    store, bus = bus_store
+    await store.resolve_for(src(), at(20, 12))
+    await store.sweep(at(22, 12))
+    assert await store.sweep(at(22, 13)) == (0, 0), "expiry_finalized is honoured"
+    assert len(bus.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_swept_lane_is_not_announced_twice(bus_store) -> None:
+    """The sweeper announced the boundary on the clock. When the user finally
+    speaks — possibly hours later — the same boundary must not fire every
+    consumer a second time."""
+    store, bus = bus_store
+    first, _, _ = await store.resolve_for(src(), at(20, 12))
+    await store.sweep(at(22, 12))
+    assert len(bus.events) == 1
+
+    rolled, branch, _ = await store.resolve_for(src(), at(22, 14))
+    assert branch is Branch.EXPIRED
+    assert rolled.session_id != first.session_id, "the new incarnation is still minted"
+    assert len(bus.events) == 1, "but the boundary is announced only once"
+
+
+@pytest.mark.asyncio
+async def test_the_sweeper_skips_a_lane_awaiting_recovery(bus_store) -> None:
+    """resume_pending means a turn still needs finishing — expiring it would
+    discard the very turn we are recovering."""
+    store, bus = bus_store
+    entry, _, _ = await store.resolve_for(src(), at(20, 12))
+    await store.save(entry.evolve(resume_pending=True))
+    assert await store.sweep(at(22, 12)) == (0, 0)
+    assert bus.events == []

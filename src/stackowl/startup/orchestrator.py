@@ -1454,6 +1454,18 @@ class StartupOrchestrator:
             retry_store=retry_queue_store,
         )
         register_retry_sweep_handler(actuator=retry_actuator, retry_store=retry_queue_store)
+
+        # D01.7 — the conversation sweep. NOTE the name: `session_sweep` is
+        # already taken by the idle-owl-session reaper, a different concept.
+        from stackowl.scheduler.handlers.conversation_sweep import (
+            register_conversation_sweep_handler,
+        )
+
+        register_conversation_sweep_handler(
+            session_store,
+            process_registry=process_registry,
+            clarify_gateway=clarify_gateway,
+        )
         # Task 7 — inject the SAME actuator instance back onto services (built
         # after services/backend exist, same reason a2a_delegator is injected
         # post-construction above) so triage.py's manual retry-intent hook

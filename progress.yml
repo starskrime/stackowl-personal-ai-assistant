@@ -1231,6 +1231,45 @@ items:
         reachable with no migration at all.
     changes:
       - date: 2026-07-25
+        slice: "3b part 3 — the sweeper: a boundary on the CLOCK, not on traffic"
+        files:
+          - "src/stackowl/sessions/store.py — sweep(), plus the double-announce guard in resolve_for"
+          - "src/stackowl/scheduler/handlers/conversation_sweep.py (new) — the recurring handler, I4 lives here"
+          - "src/stackowl/scheduler/assembly.py — job row seeded, every 5m"
+          - "src/stackowl/startup/orchestrator.py — handler registered at boot"
+          - "tests/sessions/test_session_store.py — 7 new sweeper tests"
+        design_notes:
+          - "Without a sweeper the 4 AM boundary really means 'whenever you next say something', and Q17's overnight summary never runs unattended — which is exactly when nobody is watching. This is what makes the boundary a CLOCK event."
+          - "The sweeper FINALISES rather than mints. Minting here would hand out an incarnation nobody is using and start a conversation the user never opened; the next inbound message mints it through the normal path."
+          - "Double-announce guard: a lane the sweeper finalised is NOT announced again when the user finally speaks, possibly hours later. Without it every consumer would fire twice for one boundary. expiry_finalized is what the design reserved for exactly this."
+          - "Split of responsibility: the STORE decides which lanes expired (pure policy, testable without a platform); the HANDLER decides what 'busy' means, because that is the part that depends on the rest of the system."
+          - "The busy-check FAILS CLOSED — an error means 'treat as busy'. Expiring a lane we could not assess risks severing live work; a delayed boundary costs minutes."
+        naming_collision_caught: >
+          A `session_sweep` handler ALREADY EXISTS and reaps idle NAMED OWL SESSIONS from
+          owls/session_registry.py, registering under handler_name "session_sweep". Had this
+          registered under the same name, one of the two would have silently lost. Renamed to
+          conversation_sweep. That is the FOURTH distinct meaning of "session" found in this
+          tree during D01.7 — after parliament debates, browser pages, and the lane itself.
+          Caught only because the Write tool refused to overwrite an unread file.
+        invented_apis_caught: >
+          The first draft of the busy-check called registry.running_for_session() and
+          gateway.pending_for() — NEITHER EXISTS. Guarded by getattr, they would have made
+          invariant I4 a permanent silent no-op: a busy-check that always returns False, with
+          tests passing and a doc claiming the rule was enforced. Replaced with the real APIs,
+          verified against the source: ProcessRegistry.list(session_key) and
+          ClarifyGateway.peek_for_session(session_key, channel).
+        honest_gap: >
+          TWO of Q12's four never-expire conditions are enforced today — a running background
+          process and a pending clarify. An in-flight DURABLE TASK and an ACTIVE OBJECTIVE are
+          NOT yet checked. Stated in the docstring and here rather than left implied, because a
+          busy-check that silently covers half its conditions is worse than one that admits the
+          gap. Remaining two are follow-up work.
+        verified:
+          tests: "74 passed in tests/sessions (7 new): finalises an expired lane; leaves a live one; I4 skips a busy lane and announces nothing; a busy lane is RETRIED next sweep rather than dropped; a lane is finalised only once; a swept lane is not announced twice while still minting its new incarnation; a resume_pending lane is skipped."
+          lint: "ruff clean on all touched files."
+          types: "mypy src/ -> 78, byte-identical to baseline."
+          live: "Restarted — 1225 lines, 0 ERROR/CRITICAL, 'conversation_sweep handler registered' x2 (gateway + core). Job row seeded: conversation_sweep-20bc4d7d, every 5m."
+      - date: 2026-07-25
         slice: "3b part 2 — /new becomes the session verb, /queue keeps the old capability"
         files:
           - "src/stackowl/sessions/store.py — start_new_incarnation()"
