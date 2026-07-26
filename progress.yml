@@ -468,7 +468,34 @@ known_debt:
       does_not_block_the_program: >
         Parts 6 and 7 need no model call, so D01.7 implementation continues. Only
         end-to-end VALIDATION of part 5 is blocked.
-    status: open
+    status: resolved
+    resolution:
+      date: 2026-07-26
+      what: >
+        Bakir approved the DUO push and the tunnel came up:
+        llm-gateway.dev.nera.gov -> 172.30.104.100. Platform restarted; the boot
+        probe now reports 'provider NeraAiRaw [openai]: ok (770ms)' and
+        'provider_probe.check: exit — ok=1 degraded=0' on BOTH processes.
+        `python -m stackowl health` agrees: provider:NeraAiRaw ok (760ms). The only
+        remaining degraded item is `browser` ("runtime not constructed"), which is
+        lazy init and unrelated.
+      my_diagnosis_was_WRONG_and_is_corrected_here: >
+        I concluded from two HTTP 512s, the absence of any DUO challenge line, and a
+        23-day-old password file that the stored credential had been rotated, and I
+        told Bakir to consider re-entering it. That was wrong. The credential was
+        fine; the 512s were the portal failing an UNAPPROVED DUO push. The reasoning
+        error was treating "no DUO line in the log" as evidence that DUO was not
+        reached, when this client simply does not log the push step — absence of a
+        log line is not absence of a step. Recorded because the same inference would
+        otherwise be made again the next time this tunnel drops.
+      the_stopping_decision_was_still_right: >
+        Halting after one failed attempt remains correct on its own terms — the unit
+        says a retry risks locking the account, and the retry was made only once
+        Bakir confirmed he was at his phone. Right call, wrong reason attached to it.
+      lesson: >
+        A VPN tunnel dropping presents identically to a provider outage or a moved
+        host. `getent hosts <internal-host>` distinguishes them in one command and is
+        now the first check when every provider goes unreachable at once.
   - id: DEBT-9
     found: 2026-07-25
     what: "Three tests fail whenever the live platform is running, because they build real components against the user's real ~/.stackowl instead of a temp HOME."
