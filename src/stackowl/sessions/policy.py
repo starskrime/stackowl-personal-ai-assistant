@@ -20,6 +20,7 @@ import datetime
 from dataclasses import dataclass
 from enum import StrEnum
 
+from stackowl.infra.observability import log
 from stackowl.sessions.models import Branch, ResetReason, SessionEntry
 
 # Bakir signed off 4 AM over his own initial midnight answer (2026-07-25): a
@@ -74,6 +75,39 @@ class Resolution:
     reason: ResetReason | None = None
     # True when the caller must mint a new session_id for this lane.
     mints_new_incarnation: bool = False
+
+
+def policy_from_settings(session_settings: object) -> ResetPolicy:
+    """Build a :class:`ResetPolicy` from the ``session`` config section.
+
+    Takes the settings object structurally rather than by import, so this module
+    stays free of a dependency on ``config`` (which imports far more than a policy
+    needs) and remains unit-testable with a plain stub.
+
+    An unrecognised ``reset_mode`` falls back to ``both`` — the shipped default —
+    and says so loudly. Failing closed to ``none`` would silently disable every
+    boundary, which is the failure nobody notices until a conversation has run for
+    a month.
+    """
+    raw = str(getattr(session_settings, "reset_mode", ResetMode.BOTH.value)).strip().lower()
+    try:
+        mode = ResetMode(raw)
+    except ValueError:
+        log.config.error(
+            "[sessions] policy_from_settings: unknown reset_mode — using 'both'",
+            extra={"_fields": {"configured": raw,
+                               "valid": [m.value for m in ResetMode]}},
+        )
+        mode = ResetMode.BOTH
+    return ResetPolicy(
+        mode=mode,
+        at_hour=int(getattr(session_settings, "at_hour", DEFAULT_AT_HOUR)),
+        idle_minutes=int(getattr(session_settings, "idle_minutes", DEFAULT_IDLE_MINUTES)),
+        notify_on_reset=bool(getattr(session_settings, "notify_on_reset", True)),
+        max_restart_failures=int(
+            getattr(session_settings, "max_restart_failures", DEFAULT_MAX_RESTART_FAILURES)
+        ),
+    )
 
 
 def expired_reason(entry: SessionEntry, now: datetime.datetime,

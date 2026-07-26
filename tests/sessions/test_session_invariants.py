@@ -251,3 +251,68 @@ def test_invalid_at_hour_is_rejected(hour: int) -> None:
 def test_invalid_idle_minutes_is_rejected() -> None:
     with pytest.raises(ValueError, match="idle_minutes"):
         ResetPolicy(idle_minutes=0)
+
+
+# --------------------------------------------------------------------------
+# D01.7 slice 3a.2 — the config actually drives the policy.
+#
+# A config key that is read by nothing is worse than no key: it makes the
+# operator believe they turned something off.
+# --------------------------------------------------------------------------
+
+
+class _StubSessionSettings:
+    def __init__(self, **kw: object) -> None:
+        self.reset_mode = kw.get("reset_mode", "both")
+        self.at_hour = kw.get("at_hour", 4)
+        self.idle_minutes = kw.get("idle_minutes", 1440)
+        self.notify_on_reset = kw.get("notify_on_reset", True)
+        self.max_restart_failures = kw.get("max_restart_failures", 3)
+
+
+def test_the_shipped_defaults_arm_both_boundaries() -> None:
+    """Ships ON — turning boundaries off must be a deliberate act, not the default."""
+    from stackowl.sessions import policy_from_settings
+
+    policy = policy_from_settings(_StubSessionSettings())
+    assert policy.mode.daily_armed
+    assert policy.mode.idle_armed
+    assert policy.at_hour == 4
+
+
+def test_every_configured_value_reaches_the_policy() -> None:
+    from stackowl.sessions import ResetMode, policy_from_settings
+
+    policy = policy_from_settings(_StubSessionSettings(
+        reset_mode="idle", at_hour=0, idle_minutes=30,
+        notify_on_reset=False, max_restart_failures=7,
+    ))
+    assert policy.mode is ResetMode.IDLE
+    assert policy.at_hour == 0
+    assert policy.idle_minutes == 30
+    assert policy.notify_on_reset is False
+    assert policy.max_restart_failures == 7
+
+
+def test_an_unknown_reset_mode_falls_back_to_the_shipped_default() -> None:
+    """Fails to 'both', not to 'none': failing closed would silently disable every
+    boundary, which is the failure nobody notices until a conversation is a month old."""
+    from stackowl.sessions import ResetMode, policy_from_settings
+
+    policy = policy_from_settings(_StubSessionSettings(reset_mode="sometimes"))
+    assert policy.mode is ResetMode.BOTH
+
+
+def test_the_settings_object_exposes_the_documented_session_keys() -> None:
+    """The design doc's Configuration section is a promise; this is the check that
+    it matches the tree."""
+    from stackowl.config.settings import SessionSettings
+
+    s = SessionSettings()
+    for key in ("reset_mode", "at_hour", "idle_minutes", "notify_on_reset",
+                "group_sessions_per_user", "thread_sessions_per_user"):
+        assert hasattr(s, key), f"documented session key missing: {key}"
+    assert s.at_hour == 4
+    assert s.idle_minutes == 1440
+    assert s.group_sessions_per_user is True
+    assert s.thread_sessions_per_user is False

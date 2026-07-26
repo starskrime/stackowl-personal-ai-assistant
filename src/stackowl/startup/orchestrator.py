@@ -785,6 +785,30 @@ class StartupOrchestrator:
         # the deterministic baseline (honesty spine). Built here (after the pool
         # opens, migration 0065 already applied in phase 1) so the command-stub
         # closure below can capture it.
+        # D01.7 — the session lifecycle. Built here, after the pool opens and
+        # migrations 0092/0094 have run, so the dispatch closure below can capture
+        # it. Ships ON: there is no enable flag, because a platform that cannot
+        # start or end a conversation is the state we are fixing.
+        # Aliased: `SessionStore` is already bound above to parliament's DEBATE
+        # store. Same word, different concept — the third time that collision has
+        # shown up in this item, and the reason the rename was worth doing.
+        from stackowl.sessions import SessionStore as ConversationSessionStore
+        from stackowl.sessions import policy_from_settings
+
+        # Captured once here, where `self._settings` is known non-None, so the
+        # dispatch closure below reads a plain value instead of re-deriving it off
+        # an Optional on every single turn.
+        session_settings = self._settings.session
+        session_store = ConversationSessionStore(
+            db_pool, policy_from_settings(session_settings)
+        )
+        log.info(
+            "[startup] gateway: session lifecycle armed",
+            extra={"_fields": {"reset_mode": self._settings.session.reset_mode,
+                               "at_hour": self._settings.session.at_hour,
+                               "idle_minutes": self._settings.session.idle_minutes}},
+        )
+
         sequence_store = None
         if self._settings.ui.command_suggestions:
             from stackowl.commands.sequence_store import CommandSequenceStore
@@ -1843,6 +1867,58 @@ class StartupOrchestrator:
         _parked_intakes = ParkedIntakes()
         turn_registry.set_reaped_evictor(_parked_intakes.evict)
 
+        async def _resolve_incarnation(msg: IngressMessage, owl_name: str) -> str:
+            """Resolve which RUN of this conversation the turn belongs to (D01.7).
+
+            Called AFTER routing because the lane is keyed on the owl (Bakir's Q1:
+            a different owl is a different conversation) and the owl is a routing
+            OUTPUT — so no lane can exist at IngressMessage time.
+
+            The daily boundary is a LOCAL wall-clock hour (4 AM by default), so the
+            clock passed in is local-aware rather than UTC; a UTC "4 AM" would fire
+            in the middle of the afternoon for most of the world.
+
+            FAILS OPEN, LOUDLY: a session-store problem must never cost the user
+            their reply. The turn proceeds with no incarnation, which reads as
+            honestly-unknown everywhere downstream instead of as a fabricated
+            conversation.
+            """
+            import datetime as _dt
+
+            from stackowl.sessions import ChatType, SessionSource
+
+            try:
+                source = SessionSource(
+                    owl_name=owl_name,
+                    channel=msg.channel,
+                    chat_type=ChatType.DM if msg.is_direct else ChatType.GROUP,
+                    chat_id=msg.session_key,
+                    chat_target=str(msg.chat_id) if msg.chat_id is not None else None,
+                )
+                entry, branch, reason = await session_store.resolve_for(
+                    source,
+                    _dt.datetime.now().astimezone(),
+                    group_per_user=session_settings.group_sessions_per_user,
+                    thread_per_user=session_settings.thread_sessions_per_user,
+                )
+                log.info(
+                    "[startup] gateway: session resolved",
+                    extra={"_fields": {"session_key": entry.session_key,
+                                       "session_id": entry.session_id,
+                                       "branch": branch.value,
+                                       "reason": reason.value if reason else None,
+                                       "owl": owl_name}},
+                )
+                return entry.session_id
+            except Exception as exc:
+                log.error(
+                    "[startup] gateway: session resolution failed — turn continues "
+                    "without an incarnation",
+                    exc_info=exc,
+                    extra={"_fields": {"owl": owl_name, "channel": msg.channel}},
+                )
+                return ""
+
         async def _dispatch_turn(
             pump: ClarifyPump,
             channel_adapter: _IntakeAdapter,
@@ -1912,9 +1988,11 @@ class StartupOrchestrator:
                     )
                 )
             else:
+                incarnation = await _resolve_incarnation(msg, decision.target)
                 state = PipelineState(
                     trace_id=msg.trace_id,
                     session_key=msg.session_key,
+                    session_id=incarnation,
                     input_text=input_text,
                     channel=msg.channel,
                     owl_name=decision.target,

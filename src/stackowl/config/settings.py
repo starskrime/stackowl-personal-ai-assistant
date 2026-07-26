@@ -609,6 +609,61 @@ class BriefSettings(BaseModel):
     )
 
 
+class SessionSettings(BaseModel):
+    """When a conversation ends by itself, and how visibly (D01.7).
+
+    Ships ON: ``reset_mode`` defaults to ``both``, so a conversation rolls over at
+    the daily boundary AND after a long silence without anyone configuring it.
+    Turning it off is a deliberate act (``none``), not the default state.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reset_mode: str = Field(
+        default="both",
+        description="Which automatic boundaries are armed: none | idle | daily | both.",
+        json_schema_extra={"hot_reload": False},
+    )
+    # 4 AM, not midnight: a conversation running at 1 AM is mid-thought and
+    # midnight guillotines it, whereas at 4 AM nobody is talking. Bakir signed
+    # this off over his own initial midnight answer, and it ships configurable so
+    # midnight stays reachable for anyone who disagrees.
+    at_hour: int = Field(
+        default=4, ge=0, le=23,
+        description="Local hour of the daily conversation boundary (0-23).",
+        json_schema_extra={"hot_reload": False},
+    )
+    idle_minutes: int = Field(
+        default=1440, ge=1,
+        description="Silence after which a conversation is considered ended. Default 24h.",
+        json_schema_extra={"hot_reload": False},
+    )
+    notify_on_reset: bool = Field(
+        default=True,
+        description="Show a one-line notice when a conversation rolled over. "
+                    "A boundary the user cannot see is one they experience as amnesia.",
+        json_schema_extra={"hot_reload": True},
+    )
+    group_sessions_per_user: bool = Field(
+        default=True,
+        description="Isolate group/channel conversations per speaker.",
+        json_schema_extra={"hot_reload": False},
+    )
+    thread_sessions_per_user: bool = Field(
+        default=False,
+        description="Threads are SHARED by default — a thread is a focused "
+                    "sub-discussion where shared context is the point.",
+        json_schema_extra={"hot_reload": False},
+    )
+    max_restart_failures: int = Field(
+        default=3, ge=1,
+        description="Consecutive restarts failing to complete a turn on ONE lane "
+                    "before it is wiped. Per-lane, so one poisoned conversation "
+                    "cannot take the others down with it.",
+        json_schema_extra={"hot_reload": False},
+    )
+
+
 class CheckInSettings(BaseModel):
     """Configuration for the proactive check-in (heartbeat) job.
 
@@ -930,6 +985,7 @@ class Settings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     brief: BriefSettings = Field(default_factory=BriefSettings)
     check_in: CheckInSettings = Field(default_factory=CheckInSettings)
+    session: SessionSettings = Field(default_factory=SessionSettings)
     system: SystemSettings = Field(default_factory=SystemSettings)
     ui: UISettings = Field(default_factory=UISettings)
     progress: ProgressSettings = Field(default_factory=ProgressSettings)
