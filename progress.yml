@@ -249,24 +249,27 @@ current:
     3a.1 the identity rename + migration 0093 (c82ea736), 3a.2 part 1 — the lane
     carries its own send target + migration 0094 (7b145f15).
   next_action: >
-    3a.2 part 3 — wire resolve_for into the gateway ingress. Steps 1-3 below are DONE
-    (commit 552a7cf3): the incarnation now rides TraceContext and PipelineState, reaches
-    every log record, and lands in cost_records.session_id via migration 0095. What
-    remains is steps 4 and 5 — the part that touches the live message path:
-      1. DONE — PipelineState gains `session_id` (the INCARNATION).
-      2. DONE — pipeline/backends/shared.py is the ONE TraceContext.start seam.
-      3. DONE — cost_records.session_id + ix_cost_records_incarnation (migration 0095).
-      4. startup/orchestrator.py — call SessionStore.resolve_for just before
-         _dispatch_turn (db_pool is available from line 779). Compose Q12's four
-         never-expire conditions into the has_active_work boolean there.
-      5. Point channels/base.py resolve_target and
-         notifications/router_helpers.resolve_target_chat_id at resolve_send_target.
-         NOTE: resolve_target_chat_id is PURE today; this makes it do I/O. Its
-         docstring still claims "session_key == str(user_id) == chat_id", which stops
-         being true the moment composite keys are written — fix the docstring with it.
-    Then 3a.3 (notice as a SEPARATE message + the turn-end transcript writer, user and
-    assistant roles only), then 3b (session.rollover on the EventBus, durable consumer
-    tasks, standard-tier summary, and the /new -> /queue verb swap).
+    SLICE 3a.2 IS COMPLETE AND LIVE-VALIDATED (parts 1-6, commits 7b145f15, 552a7cf3,
+    0baaf7f1/577806f9, eeb140dd, 6a1824b5, 9b571eda). Remaining on D01.7:
+
+    3a.3 — (a) the boundary notice: a SEPARATE message sent BEFORE the reply (Bakir's
+    choice), driven by policy.reset_notice() and cleared once via
+    SessionStore.consume_reset_notice, which already exist and are already tested but
+    have NO caller yet. (b) the turn-end transcript writer: INSERT into
+    conversations/messages, user+assistant roles only, keyed by lane AND incarnation.
+    That is what makes invariant I6 testable and revives the six dead readers listed in
+    the decisions block (owl DNA evolution and fact extraction among them).
+
+    3b — session.rollover on the EventBus with consumers enqueuing DURABLE tasks
+    (Q15: a rollover fires at 4 AM unattended, which is exactly when nobody is
+    watching), the standard-tier summary gated on notability (Q14), the /new -> /queue
+    verb swap, and the background sweeper. Q12's four never-expire conditions belong to
+    the SWEEPER — deliberately not wired at ingress, because a lane only needs
+    protecting from a sweeper expiring it while it is busy; on an inbound message the
+    user is by definition present.
+
+    Then: cleanup, test, validate, document — including folding the 24 brainstorm
+    answers into designs/D01.7.md and re-verifying every path in it.
   live_state: >
     Platform RESTARTED onto the renamed code at 2026-07-25 and verified: 1199 log lines
     in 3 minutes with ZERO ERROR/CRITICAL, cost_records inserting again, lane values
@@ -1227,6 +1230,29 @@ items:
         configured, so identity_key equals today's chat id and every existing row stays
         reachable with no migration at all.
     changes:
+      - date: 2026-07-25
+        slice: "3a.2 part 6 — PipelineState.session_key IS the composite lane"
+        commit: 9b571eda
+        live_validation:
+          driven_by: "Bakir sent a real Telegram message, twice — once before the switch and once after."
+          evidence:
+            lane: "sessions holds ONE row: owl:secretary:telegram:dm:72055773 -> 20260725_192603_0284e07f, chat_id 72055773."
+            branch: "'existing' — the lane was REUSED, not re-minted. Invariant I1 holding against a live turn, not a fixture."
+            cost_rows: "session_key is now the composite lane and session_id the incarnation, on every row of the turn."
+            delivery: "[telegram] adapter.send entry -> exit, [pipeline] deliver entry -> exit, message_ledger status 'completed'. ZERO 'falling back to _last_chat_id' warnings — which was the whole risk of this part."
+            redaction: "session_key logs in FULL again (it had been '***' — see the observability fix), so the design doc's jq queries actually work."
+          unrelated_error_investigated: >
+            One ERROR appeared in the same window: '[rca] staged.analyze: a stage failed'.
+            NOT caused by this work, and checked rather than assumed: the traceback reaches
+            self._backend.run(state) and dies on TimeoutError from asyncio.wait_for. The
+            rename's edit to staged_rca.py was the PipelineState construction, which would
+            have raised TypeError BEFORE the backend ran. The state built fine; the model
+            call was simply slower than per_stage_timeout_s. Same family as DEBT-6.
+          known_asymmetry: >
+            message_ledger.session_key still records the channel-native id, because that row
+            is written at INTAKE — before routing, where no composite lane can exist (the lane
+            is keyed on the owl, and the owl is a routing output). Correct, not a gap, and
+            recorded here so nobody "fixes" it into a lane it cannot know.
       - date: 2026-07-25
         slice: "3a.2 part 5 — proactive delivery resolves the recipient from the lane"
         files:
