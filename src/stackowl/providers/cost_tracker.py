@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict
 
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
-from stackowl.exceptions import ProviderError
 from stackowl.infra.observability import log
 from stackowl.providers.cost_tracker_helpers import _MAX_TRACKED_TURNS, TurnCostLedger
 from stackowl.providers.pricing.loader import PricingLoader
@@ -73,7 +72,10 @@ class CostTracker(OwnedRepository):
     Persists each call to SQLite (`cost_records` table) and enforces an
     optional daily USD budget. Emits `budget_80pct_alert` and
     `budget_exceeded` events on the EventBus when thresholds are crossed.
-    Subsequent record() calls after budget_exceeded raise ProviderError.
+    Both are INFORMATIVE ONLY (Bakir, 2026-07-26): recording NEVER refuses a
+    call, however far past the threshold the day has run. The one mechanism
+    permitted to interrupt is the SOFT per-turn pause (`per_turn_pause_usd`),
+    which asks the user and never raises.
 
     Owner-scoped: cost rows are stamped with ``owner_id`` and daily totals are
     constrained to it (defaults to the single-user :data:`DEFAULT_PRINCIPAL_ID`,
@@ -179,18 +181,16 @@ class CostTracker(OwnedRepository):
         now = datetime.datetime.now(tz=datetime.UTC)
         today = now.date().isoformat()
 
-        if self._daily_limit_usd is not None and today in self._exceeded_dates:
-            log.engine.error(
-                "[cost_tracker] record: budget already exceeded — blocking call",
-                extra={"_fields": {
-                    "provider": provider_name, "model": model,
-                    "date": today, "limit_usd": self._daily_limit_usd,
-                }},
-            )
-            raise ProviderError(
-                "budget",
-                ValueError("Budget cap reached — /config set budget.daily_limit_usd <N> to raise it"),
-            )
+        # DEBT-7 (Bakir, 2026-07-26) — recording NEVER refuses a call. This used
+        # to raise ProviderError for every call once the daily threshold was
+        # crossed ("budget already exceeded — blocking call"). The budget signal
+        # is INFORMATIVE ONLY: it must never block, gate, throttle or abort a
+        # turn. A cost signal that silently refused to answer would be a worse
+        # failure than the missing signal it replaced. The events below still
+        # fire; only the refusal is gone. The pipeline's own per-turn budget
+        # caps (pipeline/budget/callback.py, BudgetExceeded) are a SEPARATE
+        # mechanism and are untouched, as is the soft per-turn pause
+        # (per_turn_pause_usd) — which asks the user rather than raising.
 
         cost_usd = self._estimate_cost(model, input_tokens, output_tokens, is_local=is_local)
         record = CostRecord(
