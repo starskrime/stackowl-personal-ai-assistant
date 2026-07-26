@@ -245,9 +245,19 @@ current:
   stage: implement
   stage_status: in_progress
   slice: >
-    3a.2 IN PROGRESS. Committed so far: slice 1 (b38e8145), slice 2 (7a319d0f),
-    3a.1 the identity rename + migration 0093 (c82ea736), 3a.2 part 1 — the lane
-    carries its own send target + migration 0094 (7b145f15).
+    3b parts 4-7 DESIGNED AND APPROVED (2026-07-25), implementation next. Committed
+    so far: slice 1 (b38e8145), slice 2 (7a319d0f), 3a.1 identity rename + 0093
+    (c82ea736), 3a.2 parts 1-6 (7b145f15 .. 9b571eda), 3a.3 transcript + notice
+    (17bf882e), 3b.1 rollover published (e428b054), 3b.2 /new -> /queue (61f38f6b),
+    3b.3 the sweeper (d37abcdb), docs brought up to what shipped (f617b079).
+  slice_line_was_stale:
+    date: 2026-07-25
+    what: >
+      This field read "3a.2 IN PROGRESS" while the item body, the changes list and the
+      git log all agreed that 3a.2, 3a.3 and 3b parts 1-3 were committed. The same
+      failure the stale_header_corrected block below records, one field over — the
+      resume_here block was rewritten in f617b079 and this line was not.
+    why_it_matters: "A stale slice line sends the next agent to redo finished work. Corrected, and the fix is the reason the whole block is now derived from the changes list rather than hand-written."
   resume_here:
     read_first: "This block, then docs/hermes-mapping/designs/D01.7.md (its Verification section is copy-pasteable and passes)."
     one_line: >
@@ -258,25 +268,45 @@ current:
       - "timeout 600 uv run pytest tests/sessions/ -q -p no:randomly   # expect 74 passed"
       - "uv run python -m stackowl db migrate   # expect: up to date (version 0095)"
     next_task_in_order:
+      0: >
+        READ the slice-3b design round in this item's `decisions` FIRST. It supersedes
+        parts of the original brainstorm: Q14's structural notability gate is withdrawn,
+        and the "rollover summary" is NOT fact extraction — ConversationMiner already
+        does that (98435 conversation_fact rows prove it). The boundary writes a
+        NARRATIVE artifact and triggers the miner. Building the obvious thing here
+        creates a duplicate; that mistake was made and caught in the design round.
       1: >
-        3b — the rollover SUMMARY (Q14/Q17). Subscribe to SessionStore.ROLLOVER_EVENT
-        ("session.rollover"); the consumer must ENQUEUE A DURABLE TASK rather than work
-        inline (Q15: it fires at 4 AM unattended, so inline work is lost if the process
-        dies). Summarise ONLY when something notable happened (Q14's gate keeps cost
-        bounded now that every runner has a lane), and point the call at the STANDARD
-        TIER explicitly — that was Q19's final answer after tier_selector was proven
-        unable to serve it (OA1, resolved NEGATIVE).
+        3b part 4 — THE LANE ROW TELLS THE TRUTH. Migration: identity_key,
+        turn_count -> message_count, + completed_turns. turn_count is DEAD today —
+        nothing increments it, yet it is published in the rollover payload. Bump
+        message_count in resolve_for and completed_turns at turn end; stamp identity_key
+        at ingress (the sweeper has no ingress context to re-derive it from).
       2: >
-        3b — the two remaining never-expire conditions (Q12). conversation_sweep._is_busy
-        enforces a running background process and a pending clarify; an in-flight DURABLE
-        TASK and an ACTIVE OBJECTIVE are not checked. Use the REAL APIs — the first draft
-        of that method invented two method names that do not exist, which would have made
-        I4 a silent no-op.
-      3: "cleanup — resolve nothing outstanding for X3 (already resolved architecturally); confirm no dead code from the rename."
-      4: "test — gateway-driven integration from business requirements, mocking ONLY the provider."
-      5: "validate — a forced rollover proves I1/I2/I3/I5 live; I6 needs a SECOND rollover now that transcripts accumulate."
-      6: "document — close designs/D01.7.md, stamp date + commit, confirm every Invariant maps to a real test."
-      7: "then D01.1 (implement onward — brainstorm and architect are already done), D01.2, D01.4, D01.5."
+        3b part 5 — THE BOUNDARY DOES THE MEMORY WORK. session.rollover -> a scheduler
+        job (idempotency key rollover:<lane>:<ended_incarnation>) -> a DurableTask row
+        used as a CHECKPOINT RECORD, driven by the handler and NOT by the ReAct kernel.
+        The handler triggers ConversationMiner and writes ONE narrative artifact (what
+        was decided, what went wrong), STANDARD TIER, staged under identity_key so the
+        existing promoter commits it and recall finds it. DELETE FactExtractionJobHandler
+        and its registration; keep FactExtractor, the miner uses it.
+      3: >
+        3b part 6 — I4's remaining two conditions. session_key on tasks and objectives,
+        stamped at creation from PipelineState, then the two real checks in
+        conversation_sweep._is_busy. Both stores are owner-scoped and the sweeper has no
+        owner — part 4's identity_key on the lane row is what supplies it. Use the REAL
+        APIs: the first draft of that method invented two that do not exist, which would
+        have made I4 a silent no-op.
+      4: >
+        3b part 7 — Q9, every runner gets a lane. resolve_for has exactly ONE caller
+        today (startup/orchestrator.py:1924), so Q9 is currently unimplemented. Add
+        parent_session_key; give objectives / delegated subagents / durable recovery /
+        shadow validator owl:{owl}:{runner}:{id} lanes; cron resolves to its delivery
+        chat, or a synthetic owl:{owl}:cron:{job} when there is no single target.
+      5: "cleanup — X3 is resolved architecturally; confirm no dead code from the rename or from the deleted handler."
+      6: "test — gateway-driven integration from business requirements, mocking ONLY the provider."
+      7: "validate — a forced rollover proves I1/I2/I3/I5 live; I6 needs a SECOND rollover now that transcripts accumulate."
+      8: "document — close designs/D01.7.md, stamp date + commit, confirm every Invariant maps to a real test."
+      9: "then D01.1 (implement onward — brainstorm and architect are already done), D01.2, D01.4, D01.5."
     do_not_be_surprised_by:
       - "D01.3 is BLOCKED by D05.2/D05.4 (wave 2) and cannot be finished inside D01. That is by design — see waves.1.sequence_reason."
       - "tests/commands/test_config_meta.py fails — DEBT-3, pre-existing, unrelated."
@@ -1215,6 +1245,140 @@ items:
         sequencing_consequence: >
           The /new -> /queue swap lands in 3b, NOT 3a. /new only gains its session meaning once
           the rollover path exists; swapping earlier would leave /new pointing at nothing.
+      - date: 2026-07-25
+        stage: implement
+        round: "slice-3b design round — 24 questions, 6 batches of 4"
+        by: Bakir
+        trigger: >
+          3b is the last slice of implement and the first to touch MEMORY. Reading the
+          memory path before designing turned up three things the architect stage did
+          not have, each of which changed what 3b is. All three were put back to Bakir
+          before any code was written.
+        finding_1_the_summary_already_existed_dormant:
+          what: >
+            FactExtractionJobHandler (memory/extraction_handler.py) reads a lane's
+            `messages` rows, runs FactExtractor, and stages the results through the
+            MemoryBridge — the Q17 summary, already built. It is registered at boot
+            (memory/assembly.py:292) and NOTHING HAS EVER ENQUEUED IT.
+          evidence: >
+            `grep -rn "fact_extraction" src/` returns only its own definition and its
+            registration; no caller creates a job with its "fact_extraction:<key>"
+            idempotency key. It declares trigger_kind="on_demand" specifically so the
+            boot wiring audit does not flag the missing job row — which is how it stayed
+            invisible. Its data source was empty anyway until slice 3a.3.
+        finding_2_it_was_a_duplicate_not_a_gift:
+          what: >
+            THE FIRST READING WAS WRONG AND WAS CORRECTED BEFORE IT REACHED CODE.
+            Round 1 recommended wiring that dormant handler to the rollover (rung 1,
+            "fixes a dead feature"), and Bakir approved it on that framing. Checking
+            where facts actually land then showed ConversationMiner
+            (memory/conversation_miner.py) ALREADY does this job: same FactExtractor,
+            over the per-turn records turn_persist stages, with semantic dedup at 0.92
+            cosine, run by the DreamWorker, promoted into committed_facts where recall
+            reads.
+          evidence: >
+            Live DB staged_facts by source_type: conversation_fact 98435, conversation
+            8093. The miner is not theoretical — it has produced 98k facts. The dormant
+            handler was therefore a THIRD path over the same content, differing only in
+            source table (`messages` vs `staged_facts`).
+          consequence: >
+            Wiring it up would have created duplicate extraction of one conversation by
+            one extractor into one table — the exact opposite of Q24. The recommendation
+            was withdrawn and re-put to Bakir with the measurement.
+        finding_3_two_defects_in_d017_own_shipped_code:
+          turn_count_is_dead: >
+            turn_count is minted at 0, reset to 0 on rollover, persisted, read back and
+            PUBLISHED IN THE ROLLOVER PAYLOAD — and no code path ever increments it.
+            Live proof: the only existing lane reads turn_count=0 while its transcript
+            holds 4 messages. Any consumer gating on it reads a constant, and the
+            structural notability gate considered in round 1 would have been a permanent
+            no-op — the same failure class as the invented APIs caught in the sweeper.
+          q9_is_not_implemented: >
+            resolve_for has exactly ONE caller, startup/orchestrator.py:1924 (chat
+            ingress). Cron jobs, delegated subagents and objectives get no lane, against
+            Q9's "EVERY runner gets a lane — one rule, no special cases". The live
+            sessions table holds one row. This was load-bearing for the notability
+            answer: the lane explosion the Q14 gate was chosen to control does not exist
+            yet.
+        hermes_consulted_on_two_questions:
+          asked_by_bakir: "He declined to answer two design questions and asked what Hermes does. Checked rather than asserted."
+          identity_scoping: >
+            HERMES HAS NO ANSWER AND CANNOT HAVE ONE. get_memory_dir() returns
+            get_hermes_home()/"memories"; MEMORY.md and USER.md are single profile-global
+            files loaded into the system prompt (tools/memory_tool.py:55, 225-226).
+            Nothing is keyed by person or by session. Hermes is a single-user agent, so
+            "which person do these facts belong to" never arises. The teacher default is
+            rebutted BY ABSENCE — this is one of the 16 areas StackOwl is already ahead.
+          non_chat_lanes: >
+            HERMES GIVES NON-CHAT WORK NO LANE. build_session_key has exactly two
+            branches, dm and group/channel, both requiring a chat platform
+            (gateway/session.py:1074-1134) — no system, cron or internal lane exists.
+            Delegated work INHERITS the ambient key: delegate_tool.py:2976-3009 reads
+            get_current_session_key() and falls back to the durable AIAgent.session_id.
+            Background processes are session-scoped by that same inherited key
+            (process_registry.py:1777). Cron is an external managed service (chronos)
+            that fires a DELIVERY INTO A CHAT, never a session of its own. Their model:
+            a session is a conversation with a human; everything else borrows the
+            conversation that caused it.
+          outcome: "Presented as a fourth option Bakir had not been offered. He took it for cron and DIVERGED for objectives/subagents — see answers.runner_lanes."
+        answers:
+          summary_purpose: >
+            NARRATIVE ONLY, PLUS TRIGGER THE MINER. The boundary enqueues the existing
+            ConversationMiner (right moment, dedup already built in) and writes ONE
+            narrative artifact — what was decided, what went wrong. Facts stay the
+            miner's job. Q14's first category was already covered; only the narrative
+            was genuinely missing.
+          the_duplicate: "DELETE FactExtractionJobHandler and its registration. FactExtractor stays — the miner uses it. A dead third path is removed, not a capability."
+          notability: >
+            LLM DECIDES, ALWAYS CALL — gated on the incarnation having transcript rows.
+            Supersedes Q14's structural gate. Bounded because non-chat runners write no
+            transcript, so a silent lane costs nothing.
+          durable_queue: >
+            BOTH — the rollover subscriber enqueues a scheduler JOB (idempotency key
+            rollover:<lane>:<ended_incarnation>, so a boundary can never be summarised
+            twice) and the job creates a DurableTask row. REAFFIRMED after being shown
+            the cost, see accepted_tradeoffs.
+          fact_scoping: "identity_key COLUMN ON THE LANE ROW, stamped at ingress and carried in the payload. Confirmed again after learning Hermes has nothing to port."
+          turn_count: "TWO FIELDS, and RENAME: message_count (inbound, bumped in resolve_for) + completed_turns (bumped at turn end). The column is 3 days old and nothing outside sessions/ reads it."
+          runner_lanes: >
+            OWN LANE PER RUNNER — owl:{owl}:{runner}:{id} for objectives, delegated
+            subagents, durable recovery, shadow validator. A DELIBERATE DIVERGENCE from
+            Hermes, taken so background work gets its own frozen prompt (the D01.1 win).
+          cron_lanes: "The lane of the CHAT IT DELIVERS TO. A job with no single target falls back to a synthetic owl:{owl}:cron:{job_name}."
+          runner_transcripts: "The user-role row records THE TRIGGER — job name and schedule, or the subgoal text. Never invents an utterance, and the assistant row stops being an answer with no question."
+          runner_rollover: "SAME POLICY as any lane; I4 protects a lane with an active objective or in-flight durable task — which the new session_key columns finally make possible."
+          i4_scoping: "MIGRATION — session_key on tasks and objectives, stamped at creation from PipelineState. The only option that answers the question actually asked."
+          q9_gap: "CLOSE IT INSIDE 3b rather than book it."
+          summary_ux: "SILENT AND INSPECTABLE. The boundary notice (I5) stays the only thing the user sees; a 4 AM unprompted message per lane is the behaviour the flood-control incident came from."
+          read_window: "THE WHOLE ENDED INCARNATION, capped. A day is the unit being summarised; a 20-message tail would summarise the end of the day and call it the day."
+          miner_scoping: "TRIGGER UNSCOPED. staged_facts has no incarnation stamp, so 'mine this run' is not expressible; the miner is idempotent, so the boundary simply gives it a good moment. Stated as a limitation rather than dressed up."
+          ordering: "DEFECTS FIRST — the lane row must tell the truth before anything is built on it."
+        contradictions_surfaced_and_put_back:
+          - apparent: "'LLM decides, always call' withdrew the Q14 gate that was chosen AS a cost control."
+            resolution: "Reconciled rather than chosen between: the model always decides, but only for lanes with transcript rows. Both answers survive."
+          - apparent: >
+              'Own lane per runner' and 'one summary covering the work it spawned' cannot both
+              hold — work on its own lane is not on the conversation's lane.
+            resolution: "OWN LANE + parent_session_key. The runner gets its own incarnation and frozen prompt; its summary is ATTRIBUTED to the parent conversation. Both answers survive, at one column."
+          - apparent: "Cron inherits a chat lane while objectives get their own — two rules, where Q9 said one rule, no special cases."
+            resolution: "Kept deliberately and recorded as a divergence rather than left to drift: cron delivers into a chat, an objective is autonomous work."
+        accepted_tradeoffs:
+          - >
+            DURABLE QUEUE: Bakir was shown that a DurableTask is an agent ReAct kernel with
+            checkpointing while a summary is one call that either happens or is retried whole,
+            and that job+task is two queue mechanisms for one unit of work which makes dedup
+            target X1 harder to resolve later. He reaffirmed. Implemented as a job row plus a
+            DurableTask row used AS A CHECKPOINT RECORD, driven by the handler — NOT by the
+            ReAct kernel, which would be borrowing an agent loop to make one LLM call.
+          - >
+            MINER SCOPING: the boundary triggers the miner unscoped, so "what this conversation
+            taught me" is not answerable as such. The alternative (stamp session_id onto
+            staged_facts) was offered and declined for now.
+        plan:
+          part_4: "The lane row tells the truth — migration: identity_key, turn_count -> message_count, completed_turns. Stamp identity at ingress; bump both counters; payload carries all three."
+          part_5: "The boundary does the memory work — rollover subscriber -> job -> DurableTask -> trigger the miner + write the narrative artifact (standard tier). DELETE FactExtractionJobHandler."
+          part_6: "I4's remaining two conditions — session_key on tasks and objectives, stamped at creation; the two real checks in conversation_sweep._is_busy, owner-bound via the lane's identity_key."
+          part_7: "Q9 — parent_session_key column; objectives / delegated subagents / durable recovery / shadow validator get runner lanes; cron resolves to its delivery chat or a synthetic job lane; runner transcripts record the trigger."
     decisions_addendum_memory_scope:
       date: 2026-07-25
       stage: implement
