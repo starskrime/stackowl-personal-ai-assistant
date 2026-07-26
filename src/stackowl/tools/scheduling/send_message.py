@@ -37,7 +37,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.deliverer import clamp_agent_urgency
 from stackowl.notifications.router import Notification
-from stackowl.notifications.router_helpers import resolve_target_chat_id
+from stackowl.notifications.router_helpers import resolve_recipient
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.webhooks.rate_limit import TokenBucket
@@ -282,7 +282,7 @@ class SendMessageTool(Tool):
             category=_CATEGORY,
             channel_name=target,
             idempotency_key=str(trace_id) if trace_id else None,
-            target_chat_id=resolve_target_chat_id(target, session_key),
+            target_chat_id=await resolve_recipient(target, session_key, get_services().session_store),
         )
         try:
             status = await deliverer.deliver(notification)

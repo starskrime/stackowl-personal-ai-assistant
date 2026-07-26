@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
-from stackowl.pipeline.services import get_services
+from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
@@ -132,7 +132,7 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     try:
         from stackowl.memory.preferences import GLOBAL_OWNER_KEY
 
-        owner_key = state.identity_key or state.session_key
+        owner_key = owner_scope_key(state)
         # Merge the cross-channel GLOBAL prefs UNDER the per-owner prefs so a
         # globally-set preference (e.g. output_tables=off) is enforced on every
         # channel, while a per-owner pref still overrides it. No global pref →

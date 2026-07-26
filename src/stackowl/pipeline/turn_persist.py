@@ -29,7 +29,7 @@ from stackowl.pipeline.delivery_gate import (
     _critical_failure_classes,
     is_consequential_giveup_now,
 )
-from stackowl.pipeline.services import get_services
+from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
 
 
@@ -226,7 +226,10 @@ async def persist_turn(state: PipelineState) -> None:
 
     # 3. STEP — best-effort store (B5: never raise; never block delivery).
     try:
-        await bridge.store(content, state.session_key, trust=trust_override)
+        # Filed under the OWNER, not the lane: knowledge is about a person, not
+        # about which owl happened to hear it. This was the one durable-knowledge
+        # site still using the raw lane — see owner_scope_key for why that mattered.
+        await bridge.store(content, owner_scope_key(state), trust=trust_override)
     except Exception as exc:  # B5 — memory persistence must not break the turn
         log.memory.warning(
             "[pipeline] persist_turn: store failed — skipping",

@@ -116,6 +116,53 @@ def resolve_target_chat_id(channel: str | None, session_key: str | None) -> int 
         return None
 
 
+async def resolve_recipient(
+    channel: str | None, session_key: str | None, store: object | None = None,
+) -> int | None:
+    """Resolve a proactive send's recipient, preferring what the LANE recorded.
+
+    Two sources, in priority order:
+
+    1. **The session store** — since `D01.7` a lane persists the channel-native
+       target it was last seen at. This is authoritative and works for lanes the
+       heuristic below can never resolve (a Telegram group, whose chat_id is not
+       the user id; a Slack lane, which was never a chat id at all).
+    2. **The legacy heuristic** — ``int(session_key)``, kept as a fallback so lanes
+       written before the store existed, and callers that pass a bare chat id, keep
+       resolving exactly as they did.
+
+    Returning ``None`` still means "unresolved, fall back to ``_last_chat_id`` and
+    say so loudly". That contract is unchanged: a fabricated recipient IS the
+    cross-delivery bug, so neither source is allowed to guess.
+
+    ``store`` is taken as ``object`` and duck-typed to keep this module free of a
+    dependency on the sessions package — notifications must not import the gateway's
+    world just to address a message.
+    """
+    if store is not None and session_key:
+        try:
+            resolver = store.resolve_send_target  # type: ignore[attr-defined]
+            target = await resolver(session_key)
+        except Exception as exc:  # never let a store hiccup block a send
+            log.notifications.error(
+                "[notifications] resolve_recipient: session store lookup failed — "
+                "falling back to the legacy heuristic",
+                exc_info=exc, extra={"_fields": {"channel": channel}},
+            )
+        else:
+            if target:
+                try:
+                    return int(str(target).strip())
+                except ValueError:
+                    # A non-numeric native target is legitimate on other channels
+                    # (a Slack channel id); it simply is not a Telegram chat_id.
+                    log.notifications.debug(
+                        "[notifications] resolve_recipient: lane target is not numeric",
+                        extra={"_fields": {"channel": channel}},
+                    )
+    return resolve_target_chat_id(channel, session_key)
+
+
 def in_quiet_hours(settings: QuietHoursSettings, now: datetime) -> bool:
     """Return ``True`` if ``now`` falls inside the configured quiet-hours window.
 

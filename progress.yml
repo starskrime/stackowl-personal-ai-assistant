@@ -1194,7 +1194,66 @@ items:
         sequencing_consequence: >
           The /new -> /queue swap lands in 3b, NOT 3a. /new only gains its session meaning once
           the rollover path exists; swapping earlier would leave /new pointing at nothing.
+    decisions_addendum_memory_scope:
+      date: 2026-07-25
+      stage: implement
+      by: Bakir
+      question: >
+        PipelineState.session_key still held the channel-native value. Switching it to
+        the composite lane would repoint memory scoping onto a key staged_facts has no
+        rows for (738 on the live Telegram lane, 109380 overall), silently emptying
+        recall — which contradicts Q17's "adopt every existing conversation with its
+        history intact".
+      answer: "Scope durable knowledge by identity_key, freeing session_key to become the composite lane."
+      why_it_is_the_right_seam: >
+        `state.identity_key or state.session_key` was ALREADY the established pattern
+        for durable knowledge — classify.py (preferences), feedback.py, deliver.py,
+        tier_command.py, preferences_command.py and style_command.py all wrote it
+        inline. Conversation facts were the ONE durable-knowledge site still using the
+        raw lane (turn_persist.py). So this is not a new mechanism; it is the removal
+        of an inconsistency that had gone unnoticed because nothing had yet tried to
+        change what session_key means.
+      why_not_the_alternatives: >
+        A backfill was rejected as lossy: the composite lane contains the OWL, and a
+        chat's facts can span owls, so a per-row owl would have to be guessed and a
+        wrong guess silently misattributes memory. A union read was rejected as a
+        compatibility branch nobody would remember to remove. Leaving session_key
+        channel-native was rejected because it preserves two meanings of one name —
+        the exact confusion the rename existed to end.
+      why_identity_and_not_the_lane: >
+        Knowledge is about a PERSON, not about which owl heard it. Scoping facts to an
+        owl-prefixed lane would mean telling Brain your timezone and Scout not knowing
+        it. The identity resolver returns the handle unchanged when no alias is
+        configured, so identity_key equals today's chat id and every existing row stays
+        reachable with no migration at all.
     changes:
+      - date: 2026-07-25
+        slice: "3a.2 part 5 — proactive delivery resolves the recipient from the lane"
+        files:
+          - "src/stackowl/notifications/router_helpers.py — resolve_recipient(), store-first with the legacy heuristic as fallback"
+          - "src/stackowl/pipeline/services.py — StepServices.session_store"
+          - "src/stackowl/startup/orchestrator.py — wires session_store into StepServices"
+          - "src/stackowl/tools/scheduling/{send_message,send_file,heartbeat_respond}.py — 3 call sites"
+          - "tests/notifications/test_resolve_recipient.py (new) — 7 tests"
+        design_notes:
+          - "Delivery used to recover the recipient with int(session_key), which worked ONLY because the lane happened to BE the Telegram chat id. A composite lane is not int()-able, so every proactive send would have fallen through to the adapter's shared _last_chat_id — the cross-delivery bug this codebase already fixed once. That is why the lane switch could not ship without this."
+          - "Store FIRST, heuristic as fallback: nothing that resolved before stops resolving, and lanes the heuristic could never handle (a Telegram group, whose chat_id is not the user id; a Slack lane, which was never a chat id) now resolve for the first time."
+          - "resolve_recipient takes the store as `object` and duck-types it, so notifications does not import the sessions package just to address a message."
+          - "None still means 'unresolved — fall back and say so loudly'. Neither source may guess: a fabricated recipient IS the bug."
+        verified:
+          tests: "108 passed in tests/notifications, including 7 new. The headline case — a composite lane resolving through the store — is a direct regression test."
+          lint: "ruff clean on all touched files; src/ at the 46 pre-existing baseline."
+          types: "mypy src/ -> 78, byte-identical to baseline. Zero new."
+      - date: 2026-07-25
+        slice: "3a.2 part 4 — durable knowledge scopes by owner, not by lane"
+        files:
+          - "src/stackowl/pipeline/services.py — owner_scope_key(state), one definition"
+          - "src/stackowl/pipeline/turn_persist.py — bridge.store now files under the owner (was the raw lane)"
+          - "src/stackowl/pipeline/steps/classify.py — retrieve + history + preferences"
+          - "src/stackowl/pipeline/steps/feedback.py, deliver.py — inline copies replaced"
+        design_notes:
+          - "The expression existed inline in four places and was MISSING in a fifth. That drift is why the lane could not be re-keyed: four sites would have followed the identity, one would have followed the lane, and only the odd one out held the 109380 existing rows. One function now, so the next person cannot re-introduce the split."
+          - "This unblocks the composite-lane switch without a migration, a backfill or a compatibility read."
       - date: 2026-07-25
         slice: "3a.2 part 1 — the lane carries its own send target"
         commit: 7b145f15

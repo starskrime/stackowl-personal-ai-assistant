@@ -14,7 +14,7 @@ import re
 from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.pipeline import lesson_context as lc
-from stackowl.pipeline.services import get_services
+from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import Message
 
@@ -607,7 +607,7 @@ async def run(state: PipelineState) -> PipelineState:
         log.engine.debug("[pipeline] classify: no memory_bridge — pass-through")
         return state
     # Long-term committed-fact context (FTS or semantic).
-    context = await bridge.retrieve(state.input_text, state.session_key)
+    context = await bridge.retrieve(state.input_text, owner_scope_key(state))
     # Short-term: last N turns of the current session.
     try:
         from stackowl.config.settings import Settings
@@ -615,7 +615,7 @@ async def run(state: PipelineState) -> PipelineState:
         short_term_window = Settings().memory.short_term_window
     except Exception:
         short_term_window = 6
-    history = await _gather_history(state.session_key, short_term_window)
+    history = await _gather_history(owner_scope_key(state), short_term_window)
     # No lean gate (owner decision 2026-07-22): a "conversational"-classified
     # turn used to skip lessons/graph-context/skill-relevance entirely — but
     # the router's intent_class is coarser than "greetings/small-talk" (e.g.
@@ -628,7 +628,7 @@ async def run(state: PipelineState) -> PipelineState:
     # Persisted user preferences (high priority — pin to top, always included).
     # Use identity_key when resolved (cross-channel identity) so preferences
     # follow the user across channels; fall back to session_key when unconfigured.
-    prefs_block = await _gather_preferences(state.identity_key or state.session_key)
+    prefs_block = await _gather_preferences(owner_scope_key(state))
     # FR-3 (de-complication PRD): reflections are surfaced ONCE per turn, via
     # lessons_block (`_gather_lessons` → the unified LanceDB lessons_index,
     # which reflection_writer_handler already publishes reflections into).

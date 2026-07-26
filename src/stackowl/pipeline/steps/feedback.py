@@ -57,7 +57,7 @@ from stackowl.channels._format import (
 )
 from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
-from stackowl.pipeline.services import get_services
+from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 
@@ -189,7 +189,7 @@ async def _classify_and_apply(
         )
         return state
 
-    owner_key = state.identity_key or state.session_key
+    owner_key = owner_scope_key(state)
 
     # FR-2 — confident content/tone reactions are captured as a durable
     # preference NOTE (verbatim state.input_text, aspect-keyed), independent of

@@ -1380,6 +1380,8 @@ class StartupOrchestrator:
             preference_store=preference_store,
             retry_queue_store=retry_queue_store,
             message_ledger_store=message_ledger_store,
+            # D01.7 — so proactive delivery can turn a lane back into a recipient.
+            session_store=session_store,
             approach_rating_tracker=approach_rating_tracker,
             notification_router=notification_router,
             proactive_deliverer=proactive_deliverer,

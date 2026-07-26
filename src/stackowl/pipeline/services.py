@@ -39,12 +39,14 @@ if TYPE_CHECKING:
     from stackowl.owls.session_registry import SessionRegistry
     from stackowl.owls.sticky_route_cache import StickyRouteCache
     from stackowl.pipeline.retry_actuator import RetryActuator
+    from stackowl.pipeline.state import PipelineState
     from stackowl.pipeline.streaming import StreamRegistry
     from stackowl.process.registry import ProcessRegistry
     from stackowl.providers.cost_tracker import CostTracker
     from stackowl.providers.registry import ProviderRegistry
     from stackowl.sandbox.governor import SandboxGovernor
     from stackowl.sandbox.selector import SandboxSelector
+    from stackowl.sessions.store import SessionStore
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tenancy.identity import IdentityResolver
     from stackowl.tools.browser.runtime import CamoufoxRuntime
@@ -79,6 +81,11 @@ class StepServices:
     # inserts the pending row at intake. None -> both are no-ops (byte-identical
     # to before this feature existed).
     message_ledger_store: MessageLedgerStore | None = field(default=None)
+    # D01.7 — conversation lanes and their incarnations. Proactive delivery reads
+    # THIS to turn a lane back into a channel-native recipient, which a composite
+    # lane key can no longer supply by itself. None → delivery falls back to the
+    # legacy "the lane IS the chat id" heuristic, i.e. byte-identical to before.
+    session_store: SessionStore | None = field(default=None)
     # Approach-rating like/dislike votes — consolidate.py reads THIS off services
     # to record a pending vote + build the inline keyboard for a qualifying final
     # answer. ONE process-wide singleton (in-memory trace_id -> message map) so
@@ -230,6 +237,27 @@ def get_services() -> StepServices:
         return _ctx.get()
     except LookupError:
         return StepServices()
+
+
+def owner_scope_key(state: PipelineState) -> str:
+    """The key durable knowledge is filed under for this turn.
+
+    ``identity_key`` when a resolver produced one (so the same person is one owner
+    across Telegram, Slack and the CLI), else the conversation lane.
+
+    WHY THIS IS A FUNCTION. The expression ``state.identity_key or
+    state.session_key`` was written inline in four places — preferences, feedback,
+    delivery — and MISSING in a fifth: conversation facts were stored under the raw
+    lane. That drift is not cosmetic. It is the reason the lane could not be
+    re-keyed to a composite (owl-prefixed) value without silently emptying recall:
+    four call sites would have followed the identity, one would have followed the
+    lane, and only the odd one out held the 109,380 existing rows.
+
+    Knowledge is about a PERSON, not about which owl happened to hear it. Scoping
+    it to the owl-prefixed lane would mean telling Brain your timezone and having
+    Scout not know it.
+    """
+    return state.identity_key or state.session_key
 
 
 def resolve_identity_key(services: StepServices, session_key: str) -> str:

@@ -33,7 +33,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.deliverer import AgentUrgency, clamp_agent_urgency
 from stackowl.notifications.router import Notification
-from stackowl.notifications.router_helpers import resolve_target_chat_id
+from stackowl.notifications.router_helpers import resolve_recipient
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 
@@ -233,7 +233,7 @@ class HeartbeatRespondTool(Tool):
             urgency=urgency,
             category=_CATEGORY,
             channel_name=channel_name,
-            target_chat_id=resolve_target_chat_id(channel_name, session_key),
+            target_chat_id=await resolve_recipient(channel_name, session_key, get_services().session_store),
         )
         try:
             status = await deliverer.deliver(notification)
