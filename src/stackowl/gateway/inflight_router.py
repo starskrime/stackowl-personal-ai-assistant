@@ -56,11 +56,11 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
 
 # Explicit-signal slash tokens whose BODY must be stripped before the routed text
-# is folded/enqueued (Task 14 review point #4: `/steer X` / `/new X` route the
+# is folded/enqueued (Task 14 review point #4: `/steer X` / `/queue X` route the
 # BODY `X`, not the raw command line). Language-neutral command tokens — see
 # turn_router for the multilingual rule. Kept in sync with the router's
 # recognised slash signals.
-_STRIP_TOKENS: tuple[str, ...] = ("/steer", "/new")
+_STRIP_TOKENS: tuple[str, ...] = ("/steer", "/queue")
 
 
 class InflightAction(enum.Enum):

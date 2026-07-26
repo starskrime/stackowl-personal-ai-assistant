@@ -9,7 +9,7 @@ UNSIGNALED) does the conservative STEER-vs-NEW classifier (Task 15) get consulte
 Explicit signals recognised here (all language-neutral / structural — see the
 multilingual rule below):
 
-  * a recognised SLASH-COMMAND — ``/stop`` → STOP, ``/steer`` → STEER, ``/new`` →
+  * a recognised SLASH-COMMAND — ``/stop`` → STOP, ``/steer`` → STEER, ``/queue`` →
     NEW. Slash-command tokens are language-neutral command tokens (the platform's
     universal command surface), so matching them literally is correct. The command
     NAME is extracted via the same parser the gateway scanner uses
@@ -69,7 +69,12 @@ _DEFAULT_STOP_TOKENS: frozenset[str] = frozenset({"stop", "halt", "abort"})
 # Canonical slash-command tokens → signal. Language-neutral command tokens.
 _SLASH_STOP = "stop"
 _SLASH_STEER = "steer"
-_SLASH_NEW = "new"
+# D01.7 — the TOKEN moved to /queue; `/new` now means "start a fresh
+# conversation" (Bakir's Q8, and Hermes' meaning). The capability here is
+# unchanged, only its name: this signal forces a SEPARATE queued turn instead of
+# steering into the running one. ExplicitSignal.NEW keeps its name because it
+# describes the OUTCOME (a new queued turn), not the word the user types.
+_SLASH_QUEUE = "queue"
 
 
 class ExplicitSignal(enum.Enum):
@@ -146,13 +151,13 @@ def parse_explicit_signal(
     :data:`ExplicitSignal.NONE` (UNSIGNALED → Task 15's classifier) and NEVER
     raises. Precedence (most explicit first):
 
-      1. Leading slash-command ``/stop`` / ``/steer`` / ``/new`` — language-neutral
+      1. Leading slash-command ``/stop`` / ``/steer`` / ``/queue`` — language-neutral
          command tokens (extracted via the scanner's command parser). An
          UNRELATED slash-command (e.g. ``/help``) is NOT a steer/stop/new signal →
          it falls through to NONE (the normal command route handles it).
       2. Structural ``is_reply_to_inflight`` (a Telegram reply to the running
          turn's message) → STEER. Honoured even with an empty body. An explicit
-         ``/new`` from rule 1 still wins (an unambiguous "fresh turn" intent).
+         ``/queue`` from rule 1 still wins (an unambiguous "separate turn" intent).
       3. A BARE stop token (configurable, casefolded ``stop_tokens`` set) as the
          leading word → STOP.
       4. Otherwise → NONE.
@@ -173,7 +178,7 @@ def parse_explicit_signal(
                 signal = ExplicitSignal.STOP
             elif cmd == _SLASH_STEER:
                 signal = ExplicitSignal.STEER
-            elif cmd == _SLASH_NEW:
+            elif cmd == _SLASH_QUEUE:
                 signal = ExplicitSignal.NEW
             else:
                 # An unrelated slash-command is NOT a turn-routing signal here.
@@ -224,7 +229,7 @@ class TurnRouter:
     Two-layer decision (concurrent-msg §6.2/§6.3):
 
       1. :func:`parse_explicit_signal` — a ZERO-cost deterministic parse. Any
-         explicit signal (``/stop``, ``/steer``, ``/new``, reply-to-inflight, a
+         explicit signal (``/stop``, ``/steer``, ``/queue``, reply-to-inflight, a
          bare stop token) wins immediately and the classifier is never consulted.
       2. On ``NONE`` (UNSIGNALED), the conservative
          :meth:`ClarifyIntentClassifier.is_steer` proposes STEER vs NEW. STEER is

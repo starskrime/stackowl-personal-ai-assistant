@@ -12,7 +12,7 @@ They assert the production routing behaviour Task 16 wires in:
       stripped) onto the running turn's mailbox — HANDLED, no queued-new.
   (b) explicit ``/stop`` → ``request_stop`` sets the running turn's stop flag —
       HANDLED.
-  (c) explicit ``/new Y`` → queued-new (the helper returns ENQUEUE_NEW with ``Y``;
+  (c) explicit ``/queue Y`` → queued-new (the helper returns ENQUEUE_NEW with ``Y``;
       the mirrored ``_intake`` NEW-path enqueues + instant-acks).
   (d) UNSIGNALED high-confidence steer (mock classifier → STEER) → ``try_steer``.
   (e) UNSIGNALED → NEW (mock classifier → NEW) → queued-new.
@@ -102,7 +102,7 @@ async def _intake_new_path(reg: TurnRegistry, *, sid: str, text: str, rid: str) 
 @pytest.mark.filterwarnings("ignore::pytest.PytestWarning")
 def test_strip_signal_token_steer_and_new() -> None:
     assert strip_signal_token("/steer fix the import") == "fix the import"
-    assert strip_signal_token("/new write the readme") == "write the readme"
+    assert strip_signal_token("/queue write the readme") == "write the readme"
     assert strip_signal_token("/STEER  CaseInsensitive") == "CaseInsensitive"
     assert strip_signal_token("/steer") == ""  # bare token, no body
     assert strip_signal_token("no signal here") == "no signal here"
@@ -209,7 +209,7 @@ async def test_explicit_stop_sets_stop_flag() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# (c) explicit /new Y → queued-new (helper ENQUEUE_NEW; _intake mirror enqueues).
+# (c) explicit /queue Y → queued-new (helper ENQUEUE_NEW; _intake mirror enqueues).
 # --------------------------------------------------------------------------- #
 
 
@@ -221,14 +221,14 @@ async def test_explicit_new_returns_enqueue_new_and_caller_queues() -> None:
         outcome = await asyncio.wait_for(
             route_inflight_message(
                 router=router, registry=reg, running=turn,
-                text="/new draft the email", session_key="s1",
+                text="/queue draft the email", session_key="s1",
                 request_id_new="r2", target=None,
             ),
             2.0,
         )
         assert outcome.action is InflightAction.ENQUEUE_NEW
         assert outcome.signal is ExplicitSignal.NEW
-        assert outcome.routed_text == "draft the email"  # /new token stripped
+        assert outcome.routed_text == "draft the email"  # /queue token stripped
         # The mailbox must be untouched (never folded onto the running turn).
         assert turn.steering_mailbox.empty()
         # The caller's NEW path enqueues it (running turn still in flight).

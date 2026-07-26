@@ -1552,6 +1552,8 @@ class StartupOrchestrator:
             owl_registry=owl_registry,
             tool_registry=tool_registry,
             bridge=memory_bridge,
+            # D01.7 — so /new can actually end a conversation.
+            session_store=session_store,
             lancedb=memory_components.lancedb,
             promoter=memory_components.promoter,
             embedding_registry=memory_components.embedding_registry,

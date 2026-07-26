@@ -264,6 +264,50 @@ class SessionStore:
         await self._project_mirror()
         return entry
 
+    async def start_new_incarnation(
+        self, session_key: str, reason: ResetReason = ResetReason.EXPLICIT,
+        now: datetime.datetime | None = None,
+    ) -> SessionEntry | None:
+        """End this lane's incarnation on purpose and begin a fresh one.
+
+        The mechanism behind ``/new``. It shares ONE code path with the automatic
+        boundary — archive, announce, mint — so the four triggers (daily, idle,
+        explicit, context-full) cannot drift into behaving differently. That was
+        Bakir's Q8 observation: /new and the daily rollover are the same thing with
+        different causes.
+
+        ``is_fresh_reset`` is set and ``was_auto_reset`` is NOT: the user did this
+        deliberately and must never be told their conversation "expired". Returns
+        ``None`` for a lane that does not exist yet — there is nothing to end, and
+        inventing one would report a rollover that never happened.
+        """
+        stamp = now or datetime.datetime.now().astimezone()
+        existing = await self.get(session_key)
+        if existing is None:
+            log.gateway.info(
+                "session.new: no such lane — nothing to end",
+                extra={"_fields": {"session_key": session_key}},
+            )
+            return None
+        fresh = existing.evolve(
+            session_id=new_session_id(stamp),
+            created_at=stamp, updated_at=stamp, turn_count=0,
+            suspended=False, resume_pending=False, resume_reason=None,
+            was_auto_reset=False, auto_reset_reason=reason,
+            is_fresh_reset=True, expiry_finalized=False, restart_failures=0,
+        )
+        await self.save(fresh)
+        log.gateway.info(
+            "session.rollover: old incarnation ended",
+            extra={"_fields": {
+                "session_key": session_key, "old_session_id": existing.session_id,
+                "new_session_id": fresh.session_id, "reason": reason.value,
+                "turn_count": existing.turn_count,
+            }},
+        )
+        self._publish_rollover(existing, fresh, reason)
+        return fresh
+
     async def consume_reset_notice(self, entry: SessionEntry) -> SessionEntry:
         """Clear ``was_auto_reset`` after the notice has been shown ONCE (I5)."""
         if not entry.was_auto_reset:

@@ -3,7 +3,7 @@
 The TurnRouter parser maps an EXPLICIT user signal at message-arrival (while a
 turn is in-flight) to a routing decision WITHOUT any LLM call:
 
-  * a recognised slash-command (``/stop`` / ``/steer`` / ``/new``) — language-neutral
+  * a recognised slash-command (``/stop`` / ``/steer`` / ``/queue``) — language-neutral
     command tokens (reused via the gateway scanner's command extractor),
   * a Telegram reply-to-the-in-flight-message — a language-neutral STRUCTURAL signal,
   * a pending-clarify answer — folds into the existing clarify ANSWER path (REPLY),
@@ -31,7 +31,7 @@ from stackowl.gateway.turn_router import (
         ("/stop", ExplicitSignal.STOP),
         ("stop", ExplicitSignal.STOP),
         ("/steer also include Y", ExplicitSignal.STEER),
-        ("/new what's the weather", ExplicitSignal.NEW),
+        ("/queue what's the weather", ExplicitSignal.NEW),
         ("just a normal message", ExplicitSignal.NONE),
     ],
 )
@@ -55,10 +55,10 @@ def test_slash_steer_wins_over_reply_structural() -> None:
 
 
 def test_slash_new_is_not_overridden_by_reply() -> None:
-    # An explicit /new command is honoured even on a structural reply: /new is an
+    # An explicit /queue command is honoured even on a structural reply: it is an
     # unambiguous user intent to start a fresh turn, not steer the running one.
     assert (
-        parse_explicit_signal("/new something else", is_reply_to_inflight=True)
+        parse_explicit_signal("/queue something else", is_reply_to_inflight=True)
         == ExplicitSignal.NEW
     )
 
@@ -69,7 +69,7 @@ def test_leading_whitespace_and_case_insensitive_slash() -> None:
 
 
 def test_unknown_slash_command_is_not_a_steer_signal() -> None:
-    # An unrelated slash-command (e.g. /help) is NOT an explicit steer/stop/new
+    # An unrelated slash-command (e.g. /help) is NOT an explicit steer/stop/queue
     # signal — it is NONE here (it routes through the normal command path).
     assert parse_explicit_signal("/help me", is_reply_to_inflight=False) == ExplicitSignal.NONE
 
@@ -110,3 +110,32 @@ def test_never_raises_on_weird_input() -> None:
 def test_reply_to_inflight_with_empty_text_still_steer() -> None:
     # A structural reply with empty body is still a STEER signal (structural wins).
     assert parse_explicit_signal("", is_reply_to_inflight=True) == ExplicitSignal.STEER
+
+
+# --------------------------------------------------------------------------
+# D01.7 — /new is no longer an in-flight routing signal.
+#
+# The "queue this as a SEPARATE turn instead of steering" capability moved to
+# /queue; /new now means "start a fresh conversation" (Bakir's Q8, and Hermes'
+# documented meaning). Without this test the token swap is only half-specified:
+# the four tests above prove /queue works, and nothing proved /new stopped.
+# --------------------------------------------------------------------------
+
+
+def test_slash_new_is_no_longer_an_inflight_signal() -> None:
+    """/new must fall through to the normal command route, where the session
+    command handles it — NOT be swallowed as a mid-turn routing verb."""
+    assert parse_explicit_signal("/new", is_reply_to_inflight=False) is ExplicitSignal.NONE
+    assert (
+        parse_explicit_signal("/new and start over", is_reply_to_inflight=False)
+        is ExplicitSignal.NONE
+    )
+
+
+def test_slash_new_does_not_beat_a_structural_reply() -> None:
+    """It used to win over reply-to-inflight. Now it is an ordinary command, so a
+    reply to the running turn stays a STEER."""
+    assert (
+        parse_explicit_signal("/new something else", is_reply_to_inflight=True)
+        is ExplicitSignal.STEER
+    )

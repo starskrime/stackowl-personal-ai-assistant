@@ -328,3 +328,60 @@ async def test_no_bus_is_a_supported_configuration(store) -> None:
     rolled, branch, _ = await store.resolve_for(src(), at(22, 12))
     assert branch is Branch.EXPIRED
     assert rolled.session_id
+
+
+# --------------------------------------------------------------------------
+# D01.7 slice 3b — /new: an explicit boundary, sharing the automatic one's path.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_ends_the_incarnation_and_starts_another(bus_store) -> None:
+    store, bus = bus_store
+    first, _, _ = await store.resolve_for(src(), at(20, 12))
+    fresh = await store.start_new_incarnation(first.session_key)
+
+    assert fresh is not None
+    assert fresh.session_key == first.session_key, "same lane (I1)"
+    assert fresh.session_id != first.session_id, "new incarnation (I2)"
+    assert fresh.turn_count == 0
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_new_never_reports_itself_as_an_expiry(bus_store) -> None:
+    """The user did this on purpose. Telling them their conversation 'went quiet'
+    would be a lie — which is why is_fresh_reset is kept distinct from
+    was_auto_reset."""
+    from stackowl.sessions.policy import reset_notice
+
+    store, _ = bus_store
+    first, _, _ = await store.resolve_for(src(), at(20, 12))
+    fresh = await store.start_new_incarnation(first.session_key)
+
+    assert fresh is not None
+    assert fresh.is_fresh_reset is True
+    assert fresh.was_auto_reset is False
+    assert reset_notice(fresh) is None, "no 'expired' notice for a deliberate /new"
+
+
+@pytest.mark.asyncio
+async def test_new_announces_the_boundary_like_any_other(bus_store) -> None:
+    """One code path, four triggers — a consumer cannot tell (or need to tell)
+    an explicit boundary from a daily one except by the reason field."""
+    store, bus = bus_store
+    first, _, _ = await store.resolve_for(src(), at(20, 12))
+    await store.start_new_incarnation(first.session_key)
+
+    assert len(bus.events) == 1
+    name, payload = bus.events[0]
+    assert name == "session.rollover"
+    assert payload["reason"] == "explicit"
+    assert payload["old_session_id"] == first.session_id
+
+
+@pytest.mark.asyncio
+async def test_new_on_an_unknown_lane_reports_nothing_happened(bus_store) -> None:
+    """Nothing to end. Inventing a lane would announce a rollover that never was."""
+    store, bus = bus_store
+    assert await store.start_new_incarnation("owl:Brain:telegram:dm:nope") is None
+    assert bus.events == []

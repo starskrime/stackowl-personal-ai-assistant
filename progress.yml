@@ -1231,6 +1231,48 @@ items:
         reachable with no migration at all.
     changes:
       - date: 2026-07-25
+        slice: "3b part 2 — /new becomes the session verb, /queue keeps the old capability"
+        files:
+          - "src/stackowl/sessions/store.py — start_new_incarnation()"
+          - "src/stackowl/commands/new_conversation.py (new) — the /new command"
+          - "src/stackowl/commands/assembly.py — session_store dep + /new registration"
+          - "src/stackowl/startup/orchestrator.py — session_store wired into CommandDeps"
+          - "src/stackowl/gateway/turn_router.py — the in-flight token is now /queue"
+          - "src/stackowl/gateway/inflight_router.py — _STRIP_TOKENS follows the rename"
+          - "tests/sessions/test_session_store.py — 4 new; tests/gateway/* — 4 re-pointed + 2 new"
+        design_notes:
+          - "start_new_incarnation shares ONE code path with the automatic boundary — archive, announce, mint — so the four triggers (daily, idle, explicit, context-full) cannot drift into behaving differently. That was Bakir's Q8 observation: /new and the daily rollover are the same thing with different causes."
+          - "is_fresh_reset is set and was_auto_reset is NOT, so an explicit /new never tells the user their conversation 'went quiet'. A test asserts reset_notice() returns None for it."
+          - "/new on a lane that does not exist returns None and says 'you're already in a new conversation' rather than inventing a lane and announcing a rollover that never happened."
+          - "ExplicitSignal.NEW KEEPS its name: it describes the OUTCOME (a new queued turn), not the word the user types. Only the token moved."
+        straggler_caught: >
+          gateway/inflight_router.py's _STRIP_TOKENS still listed "/new". Missing it would
+          have left the token embedded in the routed message body — "/queue do X" would have
+          reached the owl as "/queue do X". Found by grepping for the token rather than
+          trusting the rename to be one-site.
+        failing_tests_escalated_not_patched:
+          what: >
+            Four tests encoded the OLD /new contract and failed BECAUSE the change worked:
+            test_strip_signal_token_steer_and_new, test_explicit_new_returns_enqueue_new_...,
+            the /new parametrised signal case, and test_slash_new_is_not_overridden_by_reply.
+          action: >
+            STOPPED and asked Bakir rather than editing them, per the standing rule. He
+            approved. They were re-pointed at /queue, and TWO NEW tests were added asserting
+            what nothing covered: that /new is no longer an in-flight signal (it now returns
+            NONE and falls through to the command route), and that it no longer beats a
+            structural reply. Without those the swap was only half-specified — four tests
+            proved /queue works, none proved /new stopped.
+        verified:
+          tests: "170 passed in tests/gateway (including the 2 new), 349 in tests/commands, 67 in tests/sessions."
+          known_red: "tests/commands/test_config_meta.py — DEBT-3, and CONFIRMED unrelated: it fails on /config's subcommand set ('detect-timezone' extra), untouched by this work. Same change-detector class as DEBT-4."
+          lint: "ruff 46 = baseline on src/; tests/gateway clean."
+          types: "mypy src/ -> 78, byte-identical to baseline."
+          live: "Restarted — 1204 log lines, 0 ERROR/CRITICAL."
+        remaining_in_3b:
+          - "Durable consumer tasks (Q15) — subscribers that enqueue rather than work inline."
+          - "The standard-tier rollover summary, gated on notability (Q14)."
+          - "The background sweeper, where Q12's four never-expire conditions belong."
+      - date: 2026-07-25
         slice: "3b part 1 — session.rollover is published on the EventBus"
         files:
           - "src/stackowl/sessions/store.py — ROLLOVER_EVENT, _publish_rollover, optional event_bus"

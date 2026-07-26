@@ -73,6 +73,9 @@ class CommandDeps:
 
     # Memory subsystem
     bridge: MemoryBridge | None = None
+    # D01.7 — conversation lanes, for /new. `object` for the same reason as
+    # preference_store below: avoid a heavy import in the deps container.
+    session_store: object | None = None
     preference_store: object | None = None  # PreferenceStore — avoid heavy import
     lancedb: LanceDBAdapter | None = None
     promoter: FactPromoter | None = None
@@ -323,6 +326,12 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     # /reset
     from stackowl.commands.reset import ResetCommand
     _safe_register(registry, "reset", lambda: ResetCommand(bridge=deps.bridge))
+
+    from stackowl.commands.new_conversation import NewConversationCommand
+    _safe_register(
+        registry, "new",
+        lambda: NewConversationCommand(store=deps.session_store),  # type: ignore[arg-type]
+    )
 
     # /connect + /disconnect
     from stackowl.commands.connect_command import ConnectCommand, DisconnectCommand
