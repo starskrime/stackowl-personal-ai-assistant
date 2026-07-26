@@ -864,7 +864,63 @@ known_debt:
     evidence: "Boot wiring audit: 'DANGLING event subscription ... subscribed but NO module declares it as a publisher, so the subscriber will NEVER fire.'"
     impact: "A conversation that cost $2.85 produced no budget signal. Directly relevant to D01.6's purpose."
     decision: "Tracked. Small fix; fold into a D01 cleanup pass."
-    status: open
+    status: resolved
+    it_was_three_defects_not_one:
+      date: 2026-07-26
+      one_the_publisher_was_never_missing: >
+        cost_tracker.py DOES emit both events (lines 294/312). They can never
+        fire because _maybe_alert_budget() opens with `if limit is None or limit
+        <= 0: return`, and budget.daily_limit_usd defaults to None with NO
+        `budget:` section in the live stackowl.yaml. So "add a publisher" — what
+        the audit's own message advises — would have been the wrong fix.
+      two_enabling_it_would_have_aborted_turns: >
+        record() raised ProviderError on EVERY call once the threshold was
+        crossed, logging "budget already exceeded — blocking call". That is
+        precisely what Bakir's constraint forbids, and it was dormant only
+        because nobody had set a limit. Wiring the alert up without finding this
+        would have shipped the exact failure mode he wrote the constraint about.
+      three_the_audit_that_reported_it_is_inoperative: >
+        declared_event_publishers in orchestrator.py was `frozenset()` — a
+        hardcoded empty set with no other assignment in the tree — so the
+        dangling-event check compared subscribers against NOTHING and could only
+        ever answer "dangling". It was right about the budget events by
+        accident, and could never have caught a genuinely new one.
+    resolution:
+      date: 2026-07-26
+      decided_by: Bakir
+      part_1: >
+        Removed the ProviderError block. The threshold events still fire (a test
+        pins the signal so removing the block cannot quietly remove it); only the
+        refusal is gone. The pipeline's own per-turn budget caps
+        (pipeline/budget/callback.py, BudgetExceeded) are a SEPARATE mechanism
+        and were deliberately left intact, as was per_turn_pause_usd — a SOFT
+        pause that asks the user, which is the one interruption shape the
+        constraint permits. Commit 6b8e8e62.
+      part_2: >
+        Bakir chose PER-CONVERSATION reporting over a daily threshold. New
+        CostTracker.session_total(session_key, session_id) — scoped to BOTH
+        because a lane outlives its incarnations — plus a second consumer on
+        D01.7's session.rollover seam emitting conversation_cost_report. No
+        migration: cost_records already carries both columns from D01.6/D01.7.
+        One boundary, many consumers (X3's principle), no new scheduler. Commit
+        5e161db7.
+      part_3: >
+        declared_event_publishers now names the three events actually emitted. A
+        CHARACTERIZATION test located the defect first — the audit function
+        produces a clean verdict as soon as it is handed a real declared set, so
+        the bug was purely in the caller and a fix aimed at the audit would have
+        been wrong. Commit ffab7db6.
+      verified:
+        tests: "3 new + 6 new + 3 new, all red first. 565 passed (providers+notifications), 95 passed (startup)."
+        lint_types: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added (one self-inflicted import-sort was caught and fixed)."
+      the_open_assumption: >
+        conversation_cost_report was added to event_bridge._ALLOWED_EVENTS so
+        the report is DELIVERABLE rather than log-only, reading "the publisher
+        tells Bakir what a conversation is costing" as meaning he wants to be
+        told. Delivery is still conditional — the bridge drops it without a
+        resolved channel/target, and a zero-cost boundary emits nothing at all.
+        If it proves chatty the one-line revert is to drop it from that set.
+      inherits: "DEBT-15 — every dollar it reports is fallback-derived until the live model is priced. The call COUNT is exact, and the module docstring says so."
   - id: DEBT-5
     found: 2026-07-25
     what: "progress.yml was pushed to main in an INVALID-YAML state for one commit (01c53d78)."
