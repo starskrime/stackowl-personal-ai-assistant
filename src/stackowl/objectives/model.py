@@ -92,6 +92,11 @@ class Objective(BaseModel):
     status: ObjectiveStatus = "active"
     #: Originating channel — the delivery context for progress/blocked pings.
     channel: str | None = None
+    #: The conversation LANE this objective belongs to, so invariant I4 can ask
+    #: whether a lane has work in flight before expiring it (D01.7 Q12). NULL when
+    #: the objective was not created from a turn; a NULL lane never matches a real
+    #: one.
+    session_key: str | None = None
     #: Durable delivery target captured at creation (mirrors the `jobs` row), so
     #: a scheduler tick with no live session can still report back to the owner.
     target_channels: list[str] = Field(default_factory=list)

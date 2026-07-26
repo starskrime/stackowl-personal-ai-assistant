@@ -111,6 +111,11 @@ class DurableTaskRunner:
                 status="running",
                 owl_name=state.owl_name or None,
                 channel=state.channel or None,
+                # The LANE, for invariant I4: a lane with a task in flight is never
+                # expired by the sweeper (Q12). Same reasoning as owl/channel above
+                # — stamped from the creating state, empty coerced to None so a
+                # task with no conversation never matches a real lane.
+                session_key=state.session_key or None,
                 creation_ceiling=creation_ceiling,
                 task_envelope=task_envelope,
                 created_at=now,

@@ -131,6 +131,7 @@ class ObjectiveStore(OwnedRepository):
                 "intent": objective.intent,
                 "status": objective.status,
                 "channel": objective.channel,
+                "session_key": objective.session_key,
                 "target_channels": _dumps(objective.target_channels),
                 "target_addresses": _dumps(objective.target_addresses),
                 "blocker": objective.blocker,
@@ -471,6 +472,7 @@ class ObjectiveStore(OwnedRepository):
             intent=str(row["intent"]),
             status=row["status"],
             channel=row.get("channel"),
+            session_key=row.get("session_key"),
             target_channels=_loads_list(row.get("target_channels")),
             target_addresses=_loads_dict(row.get("target_addresses")),
             blocker=row.get("blocker"),
@@ -503,3 +505,40 @@ class ObjectiveStore(OwnedRepository):
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
+
+
+#: Statuses that mean an objective is still live. ``done`` and ``abandoned``
+#: release the lane.
+#:
+#: ``blocked`` counts: an objective stalled on a blocker is still in flight and
+#: still expects its conversation to exist when the blocker clears.
+_ACTIVE_OBJECTIVE_STATUSES: tuple[str, ...] = ("active", "blocked")
+
+
+async def any_active_objective_for_lane(db: DbPool, session_key: str) -> bool:
+    """Does this conversation lane have a live objective?
+
+    Invariant I4's third condition (Bakir's Q12). Returns a BOOLEAN, never row
+    content.
+
+    DELIBERATELY OWNER-AGNOSTIC — a module function rather than a method on the
+    owner-scoped :class:`ObjectiveStore`. Objectives are created under
+    ``DEFAULT_PRINCIPAL_ID`` (``tools/scheduling/objective_tool.py``) while a lane's
+    ``identity_key`` is the person, so an owner-scoped read would match nothing and
+    invariant I4 would silently never fire. The lane is the scope: a row carrying
+    this lane belongs to this conversation whoever owns it.
+    """
+    if not session_key:
+        return False
+    placeholders = ",".join("?" for _ in _ACTIVE_OBJECTIVE_STATUSES)
+    rows = await db.fetch_all(
+        f"SELECT 1 FROM {_OBJECTIVES} WHERE session_key = ? "
+        f"AND status IN ({placeholders}) LIMIT 1",
+        (session_key, *_ACTIVE_OBJECTIVE_STATUSES),
+    )
+    busy = bool(rows)
+    log.engine.debug(
+        "[objectives] any_active_objective_for_lane: exit",
+        extra={"_fields": {"session_key": session_key, "busy": busy}},
+    )
+    return busy

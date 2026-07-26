@@ -420,6 +420,26 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-12
+    found: 2026-07-26
+    what: "tests/smoke/test_e8_s3_sessions_spawn_telegram_smoke.py cannot even be COLLECTED — it imports a constant that no longer exists."
+    evidence: >
+      `ImportError: cannot import name 'MAX_LIVE_SESSIONS' from
+      'stackowl.owls.delegation_limits'`. The symbol was removed by commit d9b83115
+      ("remove or relax hardcoded numeric ceilings platform-wide", 2026-07-22) and
+      the test was never updated. Verified pre-existing: the symbol is absent at
+      HEAD~8, before any of today's work, and neither file has been touched by D01.7
+      except by the mechanical session_key rename.
+    why_it_matters: >
+      A test that fails to IMPORT is worse than one that fails: it aborts collection
+      for whatever selection includes it, so `pytest -k objective` reported an error
+      rather than running. It has been invisible because nobody runs that path.
+    decision: >
+      NOT fixed here. It is unrelated to D01.7, and deciding what the smoke test
+      should assert now that the ceiling is gone is a judgement about the
+      numeric-limits arc, not about session lifecycle — the standing rule is to stop
+      and report rather than autonomously rewrite a failing test.
+    status: open
   - id: DEBT-11
     found: 2026-07-26
     what: >
@@ -1560,6 +1580,51 @@ items:
         configured, so identity_key equals today's chat id and every existing row stays
         reachable with no migration at all.
     changes:
+      - date: 2026-07-26
+        slice: "3b part 6 — invariant I4 finally enforces all four of Q12's conditions"
+        files:
+          - "src/stackowl/db/migrations/0099_lane_on_work.sql (new) — session_key on tasks + objectives, 2 indexes"
+          - "src/stackowl/pipeline/durable/task.py, store.py — DurableTask.session_key + any_active_task_for_lane()"
+          - "src/stackowl/objectives/model.py, store.py — Objective.session_key + any_active_objective_for_lane()"
+          - "src/stackowl/pipeline/durable/task_runner.py — stamps the lane from the creating state"
+          - "src/stackowl/tools/scheduling/objective_tool.py — stamps the lane from TraceContext"
+          - "src/stackowl/scheduler/handlers/conversation_sweep.py — _is_busy composes all four"
+          - "src/stackowl/startup/orchestrator.py — the pool reaches the handler"
+          - "tests/sessions/test_lane_activity.py (new) — 19 tests, written FIRST and red"
+        the_question_could_not_be_ASKED: >
+          Q12's remaining two conditions were not unimplemented so much as
+          unaskable: neither `tasks` nor `objectives` recorded which conversation
+          the work belonged to, so "does this lane have work in flight?" had nothing
+          to look up. 0099 adds it and both creation sites stamp it.
+        the_trap_avoided:
+          what: >
+            The obvious implementation is to reuse DurableTaskStore/ObjectiveStore.
+            Both are OwnedRepository subclasses, so every read is bound to one
+            principal — and OBJECTIVES ARE CREATED UNDER DEFAULT_PRINCIPAL_ID
+            (objective_tool.py:209) while a lane's identity_key is the PERSON.
+          consequence_if_missed: >
+            An owner-scoped read would have matched nothing, the busy-check would
+            have returned False for every lane, and I4 would have been a silent
+            no-op — the FOURTH such trap in this item, after the unenqueued handler,
+            the dead turn_count and the uncommittable summary.
+          resolution: >
+            Both queries are module-level functions, deliberately owner-agnostic,
+            filtering on the LANE. That is honest scoping rather than a hole: a row
+            carrying this lane belongs to this conversation whoever owns it, and the
+            function returns a BOOLEAN, never row content. A test asserts a row under
+            a different principal still counts.
+        design_notes:
+          - "`parked` counts as active for tasks: a parked task waits on a human or an approval, which is exactly the work a 4 AM sweep must not sever. `blocked` counts for objectives for the same reason — it is stalled, not finished."
+          - "A NULL lane never matches a real one. 724 existing tasks carry NULL and cannot be backfilled (a task row has owl_name and channel but never the composite lane), so without this rule one legacy row would freeze every boundary for ever. Pinned by a test."
+          - "An EMPTY lane key returns False rather than matching the NULL rows — a caller with no lane must not collide with legacy work."
+          - "The queries live in each OWNING package, not in the scheduler: the handler owns what 'busy' MEANS, each package owns how its own table answers. The scheduler gains no knowledge of either schema."
+          - "db is optional on the handler, so an unwired pool degrades those two conditions to 'do not contribute' — the same rule the other two already followed — rather than breaking expiry."
+        verified:
+          tests: "19 new (red first) in tests/sessions/test_lane_activity.py; 110 passed across tests/sessions; 134 in tests/pipeline/durable; 86 in tests/objectives."
+          migration: "0099 applied; second run reports already-applied; schema at 0099. 724 task rows preserved, both indexes created."
+          lint: "ruff src/ 46 = DEBT-1 baseline. types: mypy src/ 78 = DEBT-8 baseline. Zero added."
+          live: "Restarted — 38 log lines, ZERO ERROR/CRITICAL, and the registration now logs enforces_all_four_i4_conditions=true."
+        found_while_running_the_suites: "DEBT-12 — a smoke test that cannot be COLLECTED because it imports MAX_LIVE_SESSIONS, removed by d9b83115 in the numeric-limits arc. Pre-existing, unrelated, recorded not fixed."
       - date: 2026-07-26
         slice: "3b part 5b — the boundary does the memory work"
         files:

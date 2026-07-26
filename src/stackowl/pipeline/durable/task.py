@@ -50,6 +50,10 @@ class DurableTask(BaseModel):
     #: on legacy rows created before migration 0047 — B4 recovery falls back to
     #: the documented 'secretary' default when this is None.
     owl_name: str | None = None
+    #: The conversation LANE this work belongs to, so invariant I4 can ask whether
+    #: a lane has work in flight before expiring it (D01.7 Q12). NULL on legacy rows
+    #: and on any task not born from a turn; a NULL lane never matches a real one.
+    session_key: str | None = None
     #: Originating channel (cli/telegram/...) of the durable goal. NULL on legacy
     #: rows — B4 recovery falls back to the documented 'cli' default when None.
     channel: str | None = None

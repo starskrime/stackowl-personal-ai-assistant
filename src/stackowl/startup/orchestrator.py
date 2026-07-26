@@ -1479,6 +1479,9 @@ class StartupOrchestrator:
             # boundary announced to nobody is recovered from the lane row on the
             # next five-minute sweep instead of being lost permanently.
             enqueue_summary=enqueue_rollover_summary,
+            # Q12's remaining two conditions are owner-agnostic lane queries, so
+            # the handler needs the pool rather than an owner-scoped store.
+            db=db_pool,
         )
         # Task 7 — inject the SAME actuator instance back onto services (built
         # after services/backend exist, same reason a2a_delegator is injected

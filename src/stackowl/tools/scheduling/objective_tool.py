@@ -162,6 +162,10 @@ class ObjectiveTool(Tool):
         ctx = TraceContext.get()
         channel = ctx.get("channel")
         channel_str = channel if isinstance(channel, str) else None
+        # The LANE this objective was asked for, so the sweeper can see it as work
+        # in flight and never expire the conversation underneath it (D01.7 I4/Q12).
+        lane = ctx.get("session_key")
+        lane_str = lane if isinstance(lane, str) and lane else None
         target_channels, target_addresses = self._resolve_durable_target(channel_str)
 
         repo = args.repo.strip() if args.repo else None
@@ -186,6 +190,7 @@ class ObjectiveTool(Tool):
             owner_id=DEFAULT_PRINCIPAL_ID,
             intent=intent,
             channel=channel_str,
+            session_key=lane_str,
             target_channels=target_channels,
             target_addresses=target_addresses,
             repo=repo,

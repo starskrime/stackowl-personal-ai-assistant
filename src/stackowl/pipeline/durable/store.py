@@ -27,7 +27,7 @@ _SELECT_FIELDS = (
     "task_id, owner_id, goal, status, current_step, "
     "thread_id, result, owl_name, channel, creation_ceiling, task_envelope, "
     "parent_task_id, parent_owl, delegate_key, lease_owner, superseded, "
-    "created_at, updated_at"
+    "created_at, updated_at, session_key"
 )
 
 # Minimal fields for checkpoint read — avoids pulling the full task row when
@@ -90,6 +90,7 @@ class DurableTaskStore(OwnedRepository):
             "result": task.result,
             "owl_name": task.owl_name,
             "channel": task.channel,
+            "session_key": task.session_key,
             "creation_ceiling": (
                 task.creation_ceiling.model_dump_json()
                 if task.creation_ceiling is not None
@@ -617,6 +618,8 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         result=None if raw_result is None else str(raw_result),
         owl_name=None if raw_owl is None else str(raw_owl),
         channel=None if raw_channel is None else str(raw_channel),
+        session_key=(None if row.get("session_key") is None
+                     else str(row["session_key"])),
         creation_ceiling=ceiling,
         task_envelope=envelope,
         parent_task_id=None if raw_parent is None else str(raw_parent),
@@ -627,3 +630,45 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
+
+
+#: Statuses that mean a task is still in flight. Everything else
+#: (``completed``, ``failed``) is terminal and releases the lane.
+#:
+#: ``parked`` counts: a parked task is waiting on a human or an approval, which is
+#: precisely the work a 4 AM sweep must not sever. It is suspended, not finished.
+_ACTIVE_TASK_STATUSES: tuple[str, ...] = ("pending", "running", "recovering", "parked")
+
+
+async def any_active_task_for_lane(db: DbPool, session_key: str) -> bool:
+    """Does this conversation lane have a durable task still in flight?
+
+    Invariant I4's second condition (Bakir's Q12). Returns a BOOLEAN, never row
+    content.
+
+    DELIBERATELY OWNER-AGNOSTIC, which is why this is a module function and not a
+    method on the owner-scoped :class:`DurableTaskStore`. The caller is the
+    background sweeper, which has no principal; and objectives and tasks are
+    created under whichever owner happened to be in scope, while a lane's identity
+    is the PERSON. An owner-scoped read would therefore match nothing and invariant
+    I4 would be a silent no-op — the failure this whole item keeps finding.
+
+    The LANE is the scope here: a row carrying ``session_key = <this lane>`` belongs
+    to that conversation whoever owns it. An empty lane key matches nothing rather
+    than everything, so a caller with no lane cannot accidentally collide with the
+    NULL rows that legacy work carries.
+    """
+    if not session_key:
+        return False
+    placeholders = ",".join("?" for _ in _ACTIVE_TASK_STATUSES)
+    rows = await db.fetch_all(
+        f"SELECT 1 FROM tasks WHERE session_key = ? "
+        f"AND status IN ({placeholders}) LIMIT 1",
+        (session_key, *_ACTIVE_TASK_STATUSES),
+    )
+    busy = bool(rows)
+    log.tasks.debug(
+        "[tasks] any_active_task_for_lane: exit",
+        extra={"_fields": {"session_key": session_key, "busy": busy}},
+    )
+    return busy

@@ -35,6 +35,7 @@ from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
+    from stackowl.db.pool import DbPool
     from stackowl.sessions.models import SessionEntry
     from stackowl.sessions.store import SessionStore
 
@@ -46,10 +47,15 @@ class ConversationSweepHandler(JobHandler):
         self, store: SessionStore, *, process_registry: object | None = None,
         clarify_gateway: object | None = None,
         enqueue_summary: Callable[..., Awaitable[bool]] | None = None,
+        db: DbPool | None = None,
     ) -> None:
         self._store = store
         self._process_registry = process_registry
         self._clarify_gateway = clarify_gateway
+        # Needed for Q12's task/objective conditions, which are owner-agnostic
+        # lane queries rather than owner-scoped store reads. None → those two
+        # conditions simply do not contribute, same degrade rule as the others.
+        self._db = db
         # DEBT-11's backstop. Injected rather than imported so the scheduler does
         # not depend on memory/, and optional so an unwired backstop degrades to
         # exactly the previous behaviour instead of breaking expiry.
@@ -70,11 +76,10 @@ class ConversationSweepHandler(JobHandler):
         A component that is not wired contributes False rather than blocking every
         expiry forever — an absent subsystem is not evidence of activity.
 
-        TWO of Q12's four conditions are enforced here today: a running background
-        process and a pending clarify. The other two — an in-flight DURABLE TASK
-        and an ACTIVE OBJECTIVE — are NOT yet checked, and that is stated plainly
-        rather than implied by an empty branch, because a busy-check that silently
-        covers half its conditions is worse than one that admits the gap.
+        ALL FOUR of Q12's conditions are enforced here as of part 6. The last two
+        needed migration 0099: neither `tasks` nor `objectives` recorded which
+        conversation the work belonged to, so the question could not be asked at
+        all.
         """
         try:
             # Condition 1 — a background process still running on this lane.
@@ -83,6 +88,21 @@ class ConversationSweepHandler(JobHandler):
             registry = self._process_registry
             if registry is not None and registry.list(entry.session_key):  # type: ignore[attr-defined]
                 return True
+
+            # Conditions 2 and 3 — a durable task in flight, or a live objective.
+            # Both queries are deliberately OWNER-AGNOSTIC and filter on the lane;
+            # see their docstrings. An owner-scoped read would match nothing here,
+            # because objectives are created under DEFAULT_PRINCIPAL_ID while a
+            # lane's identity is the person — which would make this rule a silent
+            # no-op, the exact failure this item keeps turning up.
+            if self._db is not None:
+                from stackowl.objectives.store import any_active_objective_for_lane
+                from stackowl.pipeline.durable.store import any_active_task_for_lane
+
+                if await any_active_task_for_lane(self._db, entry.session_key):
+                    return True
+                if await any_active_objective_for_lane(self._db, entry.session_key):
+                    return True
 
             # Condition 4 — a clarify question this lane is still waiting on. If
             # the lane rolled now, the parked turn would have nowhere to land;
@@ -213,11 +233,12 @@ def register_conversation_sweep_handler(
     store: SessionStore, *, process_registry: object | None = None,
     clarify_gateway: object | None = None,
     enqueue_summary: Callable[..., Awaitable[bool]] | None = None,
+    db: DbPool | None = None,
 ) -> ConversationSweepHandler:
     """Construct and register the handler on the process HandlerRegistry."""
     handler = ConversationSweepHandler(
         store, process_registry=process_registry, clarify_gateway=clarify_gateway,
-        enqueue_summary=enqueue_summary,
+        enqueue_summary=enqueue_summary, db=db,
     )
     HandlerRegistry.instance().register(handler)
     log.scheduler.info(
@@ -225,6 +246,7 @@ def register_conversation_sweep_handler(
         extra={"_fields": {"handler": handler.handler_name,
                            "has_process_registry": process_registry is not None,
                            "has_clarify_gateway": clarify_gateway is not None,
-                           "has_summary_backstop": enqueue_summary is not None}},
+                           "has_summary_backstop": enqueue_summary is not None,
+                           "enforces_all_four_i4_conditions": db is not None}},
     )
     return handler
