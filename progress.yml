@@ -420,6 +420,41 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-11
+    found: 2026-07-26
+    what: >
+      A rollover announced while no consumer is listening is lost PERMANENTLY, and
+      silently. Q15's durability begins when the consumer enqueues a job; the window
+      between PUBLISH and ENQUEUE is in-memory, fire-and-forget, and unrecoverable —
+      because expiry_finalized makes the double-announce guard suppress any second
+      announcement of the same boundary.
+    found_how: >
+      By validating part 5 live rather than trusting the wiring. The consumer WAS
+      subscribed on both processes ('[memory] rollover_consumer: subscribed' at
+      14:19 and 14:38) and no job was ever enqueued.
+    the_timeline:
+      - "01:57:05Z — idle rollover published. Consumer did not exist (part 5b unbuilt)."
+      - "09:03:04Z — the SWEEPER finalised the lane on the clock (reason=daily, new_session_id=null), set expiry_finalized, and published session.rollover. Consumer still did not exist."
+      - "14:41:55Z — Bakir's message arrived; branch=expired/daily minted 20260726_094155_1b416f35. already_announced was TRUE, so the guard correctly suppressed publication."
+      - "Result: zero rollover_summary jobs, zero conversation_summary facts, and that boundary can never be re-announced."
+    why_it_is_a_real_defect_not_a_deployment_artefact: >
+      Today's instance was caused by adding the consumer after the boundary fired,
+      which is a one-off. The MECHANISM is not: the sweeper finalises at 4 AM
+      unattended, StackOwl's core exec-replaces itself on every code change, and a
+      restart in the window between publish and enqueue loses that day's summary with
+      no error and no way to notice. That is precisely the unattended case Q15 was
+      written to protect.
+    recommended_fix: >
+      Make the ENQUEUE recoverable from persisted state instead of from a live
+      subscriber. Add `summary_enqueued_at` (nullable) to sessions; conversation_sweep
+      already runs every 5 minutes, so it can pick up any lane that is finalised (or
+      has a newer incarnation) with no enqueue recorded, and enqueue then. The
+      EventBus stays the fast path and the seam D09.1/D09.3 subscribe to (dedup target
+      X3 is preserved); the sweep becomes the durable backstop. Rejected alternative:
+      having the sweeper enqueue directly instead of publishing, which would work but
+      would lose the one-boundary-many-consumers seam that X3 was resolved by.
+    status: open
+    blocks: "Nothing structurally — but part 5 cannot be called done while a boundary can silently lose its summary."
   - id: DEBT-10
     found: 2026-07-26
     what: "The ONLY enabled provider is unreachable — llm-gateway.dev.nera.gov does not resolve — so the platform is booting in DEGRADED mode and cannot answer a turn."
