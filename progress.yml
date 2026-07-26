@@ -249,13 +249,13 @@ current:
     3a.1 the identity rename + migration 0093 (c82ea736), 3a.2 part 1 — the lane
     carries its own send target + migration 0094 (7b145f15).
   next_action: >
-    3a.2 part 2 — wire resolve_for into the gateway ingress. Concretely:
-      1. PipelineState gains `session_id` (the INCARNATION); session_key already exists.
-      2. pipeline/backends/shared.py:96 is the ONE TraceContext.start seam — pass the
-         incarnation through it so every log line and cost row carries both ids.
-      3. cost_records gains a session_id column (migration 0095) for the incarnation.
-         session_key already holds the lane. That pair is what D01.1's byte-identical-
-         prompt invariant needs to group by.
+    3a.2 part 3 — wire resolve_for into the gateway ingress. Steps 1-3 below are DONE
+    (commit 552a7cf3): the incarnation now rides TraceContext and PipelineState, reaches
+    every log record, and lands in cost_records.session_id via migration 0095. What
+    remains is steps 4 and 5 — the part that touches the live message path:
+      1. DONE — PipelineState gains `session_id` (the INCARNATION).
+      2. DONE — pipeline/backends/shared.py is the ONE TraceContext.start seam.
+      3. DONE — cost_records.session_id + ix_cost_records_incarnation (migration 0095).
       4. startup/orchestrator.py — call SessionStore.resolve_for just before
          _dispatch_turn (db_pool is available from line 779). Compose Q12's four
          never-expire conditions into the has_active_work boolean there.
