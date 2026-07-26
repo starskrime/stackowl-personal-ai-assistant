@@ -1869,7 +1869,9 @@ class StartupOrchestrator:
         _parked_intakes = ParkedIntakes()
         turn_registry.set_reaped_evictor(_parked_intakes.evict)
 
-        async def _resolve_incarnation(msg: IngressMessage, owl_name: str) -> str:
+        async def _resolve_incarnation(
+            msg: IngressMessage, owl_name: str,
+        ) -> tuple[str, str]:
             """Resolve which RUN of this conversation the turn belongs to (D01.7).
 
             Called AFTER routing because the lane is keyed on the owl (Bakir's Q1:
@@ -1880,10 +1882,13 @@ class StartupOrchestrator:
             clock passed in is local-aware rather than UTC; a UTC "4 AM" would fire
             in the middle of the afternoon for most of the world.
 
+            Returns ``(session_key, session_id)`` — the composite LANE and the
+            INCARNATION of it this turn belongs to.
+
             FAILS OPEN, LOUDLY: a session-store problem must never cost the user
-            their reply. The turn proceeds with no incarnation, which reads as
-            honestly-unknown everywhere downstream instead of as a fabricated
-            conversation.
+            their reply. The turn then falls back to the channel-native lane with
+            no incarnation, which is exactly the pre-D01.7 behaviour — degraded,
+            never broken, and never a fabricated conversation.
             """
             import datetime as _dt
 
@@ -1911,7 +1916,7 @@ class StartupOrchestrator:
                                        "reason": reason.value if reason else None,
                                        "owl": owl_name}},
                 )
-                return entry.session_id
+                return entry.session_key, entry.session_id
             except Exception as exc:
                 log.error(
                     "[startup] gateway: session resolution failed — turn continues "
@@ -1919,7 +1924,7 @@ class StartupOrchestrator:
                     exc_info=exc,
                     extra={"_fields": {"owl": owl_name, "channel": msg.channel}},
                 )
-                return ""
+                return msg.session_key, ""
 
         async def _dispatch_turn(
             pump: ClarifyPump,
@@ -1990,10 +1995,13 @@ class StartupOrchestrator:
                     )
                 )
             else:
-                incarnation = await _resolve_incarnation(msg, decision.target)
+                lane, incarnation = await _resolve_incarnation(msg, decision.target)
                 state = PipelineState(
                     trace_id=msg.trace_id,
-                    session_key=msg.session_key,
+                    # The composite LANE, not the channel-native chat id. Durable
+                    # knowledge is scoped by owner_scope_key and delivery resolves
+                    # through the session store, so neither follows this value.
+                    session_key=lane,
                     session_id=incarnation,
                     input_text=input_text,
                     channel=msg.channel,
