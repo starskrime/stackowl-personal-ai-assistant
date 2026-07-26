@@ -695,6 +695,17 @@ known_debt:
     status: open
   - id: DEBT-7
     scheduled: "2026-07-26 — Bakir chose to pick this up now, after D01.7 part 7b."
+    constraint:
+      date: 2026-07-26
+      by: Bakir
+      rule: "The budget alert is INFORMATIVE ONLY. It must never block, gate, throttle or abort a turn."
+      why_it_matters: >
+        The dangling subscribers are named 'budget_80pct_alert' and
+        'budget_exceeded', and "exceeded" reads like a limit that should stop
+        something. It must not. The publisher tells Bakir what a conversation is
+        costing; the decision about what to do with that stays his. A cost signal
+        that silently refuses to answer would be a worse failure than the missing
+        signal it replaced.
     found: 2026-07-25
     what: "Budget alerting can NEVER fire — 'budget_80pct_alert' and 'budget_exceeded' are subscribed with no publisher."
     evidence: "Boot wiring audit: 'DANGLING event subscription ... subscribed but NO module declares it as a publisher, so the subscriber will NEVER fire.'"
@@ -1632,6 +1643,58 @@ items:
         configured, so identity_key equals today's chat id and every existing row stays
         reachable with no migration at all.
     changes:
+      - date: 2026-07-26
+        slice: "3b part 7b — runner call sites wired; knowledge follows the person"
+        files:
+          - "src/stackowl/sessions/store.py — runner identity inherited from the parent lane"
+          - "src/stackowl/pipeline/services.py — resolve_runner_lane(), the call-site seam"
+          - "src/stackowl/objectives/driver.py — objectives run on their own lane"
+          - "src/stackowl/pipeline/durable/recovery.py — recovery drives run on their own lane"
+          - "src/stackowl/tools/agents/sessions_spawn.py — delegated subagents run on their own lane"
+          - "tests/sessions/test_runner_identity.py (new) — 10 tests, written FIRST and red"
+        the_decision_implemented: >
+          DEBT-13, Bakir's option A. A runner INHERITS identity_key from the
+          conversation that asked, so its durable knowledge is filed under the PERSON
+          — the same rule chat already follows — instead of under machinery nobody
+          queries. Inheritance fills a gap and never overrides a known identity, and
+          it applies to RUNNER lanes only: a chat lane's identity comes from its own
+          ingress and must not arrive through a parent it should not have.
+        part_6_paid_for_itself: >
+          Two of the three wired sites read their parent straight off a row they
+          already hold — objective.session_key and task.session_key, the columns part
+          6 added for invariant I4. The third (a delegated subagent) reads the
+          caller's lane off TraceContext.
+        shadow_validator_DELIBERATELY_NOT_WIRED:
+          what: "owls/shadow_validator.py keeps its synthetic key and gets no lane."
+          why: >
+            Its own docstring states the intent: "A synthetic session_key +
+            interactive=False so nothing attempts a live delivery/clarify
+            side-channel." It is a REPLAY of a past outcome for validation, not a
+            conversation. Giving it a lane would give it an incarnation, a transcript
+            and eventually a rollover summary — polluting memory with replays of
+            conversations that already happened. Respecting stated design intent over
+            mechanical consistency, and saying so rather than leaving a reader to
+            wonder why one of the four was skipped.
+        degradation: >
+          resolve_runner_lane returns (fallback, "", None) when no store is wired or
+          the store errors — byte-identical to the pre-slice behaviour. A lane is an
+          enhancement to background work, never a precondition: an objective must not
+          fail because its conversation could not be resolved. Two tests pin it.
+        bug_i_introduced_and_the_tests_caught: >
+          I passed identity=None into PipelineState, whose identity_key is `str = ""`
+          rather than optional — 22 objectives tests failed on a pydantic
+          ValidationError. Coerced to `identity or ""`, which is the same "unknown"
+          value owner_scope_key already treats as absent. Found by running the suite,
+          not by reading.
+        verified:
+          tests: "10 new (red first); 86 in tests/objectives; 263 across tests/sessions + tests/pipeline/durable."
+          lint: "ruff src/ 46 = DEBT-1 baseline. types: mypy src/ 78 = DEBT-8 baseline. Zero added."
+          live: "Restarted — ZERO ERROR/CRITICAL."
+        not_yet_observed_live: >
+          No objective, recovery drive or subagent has RUN since the restart, so the
+          runner lanes exist in code and are proven by tests but no runner lane row
+          has yet appeared in the live table. It will appear the first time any of
+          the three executes.
       - date: 2026-07-26
         slice: "3b part 7a — the lane model supports runners and remembers the parent"
         files:

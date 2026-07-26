@@ -206,9 +206,26 @@ class SessionsSpawnTool(Tool):
         # session_key is the SESSION's id (NOT the caller's) so the seed turn lands
         # in the bridge under this session — consolidate persists it (no depth skip).
         services = get_services()
+        # Q9: a delegated subagent is a runner and gets its own lane. The parent is
+        # the CALLER's conversation, read off the ambient trace, so the child
+        # inherits its identity and everything it learns is filed under the same
+        # person — the seed turn still lands under this session as before, but the
+        # KNOWLEDGE follows the human rather than the label.
+        from stackowl.infra.trace import TraceContext
+        from stackowl.pipeline.services import resolve_runner_lane
+
+        _caller = TraceContext.get().get("session_key")
+        lane, incarnation, identity = await resolve_runner_lane(
+            runner="subagent", runner_id=label,
+            owl_name=owl_name, channel=channel,
+            parent_session_key=_caller if isinstance(_caller, str) and _caller else None,
+            fallback=f"session:{label}",
+        )
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-spawn",
-            session_key=f"session:{label}",
+            session_key=lane,
+            session_id=incarnation,
+            identity_key=identity or "",
             input_text=initial_task,
             channel=channel,
             owl_name=owl_name,

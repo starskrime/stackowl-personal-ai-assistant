@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
     from stackowl.audit.logger import AuditLogger
@@ -269,3 +272,68 @@ def resolve_identity_key(services: StepServices, session_key: str) -> str:
     if services.identity_resolver is None:
         return ""
     return services.identity_resolver.resolve(session_key)
+
+
+async def resolve_runner_lane(
+    *,
+    runner: str,
+    runner_id: str,
+    owl_name: str,
+    channel: str,
+    fallback: str,
+    parent_session_key: str | None = None,
+) -> tuple[str, str, str | None]:
+    """Resolve the conversation lane for a non-chat runner (D01.7 Q9).
+
+    Returns ``(session_key, session_id, identity_key)`` for a cron job, objective,
+    delegated subagent or recovery drive — the same lane machinery a chat turn
+    gets, so background work earns its own incarnation, its own boundary and (with
+    `D01.1`) its own stable prompt. That is a deliberate divergence from Hermes,
+    which gives non-chat work no lane at all.
+
+    ``parent_session_key`` is the conversation that ASKED for the work, when there
+    was one. The lane inherits that conversation's identity, so the runner's
+    durable knowledge is filed under the PERSON rather than under machinery nobody
+    queries. Two of the four callers can read their parent straight off a row they
+    already hold — ``objective.session_key`` and ``task.session_key``, both added
+    for invariant I4 — which is the second thing that column bought.
+
+    DEGRADES TO TODAY'S BEHAVIOUR. With no store wired, or if the store errors,
+    this returns ``(fallback, "", None)`` — the ad-hoc key the caller used before
+    this slice, no incarnation, no identity. A lane is an enhancement to background
+    work, never a precondition for it running: an objective must not fail because
+    its conversation could not be resolved.
+    """
+    store = getattr(get_services(), "session_store", None)
+    if store is None:
+        return fallback, "", None
+    try:
+        from stackowl.sessions.models import SessionSource
+
+        entry, branch, _ = await store.resolve_for(
+            SessionSource(
+                owl_name=owl_name, channel=channel,
+                runner=runner, runner_id=runner_id,
+                parent_session_key=parent_session_key,
+            ),
+            datetime.datetime.now().astimezone(),
+        )
+    except Exception as exc:
+        log.gateway.error(
+            "[pipeline] resolve_runner_lane: falling back to the ad-hoc key — "
+            "the work continues without a lane",
+            exc_info=exc,
+            extra={"_fields": {"runner": runner, "runner_id": runner_id,
+                               "fallback": fallback}},
+        )
+        return fallback, "", None
+    log.gateway.info(
+        "[pipeline] resolve_runner_lane: exit",
+        extra={"_fields": {"runner": runner, "runner_id": runner_id,
+                           "session_key": entry.session_key,
+                           "session_id": entry.session_id,
+                           "branch": branch.value,
+                           "has_identity": entry.identity_key is not None,
+                           "parent": parent_session_key}},
+    )
+    return entry.session_key, entry.session_id, entry.identity_key

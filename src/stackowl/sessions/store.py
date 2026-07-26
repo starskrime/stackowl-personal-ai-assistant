@@ -160,6 +160,27 @@ class SessionStore:
         parent = source.parent_session_key or (
             existing.parent_session_key if existing else None)
 
+        # A RUNNER inherits its identity from the conversation that asked for the
+        # work (Bakir's DEBT-13 answer). Knowledge is about a PERSON, not about which
+        # machinery produced it, so an objective started from a chat must stage its
+        # facts where that chat's recall already looks — otherwise re-keying these
+        # lanes would silently repoint where background knowledge lands, which is
+        # exactly what the 3a.2 addendum ruled against.
+        #
+        # Runner lanes ONLY: a chat lane's identity comes from its own ingress and
+        # must never arrive through a parent it should not have. Inheritance fills a
+        # gap and never overrides a known identity, and a parent that no longer
+        # exists (or never had an identity) simply yields None — a runner may outlive
+        # the lane that spawned it, and that must not raise on its critical path.
+        if identity is None and parent and source.runner:
+            parent_entry = await self.get(parent)
+            identity = parent_entry.identity_key if parent_entry else None
+            log.gateway.debug(
+                "session.resolve: runner identity inherited",
+                extra={"_fields": {"session_key": key, "parent": parent,
+                                   "inherited": identity is not None}},
+            )
+
         if existing is None:
             entry = SessionEntry(
                 session_key=key, session_id=new_session_id(now),

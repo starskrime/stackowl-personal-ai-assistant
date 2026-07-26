@@ -692,9 +692,24 @@ class ObjectiveDriverHandler(JobHandler):
         """Run one sub-goal through the pipeline; returns (final_state, task_id)."""
         assert self._backend is not None  # narrowed by execute()
         trace_id = f"objgoal-{uuid.uuid4().hex[:8]}"
+        # Q9: an objective is a runner and gets its own lane, so it earns its own
+        # incarnation, boundary and (with D01.1) stable prompt. Its identity is
+        # inherited from the conversation that ASKED for it — objective.session_key,
+        # the column part 6 added for invariant I4 — so its durable knowledge is
+        # filed under the person rather than under machinery nobody queries.
+        from stackowl.pipeline.services import resolve_runner_lane
+
+        lane, incarnation, identity = await resolve_runner_lane(
+            runner="objective", runner_id=objective.objective_id,
+            owl_name="secretary", channel=objective.channel or "cli",
+            parent_session_key=objective.session_key,
+            fallback=f"objective-{objective.objective_id}",
+        )
         state = PipelineState(
             trace_id=trace_id,
-            session_key=f"objective-{objective.objective_id}",
+            session_key=lane,
+            session_id=incarnation,
+            identity_key=identity or "",
             input_text=description,
             channel=objective.channel or "cli",
             owl_name="secretary",

@@ -426,9 +426,22 @@ class DurableTaskRecoverer:
                     "had_channel": task.channel is not None,
                 }},
             )
+        # A recovery drive continues work that a conversation asked for, so it runs
+        # on its own lane and inherits that conversation's identity via
+        # task.session_key (the column part 6 added for invariant I4).
+        from stackowl.pipeline.services import resolve_runner_lane
+
+        lane, incarnation, identity = await resolve_runner_lane(
+            runner="recovery", runner_id=task_id[:12],
+            owl_name=owl_name, channel=channel,
+            parent_session_key=task.session_key,
+            fallback=f"recover-{task_id[:12]}",
+        )
         base = PipelineState(
             trace_id=f"recover-{task_id[:12]}",
-            session_key=f"recover-{task_id[:12]}",
+            session_key=lane,
+            session_id=incarnation,
+            identity_key=identity or "",
             input_text=task.goal,
             channel=channel,
             owl_name=owl_name,
