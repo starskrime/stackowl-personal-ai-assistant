@@ -438,6 +438,36 @@ known_debt:
       end-to-end (the rollover summary needs a reachable model). The platform itself is
       behaving correctly — degraded mode with a loud error is the designed response.
     decision: "SURFACED to Bakir, not fixed: it is an environment/network fact outside the repo, and guessing at a new base_url would be inventing config."
+    root_cause_found:
+      date: 2026-07-26
+      what: >
+        NOT a StackOwl fault and not a moved host — the GlobalProtect VPN tunnel is
+        DOWN, so the internal hostname has no resolver. gp-vpn.service died at
+        07:07 CDT with "Invalid user name" and "Cookie was rejected by server;
+        exiting" while attempting a reconnect.
+      restart_attempted: >
+        Restarted on Bakir's instruction (2026-07-26 09:24, guide at
+        /etc/openconnect/guide.txt). It reached POST getconfig.esp and the portal
+        returned HTTP 512 TWICE, re-prompted for credentials a third time, and
+        exited when stdin was exhausted ("fgets (stdin): Inappropriate ioctl for
+        device") — the unit pipes the password once and then holds stdin open with
+        `sleep 120`, so it has nothing to answer a re-prompt with.
+      why_it_is_credentials_not_duo: >
+        No DUO challenge line ever appears in the log. It goes straight from "Enter
+        login credentials" to a 512 on getconfig.esp, so the portal is REJECTING the
+        credential rather than waiting for a push. /etc/openconnect/gp-risk.passwd
+        is 19 bytes and unmodified since 2026-07-03 — 23 days, which is where a
+        30-day corporate rotation would start biting.
+      why_no_further_retries: >
+        The unit sets Restart=no with the comment "each start triggers a DUO push;
+        retrying on failure would send multiple pushes and LOCK THE ACCOUNT", and the
+        guide caps it at 3 tries / 5 min. One attempt is already spent. Hammering an
+        authenticated corporate portal with a credential it just rejected is the same
+        harm class as the Telegram flood-control ban in this repo's history
+        (project_telegram_flood_ban_fixed), so this stops here and asks.
+      does_not_block_the_program: >
+        Parts 6 and 7 need no model call, so D01.7 implementation continues. Only
+        end-to-end VALIDATION of part 5 is blocked.
     status: open
   - id: DEBT-9
     found: 2026-07-25
