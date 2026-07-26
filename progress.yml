@@ -420,6 +420,38 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-13
+    found: 2026-07-26
+    what: >
+      Wiring the five runner call sites onto their new lanes (part 7b) would MOVE
+      their memory scope, because none of them sets identity_key.
+    evidence: >
+      owner_scope_key(state) is `state.identity_key or state.session_key`. Checked
+      all four runner modules — objectives/driver.py, tools/agents/sessions_spawn.py,
+      pipeline/durable/recovery.py, owls/shadow_validator.py — and NONE sets
+      identity_key. So each currently scopes durable knowledge by its ad-hoc lane
+      string ("objective-abc", "session:label", "recover-xxx",
+      "shadow-validate-xxx"). Repointing session_key to the composite lane
+      ("owl:Brain:objective:abc") silently repoints where their facts are staged and
+      read.
+    why_it_stopped_the_work: >
+      This is the exact bug class the 3a.2 decision addendum was written about, where
+      Bakir ruled that durable knowledge scopes by IDENTITY and that a scope must
+      never be repointed in a way that silently empties recall. Shipping it across
+      five background subsystems without that decision would contradict the rule this
+      whole item has been enforcing.
+    the_decision_needed:
+      option_a: >
+        RECOMMENDED — runner states inherit identity_key from parent_session_key's
+        lane, so knowledge follows the PERSON exactly as it does for chat. Orphan
+        runners (a cron job nobody asked for) have no person, so their lane stays the
+        scope and their facts make a one-time move. Consistent with 3a.2, and
+        parent_session_key (part 7a) is what finally makes the parent's identity
+        reachable.
+      option_b: "Accept the move for all runners — simplest, and it silently orphans whatever those runners had already staged."
+      option_c: "Leave the runner call sites on their ad-hoc keys; runner lanes exist but nothing uses them. Zero risk, and Q9 stays unimplemented in practice."
+    status: open
+    blocks: "D01.7 part 7b only. 7a (the lane model + parent link) is complete, green and live."
   - id: DEBT-12
     found: 2026-07-26
     what: "tests/smoke/test_e8_s3_sessions_spawn_telegram_smoke.py cannot even be COLLECTED — it imports a constant that no longer exists."
@@ -1580,6 +1612,24 @@ items:
         configured, so identity_key equals today's chat id and every existing row stays
         reachable with no migration at all.
     changes:
+      - date: 2026-07-26
+        slice: "3b part 7a — the lane model supports runners and remembers the parent"
+        files:
+          - "src/stackowl/db/migrations/0100_runner_lane_parent.sql (new) — parent_session_key + index"
+          - "src/stackowl/sessions/models.py — SessionSource.runner/runner_id/parent_session_key; build_session_key's runner branch; SessionEntry.parent_session_key"
+          - "src/stackowl/sessions/store.py — parent persisted, COALESCEd, rehydrated"
+          - "tests/sessions/test_runner_lanes.py (new) — 9 tests, written FIRST and red"
+        design_notes:
+          - "ONE resolve path, not two. A runner is a SessionSource with runner/runner_id set, so Q9's 'one rule, no special cases' holds for policy, boundaries, I4 and the summary — only KEY CONSTRUCTION branches."
+          - "A runner lane is STABLE across runs: owl:{owl}:{runner}:{id}, deliberately not per-run. A daily brief is ONE conversation that rolls, and a per-run key would rebuild the frozen prompt every morning — losing the exact D01.1 win this divergence from Hermes was taken for."
+          - "Chat isolation settings are ignored for runner lanes. group_per_user/thread_per_user answer 'whose messages are these', a question a cron job does not have; letting them apply would silently reshape the key. Pinned by a test asserting both settings produce the same key."
+          - "parent_session_key follows the same COALESCE rule as chat_id and identity_key: a run that cannot state its parent must never orphan the lane."
+          - "This is what reconciles Q17 (own lane) with Q19 (one story): the runner gets its own incarnation and frozen prompt, and its summary is attributed to the conversation that asked."
+        verified:
+          tests: "9 new (red first); 119 passed across tests/sessions."
+          migration: "0100 applied; second run reports already-applied; schema at 0100."
+          lint: "ruff src/ 46 = DEBT-1 baseline; tests/sessions clean. types: mypy src/ 78 = DEBT-8 baseline."
+          live: "Restarted — 250 log lines, ZERO ERROR/CRITICAL; parent_session_key present on the live table."
       - date: 2026-07-26
         slice: "3b part 6 — invariant I4 finally enforces all four of Q12's conditions"
         files:

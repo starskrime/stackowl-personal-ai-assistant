@@ -93,6 +93,16 @@ class SessionSource:
     #: or the lane has no person behind it (a runner lane); fabricating one would
     #: misattribute somebody's memory.
     identity_key: str | None = None
+    #: WHAT KIND of non-chat runner this is (``objective``, ``cron``, ``subagent``,
+    #: ``recovery``…), and WHICH one. Present together or not at all: their presence
+    #: is what makes this a RUNNER lane rather than a chat lane (Q9).
+    runner: str | None = None
+    runner_id: str | None = None
+    #: The conversation that ASKED for this work, when there was one. A runner gets
+    #: its own lane so it earns its own frozen prompt, and this keeps its summary
+    #: attributed to the conversation that requested it instead of fragmenting the
+    #: story (Q17 + Q19, reconciled). ``None`` for a cron job nobody asked for.
+    parent_session_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +135,9 @@ class SessionEntry:
     #: the first marker would silence every later boundary on this lane. ``None``
     #: means no summary has been enqueued for any incarnation yet (DEBT-11).
     summary_enqueued_for: str | None = None
+    #: For a runner lane, the conversation that caused it. Summaries are attributed
+    #: to the parent when set — see migration 0100.
+    parent_session_key: str | None = None
     #: Where to SEND to reach this lane, in the channel's own terms. Stored rather
     #: than derived: a composite lane key is not int()-able into a chat id, and
     #: parsing one would couple every delivery path to the key's exact shape.
@@ -189,6 +202,15 @@ def build_session_key(source: SessionSource, *, group_per_user: bool = True,
     gains a thread id later produces a genuinely different lane instead of one that
     silently collides with the thread-less form.
     """
+    # A RUNNER lane is keyed by what it is and which one — never by chat shape.
+    # Isolation settings ask "whose messages are these", a question a cron job or an
+    # objective does not have; letting them apply would silently reshape the key.
+    # Deliberately stable across runs: a daily brief is ONE conversation that rolls,
+    # not a new conversation every morning, and a per-run key would rebuild the
+    # frozen prompt every time — losing the exact D01.1 win this divergence buys.
+    if source.runner and source.runner_id:
+        return _KEY_SEP.join(["owl", source.owl_name, source.runner, source.runner_id])
+
     parts: list[str] = ["owl", source.owl_name, source.channel, source.chat_type.value]
     if source.chat_id:
         parts.append(source.chat_id)
@@ -238,6 +260,7 @@ def new_entry(source: SessionSource, now: datetime.datetime,
         updated_at=now,
         chat_id=source.chat_target,
         identity_key=source.identity_key,
+        parent_session_key=source.parent_session_key,
     )
 
 
@@ -248,4 +271,5 @@ ENTRY_FIELDS: tuple[str, ...] = (
     "message_count", "suspended", "resume_pending", "resume_reason", "was_auto_reset",
     "auto_reset_reason", "is_fresh_reset", "expiry_finalized", "restart_failures",
     "chat_id", "completed_turns", "identity_key", "summary_enqueued_for",
+    "parent_session_key",
 )

@@ -42,7 +42,8 @@ _COLUMNS = (
     "session_key, session_id, owl_name, channel, created_at, updated_at, "
     "message_count, suspended, resume_pending, resume_reason, was_auto_reset, "
     "auto_reset_reason, is_fresh_reset, expiry_finalized, restart_failures, "
-    "chat_id, completed_turns, identity_key, summary_enqueued_for"
+    "chat_id, completed_turns, identity_key, summary_enqueued_for, "
+    "parent_session_key"
 )
 
 
@@ -60,6 +61,7 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
         completed_turns=int(row["completed_turns"] or 0),
         identity_key=row.get("identity_key"),
         summary_enqueued_for=row.get("summary_enqueued_for"),
+        parent_session_key=row.get("parent_session_key"),
         suspended=bool(row["suspended"]),
         resume_pending=bool(row["resume_pending"]),
         resume_reason=row.get("resume_reason"),
@@ -155,6 +157,8 @@ class SessionStore:
         # is filed nowhere.
         target = source.chat_target or (existing.chat_id if existing else None)
         identity = source.identity_key or (existing.identity_key if existing else None)
+        parent = source.parent_session_key or (
+            existing.parent_session_key if existing else None)
 
         if existing is None:
             entry = SessionEntry(
@@ -162,6 +166,7 @@ class SessionStore:
                 owl_name=source.owl_name, channel=source.channel,
                 created_at=now, updated_at=now, chat_id=target,
                 identity_key=identity, message_count=1,
+                parent_session_key=parent,
             )
         elif decision.mints_new_incarnation:
             # A rollover ENDS an incarnation; it never destroys a transcript
@@ -181,10 +186,12 @@ class SessionStore:
                 auto_reset_reason=decision.reason,
                 is_fresh_reset=False, expiry_finalized=False,
                 restart_failures=0, chat_id=target, identity_key=identity,
+                parent_session_key=parent,
             )
         else:
             entry = existing.evolve(
                 updated_at=now, chat_id=target, identity_key=identity,
+                parent_session_key=parent,
                 message_count=existing.message_count + 1,
             )
 
@@ -262,7 +269,7 @@ class SessionStore:
         await self._db.execute(
             f"""
             INSERT INTO sessions ({_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_key) DO UPDATE SET
                 session_id=excluded.session_id, owl_name=excluded.owl_name,
                 channel=excluded.channel, created_at=excluded.created_at,
@@ -284,7 +291,11 @@ class SessionStore:
                 -- identity must not unlink the lane from its owner, or the next
                 -- rollover summary is filed where recall never looks.
                 identity_key=COALESCE(excluded.identity_key, sessions.identity_key),
-                summary_enqueued_for=excluded.summary_enqueued_for
+                summary_enqueued_for=excluded.summary_enqueued_for,
+                -- Same COALESCE rule as chat_id/identity_key: a run that cannot
+                -- state its parent must never orphan the lane.
+                parent_session_key=COALESCE(excluded.parent_session_key,
+                                            sessions.parent_session_key)
             """,
             (
                 entry.session_key, entry.session_id, entry.owl_name, entry.channel,
@@ -295,7 +306,7 @@ class SessionStore:
                 int(entry.is_fresh_reset), int(entry.expiry_finalized),
                 entry.restart_failures, entry.chat_id,
                 entry.completed_turns, entry.identity_key,
-                entry.summary_enqueued_for,
+                entry.summary_enqueued_for, entry.parent_session_key,
             ),
         )
         await self._project_mirror()
