@@ -359,6 +359,50 @@ class CostTracker(OwnedRepository):
         )
         return summary
 
+    async def session_total(self, session_key: str, session_id: str) -> DailySummary:
+        """Aggregate cost_records for ONE incarnation of one lane.
+
+        Scoped to BOTH identifiers on purpose: a lane outlives its
+        incarnations, so ``session_key`` alone would bill a fresh conversation
+        for its predecessor's spend. ``DailySummary.date`` carries the
+        ``session_id`` here — the shape is an aggregate over a conversation,
+        not over a calendar day.
+        """
+        log.engine.debug(
+            "[cost_tracker] session_total: entry",
+            extra={"_fields": {"session_key": session_key, "session_id": session_id}},
+        )
+        rows = await self._db.fetch_all(
+            """
+            SELECT provider_name, model, cost_usd
+            FROM cost_records
+            WHERE owner_id = ? AND session_key = ? AND session_id = ?
+            """,
+            (self._owner_id, session_key, session_id),
+        )
+        total = 0.0
+        by_provider: dict[str, float] = {}
+        by_model: dict[str, float] = {}
+        for row in rows:
+            cost = float(row["cost_usd"])
+            total += cost
+            by_provider[row["provider_name"]] = by_provider.get(row["provider_name"], 0.0) + cost
+            by_model[row["model"]] = by_model.get(row["model"], 0.0) + cost
+        log.engine.debug(
+            "[cost_tracker] session_total: exit",
+            extra={"_fields": {
+                "session_key": session_key, "session_id": session_id,
+                "total_usd": total, "call_count": len(rows),
+            }},
+        )
+        return DailySummary(
+            date=session_id,
+            total_usd=total,
+            by_provider=by_provider,
+            by_model=by_model,
+            call_count=len(rows),
+        )
+
     def turn_cost_usd(self, trace_id: str) -> float:
         """Return the accumulated USD spend for ``trace_id`` this server lifetime.
 

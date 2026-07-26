@@ -45,7 +45,15 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # ``message``/``channel``/``target`` to the payload when one resolves — the
 # honest-recipient rail below still drops the event if it doesn't (e.g. no
 # single allowed telegram user configured), same as any other producer.
-_ALLOWED_EVENTS: frozenset[str] = frozenset({"budget_exceeded", "budget_80pct_alert"})
+# DEBT-7 — ``conversation_cost_report`` (providers/conversation_cost_report.py)
+# joins them: Bakir asked to be told what a conversation cost, so the report
+# must be deliverable rather than log-only. The honest-recipient rail below
+# still drops it when no channel/target resolves, and the producer emits
+# nothing at all for a boundary that spent nothing — so this makes delivery
+# POSSIBLE without making it unconditional.
+_ALLOWED_EVENTS: frozenset[str] = frozenset(
+    {"budget_exceeded", "budget_80pct_alert", "conversation_cost_report"}
+)
 # ``parliament.completed`` (orchestrator) stays DEFERRED — its payload is a bare
 # ``session_key`` (not a dict; _build_notification would drop it as malformed),
 # and unlike the budget alerts it has no obvious single recipient: a session

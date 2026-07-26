@@ -1294,6 +1294,16 @@ class StartupOrchestrator:
         # provider.complete, so they no longer record separately (no double-count).
         provider_registry.set_cost_tracker(cost_tracker)
 
+        # DEBT-7 — the SECOND consumer on D01.7's session.rollover boundary
+        # (X3: one boundary, many consumers, no second scheduler). Registered
+        # here rather than beside register_rollover_consumer because this is
+        # the first point where BOTH the bus and the tracker exist.
+        from stackowl.providers.conversation_cost_report import (
+            register_conversation_cost_consumer,
+        )
+
+        register_conversation_cost_consumer(event_bus, cost_tracker)
+
         # LIVE provider hot-reload — when stackowl.yaml changes (e.g. via the
         # /provider command), pick up provider add/remove/change WITHOUT a restart.
         # The ConfigWatcher polls the yaml on a daemon thread and emits
