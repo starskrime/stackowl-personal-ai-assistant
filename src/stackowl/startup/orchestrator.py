@@ -3660,10 +3660,24 @@ class StartupOrchestrator:
         # or the audit will (correctly) flag it as a dangling subscription.
         try:
             from stackowl.notifications.event_bridge import _ALLOWED_EVENTS
+            from stackowl.providers.conversation_cost_report import COST_REPORT_EVENT
             from stackowl.scheduler.base import HandlerRegistry
             from stackowl.startup.wiring_audit import audit_scheduler_wiring
 
-            declared_event_publishers: frozenset[str] = frozenset()
+            # DEBT-7 — this was `frozenset()`, so the dangling-event check
+            # compared subscribers against NOTHING and could only ever answer
+            # "dangling". It flagged the two budget events correctly by
+            # accident and would have said the same about perfectly-wired ones,
+            # which also means it could never have caught a genuinely NEW
+            # dangling subscription. Both budget thresholds are emitted by
+            # providers/cost_tracker.py; the cost report by
+            # providers/conversation_cost_report.py. Anything added to
+            # event_bridge._ALLOWED_EVENTS needs its publisher declared here.
+            declared_event_publishers: frozenset[str] = frozenset({
+                "budget_exceeded",
+                "budget_80pct_alert",
+                COST_REPORT_EVENT,
+            })
             wiring_report = await audit_scheduler_wiring(
                 db_pool,
                 HandlerRegistry.instance(),
