@@ -30,8 +30,38 @@ _SENSITIVE_PATTERNS = (
 )
 
 
+#: Names that END in ``_key`` but identify something rather than authorise it.
+#:
+#: ``*_key`` above is a heuristic for API keys, and it was masking every one of
+#: these as ``***``. That is a redaction rule doing real damage: ``session_key``
+#: is the most-logged field in the tree (265 call sites) and the whole D01.7
+#: observability contract reads it, so every documented jq query returned
+#: ``"***"``. ``owner_key`` (35 sites), ``identity_key``, ``idempotency_key`` and
+#: the rest were equally invisible, which is why several "why did this not
+#: correlate?" questions could not be answered from the log at all.
+#:
+#: An explicit ALLOWLIST rather than a loosened pattern: anything new ending in
+#: ``_key`` stays redacted by default, so the failure mode of forgetting to think
+#: about a name is still "too private", never "leaked a credential".
+_IDENTIFIER_KEYS = frozenset({
+    "session_key",
+    "resume_session_key",
+    "identity_key",
+    "owner_key",
+    "scope_key",
+    "idempotency_key",
+    "occurrence_key",
+    "delegate_key",
+    "channel_key",
+    "stream_key",
+    "request_key",
+})
+
+
 def _is_sensitive(key: str) -> bool:
     k = key.lower()
+    if k in _IDENTIFIER_KEYS:
+        return False
     return any(fnmatch.fnmatch(k, p) for p in _SENSITIVE_PATTERNS)
 
 

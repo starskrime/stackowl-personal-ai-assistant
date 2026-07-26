@@ -90,3 +90,63 @@ def test_short_strings_are_not_scanned_for_performance() -> None:
 def test_ordinary_non_secret_text_is_unchanged() -> None:
     out = _filtered_fields({"note": "the quick brown fox jumps over the lazy dog"})
     assert out["note"] == "the quick brown fox jumps over the lazy dog"
+
+
+# --------------------------------------------------------------------------
+# D01.7 — `*_key` was masking identifiers, not just credentials.
+#
+# Found by the live validation run: `session.resolve: branch taken` logged
+# session_key as "***", which made every jq query in designs/D01.7.md useless.
+# The rule was over-broad for every *_key identifier in the tree, not only the
+# one this item added.
+# --------------------------------------------------------------------------
+
+
+def test_identifier_keys_are_not_redacted() -> None:
+    from stackowl.infra.observability import _is_sensitive
+
+    for name in ("session_key", "resume_session_key", "identity_key", "owner_key",
+                 "scope_key", "idempotency_key", "occurrence_key", "delegate_key",
+                 "channel_key", "stream_key", "request_key"):
+        assert not _is_sensitive(name), f"{name} is an identifier, not a credential"
+
+
+def test_real_credentials_ending_in_key_are_still_redacted() -> None:
+    """The allowlist must not have widened the hole it was narrowing."""
+    from stackowl.infra.observability import _is_sensitive
+
+    for name in ("api_key", "private_key", "embedded_private_key", "secret_key",
+                 "signing_key", "encryption_key"):
+        assert _is_sensitive(name), f"{name} must stay redacted"
+
+
+def test_an_unknown_key_name_still_defaults_to_redacted() -> None:
+    """Fail-closed: forgetting to think about a new *_key name must mean 'too
+    private', never 'leaked a credential'."""
+    from stackowl.infra.observability import _is_sensitive
+
+    assert _is_sensitive("some_new_key")
+    assert _is_sensitive("customer_api_key")
+
+
+def test_the_lane_survives_the_real_logging_pipeline() -> None:
+    """Filter THEN formatter — the actual order a record travels.
+
+    Redaction lives in SensitiveFieldFilter, not the formatter; a test that calls
+    the formatter alone proves nothing about redaction in either direction.
+    """
+    import json
+    import logging
+
+    from stackowl.infra.observability import JsonlFormatter, SensitiveFieldFilter
+
+    record = logging.LogRecord(
+        name="stackowl.gateway", level=logging.INFO, pathname=__file__, lineno=1,
+        msg="session.resolve: branch taken", args=(), exc_info=None,
+    )
+    record._fields = {"session_key": "owl:secretary:telegram:dm:72055773",  # type: ignore[attr-defined]
+                      "api_key": "sk-abcdef0123456789abcdef"}
+    SensitiveFieldFilter().filter(record)
+    out = json.loads(JsonlFormatter().format(record))
+    assert out["fields"]["session_key"] == "owl:secretary:telegram:dm:72055773"
+    assert out["fields"]["api_key"] == "***"
