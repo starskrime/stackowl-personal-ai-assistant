@@ -595,6 +595,21 @@ known_debt:
       verified:
         tests: "9 in tests/parliament/test_staged_rca.py (4 new, red first). 54 passed across tests/parliament."
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
+        live: >
+          CONFIRMED, and the number proves the diagnosis. The first RCA cycle
+          after the restart produced a verdict in duration_ms=101710 — 101.7s
+          across three stages, ~33.9s average per stage. The OLD budget was 30s
+          PER STAGE, so this exact incident would have timed out under the old
+          code; it now completes. Since the restart: 1 verdict, 0 stage
+          failures, 0 timeout retries, 0 ERROR/CRITICAL.
+        two_details_worth_keeping: >
+          (1) ZERO retries fired, so the budget alone carried it — the retry is
+          a safety net rather than a crutch, which is the happy path the
+          no-extra-call test pins. (2) The verdict was verified=false: the
+          verifier REJECTED the hypothesis. That is the loop working and
+          returning an honest negative, an outcome that was impossible while
+          every run died at 30s. A self-heal system that can say "not verified"
+          is the point; one that can only time out is not.
     the_sibling_is_a_different_bug: >
       'dream-50fd10ab: handler timed out' is the OUTER scheduler timeout
       (_HANDLER_TIMEOUT_SEC, 1200s) firing on the dream worker, whose own
