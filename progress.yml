@@ -405,6 +405,58 @@ current:
         what_it_needs_next:
           - "Decide what happens to FOCUS_TRACKER.begin_turn/mark_active when the per-turn scoring goes: either assemble still opens a turn cheaply without scoring, or skill_view stops depending on an assemble-seeded counter."
           - "A real turn on the platform, so DEBT-20's now-INFO per-channel numbers can size the catalogue against what scoring produces today."
+      first_real_measurement_2026_07_27:
+        how: "Bakir sent /new and one message on Telegram — the first pipeline turns since the DEBT-20 log fix."
+        finding_1_new_is_broken:
+          severity: "D01.7 defect — /new has NEVER worked."
+          evidence: >
+            '[commands] new.handle: exit — no lane to end' with
+            fields.session_key = "72055773", while the stored lane is
+            "owl:secretary:telegram:dm:72055773". start_new_incarnation() found
+            nothing and returned None, so the command silently did nothing and
+            logged it at INFO, which reads like a benign no-op.
+          root_cause: >
+            Commands are dispatched at the GATEWAY, before routing
+            (scanner.scan: command route). The composite lane is keyed on the
+            OWL, and the owl is a routing OUTPUT — _resolve_incarnation runs
+            AFTER routing for exactly that reason. So at command time the
+            composite lane does not exist yet and state.session_key is still the
+            channel-native id.
+          it_is_the_fifth_instance: >
+            The D01.7 hand-off listed four "registered but unreachable" defects
+            found inside that one item and said to assume the next one is there.
+            This is it, and it was invisible because both turns still worked:
+            branch=existing, reason=null, the same session_id from 2026-07-26
+            09:41 carried straight through the /new.
+          blocks: "D01.7 validate. The rollover -> job -> miner -> summary -> promotion chain cannot be exercised until /new can end a lane."
+        finding_2_invariant_I1_fails_today:
+          measured: "TWO distinct prompt_hash across the TWO turns — 3903d3a92e94425f (11161 chars) and 6600b739f20252fa (6331)."
+          three_sources_of_variance_with_numbers:
+            base: "3768 -> 3684. The charter itself varies by 84 chars between two turns minutes apart. NOT investigated yet; it was assumed stable, and the earlier per-part sampling happened to show 3768 throughout."
+            skills: "4169 -> 0. The second turn was tool-free (TOOL_FREE_CLASSES), which skips the skills block entirely. So the block is not merely query-scored, it is sometimes absent."
+            lessons: "1097 -> 765."
+        finding_3_my_own_slice_3_naming_is_wrong:
+          what: >
+            `stable_context` is NOT stable. Its two halves behave differently:
+            prefs_len was 252 on BOTH turns (genuinely stable), but lessons_len
+            was 1097 then 765 — lessons are recalled by relevance to the query,
+            exactly like the recall this item moved out.
+          consequence: >
+            Slice 3 kept lessons in the prompt to protect the reflect->recall arc
+            (correct, and the NFR-4 test proves it still works), but doing so
+            keeps a query-scoped part in the prompt, so I1 cannot hold as long as
+            lessons are matched to the query. The two goals collide and the
+            design does not address it.
+          the_honest_options: >
+            Either lessons become query-INDEPENDENT in the prompt (e.g. the N
+            most recent or highest-weighted, identical every turn of a session)
+            and depth stays reachable via the memory tool, or they leave the
+            prompt and the reflect->recall guarantee moves to a different seam.
+            Needs Bakir.
+        what_this_vindicates: >
+          The refusal to build slice 4 blind. Had the skills block been converted
+          on assumption, this measurement would still have shown I1 failing, and
+          the cause would have been buried under a fresh change.
     the_measured_before_state: >
       3 distinct prompt_hash across 8 turns on two real conversations; 2 across
       6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's
