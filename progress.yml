@@ -306,6 +306,33 @@ current:
           it left the prompt would have been a way to delete a feature and call
           it a refactor.
         verified: "24 passed in the outbox gate suite; 1040 in tests/pipeline; 110 in tests/notifications. ruff 46 / mypy 78, both baselines."
+      slice_2_done:
+        date: 2026-07-27
+        what: "SessionPromptStore + migration 0102 — persistence for the frozen prompt."
+        persisted_not_cached: >
+          A deliberate divergence from Hermes, who keep an in-memory LRU of live
+          agent objects because their gateway restarts rarely. StackOwl's core
+          os.execv's itself on every code change, so an in-memory cache would be
+          discarded continuously — during exactly the development in which stable
+          measurements matter most.
+        the_key_is_earned_not_assumed: >
+          (session_key, owl_name). The live logs show the staged RCA driving three
+          owls — rca_gatherer, hypothesis, verifier — against ONE incident
+          session_key, appearing as three different persona_len values on the same
+          lane. So keying on the lane alone would have served one owl's persona to
+          another. Measured, not reasoned.
+        why_session_id_is_stamped_not_keyed: >
+          Storing the INCARNATION the prompt was built for makes invariant I6
+          self-enforcing: after a rollover mints a new session_id the row no longer
+          matches and the next turn cold-builds — no invalidation job, no listener,
+          no way to forget. Keeping it OUT of the primary key is what holds this at
+          one row per (lane, owl) rather than accumulating one per incarnation
+          forever. Same reasoning as D01.7's summary_enqueued_for.
+        two_judgement_calls_pinned_by_tests:
+          - "An EMPTY prompt is never persisted — a cold build that produced nothing is a failure to assemble, not a prompt worth freezing, and storing it would pin that failure for the whole session."
+          - "The hash is DERIVED from the text on save rather than accepted from the caller: it is what invariant I1 is measured with, so the two must not be able to disagree."
+        no_owner_id_deliberately: "The parent `sessions` table has none — D01.7 scopes a lane by identity_key, and a prompt table inventing a different scoping model would be the more confusing choice."
+        verified: "7 new tests (red first); tests/sessions 142 passed, up from 135. Migration 0102 applied and idempotent on re-run. ruff 46 / mypy 78, both baselines."
     the_measured_before_state: >
       3 distinct prompt_hash across 8 turns on two real conversations; 2 across
       6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's
