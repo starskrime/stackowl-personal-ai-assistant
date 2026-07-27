@@ -263,6 +263,38 @@ current:
       command would have read "no rows" as though the invariant held — a silent
       false PASS on the one command that decides whether this item worked.
     slices:
+      implement_complete:
+        date: 2026-07-27
+        what: "All of D01.1's implement work is shipped and live."
+        the_order_mattered_more_than_it_looked: >
+          The freeze is this item's headline and it went LAST. Freezing earlier
+          would have pinned whichever value the first turn happened to carry —
+          the undelivered banner, the per-turn recall, the query-scored skills,
+          the wall-clock. Each had to leave the prompt first. Five slices
+          preceded a change that is itself about forty lines.
+        shipped:
+          - "slice 1 — the next-contact banner left the prompt for its own delivered chunk"
+          - "slice 2 — SessionPromptStore + migration 0102"
+          - "slice 3 — stable user profile in, query-scoped recall out (keeping prefs + lessons)"
+          - "lessons — selected by owl identity rather than by the question"
+          - "slice 4a — the focus clock stopped needing assemble to seed it"
+          - "slice 4b — skills became a stable catalogue (names + descriptions, bodies on demand)"
+          - "stage 1 — the STABLE and VOLATILE tiers named"
+          - "stage 2 — the wall-clock left the system prompt and rides the turn"
+          - "slice 5 — THE FREEZE: built once per (session_key, owl_name), reused verbatim"
+        what_validate_still_needs: >
+          A restart plus a couple of real turns. The platform was restarted
+          2026-07-27 on the frozen-prompt code and booted clean (0
+          ERROR/CRITICAL, 0 dangling, schema 0103) but no turn has run since:
+          RCA stopped firing once DEBT-6 and DEBT-18 removed the incidents that
+          drove it, and there is no CLI command that drives a single turn. So
+          the I1 measurement needs Bakir, exactly as the /new validation did.
+        the_query_that_decides_it: >
+          SELECT session_id, owl_name, COUNT(DISTINCT prompt_hash), COUNT(*)
+          FROM cost_records WHERE session_id != '' GROUP BY session_id, owl_name
+          — expected distinct == 1, where it read 2, 3 and 4 all session. Also
+          expect '[pipeline] assemble: prompt source' with source=cold_build ONCE
+          per conversation and source=cached for every turn after.
       plan: >
         1) move the volatile banner off the prompt, 2) SessionPrompt persistence
         (migration + store), 3) assemble becomes lookup + cold build, 4) skills ->
@@ -1684,7 +1716,7 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
+      implement:  done
       cleanup:    not_started
       test:       not_started
       validate:   not_started
