@@ -375,6 +375,36 @@ current:
           fixtures moved to stable_context, which is where that content now
           travels. Each test's actual subject is unchanged.
         verified: "tests/pipeline 1044 passed (up from 1040); 6 new profile tests; NFR-4 integration green again. ruff 46 / mypy 78, both baselines."
+      slice_4_blocked_finding:
+        date: 2026-07-27
+        status: "NOT STARTED — analysed, and it is not the clean swap the design describes."
+        the_skills_block_is_definitively_volatile: >
+          Established from the CODE, not from logs (which is the part that
+          actually matters — the logs would only have given magnitude). assemble
+          scores owned skills against state.query_embedding via
+          score_owned_skills -> assign_tiers, which decidesWHICH skills get FULL
+          bodies; the global catalog uses hybrid_recall(query_text, query_vec) or
+          semantic_recall(query_vec), with only the list_enabled() fallback being
+          query-independent. Three query-dependent paths.
+        the_entanglement_the_design_missed: >
+          assemble also calls FOCUS_TRACKER.begin_turn(...) and mark_active(...)
+          inside that same scoring block. tools/knowledge/skill_view.py — the
+          on-demand body tool the design names as THE fallback for removed skill
+          bodies — calls FOCUS_TRACKER.current_turn(owl, session) and
+          mark_viewed(...). So skill_view's own bookkeeping is SEEDED by the code
+          the design says to delete. "Bodies move to skill_view" is therefore not
+          a clean swap: removing the scoring block degrades the very tool that is
+          supposed to replace it.
+        why_this_is_recorded_rather_than_built: >
+          It is the same shape as slice 3's near-miss, where treating six
+          channels as one nearly switched off two completed arcs. The lesson from
+          that slice was to understand the seam before removing it, and acting
+          against that lesson immediately afterwards would be the wrong call.
+          directive_latch.py was checked and only MIRRORS the singleton pattern
+          in a comment — it is not a real consumer.
+        what_it_needs_next:
+          - "Decide what happens to FOCUS_TRACKER.begin_turn/mark_active when the per-turn scoring goes: either assemble still opens a turn cheaply without scoring, or skill_view stops depending on an assemble-seeded counter."
+          - "A real turn on the platform, so DEBT-20's now-INFO per-channel numbers can size the catalogue against what scoring produces today."
     the_measured_before_state: >
       3 distinct prompt_hash across 8 turns on two real conversations; 2 across
       6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's
