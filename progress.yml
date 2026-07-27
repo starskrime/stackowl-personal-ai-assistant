@@ -242,16 +242,19 @@ deployment:
 current:
   wave: 1
   item: D01.1
-  stage: cleanup
+  stage: test
   stage_status: not_started
   one_line: >
-    D01.1's implement AND validate are DONE — invariant I1 holds on the live
-    platform. Three stages remain: cleanup, test, document. Then D01.2, D01.4,
-    D01.5, D01.3.
+    D01.1's implement, validate AND cleanup are DONE — invariant I1 holds on the
+    live platform, the obsolete prompt-building path is gone, and one regression
+    the freeze itself introduced (DEBT-24) is fixed. Two stages remain: test,
+    document. Then D01.2, D01.4, D01.5, D01.3.
   read_first: >
-    This block, then docs/hermes-mapping/designs/D01.1.md. Then the D01.1 item's
-    `validate_result` and `slices` blocks — they record what was built, in what
-    order, and WHY the order mattered.
+    This block, then docs/hermes-mapping/designs/D01.1.md — its "What shipped,
+    and why the order mattered" section carries the prose. The D01.1 item's
+    `slices`, `validate_result` and `changes` blocks hold the same record
+    machine-readably; they were WRITTEN in the cleanup stage, because until then
+    this pointer named two blocks that did not exist.
   the_headline: >
     THE CONFLICT IS RESOLVED, not merely described. Two messages 74 seconds
     apart produced six model calls sharing ONE prompt_hash
@@ -265,24 +268,34 @@ current:
     - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
   next_task_in_order:
     1: >
-      cleanup — D01.1 made things obsolete that are still present. assemble.py
-      no longer uses score_owned_skills/assign_tiers/FOCUS_TRACKER (4b removed
-      the scoring); operational_adapter() and build_base_prompt() still exist
-      and still carry the clock, but nothing in the turn path calls them since
-      stage 2. Check for dead code and unused settings before removing anything
-      — `skills.global_catalog` looked dead in 4b and was NOT.
-    2: >
       test — gateway-driven integration from BUSINESS requirements, mocking ONLY
       the provider. The obvious one: two turns through the real pipeline assert
       ONE prompt_hash. Note the existing gateway smoke tests are the pattern
-      (tests/pipeline/test_phaseA_react_gateway_smoke.py).
-    3: >
+      (tests/pipeline/test_phaseA_react_gateway_smoke.py). Invariants still
+      needing a test are I3 and I5 (no tool becomes invisible; scheduled jobs and
+      proactive delivery keep working) — I1, I2, I4 and I6 are covered.
+    2: >
       document — close designs/D01.1.md: status -> live, re-stamp date + commit,
       confirm every Invariant maps to a real test, and RE-RUN the Verification
       section rather than trusting it. That section had FOUR drift items when
       this item started, one of which (a zero-byte stackowl.db) would have
-      produced a silent false PASS.
-    4: "then D01.2 (likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching is automatic), D01.4, D01.5, D01.3."
+      produced a silent false PASS. Cleanup VERIFIED three MORE drift items to
+      fold in:
+      (a) the Source line says assemble.py is 334 lines; it is 437.
+      (b) the Observability table is the bad one — of its five rows, TWO name log
+      lines that do not exist anywhere in the code ("[pipeline] assemble: cold
+      build parts" and "[pipeline] assemble: prompt invalidated"), and the other
+      rows' _fields are wrong: `exit` actually emits base_len/persona_len/
+      banner_len/owls_len/skills_len/profile_len/stable_context_len/memory_len/
+      system_len/prompt_hash and NO `cached`; `prompt source` emits source/
+      system_len/prompt_hash/trace_id/session_key/session_id/owl and NO
+      `age_turns`. Someone reading that table at 2am greps for a string the
+      platform never writes.
+      (c) Configuration must record that the capability banner is now
+      unconditional (DEBT-24).
+      NOT drift, checked: the Source line's mention of instruction_injector.py is
+      correct — assemble.py:21 still imports it.
+    3: "then D01.2 (likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching is automatic), D01.4, D01.5, D01.3."
   the_pattern_that_caught_everything_this_session:
     name: "Measure before changing; the code alone will lie to you"
     instances:
@@ -365,6 +378,142 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-27
+    found: 2026-07-27
+    what: >
+      D01.1's freeze engages ONLY for lanes that arrive through channel ingress.
+      Every background and scheduled lane has an empty session_id, so it neither
+      loads nor saves a SessionPrompt and cold-builds on every single call.
+      Measured live: 1 cached vs 51 cold_build across the whole log.
+    evidence: >
+      assemble.py gates BOTH the cache read and the freeze write on
+      `state.session_id` being truthy (`if _prompt_store is not None and
+      state.session_id:`). session_id is minted by
+      sessions/ingress.py::resolve_turn_session, which has exactly ONE caller in
+      src/ — startup/orchestrator.py:1935, the gateway ingress path.
+      Nine consecutive RCA turns after the 2026-07-27 restart logged
+      sid=[] on every one (skey=incident-740795a3b8bc / -c1a439f2fa6e /
+      -242ffb623f1e, three owls each). Across the entire live log only two owls
+      ever carried a non-empty session_id: `secretary` (telegram dm) and `Brain`.
+    what_is_NOT_broken: >
+      Invariant I1 still holds, and the COST half of the item still works. Each
+      owl reproduces a byte-identical prompt every time — rca_gatherer hashed
+      d6f1c026cafd4027 on all three runs, hypothesis 76c78b16ee47d4ea, verifier
+      53254552cdcab379 — so the provider's automatic prefix caching still hits.
+      Note also that those nine cold builds are individually CORRECT: three
+      incidents x three owls is nine distinct (session_key, owl_name) keys, and
+      a perfectly working cache would produce exactly nine cold builds. The
+      defect is not the count, it is that a repeat would cold-build too.
+    what_IS_lost: >
+      The LATENCY half. D01.1's design says the win is that "the window probe,
+      embedding scoring and DB reads all leave the critical path of every reply".
+      For ~98% of model calls on this deployment they have not left it — the
+      model-window probe, the profile read and the skill-catalogue read still run
+      on every background call.
+    why_it_contradicts_a_recorded_decision: >
+      progress.yml already records, under D01.7's brainstorm: "Q9 means the D01.1
+      frozen prompt benefits BACKGROUND work too, not just chat. The baseline
+      already hinted at this: goal-owl_lifecycle sessions were the ONLY ones
+      showing 1 distinct prompt across many calls." Background work was an
+      explicit target, not an afterthought, so this is a gap against intent
+      rather than a scope boundary.
+    decision: >
+      NOT fixed inside D01.1 cleanup. Giving background lanes a session identity
+      is D01.7's seam, not this item's, and it is a design question (does a
+      scheduled job get a per-run session, a per-day session, or a per-owl
+      standing one?) rather than a mechanical follow-on — the same reason DEBT-22
+      was not folded into slice 4b. Needs Bakir.
+    qualifies: "D01.1 validate_result — I1 PASSES as measured, but the cache-hit claim should be read as ingress-only until this is resolved."
+    hand_to: D01.7
+    status: open
+  - id: DEBT-26
+    found: 2026-07-27
+    what: "tests/ has its own ruff debt that nothing tracks — DEBT-1 counts src/ only."
+    evidence: >
+      `uv run ruff check tests/owls/` reports 6 errors, in test_a2a_fidelity.py,
+      test_dna_authored.py, test_dna_governor.py, test_manifest_provenance.py and
+      test_tool_presets.py. None is in a file D01.1 touched; the six modified
+      files are clean. No baseline count exists for tests/ as a whole, so a new
+      lint error introduced in a test file today would be invisible.
+    decision: >
+      NOT fixed inside D01.1 cleanup — unrelated files, and chasing them would
+      violate minimal-diffs exactly as DEBT-1 records for src/. Tracked so that
+      the next lint pass establishes a tests/ baseline the way DEBT-1 did for
+      src/, rather than discovering the gap again.
+    status: open
+  - id: DEBT-25
+    found: 2026-07-27
+    what: >
+      The skill FOCUS hysteresis is half-wired: the writer runs in production on
+      every skill view, and its only reader has no caller.
+    evidence: >
+      tools/knowledge/skill_view.py:180 calls FOCUS_TRACKER.mark_viewed(...) on
+      every successful view. The only consumer of that data is
+      skills/skill_relevance.py:38 (tracker.bonus_for), inside score_owned_skills
+      — which has had ZERO src/ callers since D01.1 slice 4b removed per-query
+      skill scoring from assemble. skills/skill_focus.py:139 mark_active has zero
+      callers anywhere. So the platform maintains a focus-decay structure that
+      nothing consumes.
+      Note the SCORER's input never went away: classify.py:750 still stamps
+      state.query_embedding and delivery_gate.py:1431/1438/1520 still reads it.
+    why_it_is_not_simply_dead_code: >
+      designs/D01.1.md records that slice 4a deliberately kept skill_view
+      independent of the scoring "otherwise its focus hysteresis would have
+      silently gone to zero". It went to zero anyway — via the reader, not the
+      writer. This is a half-wired feature, not finished-and-orphaned code, and
+      deleting the reader would strand the writer permanently.
+    decision: >
+      KEEP, do not delete, and hand to D05.4. Bakir challenged the initial
+      proposal to delete it and was right to. dedup_targets X2 names the
+      context_budget BUDGETER as the mechanism that should go, not skill tiering
+      — which is a sibling of D05.4 (Progressive tool disclosure, P0, wave 2),
+      not a duplicate of it. Deleting ~700 lines of tested machinery that wave 2
+      then rebuilds is the worse trade.
+      The re-wiring itself is explicitly OUT of scope for D01.1: any reader that
+      scores against the query would put per-query work back into the turn path,
+      which is precisely what this item removed to win the byte-identical prompt.
+      D05.4 must design a cache-safe reader — one that scores WITHOUT touching
+      the frozen prompt.
+    hand_to: D05.4
+    status: open
+  - id: DEBT-24
+    found: 2026-07-27
+    what: >
+      REGRESSION introduced by D01.1's own freeze: the capability banner was
+      gated on THIS TURN's intent_class, so a session opening on a chat turn
+      froze a prompt permanently missing the device-access line.
+    evidence: >
+      assemble.py passed tools_enabled=(state.intent_class not in
+      TOOL_FREE_CLASSES) to CapabilityManifest.probe, and
+      capability_manifest.py:80 gates system_exec on it. Measured with `shell`
+      registered: probe(tools_enabled=True).render() is 579 chars,
+      probe(tools_enabled=False).render() is 336 — a 243-char difference which is
+      exactly the line "You run WITH direct access to this device … You are NOT a
+      remote-only cloud model cut off from the user's machine; never claim
+      otherwise or invent a hosting location."
+    why_it_mattered: >
+      Correct while the prompt was rebuilt every turn. Slice 5 froze the prompt
+      for the life of a session, turning a correct per-turn conditional into a
+      session-long falsehood: a conversation whose first message is "hi" lost the
+      one line written to kill the self-invented "I'm a cloud model, I can't
+      reach your machine" — and with daily rollover it stayed lost for up to a
+      day. Same bug class as DEBT-22 and DEBT-23: a per-turn conditional smuggled
+      into a now-frozen prompt.
+    decision: >
+      FIXED in D01.1 cleanup, with Bakir's approval, by the same resolution
+      DEBT-22 took: tools_enabled=True unconditionally at freeze time. The banner
+      asserts PLATFORM capability ("live and wired for you"), which is a fact
+      about the session, not the turn; the per-turn claim keeps its home in
+      volatile_turn_context(capabilities_offered=False).
+      Rejected: adding intent_class to the prompt cache key — it doubles cold
+      builds and halves the hit rate, and DEBT-22 already considered and passed
+      on it.
+    pinned_by: >
+      tests/pipeline/test_assemble_skill_catalogue.py —
+      test_device_access_survives_a_session_that_opens_on_a_chat_turn. Both it
+      and the strengthened intent-class equality test were confirmed RED before
+      the fix and green after.
+    status: resolved
   - id: DEBT-13
     found: 2026-07-26
     what: >
@@ -587,7 +736,24 @@ known_debt:
       and abandon byte-identical prompts, measuring I1 over the frozen region
       only — which is approach B, already rejected.
     decision: "NOT chosen here. Slice 5 is blocked on it: building the freeze first would silently pick option (c) by omission, which is the one option nobody has argued for."
-    status: open
+    resolution:
+      chosen: "(b) — move the clock OUT of the system prompt and into the turn."
+      when: 2026-07-27
+      stage: "D01.1 implement (stage 2), confirmed closed in D01.1 cleanup"
+      how: >
+        owls/base_prompt.py gained volatile_turn_context(now, *,
+        capabilities_offered), and pipeline/steps/execute.py delivers it per turn
+        via _turn_context_prefix (three call sites). build_stable_base_prompt()
+        takes NO clock argument at all, so the frozen tier cannot regain one by
+        accident — the property is structural, not a convention a caller has to
+        remember.
+      pinned_by: >
+        tests/owls/test_prompt_tiers.py — test_the_stable_tier_carries_no_clock,
+        test_golden_stable_tier_text (byte-exact), test_golden_volatile_tier_text,
+        and test_the_frozen_prompt_is_charter_then_stable_tier which asserts
+        "Right now it is" is absent from what assemble freezes.
+        Delivery side: tests/pipeline/test_volatile_tier_delivery.py.
+    status: resolved
   - id: DEBT-22
     found: 2026-07-27
     what: "The base charter still differs between conversational and tool-using turns, which is now the LAST source of system-prompt variance."
@@ -614,7 +780,36 @@ known_debt:
       the prompt cache key — which would mean two frozen prompts per lane rather
       than one.
     decision: "NOT resolved inside slice 4b. It is a genuine design decision about a documented safety behaviour, not a mechanical follow-on, and folding it into a slice about skills would have buried it."
-    status: open
+    resolution:
+      chosen: "The protocol becomes UNCONDITIONAL in the frozen prompt."
+      when: 2026-07-27
+      stage: "D01.1 implement (stage 2), confirmed closed in D01.1 cleanup"
+      how: >
+        assemble calls build_stable_base_prompt(lean=lean) with no
+        describe_tool_protocol argument, so it defaults True on every turn.
+      why_the_safety_behaviour_did_not_regress: >
+        The imitation defence the conditional existed for did not go away — it
+        MOVED to the volatile tier. volatile_turn_context(capabilities_offered
+        =False) states "No capabilities are available to you this turn. Do not
+        attempt to call a function, tool, or capability of any kind" on the turn
+        that is actually tool-free. That is strictly better than the old silence:
+        omitting the taught ACTION: format only stopped the model imitating OUR
+        format, and never stopped a natively tool-trained model attempting its
+        own convention (observed live as a namespaced "default_api:search{…}"
+        call on a turn offering zero capabilities).
+      why_unconditional_was_forced: >
+        A frozen prompt cannot express a per-turn conditional at all. A session
+        opening on a conversational turn would have carried a protocol-less
+        prompt for its whole life, losing tool use until the next rollover.
+      pinned_by: >
+        tests/pipeline/test_assemble_skill_catalogue.py —
+        test_the_catalogue_is_present_on_a_tool_free_turn now asserts WHOLE-prompt
+        equality across intent classes, which it previously declined to assert.
+        NOTE that assertion was vacuous when first added: the harness registered
+        no tool_registry, so CapabilityManifest rendered identically either way.
+        A _ShellRegistry was added to make it bite — which is exactly how it then
+        caught the DEBT-24 regression.
+    status: resolved
   - id: DEBT-21
     found: 2026-07-27
     what: "D01.1's invariant I1 cannot be measured correctly — cost_records has no owl_name, and I1 as written counts a correct design as a violation."
@@ -1373,7 +1568,7 @@ items:
       brainstorm: done
       architect:  done
       implement:  done
-      cleanup:    not_started
+      cleanup:    done
       test:       not_started
       validate:   done
       document:   not_started
@@ -1432,8 +1627,74 @@ items:
           - "D01.2 is likely a no-op for this deployment: NeraAiRaw is OpenAI-protocol, where prefix caching is automatic."
           - "Q23 (friends on other machines) raises the priority of D18.3 profiles above what the map assumed."
           - "NEW PREREQUISITE FOUND: StackOwl has no session lifecycle at all. Tracked as D01.7."
-    changes: []
-    notes: null
+    slices:
+      note: >
+        The freeze is the headline and it went LAST, deliberately. Freezing
+        earlier would have pinned whichever value the first turn happened to
+        carry, so every volatile part had to leave first. Prose version, with the
+        reasoning, is in designs/D01.1.md "What shipped, and why the order
+        mattered".
+      order:
+        1: "the next-contact banner left the prompt for its own delivered chunk"
+        2: "SessionPromptStore + migration 0102"
+        3: "stable user profile in, query-scoped recall out (prefs + lessons kept)"
+        4a: "lessons selected by owl identity rather than by the question"
+        4b: "skills became a stable CATALOGUE (names + descriptions; bodies via skill_view); focus clock stopped needing assemble to seed it"
+        5: "the STABLE and VOLATILE tiers named; the wall-clock left the system prompt and rides the turn (DEBT-23)"
+        6: "THE FREEZE — built once per (session_key, owl_name), reused verbatim"
+      commits: [85afe9fb, 67d80bbe, d61b992f, 12cca5ee, cf280aa3]
+    validate_result:
+      date: 2026-07-27
+      verdict: PASS
+      invariant: "I1 — within one session_id AND one owl, every turn sends a byte-identical system prompt."
+      evidence: >
+        Two messages 74 seconds apart produced six model calls sharing ONE
+        prompt_hash (aad8651ec66f6502): 19:00:21 / 19:00:24 / 19:00:24 and
+        19:01:31 / 19:01:34 / 19:01:35. The cache says the same thing directly —
+        "[pipeline] assemble: prompt source" read source=cold_build once and
+        source=cached thereafter, both carrying that hash.
+      baseline_it_replaced: "3 distinct prompts across 8 turns; 4 across 16. Now 1."
+      measurement_trap: >
+        A first pass showed distinct=2 for that lane. That was the QUERY, not the
+        platform: it counted rows with prompt_hash='' — classifier and utility
+        calls that carry no prompt. Filter those out and every remaining row
+        shares one hash. Recorded because the next reader will run the same query
+        and see the same 2.
+      prerequisite: >
+        I1 could not be measured at all until cost_records gained owl_name
+        (migration 0103, DEBT-21). As first written I1 grouped by session_id
+        alone, which counted a correct multi-owl lane as three violations.
+    changes:
+      - date: 2026-07-27
+        stage: cleanup
+        summary: "Removed what the freeze made obsolete; fixed one regression the freeze introduced."
+        removed:
+          - "owls/base_prompt.py: operational_adapter(), build_base_prompt(), build_base_prompt_now() — superseded by stable_operational_context() + volatile_turn_context(). Their strings were duplicated verbatim in the tier constants, so the same prompt text was maintained in two places; the file's own comment said to remove them once callers moved, and both had. build_base_prompt_now() had zero callers even before D01.1."
+          - "owls/base_prompt.py: the now-unused `from stackowl.infra.clock import now_local` import."
+          - "pipeline/steps/assemble.py: _GLOBAL_CATALOG_K — orphaned by slice 4b, zero references in the whole tree."
+          - "pipeline/steps/assemble.py: the TOOL_FREE_CLASSES import, unused once the capability gate went unconditional."
+        fixed:
+          - "DEBT-24 — the capability banner was still gated on this turn's intent_class while the prompt is frozen for the session. See known_debt DEBT-24."
+        tests:
+          - "tests/owls/test_prompt_tiers.py: GOLDEN SNAPSHOTS pinning both tiers byte-for-byte. These replace the equivalence test that proved the tier split changed nothing the model sees — once the old path is deleted there is nothing left to be equivalent TO, so the guarantee needed a new form. Written and made to pass BEFORE the deletion, so they pin what actually shipped."
+          - "tests/owls/test_base_prompt.py: adapter tests RETARGETED onto the tier functions rather than deleted. test_protocol_example_parses_with_real_parser is the lock-step guard between the ACTION: format we teach and providers/_react.parse_react_action that reads it back — losing it would let the two drift silently."
+          - "tests/owls/test_lean_charter_dna.py: retargeted build_base_prompt -> build_stable_base_prompt."
+          - "tests/pipeline/test_assemble_skill_catalogue.py: added _ShellRegistry so the intent-class equality assertion stops passing vacuously, plus test_device_access_survives_a_session_that_opens_on_a_chat_turn."
+        kept_deliberately:
+          - "skills/skill_relevance.py + instruction_injector.assign_tiers + FULL_FLOOR/SUMMARY_FLOOR — orphaned but NOT deleted. See DEBT-25; handed to D05.4."
+          - "FOCUS_TRACKER — looked like assemble's private business, is live via skill_view.py:179. The progress.yml warning about skills.global_catalog applied here too."
+        gate:
+          tests: "1208 -> see test stage; tests/owls/ 278 passed; targeted files green"
+          ruff: "src/ 46 — DEBT-1 baseline UNCHANGED. All six touched files: clean."
+          mypy: "78 — DEBT-8 baseline UNCHANGED."
+    notes: >
+      Two documented lessons from this item's cleanup. (1) A grep returning zero
+      hits proves a symbol is unreferenced, NOT that a capability is unwanted —
+      Bakir rejected the proposal to delete the skill-scoring machinery and the
+      evidence then went against deletion (DEBT-25). (2) An assertion that
+      cannot fail is worse than no assertion: the intent-class equality test
+      passed for a whole slice while the regression in DEBT-24 was live,
+      because its harness registered no tool_registry.
 
   - id: D01.2
     title: "Prompt-cache breakpoints"

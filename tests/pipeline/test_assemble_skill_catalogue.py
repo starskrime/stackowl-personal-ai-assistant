@@ -92,6 +92,20 @@ def _state(**kw: object) -> PipelineState:
     return PipelineState(**base)  # type: ignore[arg-type]
 
 
+class _ShellRegistry:
+    """A tool registry with ``shell`` registered — the ONLY condition under which
+    CapabilityManifest emits its device-access line.
+
+    Without this, ``probe(tools_enabled=...)`` renders identically whichever way
+    it is called, and any test asserting prompt equality across intent classes
+    passes vacuously. That is exactly how the frozen-capability regression got
+    through: the assertion was there, but nothing made it bite.
+    """
+
+    def get(self, name: str) -> object | None:
+        return object() if name == "shell" else None
+
+
 async def _prompt(store: _CatalogueStore, tmp_path: Path,
                   monkeypatch: pytest.MonkeyPatch, **kw: object) -> str:
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
@@ -99,7 +113,9 @@ async def _prompt(store: _CatalogueStore, tmp_path: Path,
     # NOT own appear. Settings absent means OFF, which is pre-existing behaviour
     # this slice deliberately preserved rather than overriding.
     settings = SimpleNamespace(skills=SimpleNamespace(global_catalog=True))
-    set_services(StepServices(skill_store=store, settings=settings))  # type: ignore[arg-type]
+    set_services(StepServices(  # type: ignore[arg-type]
+        skill_store=store, settings=settings, tool_registry=_ShellRegistry(),
+    ))
     out = await assemble.run(_state(**kw))
     return out.system_prompt or ""
 
@@ -163,11 +179,59 @@ async def test_the_catalogue_is_present_on_a_tool_free_turn(
         assert "summarize pdfs" in prompt
     assert _catalogue_of(conversational) == _catalogue_of(working)
 
-    # NOT asserted: whole-prompt equality across intent classes. `base` still
-    # differs, because build_base_prompt drops the ACTION: protocol on a
-    # tool-free turn by design — teaching the calling protocol to a turn with
-    # nothing to call made a weak model imitate it, traced live. That is the
-    # 3768 -> 3684 base_len seen on 2026-07-27, and it is the LAST source of
-    # prompt variance after this slice. It is a separate decision (should the
-    # protocol stay conditional?) and is tracked as DEBT-22 rather than being
-    # quietly folded into this one.
+    # WHOLE-PROMPT equality across intent classes — asserted, as of DEBT-22's
+    # resolution. When this test was written it deliberately did NOT assert
+    # this: `base` differed by 84 chars (3768 vs 3684 on 2026-07-27) because the
+    # old build_base_prompt dropped the ACTION: protocol on a tool-free turn,
+    # and that was then the LAST source of prompt variance.
+    #
+    # DEBT-22 chose "the protocol becomes unconditional". It is safe to make it
+    # unconditional precisely because the imitation defence it existed for did
+    # not go away — it moved to the VOLATILE tier, where "no capabilities are
+    # available to you this turn" is delivered with the turn that is actually
+    # tool-free, instead of being baked into a prompt frozen for the session.
+    # A frozen prompt cannot express a per-turn conditional at all: a session
+    # opening on a chat turn would otherwise carry a protocol-less prompt for
+    # its whole life and lose tool use until the next rollover.
+    assert conversational == working, (
+        "the frozen system prompt must not vary with intent_class — DEBT-22"
+    )
+
+    # And the assertion BITES: the harness registers `shell`, so a per-turn
+    # capability gate would show up here as a 243-char difference. See
+    # test_device_access_survives_a_session_that_opens_on_a_chat_turn below.
+    assert "direct access to this device" in conversational
+
+
+async def test_device_access_survives_a_session_that_opens_on_a_chat_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REGRESSION — introduced by the freeze itself, found in D01.1's cleanup.
+
+    CapabilityManifest gates its device-access line on ``tools_enabled``, which
+    assemble derived from THIS TURN's intent_class. That was correct while the
+    prompt was rebuilt every turn. Once slice 5 froze the prompt for the life of
+    a session, the same conditional became a session-long falsehood: a
+    conversation whose first message is "hi" (a TOOL_FREE_CLASSES intent) froze
+    a prompt missing the one line written to stop the owl claiming it is a
+    remote cloud model that cannot reach the user's machine — and with daily
+    rollover, it stayed missing for up to a day.
+
+    Measured before the fix, with `shell` registered: 579 chars rendered with
+    tools_enabled=True vs 336 with False.
+
+    The fix is the same one DEBT-22 took for the call protocol, for the same
+    reason: the banner asserts PLATFORM capability, which is a fact about the
+    session, not the turn. The per-turn truth keeps its own home in
+    ``volatile_turn_context(capabilities_offered=False)``.
+    """
+    store = _CatalogueStore()
+
+    opened_on_chat = await _prompt(store, tmp_path, monkeypatch,
+                                   intent_class="conversational")
+
+    assert "direct access to this device" in opened_on_chat, (
+        "a session opening on a chat turn must still freeze a prompt that "
+        "states the platform's device access"
+    )
+    assert "never claim otherwise" in opened_on_chat

@@ -1,33 +1,41 @@
-"""System prompt: a durable behavioural charter + a swappable operational adapter.
+"""System prompt: a durable behavioural charter + two operational TIERS.
 
-The whole point of this split is that BEHAVIOUR is the permanent invariant while
-the model, the operating system, and the tool set are all swappable. So the
-preamble that leads every system prompt is two layers:
+The whole point of the first split is that BEHAVIOUR is the permanent invariant
+while the model, the operating system, and the tool set are all swappable. The
+second split is about caching: what may be frozen for a whole conversation, and
+what may not.
 
   1. :func:`behavioral_charter` — WHO the assistant is and HOW it behaves, stated
      as timeless, global, high-level principles. It names no tool, no date, and
      no example domain, so it stays valid on any model, OS, or capability set.
-  2. :func:`operational_adapter` — the swap-out mechanics for *today's*
-     environment: the current date/time as a human-readable grounding fact, and
-     the generic call PROTOCOL the model uses to invoke a capability. The live
-     catalogue of actual tools is supplied separately by the provider, so the
-     adapter teaches only the FORMAT — never specific tool names.
+  2. :func:`stable_operational_context` — the mechanics that do NOT change
+     between turns: the generic call PROTOCOL the model uses to invoke a
+     capability, and the downloads convention. The live catalogue of actual tools
+     is supplied separately by the provider, so this teaches only the FORMAT —
+     never specific tool names. It takes no clock, by construction.
+  3. :func:`volatile_turn_context` — the facts belonging to ONE turn: the
+     wall-clock, and the "no capabilities this turn" prohibition. Delivered with
+     the turn, outside the cached prefix.
 
-:func:`build_base_prompt` composes the two (charter first — strongest, durable
-signal leads). It keeps its name so ``pipeline/steps/assemble.py`` is unchanged.
-The ReAct example in the adapter is kept in lock-step with the parser in
-``providers/_react.parse_react_action``.
+:func:`build_stable_base_prompt` composes 1 and 2 (charter first — strongest,
+durable signal leads); that is what ``pipeline/steps/assemble.py`` freezes per
+session. ``pipeline/steps/execute.py`` delivers 3 alongside each turn.
+
+The ReAct example in the stable tier is kept in lock-step with the parser in
+``providers/_react.parse_react_action`` — see
+``tests/owls/test_base_prompt.py::test_protocol_example_parses_with_real_parser``.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from stackowl.infra.clock import now_local
-
 # Window at/below which a model gets the lean charter + lean DNA (small/weak local
 # models + the unknown/probe-fail fallback). Capable models (>= 16384) keep the
-# full charter. Imported by pipeline/steps/assemble.py.
+# full charter. Read by pipeline/delivery_gate.py (small-window acknowledgement)
+# and pipeline/progress_tracker.py (adaptive no-progress threshold). NOT by
+# assemble — it hardcodes lean=False since the 2026-07-22 owner decision that a
+# small-window model most needs the FULL instructions, not a trimmed one.
 LEAN_WINDOW_THRESHOLD = 8192
 
 
@@ -127,74 +135,25 @@ def behavioral_charter_lean() -> str:
     )
 
 
-def operational_adapter(now: datetime, *, describe_tool_protocol: bool = True) -> str:
-    """The swappable operational layer for the current environment.
-
-    Carries today's date/time as a human-readable grounding fact and, when
-    ``describe_tool_protocol`` is True, the generic call protocol. Pure function:
-    same ``(now, describe_tool_protocol)`` → same text. The ``ACTION:`` line and
-    ```json fence below MUST match ``providers/_react.parse_react_action``.
-    A portable strftime is used (no GNU-only ``%-d``/``%-I`` directives).
-
-    ``describe_tool_protocol=False`` (tool-free turns — the SAME
-    ``state.intent_class in TOOL_FREE_CLASSES`` signal ``assemble.py`` already
-    computes for ``tools_enabled`` a few lines after this call) omits the
-    ACTION:-format paragraph entirely: teaching a calling PROTOCOL for a turn
-    where no capability is actually on offer gives a less-instruction-following
-    (e.g. reasoning/base) model a pattern to imitate with nothing real to call,
-    which is exactly what the live incident traced to (a plain conversational
-    reply getting flagged and floored as an unparsed tool-call attempt). Default
-    True keeps every other/not-yet-updated caller byte-identical.
-    """
-    # Portable, human-readable rendering — works on Linux, macOS, and Windows.
-    human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
-    parts = [
-        "Operational context (this changes; your character above does not).\n"
-        f"Right now it is {human_now}.",
-    ]
-    if describe_tool_protocol:
-        parts.append(
-            "To use a capability, output exactly:\n"
-            "ACTION: <name>\n"
-            "```json\n"
-            '{"<arg>": "<value>"}\n'
-            "```\n"
-            "Then stop and wait for the OBSERVATION (the result) before continuing. "
-            "The capabilities currently available to you are listed separately; use "
-            "their exact names in place of <name>."
-        )
-    else:
-        # Omitting the ACTION: paragraph only stops the model imitating a format
-        # WE taught it — it does not stop a natively tool-trained model from
-        # attempting ITS OWN inherent function-calling convention (observed live:
-        # a namespaced "default_api:search{...}"-style call on a turn with zero
-        # capabilities offered). An explicit negative instruction is needed to
-        # override that native training, not just silence about the topic.
-        parts.append(
-            "No capabilities are available to you this turn. Do not attempt to "
-            "call a function, tool, or capability of any kind, in any format — "
-            "answer entirely from your own knowledge instead."
-        )
-    parts.append(
-        "When you fetch or save a file for the user, write it into the workspace's "
-        "downloads/ folder, so it can be delivered to them and is cleaned up "
-        "automatically over time."
-    )
-    return "\n\n".join(parts)
-
-
 # ---------------------------------------------------------------------------
 # D01.1 — the two TIERS, named.
 #
 # The design said it adopted Hermes' split and then "froze even the volatile
-# tier". That adoption is the error, and three findings this session are the
-# same mistake in different fields: the undelivered banner (slice 1), per-turn
-# recall (slice 3), and the wall-clock (DEBT-23). Volatile means volatile.
+# tier". That adoption is the error, and FOUR findings are the same mistake in
+# different fields: the undelivered banner (slice 1), per-turn recall (slice 3),
+# the wall-clock (DEBT-23), and the capability banner (DEBT-24, found in cleanup
+# — it was still gated on the turn's intent_class after the prompt was frozen,
+# so a session opening on a chat turn lost its device-access line for the day).
+# Volatile means volatile. If a new fact is true of THIS TURN rather than of the
+# session, it belongs in volatile_turn_context, not in the frozen prompt.
 #
-# These are ADDITIVE for now. `operational_adapter` and `build_base_prompt`
-# below are untouched and still produce exactly today's text, so this stage
-# cannot change what any model sees. Callers move in a later stage, one at a
-# time, each verified.
+# These were introduced ADDITIVELY alongside the single `operational_adapter`
+# they replaced, so the tier split could not change what any model saw. Both
+# callers have since moved — `assemble` to `build_stable_base_prompt`, `execute`
+# to `volatile_turn_context` — and the CLEANUP stage removed the old adapter,
+# which by then held a second copy of every string below. The byte-for-byte
+# guarantee it used to provide now lives in tests/owls/test_prompt_tiers.py's
+# golden snapshots.
 # ---------------------------------------------------------------------------
 
 _DOWNLOADS_RULE = (
@@ -278,17 +237,3 @@ def build_stable_base_prompt(
     return charter + "\n\n" + stable_operational_context(
         describe_tool_protocol=describe_tool_protocol,
     )
-
-
-def build_base_prompt(
-    now: datetime, *, lean: bool = False, describe_tool_protocol: bool = True,
-) -> str:
-    """Compose the charter (lean or full) and the swappable adapter (charter first)."""
-    charter = behavioral_charter_lean() if lean else behavioral_charter()
-    adapter = operational_adapter(now, describe_tool_protocol=describe_tool_protocol)
-    return charter + "\n\n" + adapter
-
-
-def build_base_prompt_now() -> str:
-    """Convenience: build the base prompt using the current local time."""
-    return build_base_prompt(now_local())

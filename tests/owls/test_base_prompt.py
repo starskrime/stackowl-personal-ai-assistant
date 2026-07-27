@@ -1,16 +1,23 @@
-"""Unit tests for the system prompt split into charter + adapter (Phase A+).
+"""Unit tests for the system prompt: charter + the two operational TIERS.
 
-The system prompt is now two pure functions:
+The system prompt is three pure functions:
 
   * ``behavioral_charter()`` — DURABLE, GLOBAL, HIGH-LEVEL behavioural principles.
     It is timeless: valid on any model, OS, or tool set. It must therefore
     contain NO tool names, NO date, and NO case-specific example domains.
-  * ``operational_adapter(now)`` — the SWAPPABLE mechanics: today's date as a
-    human-readable grounding fact, plus the generic ReAct call protocol whose
-    format must match the Phase A1 parser (``providers/_react.parse_react_action``).
+  * ``stable_operational_context()`` — the mechanics that do not change between
+    turns: the generic ReAct call protocol, whose format must match the Phase A1
+    parser (``providers/_react.parse_react_action``), and the downloads
+    convention. Frozen per session (D01.1).
+  * ``volatile_turn_context(now)`` — what belongs to ONE turn: the wall-clock,
+    and the "no capabilities this turn" prohibition. Delivered with the turn.
 
-``build_base_prompt(now)`` composes the two (charter + adapter) and keeps its
-name so ``pipeline/steps/assemble.py`` continues to work unchanged.
+These tests previously targeted ``operational_adapter(now)``, which held all of
+the above in one string and was removed in D01.1's cleanup once both callers had
+moved. They were RETARGETED rather than deleted: what they assert — chiefly that
+the taught ``ACTION:`` format stays in lock-step with the real parser — is a
+property of the text, not of the function that used to hold it. Byte-exact
+snapshots of both tiers live in ``test_prompt_tiers.py``.
 """
 
 from __future__ import annotations
@@ -19,8 +26,8 @@ from datetime import datetime
 
 from stackowl.owls.base_prompt import (
     behavioral_charter,
-    build_base_prompt,
-    operational_adapter,
+    stable_operational_context,
+    volatile_turn_context,
 )
 
 
@@ -170,24 +177,34 @@ def test_charter_carries_act_first_ambiguity_principle() -> None:
         )
 
 
-def test_adapter_has_date_and_protocol() -> None:
-    """The adapter renders today's date human-readably (not raw isoformat) and
-    teaches the ReAct call protocol."""
-    adapter = operational_adapter(_fixed())
+def test_date_is_human_readable_and_lives_in_the_volatile_tier() -> None:
+    """The date renders human-readably (not raw isoformat), and it renders in the
+    VOLATILE tier — the stable tier must carry no clock at all, which is the
+    property that lets the prompt be frozen for a whole session."""
+    volatile = volatile_turn_context(_fixed())
 
     # Human-readable date: month name + year present.
-    assert "May" in adapter
-    assert "2026" in adapter
+    assert "May" in volatile
+    assert "2026" in volatile
 
     # NOT the raw isoformat form ("2026-05-31T14:30:00").
-    assert _fixed().isoformat() not in adapter
+    assert _fixed().isoformat() not in volatile
 
-    # ReAct protocol tokens.
-    assert "ACTION:" in adapter
-    assert "```json" in adapter
+    # And the frozen tier is clock-free.
+    assert "May" not in stable_operational_context()
+    assert "2026" not in stable_operational_context()
 
 
-def test_adapter_example_parses_with_real_parser() -> None:
+def test_stable_tier_teaches_the_protocol() -> None:
+    """The ReAct call protocol is STABLE-tier: how to call a tool does not vary
+    between turns, so it can live inside the cached prefix."""
+    stable = stable_operational_context()
+
+    assert "ACTION:" in stable
+    assert "```json" in stable
+
+
+def test_protocol_example_parses_with_real_parser() -> None:
     """The taught ReAct format must match the real A1 parser's grammar.
 
     The example deliberately uses placeholders (``<name>`` / ``<arg>``) so it is
@@ -196,23 +213,27 @@ def test_adapter_example_parses_with_real_parser() -> None:
     for the placeholder example. We therefore assert the example is
     STRUCTURALLY what the parser expects: an ``ACTION:`` line followed by a
     fenced ``json`` block — the exact two tokens the parser keys on.
+
+    This is the lock-step guard between the text we teach and the parser that
+    reads it back. It moved from ``operational_adapter`` to the stable tier
+    unchanged, because the format did.
     """
     from stackowl.providers._react import parse_react_action
 
-    adapter = operational_adapter(_fixed())
+    stable = stable_operational_context()
 
     # The placeholder example is intentionally non-tool-specific.
-    assert parse_react_action(adapter) is None, (
+    assert parse_react_action(stable) is None, (
         "placeholder <name> must NOT resolve to a real tool"
     )
 
     # Structural match: the format the parser keys on is present verbatim.
-    assert "ACTION:" in adapter
-    assert "```json" in adapter
+    assert "ACTION:" in stable
+    assert "```json" in stable
 
     # Proof the SAME format with a concrete tool name does parse — i.e. the
     # taught grammar is the parser's grammar.
-    concrete = adapter.replace("<name>", "example_tool").replace(
+    concrete = stable.replace("<name>", "example_tool").replace(
         '{"<arg>": "<value>"}', '{"arg": "value"}'
     )
     parsed = parse_react_action(concrete)
@@ -222,81 +243,47 @@ def test_adapter_example_parses_with_real_parser() -> None:
     assert args == {"arg": "value"}
 
 
-def test_adapter_omits_protocol_when_tool_free() -> None:
-    """describe_tool_protocol=False (a TOOL_FREE_CLASSES turn) drops the ACTION:
-    calling protocol entirely — teaching a call format with nothing real to call
-    primes a less-instruction-following model to imitate it anyway (the live
-    incident: a plain conversational reply flagged/floored as an unparsed
-    tool-call). The date/downloads-convention content must still be present."""
-    adapter = operational_adapter(_fixed(), describe_tool_protocol=False)
+def test_tool_free_turn_drops_protocol_and_states_the_prohibition() -> None:
+    """A turn offering no capabilities must both DROP the ACTION: format and
+    STATE the prohibition — and the two halves live in different tiers.
 
-    assert "ACTION:" not in adapter
-    assert "```json" not in adapter
-    assert "May" in adapter
-    assert "2026" in adapter
-    assert "downloads" in adapter.lower()
-    # Live incident 2026-07-16 (round 2): omitting the taught ACTION: format only
-    # stops the model imitating OUR format — it does not stop a natively
-    # tool-trained model (NeraAiRaw/Gemini-family) from attempting its OWN
-    # inherent function-calling convention on a turn with zero tools offered.
-    # An explicit negative instruction is required to override that.
-    assert "no capabilities are available" in adapter.lower()
-    assert "do not attempt to call" in adapter.lower()
+    Dropping the taught format stops a less-instruction-following model imitating
+    it with nothing real to call (the live incident: a plain conversational reply
+    flagged/floored as an unparsed tool-call). But omission alone is not enough —
+    live incident 2026-07-16 round 2 showed a natively tool-trained model
+    attempting its OWN inherent function-calling convention on a turn with zero
+    tools offered. The explicit negative instruction overrides that, and it is
+    VOLATILE ("this turn"), so it cannot sit in the frozen tier.
+    """
+    stable = stable_operational_context(describe_tool_protocol=False)
+    volatile = volatile_turn_context(_fixed(), capabilities_offered=False)
 
+    # Stable half: no taught format, but the durable downloads rule remains.
+    assert "ACTION:" not in stable
+    assert "```json" not in stable
+    assert "downloads" in stable.lower()
 
-def test_adapter_default_is_byte_identical_to_pre_flag_behavior() -> None:
-    """describe_tool_protocol's default (True) must reproduce the EXACT prior
-    text — no accidental whitespace/paragraph-break change from refactoring the
-    string into a list-join."""
-    now = _fixed()
-    human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
-    expected = (
-        "Operational context (this changes; your character above does not).\n"
-        f"Right now it is {human_now}.\n\n"
-        "To use a capability, output exactly:\n"
-        "ACTION: <name>\n"
-        "```json\n"
-        '{"<arg>": "<value>"}\n'
-        "```\n"
-        "Then stop and wait for the OBSERVATION (the result) before continuing. "
-        "The capabilities currently available to you are listed separately; use "
-        "their exact names in place of <name>.\n\n"
-        "When you fetch or save a file for the user, write it into the workspace's "
-        "downloads/ folder, so it can be delivered to them and is cleaned up "
-        "automatically over time."
-    )
-    assert operational_adapter(now) == expected
+    # Volatile half: the prohibition, plus the turn's clock.
+    assert "no capabilities are available" in volatile.lower()
+    assert "do not attempt to call" in volatile.lower()
+    assert "May" in volatile and "2026" in volatile
+
+    # The prohibition must NOT leak into the frozen tier.
+    assert "no capabilities are available" not in stable.lower()
 
 
-def test_adapter_carries_downloads_convention() -> None:
-    """The operational adapter steers downloads into the workspace downloads/
-    folder — generic file-hygiene mechanics, no tool/domain words. The charter
-    must NOT carry this (it stays pure behaviour)."""
-    adapter = operational_adapter(_fixed()).lower()
+def test_stable_tier_carries_downloads_convention() -> None:
+    """The stable tier steers downloads into the workspace downloads/ folder —
+    generic file-hygiene mechanics, no tool/domain words. The charter must NOT
+    carry this (it stays pure behaviour)."""
+    stable = stable_operational_context().lower()
     charter = behavioral_charter().lower()
 
-    # The adapter names the workspace downloads convention.
-    assert "downloads/" in adapter
-    assert "workspace" in adapter
+    # The operational tier names the workspace downloads convention.
+    assert "downloads/" in stable
+    assert "workspace" in stable
 
     # It is allowed to use the word "download" (operational layer); the charter
     # is not — the forbidden-token test already guards the charter. Re-assert the
     # charter does not pick up the convention.
     assert "downloads/" not in charter
-
-
-def test_build_base_prompt_composes() -> None:
-    """build_base_prompt(dt) contains both charter and adapter content."""
-    dt = _fixed()
-    prompt = build_base_prompt(dt)
-
-    charter = behavioral_charter()
-    adapter = operational_adapter(dt)
-
-    # A distinctive slice of each must appear in the composed prompt.
-    assert charter[:40] in prompt
-    assert adapter[:40] in prompt  # adapter content is composed in
-    assert "ACTION:" in prompt  # from adapter
-    assert "2026" in prompt  # from adapter
-    # Charter leads the adapter (strongest, durable signal first).
-    assert prompt.index(charter[:40]) < prompt.index("ACTION:")

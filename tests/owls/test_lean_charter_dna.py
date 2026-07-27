@@ -3,28 +3,29 @@
 Covers:
   - LEAN_WINDOW_THRESHOLD constant value.
   - behavioral_charter_lean() produces a shorter but principle-preserving text.
-  - build_base_prompt(now, lean=True) uses the lean charter.
-  - build_base_prompt(now) / build_base_prompt(now, lean=False) are byte-identical
-    and contain the full charter.
+  - build_stable_base_prompt(lean=True) uses the lean charter.
+  - build_stable_base_prompt() / build_stable_base_prompt(lean=False) are
+    byte-identical and contain the full charter.
   - DNAPromptInjector.inject(..., lean=True) suppresses backfiring HIGH directives.
+
+Retargeted from ``build_base_prompt(now, ...)`` in D01.1's cleanup: that function
+took a clock it no longer needs, and was removed once ``assemble`` moved to the
+clock-free ``build_stable_base_prompt``. The lean/full charter selection these
+tests guard is unchanged — only the composer's name and signature are.
 """
 
 from __future__ import annotations
-
-from datetime import datetime
 
 from stackowl.owls.base_prompt import (
     LEAN_WINDOW_THRESHOLD,
     behavioral_charter,
     behavioral_charter_lean,
-    build_base_prompt,
+    build_stable_base_prompt,
 )
 from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.owls.manifest import OwlAgentManifest
-
-_NOW = datetime(2026, 6, 14, 12, 0, 0)
 
 
 def test_threshold_value() -> None:
@@ -42,14 +43,14 @@ def test_lean_charter_shorter_but_keeps_principles() -> None:
     assert "memory" in low
 
 
-def test_build_base_prompt_lean_uses_lean_charter() -> None:
-    assert behavioral_charter_lean() in build_base_prompt(_NOW, lean=True)
-    assert behavioral_charter_lean() not in build_base_prompt(_NOW, lean=False)
+def test_build_stable_base_prompt_lean_uses_lean_charter() -> None:
+    assert behavioral_charter_lean() in build_stable_base_prompt(lean=True)
+    assert behavioral_charter_lean() not in build_stable_base_prompt(lean=False)
 
 
-def test_build_base_prompt_full_byte_identical() -> None:
-    full = build_base_prompt(_NOW)
-    assert build_base_prompt(_NOW, lean=False) == full
+def test_build_stable_base_prompt_full_byte_identical() -> None:
+    full = build_stable_base_prompt()
+    assert build_stable_base_prompt(lean=False) == full
     assert behavioral_charter() in full
 
 

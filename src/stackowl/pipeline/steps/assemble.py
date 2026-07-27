@@ -17,7 +17,7 @@ from stackowl.owls.base_prompt import build_stable_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.capability_manifest import CapabilityManifest
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
+from stackowl.pipeline.state import PipelineState
 from stackowl.skills.instruction_injector import (
     SkillInstructionInjector,
     SkillTier,
@@ -25,12 +25,6 @@ from stackowl.skills.instruction_injector import (
 
 _injector = DNAPromptInjector()
 _skill_injector = SkillInstructionInjector()
-
-# Bounded top-K for the global skill-catalog branch (LAT.2) — comfortably above
-# what instruction_injector's render() cap actually renders, but nowhere near
-# the full enabled-skill count (hundreds), so the branch stops paying for a
-# full-row fetch + format + discard cycle just to emit a truncated name list.
-_GLOBAL_CATALOG_K = 20
 
 
 def _safe_resolve_api_key(cfg: object) -> str | None:
@@ -269,12 +263,6 @@ async def run(state: PipelineState) -> PipelineState:
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
     try:
-        # describe_tool_protocol: same TOOL_FREE_CLASSES signal already used for
-        # the capability manifest a few lines below (tools_enabled=) — a tool-free
-        # turn has nothing to call, so teaching the ACTION: calling PROTOCOL only
-        # gives a less-instruction-following model a pattern to imitate with
-        # nothing real behind it (traced live: a plain conversational reply
-        # flagged and floored as an unparsed tool-call attempt).
         # D01.1 stage 2 — the STABLE tier only. The wall-clock left the system
         # prompt (DEBT-23): rendered to the minute, it made a byte-identical
         # prompt impossible, and freezing it would have told the model a time up
@@ -286,7 +274,8 @@ async def run(state: PipelineState) -> PipelineState:
         # prompt cannot express a per-turn conditional at all: a session opening
         # with a conversational turn would carry a protocol-less prompt for its
         # whole life. The genuinely per-turn half, "no capabilities available
-        # THIS turn", moved to the volatile tier where it belongs.
+        # THIS turn", moved to the volatile tier where it belongs — which is why
+        # nothing in this frozen prompt reads state.intent_class any more.
         base = build_stable_base_prompt(lean=lean)
     except Exception as exc:  # no-hidden-errors: never let prompt-building crash the turn
         log.engine.error(
@@ -298,11 +287,26 @@ async def run(state: PipelineState) -> PipelineState:
     # the PLATFORM can do this run, derived from live reachability (not a registry
     # list). Kills the self-invented "I can't…" by stating present capability as a
     # measured fact. Fail-open + byte-absent when nothing is reachable.
+    #
+    # D01.1 cleanup — tools_enabled is UNCONDITIONALLY True here, and that is a
+    # correction, not an oversight. This read `state.intent_class not in
+    # TOOL_FREE_CLASSES`, which was right while the prompt was rebuilt every
+    # turn. Slice 5 froze the prompt for the life of a session, and the same
+    # conditional then became a session-long falsehood: a conversation opening
+    # with "hi" froze a prompt missing the device-access line — the very line
+    # that exists to stop the owl claiming it is a remote cloud model that
+    # cannot reach the user's machine — and daily rollover kept it missing for
+    # up to a day. Measured with `shell` registered: 579 chars vs 336.
+    #
+    # The banner asserts PLATFORM capability ("live and wired for you"), which is
+    # a fact about the session, not the turn. The per-turn claim keeps its own
+    # home in base_prompt.volatile_turn_context(capabilities_offered=False),
+    # which says "no capabilities are available to you this turn" on the turn
+    # that is actually tool-free. Same resolution DEBT-22 took for the call
+    # protocol, for the same reason.
     capabilities = ""
     try:
-        capabilities = CapabilityManifest.probe(
-            services, tools_enabled=state.intent_class not in TOOL_FREE_CLASSES
-        ).render()
+        capabilities = CapabilityManifest.probe(services, tools_enabled=True).render()
     except Exception as exc:  # no-hidden-errors: never crash the turn over a manifest
         log.engine.error(
             "[pipeline] assemble: capability manifest FAILED — skipped",
