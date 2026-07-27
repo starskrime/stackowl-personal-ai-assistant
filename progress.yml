@@ -453,7 +453,36 @@ current:
             and depth stays reachable via the memory tool, or they leave the
             prompt and the reflect->recall guarantee moves to a different seam.
             Needs Bakir.
-        what_this_vindicates: >
+        second_measurement_after_the_new_fix:
+        i1_by_incarnation: >
+          20260726_232710_f7fd846d (the fresh one): 2 distinct prompt_hash / 6
+          turns. The older ones: 4/16, 3/8, 3/8. Still failing, but the ratio
+          improved — and the reason it can never reach 1 as I1 is literally
+          written is the finding below.
+        I1_AS_WRITTEN_IS_UNACHIEVABLE_ON_A_MULTI_OWL_LANE: >
+          designs/D01.1.md states I1 as "within one session_id, every turn sends
+          a byte-identical system prompt", measured by
+          COUNT(DISTINCT prompt_hash) GROUP BY session_id. But a lane can run
+          SEVERAL owls: the staged RCA drives rca_gatherer, hypothesis and
+          verifier against one incident lane, and the live prompts show
+          persona_len cycling 291 / 252 / 255 / 303 within a single incarnation.
+          Different owls MUST have different prompts — that is invariant I6 and
+          the whole reason the key is (session_key, owl_name). So grouping by
+          session_id alone counts a correct design as a violation.
+        the_measurement_spine_cannot_express_the_real_invariant: >
+          The honest invariant is "within one (session_id, owl_name), byte-
+          identical". cost_records carries session_key and session_id but NOT
+          owl_name, so D01.6's spine cannot currently group the right way. Either
+          cost_records gains owl_name, or I1 is measured from the assemble log
+          instead. Recorded as DEBT-21 rather than quietly measuring the easy
+          thing and calling it the invariant.
+        base_is_stable_after_all: >
+          All seven prompts on the new incarnation show base_len=3768. The
+          earlier 3768 -> 3684 came from ONE tool-free turn, not from drift in
+          the charter, so the 84-char question raised earlier is answered and
+          closed.
+        lessons_confirmed_query_scoped: "stable_context_len across the new incarnation: 687, 43, 1142, 478, 1142 — varying exactly as the first measurement suggested, which is what Bakir's query-independent-lessons decision now addresses."
+      what_this_vindicates: >
           The refusal to build slice 4 blind. Had the skills block been converted
           on assumption, this measurement would still have shown I1 failing, and
           the cause would have been buried under a fresh change.
@@ -838,6 +867,29 @@ known_debt:
       comment records ~16 min as its slowest legitimate run. That is the dream
       worker genuinely exceeding 20 minutes, not the RCA budget, and it is NOT
       fixed here. Tracked as DEBT-19 so it is not lost behind this fix.
+  - id: DEBT-21
+    found: 2026-07-27
+    what: "D01.1's invariant I1 cannot be measured correctly — cost_records has no owl_name, and I1 as written counts a correct design as a violation."
+    evidence: >
+      designs/D01.1.md states I1 as "within one session_id, every turn sends a
+      byte-identical system prompt", measured by COUNT(DISTINCT prompt_hash)
+      GROUP BY session_id. But a lane can run SEVERAL owls: the staged RCA drives
+      rca_gatherer, hypothesis and verifier against one incident lane, and the
+      live prompts show persona_len cycling 291 / 252 / 255 / 303 inside a single
+      incarnation. Different owls MUST have different prompts — that is invariant
+      I6, and the whole reason the prompt key is (session_key, owl_name).
+    why_it_matters: >
+      The item's PASS/FAIL gate is this query. As written it can never return 1
+      for any lane that runs more than one owl, so D01.1 would be judged failed
+      for behaving exactly as designed. The honest invariant is "within one
+      (session_id, owl_name), byte-identical".
+    the_blocker: >
+      cost_records carries session_key and session_id but NOT owl_name, so
+      D01.6's measurement spine cannot group the right way. Either cost_records
+      gains owl_name, or I1 is measured from the assemble log (which does carry
+      the owl) instead of from cost_records.
+    decision: "Recorded rather than quietly measuring the easy thing and calling it the invariant. Needs a call on which surface carries the measurement before D01.1 can be validated."
+    status: open
   - id: DEBT-20
     found: 2026-07-27
     what: "classify's per-channel sizes are unmeasurable — its exit log is at DEBUG while the live log level is INFO."
@@ -1911,6 +1963,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
+      validate:   done
       validate:   not_started
       document:   not_started
     cleanup_record:
@@ -1967,7 +2020,33 @@ items:
         affected: "51 passed across test_transcript_store, test_rollover_summary, test_assembly, test_telegram_voice, test_conversation_cost_report. The single failure is DEBT-9's kuzu lock, reproduced and confirmed as such (the live platform holds it)."
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
       no_capability_removed: "Checked explicitly: every change adds a predicate or a stamp. Nothing was disabled, stubbed or deleted to make a check pass."
-    validate_partial:
+    validate_complete:
+      date: 2026-07-27
+      status: "PASS — the whole chain fired end to end, after the /new defect this stage FOUND was fixed."
+      what_the_stage_earned_its_keep_for: >
+        The first /new attempt did nothing at all. `/new` had NEVER worked: it
+        looked up the channel-native id while the lane is composite, replied
+        "You're already in a new conversation", and the conversation carried on.
+        Six stages of process had not caught it; driving the real thing did. It
+        is now fixed and covered by 8 tests (the command had ZERO before).
+      the_chain_after_the_fix:
+        - "session.new: requested — the next turn starts a fresh conversation"
+        - "session.rollover: old incarnation ended (old=20260726_094155_1b416f35 new=20260726_232710_f7fd846d reason=explicit message_count=3 completed_turns=3)"
+        - "session.resolve: explicit /new honoured"
+        - "[memory] rollover_summary.enqueue: queued — idempotency_key rollover:owl:secretary:telegram:dm:72055773:20260726_094155_1b416f35, exactly the rollover:{lane}:{incarnation} shape designed"
+        - "[scheduler] rollover_summary-0a074112: entry — running handler"
+        - "[memory] rollover_summary.execute: entry -> 'nothing notable — storing nothing' -> exit"
+        - "[cost] conversation_cost: exit — total_usd=1.19 call_count=16 (DEBT-7's first live firing)"
+      nothing_notable_is_a_PASS_not_a_gap: >
+        The handler ran and the MODEL judged a 3-turn conversation not worth
+        summarising. That is the designed outcome — test_the_model_decides_
+        notability pins exactly this — not a broken link. Every link fired.
+      the_debt_11_backstop_is_correct_live: >
+        sessions.summary_enqueued_for = 20260726_094155_1b416f35, the ENDED
+        incarnation, while the lane moved on to 20260726_232710_f7fd846d with
+        message_count reset to 0. That is precisely what the 5c backstop was
+        built to record, observed rather than assumed.
+    validate_partial_superseded:
       date: 2026-07-26
       status: "PARTIAL — everything observable without a conversation boundary is confirmed. The last step needs Bakir."
       confirmed_live_read_only:
