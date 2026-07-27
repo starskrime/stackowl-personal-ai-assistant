@@ -38,7 +38,6 @@ from stackowl.gateway.scanner import GatewayScanner
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.messaging.a2a import A2AQueue
 from stackowl.owls.concurrency import ConcurrencyGovernor
-from stackowl.owls.delegation_limits import MAX_LIVE_SESSIONS
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.owls.session_registry import SessionRegistry
@@ -243,17 +242,35 @@ async def test_smoke_duplicate_label_surfaces_to_user(tmp_db: DbPool) -> None:
     assert "refused" in _delivered(env), _delivered(env)
 
 
-async def test_smoke_capacity_cap_surfaces_to_user(tmp_db: DbPool) -> None:
+async def test_smoke_no_capacity_cap_refuses_a_spawn(tmp_db: DbPool) -> None:
+    """DEBT-12 — this test used to assert the OPPOSITE, and the ceiling it
+    asserted is gone on purpose.
+
+    ``MAX_LIVE_SESSIONS = 8`` was removed outright by the numeric-limits arc
+    (commit d9b83115, 2026-07-22, owner decision), along with the
+    ``too_many_sessions`` refusal it drove — that reason no longer appears
+    anywhere in ``src/``. The test kept importing the deleted constant, so it
+    could not even be COLLECTED, which aborted collection for any selection
+    that included it (``pytest -k objective`` reported an error rather than
+    running). It had been invisible because nobody ran that path.
+
+    Rather than delete it, it now pins the REMOVAL as an invariant: spawning
+    well past the old ceiling must succeed. That way a ceiling cannot be
+    quietly reintroduced without a test going red — the same move made for
+    DEBT-4, converting a change-detector into the invariant it was reaching
+    for.
+    """
     env = _build_env(tmp_db)
-    for i in range(MAX_LIVE_SESSIONS):
+    # Comfortably past the old ceiling of 8.
+    past_the_old_cap = 12
+    for i in range(past_the_old_cap):
         env.sessions.spawn(f"pre{i}", "scout")
 
-    await _turn(env, "one-too-many")
+    await _turn(env, "one-past-the-old-cap")
 
     record = json.loads(env.provider.tool_outputs[0])["record"]
-    assert record["status"] == "refused", record
-    assert record["reason"] == "too_many_sessions", record
-    # The cap held — the new label was NOT created.
-    assert env.sessions.get("one-too-many") is None
-    assert len(env.sessions.all()) == MAX_LIVE_SESSIONS
-    assert "refused" in _delivered(env), _delivered(env)
+    assert record["status"] == "spawned", record
+    # The new label really exists — no ceiling silently refused it.
+    assert env.sessions.get("one-past-the-old-cap") is not None
+    assert len(env.sessions.all()) == past_the_old_cap + 1
+    assert "refused" not in _delivered(env), _delivered(env)

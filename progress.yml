@@ -489,6 +489,62 @@ known_debt:
       should assert now that the ceiling is gone is a judgement about the
       numeric-limits arc, not about session lifecycle — the standing rule is to stop
       and report rather than autonomously rewrite a failing test.
+    status: resolved
+    resolution:
+      date: 2026-07-26
+      decided_by: Bakir
+      the_finding_that_settled_it: >
+        The refusal the test asserts — reason "too_many_sessions" — does not
+        exist ANYWHERE in src/ any more. `MAX_LIVE_SESSIONS = 8` and its refusal
+        were removed OUTRIGHT by the numeric-limits arc (d9b83115, 2026-07-22,
+        owner decision), so the test was not broken: it was asserting a feature
+        that had been deliberately deleted. That reframes the question from
+        "what should this assert" to "should the removal be pinned".
+      answer: >
+        REPLACE IT WITH THE INVERSE INVARIANT. test_smoke_capacity_cap_surfaces_
+        to_user became test_smoke_no_capacity_cap_refuses_a_spawn: seed 12
+        sessions (comfortably past the old ceiling of 8), spawn one more, and
+        assert it SUCCEEDS. A ceiling can no longer be quietly reintroduced
+        without a test going red. Same move as DEBT-4's resolution — convert a
+        change-detector into the invariant it was reaching for, rather than
+        deleting the coverage.
+      verified:
+        collection: "`pytest tests/smoke/ -k objective --collect-only` now reports '58 deselected' instead of aborting with a collection ERROR — the concrete impact this debt named."
+        tests: "3 passed in tests/smoke/test_e8_s3_sessions_spawn_telegram_smoke.py (all three were uncollectable before; two were healthy and hostage to the import)."
+        no_regression: >
+          tests/smoke/ went from 11 failed / 42 passed (baseline at b948c6bb in
+          a worktree, with this file excluded because it aborted collection) to
+          11 failed / 45 passed. Same eleven failures, plus the three this fix
+          made collectable. Those eleven are DEBT-16.
+  - id: DEBT-16
+    found: 2026-07-26
+    what: "Eleven tests in tests/smoke/ fail, in five files, unrelated to any current item."
+    evidence: >
+      `timeout 500 uv run pytest tests/smoke/ -q -p no:randomly` -> 11 failed,
+      45 passed, 2 skipped. The five files are
+      test_delegation_hardening_smoke.py (5: j2, j3, j3b, j3w, j4),
+      test_delegation_self_healing_smoke.py (1),
+      test_e2_s1_browser_snapshot_telegram_smoke.py (1),
+      test_e2_s6_dialog_consent_telegram_smoke.py (1),
+      test_e4_s2_skill_manage_consent_telegram_smoke.py (2), and
+      test_e7_s2_heartbeat_respond_telegram_smoke.py (1).
+    proven_pre_existing: >
+      IDENTICAL eleven failures in a `git worktree` checkout of b948c6bb —
+      before any of 2026-07-26's DEBT-6/7/12 work — with the DEBT-12 file
+      excluded from both runs so the comparison was like-for-like (it aborted
+      collection at that commit, which is what DEBT-12 was). Worktree rather
+      than `git stash`, which is banned on this box.
+    found_how: >
+      By running the whole smoke directory after fixing DEBT-12. They had been
+      partly INVISIBLE: DEBT-12's uncollectable import aborted collection for
+      any selection including it, so nobody was running this directory.
+    why_it_matters: >
+      Smoke tests are the gateway-driven, business-requirement tests the
+      standing rules call mandatory, and a fifth of them are red. Five of the
+      eleven are delegation-hardening — the same subsystem D01.7 part 7b just
+      repointed onto runner lanes — so this should be understood before the
+      delegation items in wave 7.
+    decision: "NOT fixed during the DEBT-12 pass — eleven failures across five unrelated subsystems is its own systematic-debugging arc, not a rider on a one-line import fix."
     status: open
   - id: DEBT-11
     found: 2026-07-26
