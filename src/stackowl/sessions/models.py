@@ -66,6 +66,12 @@ class Branch(StrEnum):
     RESUME = "resume"          # soft recovery: PRESERVE the id
     EXPIRED = "expired"        # policy fired: new id
     EXISTING = "existing"      # nothing fired: carry on
+    # The user typed /new. Distinct from EXPIRED on purpose: the branch is what
+    # gets logged as the DECISION, and recording a deliberate request as
+    # "expired" is exactly the confusion invariant I5 exists to prevent —
+    # a user who asked for a fresh conversation must never be told theirs
+    # lapsed.
+    EXPLICIT_RESET = "explicit_reset"
 
 
 @dataclass(frozen=True, slots=True)

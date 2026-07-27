@@ -93,6 +93,24 @@ class SessionStore:
         # Duck-typed to keep sessions/ free of an events/ import. None → the
         # rollover is still logged, just not published; nothing breaks.
         self._event_bus = event_bus
+        # Chats whose next turn must start a NEW conversation, keyed by the
+        # CHANNEL-NATIVE id (D01.7, 2026-07-27).
+        #
+        # /new could not end a lane because commands dispatch at the gateway,
+        # BEFORE routing, while the composite lane is keyed on the owl — and the
+        # owl is a routing OUTPUT, which is why _resolve_incarnation runs after
+        # routing. So all /new ever has is the channel-native id, and looking a
+        # lane up by it found nothing: the command silently did nothing for the
+        # life of the feature.
+        #
+        # In-memory ON PURPOSE, unlike everything else in this store. A pending
+        # reset lives for milliseconds — the command and the resolution are the
+        # same turn in the same process — and a reset that SURVIVED a restart
+        # would be worse than one that is lost: it would silently start a fresh
+        # conversation at some unrelated later moment. Losing it costs the user
+        # one repeated /new; keeping it costs them a conversation they did not
+        # ask to end.
+        self._pending_new: set[str] = set()
 
     # ------------------------------------------------------------------ read
 
@@ -146,6 +164,31 @@ class SessionStore:
                                "chat_type": source.chat_type.value,
                                "session_key": key}},
         )
+        # A pending /new is consumed HERE, because this is the first moment the
+        # composite lane exists: the command that requested it only had the
+        # channel-native id. Consumed before the policy runs so an explicit
+        # request is never second-guessed by an automatic rule, and popped
+        # unconditionally so one /new ends exactly one conversation — a flag left
+        # set would silently start a fresh conversation on every later message,
+        # which is the more annoying failure of the two.
+        if source.chat_id and source.chat_id in self._pending_new:
+            self._pending_new.discard(source.chat_id)
+            fresh = await self.start_new_incarnation(key, now=now)
+            if fresh is not None:
+                log.gateway.info(
+                    "session.resolve: explicit /new honoured",
+                    extra={"_fields": {"session_key": key,
+                                       "new_session_id": fresh.session_id}},
+                )
+                return fresh, Branch.EXPLICIT_RESET, ResetReason.EXPLICIT
+            # No lane yet — /new on a brand-new chat has nothing to end. Fall
+            # through and let the ordinary path mint the first one, so the user
+            # still lands in a working conversation.
+            log.gateway.info(
+                "session.resolve: /new with no lane yet — the first conversation starts now",
+                extra={"_fields": {"session_key": key}},
+            )
+
         existing = await self.get(key)
         decision = resolve(existing, now, self._policy, has_active_work=has_active_work)
 
@@ -332,6 +375,29 @@ class SessionStore:
         )
         await self._project_mirror()
         return entry
+
+    async def request_new_incarnation(self, chat_key: str) -> None:
+        """Record that this chat's NEXT turn must start a fresh conversation.
+
+        What ``/new`` calls. It runs at the gateway, before routing, so the
+        composite lane it needs to end does not exist yet — only the
+        channel-native id does. Marking the intent here and consuming it in
+        ``resolve_for`` keeps the actual ending in the ONE place that already
+        knows how to end a lane, rather than teaching a second place to do it.
+
+        Idempotent: two ``/new``s before a turn still end one conversation.
+        """
+        if not chat_key:
+            log.gateway.warning(
+                "session.new: requested with no chat key — ignored",
+                extra={"_fields": {"chat_key": chat_key}},
+            )
+            return
+        self._pending_new.add(chat_key)
+        log.gateway.info(
+            "session.new: requested — the next turn starts a fresh conversation",
+            extra={"_fields": {"chat_key": chat_key}},
+        )
 
     async def start_new_incarnation(
         self, session_key: str, reason: ResetReason = ResetReason.EXPLICIT,

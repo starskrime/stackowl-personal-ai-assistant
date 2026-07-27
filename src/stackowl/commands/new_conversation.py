@@ -55,29 +55,32 @@ class NewConversationCommand(SlashCommand):
             )
             return "Sessions are not configured, so I cannot start a new conversation."
 
-        # 3. STEP — the SAME path the automatic boundary takes.
+        # 3. STEP — RECORD the intent; the next lane resolution performs it.
+        #
+        # This used to call start_new_incarnation(state.session_key) directly and
+        # it NEVER worked (found live 2026-07-27). Commands dispatch at the
+        # gateway, BEFORE routing, and the composite lane is keyed on the OWL —
+        # a routing OUTPUT. So state.session_key here is still the channel-native
+        # id ("72055773") while the stored lane is
+        # "owl:secretary:telegram:dm:72055773". The lookup found nothing, the
+        # command returned "You're already in a new conversation", and the
+        # conversation carried on unchanged.
+        #
+        # The reset now happens in resolve_for, the one place that already knows
+        # how to end a lane, at the first moment the composite key exists.
         try:
-            fresh = await self._store.start_new_incarnation(state.session_key)
+            await self._store.request_new_incarnation(state.session_key)
         except Exception as exc:
             log.gateway.error(
-                "[commands] new.handle: rollover failed",
+                "[commands] new.handle: could not record the request",
                 exc_info=exc,
                 extra={"_fields": {"session_key": state.session_key}},
             )
             return "I could not start a new conversation just now."
 
-        if fresh is None:
-            # No lane yet means this IS already a fresh conversation.
-            log.gateway.info(
-                "[commands] new.handle: exit — no lane to end",
-                extra={"_fields": {"session_key": state.session_key}},
-            )
-            return "You're already in a new conversation."
-
         # 4. EXIT
         log.gateway.info(
-            "[commands] new.handle: exit",
-            extra={"_fields": {"session_key": state.session_key,
-                               "new_session_id": fresh.session_id}},
+            "[commands] new.handle: exit — next turn starts a fresh conversation",
+            extra={"_fields": {"session_key": state.session_key}},
         )
         return "Starting a new conversation. Your history is still here if I need it."
