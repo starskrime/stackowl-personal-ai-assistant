@@ -42,6 +42,11 @@ class CostRecord(BaseModel):
     # saw 10 distinct prompts on one "conversation". D01.1's stability invariant
     # groups by THIS.
     session_id: str = ""
+    # DEBT-21 — WHICH OWL spent. Required to measure D01.1's invariant I1:
+    # a lane can run several owls (the staged RCA drives three against one
+    # incident lane) and each MUST have its own prompt, so grouping by
+    # session_id alone counts a correct design as a violation.
+    owl_name: str = ""
     # Provider-reported prefix-cache hits. 0 is AMBIGUOUS by construction: it
     # means "no cache hit" OR "provider does not report" (D01.6 I4). Readers
     # must count reporting rows to tell the two apart — see /cost.
@@ -147,6 +152,7 @@ class CostTracker(OwnedRepository):
         is_local: bool = False,
         session_key: str = "",
         session_id: str = "",
+        owl_name: str = "",
         cached_input_tokens: int = 0,
         prompt_hash: str = "",
         system_prompt_chars: int = 0,
@@ -207,7 +213,7 @@ class CostTracker(OwnedRepository):
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,
             cost_usd=cost_usd, trace_id=trace_id, recorded_at=now.isoformat(),
-            session_key=session_key, session_id=session_id,
+            session_key=session_key, session_id=session_id, owl_name=owl_name,
             cached_input_tokens=cached_input_tokens,
             prompt_hash=prompt_hash, system_prompt_chars=system_prompt_chars,
             ttft_ms=ttft_ms,
@@ -220,8 +226,8 @@ class CostTracker(OwnedRepository):
                     provider_name, model, input_tokens, output_tokens,
                     cost_usd, trace_id, recorded_at, owner_id,
                     session_key, session_id, cached_input_tokens, prompt_hash,
-                    system_prompt_chars, ttft_ms, priced
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    system_prompt_chars, ttft_ms, priced, owl_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.provider_name, record.model, record.input_tokens,
@@ -229,7 +235,7 @@ class CostTracker(OwnedRepository):
                     record.recorded_at, self._owner_id,
                     record.session_key, record.session_id, record.cached_input_tokens,
                     record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
-                    int(priced),
+                    int(priced), record.owl_name,
                 ),
             )
         except Exception as exc:

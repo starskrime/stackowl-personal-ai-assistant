@@ -1,0 +1,36 @@
+-- DEBT-21 — record WHICH OWL spent, so D01.1's invariant I1 can be measured.
+--
+-- THE DEFECT THIS CLOSES. D01.1's pass/fail gate is stated as "within one
+-- session_id, every turn sends a byte-identical system prompt", measured by
+-- COUNT(DISTINCT prompt_hash) GROUP BY session_id. That query counts a CORRECT
+-- design as a violation.
+--
+-- A lane can run SEVERAL owls. The staged RCA drives rca_gatherer, hypothesis
+-- and verifier against one incident lane, and the live prompts on 2026-07-27
+-- showed persona_len cycling 291 / 252 / 255 / 303 inside a single incarnation.
+-- Different owls MUST have different prompts — that is invariant I6, and the
+-- entire reason the prompt cache key is (session_key, owl_name). Grouped by
+-- session_id alone, three correct prompts read as three violations, so the item
+-- would be judged failed for behaving exactly as designed.
+--
+-- WHY A COLUMN RATHER THAN INFERRING FROM session_key. For anything that came
+-- from ingress the lane key already contains the owl
+-- ("owl:secretary:telegram:dm:72055773"), so inference would work. But NOT for
+-- internal lanes: the RCA's session_key is a bare incident id shared by all
+-- three owls. Inference would therefore be right for ordinary conversations and
+-- silently wrong for precisely the lanes that exposed the problem — the worst
+-- possible split, because the measurement would look healthy while being blind
+-- exactly where it matters. (Bakir, 2026-07-27.)
+--
+-- NO PROVIDER SIGNATURE GROWS. TraceContext already carries owl_name, and
+-- providers/base.py::_record_cost already reads session_key and session_id off
+-- it. This is the same seam D01.6 found when it discovered that threading five
+-- values through provider signatures was unnecessary.
+--
+-- Empty string, not NULL, for a call with no owl in context: background and
+-- utility calls legitimately have none, and "" groups predictably where NULL
+-- would silently drop rows out of a GROUP BY. Existing rows get NULL because
+-- their attribution is genuinely unknown and inventing one would be the DEBT-15
+-- mistake in a new place.
+
+ALTER TABLE cost_records ADD COLUMN owl_name TEXT;

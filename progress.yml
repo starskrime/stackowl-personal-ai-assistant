@@ -889,7 +889,31 @@ known_debt:
       gains owl_name, or I1 is measured from the assemble log (which does carry
       the owl) instead of from cost_records.
     decision: "Recorded rather than quietly measuring the easy thing and calling it the invariant. Needs a call on which surface carries the measurement before D01.1 can be validated."
-    status: open
+    status: resolved
+    resolution:
+      date: 2026-07-27
+      by: Bakir
+      answer: "Add owl_name to cost_records (migration 0103)."
+      why_not_inferred_from_session_key: >
+        session_key contains the owl for anything that came from ingress
+        ("owl:secretary:telegram:dm:72055773"), so inference would have worked
+        there. But an RCA lane's key is a bare incident id shared by all three
+        owls, so inference would have been right for ordinary conversations and
+        silently WRONG for exactly the lanes that exposed the problem — the worst
+        split available, because the measurement would look healthy while being
+        blind where it matters.
+      no_signature_grew: >
+        TraceContext already carried owl_name and _record_cost already read
+        session_key and session_id off it, so the column was wired through the
+        same seam D01.6 found when it discovered that threading five values
+        through provider signatures was unnecessary.
+      the_gate_is_now_correct: >
+        I1 reads "within one session_id AND one owl". A test proves the old query
+        sees three owls on one RCA lane as three violations while the new one sees
+        three clean conversations — and a second test proves a genuine drift
+        WITHIN one owl still fails, so the fix removes a false positive without
+        making the gate unfalsifiable.
+      verified: "4 new tests (red first); tests/providers 470 passed. Migration 0103 applied and idempotent. ruff 46 / mypy 78, both baselines."
   - id: DEBT-20
     found: 2026-07-27
     what: "classify's per-channel sizes are unmeasurable — its exit log is at DEBUG while the live log level is INFO."
