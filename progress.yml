@@ -1591,6 +1591,52 @@ items:
         affected: "51 passed across test_transcript_store, test_rollover_summary, test_assembly, test_telegram_voice, test_conversation_cost_report. The single failure is DEBT-9's kuzu lock, reproduced and confirmed as such (the live platform holds it)."
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
       no_capability_removed: "Checked explicitly: every change adds a predicate or a stamp. Nothing was disabled, stubbed or deleted to make a check pass."
+    validate_partial:
+      date: 2026-07-26
+      status: "PARTIAL — everything observable without a conversation boundary is confirmed. The last step needs Bakir."
+      confirmed_live_read_only:
+        runner_lanes_now_exist: >
+          THE HAND-OFF SAID THIS WAS UNOBSERVED. b948c6bb's commit message read
+          "Not yet observed live: no objective, recovery or subagent has run
+          since the restart, so no runner lane row exists in the live table
+          yet." Three now do:
+          owl:secretary:recovery:task-31becdd / -28ed400 / -5c404b6, with
+          message_count and completed_turns moving. Parts 7a and 7b are
+          confirmed working on the platform, not just in tests.
+        orphan_runners_behave_as_decided: >
+          All three carry identity_key=NULL, which is exactly DEBT-13 option A's
+          stated outcome for an orphan runner: no parent conversation means no
+          person, so the LANE stays the scope. The decision is observably in
+          force rather than merely written down.
+        the_lane_persists_across_restarts: >
+          owl:secretary:telegram:dm:72055773 has carried session_id
+          20260726_094155_1b416f35 for ~16 hours across FOUR platform restarts
+          without minting a new incarnation, with identity_key=72055773 stamped.
+          That is the persistence D01.7 exists for — an in-memory cache would
+          have been discarded at the first exec-replace.
+        the_transcript_is_written: "5 conversations / 11 messages in the live DB."
+        owner_stamping_is_consistent: >
+          Every conversations and messages row reads owner_id='principal-default'
+          — pre-change rows from migration 0043's column default, post-change
+          rows from the explicit stamp. They agree, so the cleanup introduced no
+          split-brain in existing data.
+      what_still_needs_bakir:
+        why: >
+          The end-to-end chain (rollover -> job -> miner -> narrative summary ->
+          promotion) needs a BOUNDARY, and no boundary is due. The lane last
+          moved at 04:41 CDT on 2026-07-26; the next daily boundary is 04:00 CDT
+          on 2026-07-27 and the idle boundary is ~04:41 CDT, both ~7.5 hours
+          after this was written.
+        the_action: "ONE `/new` on Telegram. That is the whole ask."
+        what_it_proves_in_one_go: >
+          The boundary announcement, the durable job, the miner, the narrative
+          summary, the promotion — AND, since 2026-07-26, DEBT-7's conversation
+          cost report, which subscribes to the same rollover boundary. One
+          keyboard moment, two items validated.
+        what_to_look_for:
+          - "'session.rollover: old incarnation ended' in the JSONL"
+          - "'[cost] conversation_cost: exit — reporting a finished conversation' with a non-zero total_usd"
+          - "a new sessions row for the same lane with a NEW session_id, and the OLD one summarised"
     test_record:
       date: 2026-07-26
       the_gap_it_found: >
