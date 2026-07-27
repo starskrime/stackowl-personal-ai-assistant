@@ -413,9 +413,15 @@ async def test_weak_model_react_tool_dispatch_through_gateway(
     assert system_msgs, "Assertion 3 FAIL: no system message reached the provider."
     system_text = str(system_msgs[0]["content"])
     current_year = str(now_local().year)
-    assert current_year in system_text, (
-        f"Assertion 3 FAIL: current year {current_year!r} (the live date) was not in "
-        "the system prompt — the agentic base prompt's date line did not wire through."
+    # D01.1 stage 2 — the live date MOVED from the system prompt to the turn's
+    # user text. Its subject is unchanged and still asserted: the model must be
+    # grounded in the real date rather than its training cutoff. It just no
+    # longer arrives in the frozen tier, because a minute-resolution clock there
+    # made a byte-identical prompt impossible (DEBT-23).
+    all_text = " ".join(str(m.get("content", "")) for m in first_call_messages)
+    assert current_year in all_text, (
+        f"Assertion 3 FAIL: current year {current_year!r} (the live date) never "
+        "reached the model in any message — the grounding date did not wire through."
     )
     assert "ACTION:" in system_text, (
         "Assertion 3 FAIL: the 'ACTION:' tool-use mandate was not in the system "

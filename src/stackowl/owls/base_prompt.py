@@ -265,6 +265,21 @@ def volatile_turn_context(
     return "\n\n".join(parts)
 
 
+def build_stable_base_prompt(
+    *, lean: bool = False, describe_tool_protocol: bool = True,
+) -> str:
+    """The charter plus the STABLE operational tier — no clock, by construction.
+
+    This is what a frozen per-session prompt is built from (D01.1). It takes no
+    ``now`` because there is nothing time-dependent left in it: the wall-clock
+    moved to :func:`volatile_turn_context`, which rides the turn.
+    """
+    charter = behavioral_charter_lean() if lean else behavioral_charter()
+    return charter + "\n\n" + stable_operational_context(
+        describe_tool_protocol=describe_tool_protocol,
+    )
+
+
 def build_base_prompt(
     now: datetime, *, lean: bool = False, describe_tool_protocol: bool = True,
 ) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import functools
 import json
 import time
@@ -25,6 +26,7 @@ from stackowl.exceptions import (
     TurnStopped,
 )
 from stackowl.infra import hydrated_tools, recovery_context, tool_outcome_ledger
+from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.reversibility_resolver import (
@@ -984,6 +986,42 @@ def _tool_call_from_record(rc: dict[str, Any], *, duration_ms: float = 0.0) -> T
     )
 
 
+
+def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = None) -> str:
+    """The VOLATILE tier, prefixed to this turn's user text (D01.1 stage 2).
+
+    The system prompt is frozen per session, so anything genuinely per-turn has
+    to arrive with the turn instead. Two things qualify:
+
+    * the wall-clock, rendered to the minute — while it lived in the system
+      prompt no two turns a minute apart could share a prompt (DEBT-23), and
+      freezing it would have told the model a time up to ~24h stale, defeating
+      the grounding it exists to provide;
+    * "no capabilities are available to you THIS turn", which is a claim about
+      one turn and cannot be frozen either. It stays an explicit NEGATIVE
+      instruction rather than silence, because silence did not stop a natively
+      tool-trained model attempting its own convention (observed live: a
+      namespaced "default_api:search{…}" call on a turn offering nothing).
+
+    Never raises: a turn must survive a missing clock, so any failure degrades
+    to the user's text unchanged.
+    """
+    try:
+        from stackowl.owls.base_prompt import volatile_turn_context
+
+        context = volatile_turn_context(
+            now or now_local(),
+            capabilities_offered=state.intent_class not in TOOL_FREE_CLASSES,
+        )
+    except Exception as exc:  # no-hidden-errors: never cost the turn its text
+        log.engine.error(
+            "[pipeline] execute: turn context FAILED — sending the message alone",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return state.input_text
+    return f"{context}\n\n{state.input_text}"
+
+
 async def _run_with_tools(
     state: PipelineState,
     choice: ToolProviderChoice | ModelProvider,
@@ -1910,7 +1948,7 @@ async def _run_with_tools(
         _preg = _services.provider_registry
         if choice.pinned or _preg is None:
             return await provider.complete_with_tools(
-                user_text=state.input_text,
+                user_text=_turn_context_prefix(state),
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,
                 tool_dispatcher=_dispatch,
@@ -1929,7 +1967,7 @@ async def _run_with_tools(
 
         gateway = LLMGateway(_preg)
         return await gateway.complete_with_tools(
-            user_text=state.input_text,
+            user_text=_turn_context_prefix(state),
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,
@@ -2030,7 +2068,7 @@ async def _run_with_tools(
             if persistence_check is not None:
                 _durable_extra["persistence_check"] = persistence_check
             result = await provider.complete_with_tools(
-                user_text=state.input_text,
+                user_text=_turn_context_prefix(state),
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,
                 tool_dispatcher=_dispatch,

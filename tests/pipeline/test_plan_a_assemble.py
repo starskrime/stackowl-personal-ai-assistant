@@ -83,9 +83,14 @@ async def test_assemble_leads_with_agentic_base_prompt():
     s = _state(owl_name="default", stable_context="## Learned Preferences\n- likes tea")
     out = await assemble.run(s)
     assert out.system_prompt is not None
-    # Live date is injected (proves the base prompt is wired in, not the
-    # model's stale training cutoff).
-    assert str(datetime.now().year) in out.system_prompt
+    # D01.1 stage 2 — the live date moved OUT of the system prompt into the
+    # turn's volatile context (execute._turn_context_prefix), because a
+    # minute-resolution clock in a frozen tier makes a byte-identical prompt
+    # impossible (DEBT-23). The grounding guarantee is unchanged and covered by
+    # tests/pipeline/test_volatile_tier_delivery.py; what this test asserts is
+    # that the agentic BASE prompt is wired in, which the ACTION: mandate below
+    # proves without depending on a clock.
+    assert "Right now it is" not in out.system_prompt
     # Tool-use mandate (ReAct syntax) is present.
     assert "ACTION:" in out.system_prompt
     # Persona still present, and the base prompt leads it.

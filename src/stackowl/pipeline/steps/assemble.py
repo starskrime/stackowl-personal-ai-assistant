@@ -12,9 +12,8 @@ from typing import Any
 
 from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra import prompt_metrics
-from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
-from stackowl.owls.base_prompt import build_base_prompt
+from stackowl.owls.base_prompt import build_stable_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.capability_manifest import CapabilityManifest
 from stackowl.pipeline.services import get_services
@@ -235,10 +234,19 @@ async def run(state: PipelineState) -> PipelineState:
         # gives a less-instruction-following model a pattern to imitate with
         # nothing real behind it (traced live: a plain conversational reply
         # flagged and floored as an unparsed tool-call attempt).
-        base = build_base_prompt(
-            now_local(), lean=lean,
-            describe_tool_protocol=state.intent_class not in TOOL_FREE_CLASSES,
-        )
+        # D01.1 stage 2 — the STABLE tier only. The wall-clock left the system
+        # prompt (DEBT-23): rendered to the minute, it made a byte-identical
+        # prompt impossible, and freezing it would have told the model a time up
+        # to ~24h stale. It now rides the turn, via execute's
+        # _turn_context_prefix.
+        #
+        # describe_tool_protocol is UNCONDITIONAL here (DEBT-22). The protocol is
+        # stable — how to call a tool does not vary per turn — and a frozen
+        # prompt cannot express a per-turn conditional at all: a session opening
+        # with a conversational turn would carry a protocol-less prompt for its
+        # whole life. The genuinely per-turn half, "no capabilities available
+        # THIS turn", moved to the volatile tier where it belongs.
+        base = build_stable_base_prompt(lean=lean)
     except Exception as exc:  # no-hidden-errors: never let prompt-building crash the turn
         log.engine.error(
             "[pipeline] assemble: base prompt build FAILED — persona-only",
