@@ -256,6 +256,17 @@ class PipelineState(BaseModel, frozen=True):
     # blocks). Built by the assemble step; consumed by execute. None until
     # assemble runs. RC-B fix.
     system_prompt: str | None = None
+    # D01.1 — the next-contact banner (undelivered_outbox), carried to the user
+    # OUT-OF-BAND rather than injected into the system prompt.
+    #
+    # The banner is volatile by design: it appears exactly when there is something
+    # to say and must then vanish. D01.1 freezes the system prompt for the life of
+    # a session so the provider's automatic prefix cache can hit (invariant I1 —
+    # one distinct prompt_hash per session), and a prompt reused byte-identically
+    # cannot carry a thing like that: it would be baked into every turn of the
+    # session, or arrive too late to be seen. Set by assemble, delivered as its own
+    # response chunk by deliver. Empty on the vast majority of turns.
+    pending_banner: str = ""
     errors: tuple[str, ...] = ()
     # REACT-7/F092 — STRUCTURED per-step failure records, written in lockstep with
     # `errors` via stackowl.pipeline.step_error.format_step_error. The critical-failure

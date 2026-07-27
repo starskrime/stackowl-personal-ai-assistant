@@ -305,8 +305,15 @@ async def run(state: PipelineState) -> PipelineState:
             )
             banner = ""
 
+    # D01.1 — `banner` is deliberately ABSENT from this list. It is volatile by
+    # design (present exactly when there is something to say, then gone), so it
+    # cannot live in a prompt that is frozen for the life of a session without
+    # either repeating every turn or arriving too late. It travels on
+    # state.pending_banner and is delivered as its own chunk instead — which also
+    # means the user reads the undelivered body VERBATIM, which is what
+    # render_banner's docstring says it is for, rather than the owl's paraphrase.
     parts = [
-        p for p in (base, capabilities, banner, persona, owls_block, skills_block, state.memory_context) if p
+        p for p in (base, capabilities, persona, owls_block, skills_block, state.memory_context) if p
     ]
     system_prompt = "\n\n".join(parts) or None
     # D01.6 — stamp this turn's prompt identity so the single cost-recording site
@@ -331,4 +338,8 @@ async def run(state: PipelineState) -> PipelineState:
             "prompt_hash": prompt_hash,
         }},
     )
-    return state.evolve(system_prompt=system_prompt, model_window=model_window)
+    return state.evolve(
+        system_prompt=system_prompt,
+        model_window=model_window,
+        pending_banner=banner,
+    )

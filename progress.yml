@@ -262,6 +262,50 @@ current:
       The live DB is ~/.stackowl/workspace/stackowl.db. A reader adapting that
       command would have read "no rows" as though the invariant held — a silent
       false PASS on the one command that decides whether this item worked.
+    slices:
+      plan: >
+        1) move the volatile banner off the prompt, 2) SessionPrompt persistence
+        (migration + store), 3) assemble becomes lookup + cold build, 4) skills ->
+        catalogue and memory -> user profile, 5) invalidation on rollover.
+      slice_1_done:
+        date: 2026-07-27
+        what: "The next-contact banner left the system prompt."
+        the_gap_it_closed: >
+          assemble.py builds SEVEN parts; the design accounted for six. The
+          seventh is the undelivered_outbox banner, and it is volatile BY DESIGN
+          with a side effect (mark_surfaced — shown exactly once). A prompt built
+          once per session and reused byte-identically cannot carry it: it would
+          be baked into every turn of that session, or arrive too late to be
+          seen. The architect stage missed it.
+        it_is_a_real_feature_not_a_curiosity: >
+          First reported as "never fired" on the strength of banner_len=0 across
+          464 assembles — but that was only the 7 days of retained logs. The live
+          table holds 165 rows. It is the Arc B undeliverable-message safety net:
+          a proactive message that could not be delivered is parked rather than
+          lost, then shown once the next time the user talks. Corrected before
+          Bakir decided, because "never fires" would have made the decision look
+          free.
+        decision: "Bakir, 2026-07-27 — move it OUT of the system prompt and deliver it as a user-visible message, keeping invariant I1 strict and literal."
+        how: >
+          Carried on the new PipelineState.pending_banner, set by assemble and
+          written by deliver as the FIRST chunk of the turn. Also truer to the
+          feature's intent: render_banner's own docstring says the body is shown
+          verbatim "so the user reads what was actually going to be sent", which
+          the owl paraphrasing it never guaranteed.
+        three_existing_tests_encoded_the_old_location: >
+          They asserted the banner lands in system_prompt. Updated to the new
+          surface rather than deleted — the behaviour change is Bakir's explicit
+          decision, and the assertions about show-ONCE semantics and the
+          delegated-turn gate are untouched. Called out here because the standing
+          rule is to stop rather than silently rewrite a failing test; this is
+          the case where the requirement itself moved.
+        capability_preserved: >
+          Two new tests drive the REAL delivery path and read what the user would
+          actually see — the banner arrives, it leads the reply, and an empty
+          banner adds nothing at all (not even a blank line). Asserting only that
+          it left the prompt would have been a way to delete a feature and call
+          it a refactor.
+        verified: "24 passed in the outbox gate suite; 1040 in tests/pipeline; 110 in tests/notifications. ruff 46 / mypy 78, both baselines."
     the_measured_before_state: >
       3 distinct prompt_hash across 8 turns on two real conversations; 2 across
       6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's

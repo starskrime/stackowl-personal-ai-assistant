@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.streaming import ResponseChunk
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.pipeline.services import StepServices
@@ -86,6 +87,28 @@ async def run(state: PipelineState) -> PipelineState:
     # the cli_adapter/conversation_view is_final checks are satisfied by the adapter's
     # own belt-and-suspenders terminal marker. is_final on a CONTENT chunk is dead for
     # this path by design — kept only for the non-streaming consolidate merge.
+    # D01.1 — the next-contact banner is delivered FIRST, as its own chunk, and no
+    # longer as system-prompt text (the prompt is frozen per session for invariant
+    # I1, and this is volatile by design). is_final stays False per the contract
+    # above: close() emits the one terminal sentinel.
+    if state.pending_banner:
+        await writer.write(
+            ResponseChunk(
+                content=state.pending_banner + "\n\n",
+                is_final=False,
+                chunk_index=0,
+                trace_id=state.trace_id,
+                owl_name=state.owl_name,
+                target=state.reply_target,
+            )
+        )
+        log.gateway.info(
+            "[pipeline] deliver: next-contact banner delivered",
+            extra={"_fields": {"trace_id": state.trace_id,
+                               "session_key": state.session_key,
+                               "banner_len": len(state.pending_banner)}},
+        )
+
     for chunk in state.responses:
         if chunk.trace_id and chunk.trace_id != state.trace_id:
             log.gateway.error(

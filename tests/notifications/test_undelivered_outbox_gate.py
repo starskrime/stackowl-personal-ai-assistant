@@ -136,7 +136,26 @@ async def test_suppressed_router_path_writes_durable_row_with_body(
 
 
 async def test_next_contact_banner_surfaces_once_then_clears(tmp_db: DbPool) -> None:
-    """Seed a pending row → drive an inbound turn → banner shows once, surfaced_at set."""
+    """Seed a pending row → drive an inbound turn → banner shows once, surfaced_at set.
+
+    D01.1 (Bakir, 2026-07-27) MOVED THE BANNER OUT OF THE SYSTEM PROMPT. It is now
+    carried on ``state.pending_banner`` and delivered to the user as its own
+    response chunk, rather than injected as system-prompt text.
+
+    Why: D01.1 freezes the system prompt for the life of a session so the provider's
+    automatic prefix cache can actually hit (invariant I1 — one distinct prompt_hash
+    per session). The banner is volatile BY DESIGN — it appears exactly when there is
+    something to say and must then vanish — so a prompt built once and reused
+    byte-identically cannot carry it: it would either be baked into every turn of the
+    session or arrive too late to be seen.
+
+    Delivering it directly is also truer to what it is for. ``render_banner``'s own
+    docstring says the body is shown verbatim "so the user reads what was actually
+    going to be sent" — which the owl paraphrasing it never guaranteed.
+
+    The show-ONCE semantics and the delegated-turn gate are unchanged, and are still
+    asserted below.
+    """
     outbox = UndeliveredOutbox(tmp_db)
     ok = await outbox.record_undelivered(
         identity_key="turn-user-1",
@@ -159,7 +178,10 @@ async def test_next_contact_banner_surfaces_once_then_clears(tmp_db: DbPool) -> 
         pipeline_step="assemble",
     )
     out = await assemble.run(state)
-    assert "the thing you asked me to send earlier" in (out.system_prompt or "")
+    # It reaches the USER, on its own carrier...
+    assert "the thing you asked me to send earlier" in out.pending_banner
+    # ...and NOT the system prompt, whose stability is invariant I1.
+    assert "the thing you asked me to send earlier" not in (out.system_prompt or "")
 
     row = (
         await tmp_db.fetch_all(
@@ -171,7 +193,7 @@ async def test_next_contact_banner_surfaces_once_then_clears(tmp_db: DbPool) -> 
 
     # A second turn for the same identity must NOT re-surface it.
     out2 = await assemble.run(state)
-    assert "the thing you asked me to send earlier" not in (out2.system_prompt or "")
+    assert "the thing you asked me to send earlier" not in out2.pending_banner
 
 
 async def test_delegated_child_turn_does_not_surface_banner(tmp_db: DbPool) -> None:
@@ -197,6 +219,7 @@ async def test_delegated_child_turn_does_not_surface_banner(tmp_db: DbPool) -> N
         delegation_depth=1,
     )
     out = await assemble.run(state)
+    assert "should not surface on a delegated turn" not in out.pending_banner
     assert "should not surface on a delegated turn" not in (out.system_prompt or "")
     row = (
         await tmp_db.fetch_all(
@@ -747,7 +770,9 @@ async def test_banner_surfaces_row_written_under_different_identity_key(
         pipeline_step="assemble",
     )
     out = await assemble.run(state)
-    assert "dropped on a different channel entirely" in (out.system_prompt or "")
+    # D01.1 moved the banner from the system prompt to its own delivered chunk;
+    # the identity-key resolution this test is actually about is unchanged.
+    assert "dropped on a different channel entirely" in out.pending_banner
 
     row = (
         await tmp_db.fetch_all(
@@ -774,3 +799,74 @@ async def test_render_banner_truncates_oversized_body() -> None:
     assert rendered.rstrip().endswith("…")
     body_line = rendered.splitlines()[1]
     assert len(body_line) <= MAX_BANNER_BODY_CHARS + len("- [digest/transport_failed] ") + 1
+
+
+async def test_the_banner_actually_reaches_the_user(tmp_db: DbPool) -> None:
+    """D01.1 — moving the banner OFF the system prompt must not lose it.
+
+    The whole point of the outbox is that a proactive message which could not be
+    delivered is never silently dropped. Asserting only that it left the system
+    prompt would be a fine way to delete a feature and call it a refactor, so this
+    drives the real delivery path and reads what the user would actually see.
+    """
+    from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
+    from stackowl.pipeline.steps import deliver
+
+    registry = StreamRegistry()
+    set_services(StepServices(db_pool=tmp_db, stream_registry=registry))
+    _writer, reader = registry.create("t-deliver-1")
+
+    state = PipelineState(
+        trace_id="t-deliver-1",
+        session_key="turn-user-deliver",
+        input_text="hi",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="deliver",
+        pending_banner="While you were away, 1 message could not be delivered.",
+        responses=(
+            ResponseChunk(
+                content="Here is your actual answer.", is_final=False,
+                chunk_index=0, trace_id="t-deliver-1", owl_name="secretary",
+            ),
+        ),
+    )
+
+    await deliver.run(state)
+    delivered = "".join([c.content async for c in reader])
+
+    assert "While you were away, 1 message could not be delivered." in delivered
+    assert "Here is your actual answer." in delivered
+    # The banner leads — the user learns what they missed before the reply.
+    assert delivered.index("While you were away") < delivered.index("Here is your actual answer.")
+
+
+async def test_no_banner_means_no_extra_chunk(tmp_db: DbPool) -> None:
+    """The common case is an empty banner. It must add nothing at all — not a
+    blank line, not an empty chunk — or every reply grows a stray prefix."""
+    from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
+    from stackowl.pipeline.steps import deliver
+
+    registry = StreamRegistry()
+    set_services(StepServices(db_pool=tmp_db, stream_registry=registry))
+    _writer, reader = registry.create("t-deliver-2")
+
+    state = PipelineState(
+        trace_id="t-deliver-2",
+        session_key="turn-user-deliver-2",
+        input_text="hi",
+        channel="cli",
+        owl_name="secretary",
+        pipeline_step="deliver",
+        responses=(
+            ResponseChunk(
+                content="Just the answer.", is_final=False,
+                chunk_index=0, trace_id="t-deliver-2", owl_name="secretary",
+            ),
+        ),
+    )
+
+    await deliver.run(state)
+    delivered = "".join([c.content async for c in reader])
+
+    assert delivered == "Just the answer."
