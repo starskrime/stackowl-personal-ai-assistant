@@ -136,6 +136,28 @@ def _slugify(raw: str, fallback: str) -> str:
     return slug or fallback
 
 
+#: Per-stage wall-clock budget. Sized from MEASUREMENT, not taste (DEBT-18).
+#:
+#: The previous 30s was calibrated for a fast model. On the deployment that
+#: surfaced this, a single model call had a p90 of 93s — and a stage is a whole
+#: agentic turn that may make several. The evidence was that the successful-RCA
+#: duration distribution was TRUNCATED exactly at the old limit (max 28.5s per
+#: stage against a 30s timeout), which is the signature of a budget cutting into
+#: real work rather than bounding a hang: 323 timeouts against 605 verdicts, and
+#: 100% failure on the last day observed.
+#:
+#: Generous but finite, following the same treatment the numeric-limits arc gave
+#: GOVERNOR_ACQUIRE_TIMEOUT_SECONDS (45s -> 1800s): removing the bound outright
+#: would let one stuck stage sit forever. The ceiling that makes this safe is the
+#: scheduler's own _HANDLER_TIMEOUT_SEC (1200s) — worst case here is three stages
+#: plus one retry (4 x 240 = 960s), leaving 240s of margin, and a test pins that
+#: relationship so the inner budget can never be silently pre-empted by the outer
+#: one. That test earned its place immediately: the first value tried here was
+#: 300s, which makes the worst case exactly 1200s — equal to the ceiling rather
+#: than under it, so a stage retry could have been killed mid-flight.
+DEFAULT_PER_STAGE_TIMEOUT_S = 240.0
+
+
 class StagedRcaSession:
     """Runs the three fixed RCA stages for ONE incident and returns a verdict.
 
@@ -151,7 +173,7 @@ class StagedRcaSession:
         backend: OrchestratorBackend,
         *,
         owls: RcaOwls | None = None,
-        per_stage_timeout_s: float = 30.0,
+        per_stage_timeout_s: float = DEFAULT_PER_STAGE_TIMEOUT_S,
     ) -> None:
         self._backend = backend
         self._owls = owls or RcaOwls()
@@ -265,9 +287,39 @@ class StagedRcaSession:
             defer_delivery=True,
         )
         t0 = time.monotonic()
-        final = await asyncio.wait_for(
-            self._backend.run(state), timeout=self._per_stage_timeout_s,
-        )
+        # DEBT-18 — a timed-out stage RETRIES ONCE before the incident is lost.
+        # Previously any timeout propagated straight out of analyze(), which
+        # discarded the whole run including stages that had already succeeded,
+        # and nothing ever re-ran it: that incident simply never got a verdict.
+        # Bounded at one retry on purpose — every stage is a paid model turn, so
+        # a genuinely stuck stage must stop rather than spin. The happy path is
+        # untouched (no extra call when the first attempt returns).
+        final = None
+        for attempt in (1, 2):
+            try:
+                final = await asyncio.wait_for(
+                    self._backend.run(state), timeout=self._per_stage_timeout_s,
+                )
+                break
+            except TimeoutError:
+                if attempt == 1:
+                    log.parliament.warning(
+                        "[rca] staged._run_stage: stage timed out — retrying once",
+                        extra={"_fields": {
+                            "incident_id": evidence.incident_id, "owl": owl_name,
+                            "timeout_s": self._per_stage_timeout_s,
+                        }},
+                    )
+                    continue
+                log.parliament.error(
+                    "[rca] staged._run_stage: stage timed out twice — giving up",
+                    extra={"_fields": {
+                        "incident_id": evidence.incident_id, "owl": owl_name,
+                        "timeout_s": self._per_stage_timeout_s, "attempts": 2,
+                    }},
+                )
+                raise
+        assert final is not None  # noqa: S101 — the loop either breaks or raises
         text = "".join(c.content for c in final.responses)
         traces.append(_StageTrace(
             owl=owl_name, prompt=prompt, output=text,

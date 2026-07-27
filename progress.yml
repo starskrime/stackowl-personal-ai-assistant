@@ -541,6 +541,82 @@ known_debt:
       the self-heal machinery this repo has invested heavily in, reporting
       failure into a log nobody reads — and it burns a model call each time.
     decision: "NOT investigated during the D01.7 test stage — unrelated subsystem, and a recurring stall needs its own systematic-debugging pass rather than a guess."
+    status: resolved
+    root_cause:
+      date: 2026-07-27
+      what: >
+        StagedRcaSession's per-stage budget was a hardcoded 30s, never
+        overridden by any caller. A stage is not one model call — it is a whole
+        agentic turn (backend.run -> execute -> complete_with_tools, which can
+        loop over tools). The exception in the log was a bare asyncio
+        TimeoutError from _run_stage's wait_for.
+      the_measurement_that_proved_it: >
+        Across 2123 model calls in one day: median 12.4s, p90 93.5s, max 188s.
+        The budget therefore sat BELOW the p90 of a single call, for something
+        that makes several. Decisive corroboration: the SUCCESSFUL RCA duration
+        distribution was truncated exactly at the limit — max 28.5s per stage
+        against a 30s timeout — which is the signature of a budget cutting into
+        real work rather than bounding a hang.
+      it_was_not_always_broken: >
+        605 verdicts against 323 timeouts across retained logs. Healthy through
+        2026-07-23 (~5% failure), then 70% on 07-25, 62% on 07-26 and 100% on
+        07-27. Model latency did NOT change (median 6.5-17s and p90 87-104s are
+        stable across every day), so the collapse is the marginal budget losing
+        a coin-flip more often as incident complexity grew — not a slower model.
+    resolution:
+      date: 2026-07-27
+      instruction_from_bakir: >
+        "i hope we are going to fix self heal logic, not a block or remove that
+        logic." Both halves below are that instruction: the budget makes the
+        analysis able to finish, and the retry makes a timeout recoverable. The
+        RCA feature is not gated, throttled or disabled anywhere.
+      part_a_budget: >
+        DEFAULT_PER_STAGE_TIMEOUT_S = 240.0, a named module constant sized from
+        the measurement above rather than from taste. Generous but FINITE,
+        following the numeric-limits arc's own treatment of the sibling
+        GOVERNOR_ACQUIRE_TIMEOUT_SECONDS (45s -> 1800s): removing the bound
+        outright would let one stuck stage sit forever.
+      part_b_self_heal: >
+        A timed-out stage now RETRIES ONCE inside _run_stage, so all three
+        stages heal uniformly (fix the architecture, not one call site).
+        Previously any timeout propagated straight out of analyze(), discarding
+        the whole run INCLUDING stages that had already succeeded, and nothing
+        ever re-ran it — that incident simply never got a verdict. Bounded at one
+        retry because every stage is a paid model turn; the happy path makes no
+        extra call, pinned by its own test.
+      the_invariant_that_caught_a_real_error: >
+        A test asserts the inner budget stays strictly under the scheduler's
+        _HANDLER_TIMEOUT_SEC (1200s), worst case being three stages plus one
+        retry. It failed immediately on the first value tried: 300s makes the
+        worst case exactly 1200s — EQUAL to the ceiling rather than under it, so
+        a retry could have been killed mid-flight by the outer timeout. 240s
+        gives 4 x 240 = 960s with 240s of margin. Without that assertion the fix
+        would have shipped with a boundary bug in it.
+      verified:
+        tests: "9 in tests/parliament/test_staged_rca.py (4 new, red first). 54 passed across tests/parliament."
+        gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
+    the_sibling_is_a_different_bug: >
+      'dream-50fd10ab: handler timed out' is the OUTER scheduler timeout
+      (_HANDLER_TIMEOUT_SEC, 1200s) firing on the dream worker, whose own
+      comment records ~16 min as its slowest legitimate run. That is the dream
+      worker genuinely exceeding 20 minutes, not the RCA budget, and it is NOT
+      fixed here. Tracked as DEBT-19 so it is not lost behind this fix.
+  - id: DEBT-19
+    found: 2026-07-27
+    what: "The dream worker exceeds the scheduler's 20-minute handler timeout and is killed mid-run, repeatedly."
+    evidence: >
+      '[scheduler] dream-50fd10ab: handler timed out — freed for retry/re-arm
+      (a hung handler must never freeze every other job's dispatch)' at 16:48,
+      17:38, 17:58, 18:18, 19:08, 19:28, 20:08 on 2026-07-26 alone.
+      _HANDLER_TIMEOUT_SEC is 1200s and its comment records the slowest observed
+      legitimate dream_worker run as ~16 min — so it is now running past 20.
+    why_it_matters: >
+      The timeout works as designed (it frees the slot so other jobs still
+      dispatch), but the dream worker never COMPLETES, so whatever it produces
+      is never produced. Same shape as DEBT-18: a budget calibrated against a
+      faster model, on a subsystem whose failure is invisible because the
+      recovery path looks like success in the log.
+    decision: "NOT fixed alongside DEBT-18 — different subsystem, different budget, and raising the OUTER handler timeout affects every job, so it needs its own measurement rather than a sympathetic guess."
     status: open
   - id: DEBT-17
     found: 2026-07-26
