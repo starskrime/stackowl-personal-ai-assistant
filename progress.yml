@@ -242,13 +242,14 @@ deployment:
 current:
   wave: 1
   item: D01.1
-  stage: test
+  stage: document
   stage_status: not_started
   one_line: >
-    D01.1's implement, validate AND cleanup are DONE — invariant I1 holds on the
-    live platform, the obsolete prompt-building path is gone, and one regression
-    the freeze itself introduced (DEBT-24) is fixed. Two stages remain: test,
-    document. Then D01.2, D01.4, D01.5, D01.3.
+    D01.1 is SIX of seven stages done — only `document` remains. I1 holds on the
+    live platform, the obsolete prompt-building path is gone, one regression the
+    freeze itself introduced (DEBT-24) is fixed, and all six invariants now map
+    to real tests that were mutation-tested rather than assumed. Then D01.2,
+    D01.4, D01.5, D01.3.
   read_first: >
     This block, then docs/hermes-mapping/designs/D01.1.md — its "What shipped,
     and why the order mattered" section carries the prose. The D01.1 item's
@@ -268,19 +269,12 @@ current:
     - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
   next_task_in_order:
     1: >
-      test — gateway-driven integration from BUSINESS requirements, mocking ONLY
-      the provider. The obvious one: two turns through the real pipeline assert
-      ONE prompt_hash. Note the existing gateway smoke tests are the pattern
-      (tests/pipeline/test_phaseA_react_gateway_smoke.py). Invariants still
-      needing a test are I3 and I5 (no tool becomes invisible; scheduled jobs and
-      proactive delivery keep working) — I1, I2, I4 and I6 are covered.
-    2: >
       document — close designs/D01.1.md: status -> live, re-stamp date + commit,
       confirm every Invariant maps to a real test, and RE-RUN the Verification
       section rather than trusting it. That section had FOUR drift items when
       this item started, one of which (a zero-byte stackowl.db) would have
-      produced a silent false PASS. Cleanup VERIFIED three MORE drift items to
-      fold in:
+      produced a silent false PASS. Cleanup and test VERIFIED FOUR MORE drift
+      items to fold in:
       (a) the Source line says assemble.py is 334 lines; it is 437.
       (b) the Observability table is the bad one — of its five rows, TWO name log
       lines that do not exist anywhere in the code ("[pipeline] assemble: cold
@@ -293,9 +287,18 @@ current:
       platform never writes.
       (c) Configuration must record that the capability banner is now
       unconditional (DEBT-24).
+      (d) Verification step 5 — the one that proves hard invariants I3/I4/I5 did
+      not regress — cites `tests/tools/test_registry.py`, which DOES NOT EXIST.
+      The real tool-registry tests are test_registry_failure_advisory.py,
+      test_registry_concurrency.py and test_registry_description_lint.py. This is
+      the FIFTH drift item in that one Verification section, and the second time
+      it has named a test file that is not in the tree (DEBT-2's exact pattern).
+      The corrected command, run 2026-07-27 in the test stage: those three plus
+      tests/notifications/ — 123 passed.
       NOT drift, checked: the Source line's mention of instruction_injector.py is
-      correct — assemble.py:21 still imports it.
-    3: "then D01.2 (likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching is automatic), D01.4, D01.5, D01.3."
+      correct — assemble.py:21 still imports it. The step-5 warning about NOT
+      running tests/scheduler/ is also correct and should be kept (DEBT-14).
+    2: "then D01.2 (likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching is automatic), D01.4, D01.5, D01.3."
   the_pattern_that_caught_everything_this_session:
     name: "Measure before changing; the code alone will lie to you"
     instances:
@@ -417,6 +420,16 @@ known_debt:
       showing 1 distinct prompt across many calls." Background work was an
       explicit target, not an afterthought, so this is a gap against intent
       rather than a scope boundary.
+    the_guard_is_deliberate_do_not_remove_it: >
+      CRITICAL for whoever picks this up: the `and state.session_id` gate is not
+      an oversight and must NOT be "fixed" by deleting it. It is deliberate and
+      already tested —
+      tests/pipeline/test_prompt_freeze.py::test_a_turn_with_no_incarnation_is_
+      never_frozen states the reason: "Freezing under an empty key would collide
+      every such turn into one prompt." Every background lane shares the empty
+      key, so removing the guard would serve one owl's frozen prompt to every
+      other background owl. The fix is to give background lanes a real session
+      identity, never to drop the guard.
     decision: >
       NOT fixed inside D01.1 cleanup. Giving background lanes a session identity
       is D01.7's seam, not this item's, and it is a design question (does a
@@ -1569,7 +1582,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       not_started
+      test:       done
       validate:   done
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.1.md"
@@ -1684,9 +1697,47 @@ items:
           - "skills/skill_relevance.py + instruction_injector.assign_tiers + FULL_FLOOR/SUMMARY_FLOOR — orphaned but NOT deleted. See DEBT-25; handed to D05.4."
           - "FOCUS_TRACKER — looked like assemble's private business, is live via skill_view.py:179. The progress.yml warning about skills.global_catalog applied here too."
         gate:
-          tests: "1208 -> see test stage; tests/owls/ 278 passed; targeted files green"
+          tests: "tests/pipeline 1062 passed (1061 + 1 new); tests/sessions + tests/owls 425 passed (147 + 278)"
           ruff: "src/ 46 — DEBT-1 baseline UNCHANGED. All six touched files: clean."
           mypy: "78 — DEBT-8 baseline UNCHANGED."
+      - date: 2026-07-27
+        stage: test
+        summary: "Gateway-driven integration for the frozen prompt, mocking ONLY the provider — and mutation-tested so it can actually fail."
+        added:
+          - "tests/pipeline/test_d011_frozen_prompt_gateway_integration.py — three tests on the REAL path: GatewayScanner -> route -> PipelineState -> AsyncioBackend -> the pipeline -> the REAL SessionPromptStore against a REAL db -> the provider's system message. Only the AI provider is faked."
+        the_design_problem_and_its_fix: >
+          Two ordinary turns produce identical prompts even with the freeze
+          entirely absent, because nothing in a test harness differs between
+          them — so the obvious assertion would pass on broken code. The tests
+          therefore MUTATE THE OWL'S PERSONA between turn 1 and turn 2: a frozen
+          prompt keeps the original, a rebuilt one picks up the change. That also
+          encodes a real recorded decision (Q14 — persona frozen for the life of
+          a conversation, evolution landing at the next rollover).
+        mutation_tested: >
+          Proven rather than assumed. Disabling the cache hit in assemble
+          (`if False and cached is not None`) turned
+          test_two_turns_of_one_conversation_send_a_byte_identical_system_prompt
+          RED, and test_prompt_freeze.py's I1 test with it. The mutation was then
+          reverted and `git diff src/` confirmed EMPTY.
+          Two honest findings from that run, recorded in the file's docstring:
+          (1) the byte-equality assertion alone does NOT bite — both rebuilt
+          prompts were still identical; it is the persona assertion that fails,
+          and in test_prompt_freeze.py only the `saved == 1` count caught it.
+          (2) test_a_new_conversation_picks_up_the_evolved_persona also survives
+          the mutation and cannot do otherwise; it is not a freeze test alone,
+          it is the other jaw of the vice (frozen WITHIN a conversation,
+          RELEASED at the boundary — a permanently stuck cache fails it).
+        invariant_coverage:
+          I1: "tests/pipeline/test_d011_frozen_prompt_gateway_integration.py (gateway) + test_prompt_freeze.py::test_the_second_turn_reuses_the_first_turns_prompt (unit)"
+          I2: "test_prompt_freeze.py::test_no_store_wired_still_produces_a_prompt — the freeze is an enhancement to a working pipeline, never a precondition"
+          I3: "test_a_tool_still_dispatches_on_the_frozen_turn — turn 1 conversational, tool dispatched on turn 2 off the CACHED prompt. This is DEBT-22's fear in concrete form. Plus 123 passed across the three tool-registry suites + tests/notifications/."
+          I4: "the persona-marker assertions above prove the owl's own system_prompt reaches the model verbatim through the frozen path"
+          I5: "tests/notifications/ green within that 123; background lanes additionally covered by test_a_turn_with_no_incarnation_is_never_frozen"
+          I6: "test_prompt_freeze.py::test_a_different_owl_gets_its_own_prompt + test_a_new_incarnation_rebuilds"
+        gate:
+          tests: "tests/pipeline 1065 passed (1062 + 3 new); I3/I5 suites 123 passed"
+          ruff: "new file clean; src/ 46 UNCHANGED"
+          mypy: "78 UNCHANGED; git diff src/ empty (mutation fully reverted)"
     notes: >
       Two documented lessons from this item's cleanup. (1) A grep returning zero
       hits proves a symbol is unreferenced, NOT that a capability is unwanted —
