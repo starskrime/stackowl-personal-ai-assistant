@@ -699,12 +699,23 @@ async def run(state: PipelineState) -> PipelineState:
     # call a tool to fetch its OWN past lessons — so these stay in the prompt
     # even though the rest of this block leaves it.
     stable = "\n\n".join(p for p in (prefs_block, lessons_block) if p)
-    log.engine.debug(
+    # DEBT-20 — INFO, not DEBUG. These per-channel sizes are the only way to see
+    # what `memory_context` is actually made of, and at debug level they never
+    # reached the live log at all: a jq over every retained day returned ZERO
+    # records. That blindness is why D01.1's architect stage could treat this
+    # block as one thing ("per-turn memory recall") when it is six, and nearly
+    # switched off the preference-learning and reflect->recall arcs by removing
+    # it wholesale. Exactly the fix D01.6 applied to assemble's exit line, for
+    # exactly the same reason — an unmeasurable composition is one whose parts
+    # get changed by accident.
+    log.engine.info(
         "[pipeline] classify: exit",
         extra={
             "_fields": {
                 "trace_id": state.trace_id,
+                "session_key": state.session_key,
                 "context_len": len(combined),
+                "stable_len": len(stable),
                 "prefs_len": len(prefs_block),
                 "skills_len": len(skills_block),
                 "lessons_len": len(lessons_block),
