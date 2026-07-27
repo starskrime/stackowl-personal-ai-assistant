@@ -1606,7 +1606,7 @@ items:
       validate:   not_started
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.1.md"
-    doc_last_verified: 2026-07-25
+    doc_last_verified: 2026-07-27
     decisions:
       - date: 2026-07-25
         stage: brainstorm
@@ -1792,6 +1792,7 @@ items:
       test:       done
       validate:   done
       document:   done
+      document:   done
     doc: "docs/hermes-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25  # against commit a717c4e9
     decisions: []
@@ -1964,8 +1965,7 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      validate:   not_started
-      document:   not_started
+      document:   done
     cleanup_record:
       date: 2026-07-26
       what_it_found: >
@@ -2131,7 +2131,7 @@ items:
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
         live: "Restarted — both processes boot clean, 0 dangling, 0 session-resolution failures. The single ERROR is DEBT-18, pre-existing and unrelated."
     doc: "docs/hermes-mapping/designs/D01.7.md"
-    doc_last_verified: 2026-07-25
+    doc_last_verified: 2026-07-27
     decisions:
       - date: 2026-07-25
         stage: brainstorm
