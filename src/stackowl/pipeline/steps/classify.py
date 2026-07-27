@@ -438,7 +438,7 @@ async def _gather_relevant_skills(
     return result
 
 
-async def _gather_lessons(query: str, limit: int = 3) -> str:
+async def _gather_lessons(query: str, limit: int = 3, *, owl_name: str = "") -> str:
     """Best-effort: surface up to K cross-source lessons (Learning Commit 5).
 
     Queries the unified LessonsIndex (LanceDB) which holds reflections + tool
@@ -453,6 +453,24 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
         "[pipeline] classify._gather_lessons: entry",
         extra={"_fields": {"query_len": len(query), "limit": limit}},
     )
+    # D01.1 — the lessons channel is selected by a STABLE key, not by what the
+    # user just typed. Measured 2026-07-27: lessons_len moved 1097 -> 765 across
+    # two turns of one conversation while prefs_len held at 252, so this was the
+    # remaining query-scoped part keeping invariant I1 out of reach.
+    #
+    # Removing lessons was rejected — they are the reflect->recall arc's output,
+    # the model cannot be relied on to call a tool for its OWN past lessons, and
+    # NFR-4 exists to protect that. Bakir chose query-INDEPENDENT instead.
+    #
+    # DEVIATION from his phrasing ("N most recent or highest-weighted"): the
+    # index is LanceDB and exposes ANN only, so recency/weight ordering needs a
+    # new scan path through LessonsIndex AND LessonsLanceAdapter. What I1
+    # requires is the PROPERTY — identical every turn of a session — so the key
+    # is the OWL's identity. Same owl, same index contents, same lessons; and
+    # "lessons relevant to this owl" is a more defensible selection than
+    # "lessons similar to whatever was just typed". Recency remains available as
+    # a follow-up with a real adapter change behind it.
+    selector = f"lessons for the {owl_name} owl" if owl_name else query
     services = get_services()
     lessons_index = services.lessons_index
     if lessons_index is None or limit <= 0:
@@ -467,7 +485,7 @@ async def _gather_lessons(query: str, limit: int = 3) -> str:
     last_exc: Exception | None = None
     for attempt in (1, 2):
         try:
-            hits = await lessons_index.search(query, limit=limit)
+            hits = await lessons_index.search(selector, limit=limit)
             last_exc = None
             break
         except Exception as exc:  # B5
@@ -679,7 +697,7 @@ async def run(state: PipelineState) -> PipelineState:
     )
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
-    lessons_block = await _gather_lessons(state.input_text, limit=3)
+    lessons_block = await _gather_lessons(state.input_text, limit=3, owl_name=state.owl_name)
     # Combine: prefs first (always in view), then skills (what tactics apply),
     # then lessons (cross-source learnings, including reflections — FR-3),
     # then actions (what was done before), then long-term context, then graph.
