@@ -1919,70 +1919,20 @@ class StartupOrchestrator:
             a different owl is a different conversation) and the owl is a routing
             OUTPUT — so no lane can exist at IngressMessage time.
 
-            The daily boundary is a LOCAL wall-clock hour (4 AM by default), so the
-            clock passed in is local-aware rather than UTC; a UTC "4 AM" would fire
-            in the middle of the afternoon for most of the world.
-
-            Returns ``(session_key, session_id, notice)`` — the composite LANE, the
-            INCARNATION of it this turn belongs to, and a one-line boundary notice
-            when this turn crossed an automatic reset (``None`` otherwise).
-
-            The notice is CONSUMED here, so it is shown exactly once (invariant I5)
-            even if the turn later fails: a boundary the user cannot see is one they
-            experience as amnesia, and one they see twice reads as a bug.
-
-            FAILS OPEN, LOUDLY: a session-store problem must never cost the user
-            their reply. The turn then falls back to the channel-native lane with
-            no incarnation, which is exactly the pre-D01.7 behaviour — degraded,
-            never broken, and never a fabricated conversation.
+            The sequence itself lives in ``sessions/ingress.py`` so it can be
+            TESTED: "shown exactly once" (I5) is a property of the ORDER these
+            steps run in, and while this was a closure here nothing could reach
+            it. See tests/sessions/test_ingress_resolution.py.
             """
-            import datetime as _dt
+            from stackowl.sessions.ingress import resolve_turn_session
 
-            from stackowl.sessions import ChatType, SessionSource, reset_notice
-
-            try:
-                source = SessionSource(
-                    owl_name=owl_name,
-                    channel=msg.channel,
-                    chat_type=ChatType.DM if msg.is_direct else ChatType.GROUP,
-                    chat_id=msg.session_key,
-                    chat_target=str(msg.chat_id) if msg.chat_id is not None else None,
-                    # Stamped HERE because this is where the identity is already
-                    # resolved. The sweeper publishes rollovers at 4 AM with no
-                    # ingress context, so a summary consumer that had to re-derive
-                    # the owner would have nothing to derive it from — and a
-                    # summary filed under the owl-prefixed lane is one recall never
-                    # sees. Same resolver the turn itself uses, two calls below.
-                    identity_key=resolve_identity_key(services, msg.session_key),
-                )
-                entry, branch, reason = await session_store.resolve_for(
-                    source,
-                    _dt.datetime.now().astimezone(),
-                    group_per_user=session_settings.group_sessions_per_user,
-                    thread_per_user=session_settings.thread_sessions_per_user,
-                )
-                log.info(
-                    "[startup] gateway: session resolved",
-                    extra={"_fields": {"session_key": entry.session_key,
-                                       "session_id": entry.session_id,
-                                       "branch": branch.value,
-                                       "reason": reason.value if reason else None,
-                                       "owl": owl_name}},
-                )
-                notice = (
-                    reset_notice(entry) if session_settings.notify_on_reset else None
-                )
-                if notice:
-                    entry = await session_store.consume_reset_notice(entry)
-                return entry.session_key, entry.session_id, notice
-            except Exception as exc:
-                log.error(
-                    "[startup] gateway: session resolution failed — turn continues "
-                    "without an incarnation",
-                    exc_info=exc,
-                    extra={"_fields": {"owl": owl_name, "channel": msg.channel}},
-                )
-                return msg.session_key, "", None
+            return await resolve_turn_session(
+                msg,
+                owl_name=owl_name,
+                session_store=session_store,
+                session_settings=session_settings,
+                services=services,
+            )
 
         async def _dispatch_turn(
             pump: ClarifyPump,

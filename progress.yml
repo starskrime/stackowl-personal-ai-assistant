@@ -522,6 +522,26 @@ known_debt:
           a worktree, with this file excluded because it aborted collection) to
           11 failed / 45 passed. Same eleven failures, plus the three this fix
           made collectable. Those eleven are DEBT-16.
+  - id: DEBT-18
+    found: 2026-07-26
+    what: "A recurring ERROR every ~11 minutes: '[rca] staged.analyze: a stage failed — no verdict'."
+    evidence: >
+      stackowl.parliament logs it at 16:53, 17:04, 17:15, 17:26, 17:37, 17:48,
+      17:59, 19:44, 19:56, 20:07 and on every boot since — roughly every 11
+      minutes, which is twice the 5.5-minute health-sweep cadence. Present in
+      the FIRST log query of the 2026-07-26 session, hours before any change
+      that day, so it is not caused by DEBT-6/7/12 or the D01.7 cleanup.
+    also_seen: >
+      A sibling recurring ERROR, '[scheduler] dream-50fd10ab: handler timed out
+      — freed for retry/re-arm', on a similar cadence. Likely the same
+      underlying stall; recorded together so they are investigated together.
+    why_it_matters: >
+      An RCA stage that never reaches a verdict means the platform's own
+      root-cause analysis is silently producing nothing, on a schedule. That is
+      the self-heal machinery this repo has invested heavily in, reporting
+      failure into a log nobody reads — and it burns a model call each time.
+    decision: "NOT investigated during the D01.7 test stage — unrelated subsystem, and a recurring stall needs its own systematic-debugging pass rather than a guess."
+    status: open
   - id: DEBT-17
     found: 2026-07-26
     what: "tests/skills/test_skill_retrieval.py::test_gather_relevant_skills_returns_block_when_wired is a CHANGE-DETECTOR test on hint wording."
@@ -1514,7 +1534,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       not_started
+      test:       done
       validate:   not_started
       document:   not_started
     cleanup_record:
@@ -1571,6 +1591,44 @@ items:
         affected: "51 passed across test_transcript_store, test_rollover_summary, test_assembly, test_telegram_voice, test_conversation_cost_report. The single failure is DEBT-9's kuzu lock, reproduced and confirmed as such (the live platform holds it)."
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
       no_capability_removed: "Checked explicitly: every change adds a predicate or a stamp. Nothing was disabled, stubbed or deleted to make a check pass."
+    test_record:
+      date: 2026-07-26
+      the_gap_it_found: >
+        The PIECES were well covered (129 tests: resolve_for persists,
+        reset_notice renders, consume_reset_notice clears). The COMPOSITION was
+        not covered at all — and that is where Bakir's actual requirement lives:
+        "a short one-line note, shown once; a boundary the user cannot see is one
+        they experience as amnesia". Shown ONCE is a property of the ORDER those
+        calls run in. Get the order wrong and the note shows forever or never,
+        while every unit test still passes.
+      why_nothing_tested_it: >
+        The ingress sequence was a nested closure (_resolve_incarnation) inside
+        startup/orchestrator.py's gateway phase, reachable only by constructing
+        the whole orchestrator. Untestable business logic — which is why an
+        invariant the design doc lists (I5) had no test behind it despite the
+        pieces all being tested.
+      what_was_done: >
+        Extracted to sessions/ingress.py::resolve_turn_session with its three
+        real dependencies passed in (session_store, session_settings, services).
+        The orchestrator keeps a thin closure that delegates, so the SHIPPED path
+        is the tested one rather than a reproduction of it. Behaviour unchanged;
+        the long docstring moved with the code so the prose is not duplicated.
+      tests_added: >
+        6 in tests/sessions/test_ingress_resolution.py, red first. Real DbPool,
+        real SessionStore, real policy, real notice renderer; no AI provider is
+        involved because session resolution happens BEFORE any model call. They
+        pin: a lane and an incarnation are minted; a quiet turn does NOT mint a
+        new incarnation (an incarnation per turn would defeat the whole item);
+        the boundary note appears on the crossing turn and is SILENT on the next;
+        notify_on_reset=False suppresses the note without suppressing the
+        rollover (presentation vs behaviour); a different owl is a different
+        conversation through the ingress path; and a BROKEN store costs the user
+        nothing — the one path that cannot be verified by reading the code,
+        because the whole point is what happens when the code raises.
+      verified:
+        tests: "tests/sessions/ — 135 passed, up from 129."
+        gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
+        live: "Restarted — both processes boot clean, 0 dangling, 0 session-resolution failures. The single ERROR is DEBT-18, pre-existing and unrelated."
     doc: "docs/hermes-mapping/designs/D01.7.md"
     doc_last_verified: 2026-07-25
     decisions:
