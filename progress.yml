@@ -333,6 +333,48 @@ current:
           - "The hash is DERIVED from the text on save rather than accepted from the caller: it is what invariant I1 is measured with, so the two must not be able to disagree."
         no_owner_id_deliberately: "The parent `sessions` table has none — D01.7 scopes a lane by identity_key, and a prompt table inventing a different scoping model would be the more confusing choice."
         verified: "7 new tests (red first); tests/sessions 142 passed, up from 135. Migration 0102 applied and idempotent on re-run. ruff 46 / mypy 78, both baselines."
+      slice_3_done:
+        date: 2026-07-27
+        what: "The volatile half of memory left the prompt; a stable user profile took its place."
+        the_collision_the_design_missed: >
+          D01.1 treated `memory_context` as ONE thing — "per-turn memory recall"
+          — and moved it wholesale to the `memory` tool. It is actually SIX
+          channels composed in classify.py: prefs_block, skills_block,
+          lessons_block, actions_block, context, graph_context. Removing the
+          block therefore switched off the outputs of two COMPLETED arcs: the
+          preference-learning arc and the reflect->recall loop.
+        how_it_was_caught: >
+          By the gateway integration test the standing rules mandate —
+          test_reflect_recall_gateway_integration (Story 1.1 Task 3, NFR-4) went
+          red because a published reflection stopped reaching a later turn. A
+          unit-test-only suite would have passed this through.
+        why_the_architect_stage_was_blind_to_it: >
+          classify's exit log is at DEBUG and the live level is INFO, so its
+          per-channel sizes never reach the log. That is exactly the blindness
+          D01.6 fixed for assemble by promoting its exit to INFO — and never
+          fixed for classify. Recorded as DEBT-20.
+        decision: >
+          Bakir, 2026-07-27 — KEEP prefs + lessons in the prompt, drop the
+          query-scoped rest. His earlier `recall_risk: ACCEPTED` was about memory
+          being weak; it was not a decision to stop feeding the owl its own
+          learned lessons, and the model cannot be relied on to call a tool to
+          fetch them.
+        how: >
+          classify now also exposes `stable_context` (prefs + lessons) alongside
+          the unchanged `memory_context`. assemble puts `profile` +
+          `stable_context` in the prompt; `memory_context` stays on the state for
+          execute's grounding haystacks. Moved, not deleted.
+        also: >
+          New memory/user_profile.py loads ~/.stackowl/USER.md verbatim — a plain
+          file the user can open and edit (Q6), returning "" for missing,
+          unreadable or whitespace-only, so a profile never costs a reply (I2).
+        four_tests_translated_not_weakened: >
+          Three unit tests used memory_context as a VEHICLE to prove persona
+          ordering, self-heal on a broken registry and quiet unknown-owl
+          degradation; one literally passed "## Learned Preferences". Their
+          fixtures moved to stable_context, which is where that content now
+          travels. Each test's actual subject is unchanged.
+        verified: "tests/pipeline 1044 passed (up from 1040); 6 new profile tests; NFR-4 integration green again. ruff 46 / mypy 78, both baselines."
     the_measured_before_state: >
       3 distinct prompt_hash across 8 turns on two real conversations; 2 across
       6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's
@@ -714,6 +756,24 @@ known_debt:
       comment records ~16 min as its slowest legitimate run. That is the dream
       worker genuinely exceeding 20 minutes, not the RCA budget, and it is NOT
       fixed here. Tracked as DEBT-19 so it is not lost behind this fix.
+  - id: DEBT-20
+    found: 2026-07-27
+    what: "classify's per-channel sizes are unmeasurable — its exit log is at DEBUG while the live log level is INFO."
+    evidence: >
+      `log.engine.debug("[pipeline] classify: exit", ...)` carries prefs_len,
+      skills_len, lessons_len, actions_len, graph_context_len and context_len.
+      A jq over every retained log returns ZERO records for it, so none of those
+      numbers has ever been observable on the live platform.
+    why_it_matters: >
+      This is the SAME defect D01.6 found and fixed for assemble — where 0 of
+      17403 lines carried the per-part sizes, making prompt composition
+      unmeasurable — and it was fixed only for assemble. It is why D01.1's
+      architect stage could treat `memory_context` as one thing when it is six,
+      and why removing it nearly switched off the preference-learning and
+      reflect->recall arcs unnoticed. An unmeasurable composition is one whose
+      parts get changed by accident.
+    decision: "NOT fixed inside D01.1 slice 3 — it is a one-line level change but it belongs with a restart and a fresh measurement, and slice 3 was already carrying a design correction."
+    status: open
   - id: DEBT-19
     found: 2026-07-27
     what: "The dream worker exceeds the scheduler's 20-minute handler timeout and is killed mid-run, repeatedly."

@@ -692,6 +692,13 @@ async def run(state: PipelineState) -> PipelineState:
         ) if p
     ]
     combined = "\n\n".join(parts)
+    # D01.1 — the STABLE half, carried into the system prompt while the
+    # query-scoped half (recall, graph, actions, per-turn skills) does not.
+    # Learned preferences and reflect->recall lessons are what make the owl sound
+    # like itself and improve over time, and the model cannot be relied on to
+    # call a tool to fetch its OWN past lessons — so these stay in the prompt
+    # even though the rest of this block leaves it.
+    stable = "\n\n".join(p for p in (prefs_block, lessons_block) if p)
     log.engine.debug(
         "[pipeline] classify: exit",
         extra={
@@ -707,4 +714,9 @@ async def run(state: PipelineState) -> PipelineState:
             }
         },
     )
-    return state.evolve(memory_context=combined or None, history=tuple(history), query_embedding=query_embedding)
+    return state.evolve(
+        memory_context=combined or None,
+        stable_context=stable or None,
+        history=tuple(history),
+        query_embedding=query_embedding,
+    )

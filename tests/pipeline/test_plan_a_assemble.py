@@ -50,7 +50,10 @@ async def test_assemble_prepends_persona_to_memory():
     reg = _make_registry_with_default()
     set_services(StepServices(owl_registry=reg))
     from stackowl.pipeline.steps import assemble
-    s = _state(owl_name="default", memory_context="## Learned Preferences\n- likes tea")
+    # D01.1 — learned preferences now travel on stable_context. Query-scoped
+    # recall (memory_context) no longer reaches the prompt; the STABLE half
+    # does, which is exactly the content these tests use. Subject unchanged.
+    s = _state(owl_name="default", stable_context="## Learned Preferences\n- likes tea")
     out = await assemble.run(s)
     assert out.system_prompt is not None
     assert "likes tea" in out.system_prompt
@@ -74,7 +77,10 @@ async def test_assemble_leads_with_agentic_base_prompt():
     reg = _make_registry_with_default()
     set_services(StepServices(owl_registry=reg))
     from stackowl.pipeline.steps import assemble
-    s = _state(owl_name="default", memory_context="## Learned Preferences\n- likes tea")
+    # D01.1 — learned preferences now travel on stable_context. Query-scoped
+    # recall (memory_context) no longer reaches the prompt; the STABLE half
+    # does, which is exactly the content these tests use. Subject unchanged.
+    s = _state(owl_name="default", stable_context="## Learned Preferences\n- likes tea")
     out = await assemble.run(s)
     assert out.system_prompt is not None
     # Live date is injected (proves the base prompt is wired in, not the
@@ -128,7 +134,9 @@ async def test_assemble_logs_error_on_unexpected_registry_exception(caplog):
     set_services(StepServices(owl_registry=_BrokenRegistry()))
     from stackowl.pipeline.steps import assemble
 
-    s = _state(owl_name="broken_owl", memory_context="some memory")
+    # D01.1 — the STABLE half is what reaches the prompt now. This test is about
+    # self-healing on a broken registry, not about which channel carries it.
+    s = _state(owl_name="broken_owl", stable_context="some memory")
     with caplog.at_level(logging.ERROR, logger="stackowl.engine"):
         out = await assemble.run(s)
 
@@ -153,7 +161,8 @@ async def test_assemble_unknown_owl_degrades_quietly(caplog):
     set_services(StepServices(owl_registry=reg))
     from stackowl.pipeline.steps import assemble
 
-    s = _state(owl_name="nonexistent_owl", memory_context="ctx")
+    # D01.1 — see above: the degradation is the subject, stable_context the vehicle.
+    s = _state(owl_name="nonexistent_owl", stable_context="ctx")
     with caplog.at_level(logging.DEBUG, logger="stackowl.engine"):
         out = await assemble.run(s)
 

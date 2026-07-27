@@ -305,15 +305,39 @@ async def run(state: PipelineState) -> PipelineState:
             )
             banner = ""
 
-    # D01.1 — `banner` is deliberately ABSENT from this list. It is volatile by
-    # design (present exactly when there is something to say, then gone), so it
-    # cannot live in a prompt that is frozen for the life of a session without
-    # either repeating every turn or arriving too late. It travels on
-    # state.pending_banner and is delivered as its own chunk instead — which also
-    # means the user reads the undelivered body VERBATIM, which is what
-    # render_banner's docstring says it is for, rather than the owl's paraphrase.
+    # D01.1 — the STABLE user profile replaces per-turn memory recall here.
+    #
+    # `state.memory_context` is still computed by classify and still read by
+    # execute for its grounding haystacks; it simply stops being PROMPT text.
+    # Measured 2026-07-27: it varied in every session observed, making it the
+    # largest single source of prompt instability, and an unstable prompt
+    # forfeits the provider's automatic prefix cache with no marker to blame.
+    # Depth is not lost — the registered `memory` tool is how the model reaches
+    # for it when a conversation needs more than the profile (Bakir's Q5+Q12,
+    # with recall_risk explicitly ACCEPTED).
+    profile = ""
+    try:
+        from stackowl.memory.user_profile import load_user_profile
+
+        profile = load_user_profile()
+    except Exception as exc:  # no-hidden-errors: a profile must never cost a reply
+        log.engine.error(
+            "[pipeline] assemble: user profile FAILED — continuing without it",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        profile = ""
+    # `banner` is deliberately ABSENT from this list: it is volatile by design
+    # (present exactly when there is something to say, then gone), so it cannot
+    # live in a prompt frozen for the life of a session without either repeating
+    # every turn or arriving too late. It travels on state.pending_banner and is
+    # delivered as its own chunk — which also means the user reads the
+    # undelivered body VERBATIM, as render_banner intends, rather than the owl's
+    # paraphrase of it.
     parts = [
-        p for p in (base, capabilities, persona, owls_block, skills_block, state.memory_context) if p
+        p for p in (
+            base, capabilities, persona, owls_block, skills_block,
+            profile, state.stable_context,
+        ) if p
     ]
     system_prompt = "\n\n".join(parts) or None
     # D01.6 — stamp this turn's prompt identity so the single cost-recording site
@@ -333,6 +357,10 @@ async def run(state: PipelineState) -> PipelineState:
             "banner_len": len(banner),
             "owls_len": len(owls_block),
             "skills_len": len(skills_block),
+            # D01.1 — the profile is what is now IN the prompt; memory_len stays
+            # so the two can be compared during the cut-over and afterwards.
+            "profile_len": len(profile),
+            "stable_context_len": len(state.stable_context or ""),
             "memory_len": len(state.memory_context or ""),
             "system_len": prompt_chars,
             "prompt_hash": prompt_hash,

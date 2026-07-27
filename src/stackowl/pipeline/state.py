@@ -244,6 +244,15 @@ class PipelineState(BaseModel, frozen=True):
     # carry the general network re-probe kind (HttpProbeOutcome, F-12).
     expected_outcome: ExpectedOutcome | HttpProbeOutcome | None = None
     memory_context: str | None = None
+    # D01.1 — the STABLE half of memory_context: learned preferences and
+    # reflect->recall lessons. Split out because `memory_context` turned out to be
+    # SIX channels, not one (prefs, skills, lessons, actions, recall, graph), and
+    # only the query-scoped ones vary per turn. Dropping the whole block from the
+    # prompt would have silently switched off the preference-learning and
+    # reflect->recall arcs — a published reflection stopped reaching later turns,
+    # which is what the NFR-4 gateway test caught. The volatile half leaves the
+    # prompt; this half stays. (Bakir, 2026-07-27.)
+    stable_context: str | None = None
     # Query embedding computed once in classify (semantic only), forwarded so assemble
     # can score owned skills without re-embedding. None = no usable relevance signal. Story B.
     query_embedding: tuple[float, ...] | None = None
