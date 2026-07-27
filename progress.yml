@@ -241,64 +241,70 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 1
-  item: D01.1
-  stage: document
+  item: D01.2
+  stage: brainstorm
   stage_status: not_started
   one_line: >
-    D01.1 is SIX of seven stages done — only `document` remains. I1 holds on the
-    live platform, the obsolete prompt-building path is gone, one regression the
-    freeze itself introduced (DEBT-24) is fixed, and all six invariants now map
-    to real tests that were mutation-tested rather than assumed. Then D01.2,
-    D01.4, D01.5, D01.3.
+    D01.1 is COMPLETE — all seven stages, doc closed and status live. Next is
+    D01.2 (prompt-cache breakpoints), which the D01.1 brainstorm predicted would
+    be largely a NO-OP: NeraAiRaw is OpenAI-protocol, where prefix caching is
+    automatic and there is no cache_control marker to place. Start by proving or
+    disproving that, because it decides whether the item is 25 questions or one
+    paragraph. Then D01.4, D01.5, D01.3.
   read_first: >
-    This block, then docs/hermes-mapping/designs/D01.1.md — its "What shipped,
-    and why the order mattered" section carries the prose. The D01.1 item's
-    `slices`, `validate_result` and `changes` blocks hold the same record
-    machine-readably; they were WRITTEN in the cleanup stage, because until then
-    this pointer named two blocks that did not exist.
+    This block, then docs/hermes-mapping/designs/D01.1.md — now status `live`,
+    verified against commit 6b5017aa, with its Verification section actually RUN
+    rather than trusted. The D01.1 item's `slices`, `validate_result` and
+    `changes` blocks hold the same record machine-readably.
+    Before starting D01.2, read DEBT-27 — it qualifies D01.1's result and is the
+    highest-value open thread in this wave.
   the_headline: >
-    THE CONFLICT IS RESOLVED, not merely described. Two messages 74 seconds
-    apart produced six model calls sharing ONE prompt_hash
-    (aad8651ec66f6502). The baseline captured at the start of this item was 3
-    distinct prompts across 8 turns. It is now 1.
+    D01.1's CONFLICT IS RESOLVED. Invariant I1 measured on the live database at
+    close: 4 owl-attributed lanes, 0 violations, 23 calls. The baseline at the
+    start of the item was 3 distinct prompts across 8 turns.
+    But read that with DEBT-27 beside it: the freeze engages ONLY for
+    channel-ingress lanes. Live tally 1 cached vs 51 cold_build. I1 holds and
+    the provider-side cost win holds; the LATENCY win does not exist yet for
+    background and scheduled work, which was an explicit target.
+  what_D01_1_taught_that_outlives_it: >
+    An assertion that cannot fail reads as coverage without being coverage. The
+    intent-class equality test in test_assemble_skill_catalogue.py passed for a
+    whole slice while DEBT-24 was live, because its harness registered no
+    tool_registry so nothing COULD differ. The same trap sits in any
+    "prompt A == prompt B" test: two turns in a harness are identical whether or
+    not the freeze works. Mutate something that only a rebuild would pick up —
+    D01.1's gateway test mutates the owl's persona — and then MUTATION-TEST the
+    test itself by breaking the code on purpose.
   verify_the_platform_before_you_start:
-    - "./start.sh   # then expect 0 ERROR/CRITICAL and 0 DANGLING in ~/.stackowl/logs/stackowl.jsonl"
+    - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl. NOTE: grepping the word 'dangling' matches the audit lines that REPORT '0 dangling' — check fields.dangling_handlers == [] instead."
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0103)"
-    - "timeout 500 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1061 passed"
-    - "timeout 500 uv run pytest tests/sessions/ -q -p no:randomly   # expect 147 passed"
+    - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1065 passed"
+    - "timeout 800 uv run pytest tests/sessions/ tests/owls/ -q -p no:randomly   # expect 425 passed (147 + 278)"
     - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
+    - "NEVER run the two pytest invocations in parallel on this box, and never combine them under one timeout — both were tried on 2026-07-27 and both were killed at their deadline (exit 143). Sequential, separate budgets."
   next_task_in_order:
     1: >
-      document — close designs/D01.1.md: status -> live, re-stamp date + commit,
-      confirm every Invariant maps to a real test, and RE-RUN the Verification
-      section rather than trusting it. That section had FOUR drift items when
-      this item started, one of which (a zero-byte stackowl.db) would have
-      produced a silent false PASS. Cleanup and test VERIFIED FOUR MORE drift
-      items to fold in:
-      (a) the Source line says assemble.py is 334 lines; it is 437.
-      (b) the Observability table is the bad one — of its five rows, TWO name log
-      lines that do not exist anywhere in the code ("[pipeline] assemble: cold
-      build parts" and "[pipeline] assemble: prompt invalidated"), and the other
-      rows' _fields are wrong: `exit` actually emits base_len/persona_len/
-      banner_len/owls_len/skills_len/profile_len/stable_context_len/memory_len/
-      system_len/prompt_hash and NO `cached`; `prompt source` emits source/
-      system_len/prompt_hash/trace_id/session_key/session_id/owl and NO
-      `age_turns`. Someone reading that table at 2am greps for a string the
-      platform never writes.
-      (c) Configuration must record that the capability banner is now
-      unconditional (DEBT-24).
-      (d) Verification step 5 — the one that proves hard invariants I3/I4/I5 did
-      not regress — cites `tests/tools/test_registry.py`, which DOES NOT EXIST.
-      The real tool-registry tests are test_registry_failure_advisory.py,
-      test_registry_concurrency.py and test_registry_description_lint.py. This is
-      the FIFTH drift item in that one Verification section, and the second time
-      it has named a test file that is not in the tree (DEBT-2's exact pattern).
-      The corrected command, run 2026-07-27 in the test stage: those three plus
-      tests/notifications/ — 123 passed.
-      NOT drift, checked: the Source line's mention of instruction_injector.py is
-      correct — assemble.py:21 still imports it. The step-5 warning about NOT
-      running tests/scheduler/ is also correct and should be kept (DEBT-14).
-    2: "then D01.2 (likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching is automatic), D01.4, D01.5, D01.3."
+      D01.2 brainstorm — but FIRST spend ten minutes disproving the premise,
+      because it decides the size of the item. The D01.1 brainstorm recorded:
+      "D01.2 is likely a no-op for this deployment: NeraAiRaw is OpenAI-protocol,
+      where prefix caching is automatic." If that holds there is no cache_control
+      marker to place and the item is a documented no_change_needed rather than
+      25 questions. Evidence to gather before asking Bakir anything:
+      (a) `grep -rn "cache_control\|cached_tokens" src/` — D01.1 recorded ZERO
+      occurrences anywhere in src/; confirm that is still true.
+      (b) D01.6 already established that NeraAiRaw reports NO cache fields in any
+      of the three accepted shapes, so metric 1 is not measurable on this
+      deployment (see D01.6 notes and invariant I4 there: 0-with-0-reporting is a
+      silent gateway, NOT a cold cache). That is the single most important prior.
+      (c) `no_change_needed` is a legitimate outcome per PROCESS — but silence is
+      not. Whatever the answer, D01.2 still ships a document.
+    2: >
+      DEBT-27 needs a decision from Bakir before D01.7 can close it, and it is
+      the highest-value open thread in wave 1: background and scheduled lanes get
+      no benefit from the freeze at all. The question is what session identity a
+      scheduled job should have — per-run, per-day, or a standing per-owl one.
+      Do NOT resolve it by deleting the session_id guard in assemble.
+    3: "then D01.4, D01.5, D01.3."
   the_pattern_that_caught_everything_this_session:
     name: "Measure before changing; the code alone will lie to you"
     instances:
@@ -1552,8 +1558,11 @@ summary:
     P3: 32
   by_status:
     not_started: 108
-    in_progress: 3      # D01.1 (brainstorm+architect), D01.6 (6/7), D01.7 (2/7 + implement live)
-    done: 0             # D01.6 is functionally closed but its brainstorm stage was never run
+    in_progress: 2      # D01.6 (6/7), D01.7 (2/7 + implement live)
+    done: 1             # D01.1 — all seven stages, doc live, closed 2026-07-27 @ 6b5017aa
+    # D01.6 is functionally closed but its brainstorm stage was never run, so it
+    # is NOT counted done. Same rule as everything else: seven stages or it is
+    # in_progress.
     blocked: 0
   stages_completed: 11   # recomputed from items, not hand-maintained
   stages_total: 777   # 111 items x 7 stages
@@ -1584,7 +1593,7 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      document:   not_started
+      document:   done
     doc: "docs/hermes-mapping/designs/D01.1.md"
     doc_last_verified: 2026-07-27
     decisions:
