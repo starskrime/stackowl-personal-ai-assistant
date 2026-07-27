@@ -25,12 +25,15 @@ def _decayed(base: float, last_turn: int, current_turn: int) -> float:
 
 
 class _Focus:
-    __slots__ = ("turn", "active", "viewed")
+    __slots__ = ("turn", "active", "viewed", "last_trace")
 
     def __init__(self) -> None:
         self.turn = 0
         self.active: dict[str, int] = {}
         self.viewed: dict[str, int] = {}
+        # D01.1 — the trace that last advanced `turn`. Lets ANY caller ask for
+        # the current turn without having to know whether it is first.
+        self.last_trace = ""
 
 
 class SkillFocusTracker:
@@ -59,6 +62,42 @@ class SkillFocusTracker:
                 "[skill_focus] begin_turn failed",
                 exc_info=exc,
                 extra={"_fields": {"owl": owl}},
+            )
+            return 0
+
+    def turn_for(self, owl: str, session: str, trace_id: str) -> int:
+        """The current turn for this lane, advancing ONCE per new ``trace_id``.
+
+        D01.1 removed `assemble`'s per-query skill scoring, and with it the only
+        caller that ever advanced this clock via ``begin_turn``. A frozen clock
+        is not a loud failure: ``_focus_score`` returns 0.0 whenever
+        ``current_turn - last_turn < 1``, so focus scoring would have gone
+        silently to zero for everything — degrading precisely the tool D01.1
+        leans on as the fallback for removed skill bodies.
+
+        Keying on the trace removes the ordering dependency instead of moving
+        it: several callers in one turn see ONE turn, the first caller to touch
+        it starts a real turn rather than 0, and nothing has to be seeded first.
+        The clock therefore advances on actual skill activity rather than on
+        every assemble, which is a more honest measure of what decay is counting.
+
+        Fails safe to the existing turn (never raises) — a focus clock must
+        never cost a reply.
+        """
+        if not trace_id:
+            return self.current_turn(owl, session)
+        try:
+            with self._lock:
+                f = self._get(owl, session)
+                if f.last_trace != trace_id:
+                    f.turn += 1
+                    f.last_trace = trace_id
+                return f.turn
+        except Exception as exc:
+            log.engine.error(
+                "[skill_focus] turn_for failed",
+                exc_info=exc,
+                extra={"_fields": {"owl": owl, "trace_id": trace_id}},
             )
             return 0
 

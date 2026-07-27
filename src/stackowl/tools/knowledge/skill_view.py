@@ -165,7 +165,18 @@ class SkillViewTool(Tool):
             owl = ctx.get("owl_name")
             session = ctx.get("session_key")
             if owl and session:
-                turn = FOCUS_TRACKER.current_turn(owl, session)
+                # D01.1 — turn_for, not current_turn. `assemble` used to advance
+                # this clock via begin_turn inside its per-query skill-scoring
+                # block, and D01.1 removes that block. current_turn only READS,
+                # so with nothing seeding it the counter stayed at 0 and
+                # _decayed() returns 0.0 for every distance below 1 — focus
+                # hysteresis would have gone silently to zero in the very tool
+                # that is now the fallback for removed skill bodies.
+                #
+                # Keying on the trace means this tool no longer depends on
+                # another step having run first: it advances the clock exactly
+                # once per turn no matter how many skills are viewed in it.
+                turn = FOCUS_TRACKER.turn_for(owl, session, str(ctx.get("trace_id") or ""))
                 FOCUS_TRACKER.mark_viewed(owl, session, skill.name, turn)
             # 4. EXIT
             return self._ok(
