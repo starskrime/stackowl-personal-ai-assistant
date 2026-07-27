@@ -58,6 +58,47 @@ async def run(state: PipelineState) -> PipelineState:
     )
     services = get_services()
 
+    # D01.1 slice 5 — THE FREEZE. Built once per (session_key, owl_name) and
+    # reused verbatim for every turn of that incarnation.
+    #
+    # Only reachable now that every part of the prompt is stable: the banner
+    # left (slice 1), per-turn recall left (slice 3), lessons became
+    # query-independent, skills became a catalogue (4b), and the wall-clock
+    # moved to the volatile tier (stage 2). Freezing before that would have
+    # pinned whichever value the first turn happened to carry.
+    #
+    # On a HIT this returns immediately, so the model-window probe, the skill
+    # read and the profile read all leave the critical path of every reply after
+    # the first — the latency half of this item, not just the cost half.
+    _prompt_store = getattr(services, "session_prompt_store", None)
+    if _prompt_store is not None and state.session_id:
+        try:
+            cached = await _prompt_store.load(
+                session_key=state.session_key, owl_name=state.owl_name,
+                session_id=state.session_id,
+            )
+        except Exception as exc:  # never let a cache cost a turn (I2)
+            log.engine.error(
+                "[pipeline] assemble: prompt cache read FAILED — cold building",
+                exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+            )
+            cached = None
+        if cached is not None:
+            prompt_hash, prompt_chars = prompt_metrics.stamp(cached.prompt_text)
+            log.engine.info(
+                "[pipeline] assemble: prompt source",
+                extra={"_fields": {
+                    "trace_id": state.trace_id, "session_key": state.session_key,
+                    "session_id": state.session_id, "owl": state.owl_name,
+                    "source": "cached", "system_len": prompt_chars,
+                    "prompt_hash": prompt_hash,
+                }},
+            )
+            return state.evolve(
+                system_prompt=cached.prompt_text,
+                model_window=cached.model_window,
+            )
+
     # Model window resolution (shared selection + Slice-1 resolve_window, memoized):
     # still needed for delivery_gate's honest small-window acknowledgement and
     # progress_tracker's adaptive no-progress threshold. The charter/DNA no longer
@@ -361,6 +402,27 @@ async def run(state: PipelineState) -> PipelineState:
             "stable_context_len": len(state.stable_context or ""),
             "memory_len": len(state.memory_context or ""),
             "system_len": prompt_chars,
+            "prompt_hash": prompt_hash,
+        }},
+    )
+    if _prompt_store is not None and state.session_id and system_prompt:
+        try:
+            await _prompt_store.save(
+                session_key=state.session_key, owl_name=state.owl_name,
+                session_id=state.session_id, prompt_text=system_prompt,
+                model_window=model_window,
+            )
+        except Exception as exc:  # a failed freeze costs a rebuild, never the turn
+            log.engine.error(
+                "[pipeline] assemble: prompt freeze FAILED — next turn rebuilds",
+                exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+            )
+    log.engine.info(
+        "[pipeline] assemble: prompt source",
+        extra={"_fields": {
+            "trace_id": state.trace_id, "session_key": state.session_key,
+            "session_id": state.session_id, "owl": state.owl_name,
+            "source": "cold_build", "system_len": prompt_chars,
             "prompt_hash": prompt_hash,
         }},
     )

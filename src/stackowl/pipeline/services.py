@@ -89,6 +89,11 @@ class StepServices:
     # lane key can no longer supply by itself. None → delivery falls back to the
     # legacy "the lane IS the chat id" heuristic, i.e. byte-identical to before.
     session_store: SessionStore | None = field(default=None)
+    # D01.1 — the frozen per-session system prompt. None (unwired, and every
+    # settings-less unit test) means assemble cold-builds every turn exactly as
+    # it did before, so the freeze is an enhancement to a working pipeline
+    # rather than a precondition for one.
+    session_prompt_store: object | None = field(default=None)
     # Approach-rating like/dislike votes — consolidate.py reads THIS off services
     # to record a pending vote + build the inline keyboard for a qualifying final
     # answer. ONE process-wide singleton (in-memory trace_id -> message map) so

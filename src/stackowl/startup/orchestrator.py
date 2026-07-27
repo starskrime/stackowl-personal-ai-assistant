@@ -969,6 +969,12 @@ class StartupOrchestrator:
         # a rollover fires at 4 AM unattended, so anything done inline is lost if
         # the process dies mid-summary (Bakir's Q15).
         register_rollover_consumer(event_bus, db_pool, session_store)
+        # D01.1 — the frozen per-session system prompt. Persisted rather than
+        # memory-cached because our core os.execv's itself on every code change,
+        # which would discard an in-memory cache continuously.
+        from stackowl.sessions.prompt_store import SessionPromptStore
+
+        session_prompt_store = SessionPromptStore(db_pool)
 
         notification_components = await NotificationAssembly.build(
             db=db_pool,
@@ -1402,6 +1408,8 @@ class StartupOrchestrator:
             message_ledger_store=message_ledger_store,
             # D01.7 — so proactive delivery can turn a lane back into a recipient.
             session_store=session_store,
+            # D01.1 — the frozen per-session system prompt.
+            session_prompt_store=session_prompt_store,
             approach_rating_tracker=approach_rating_tracker,
             notification_router=notification_router,
             proactive_deliverer=proactive_deliverer,
