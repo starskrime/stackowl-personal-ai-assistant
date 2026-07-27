@@ -112,6 +112,22 @@ class PricingLoader:
                 )
         return cleaned
 
+    def is_priced(self, model: str, *, is_local: bool = False) -> bool:
+        """Is the figure :meth:`estimate` returns a real PRICE or a guess?
+
+        DEBT-15 (Bakir, 2026-07-26): the fallback must report itself rather than
+        have prices invented for it. ``estimate`` returns a bare float, so a
+        conservative placeholder is indistinguishable from a table price once it
+        reaches a log line, a SUM, or a budget gate.
+
+        A LOCAL backend is priced ``True`` even when absent from the table:
+        self-hosted really is free, so $0 is a real answer, not a placeholder.
+        Marking it estimated would cry wolf on every local call. Only the
+        unknown-CLOUD path — the one charged ``unknown_cloud_per_1m_usd`` — is a
+        guess, and it is the only one this returns ``False`` for.
+        """
+        return model in self._table or is_local
+
     def estimate(
         self, model: str, input_tokens: int, output_tokens: int, *, is_local: bool = False
     ) -> float:

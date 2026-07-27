@@ -1021,7 +1021,52 @@ known_debt:
       every caller treats it as a real price. That is its own change with its
       own tests, not a rider.
     affects: "D01.6 (its captured baseline), DEBT-7 (the budget alert would report fallback-derived costs)."
-    status: open
+    status: resolved
+    resolution:
+      date: 2026-07-27
+      the_fourth_surface_found_while_implementing: >
+        The scope note listed the log line, the stored rows and the DEBT-7
+        report. A fourth was found by tracing consumers: turn_cost_usd feeds
+        pipeline/budget/governor.py's BudgetBreach, so the SOFT per-turn pause
+        can INTERRUPT the user and ask them to continue or stop — on placeholder
+        dollars. That makes this a behavioural defect, not only a cosmetic one.
+      how: >
+        PricingLoader.is_priced(model, is_local=) answers whether the figure
+        estimate() returned is a real price or a guess. The estimate itself is
+        UNCHANGED — honesty is a label on the number, not a change to it, and a
+        test pins that the conservative fallback still bills high so an unpriced
+        paid model can never silently read $0 (F128).
+      the_distinction_that_matters: >
+        A LOCAL model absent from the table is priced TRUE: self-hosted really is
+        free, so $0 is a real answer. Only the unknown-CLOUD path is a guess.
+        Marking local calls "estimated" would cry wolf on every one of them and
+        train everybody to ignore the marker.
+      migration_0101: >
+        cost_records.priced INTEGER, NULLABLE. NULL for pre-existing rows because
+        their provenance is genuinely unknown — backfilling 1 would claim history
+        was priced (false on this deployment) and 0 would claim it was estimated
+        (false for any real model). Either invents a fact, which is the exact
+        mistake this debt is about. Persisted rather than logged only because
+        these rows are AGGREGATED: D01.6's metric 3 sums them, and a SUM over
+        mixed real and guessed dollars cannot be made honest afterwards.
+      surfaces_now_honest:
+        log_line: "'~$0.039840 (... , est)' for a fallback figure; a priced call is byte-identical to before."
+        stored_rows: "priced=0/1 per row; NULL only for history."
+        conversation_report: >
+          Says "approximately $X ... (This model has no published price, so the
+          figure is a conservative estimate.)" and carries estimated=true in the
+          payload. The hedge is EARNED — a fully priced conversation states its
+          cost plainly, pinned by its own test, so the caveat never becomes
+          noise.
+      not_done_deliberately: >
+        No prices were invented for neraai-v1-raw. Bakir's instruction was that
+        the real per-token rates are not known here and must not be guessed, so
+        the platform now says so instead of pretending.
+      verified:
+        tests: "9 new in tests/providers/test_pricing_honesty.py, red first. 466 passed across tests/providers."
+        migration: "0101 applied; second run reports already-applied; schema at 0101."
+        gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
+        commands: "349 passed in tests/commands; the single failure is DEBT-3, pre-existing."
   - id: DEBT-14
     found: 2026-07-26
     what: "tests/scheduler/test_scheduler_assembly.py HANGS — 25 tests collect in 0.10s, then execution never completes."

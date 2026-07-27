@@ -64,6 +64,12 @@ class DailySummary(BaseModel):
     by_provider: dict[str, float]
     by_model: dict[str, float]
     call_count: int
+    # DEBT-15 — is ``total_usd`` a real total, or does it contain guesses?
+    # False when ANY constituent call used the unknown-CLOUD fallback, or when
+    # a row predates migration 0101 and its provenance is genuinely unknown.
+    # Defaults True so an aggregate nobody has taught to compute it reads as it
+    # always did rather than hedging everything.
+    all_priced: bool = True
 
 
 class CostTracker(OwnedRepository):
@@ -193,6 +199,10 @@ class CostTracker(OwnedRepository):
         # (per_turn_pause_usd) — which asks the user rather than raising.
 
         cost_usd = self._estimate_cost(model, input_tokens, output_tokens, is_local=is_local)
+        # DEBT-15 — is that figure a PRICE or a guess? Recorded per row because
+        # these rows are aggregated (D01.6 metric 3 sums them), and a SUM over a
+        # mix of real and fallback dollars cannot be made honest afterwards.
+        priced = self._pricing.is_priced(model, is_local=is_local)
         record = CostRecord(
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,
@@ -210,8 +220,8 @@ class CostTracker(OwnedRepository):
                     provider_name, model, input_tokens, output_tokens,
                     cost_usd, trace_id, recorded_at, owner_id,
                     session_key, session_id, cached_input_tokens, prompt_hash,
-                    system_prompt_chars, ttft_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    system_prompt_chars, ttft_ms, priced
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.provider_name, record.model, record.input_tokens,
@@ -219,6 +229,7 @@ class CostTracker(OwnedRepository):
                     record.recorded_at, self._owner_id,
                     record.session_key, record.session_id, record.cached_input_tokens,
                     record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
+                    int(priced),
                 ),
             )
         except Exception as exc:
@@ -229,14 +240,19 @@ class CostTracker(OwnedRepository):
             )
             raise
 
+        # DEBT-15 — "~" and "est," mark a figure derived from the unknown-CLOUD
+        # fallback rather than a table price, so the log can never be read as a
+        # measurement it is not. A priced call is unchanged.
         log.engine.info(
-            "[cost] %s/%s: $%.6f (%din/%dout tokens, %.1fms)",
-            provider_name, model, cost_usd, input_tokens, output_tokens, duration_ms,
+            "[cost] %s/%s: %s$%.6f (%din/%dout tokens, %.1fms%s)",
+            provider_name, model, "" if priced else "~", cost_usd,
+            input_tokens, output_tokens, duration_ms, "" if priced else ", est",
             extra={
                 "_fields": {
                     "provider": provider_name,
                     "model": model,
                     "cost_usd": cost_usd,
+                    "priced": priced,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "duration_ms": duration_ms,
@@ -374,7 +390,7 @@ class CostTracker(OwnedRepository):
         )
         rows = await self._db.fetch_all(
             """
-            SELECT provider_name, model, cost_usd
+            SELECT provider_name, model, cost_usd, priced
             FROM cost_records
             WHERE owner_id = ? AND session_key = ? AND session_id = ?
             """,
@@ -383,9 +399,14 @@ class CostTracker(OwnedRepository):
         total = 0.0
         by_provider: dict[str, float] = {}
         by_model: dict[str, float] = {}
+        # A NULL `priced` is a row from before migration 0101 — unknown
+        # provenance, which cannot honestly be counted as priced.
+        all_priced = True
         for row in rows:
             cost = float(row["cost_usd"])
             total += cost
+            if row["priced"] != 1:
+                all_priced = False
             by_provider[row["provider_name"]] = by_provider.get(row["provider_name"], 0.0) + cost
             by_model[row["model"]] = by_model.get(row["model"], 0.0) + cost
         log.engine.debug(
@@ -401,6 +422,7 @@ class CostTracker(OwnedRepository):
             by_provider=by_provider,
             by_model=by_model,
             call_count=len(rows),
+            all_priced=all_priced,
         )
 
     def turn_cost_usd(self, trace_id: str) -> float:

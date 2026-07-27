@@ -1,0 +1,31 @@
+-- DEBT-15 — a fallback-derived cost must not present itself as a price.
+--
+-- THE DEFECT THIS CLOSES. `neraai-v1-raw`, the only enabled model on this
+-- deployment, is absent from pricing.yaml. Every figure it produces therefore
+-- comes from the conservative `unknown_cloud_per_1m_usd` fallback, and the
+-- platform prints it as `$0.000225` — indistinguishable from a real price.
+-- 1531 `[pricing] estimate: UNKNOWN CLOUD MODEL` warnings landed in one day.
+--
+-- WHY A COLUMN AND NOT JUST A NICER LOG LINE. These rows are AGGREGATED.
+-- D01.6's metric 3 is `SUM(cost_usd) GROUP BY session_key`, and its captured
+-- baseline headline — "$2.85 for five messages" — is entirely fallback-derived.
+-- A SUM over a mix of real and guessed dollars cannot be made honest after the
+-- fact unless each row records which it was. The ratios between traces still
+-- hold (every figure uses the same rate); the absolute dollars do not.
+--
+-- It is not cosmetic either: `turn_cost_usd` feeds pipeline/budget/governor.py's
+-- BudgetBreach, so the SOFT per-turn pause can interrupt a user and ask them to
+-- continue or stop — on placeholder dollars.
+--
+-- NULL, NOT 0 OR 1, FOR EXISTING ROWS. The provenance of a row written before
+-- this migration is genuinely unknown. Backfilling 1 would claim history was
+-- priced (false on this deployment); backfilling 0 would claim it was estimated
+-- (false for any genuinely-priced model). Either would invent a fact, which is
+-- the exact mistake this debt is about. NULL reads as "unknown provenance" and
+-- is the only honest answer available retroactively.
+--
+-- 1 = a real table price, or a local backend that is genuinely free.
+-- 0 = the conservative unknown-CLOUD fallback: a guess, deliberately high so an
+--     unpriced paid model can never silently bill $0 (F128).
+
+ALTER TABLE cost_records ADD COLUMN priced INTEGER;

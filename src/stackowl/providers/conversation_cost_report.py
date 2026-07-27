@@ -67,9 +67,16 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
                 extra={"_fields": {"session_key": lane, "ended_session_id": ended}},
             )
             return
+        # DEBT-15 — hedge ONLY when the total contains guesses. This message can
+        # be delivered to the user, so a fallback-derived figure stated as a
+        # receipt is the most damaging place for false precision. The hedge has
+        # to be earned, or the caveat becomes noise everyone learns to skip.
+        estimated = not getattr(summary, "all_priced", True)
         message = (
-            f"That conversation cost ${summary.total_usd:.4f} "
-            f"over {summary.call_count} model call(s)."
+            f"That conversation cost {'approximately ' if estimated else ''}"
+            f"${summary.total_usd:.4f} over {summary.call_count} model call(s)."
+            + (" (This model has no published price, so the figure is a "
+               "conservative estimate.)" if estimated else "")
         )
         log.engine.info(
             "[cost] conversation_cost: exit — reporting a finished conversation",
@@ -89,6 +96,7 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
             "call_count": summary.call_count,
             "owl_name": data.get("owl_name"),
             "channel": data.get("channel"),
+            "estimated": estimated,
             "message": message,
         })
 
