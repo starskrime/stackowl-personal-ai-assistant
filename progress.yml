@@ -241,9 +241,36 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 1
-  item: D01.7
+  item: D01.1
   stage: implement
   stage_status: in_progress
+  d01_1_resume:
+    started: 2026-07-27
+    why_it_is_unblocked: >
+      implement_blocked_by was [D01.6, D01.7]. D01.6 is closed. D01.7's session
+      lifecycle is live — lanes, incarnations, rollover and the transcript are
+      all working on the platform — which was the actual prerequisite: "build
+      the prompt once per session" is meaningless until a session can start and
+      end. D01.7's own remaining stages (validate, document) do not gate this.
+    before_touching_code_the_design_doc_was_re_verified: >
+      It was stamped against commit eb079ea1 on 2026-07-25, before all of D01.7
+      and before today's debt work. Four drift items were found and corrected —
+      see designs/D01.1.md's own correction block. The worst was NOT a typo: its
+      Verification step 3, which is the item's pass/fail gate, pointed at
+      ~/.stackowl/stackowl.db, which EXISTS as a zero-byte file with no tables
+      (debris from DEBT-2's original wrong command, created 2026-07-25 12:27).
+      The live DB is ~/.stackowl/workspace/stackowl.db. A reader adapting that
+      command would have read "no rows" as though the invariant held — a silent
+      false PASS on the one command that decides whether this item worked.
+    the_measured_before_state: >
+      3 distinct prompt_hash across 8 turns on two real conversations; 2 across
+      6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's
+      spine works. This CORRECTS the draft's assumption of "distinct == turns"
+      (a fresh prompt every single turn): the prompt is rebuilt every turn but
+      only DIFFERS at some, so the instability comes from the parts that vary
+      with the query — per-turn memory recall and the relevance-scored skills
+      block — which are precisely the two this item moves to on-demand tools.
+      Validation must not read "3" as partial success; 3 is the starting point.
   slice: >
     IMPLEMENT IS COMPLETE. All of slice 3 shipped: 3a.1-3a.3, 3b parts 1-7b.
     Migrations 0092-0100. Remaining stages for D01.7: cleanup, test, validate,
