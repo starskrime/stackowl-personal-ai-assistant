@@ -183,6 +183,88 @@ def operational_adapter(now: datetime, *, describe_tool_protocol: bool = True) -
     return "\n\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# D01.1 — the two TIERS, named.
+#
+# The design said it adopted Hermes' split and then "froze even the volatile
+# tier". That adoption is the error, and three findings this session are the
+# same mistake in different fields: the undelivered banner (slice 1), per-turn
+# recall (slice 3), and the wall-clock (DEBT-23). Volatile means volatile.
+#
+# These are ADDITIVE for now. `operational_adapter` and `build_base_prompt`
+# below are untouched and still produce exactly today's text, so this stage
+# cannot change what any model sees. Callers move in a later stage, one at a
+# time, each verified.
+# ---------------------------------------------------------------------------
+
+_DOWNLOADS_RULE = (
+    "When you fetch or save a file for the user, write it into the workspace's "
+    "downloads/ folder, so it can be delivered to them and is cleaned up "
+    "automatically over time."
+)
+
+_CALL_PROTOCOL = (
+    "To use a capability, output exactly:\n"
+    "ACTION: <name>\n"
+    "```json\n"
+    '{"<arg>": "<value>"}\n'
+    "```\n"
+    "Then stop and wait for the OBSERVATION (the result) before continuing. "
+    "The capabilities currently available to you are listed separately; use "
+    "their exact names in place of <name>."
+)
+
+_NO_CAPABILITIES_THIS_TURN = (
+    "No capabilities are available to you this turn. Do not attempt to "
+    "call a function, tool, or capability of any kind, in any format — "
+    "answer entirely from your own knowledge instead."
+)
+
+
+def stable_operational_context(*, describe_tool_protocol: bool = True) -> str:
+    """The operational text that does NOT change between turns.
+
+    Takes no clock, by construction: a frozen tier that accepted a timestamp
+    would just be a slower way to make the same mistake. The call PROTOCOL
+    lives here because how to call a tool does not vary per turn — and because
+    a frozen prompt cannot express a per-turn conditional at all. A session
+    whose first turn was conversational would otherwise carry a prompt with no
+    protocol for its entire life, losing tool use until the next rollover.
+
+    ``describe_tool_protocol=False`` is retained for callers that genuinely
+    never offer capabilities; it is not the per-turn signal it used to be.
+    """
+    parts = ["Operational context (this changes; your character above does not)."]
+    if describe_tool_protocol:
+        parts.append(_CALL_PROTOCOL)
+    parts.append(_DOWNLOADS_RULE)
+    return "\n\n".join(parts)
+
+
+def volatile_turn_context(
+    now: datetime, *, capabilities_offered: bool = True
+) -> str:
+    """The operational facts that belong to ONE turn, delivered with it.
+
+    The wall-clock is the obvious one — rendered to the minute, so it can never
+    be part of a byte-identical prompt (DEBT-23). Less obvious, and the reason
+    this returns more than a timestamp: "No capabilities are available to you
+    THIS TURN" is a claim about a single turn too, so it cannot live in a frozen
+    tier either. It is an explicit NEGATIVE instruction rather than silence,
+    because silence does not stop a natively tool-trained model attempting its
+    own calling convention (observed live: a namespaced "default_api:search{…}"
+    call on a turn offering zero capabilities).
+
+    This is the seam every future per-turn fact should use, instead of being
+    smuggled into the system prompt and quietly costing the cached prefix.
+    """
+    human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
+    parts = [f"Right now it is {human_now}."]
+    if not capabilities_offered:
+        parts.append(_NO_CAPABILITIES_THIS_TURN)
+    return "\n\n".join(parts)
+
+
 def build_base_prompt(
     now: datetime, *, lean: bool = False, describe_tool_protocol: bool = True,
 ) -> str:
