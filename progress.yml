@@ -867,6 +867,39 @@ known_debt:
       comment records ~16 min as its slowest legitimate run. That is the dream
       worker genuinely exceeding 20 minutes, not the RCA budget, and it is NOT
       fixed here. Tracked as DEBT-19 so it is not lost behind this fix.
+  - id: DEBT-23
+    found: 2026-07-27
+    what: "The system prompt carries the wall-clock time TO THE MINUTE, so it can never be byte-identical across turns — and freezing it would freeze the clock."
+    evidence: >
+      owls/base_prompt.py:150 —
+      `human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")`. This is why
+      base_len read a constant 3768 across every measured turn while prompt_hash
+      kept changing: identical format WIDTH, different content. Earlier notes
+      chased base_len and concluded the charter was stable; it is stable in
+      length and unstable in bytes, which is the harder failure to see.
+    why_it_outranks_DEBT_22: >
+      The intent-class split (DEBT-22) breaks I1 only when a conversation mixes
+      chat and work turns. A minute-resolution clock breaks it between ANY two
+      turns more than a minute apart, which is essentially every conversation.
+      This is the primary reason invariant I1 fails.
+    the_conflict_it_creates_for_slice_5: >
+      Slice 5 freezes the prompt for the life of a session, which would freeze
+      the timestamp with it. Given the daily rollover boundary, the model could
+      be told a time up to ~24 hours stale — defeating the exact purpose the
+      timestamp serves, which base_prompt documents as grounding the model in
+      the real date rather than its training cutoff. Freezing and grounding pull
+      in opposite directions, and D01.1's design never addresses it.
+    the_options: >
+      (a) Coarsen the stamp to the DAY, so it is stable for a session bounded by
+      a daily rollover and still grounds the model — cheapest, and it makes the
+      daily boundary do double duty. (b) Move the clock OUT of the system prompt
+      and into the user message, keeping the system prompt frozen and the time
+      always accurate — costs a per-turn injection point. (c) Accept a frozen
+      timestamp and rely on the rollover to refresh it. (d) Keep the clock live
+      and abandon byte-identical prompts, measuring I1 over the frozen region
+      only — which is approach B, already rejected.
+    decision: "NOT chosen here. Slice 5 is blocked on it: building the freeze first would silently pick option (c) by omission, which is the one option nobody has argued for."
+    status: open
   - id: DEBT-22
     found: 2026-07-27
     what: "The base charter still differs between conversational and tool-using turns, which is now the LAST source of system-prompt variance."
