@@ -8,6 +8,8 @@ recalled memory blocks classify produced.
 
 from __future__ import annotations
 
+from typing import Any
+
 from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra import prompt_metrics
 from stackowl.infra.clock import now_local
@@ -20,10 +22,7 @@ from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.skills.instruction_injector import (
     SkillInstructionInjector,
     SkillTier,
-    assign_tiers,
 )
-from stackowl.skills.skill_focus import FOCUS_TRACKER
-from stackowl.skills.skill_relevance import score_owned_skills
 
 _injector = DNAPromptInjector()
 _skill_injector = SkillInstructionInjector()
@@ -151,91 +150,82 @@ async def run(state: PipelineState) -> PipelineState:
                 "[pipeline] assemble: existing-owls block FAILED — skipped",
                 exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
             )
-    # Inject owned-skill playbooks — fail-open (never crash the turn).
-    # Conversational turns are lean: classify already skips marketplace skills for
-    # them, and assemble must match: no skills block so a conversational turn does
-    # not carry needless playbook tokens in its system prompt.
+    # D01.1 slice 4b — a STABLE CATALOGUE, not a per-query selection.
+    #
+    # Bakir's Q9: "Names + descriptions ALWAYS loaded; full body fetched on
+    # demand via tool call." The word that decides the shape is *always*.
+    #
+    # What this replaces had THREE query-dependent paths — score_owned_skills
+    # against state.query_embedding, then assign_tiers choosing which skills got
+    # FULL bodies, then hybrid_recall/semantic_recall for the global catalogue —
+    # and it skipped the block entirely on a tool-free turn. Measured live
+    # 2026-07-27: skills_len went 4169 -> 0 across two turns of ONE conversation,
+    # the largest remaining source of prompt instability.
+    #
+    # Present on EVERY turn, including conversational ones. The old skip existed
+    # so a chat turn did not carry needless playbook tokens — a real concern when
+    # the block injected full BODIES. A catalogue is names and descriptions only,
+    # and this item's whole thesis is that a byte-identical prompt is cheaper
+    # through automatic prefix caching than a per-turn-optimised one: a block
+    # that vanishes on some turns forfeits the cache on every turn, which costs
+    # more than the tokens it saves.
+    #
+    # Depth is not lost. `skill_view` fetches a body when the model decides it
+    # needs one, and slice 4a made that tool independent of the scoring removed
+    # here — otherwise its focus hysteresis would have silently gone to zero.
     skills_block = ""
     store = services.skill_store
-    # Global catalog (skills.global_catalog, default ON) surfaces installed skills
-    # the owl does NOT own as a cheap CATALOG region, so the default Secretary —
-    # which owns no skills — still learns skills exist. Unconfigured (no settings
-    # wired, e.g. settings-less unit tests) ⇒ OFF ⇒ byte-identical baseline.
-    _settings = getattr(services, "settings", None)
-    global_catalog_enabled = (
-        bool(getattr(getattr(_settings, "skills", None), "global_catalog", True))
-        if _settings is not None
-        else False
-    )
     owned_skills = tuple(manifest.skills) if manifest is not None else ()
-    if (
-        store is not None
-        and state.intent_class not in TOOL_FREE_CLASSES
-        and (owned_skills or global_catalog_enabled)
-    ):
+    if store is not None:
         try:
             owned = await store.get_many_by_name(owned_skills) if owned_skills else []
-            pinned = (
-                set(manifest.pinned_skills) & set(owned_skills) if manifest is not None else set()
-            )  # owned-only pins
-            scores = None
-            turn = None
-            if owned and state.query_embedding is not None:
-                turn = FOCUS_TRACKER.begin_turn(state.owl_name, state.session_key)
-                scores = score_owned_skills(
-                    owned, query_embedding=state.query_embedding, tracker=FOCUS_TRACKER,
-                    owl=state.owl_name, session=state.session_key, turn=turn,
-                )
-            tiered = assign_tiers(owned, scores, pinned=pinned)
-            # Append OTHER relevant skills as CATALOG entries — three-tier
-            # fallback (LAT.2): hybrid (keyword+semantic) when both signals are
-            # usable, embedding-only when just the vector is, else the original
-            # unranked list_enabled() (byte-identical to pre-LAT.2 behavior).
+            owned_names = {sk.name for sk in owned}
+            # list_enabled() is the query-INDEPENDENT read that already existed
+            # as the third-tier fallback. It is now the only path.
+            # `skills.global_catalog` still GOVERNS whether skills the owl does
+            # not own appear. Making the catalogue query-independent must not
+            # quietly take away a setting the user controls — it is still read,
+            # still has a reachability probe in the census, and turning it off
+            # still means "only my own skills". Owned skills are unaffected by
+            # it, exactly as before.
+            _settings = getattr(services, "settings", None)
+            global_catalog_enabled = (
+                bool(getattr(getattr(_settings, "skills", None), "global_catalog", True))
+                if _settings is not None
+                else False
+            )
+            unowned: list[Any] = []
             if global_catalog_enabled and hasattr(store, "list_enabled"):
-                owned_names = {sk.name for sk in owned}
-                query_text = state.input_text
-                query_vec = list(state.query_embedding) if state.query_embedding is not None else None
-                if query_text and query_vec is not None and hasattr(store, "hybrid_recall"):
-                    catalog_tier = "hybrid"
-                    catalog_candidates = [
-                        sk for sk, _score in
-                        await store.hybrid_recall(query_text, query_vec, limit=_GLOBAL_CATALOG_K)
-                    ]
-                elif query_vec is not None and hasattr(store, "semantic_recall"):
-                    catalog_tier = "semantic"
-                    catalog_candidates = [
-                        sk for sk, _score in
-                        await store.semantic_recall(query_vec, limit=_GLOBAL_CATALOG_K)
-                    ]
-                else:
-                    catalog_tier = "list_enabled"
-                    catalog_candidates = await store.list_enabled()
-                log.engine.debug(
-                    "[pipeline] assemble: global catalog tier selected",
-                    extra={"_fields": {
-                        "tier": catalog_tier, "candidates": len(catalog_candidates),
-                    }},
-                )
-                tiered = tiered + [
-                    (sk, SkillTier.CATALOG, False)
-                    for sk in catalog_candidates
+                unowned = [
+                    sk for sk in await store.list_enabled()
                     if sk.name not in owned_names
                 ]
+            # Sorted so the block is byte-identical across turns regardless of
+            # the order the store happens to return rows in — an unstable
+            # ordering would defeat the whole point as surely as an unstable
+            # selection.
+            catalogue: list[Any] = sorted(
+                [*owned, *unowned], key=lambda sk: (getattr(sk, "name", "") or ""),
+            )
+            # SUMMARY, not CATALOG. Q9 asks for names AND descriptions; the
+            # CATALOG tier renders bare names ("deploy, pdf") while SUMMARY
+            # renders "- name: description — when_to_use (skill_view name)",
+            # which is the shape Q9 describes and carries the pointer for
+            # fetching the body on demand. Still no bodies: only FULL injects
+            # those, and nothing here asks for FULL.
+            tiered: list[Any] = [(sk, SkillTier.SUMMARY, False) for sk in catalogue]
             if tiered:
                 skills_block = _skill_injector.render(state.owl_name, tiered)
-            if scores is not None and turn is not None:
-                full_names = [sk.name for sk, tier, _p in tiered if tier is SkillTier.FULL]
-                FOCUS_TRACKER.mark_active(state.owl_name, state.session_key, full_names, turn)
             log.engine.debug(
-                "[pipeline] assemble: skills block rendered",
+                "[pipeline] assemble: skill catalogue rendered",
                 extra={"_fields": {
                     "owl": state.owl_name, "skills_len": len(skills_block),
-                    "global_catalog": global_catalog_enabled,
+                    "owned": len(owned), "catalogue": len(catalogue),
                 }},
             )
         except Exception as exc:  # no-hidden-errors: never crash the turn
             log.engine.error(
-                "[pipeline] assemble: skill injection FAILED — skipped",
+                "[pipeline] assemble: skill catalogue FAILED — skipped",
                 exc_info=exc, extra={"_fields": {"owl": state.owl_name}},
             )
     try:

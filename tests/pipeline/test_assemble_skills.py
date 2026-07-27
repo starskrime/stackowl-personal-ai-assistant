@@ -72,10 +72,14 @@ async def test_owned_skill_summary_injected():
     set_services(StepServices(owl_registry=reg, skill_store=_FakeStore([_Sk("research_skill")])))
     from stackowl.pipeline.steps import assemble
     out = await assemble.run(_state())
-    # No query embedding -> fallback: the owned skill is injected (FULL/ACTIVE tier).
+    # D01.1 slice 4b — the owned skill still reaches the prompt, which is this
+    # test's subject. What changed is the TIER: Q9 is "names + descriptions
+    # always loaded; full body fetched on demand", so an owned skill now lands
+    # under AVAILABLE with a skill_view pointer instead of ACTIVE with its body.
     assert "Do the thing." in out.system_prompt
     assert "research_skill" in out.system_prompt
-    assert "ACTIVE" in out.system_prompt
+    assert "AVAILABLE" in out.system_prompt
+    assert "skill_view research_skill" in out.system_prompt
 
 
 @pytest.mark.asyncio
@@ -104,7 +108,13 @@ async def test_assemble_tiers_by_query_embedding():
     state = _state(owl_name="o", query_embedding=(1.0, 0.0))
     out = await assemble.run(state)
     sp = out.system_prompt or ""
-    assert "ACTIVE" in sp and "rel" in sp  # rel relevant -> ACTIVE
+    # D01.1 slice 4b — the INVERSE is now the invariant. Tiering by
+    # query_embedding was removed: it made the block differ per turn, the
+    # largest reason invariant I1 was unreachable (skills_len 4169 -> 0 across
+    # two turns of ONE conversation, measured 2026-07-27). Pinned as a removal,
+    # DEBT-12 style, so query-shaped tiering cannot be quietly reintroduced.
+    assert "ACTIVE" not in sp, "no skill may be promoted to a FULL body by the query"
+    assert "rel" in sp, "but every skill is still catalogued"
 
 
 @pytest.mark.asyncio
@@ -137,7 +147,11 @@ async def test_global_catalog_surfaced_for_default_owl_when_enabled():
     from stackowl.pipeline.steps import assemble
     out = await assemble.run(_state(owl_name="secretary"))
     sp = out.system_prompt or ""
-    assert "CATALOG" in sp
+    # D01.1 slice 4b — the region is rendered with descriptions now rather than
+    # as a bare name list, so the header moved from CATALOG to AVAILABLE. The
+    # subject is unchanged and still asserted below: an owl that owns NO skills
+    # must still learn that installed ones exist.
+    assert "AVAILABLE" in sp
     assert "dl-video" in sp and "hello" in sp
     assert "skill_view" in sp
 
@@ -211,7 +225,10 @@ async def test_global_catalog_routes_to_hybrid_recall_when_both_signals_present(
     state = _state(owl_name="secretary", input_text="download a video",
                     query_embedding=(1.0, 0.0))
     await assemble.run(state)
-    assert store.calls == ["hybrid_recall"]
+    # D01.1 slice 4b — query-shaped retrieval removed. list_enabled() is the
+    # only path now, because hybrid_recall(query_text, query_vec) made the
+    # catalogue depend on what was just typed.
+    assert store.calls == ["list_enabled"]
 
 
 @pytest.mark.asyncio
@@ -226,7 +243,9 @@ async def test_global_catalog_routes_to_semantic_recall_when_only_embedding_pres
     from stackowl.pipeline.steps import assemble
     state = _state(owl_name="secretary", input_text="", query_embedding=(1.0, 0.0))
     await assemble.run(state)
-    assert store.calls == ["semantic_recall"]
+    # D01.1 slice 4b — semantic_recall(query_vec) is query-shaped too, so it
+    # is gone for the same reason as hybrid_recall above.
+    assert store.calls == ["list_enabled"]
 
 
 @pytest.mark.asyncio
@@ -289,9 +308,11 @@ async def test_conversational_turn_gets_no_skills_block():
     from stackowl.pipeline.steps import assemble
     out = await assemble.run(_state(intent_class="conversational"))
     sp = out.system_prompt or ""
-    assert "Do the thing." not in sp, (
-        f"skill summary leaked into conversational system_prompt: {sp!r}"
-    )
-    assert "research_skill" not in sp, (
-        f"skill name leaked into conversational system_prompt: {sp!r}"
-    )
+    # D01.1 slice 4b — INVERTED by Bakir's Q9: "names + descriptions ALWAYS
+    # loaded". The old skip kept chat turns lean, a real concern when the block
+    # injected full BODIES. A catalogue is names and descriptions only, and a
+    # block that vanishes on some turns forfeits the prefix cache on EVERY turn
+    # — costing more than the tokens it saved. Depth still arrives on demand
+    # through skill_view.
+    assert "research_skill" in sp, "the catalogue is present on a conversational turn"
+    assert "skill_view research_skill" in sp, "with the pointer to fetch the body"

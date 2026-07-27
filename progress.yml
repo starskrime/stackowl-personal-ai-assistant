@@ -867,6 +867,33 @@ known_debt:
       comment records ~16 min as its slowest legitimate run. That is the dream
       worker genuinely exceeding 20 minutes, not the RCA budget, and it is NOT
       fixed here. Tracked as DEBT-19 so it is not lost behind this fix.
+  - id: DEBT-22
+    found: 2026-07-27
+    what: "The base charter still differs between conversational and tool-using turns, which is now the LAST source of system-prompt variance."
+    evidence: >
+      base_len read 3768 on tool-using turns and 3684 on a tool-free one — the
+      84-char difference first seen live on 2026-07-27 and originally mistaken
+      for drift in the charter. It is not drift: build_base_prompt drops the
+      ACTION: calling protocol when state.intent_class is in TOOL_FREE_CLASSES.
+    why_it_is_deliberate: >
+      Documented in assemble.py: teaching the calling PROTOCOL to a turn with
+      nothing to call gave a less instruction-following model a pattern to
+      imitate with nothing behind it — traced live as a plain conversational
+      reply being flagged and floored as an unparsed tool-call attempt. So this
+      is a real defence, not an oversight.
+    why_it_matters_now: >
+      After slices 1, 3, 4a and 4b, every other part of the prompt is stable per
+      (session_key, owl_name). This is the only remaining reason invariant I1
+      can fail, and it fails exactly when a conversation mixes chat turns with
+      working turns — which is the normal case.
+    the_options: >
+      Either the protocol becomes unconditional (paying the imitation risk the
+      comment documents, possibly mitigated by wording), or I1 is scoped to
+      turns of the same intent class, or the intent-class split becomes part of
+      the prompt cache key — which would mean two frozen prompts per lane rather
+      than one.
+    decision: "NOT resolved inside slice 4b. It is a genuine design decision about a documented safety behaviour, not a mechanical follow-on, and folding it into a slice about skills would have buried it."
+    status: open
   - id: DEBT-21
     found: 2026-07-27
     what: "D01.1's invariant I1 cannot be measured correctly — cost_records has no owl_name, and I1 as written counts a correct design as a violation."
