@@ -242,403 +242,59 @@ deployment:
 current:
   wave: 1
   item: D01.1
-  stage: implement
-  stage_status: in_progress
-  d01_1_resume:
-    started: 2026-07-27
-    why_it_is_unblocked: >
-      implement_blocked_by was [D01.6, D01.7]. D01.6 is closed. D01.7's session
-      lifecycle is live — lanes, incarnations, rollover and the transcript are
-      all working on the platform — which was the actual prerequisite: "build
-      the prompt once per session" is meaningless until a session can start and
-      end. D01.7's own remaining stages (validate, document) do not gate this.
-    before_touching_code_the_design_doc_was_re_verified: >
-      It was stamped against commit eb079ea1 on 2026-07-25, before all of D01.7
-      and before today's debt work. Four drift items were found and corrected —
-      see designs/D01.1.md's own correction block. The worst was NOT a typo: its
-      Verification step 3, which is the item's pass/fail gate, pointed at
-      ~/.stackowl/stackowl.db, which EXISTS as a zero-byte file with no tables
-      (debris from DEBT-2's original wrong command, created 2026-07-25 12:27).
-      The live DB is ~/.stackowl/workspace/stackowl.db. A reader adapting that
-      command would have read "no rows" as though the invariant held — a silent
-      false PASS on the one command that decides whether this item worked.
-    slices:
-      implement_complete:
-        date: 2026-07-27
-        what: "All of D01.1's implement work is shipped and live."
-        the_order_mattered_more_than_it_looked: >
-          The freeze is this item's headline and it went LAST. Freezing earlier
-          would have pinned whichever value the first turn happened to carry —
-          the undelivered banner, the per-turn recall, the query-scored skills,
-          the wall-clock. Each had to leave the prompt first. Five slices
-          preceded a change that is itself about forty lines.
-        shipped:
-          - "slice 1 — the next-contact banner left the prompt for its own delivered chunk"
-          - "slice 2 — SessionPromptStore + migration 0102"
-          - "slice 3 — stable user profile in, query-scoped recall out (keeping prefs + lessons)"
-          - "lessons — selected by owl identity rather than by the question"
-          - "slice 4a — the focus clock stopped needing assemble to seed it"
-          - "slice 4b — skills became a stable catalogue (names + descriptions, bodies on demand)"
-          - "stage 1 — the STABLE and VOLATILE tiers named"
-          - "stage 2 — the wall-clock left the system prompt and rides the turn"
-          - "slice 5 — THE FREEZE: built once per (session_key, owl_name), reused verbatim"
-        what_validate_still_needs: >
-          A restart plus a couple of real turns. The platform was restarted
-          2026-07-27 on the frozen-prompt code and booted clean (0
-          ERROR/CRITICAL, 0 dangling, schema 0103) but no turn has run since:
-          RCA stopped firing once DEBT-6 and DEBT-18 removed the incidents that
-          drove it, and there is no CLI command that drives a single turn. So
-          the I1 measurement needs Bakir, exactly as the /new validation did.
-        the_query_that_decides_it: >
-          SELECT session_id, owl_name, COUNT(DISTINCT prompt_hash), COUNT(*)
-          FROM cost_records WHERE session_id != '' GROUP BY session_id, owl_name
-          — expected distinct == 1, where it read 2, 3 and 4 all session. Also
-          expect '[pipeline] assemble: prompt source' with source=cold_build ONCE
-          per conversation and source=cached for every turn after.
-      plan: >
-        1) move the volatile banner off the prompt, 2) SessionPrompt persistence
-        (migration + store), 3) assemble becomes lookup + cold build, 4) skills ->
-        catalogue and memory -> user profile, 5) invalidation on rollover.
-      slice_1_done:
-        date: 2026-07-27
-        what: "The next-contact banner left the system prompt."
-        the_gap_it_closed: >
-          assemble.py builds SEVEN parts; the design accounted for six. The
-          seventh is the undelivered_outbox banner, and it is volatile BY DESIGN
-          with a side effect (mark_surfaced — shown exactly once). A prompt built
-          once per session and reused byte-identically cannot carry it: it would
-          be baked into every turn of that session, or arrive too late to be
-          seen. The architect stage missed it.
-        it_is_a_real_feature_not_a_curiosity: >
-          First reported as "never fired" on the strength of banner_len=0 across
-          464 assembles — but that was only the 7 days of retained logs. The live
-          table holds 165 rows. It is the Arc B undeliverable-message safety net:
-          a proactive message that could not be delivered is parked rather than
-          lost, then shown once the next time the user talks. Corrected before
-          Bakir decided, because "never fires" would have made the decision look
-          free.
-        decision: "Bakir, 2026-07-27 — move it OUT of the system prompt and deliver it as a user-visible message, keeping invariant I1 strict and literal."
-        how: >
-          Carried on the new PipelineState.pending_banner, set by assemble and
-          written by deliver as the FIRST chunk of the turn. Also truer to the
-          feature's intent: render_banner's own docstring says the body is shown
-          verbatim "so the user reads what was actually going to be sent", which
-          the owl paraphrasing it never guaranteed.
-        three_existing_tests_encoded_the_old_location: >
-          They asserted the banner lands in system_prompt. Updated to the new
-          surface rather than deleted — the behaviour change is Bakir's explicit
-          decision, and the assertions about show-ONCE semantics and the
-          delegated-turn gate are untouched. Called out here because the standing
-          rule is to stop rather than silently rewrite a failing test; this is
-          the case where the requirement itself moved.
-        capability_preserved: >
-          Two new tests drive the REAL delivery path and read what the user would
-          actually see — the banner arrives, it leads the reply, and an empty
-          banner adds nothing at all (not even a blank line). Asserting only that
-          it left the prompt would have been a way to delete a feature and call
-          it a refactor.
-        verified: "24 passed in the outbox gate suite; 1040 in tests/pipeline; 110 in tests/notifications. ruff 46 / mypy 78, both baselines."
-      slice_2_done:
-        date: 2026-07-27
-        what: "SessionPromptStore + migration 0102 — persistence for the frozen prompt."
-        persisted_not_cached: >
-          A deliberate divergence from Hermes, who keep an in-memory LRU of live
-          agent objects because their gateway restarts rarely. StackOwl's core
-          os.execv's itself on every code change, so an in-memory cache would be
-          discarded continuously — during exactly the development in which stable
-          measurements matter most.
-        the_key_is_earned_not_assumed: >
-          (session_key, owl_name). The live logs show the staged RCA driving three
-          owls — rca_gatherer, hypothesis, verifier — against ONE incident
-          session_key, appearing as three different persona_len values on the same
-          lane. So keying on the lane alone would have served one owl's persona to
-          another. Measured, not reasoned.
-        why_session_id_is_stamped_not_keyed: >
-          Storing the INCARNATION the prompt was built for makes invariant I6
-          self-enforcing: after a rollover mints a new session_id the row no longer
-          matches and the next turn cold-builds — no invalidation job, no listener,
-          no way to forget. Keeping it OUT of the primary key is what holds this at
-          one row per (lane, owl) rather than accumulating one per incarnation
-          forever. Same reasoning as D01.7's summary_enqueued_for.
-        two_judgement_calls_pinned_by_tests:
-          - "An EMPTY prompt is never persisted — a cold build that produced nothing is a failure to assemble, not a prompt worth freezing, and storing it would pin that failure for the whole session."
-          - "The hash is DERIVED from the text on save rather than accepted from the caller: it is what invariant I1 is measured with, so the two must not be able to disagree."
-        no_owner_id_deliberately: "The parent `sessions` table has none — D01.7 scopes a lane by identity_key, and a prompt table inventing a different scoping model would be the more confusing choice."
-        verified: "7 new tests (red first); tests/sessions 142 passed, up from 135. Migration 0102 applied and idempotent on re-run. ruff 46 / mypy 78, both baselines."
-      slice_3_done:
-        date: 2026-07-27
-        what: "The volatile half of memory left the prompt; a stable user profile took its place."
-        the_collision_the_design_missed: >
-          D01.1 treated `memory_context` as ONE thing — "per-turn memory recall"
-          — and moved it wholesale to the `memory` tool. It is actually SIX
-          channels composed in classify.py: prefs_block, skills_block,
-          lessons_block, actions_block, context, graph_context. Removing the
-          block therefore switched off the outputs of two COMPLETED arcs: the
-          preference-learning arc and the reflect->recall loop.
-        how_it_was_caught: >
-          By the gateway integration test the standing rules mandate —
-          test_reflect_recall_gateway_integration (Story 1.1 Task 3, NFR-4) went
-          red because a published reflection stopped reaching a later turn. A
-          unit-test-only suite would have passed this through.
-        why_the_architect_stage_was_blind_to_it: >
-          classify's exit log is at DEBUG and the live level is INFO, so its
-          per-channel sizes never reach the log. That is exactly the blindness
-          D01.6 fixed for assemble by promoting its exit to INFO — and never
-          fixed for classify. Recorded as DEBT-20.
-        decision: >
-          Bakir, 2026-07-27 — KEEP prefs + lessons in the prompt, drop the
-          query-scoped rest. His earlier `recall_risk: ACCEPTED` was about memory
-          being weak; it was not a decision to stop feeding the owl its own
-          learned lessons, and the model cannot be relied on to call a tool to
-          fetch them.
-        how: >
-          classify now also exposes `stable_context` (prefs + lessons) alongside
-          the unchanged `memory_context`. assemble puts `profile` +
-          `stable_context` in the prompt; `memory_context` stays on the state for
-          execute's grounding haystacks. Moved, not deleted.
-        also: >
-          New memory/user_profile.py loads ~/.stackowl/USER.md verbatim — a plain
-          file the user can open and edit (Q6), returning "" for missing,
-          unreadable or whitespace-only, so a profile never costs a reply (I2).
-        four_tests_translated_not_weakened: >
-          Three unit tests used memory_context as a VEHICLE to prove persona
-          ordering, self-heal on a broken registry and quiet unknown-owl
-          degradation; one literally passed "## Learned Preferences". Their
-          fixtures moved to stable_context, which is where that content now
-          travels. Each test's actual subject is unchanged.
-        verified: "tests/pipeline 1044 passed (up from 1040); 6 new profile tests; NFR-4 integration green again. ruff 46 / mypy 78, both baselines."
-      slice_4_blocked_finding:
-        date: 2026-07-27
-        status: "NOT STARTED — analysed, and it is not the clean swap the design describes."
-        the_skills_block_is_definitively_volatile: >
-          Established from the CODE, not from logs (which is the part that
-          actually matters — the logs would only have given magnitude). assemble
-          scores owned skills against state.query_embedding via
-          score_owned_skills -> assign_tiers, which decidesWHICH skills get FULL
-          bodies; the global catalog uses hybrid_recall(query_text, query_vec) or
-          semantic_recall(query_vec), with only the list_enabled() fallback being
-          query-independent. Three query-dependent paths.
-        the_entanglement_the_design_missed: >
-          assemble also calls FOCUS_TRACKER.begin_turn(...) and mark_active(...)
-          inside that same scoring block. tools/knowledge/skill_view.py — the
-          on-demand body tool the design names as THE fallback for removed skill
-          bodies — calls FOCUS_TRACKER.current_turn(owl, session) and
-          mark_viewed(...). So skill_view's own bookkeeping is SEEDED by the code
-          the design says to delete. "Bodies move to skill_view" is therefore not
-          a clean swap: removing the scoring block degrades the very tool that is
-          supposed to replace it.
-        why_this_is_recorded_rather_than_built: >
-          It is the same shape as slice 3's near-miss, where treating six
-          channels as one nearly switched off two completed arcs. The lesson from
-          that slice was to understand the seam before removing it, and acting
-          against that lesson immediately afterwards would be the wrong call.
-          directive_latch.py was checked and only MIRRORS the singleton pattern
-          in a comment — it is not a real consumer.
-        what_it_needs_next:
-          - "Decide what happens to FOCUS_TRACKER.begin_turn/mark_active when the per-turn scoring goes: either assemble still opens a turn cheaply without scoring, or skill_view stops depending on an assemble-seeded counter."
-          - "A real turn on the platform, so DEBT-20's now-INFO per-channel numbers can size the catalogue against what scoring produces today."
-      first_real_measurement_2026_07_27:
-        how: "Bakir sent /new and one message on Telegram — the first pipeline turns since the DEBT-20 log fix."
-        finding_1_new_is_broken:
-          severity: "D01.7 defect — /new has NEVER worked."
-          evidence: >
-            '[commands] new.handle: exit — no lane to end' with
-            fields.session_key = "72055773", while the stored lane is
-            "owl:secretary:telegram:dm:72055773". start_new_incarnation() found
-            nothing and returned None, so the command silently did nothing and
-            logged it at INFO, which reads like a benign no-op.
-          root_cause: >
-            Commands are dispatched at the GATEWAY, before routing
-            (scanner.scan: command route). The composite lane is keyed on the
-            OWL, and the owl is a routing OUTPUT — _resolve_incarnation runs
-            AFTER routing for exactly that reason. So at command time the
-            composite lane does not exist yet and state.session_key is still the
-            channel-native id.
-          it_is_the_fifth_instance: >
-            The D01.7 hand-off listed four "registered but unreachable" defects
-            found inside that one item and said to assume the next one is there.
-            This is it, and it was invisible because both turns still worked:
-            branch=existing, reason=null, the same session_id from 2026-07-26
-            09:41 carried straight through the /new.
-          blocks: "D01.7 validate. The rollover -> job -> miner -> summary -> promotion chain cannot be exercised until /new can end a lane."
-        finding_2_invariant_I1_fails_today:
-          measured: "TWO distinct prompt_hash across the TWO turns — 3903d3a92e94425f (11161 chars) and 6600b739f20252fa (6331)."
-          three_sources_of_variance_with_numbers:
-            base: "3768 -> 3684. The charter itself varies by 84 chars between two turns minutes apart. NOT investigated yet; it was assumed stable, and the earlier per-part sampling happened to show 3768 throughout."
-            skills: "4169 -> 0. The second turn was tool-free (TOOL_FREE_CLASSES), which skips the skills block entirely. So the block is not merely query-scored, it is sometimes absent."
-            lessons: "1097 -> 765."
-        finding_3_my_own_slice_3_naming_is_wrong:
-          what: >
-            `stable_context` is NOT stable. Its two halves behave differently:
-            prefs_len was 252 on BOTH turns (genuinely stable), but lessons_len
-            was 1097 then 765 — lessons are recalled by relevance to the query,
-            exactly like the recall this item moved out.
-          consequence: >
-            Slice 3 kept lessons in the prompt to protect the reflect->recall arc
-            (correct, and the NFR-4 test proves it still works), but doing so
-            keeps a query-scoped part in the prompt, so I1 cannot hold as long as
-            lessons are matched to the query. The two goals collide and the
-            design does not address it.
-          the_honest_options: >
-            Either lessons become query-INDEPENDENT in the prompt (e.g. the N
-            most recent or highest-weighted, identical every turn of a session)
-            and depth stays reachable via the memory tool, or they leave the
-            prompt and the reflect->recall guarantee moves to a different seam.
-            Needs Bakir.
-        second_measurement_after_the_new_fix:
-        i1_by_incarnation: >
-          20260726_232710_f7fd846d (the fresh one): 2 distinct prompt_hash / 6
-          turns. The older ones: 4/16, 3/8, 3/8. Still failing, but the ratio
-          improved — and the reason it can never reach 1 as I1 is literally
-          written is the finding below.
-        I1_AS_WRITTEN_IS_UNACHIEVABLE_ON_A_MULTI_OWL_LANE: >
-          designs/D01.1.md states I1 as "within one session_id, every turn sends
-          a byte-identical system prompt", measured by
-          COUNT(DISTINCT prompt_hash) GROUP BY session_id. But a lane can run
-          SEVERAL owls: the staged RCA drives rca_gatherer, hypothesis and
-          verifier against one incident lane, and the live prompts show
-          persona_len cycling 291 / 252 / 255 / 303 within a single incarnation.
-          Different owls MUST have different prompts — that is invariant I6 and
-          the whole reason the key is (session_key, owl_name). So grouping by
-          session_id alone counts a correct design as a violation.
-        the_measurement_spine_cannot_express_the_real_invariant: >
-          The honest invariant is "within one (session_id, owl_name), byte-
-          identical". cost_records carries session_key and session_id but NOT
-          owl_name, so D01.6's spine cannot currently group the right way. Either
-          cost_records gains owl_name, or I1 is measured from the assemble log
-          instead. Recorded as DEBT-21 rather than quietly measuring the easy
-          thing and calling it the invariant.
-        base_is_stable_after_all: >
-          All seven prompts on the new incarnation show base_len=3768. The
-          earlier 3768 -> 3684 came from ONE tool-free turn, not from drift in
-          the charter, so the 84-char question raised earlier is answered and
-          closed.
-        lessons_confirmed_query_scoped: "stable_context_len across the new incarnation: 687, 43, 1142, 478, 1142 — varying exactly as the first measurement suggested, which is what Bakir's query-independent-lessons decision now addresses."
-      what_this_vindicates: >
-          The refusal to build slice 4 blind. Had the skills block been converted
-          on assumption, this measurement would still have shown I1 failing, and
-          the cause would have been buried under a fresh change.
-    the_measured_before_state: >
-      3 distinct prompt_hash across 8 turns on two real conversations; 2 across
-      6 and 2 across 5 on others. 1103 rows carry a prompt_hash, so D01.6's
-      spine works. This CORRECTS the draft's assumption of "distinct == turns"
-      (a fresh prompt every single turn): the prompt is rebuilt every turn but
-      only DIFFERS at some, so the instability comes from the parts that vary
-      with the query — per-turn memory recall and the relevance-scored skills
-      block — which are precisely the two this item moves to on-demand tools.
-      Validation must not read "3" as partial success; 3 is the starting point.
-  slice: >
-    IMPLEMENT IS COMPLETE. All of slice 3 shipped: 3a.1-3a.3, 3b parts 1-7b.
-    Migrations 0092-0100. Remaining stages for D01.7: cleanup, test, validate,
-    document.
-  resume_here:
-    read_first: >
-      This block, then docs/hermes-mapping/designs/D01.7.md — its Verification
-      section is eight commands, every one of which was run against this tree.
-      Then the D01.7 `decisions` list, especially the slice-3b design round: it
-      SUPERSEDES parts of the original brainstorm.
-    one_line: >
-      D01.7's implement stage is DONE and live. The three debts Bakir picked
-      (DEBT-6, DEBT-7, DEBT-12) are ALL RESOLVED, verified live and pushed as of
-      2026-07-26. Next: D01.7's last four stages (cleanup, test, validate,
-      document), then D01.1.
-    session_2026_07_26_second_half:
-      completed:
-        - "DEBT-6 — root cause was health_check() probing with max_tokens=1 and no disable_thinking. Fixed, verified live (18 sweeps, 0 empty completions). Commits 7e07e1e4, 947ce738."
-        - "DEBT-7 — was THREE defects, not one. Fixed, 0 dangling on both processes. Commits 6b8e8e62, 5e161db7, ffab7db6, d8486cf6."
-        - "DEBT-12 — the removed ceiling is now pinned as an invariant. Commit 3120e7ff."
-      found_along_the_way:
-        - "DEBT-14 — tests/scheduler/test_scheduler_assembly.py hangs on execution. Pre-existing, proven in a worktree."
-        - "DEBT-15 — the live model is unpriced, so D01.6's headline $2.85 and its whole cost table are fallback-derived. Decision taken, NOT implemented."
-        - "DEBT-16 — eleven tests/smoke failures across five files. Pre-existing, proven in a worktree."
-      the_correction_worth_reading: >
-        DEBT-6 was recorded as "3+ times in a 5-message conversation", implying
-        user turns were failing. They were not: 262 health sweeps against 261
-        empty completions that day, session_key NULL on all 261. Background
-        probes fired DURING the conversation, not because of it. designs/
-        D01.6-baseline.md carried that wrong framing and has been corrected.
-    verify_the_platform_still_works_before_you_start:
-      - "./start.sh   # then confirm 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
-      - "timeout 600 uv run pytest tests/sessions/ -q -p no:randomly   # expect 129 passed"
-      - "uv run python -m stackowl db migrate   # expect: up to date (version 0100)"
-      - "uv run python -m stackowl health   # expect provider:NeraAiRaw ok; browser degraded is normal"
-    next_task_in_order:
-      1: "cleanup — X3 is resolved architecturally; confirm no dead code from the rename or the deleted extraction_handler."
-      2: "test — gateway-driven integration from business requirements, mocking ONLY the provider."
-      3: >
-        validate — NEEDS BAKIR AT THE KEYBOARD. One `/new` on Telegram proves the
-        whole chain end-to-end: rollover -> job -> miner -> narrative summary ->
-        promotion. Part 4 is ALREADY validated live (counters move, identity
-        stamped). Nothing else is blocked on him.
-        BONUS as of 2026-07-26: the same `/new` now also exercises DEBT-7's
-        conversation cost report, which subscribes to the SAME boundary — expect
-        '[cost] conversation_cost: exit — reporting a finished conversation'
-        with a non-zero total_usd.
-      4: "document — close designs/D01.7.md, re-stamp date + commit, confirm every Invariant maps to a real test."
-      5: "then D01.1 (implement onward — brainstorm and architect are already done), D01.2, D01.4, D01.5."
-      not_blocking_but_queued: >
-        DEBT-15 (pricing honesty) is DECIDED and unimplemented. Worth doing
-        before anything else that reasons about cost, including D01.1's success
-        criteria — every dollar figure the platform reports today, and every one
-        in the D01.6 baseline, comes from a placeholder rate.
-    the_pattern_to_watch_for:
-      name: "Registered but unreachable"
-      why_it_is_here: >
-        FOUR separate instances were found inside this one item, each of which
-        looked finished and did nothing: a fact-extraction handler registered at
-        boot that nothing ever enqueued; a turn_count that was persisted and
-        published but never incremented; a summary type the promoter could never
-        commit because it required corroboration nothing would ever supply; and a
-        busy-check that would have read False for every lane had it used the
-        owner-scoped stores. Every one passed its tests.
-      how_they_were_caught: "By MEASURING the live database and logs against what the code claimed, not by reading the code. Assume the next one is there."
-    do_not_be_surprised_by:
-      - "tests/commands/test_config_meta.py fails — DEBT-3, pre-existing, unrelated."
-      - "Three tests/memory tests fail whenever the platform is RUNNING — DEBT-9, they build against the real ~/.stackowl and lose the kuzu lock. test_assembly's failure is raised inside KuzuAdapter init, before components are returned."
-      - "mypy src/ reports 78 and ruff src/ 46; tests/ ruff reports 285. All three are tracked pre-existing baselines (DEBT-8, DEBT-1). Diff against them; do not chase them to zero."
-      - "The word `session` means FIVE things in this tree: a conversation lane, a parliament debate, a browser page, a named owl session, and ConversationMiner.mine_session's argument (which is actually an OWNER scope, not a session key at all)."
-      - "owls/shadow_validator is DELIBERATELY not wired onto a runner lane — it replays past outcomes, and a lane would give a replay a transcript and a summary. Its docstring states the intent. Do not 'complete' it."
-      - "The VPN drops sometimes. When every provider goes unreachable at once, `getent hosts llm-gateway.dev.nera.gov` distinguishes a dead tunnel from a real outage in one command; `sudo systemctl restart gp-vpn` then needs Bakir to approve a DUO push."
-    resume_pending_is_not_wired: >
-      The flag, its policy branch, its persistence and its tests all exist, but
-      NOTHING SETS IT. Q6's crash-recovery path (synthesise a message event and
-      auto-continue) is unbuilt, so an interrupted turn is currently lost rather
-      than resumed. Called out because the code reads as though it is finished.
-  live_state: >
-    Platform restarted 2026-07-26 on the part-7b code: ZERO ERROR/CRITICAL, schema
-    at 0100, provider NeraAiRaw ok (~760ms) after the VPN tunnel was restored.
-    The live lane owl:secretary:telegram:dm:72055773 carries message_count=1,
-    completed_turns=1 and identity_key=72055773 — all three read 0/0/NULL before
-    migration 0096, which is what validated part 4 on the platform.
-    conversation_sweep runs every 5 minutes reporting finalized / skipped_active /
-    summaries_recovered, and registers with all four I4 conditions wired.
-  brainstorm_round: "COMPLETE — 24 questions, 6 rounds. Architect COMPLETE — OA1 resolved, at_hour signed off."
-  stale_header_corrected:
-    date: 2026-07-25
-    what: >
-      This block read `stage: architect / in_progress` while the D01.7 item body read
-      `architect: done, implement: in_progress` and two implement slices were already
-      committed. The item body and the git log agreed; this header did not.
-    why_it_matters: >
-      The header is what the next agent reads first. A stale header sends it to redo a
-      finished stage. Corrected here, and `blocked_by` was declared twice in this same
-      block (lines 247 and 261) — the duplicate key is removed.
-  note_2: >
-    D01.6 CLOSED — all seven stages complete, baseline captured, D01.1 unblocked.
-    D01.7 slices 1+2 committed. at_hour signed off at 4 AM.
-  previous: "D01.1 brainstorm done (25 questions answered, Approach A approved) + architect done (design doc written)."
-  order_change:
-    date: 2026-07-25
-    decision: "Bakir (Q15): build D01.6 measurement BEFORE D01.1 implementation."
-    reason: >
-      Prompt composition is unmeasurable today — assemble logs per-part sizes at
-      debug() and the live log level is INFO, so 0 of 17403 log lines carry them.
-      Without a baseline we cannot prove the fix worked. D01.6 moves to order 1.
-    effect: "D01.1 brainstorm+architect proceed now; D01.1 implement is BLOCKED on D01.6 validate."
-  note: >
-    Walk order is by `wave` then `order`. D01 first because the two CONFLICT items
-    gate the value of most of the 42 MISSING items — fixing anything else first means
-    paying full input price on every turn while we build it.
+  stage: cleanup
+  stage_status: not_started
+  one_line: >
+    D01.1's implement AND validate are DONE — invariant I1 holds on the live
+    platform. Three stages remain: cleanup, test, document. Then D01.2, D01.4,
+    D01.5, D01.3.
+  read_first: >
+    This block, then docs/hermes-mapping/designs/D01.1.md. Then the D01.1 item's
+    `validate_result` and `slices` blocks — they record what was built, in what
+    order, and WHY the order mattered.
+  the_headline: >
+    THE CONFLICT IS RESOLVED, not merely described. Two messages 74 seconds
+    apart produced six model calls sharing ONE prompt_hash
+    (aad8651ec66f6502). The baseline captured at the start of this item was 3
+    distinct prompts across 8 turns. It is now 1.
+  verify_the_platform_before_you_start:
+    - "./start.sh   # then expect 0 ERROR/CRITICAL and 0 DANGLING in ~/.stackowl/logs/stackowl.jsonl"
+    - "uv run python -m stackowl db migrate   # expect: up to date (version 0103)"
+    - "timeout 500 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1061 passed"
+    - "timeout 500 uv run pytest tests/sessions/ -q -p no:randomly   # expect 147 passed"
+    - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
+  next_task_in_order:
+    1: >
+      cleanup — D01.1 made things obsolete that are still present. assemble.py
+      no longer uses score_owned_skills/assign_tiers/FOCUS_TRACKER (4b removed
+      the scoring); operational_adapter() and build_base_prompt() still exist
+      and still carry the clock, but nothing in the turn path calls them since
+      stage 2. Check for dead code and unused settings before removing anything
+      — `skills.global_catalog` looked dead in 4b and was NOT.
+    2: >
+      test — gateway-driven integration from BUSINESS requirements, mocking ONLY
+      the provider. The obvious one: two turns through the real pipeline assert
+      ONE prompt_hash. Note the existing gateway smoke tests are the pattern
+      (tests/pipeline/test_phaseA_react_gateway_smoke.py).
+    3: >
+      document — close designs/D01.1.md: status -> live, re-stamp date + commit,
+      confirm every Invariant maps to a real test, and RE-RUN the Verification
+      section rather than trusting it. That section had FOUR drift items when
+      this item started, one of which (a zero-byte stackowl.db) would have
+      produced a silent false PASS.
+    4: "then D01.2 (likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching is automatic), D01.4, D01.5, D01.3."
+  the_pattern_that_caught_everything_this_session:
+    name: "Measure before changing; the code alone will lie to you"
+    instances:
+      - "`memory_context` looked like one thing and was SIX channels — removing it wholesale nearly switched off the preference-learning and reflect->recall arcs. Caught by the NFR-4 gateway test."
+      - "`base_len` read a constant 3768 for days while prompt_hash kept changing — stable in LENGTH, unstable in bytes, because the clock was rendered to the minute."
+      - "`FOCUS_TRACKER` looked like assemble's private business; skill_view depended on it, and removing the scoring would have sent focus hysteresis silently to zero."
+      - "`skills.global_catalog` looked dead; it is a live user-facing setting with a reachability probe. I removed it by accident and the tests caught me."
+      - "`/new` looked finished and had NEVER worked — the composite lane it looked up cannot exist at command time."
+  what_needs_bakir:
+    - "DEBT-17 — one assertion; he decides what it should say instead of the exact hint string."
+    - "Nothing else is blocked on him. Validation now needs only ordinary use, not a special action."
+  known_open_debt: "DEBT-1, 3, 8, 9, 14, 16, 17, 19. See known_debt for evidence and decisions."
 
 # ---------------------------------------------------------------------------
 # WALK ORDER — waves, in sequence
@@ -1719,7 +1375,7 @@ items:
       implement:  done
       cleanup:    not_started
       test:       not_started
-      validate:   not_started
+      validate:   done
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.1.md"
     doc_last_verified: 2026-07-27
