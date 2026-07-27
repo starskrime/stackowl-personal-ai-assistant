@@ -255,43 +255,49 @@ current:
       Then the D01.7 `decisions` list, especially the slice-3b design round: it
       SUPERSEDES parts of the original brainstorm.
     one_line: >
-      D01.7's implement stage is DONE and live. Bakir picked three debts to clear
-      next (DEBT-6, DEBT-7, DEBT-12), then D01.7's last four stages, then D01.1.
+      D01.7's implement stage is DONE and live. The three debts Bakir picked
+      (DEBT-6, DEBT-7, DEBT-12) are ALL RESOLVED, verified live and pushed as of
+      2026-07-26. Next: D01.7's last four stages (cleanup, test, validate,
+      document), then D01.1.
+    session_2026_07_26_second_half:
+      completed:
+        - "DEBT-6 — root cause was health_check() probing with max_tokens=1 and no disable_thinking. Fixed, verified live (18 sweeps, 0 empty completions). Commits 7e07e1e4, 947ce738."
+        - "DEBT-7 — was THREE defects, not one. Fixed, 0 dangling on both processes. Commits 6b8e8e62, 5e161db7, ffab7db6, d8486cf6."
+        - "DEBT-12 — the removed ceiling is now pinned as an invariant. Commit 3120e7ff."
+      found_along_the_way:
+        - "DEBT-14 — tests/scheduler/test_scheduler_assembly.py hangs on execution. Pre-existing, proven in a worktree."
+        - "DEBT-15 — the live model is unpriced, so D01.6's headline $2.85 and its whole cost table are fallback-derived. Decision taken, NOT implemented."
+        - "DEBT-16 — eleven tests/smoke failures across five files. Pre-existing, proven in a worktree."
+      the_correction_worth_reading: >
+        DEBT-6 was recorded as "3+ times in a 5-message conversation", implying
+        user turns were failing. They were not: 262 health sweeps against 261
+        empty completions that day, session_key NULL on all 261. Background
+        probes fired DURING the conversation, not because of it. designs/
+        D01.6-baseline.md carried that wrong framing and has been corrected.
     verify_the_platform_still_works_before_you_start:
       - "./start.sh   # then confirm 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
       - "timeout 600 uv run pytest tests/sessions/ -q -p no:randomly   # expect 129 passed"
       - "uv run python -m stackowl db migrate   # expect: up to date (version 0100)"
       - "uv run python -m stackowl health   # expect provider:NeraAiRaw ok; browser degraded is normal"
     next_task_in_order:
-      1: >
-        DEBT-6 — empty completions. NeraAiRaw returns reasoning but no visible
-        content; every occurrence burns a FULL PAID CALL and yields nothing, 3+
-        times in a 5-message conversation. Prime suspect: a reasoning model
-        spending max_tokens on reasoning_content before emitting any content,
-        which would make it a token-budget bug rather than a provider fault. Use
-        systematic-debugging; find the cause before proposing a fix. Highest
-        real-money impact of anything open.
-      2: >
-        DEBT-7 — budget alerting can never fire ('budget_80pct_alert' and
-        'budget_exceeded' are subscribed with NO publisher). HARD CONSTRAINT from
-        Bakir, 2026-07-26: the alert is INFORMATIVE ONLY and must never block,
-        gate, throttle or abort a turn. The subscriber name says "exceeded"; it is
-        not a limit.
+      1: "cleanup — X3 is resolved architecturally; confirm no dead code from the rename or the deleted extraction_handler."
+      2: "test — gateway-driven integration from business requirements, mocking ONLY the provider."
       3: >
-        DEBT-12 — tests/smoke/test_e8_s3_sessions_spawn_telegram_smoke.py cannot be
-        COLLECTED (imports MAX_LIVE_SESSIONS, removed by d9b83115 in the
-        numeric-limits arc). An uncollectable test aborts the whole selection. BRING
-        BAKIR THE ASSERTION rather than inventing one — standing rule against
-        autonomously rewriting a failing test.
-      4: "cleanup — X3 is resolved architecturally; confirm no dead code from the rename or the deleted extraction_handler."
-      5: "test — gateway-driven integration from business requirements, mocking ONLY the provider."
-      6: >
         validate — NEEDS BAKIR AT THE KEYBOARD. One `/new` on Telegram proves the
         whole chain end-to-end: rollover -> job -> miner -> narrative summary ->
         promotion. Part 4 is ALREADY validated live (counters move, identity
         stamped). Nothing else is blocked on him.
-      7: "document — close designs/D01.7.md, re-stamp date + commit, confirm every Invariant maps to a real test."
-      8: "then D01.1 (implement onward — brainstorm and architect are already done), D01.2, D01.4, D01.5."
+        BONUS as of 2026-07-26: the same `/new` now also exercises DEBT-7's
+        conversation cost report, which subscribes to the SAME boundary — expect
+        '[cost] conversation_cost: exit — reporting a finished conversation'
+        with a non-zero total_usd.
+      4: "document — close designs/D01.7.md, re-stamp date + commit, confirm every Invariant maps to a real test."
+      5: "then D01.1 (implement onward — brainstorm and architect are already done), D01.2, D01.4, D01.5."
+      not_blocking_but_queued: >
+        DEBT-15 (pricing honesty) is DECIDED and unimplemented. Worth doing
+        before anything else that reasons about cost, including D01.1's success
+        criteria — every dollar figure the platform reports today, and every one
+        in the D01.6 baseline, comes from a placeholder rate.
     the_pattern_to_watch_for:
       name: "Registered but unreachable"
       why_it_is_here: >
