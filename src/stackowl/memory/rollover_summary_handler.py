@@ -84,10 +84,19 @@ _FENCE_CLOSE_RE = re.compile(r"\n?```\s*$", re.UNICODE)
 #: transcript to a single call.
 _MAX_MESSAGES = 400
 
+# Scoped to the CONVERSATION'S OWN owner, not to a constructor default.
+# `messages` is owner-governed (migration 0043), and matching on
+# conversation_id alone would summarise a foreign row that merely claims the
+# same conversation into this owner's day. Deriving the owner from the
+# conversation row keeps this correct under multiple principals WITHOUT the
+# handler having to know whose boundary it is — a default would read nothing
+# for every non-default principal, which is the silent no-op trap documented
+# on any_active_task_for_lane.
 _TRANSCRIPT_SQL = """
 SELECT role, content
 FROM messages
 WHERE conversation_id = ?
+  AND owner_id = (SELECT owner_id FROM conversations WHERE id = ?)
 ORDER BY created_at ASC, id ASC
 LIMIT ?
 """
@@ -241,7 +250,8 @@ class RolloverSummaryHandler(JobHandler):
         summarise a previous run of the same conversation.
         """
         rows = await self._db.fetch_all(
-            _TRANSCRIPT_SQL, (ended_session_id, self._max_messages)
+            _TRANSCRIPT_SQL,
+            (ended_session_id, ended_session_id, self._max_messages),
         )
         out: list[Message] = []
         for row in rows:

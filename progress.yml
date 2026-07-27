@@ -522,6 +522,28 @@ known_debt:
           a worktree, with this file excluded because it aborted collection) to
           11 failed / 45 passed. Same eleven failures, plus the three this fix
           made collectable. Those eleven are DEBT-16.
+  - id: DEBT-17
+    found: 2026-07-26
+    what: "tests/skills/test_skill_retrieval.py::test_gather_relevant_skills_returns_block_when_wired is a CHANGE-DETECTOR test on hint wording."
+    evidence: >
+      It asserts `"/skill show" in block`, but the block now ends
+      "(Use `skill_view <name>` to load the full playbook.)". The three
+      assertions that matter — the heading, the skill name, the description —
+      all PASS, so retrieval works correctly; only the trailing hint string
+      changed. Fails identically at HEAD (766b05e8) in a worktree with none of
+      the D01.7 cleanup applied.
+    why_it_matters: >
+      Same class as DEBT-4: a test that freezes an exact user-facing string
+      breaks whenever that string is legitimately improved, which trains people
+      to ignore red. It is map item D18.6 (change-detector test ban) appearing
+      in our own tree for the second time.
+    decision: >
+      NOT autonomously patched — the standing rule is to stop and inform rather
+      than silently rewrite a failing test. Recommendation on the table, matching
+      what was done for DEBT-4: assert the invariant it was reaching for (the
+      block names a way to load the full skill) rather than the exact command
+      string.
+    status: open
   - id: DEBT-16
     found: 2026-07-26
     what: "Eleven tests in tests/smoke/ fail, in five files, unrelated to any current item."
@@ -1491,10 +1513,64 @@ items:
       brainstorm: done
       architect:  done
       implement:  done
-      cleanup:    not_started
+      cleanup:    done
       test:       not_started
       validate:   not_started
       document:   not_started
+    cleanup_record:
+      date: 2026-07-26
+      what_it_found: >
+        The tenancy suite had been RED since D01.7's implement stage and nobody
+        noticed — tests/tenancy/ is not in anyone's usual selection. Five
+        owner-scope bypasses plus two stale allowlist entries, four of the five
+        introduced by D01.7 itself.
+      how_provenance_was_established: >
+        By running tests/tenancy/test_no_owner_scope_bypass.py in git worktrees
+        at three commits: HEAD (5 bypasses + 2 stale), b948c6bb the D01.7
+        hand-off (identical, so today's DEBT work caused none of it), and
+        aec4e35b = part 5a (only 3 bypasses, allowlist still clean). That
+        bracketing is what attributed each one to a specific slice.
+      resolved:
+        stale_allowlist_entries: >
+          Two entries for memory/extraction_handler.py, a file part 5b DELETED.
+          An allowlist entry for a nonexistent file is exactly the rot
+          test_allowlist_has_no_stale_entries guards against.
+        transcript_store: >
+          Now STAMPS owner_id on both INSERTs instead of leaning on migration
+          0043's `DEFAULT 'principal-default'`. The default made it right by
+          accident on a single-user install and silently wrong with a second
+          principal. A writer decides attribution, and a mis-attributed row is
+          far harder to repair later than a mis-scoped read. Constructor takes
+          `owner_id: str = DEFAULT_PRINCIPAL_ID`, matching CostTracker, so every
+          existing call site is unchanged.
+        rollover_summary_handler: >
+          The transcript read matched on conversation_id ALONE, so a row
+          carrying the right conversation_id and a different owner_id was
+          summarised into this owner's day — a real cross-owner leak, pinned by
+          a test that puts a foreign row in the same conversation and asserts it
+          never reaches the prompt. Scoped via the CONVERSATION'S OWN owner
+          (a subquery), deliberately NOT a constructor default: a default would
+          read nothing for every non-default principal, which is the same silent
+          no-op trap documented on any_active_task_for_lane.
+        skills_store: >
+          ALSO FOUND AND FIXED, pre-existing and unrelated to D01.7:
+          _sync_fts's `SELECT ... FROM skills WHERE skill_id = ?` had no
+          owner_id predicate in a store that is already an OwnedRepository.
+      deliberately_not_fixed:
+        pipeline_durable_store: >
+          any_active_task_for_lane is DELIBERATELY owner-agnostic and its
+          docstring says so at length — it is a module function rather than a
+          DurableTaskStore method precisely for this reason. Bakir answered
+          "scope all four properly now" BEFORE that docstring was read; scoping
+          it would make invariant I4 a silent no-op, which is the exact failure
+          D01.7 spent the whole item hunting. Added to the allowlist under a
+          DELIBERATELY-owner-agnostic heading that explicitly says it is not an
+          Epic 9 TODO and must not be "fixed" later.
+      verified:
+        tenancy: "tests/tenancy/ — 38 passed, whole suite green (was 2 failed)."
+        affected: "51 passed across test_transcript_store, test_rollover_summary, test_assembly, test_telegram_voice, test_conversation_cost_report. The single failure is DEBT-9's kuzu lock, reproduced and confirmed as such (the live platform holds it)."
+        gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
+      no_capability_removed: "Checked explicitly: every change adds a predicate or a stamp. Nothing was disabled, stubbed or deleted to make a check pass."
     doc: "docs/hermes-mapping/designs/D01.7.md"
     doc_last_verified: 2026-07-25
     decisions:

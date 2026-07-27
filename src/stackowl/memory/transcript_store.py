@@ -36,6 +36,7 @@ import uuid
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 _ROLE_USER = "user"
 _ROLE_ASSISTANT = "assistant"
@@ -44,8 +45,17 @@ _ROLE_ASSISTANT = "assistant"
 class TranscriptStore:
     """Appends a turn to the durable conversation transcript."""
 
-    def __init__(self, db: DbPool) -> None:
+    def __init__(self, db: DbPool, owner_id: str = DEFAULT_PRINCIPAL_ID) -> None:
         self._db = db
+        # D01.7 cleanup — the writer STAMPS owner_id rather than leaning on the
+        # column default. `conversations`/`messages` carry
+        # `owner_id TEXT NOT NULL DEFAULT 'principal-default'` (migration 0043),
+        # so omitting it is right by accident on a single-user install and
+        # silently wrong the moment a second principal exists. A writer decides
+        # attribution, and a mis-attributed row is far harder to repair later
+        # than a mis-scoped read. Defaults to the single-user principal, so
+        # every existing call site is unchanged.
+        self._owner_id = owner_id
 
     async def record_turn(
         self,
@@ -104,22 +114,24 @@ class TranscriptStore:
         # starts a new transcript without touching the old one (invariant I6).
         await self._db.execute(
             """
-            INSERT INTO conversations (id, session_key, owl_name, started_at, message_count)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO conversations (id, session_key, owl_name, started_at,
+                                       message_count, owner_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 message_count = conversations.message_count + excluded.message_count
             """,
-            (session_id, session_key, owl_name, stamp.isoformat(), len(rows)),
+            (session_id, session_key, owl_name, stamp.isoformat(), len(rows),
+             self._owner_id),
         )
         for role, content in rows:
             await self._db.execute(
                 """
                 INSERT INTO messages (id, conversation_id, role, content, model,
-                                      created_at, trace_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                      created_at, trace_id, owner_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (str(uuid.uuid4()), session_id, role, content, model,
-                 stamp.isoformat(), trace_id),
+                 stamp.isoformat(), trace_id, self._owner_id),
             )
 
         # 4. EXIT

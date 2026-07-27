@@ -255,6 +255,34 @@ async def test_the_whole_incarnation_is_read_not_a_tail(tmp_db: DbPool) -> None:
     assert "question 29" in provider.prompts[0]
 
 
+async def test_another_owners_rows_never_enter_the_transcript(tmp_db: DbPool) -> None:
+    """D01.7 cleanup — the transcript read is scoped to the CONVERSATION'S owner.
+
+    `messages` is an owner-governed table, and this read matched on
+    `conversation_id` alone. A row carrying the right conversation_id but a
+    different owner_id would have been summarised into someone else's day.
+
+    Scoped via the conversation's OWN owner rather than a constructor default:
+    a default would read nothing for every non-default principal, which is the
+    silent no-op failure this item keeps finding (see
+    any_active_task_for_lane's docstring for the same trap).
+    """
+    await _write_transcript(tmp_db, turns=1)
+    # A foreign row that claims the same conversation.
+    await tmp_db.execute(
+        "INSERT INTO messages (id, conversation_id, role, content, model,"
+        " created_at, trace_id, owner_id) VALUES (?, ?, ?, ?, NULL, ?, '', ?)",
+        (str(uuid.uuid4()), ENDED, "user", "SOMEONE ELSES SECRET",
+         datetime.datetime.now(datetime.UTC).isoformat(), "principal-intruder"),
+    )
+    provider = FakeProvider(_notable())
+
+    await _handler(tmp_db, FakeMiner(), FakeRegistry(provider)).execute(_job())
+
+    assert "SOMEONE ELSES SECRET" not in provider.prompts[0]
+    assert "question 0" in provider.prompts[0]  # the real transcript still reads
+
+
 # ------------------------------------------------------- durability and honesty
 
 

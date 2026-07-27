@@ -213,6 +213,17 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # TODO(Epic 9 multi-user): owner-scope import/export of committed_facts/owl_dna
         ("export/importer.py", "committed_facts"),
         ("export/importer.py", "owl_dna"),
+        # --- DELIBERATELY owner-agnostic (NOT an Epic 9 TODO) ---
+        # pipeline/durable/store.py's any_active_task_for_lane is a module
+        # function precisely BECAUSE it must not be owner-scoped, and its
+        # docstring says so at length: the caller is the background sweeper,
+        # which has no principal, and tasks are created under whichever owner
+        # happened to be in scope while a lane's identity is the PERSON. An
+        # owner-scoped read would match nothing and invariant I4 would become a
+        # silent no-op — the exact failure D01.7 kept finding. The LANE is the
+        # scope here. Listed so the detector stays honest; do NOT "fix" this by
+        # adding owner_id, and do not retitle it as deferred debt.
+        ("pipeline/durable/store.py", "tasks"),
         # --- memory dual-bridge + workers (raw SQL bridges, not Store subclasses) ---
         # TODO(Epic 9 multi-user): owner-scope committed_facts/staged_facts access
         ("memory/budget_enforcer.py", "committed_facts"),
@@ -221,8 +232,11 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("memory/conversation_miner.py", "staged_facts"),
         ("memory/dream_worker_helpers.py", "committed_facts"),
         ("memory/dream_worker_helpers.py", "staged_facts"),
-        ("memory/extraction_handler.py", "conversations"),
-        ("memory/extraction_handler.py", "messages"),
+        # memory/extraction_handler.py entries removed 2026-07-26: the file was
+        # DELETED by D01.7 slice 3b part 5b (c2fc9d32) — it was registered at
+        # boot and never enqueued by anything, so the rollover boundary took
+        # over its job. An allowlist entry for a file that does not exist is
+        # exactly the rot test_allowlist_has_no_stale_entries guards against.
         ("memory/fact_promoter.py", "committed_facts"),
         ("memory/fact_promoter.py", "staged_facts"),
         ("memory/fact_reinforcer.py", "staged_facts"),

@@ -684,8 +684,9 @@ class SkillIndexStore(OwnedRepository):
         application-layer sync (``sqlite_bridge.py``). A no-op if the skill
         row is gone (e.g. deleted concurrently)."""
         rows = await self._db.fetch_all(
-            "SELECT name, description, when_to_use, summary FROM skills WHERE skill_id = ?",
-            (skill_id,),
+            "SELECT name, description, when_to_use, summary FROM skills "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (skill_id, self._owner_id),
         )
         if not rows:
             return

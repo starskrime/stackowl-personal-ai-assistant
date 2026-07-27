@@ -47,6 +47,45 @@ async def test_a_clean_turn_records_both_sides(store) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rows_are_stamped_with_the_owner(store) -> None:
+    """D01.7 cleanup — the writer must STAMP owner_id, not lean on the column
+    default.
+
+    ``conversations``/``messages`` carry ``owner_id TEXT NOT NULL DEFAULT
+    'principal-default'`` (migration 0043), so omitting it happens to be right
+    on a single-user install and silently wrong the moment a second principal
+    exists. A writer is where attribution is decided, so it is the one place
+    that must be explicit — a mis-attributed row is far harder to repair after
+    the fact than a mis-scoped read.
+    """
+    ts, db = store
+    await ts.record_turn(session_key=LANE, session_id=RUN, owl_name="Brain",
+                         user_text="hello", assistant_text="hi")
+
+    convs = await db.fetch_all("SELECT owner_id FROM conversations")
+    msgs = await db.fetch_all("SELECT owner_id FROM messages")
+
+    assert [c["owner_id"] for c in convs] == ["principal-default"]
+    assert [m["owner_id"] for m in msgs] == ["principal-default", "principal-default"]
+
+
+@pytest.mark.asyncio
+async def test_a_non_default_owner_is_honoured(store) -> None:
+    """The stamp must be the STORE's owner, not a hardcoded default — otherwise
+    'explicit' is just the default written twice."""
+    _ts, db = store
+    ts = TranscriptStore(db, owner_id="principal-someone-else")
+
+    await ts.record_turn(session_key=LANE, session_id=RUN, owl_name="Brain",
+                         user_text="hello", assistant_text="hi")
+
+    convs = await db.fetch_all("SELECT owner_id FROM conversations")
+    msgs = await db.fetch_all("SELECT owner_id FROM messages")
+    assert [c["owner_id"] for c in convs] == ["principal-someone-else"]
+    assert {m["owner_id"] for m in msgs} == {"principal-someone-else"}
+
+
+@pytest.mark.asyncio
 async def test_the_six_readers_join_finds_it(store) -> None:
     """The exact shape owls/evolution.py and extraction_handler.py use."""
     ts, db = store
