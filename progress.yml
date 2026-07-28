@@ -2082,6 +2082,48 @@ items:
           lint: "ruff clean on both new files; src/ total unchanged at 46 (DEBT-1) — zero added."
           types: "mypy clean on _cache_control.py; src/ total unchanged at 78 (DEBT-8) — zero added."
           baseline: "tests/pipeline/ 1065 passed (450s) — matches the stated pre-start baseline exactly."
+      - date: 2026-07-27
+        commit: pending
+        stage: implement
+        slice: "2+3 — capability gate, the ONE chokepoint, the reader, and cache_ttl"
+        files:
+          - "src/stackowl/providers/base.py — supports_cache_breakpoints property, default False (matches supports_vision/supports_document/supports_tools)"
+          - "src/stackowl/providers/anthropic_provider.py — returns True; _request_kwargs() chokepoint; _measure_spans() live count_tokens; _cache_read_tokens/_cache_creation_tokens readers; [cache] breakpoints: result at INFO"
+          - "src/stackowl/config/provider.py — cache_ttl: Literal['5m','1h'] = '5m'"
+          - "tests/providers/test_anthropic_cache_breakpoints.py (new, 13 tests)"
+          - "tests/providers/test_cache_ttl_config.py (new, 4 tests)"
+        the_chokepoint: >
+          All FOUR call sites now build their request in one place: the three
+          messages.create() sites (the tool round, the wrap-up round, complete())
+          and the messages.stream() site. stream() cannot share a create()
+          wrapper — it is a context-manager factory, not a coroutine — so it
+          shares the kwargs BUILDER instead, which is the thing that actually has
+          to be single. A call site added later inherits marking rather than
+          silently skipping it.
+        count_tokens_shape: >
+          TWO calls per (session_id, model), not three. The tools span is measured
+          alone; the tools+system prefix is measured together and system is the
+          DIFFERENCE, so the constant overhead of the probe message cancels out of
+          the system figure instead of needing its own baseline call. Verified
+          against the installed SDK (anthropic 0.104.1) rather than assumed:
+          AsyncMessages.count_tokens exists and takes messages/model/system/tools.
+        one_mypy_error_added_and_fixed: >
+          The gate caught it: mypy went 78 -> 79. stream()'s `stream_kwargs:
+          dict[str, object]` existed only to be splatted into stream(), and once
+          the request moved to the chokepoint its untyped `object` value was the
+          only thing left. Replaced with a typed `stream_system: str | None`,
+          which also deletes a now-pointless dict. Back to 78.
+        mutations: >
+          6 run, 6 killed on the first attempt: ignore the capability gate (I4
+          dies), remove the I3 guard (2 die), stop feeding cached_input_tokens
+          (reader dies), never cache the span measurement (per-session test dies),
+          hardcode the ttl (config test dies), let a count_tokens failure
+          propagate (fallback test dies).
+        verified:
+          tests: "13 + 4 new passed. tests/providers/ 507 passed after the rewrite of all four call sites."
+          lint: "ruff clean on all 5 touched files; src/ total 46 (DEBT-1) — zero added."
+          types: "mypy src/ 78 (DEBT-8) — zero added, after fixing the one this slice introduced."
+          baseline: "tests/sessions/ + tests/owls/ 425 passed (475s) — matches the stated pre-start baseline exactly."
     notes: >
       The lesson that generalises: the handoff's premise, the map's own text, and
       my first recollection of the minimum-prefix threshold were EACH wrong in a

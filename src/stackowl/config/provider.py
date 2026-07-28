@@ -102,6 +102,20 @@ class ProviderConfig(BaseModel):
     # text-protocol parser still runs as a fallback if a native call is ever absent.
     # Set False only for a legacy endpoint that genuinely lacks native tool-calling.
     supports_native_tools: bool = True
+    # D01.2 — how long a prompt-cache entry lives on a provider that supports
+    # cache breakpoints. Per-provider rather than global because the TTL is an
+    # ECONOMIC decision about one backend: a user running two Anthropic backends
+    # (a chatty one and a batch one) wants them priced differently.
+    #
+    # 5m is the default because a conversation is normally a burst of turns
+    # minutes apart. 1h doubles the write cost (2x vs 1.25x) and needs 3+ reads
+    # to break even, so a conversation that stops after two turns becomes MORE
+    # expensive than not caching at all.
+    #
+    # Literal-typed, so a typo fails at config load rather than shipping a marker
+    # the API rejects on the first real request. Inert on any provider whose
+    # supports_cache_breakpoints is False, which is every provider but Anthropic.
+    cache_ttl: Literal["5m", "1h"] = "5m"
     # F-quota — hours to keep this provider's circuit OPEN after a quota/rate
     # failure with NO parseable reset signal from the provider's own response
     # (e.g. "I know this free tier resets daily"). None (default): no change

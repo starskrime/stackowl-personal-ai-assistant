@@ -265,6 +265,29 @@ class ModelProvider(ABC):
         return True
 
     @property
+    def supports_cache_breakpoints(self) -> bool:
+        """Whether this provider needs EXPLICIT prompt-cache markers (D01.2).
+
+        Two protocols, two economics. An OpenAI-protocol backend caches a
+        byte-identical prefix AUTOMATICALLY, so D01.1's frozen prompt already
+        collects the discount and there is nothing to mark. An Anthropic-protocol
+        backend caches only what the request explicitly marks with
+        ``cache_control``, so the same frozen prompt buys **nothing at all**
+        without a marker — which is exactly the state StackOwl shipped in until
+        this item (``grep -rn cache_control src/`` returned zero).
+
+        Defaults **False** on the ABC so every existing provider sends a request
+        byte-identical to today's (invariant I4). That default is what makes it
+        safe to ship this ON with no enable flag: on a deployment that cannot use
+        the feature, the feature is simply never reached.
+
+        Dispatches on DECLARED CAPABILITY, never on a provider's name — Bakir
+        runs one LiteLLM gateway and his users run a hundred different backends,
+        so a name check would be wrong for one of them.
+        """
+        return False
+
+    @property
     def supports_vision(self) -> bool:
         """Whether this provider's configured model can accept IMAGE blocks (E10-S1).
 

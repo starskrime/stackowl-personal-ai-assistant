@@ -18,6 +18,7 @@ from stackowl.pipeline.delivery_gate import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
+from stackowl.providers._cache_control import apply_cache_breakpoints
 from stackowl.providers._react import LoopGuard, looks_like_tool_call, parse_react_action
 from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers._truncate import (
@@ -76,6 +77,52 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
 # DEFAULT_TURN_MAX_TIME_S (fixing the same wall-clock-timeout-family inversion).
 _ROUND_DEADLINE_FALLBACK_S = 600.0
 
+# D01.2 — how many (incarnation, model) span measurements to keep before dropping
+# the lot. Sessions roll over continuously, so without a bound this dict grows for
+# the life of the process; clearing wholesale costs one re-measure per live
+# session, which is cheaper than tracking recency for a cache this small.
+_SPAN_CACHE_MAX = 256
+
+
+def _cache_read_tokens(usage: Any) -> int:
+    """Prompt-cache hits Anthropic reports, or 0 when it reports none (D01.2).
+
+    A DIRECT read, deliberately — unlike the OpenAI-protocol sibling, which walks
+    a three-shape priority chain because cache-stat naming is not standardised
+    across gateways. Here the field is first-class in Anthropic's own API, so
+    shape-probing would be dishonest: it would imply an uncertainty that does not
+    exist on this protocol.
+
+    The 0 is AMBIGUOUS by construction (D01.6's invariant I4): no cache hit, a
+    cold cache, and a gateway that strips usage fields all read 0. It is never an
+    error, and per I5 it is never persisted as evidence the markers are dead.
+
+    NEVER raises — cost recording must not break a completion that already
+    happened (B5).
+    """
+    if usage is None:
+        return 0
+    try:
+        value = getattr(usage, "cache_read_input_tokens", None)
+        return int(value) if value else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cache_creation_tokens(usage: Any) -> int:
+    """Tokens Anthropic reports WRITING to the cache this request (D01.2).
+
+    This is the probe signal: a non-zero value is proof the endpoint honours
+    ``cache_control`` markers at all. Never raises, for the same reason as above.
+    """
+    if usage is None:
+        return 0
+    try:
+        value = getattr(usage, "cache_creation_input_tokens", None)
+        return int(value) if value else 0
+    except (TypeError, ValueError):
+        return 0
+
 
 class AnthropicProvider(ModelProvider):
     """Anthropic Messages API provider (claude-* family)."""
@@ -84,6 +131,9 @@ class AnthropicProvider(ModelProvider):
         self._name = config.name
         self._config = config
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        # D01.2 — measured span sizes keyed by (session_id, model). See
+        # _measure_spans for why the incarnation is the right cache scope.
+        self._span_tokens: dict[tuple[str, str], dict[str, int]] = {}
         log.engine.debug(
             "[anthropic] init: provider constructed",
             extra={"_fields": {"name": self._name, "model": config.default_model}},
@@ -107,6 +157,145 @@ class AnthropicProvider(ModelProvider):
         """A vision-capable Claude model also accepts PDF document blocks (Mode B)."""
         return is_vision_model(self._config.default_model)
 
+    @property
+    def supports_cache_breakpoints(self) -> bool:
+        """D01.2 — Anthropic caches only what the request explicitly marks."""
+        return True
+
+    async def _measure_spans(
+        self,
+        *,
+        model: str,
+        tools: list[dict[str, Any]] | None,
+        system: str | list[dict[str, Any]] | None,
+    ) -> dict[str, int]:
+        """Live token counts for the ``tools`` and ``system`` spans (D01.2).
+
+        Measured ONCE PER SESSION and cached. D01.1 freezes the system prompt for
+        the life of a conversation, so re-measuring every turn would spend a
+        network round-trip to learn the same number — and the only question the
+        number answers is "does this prefix clear the cacheable minimum", which
+        cannot change while the prefix does not.
+
+        TWO calls, not three. The tools span is measured alone; the tools+system
+        prefix is measured together and the system span is the difference, so the
+        constant overhead of the probe message CANCELS out of the system figure
+        instead of needing its own baseline call.
+
+        Returns ``{}`` on any failure — a gateway that does not implement
+        ``count_tokens`` must still get markers, from the character estimate.
+        The error is logged, never hidden.
+        """
+        # D01.7 — the incarnation is the natural cache scope, and it already rides
+        # TraceContext. Background work with no session in context measures once
+        # per model instead, which is the honest fallback rather than a fabricated
+        # session id.
+        session_id = str(TraceContext.get().get("session_id") or "")
+        cache_key = (session_id, model)
+        cached = self._span_tokens.get(cache_key)
+        if cached is not None:
+            return cached
+
+        probe = [{"role": "user", "content": "."}]
+        try:
+            tools_count = 0
+            if tools:
+                tools_count = int(
+                    (await self._client.messages.count_tokens(
+                        model=model, messages=probe, tools=tools,  # type: ignore[arg-type]
+                    )).input_tokens
+                )
+            prefix_count = tools_count
+            if system is not None:
+                kwargs: dict[str, Any] = {"model": model, "messages": probe, "system": system}
+                if tools:
+                    kwargs["tools"] = tools
+                prefix_count = int(
+                    (await self._client.messages.count_tokens(**kwargs)).input_tokens
+                )
+        except Exception as exc:
+            # NOT hidden: a gateway without this endpoint is a normal deployment,
+            # but a silent fallback would make the estimate's imprecision
+            # untraceable at 2am.
+            log.engine.error(
+                "[cache] breakpoints: count_tokens unavailable — falling back to the char estimate",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name, "model": model}},
+            )
+            return {}
+
+        measured = {"tools": tools_count, "system": max(prefix_count - tools_count, 0)}
+        # Bounded: one entry per (incarnation, model). Sessions roll over, and an
+        # unbounded dict on a long-lived provider object is a slow leak.
+        if len(self._span_tokens) >= _SPAN_CACHE_MAX:
+            self._span_tokens.clear()
+        self._span_tokens[cache_key] = measured
+        log.engine.debug(
+            "[cache] breakpoints: spans measured",
+            extra={"_fields": {"provider": self._name, "model": model,
+                               "session_id": session_id, **measured}},
+        )
+        return measured
+
+    async def _request_kwargs(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
+        system: str | list[dict[str, Any]] | None = None,
+        capable: bool | None = None,
+    ) -> dict[str, Any]:
+        """THE chokepoint — every Messages API request this provider sends is built here.
+
+        All three ``messages.create()`` sites AND the ``messages.stream()`` site
+        route through this one method, so marking happens in exactly one place and
+        a call site added later inherits it rather than silently skipping it. That
+        is the divergence from the reference platform, which marks in three files
+        that cannot see each other and therefore cannot prove the four-marker
+        budget is respected.
+
+        ``capable`` overrides the capability gate for tests; production passes
+        ``None`` and the provider's own declaration decides.
+
+        Invariant I3: if the marker layer raises, the error is LOGGED and the
+        request goes out UNMARKED. Caching is an optimisation, never a dependency.
+        """
+        kwargs: dict[str, Any] = {
+            "model": model, "messages": messages, "max_tokens": max_tokens,
+        }
+        if tools is not None:
+            kwargs["tools"] = tools
+        if system is not None:
+            kwargs["system"] = system
+
+        if not (self.supports_cache_breakpoints if capable is None else capable):
+            return kwargs
+
+        try:
+            measured = await self._measure_spans(model=model, tools=tools, system=system)
+            marked_tools, marked_system, marked_messages = apply_cache_breakpoints(
+                tools, system, messages,
+                model=model,
+                ttl=self._config.cache_ttl,
+                measured_tokens=measured or None,
+            )
+        except Exception as exc:  # I3 — never let marking cost a turn.
+            log.engine.error(
+                "[cache] breakpoints: marking FAILED — sending the request unmarked",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name, "model": model}},
+            )
+            return kwargs
+
+        kwargs["messages"] = marked_messages
+        if tools is not None:
+            kwargs["tools"] = marked_tools
+        if system is not None:
+            kwargs["system"] = marked_system
+        return kwargs
+
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("anthropic.stream")
         log.engine.debug(
@@ -116,23 +305,36 @@ class AnthropicProvider(ModelProvider):
         system_parts = [m.content for m in messages if m.role == "system"]
         chat_msgs = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
         resolved_model = model or self._config.default_model
-        stream_kwargs: dict[str, object] = {"system": "\n\n".join(system_parts)} if system_parts else {}
+        # A typed local, not a kwargs dict: the dict existed only to be splatted
+        # into stream(), and now that the request is built at the chokepoint the
+        # untyped `object` value was the one thing standing between this file and
+        # a clean mypy run.
+        stream_system: str | None = "\n\n".join(system_parts) if system_parts else None
         _t0 = time.monotonic()
+        # The stream site routes through the SAME chokepoint as the three create()
+        # sites — messages.stream() is a context-manager factory rather than a
+        # coroutine, so it cannot share a create() wrapper, but it shares the one
+        # place where markers are decided. That is what makes the four-marker
+        # budget provable instead of enforced in four places that cannot see each
+        # other.
+        _stream_request = await self._request_kwargs(
+            model=resolved_model,
+            messages=chat_msgs,
+            # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
+            # per-model ceilings (8192-64000) — safe today (no Anthropic
+            # provider configured), but the FIRST Anthropic provider added
+            # must set an explicit models[].max_output_tokens (or a smaller
+            # provider-level max_output_tokens) or its first real request
+            # fails with a 400. No window-bounding exists for this
+            # provider (unlike OpenAI's _output_cap) — deliberately out of
+            # scope for this plan.
+            max_tokens=_max_tokens(
+                kwargs, default=resolve_model_override(self._config, resolved_model)[0]
+            ),
+            system=stream_system,
+        )
         try:
-            async with self._client.messages.stream(
-                model=resolved_model,
-                messages=chat_msgs,  # type: ignore[arg-type]
-                # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
-                # per-model ceilings (8192-64000) — safe today (no Anthropic
-                # provider configured), but the FIRST Anthropic provider added
-                # must set an explicit models[].max_output_tokens (or a smaller
-                # provider-level max_output_tokens) or its first real request
-                # fails with a 400. No window-bounding exists for this
-                # provider (unlike OpenAI's _output_cap) — deliberately out of
-                # scope for this plan.
-                max_tokens=_max_tokens(kwargs, default=resolve_model_override(self._config, resolved_model)[0]),
-                **stream_kwargs,  # type: ignore[arg-type]
-            ) as stream:
+            async with self._client.messages.stream(**_stream_request) as stream:
                 try:
                     async for text in stream.text_stream:
                         yield text
@@ -181,6 +383,9 @@ class AnthropicProvider(ModelProvider):
             in_tok = int(getattr(usage, "input_tokens", 0) or 0)
             out_tok = int(getattr(usage, "output_tokens", 0) or 0)
             rec_model = getattr(final, "model", model) or model
+            # D01.2 — base.py::_record_cost has accepted this since D01.6 and the
+            # Anthropic path has fed it 0 every time. This is the reader half.
+            cached_tok = _cache_read_tokens(usage)
         except Exception as exc:  # B5 — never break the stream on cost accounting.
             log.engine.debug(
                 "[anthropic] stream: usage extraction skipped",
@@ -189,6 +394,7 @@ class AnthropicProvider(ModelProvider):
             return
         await self._record_cost(
             model=rec_model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+            cached_input_tokens=cached_tok,
         )
 
     async def complete_with_tools(
@@ -359,14 +565,16 @@ class AnthropicProvider(ModelProvider):
 
             async def _round(_msgs: list[dict[str, Any]] = messages) -> Any:
                 return await self._client.messages.create(
-                    model=resolved_model,
-                    messages=_msgs,  # type: ignore[arg-type]
-                    max_tokens=(
-                        max_tokens if max_tokens is not None
-                        else self._config.max_output_tokens
-                    ),
-                    tools=tool_schemas,  # type: ignore[arg-type]
-                    **system_kwargs,
+                    **await self._request_kwargs(
+                        model=resolved_model,
+                        messages=_msgs,
+                        max_tokens=(
+                            max_tokens if max_tokens is not None
+                            else self._config.max_output_tokens
+                        ),
+                        tools=tool_schemas,
+                        system=system_kwargs.get("system"),
+                    )
                 )
 
             async with TraceContext.span("provider.round"):
@@ -602,13 +810,15 @@ class AnthropicProvider(ModelProvider):
 
             async def _wrap_round() -> Any:
                 return await self._client.messages.create(
-                    model=resolved_model,
-                    messages=messages,  # type: ignore[arg-type]
-                    max_tokens=(
-                        max_tokens if max_tokens is not None
-                        else self._config.max_output_tokens
-                    ),
-                    **system_kwargs,
+                    **await self._request_kwargs(
+                        model=resolved_model,
+                        messages=messages,
+                        max_tokens=(
+                            max_tokens if max_tokens is not None
+                            else self._config.max_output_tokens
+                        ),
+                        system=system_kwargs.get("system"),
+                    )
                 )
 
             # F027 — bound the terminal wrap-up by the governor's residual budget.
@@ -685,14 +895,30 @@ class AnthropicProvider(ModelProvider):
             in_tok = usage.input_tokens if usage else 0
             out_tok = usage.output_tokens if usage else 0
             model = getattr(response, "model", "") or ""
+            # D01.2 — the reader half. See _cache_read_tokens for why a 0 here is
+            # ambiguous rather than proof the markers are dead.
+            cached_tok = _cache_read_tokens(usage)
+            created_tok = _cache_creation_tokens(usage)
         except Exception as exc:  # B5 — usage shape varies / may be absent on fakes.
             log.engine.debug(
                 "[anthropic] _record_usage_safe: usage extraction skipped",
                 extra={"_fields": {"provider": self._name, "err": str(exc)}},
             )
             return
+        # INFO, not debug, and deliberately so. D01.6 learned this the hard way:
+        # the per-part prompt sizes it needed were logged at debug and appeared in
+        # 0 of 17403 live log lines, which is why prompt composition was
+        # unmeasurable for days. This line is how "is caching actually working?"
+        # gets answered from the JSONL instead of guessed.
+        log.engine.info(
+            "[cache] breakpoints: result",
+            extra={"_fields": {"provider": self._name, "model": model,
+                               "cache_read": cached_tok, "cache_creation": created_tok,
+                               "input_tokens": in_tok}},
+        )
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
+            cached_input_tokens=cached_tok,
         )
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
@@ -719,18 +945,22 @@ class AnthropicProvider(ModelProvider):
 
         async def _round() -> Any:
             return await self._client.messages.create(
-                model=resolved_model,
-                messages=chat_msgs,  # type: ignore[arg-type]
-                # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
-                # per-model ceilings (8192-64000) — safe today (no Anthropic
-                # provider configured), but the FIRST Anthropic provider added
-                # must set an explicit models[].max_output_tokens (or a smaller
-                # provider-level max_output_tokens) or its first real request
-                # fails with a 400. No window-bounding exists for this
-                # provider (unlike OpenAI's _output_cap) — deliberately out of
-                # scope for this plan.
-                max_tokens=_max_tokens(kwargs, default=resolve_model_override(self._config, resolved_model)[0]),
-                **sys_kwargs,
+                **await self._request_kwargs(
+                    model=resolved_model,
+                    messages=chat_msgs,
+                    # NOTE: max_output_tokens' 250000 default exceeds real Anthropic
+                    # per-model ceilings (8192-64000) — safe today (no Anthropic
+                    # provider configured), but the FIRST Anthropic provider added
+                    # must set an explicit models[].max_output_tokens (or a smaller
+                    # provider-level max_output_tokens) or its first real request
+                    # fails with a 400. No window-bounding exists for this
+                    # provider (unlike OpenAI's _output_cap) — deliberately out of
+                    # scope for this plan.
+                    max_tokens=_max_tokens(
+                        kwargs, default=resolve_model_override(self._config, resolved_model)[0]
+                    ),
+                    system=sys_kwargs.get("system"),
+                )
             )
 
         try:
