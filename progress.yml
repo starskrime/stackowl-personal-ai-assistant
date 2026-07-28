@@ -324,15 +324,18 @@ current:
     2: "Then D01.4 architect (25 more questions), implement, cleanup, test, validate, document."
     3: "Then D01.5 — its Hermes pointers are already recorded on the item, found during D01.2."
     4: "Then D01.3 — but see the OPEN MEASUREMENT below; it may be answerable with data by then."
-  the_open_measurement_worth_collecting: >
-    D01.2 shipped the instrument that answers D01.3 and it has NOT yet returned a
-    reading. The owl-scoped audit reported zero tools-array changes, but every
-    (lane, owl) pair in the observation window had exactly ONE turn, so that is
-    no opportunity rather than stability. It needs 2+ turns by the SAME owl on the
-    SAME lane — i.e. real channel traffic; no CLI drives a turn. Whenever Bakir
-    has used the assistant for a few messages, run:
-      cat ~/.stackowl/logs/stackowl.jsonl | jq -r 'select(.msg|test("tools array CHANGED")) | "\(.fields.session_key) owl=\(.fields.owl) tools=\(.fields.tool_count)"'
-    A non-empty result is the first hard evidence for D01.3 in this program.
+  the_open_measurement_that_CAME_IN: >
+    ANSWERED 2026-07-28. D01.2 shipped the instrument that measures D01.3's
+    premise, and it has now returned a reading. 5 (lane, owl) pairs reported a
+    tools-array change, 15 events total, and in 4 of the 5 the tool COUNT itself
+    oscillated (sysfup 5->4->5->5->5, Brain 4->4->3->4, scout 4->3->4,
+    headhunter 5->4) — same owl, same lane, so owl-switching is excluded. The
+    earlier zero-result was NO OPPORTUNITY, not stability, exactly as recorded.
+    See D01.3's THE_PREMISE_IS_NOW_MEASURED block for the full figures, the
+    cause (execute.py's to_provider_schema(request_text=...)) and the
+    consequence for D01.2's position-0 marker.
+    STILL OPEN: every pair is a BACKGROUND lane. The INTERACTIVE path needs 2+
+    Telegram turns to one owl before the same claim can be made for it.
   what_needs_bakir:
     - "Nothing is BLOCKING. DEBT-27 and DEBT-17 were both decided on 2026-07-27; the push was approved and done."
     - "DEBT-32 — the dream job has failed 17 times while still enabled. He chose to track it and finish D01.2 first; it is now the top non-item thread."
@@ -2558,6 +2561,43 @@ items:
     doc_last_verified: null
     decisions: []
     changes: []
+    THE_PREMISE_IS_NOW_MEASURED:
+      date: 2026-07-28
+      status: "CONFIRMED with valid data. This is the first hard evidence for D01.3 in the program, and it came from the instrument D01.2 shipped."
+      how: >
+        D01.2's owl-scoped audit_tools_stability, running on the live platform.
+        The earlier window was inconclusive because every (lane, owl) pair had
+        exactly ONE turn — no opportunity to change. This window has real
+        repeats: goal-owl_lifecycle-sysfup/sysfup ran 7 turns, Brain 5, scout 5,
+        headhunter 4 and 4. Same owl, same lane, so an owl-switch artifact is
+        excluded by construction.
+      measured:
+        pairs_reporting_change: 5
+        total_change_events: 15
+        pairs_where_the_COUNT_changed: "4 of 5 — not merely reordering"
+        sequences:
+          sysfup: "5 -> 4 -> 5 -> 5 -> 5"
+          Brain: "4 -> 4 -> 3 -> 4"
+          scout: "4 -> 3 -> 4"
+          headhunter: "5 -> 4"
+          hypothesis: "30 (content changed, count did not)"
+      cause: "pipeline/steps/execute.py builds the schemas via to_provider_schema(request_text=state.input_text, budget={window, fixed_cost_tokens, max_tools}), so the presented set is re-selected per query."
+      consequence_for_D01_2: >
+        On an Anthropic backend `tools` renders at position 0, so a tools array
+        that changes per turn invalidates marker 1 AND every marker downstream of
+        it — all four — on essentially every turn of these lanes. D01.2's design
+        predicted exactly this ("the tools marker delivers little until
+        D01.3/D05.4 land; flag it loudly, it is measured evidence FOR D01.3
+        rather than a reason to skip the marker"). That call now has data.
+      honest_limits:
+        - "EVERY pair here is a BACKGROUND/scheduled lane (goal-*, incident-*). The INTERACTIVE path is still unmeasured — it needs 2+ Telegram turns to one owl."
+        - "Tool counts differ hugely by lane type (3-5 on goal lanes, 30 on incident lanes) because the context budget sizes the presented set to the model window. A rate computed across both would be meaningless."
+      what_this_changes_for_D01_3s_brainstorm: >
+        The item no longer opens with an unmeasured assertion. It opens with a
+        rate, a cause located at a specific call site, and a named consequence
+        for an item that already shipped. The question shifts from "does the
+        array vary?" to "should it, and what does it cost" — and the answer to
+        the second half is now computable from cost_records.
     notes: null
 
   - id: D01.4
