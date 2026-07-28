@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.2
-  stage: implement
+  stage: cleanup
   stage_status: not_started
   one_line: >
     D01.1 is COMPLETE (7/7, doc live). D01.2 has brainstorm + architect DONE and
@@ -1940,11 +1940,35 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
+      implement:  done
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
+    implement_result:
+      date: 2026-07-27
+      commits: [daf58a60, 11328aee, 90b30704, f2d811e3]
+      pushed: "2026-07-27 — cf280aa3..f2d811e3 to origin/main, on Bakir's explicit approval. Ten commits went up: the five that had been waiting since D01.1, plus the four from this stage."
+      ships: "ON. No enable flag — the capability gate makes it inert on every non-Anthropic provider, so the standing rule is satisfied honestly rather than with a setting that defaults off forever."
+      four_corrections_the_document_stage_MUST_fold_in:
+        1: "The minimum guard is CUMULATIVE, not per-span. The Lifecycle section reads as a per-span check."
+        2: "I2 as written cannot be fully satisfied. Anthropic returns one cache_creation_input_tokens per REQUEST, so a positive is never attributable to a span and the learned state can never recover a per-model minimum. The guard defaults to MIN_CACHEABLE_TOKENS=512 with a minimum_tokens override, and on a 4096-floor model some markers will not cache."
+        3: "The tools-instability audit is in pipeline/steps/execute.py, NOT the Anthropic provider as the Observability table says. On the Anthropic path it would measure nothing on this deployment."
+        4: "Breakpoints ARE reallocated. The Lifecycle section's 'its breakpoint is NOT reallocated' is now false — adopted from Hermes after Bakir's read-Hermes-first instruction."
+      two_things_the_design_did_not_have:
+        i1_hazard: "complete_with_tools re-marks ONE growing messages list every round, so stale markers accumulate and I1 breaks on the SECOND tool iteration. apply_cache_breakpoints now strips existing markers before placing its four."
+        ordering_invariant: "Marking must be the LAST mutation before the wire — it turns a string into a block list, so any later isinstance(content, str) pass silently skips it and the same message goes normalised on one turn and raw on the next. Learned from Hermes' own test suite, which locks it by inspecting source order. Ours holds STRUCTURALLY (per iteration: trim -> mark -> send, and apply_cache_breakpoints returns copies so the loop's list stays permanently unmarked), verified by reading; the OUTCOME is locked by a test asserting markers reach messages.create()."
+      mutation_testing_summary: >
+        25 mutations across the three modules; 24 died on the first attempt. The
+        single survivor was M2 — replacing the cumulative guard with a per-span
+        one still passed 20/20, because the cumulative test's system span cleared
+        the floor unaided and so could not fail. Exactly the D01.1 trap. A case
+        where NEITHER span clears alone but their sum does was added; M2 now dies.
+      verified:
+        tests: "tests/providers/ 525 passed. tests/pipeline/ 1076 passed = the 1065 baseline plus exactly the 11 new audit tests. tests/skills/test_skill_retrieval.py 9 passed (was 1 failed, DEBT-17)."
+        gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added — including one mypy error this stage introduced and then fixed (stream()'s dict[str, object] kwargs bag)."
+        migration: "0104 applied, then reported 'already applied' on a second run. Schema version 0104."
+      no_capability_removed: "Checked explicitly. Every change adds a marker, a reader, a store or a log line. Nothing was disabled, stubbed or deleted to make a check pass."
     doc: "docs/hermes-mapping/designs/D01.2.md"
     doc_last_verified: 2026-07-27
     architect_result:
@@ -2069,7 +2093,7 @@ items:
             resolution: "Convert ONLY when marking. Blast radius matches benefit; unmarked requests stay byte-identical."
     changes:
       - date: 2026-07-27
-        commit: pending
+        commit: daf58a60
         stage: implement
         slice: "1 — _cache_control.py, the pure marker-placement function"
         files:
@@ -2127,7 +2151,7 @@ items:
           types: "mypy clean on _cache_control.py; src/ total unchanged at 78 (DEBT-8) — zero added."
           baseline: "tests/pipeline/ 1065 passed (450s) — matches the stated pre-start baseline exactly."
       - date: 2026-07-27
-        commit: pending
+        commit: 11328aee
         stage: implement
         slice: "2+3 — capability gate, the ONE chokepoint, the reader, and cache_ttl"
         files:
@@ -2169,7 +2193,7 @@ items:
           types: "mypy src/ 78 (DEBT-8) — zero added, after fixing the one this slice introduced."
           baseline: "tests/sessions/ + tests/owls/ 425 passed (475s) — matches the stated pre-start baseline exactly."
       - date: 2026-07-27
-        commit: pending
+        commit: 90b30704
         stage: implement
         slice: "4 — migration 0104 + CacheProbeStore, wired ON at startup"
         files:
@@ -2216,7 +2240,7 @@ items:
           lint: "ruff clean on all new files; src/ total 46 (DEBT-1) — zero added."
           types: "mypy src/ 78 (DEBT-8) — zero added."
       - date: 2026-07-27
-        commit: pending
+        commit: f2d811e3
         stage: implement
         slice: "5 — the silent-invalidator audit"
         files:
@@ -2263,7 +2287,7 @@ items:
           types: "mypy src/ 78 (DEBT-8) — zero added."
           mutations: "6 run, 6 killed: sort the tools array (hides reordering), report a change on turn one, track the empty session key, remove the lane bound, let an unserialisable schema raise, report only the first changed part."
       - date: 2026-07-27
-        commit: pending
+        commit: f2d811e3
         stage: implement
         slice: "6 — budget reallocation, learned by READING Hermes rather than our summary of it"
         why_this_slice_exists: >
