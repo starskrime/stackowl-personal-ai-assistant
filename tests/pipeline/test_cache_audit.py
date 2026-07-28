@@ -59,6 +59,46 @@ def test_the_first_turn_of_a_lane_is_not_a_change(caplog: Any) -> None:
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
 
+def test_two_owls_on_one_lane_do_not_look_like_a_change(caplog: Any) -> None:
+    """FOUND IN VALIDATE, on real traffic, and it is DEBT-21's mistake again.
+
+    An incident lane runs the staged RCA: three owls (rca_gatherer, hypothesis,
+    verifier) against ONE session_key. Their tool sets and personas differ BY
+    DESIGN — that is invariant I6, and the whole reason D01.1's prompt cache is
+    keyed (session_key, owl_name).
+
+    Keyed on the lane alone, this audit reported three correct prompts as three
+    violations, which is precisely what DEBT-21 says about grouping by session_id:
+    "three correct prompts read as three violations, so the item would be judged
+    failed for behaving exactly as designed." An audit that cries wolf on every
+    multi-owl lane trains its reader to ignore it.
+    """
+    with caplog.at_level("WARNING"):
+        audit_tools_stability("incident-1", _schemas("shell", "memory"), owl="rca_gatherer")
+        audit_tools_stability("incident-1", _schemas("shell"), owl="hypothesis")
+        audit_tools_stability("incident-1", _schemas("memory"), owl="verifier")
+    assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
+
+
+def test_one_owl_changing_its_own_tools_is_still_reported(caplog: Any) -> None:
+    """The other jaw of the vice: owl-scoping must not silence the real signal."""
+    with caplog.at_level("WARNING"):
+        audit_tools_stability("incident-1", _schemas("shell", "memory"), owl="rca_gatherer")
+        audit_tools_stability("incident-1", _schemas("shell"), owl="rca_gatherer")
+    changed = [r for r in caplog.records if "tools array CHANGED" in r.message]
+    assert len(changed) == 1
+    assert changed[0]._fields["owl"] == "rca_gatherer"
+
+
+def test_two_owls_on_one_lane_do_not_look_like_a_prompt_part_change(caplog: Any) -> None:
+    """Same defect on the prompt-part side — persona and the owls block differ
+    per owl BY DESIGN, so a lane-keyed audit flags every owl switch."""
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("incident-1", {"persona": "A", "owls": "x"}, owl="rca_gatherer")
+        audit_prompt_parts("incident-1", {"persona": "B", "owls": "y"}, owl="hypothesis")
+    assert [r for r in caplog.records if "prompt part CHANGED" in r.message] == []
+
+
 def test_two_lanes_do_not_contaminate_each_other(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
         audit_tools_stability("lane-a", _schemas("shell"))

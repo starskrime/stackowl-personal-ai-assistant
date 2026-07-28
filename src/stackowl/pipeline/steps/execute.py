@@ -1162,7 +1162,7 @@ async def _run_with_tools(
     # Anthropic-protocol backend `tools` renders at position 0, which means a
     # varying array invalidates EVERY downstream breakpoint on every turn.
     # Reports only — this never changes what is sent.
-    audit_tools_stability(state.session_key, tool_schemas)
+    audit_tools_stability(state.session_key, tool_schemas, owl=state.owl_name)
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(
         "[pipeline] execute: context budget",

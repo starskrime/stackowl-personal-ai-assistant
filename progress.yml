@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.2
-  stage: validate
+  stage: document
   stage_status: not_started
   one_line: >
     D01.1 is COMPLETE (7/7, doc live). D01.2 has brainstorm + architect DONE and
@@ -441,6 +441,28 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-32
+    found: 2026-07-28
+    what: "The `dream-50fd10ab` scheduled job has failure_count=17 while still enabled and scheduled."
+    evidence: >
+      Surfaced during D01.2 validate while querying the jobs table for an
+      unrelated reason: `SELECT job_id,status,enabled,failure_count FROM jobs`
+      returns dream-50fd10ab status=pending enabled=1 failure_count=17,
+      last_run 2026-07-28T02:20:56, next_run 2026-07-28T03:58:03. It is still
+      being scheduled and still failing.
+    why_it_matters: >
+      Seventeen consecutive failures on an ENABLED job is a capability that has
+      been dead for some time with nobody told — the Silent Fail-Open
+      antipattern this program has fixed twice before. It is also exactly what
+      the scheduler self-heal arc was built to catch, so either the breaker is
+      not engaging for this handler or the failures are not being classified.
+    decision: >
+      TRACKED, NOT INVESTIGATED. Bakir chose "track it, finish D01.2 first"
+      (2026-07-28) — one item in flight at a time, and this is not a regression
+      from anything in D01.2. Pick it up after D01.2 closes: read jobs.last_error
+      and the recent job_runs/job_results rows for this job_id first.
+    status: open
+
   - id: DEBT-31
     found: 2026-07-27
     what: "D01.3's premise — that context_budget varies the tools array every turn — has never been MEASURED."
@@ -1943,7 +1965,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   not_started
+      validate:   done
       document:   not_started
     implement_result:
       date: 2026-07-27
@@ -2063,6 +2085,65 @@ items:
         tests: "tests/pipeline/ 1080 passed = the 1076 baseline plus exactly the 4 new gateway tests. Zero regressions."
         gates: "ruff src/ 46 = DEBT-1 baseline; ruff clean on the new test file; mypy src/ 78 = DEBT-8 baseline. Zero added."
         mutations: "4 run, 4 killed. The post-battery restore was VERIFIED with `git diff --stat src/` rather than trusted — it had missed a file."
+    validate_result:
+      date: 2026-07-28
+      status: "PASS for everything reachable on this deployment, with ONE half explicitly unproven and ONE measurement explicitly still owed."
+      what_the_stage_earned_its_keep_for: >
+        IT FOUND A REAL DEFECT IN CODE THAT HAD ALREADY PASSED 14 UNIT TESTS, A
+        MUTATION BATTERY AND A GATEWAY TEST. The invalidator audit keyed on
+        session_key ALONE. Incident lanes run the staged RCA's three owls
+        (rca_gatherer, hypothesis, verifier) against ONE lane, and their personas
+        and tool sets differ BY DESIGN — invariant I6, the exact reason D01.1's
+        prompt cache carries owl_name in its key. Lane-keyed, the audit reported
+        three correct prompts as three violations. That is DEBT-21's mistake,
+        written down in this very file, reproduced one item later.
+      the_consequence_was_worse_than_the_bug: >
+        I was one step from reporting "D01.3's premise is now MEASURED" on the
+        strength of three TOOLS ARRAY CHANGED lines that were owl-switch
+        artifacts. A wrong measurement presented as evidence is worse than no
+        measurement, because the next item would have built on it.
+      the_fix_is_proven_by_a_natural_A_B: >
+        Same workload, both runs incident lanes with three owls. Lane-keyed: 3
+        TOOLS ARRAY CHANGED + 3 PROMPT PART CHANGED (parts=[owls, persona,
+        stable_context] — precisely the per-owl fields). Owl-keyed, after the
+        fix: 0 and 0. Identical traffic, opposite conclusion. Not a test result —
+        the live platform, twice.
+      confirmed_live:
+        restart_clean: "Two restarts, 1183 then 1866 new log lines, ZERO ERROR/CRITICAL in either."
+        migration: "Live schema version 0104; cache_breakpoint_probes exists."
+        probe_rows_zero_is_CORRECT: "0 rows. Nothing has been confirmed because no Anthropic backend exists, and I5 forbids persisting a zero. An empty table here is the invariant working, not a gap."
+        audit_reachable: "audit_tools_stability executes on the real path (222 execute rounds observed in one window). audit_prompt_parts executes on every cold build (4 observed)."
+        freeze_still_hits: "assemble reported source=cached on interactive turns — D01.1 is not regressed by anything here."
+      NOT_proven_and_why_1: >
+        D01.3's PREMISE IS STILL UNMEASURED. The owl-scoped audit reported zero
+        changes, but every (lane, owl) pair in the window had exactly ONE turn —
+        incident-28976ee0ea87 ran 3 rounds as 3 DIFFERENT owls, incident-
+        5fb38c36fd15 ran 2 as 2 different owls. The first turn of a pair is never
+        a change, so zero here is NO OPPORTUNITY, not evidence of stability.
+        Reporting it as stability would be the assertion-that-cannot-fail trap
+        D01.1 paid for. WHAT IT NEEDS: two or more turns by the SAME owl on the
+        SAME lane. Background lanes cannot supply it (one owl per incident), and
+        there is no CLI that drives a turn, so it needs Bakir to send 2+ Telegram
+        messages to one owl. Then `jq \'select(.msg|test("tools array CHANGED"))\'`
+        answers D01.3 with data for the first time.
+      NOT_proven_and_why_2: >
+        WHETHER ANTHROPIC HONOURS THE MARKERS. Verified as fact rather than
+        assumed: ~/.stackowl/stackowl.yaml holds four providers, ALL protocol:
+        openai, three disabled, the enabled one a LiteLLM gateway. There is no
+        Anthropic backend to answer this, and D01.6 established the gateway
+        reports no cache fields in any accepted shape, so pointing StackOwl at it
+        would not settle it either. The item closes with this half UNPROVEN and
+        the document says so above the fold.
+      found_and_fixed_outside_the_item: >
+        A one-shot scheduler.resume script (PIDs 828754/828763) had been hung on
+        futex_wait_queue_me for 9 days 9 hours holding stackowl.db + -wal + -shm
+        open read-write. It was MY orphaned Claude background task from a prior
+        session (its stdout pointed at that session\'s task file), not anything
+        Bakir started, and it survived every ./start.sh because the kill pattern
+        only matches `stackowl (start|__core__)`. Diagnosed BEFORE acting, on
+        Bakir\'s instruction: the 6 resume calls had landed — 3 of the job ids
+        are live today (goal_execution-715f6143 ran 25 minutes before the check)
+        and 3 no longer exist. Killed with his approval; handle released.
     doc: "docs/hermes-mapping/designs/D01.2.md"
     doc_last_verified: 2026-07-27
     architect_result:

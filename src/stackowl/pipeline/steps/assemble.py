@@ -399,7 +399,7 @@ async def run(state: PipelineState) -> PipelineState:
         "skills": skills_block,
         "profile": profile,
         "stable_context": state.stable_context or "",
-    })
+    }, owl=state.owl_name)
     # INFO, not DEBUG. These per-part sizes are the diagnostic D01.6 exists to
     # obtain, and at debug level they vanished entirely: 0 of 17403 lines in the
     # live log carried them, which is why prompt composition was unmeasurable.

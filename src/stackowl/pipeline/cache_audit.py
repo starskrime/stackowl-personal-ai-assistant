@@ -35,8 +35,16 @@ from stackowl.infra.prompt_metrics import digest
 # strictly better than growing forever.
 _LANE_CACHE_MAX = 512
 
-_tools_hashes: OrderedDict[str, str] = OrderedDict()
-_part_hashes: OrderedDict[str, dict[str, str]] = OrderedDict()
+# Keyed (session_key, owl_name), NOT session_key alone. Found in the validate
+# stage on real traffic: an incident lane runs the staged RCA's three owls
+# against ONE session_key, and their tool sets and personas differ BY DESIGN
+# (invariant I6 — the same reason D01.1's prompt cache carries owl_name in its
+# key). Lane-keyed, this audit reported three correct prompts as three
+# violations, which is DEBT-21's mistake exactly: "grouped by session_id alone,
+# three correct prompts read as three violations". An audit that cries wolf on
+# every multi-owl lane trains its reader to ignore it.
+_tools_hashes: OrderedDict[tuple[str, str], str] = OrderedDict()
+_part_hashes: OrderedDict[tuple[str, str], dict[str, str]] = OrderedDict()
 
 
 def reset_audit_state() -> None:
@@ -45,7 +53,9 @@ def reset_audit_state() -> None:
     _part_hashes.clear()
 
 
-def _remember(store: OrderedDict[str, Any], key: str, value: Any) -> None:
+def _remember(
+    store: OrderedDict[tuple[str, str], Any], key: tuple[str, str], value: Any
+) -> None:
     store[key] = value
     store.move_to_end(key)
     while len(store) > _LANE_CACHE_MAX:
@@ -74,7 +84,9 @@ def tools_digest(tool_schemas: list[dict[str, Any]]) -> str:
         return ""
 
 
-def audit_tools_stability(session_key: str, tool_schemas: list[dict[str, Any]]) -> None:
+def audit_tools_stability(
+    session_key: str, tool_schemas: list[dict[str, Any]], owl: str = ""
+) -> None:
     """Report when a lane's tools array changes between turns.
 
     A change is a WARNING rather than an error: it is not a fault, it is a cost.
@@ -92,14 +104,16 @@ def audit_tools_stability(session_key: str, tool_schemas: list[dict[str, Any]]) 
     current = tools_digest(tool_schemas)
     if not current:
         return
-    previous = _tools_hashes.get(session_key)
-    _remember(_tools_hashes, session_key, current)
+    key = (session_key, owl)
+    previous = _tools_hashes.get(key)
+    _remember(_tools_hashes, key, current)
     if previous is None or previous == current:
         return
     log.engine.warning(
         "[cache] breakpoints: tools array CHANGED — position 0 invalidated this turn",
         extra={"_fields": {
             "session_key": session_key,
+            "owl": owl,
             "prev_hash": previous,
             "hash": current,
             "tool_count": len(tool_schemas),
@@ -108,7 +122,9 @@ def audit_tools_stability(session_key: str, tool_schemas: list[dict[str, Any]]) 
     )
 
 
-def audit_prompt_parts(session_key: str, parts: dict[str, str]) -> None:
+def audit_prompt_parts(
+    session_key: str, parts: dict[str, str], owl: str = ""
+) -> None:
     """Report WHICH system-prompt part changed between two builds on one lane.
 
     ``prompt_hash`` says the prompt moved; this says it was the skills catalogue,
@@ -128,8 +144,9 @@ def audit_prompt_parts(session_key: str, parts: dict[str, str]) -> None:
             exc_info=exc, extra={"_fields": {"session_key": session_key}},
         )
         return
-    previous = _part_hashes.get(session_key)
-    _remember(_part_hashes, session_key, current)
+    key = (session_key, owl)
+    previous = _part_hashes.get(key)
+    _remember(_part_hashes, key, current)
     if previous is None:
         return
     changed = sorted(
@@ -141,6 +158,7 @@ def audit_prompt_parts(session_key: str, parts: dict[str, str]) -> None:
         "[cache] breakpoints: prompt part CHANGED — the cached prefix is lost from here",
         extra={"_fields": {
             "session_key": session_key,
+            "owl": owl,
             "parts": changed,
             "part_count": len(current),
         }},
