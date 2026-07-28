@@ -258,119 +258,93 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 1
-  item: D01.2
-  stage: document
+  item: D01.4
+  stage: brainstorm
   stage_status: not_started
   one_line: >
-    D01.1 is COMPLETE (7/7, doc live). D01.2 has brainstorm + architect DONE and
-    a finished design doc; IMPLEMENT is the next stage and nothing has been
-    coded yet. After D01.2: D01.4, D01.5, D01.3.
+    D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
+    D01.4 "Deferred invalidation as a UX pattern" is next and NOTHING has been
+    done on it — start at brainstorm with the 25-question grill. After D01.4:
+    D01.5, then D01.3.
   read_first: >
-    (1) This block. (2) docs/hermes-mapping/designs/D01.2.md — the full design,
-    already written; it names every file to create and change, the 5 invariants,
-    and states ABOVE THE FOLD that the live half cannot be verified on this box.
-    (3) The D01.2 item's `decisions` (14 recorded answers + 3 contradictions
-    Bakir resolved) and `architect_result` blocks — those are the contract the
-    implementation must satisfy; do not re-litigate them.
-    (4) DEBT-27 through DEBT-31. DEBT-27 still needs a decision FROM BAKIR and
-    is the highest-value open thread in wave 1.
+    (1) This block. (2) docs/hermes-mapping/PROCESS.md and DOC_STANDARD.md.
+    (3) designs/D01.2.md — not for D01.4's content, but because its front matter
+    shows the shape a CLOSED document takes, including how an unprovable half is
+    declared above the fold instead of quietly omitted.
+    (4) The NEW standing rule in `rules.process`: READ HERMES BEFORE ASKING.
+    Bakir gave it mid-D01.2 and it immediately produced two improvements that
+    were sitting in a 165-line file nobody had opened.
+    (5) DEBT-27 (DECIDED — per-day, implementation belongs to D01.7) and
+    DEBT-32 (new, dream job failing 17 times, tracked not investigated).
   the_headline: >
-    D01.2 exists because its own premise was FALSE. The wave-1 handoff predicted
-    it was "likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching
-    is automatic". True for this box; false for the platform. anthropic_provider
-    .py is 802 LIVE lines, built at registry.py:81, shipped in
-    setup/providers/anthropic.yaml and handled in setup/minimal.py:44 — anyone
-    who picks Anthropic at onboarding gets a fully wired provider with ZERO
-    prompt caching, because `grep -rn "cache_control" src/` returns nothing.
-    The design is settled: 4 breakpoints on tools + full system + last 2
-    messages. The STABLE TIER marker was dropped deliberately — at ~928 tokens
-    it is below Anthropic's minimum cacheable prefix on every model except
-    Opus 5, so it would have been a silently dead marker.
-  what_D01_1_taught_that_outlives_it: >
-    An assertion that cannot fail reads as coverage without being coverage. The
-    intent-class equality test in test_assemble_skill_catalogue.py passed for a
-    whole slice while DEBT-24 was live, because its harness registered no
-    tool_registry so nothing COULD differ. The same trap sits in any
-    "prompt A == prompt B" test: two turns in a harness are identical whether or
-    not the freeze works. Mutate something that only a rebuild would pick up —
-    D01.1's gateway test mutates the owl's persona — and then MUTATION-TEST the
-    test itself by breaking the code on purpose.
-  what_D01_2_has_taught_so_far: >
-    THREE stated premises were wrong, each in a different direction, and each
-    was caught by a different check. The handoff's "no-op" prediction — caught
-    by reading the tree. The MAP's claim that cached_tokens appears nowhere in
-    src/ — stale, caught by grepping (D01.6 added a reader at
-    openai_provider.py:114). A recollection of Anthropic's minimum cacheable
-    prefix — caught by loading the API reference instead of trusting memory, and
-    the real answer is model-dependent AND non-monotonic (512/1024/2048/4096).
-    None would have surfaced by writing the design first and checking later.
+    D01.2 shipped and the four stages after `implement` each found something the
+    stage before could not. `cleanup` found the stream path was MARKED but never
+    INSTRUMENTED. `test` found the reason that mattered: THE LIVE ANSWER PATH
+    STREAMS — every provider unit test drives create(), so the whole marker layer
+    had been proven on a path a real turn does not take. `validate` found the
+    invalidator audit keyed on session_key alone, so it reported the staged RCA's
+    three owls as three violations — DEBT-21's mistake, reproduced one item later
+    — and nearly let me report D01.3's premise as MEASURED on artifact data.
+    `document` found the Verification section told the reader to use `sqlite3`,
+    which is not installed here, exactly as D01.6's first draft did.
+  what_D01_2_taught_that_outlives_it: >
+    A test suite proves the path it exercises, not the path production takes. 24
+    unit tests, a 4-mutation gateway battery and 527 provider tests all drove
+    messages.create(); the live pipeline calls messages.stream(). The gap was
+    invisible until a gateway test instantiated the real thing and the fake blew
+    up for lacking a stream(). Before trusting a provider-level test, ASK WHICH
+    ENTRY POINT PRODUCTION USES — and if the answer is not in front of you, that
+    is the first thing to go and measure.
+  the_second_lesson: >
+    A measurement can be confounded rather than wrong, which is worse because it
+    looks like data. Lane-keyed, the audit reported 3 TOOLS ARRAY CHANGED on
+    incident lanes; owl-keyed, on identical traffic, it reported 0. Had I written
+    up the first number, D01.3 would have inherited a false premise from the very
+    mechanism built to give it a true one. Check the DENOMINATOR before reporting
+    a rate: zero changes across pairs that each had one turn is no opportunity,
+    not stability.
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl. NOTE: grepping the word 'dangling' matches the audit lines that REPORT '0 dangling' — check fields.dangling_handlers == [] instead."
-    - "uv run python -m stackowl db migrate   # expect: up to date (version 0103). D01.2 will add 0104."
-    - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1065 passed"
-    - "timeout 800 uv run pytest tests/sessions/ tests/owls/ -q -p no:randomly   # expect 425 passed (147 + 278)"
+    - "uv run python -m stackowl db migrate   # expect: up to date (version 0104)."
+    - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1080 passed"
+    - "timeout 600 uv run pytest tests/providers/ -q -p no:randomly  # expect 527 passed"
+    - "timeout 800 uv run pytest tests/sessions/ tests/owls/ -q -p no:randomly   # expect 425 passed"
     - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
-    - "NEVER run the two pytest invocations in parallel on this box, and never combine them under one timeout — both were tried on 2026-07-27 and both were killed at their deadline (exit 143). Sequential, separate budgets."
+    - "NEVER run two pytest invocations in parallel on this box, and never combine them under one timeout — tried twice, killed at the deadline both times (exit 143). Sequential, separate budgets."
+    - "sqlite3 is NOT installed. Query the DB through `uv run python -c 'import sqlite3...'` instead. This has now bitten two documents."
   git_state:
     branch: main
-    unpushed: >
-      FIVE commits are committed locally and NOT pushed: 3d6c09b5 (D01.1
-      cleanup), 6b5017aa (D01.1 test), 32b5f617 (D01.1 document), 178a522e
-      (D01.2 brainstorm), ab33d6e4 (D01.2 architect). Bakir has been asked twice
-      and has not yet said push — ASK, do not push unprompted.
+    unpushed: "NONE. Everything through D01.2 is pushed to origin/main (last: 2f3a43f7 + the document-stage commit). Bakir approved the push on 2026-07-27 after ten commits had accumulated."
   next_task_in_order:
     1: >
-      D01.2 IMPLEMENT — tests first (superpowers:test-driven-development), and
-      MUTATION-TEST them (see what_D01_1_taught_that_outlives_it). Build order:
-      (a) providers/_cache_control.py — ONE pure function
-          apply_cache_breakpoints(tools, system, messages, *, model, ttl) ->
-          (tools, system, messages). No I/O, no provider dependency.
-      (b) providers/base.py — supports_cache_breakpoints property, default
-          False, matching the supports_vision/supports_document pattern at
-          base.py:240-275.
-      (c) providers/anthropic_provider.py — return True; add ONE private
-          wrapper that the 3 messages.create() sites (lines 361, 604, 721) AND
-          the stream path all route through. Populate cached_input_tokens at
-          _record_stream_usage_safe:163 and _record_usage_safe:675 —
-          base.py:158 has accepted that parameter since D01.6 and Anthropic has
-          never fed it.
-      (d) config/provider.py — cache_ttl on ProviderConfig, default "5m".
-      (e) migration 0104 — probe state keyed by (provider, model). Idempotent.
-      (f) pipeline/steps/assemble.py — silent-invalidator audit at cold build.
-      (g) tests/providers/test_cache_control.py — replay fixture: byte-exact
-          outgoing request shape + a canned usage response built from the API
-          docs (NOT captured from the real API — say so in the test).
-    2: >
-      THE ONE THING NOT TO GET WRONG: learn ASYMMETRICALLY. Persist only
-      POSITIVE probe results. A zero cache reading must NEVER be persisted and
-      NEVER treated as "marker is dead" — a field-stripping gateway guarantees a
-      zero on turn one, and persisting it would disable the feature forever with
-      no error. D01.6 already measured that NeraAiRaw reports no cache fields in
-      any accepted shape. This was a contradiction Bakir resolved explicitly;
-      see the item's contradictions block.
-    3: >
-      DEBT-27 needs a decision FROM BAKIR before D01.7 can close it, and it is
-      the highest-value open thread in wave 1: background and scheduled lanes get
-      no benefit from D01.1's freeze at all (measured: 1 cached vs 51
-      cold_build). The question is what session identity a scheduled job should
-      have — per-run, per-day, or a standing per-owl one. Do NOT resolve it by
-      deleting the session_id guard in assemble; that guard is deliberate and
-      tested, and removing it would serve one owl's frozen prompt to every other
-      background owl.
-    4: "then D01.4, D01.5, D01.3."
+      D01.4 BRAINSTORM — 25 questions, batched 4 per round, per the GRILL RULE.
+      BUT READ HERMES FIRST (the new standing rule): find their deferred-
+      invalidation / "this would cost you money right now" vocabulary before
+      asking, so the questions are the ones Hermes cannot answer.
+    2: "Then D01.4 architect (25 more questions), implement, cleanup, test, validate, document."
+    3: "Then D01.5 — its Hermes pointers are already recorded on the item, found during D01.2."
+    4: "Then D01.3 — but see the OPEN MEASUREMENT below; it may be answerable with data by then."
+  the_open_measurement_worth_collecting: >
+    D01.2 shipped the instrument that answers D01.3 and it has NOT yet returned a
+    reading. The owl-scoped audit reported zero tools-array changes, but every
+    (lane, owl) pair in the observation window had exactly ONE turn, so that is
+    no opportunity rather than stability. It needs 2+ turns by the SAME owl on the
+    SAME lane — i.e. real channel traffic; no CLI drives a turn. Whenever Bakir
+    has used the assistant for a few messages, run:
+      cat ~/.stackowl/logs/stackowl.jsonl | jq -r 'select(.msg|test("tools array CHANGED")) | "\(.fields.session_key) owl=\(.fields.owl) tools=\(.fields.tool_count)"'
+    A non-empty result is the first hard evidence for D01.3 in this program.
   what_needs_bakir:
-    - "DEBT-27 — the session-identity design call for background/scheduled lanes. Blocks D01.7 closing."
-    - "Whether to push the five local commits."
-    - "DEBT-17 — one assertion; he decides what it should say instead of the exact hint string."
-  known_open_debt: "DEBT-1, 3, 8, 9, 14, 16, 17, 19, 25, 26, 27, 28, 29, 30, 31. Resolved: DEBT-22, 23, 24. See known_debt for evidence and decisions."
+    - "Nothing is BLOCKING. DEBT-27 and DEBT-17 were both decided on 2026-07-27; the push was approved and done."
+    - "DEBT-32 — the dream job has failed 17 times while still enabled. He chose to track it and finish D01.2 first; it is now the top non-item thread."
+    - "The D01.3 measurement above needs him to simply USE the assistant for a few turns. No work required, just traffic."
   the_pattern_that_caught_everything_this_session:
-    name: "Measure before changing; the code alone will lie to you"
+    name: "Each stage catches what the stage before structurally cannot"
     instances:
-      - "`memory_context` looked like one thing and was SIX channels — removing it wholesale nearly switched off the preference-learning and reflect->recall arcs. Caught by the NFR-4 gateway test."
-      - "`base_len` read a constant 3768 for days while prompt_hash kept changing — stable in LENGTH, unstable in bytes, because the clock was rendered to the minute."
-      - "`FOCUS_TRACKER` looked like assemble's private business; skill_view depended on it, and removing the scoring would have sent focus hysteresis silently to zero."
-      - "`skills.global_catalog` looked dead; it is a live user-facing setting with a reachability probe. I removed it by accident and the tests caught me."
-      - "`/new` looked finished and had NEVER worked — the composite lane it looked up cannot exist at command time."
+      - "unit tests proved the marker layout; they could not know production streams."
+      - "the gateway test found the streaming path; it could not know the audit was lane-keyed, because its harness has one owl."
+      - "live traffic found the lane-keying, because incident lanes run three owls; no test harness had that shape."
+      - "the document stage found `sqlite3` is not installed, because it is the only stage that RUNS the instructions a reader would follow."
+      - "MUTATION TESTING found a test that could not fail (M2), and later a RESTORE that did not restore — verify the harness, not just the code."
 
 # ---------------------------------------------------------------------------
 # WALK ORDER — waves, in sequence
@@ -1966,7 +1940,7 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      document:   not_started
+      document:   done
     implement_result:
       date: 2026-07-27
       commits: [daf58a60, 11328aee, 90b30704, f2d811e3]
@@ -2144,8 +2118,38 @@ items:
         Bakir\'s instruction: the 6 resume calls had landed — 3 of the job ids
         are live today (goal_execution-715f6143 ran 25 minutes before the check)
         and 3 no longer exist. Killed with his approval; handle released.
+    document_result:
+      date: 2026-07-28
+      status: "CLOSED. Status line moved design -> live. Every Verification command RUN, not trusted."
+      five_corrections_folded_in_marked_CORRECTED_in_the_doc:
+        1: "The minimum guard is CUMULATIVE, not per-span — the Lifecycle section read as a per-span check."
+        2: "I2 cannot be satisfied absolutely, and the doc now SAYS so instead of stating an absolute the code cannot meet. A 4096-floor model will get markers that do not cache; they cost a wasted breakpoint, never a wrong request."
+        3: "Breakpoints ARE reallocated — reverses the original 'a simpler, assertable layout was chosen over a self-optimising one'."
+        4: "The tools audit lives in pipeline/steps/execute.py, not the Anthropic provider. In the provider it would have measured NOTHING on this deployment."
+        5: "The 'misplaced cache_read_input_tokens probe' debt was a PHANTOM and is closed, with the live-config evidence."
+      two_invariants_added:
+        I1_note: "Existing markers are STRIPPED before placement — the reason I1 holds under the tool loop's growing message list."
+        I6: "The invalidator audit is keyed (session_key, owl_name), never the lane alone. Found in validate on live traffic; DEBT-21's mistake reproduced."
+      verification_section_was_RUN: >
+        Not trusted — pasted and executed. `0104 0` for the migration and probe
+        count (zero rows IS the pass: I5 forbids persisting a zero and there is no
+        Anthropic backend to confirm). Four providers listed, ALL protocol:
+        openai, three disabled. 24 passed in test_cache_control.py, 4 passed in
+        the gateway integration file. Also fixed IN the doc: it had told the
+        reader to use `sqlite3`, which is NOT installed on this box — the same
+        mistake D01.6's first draft made (DEBT-2). Replaced with a Python
+        one-liner that actually runs here.
+      every_path_verified_against_the_tree: "13 source and test paths named in the doc, all confirmed present; 5 factual claims (MIN_CACHEABLE_TOKENS=512, cache_ttl default, the execute.py call site, request_text-driven schema selection, ABC default False) each grepped rather than remembered."
+      what_the_doc_now_says_it_CANNOT_prove: >
+        Two things, both with the exact command that would prove them. (a) D01.3's
+        premise — the owl-scoped audit reported zero changes but every (lane, owl)
+        pair had ONE turn, so that is no opportunity rather than stability; it
+        needs 2+ turns by the same owl on the same lane, which needs real channel
+        traffic. (b) Whether Anthropic honours the markers — no Anthropic backend
+        exists here and D01.6 established the enabled gateway reports no cache
+        fields, so even pointing StackOwl at it would not settle it.
     doc: "docs/hermes-mapping/designs/D01.2.md"
-    doc_last_verified: 2026-07-27
+    doc_last_verified: 2026-07-28  # against commit 2f3a43f7, Verification section RUN not trusted
     architect_result:
       date: 2026-07-27
       round: "25 architect questions, batched 4 per round"
