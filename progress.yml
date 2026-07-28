@@ -245,27 +245,30 @@ current:
   stage: implement
   stage_status: not_started
   one_line: >
-    D01.1 is COMPLETE — all seven stages, doc closed and status live. Next is
-    D01.2 (prompt-cache breakpoints), which the D01.1 brainstorm predicted would
-    be largely a NO-OP: NeraAiRaw is OpenAI-protocol, where prefix caching is
-    automatic and there is no cache_control marker to place. Start by proving or
-    disproving that, because it decides whether the item is 25 questions or one
-    paragraph. Then D01.4, D01.5, D01.3.
+    D01.1 is COMPLETE (7/7, doc live). D01.2 has brainstorm + architect DONE and
+    a finished design doc; IMPLEMENT is the next stage and nothing has been
+    coded yet. After D01.2: D01.4, D01.5, D01.3.
   read_first: >
-    This block, then docs/hermes-mapping/designs/D01.1.md — now status `live`,
-    verified against commit 6b5017aa, with its Verification section actually RUN
-    rather than trusted. The D01.1 item's `slices`, `validate_result` and
-    `changes` blocks hold the same record machine-readably.
-    Before starting D01.2, read DEBT-27 — it qualifies D01.1's result and is the
-    highest-value open thread in this wave.
+    (1) This block. (2) docs/hermes-mapping/designs/D01.2.md — the full design,
+    already written; it names every file to create and change, the 5 invariants,
+    and states ABOVE THE FOLD that the live half cannot be verified on this box.
+    (3) The D01.2 item's `decisions` (14 recorded answers + 3 contradictions
+    Bakir resolved) and `architect_result` blocks — those are the contract the
+    implementation must satisfy; do not re-litigate them.
+    (4) DEBT-27 through DEBT-31. DEBT-27 still needs a decision FROM BAKIR and
+    is the highest-value open thread in wave 1.
   the_headline: >
-    D01.1's CONFLICT IS RESOLVED. Invariant I1 measured on the live database at
-    close: 4 owl-attributed lanes, 0 violations, 23 calls. The baseline at the
-    start of the item was 3 distinct prompts across 8 turns.
-    But read that with DEBT-27 beside it: the freeze engages ONLY for
-    channel-ingress lanes. Live tally 1 cached vs 51 cold_build. I1 holds and
-    the provider-side cost win holds; the LATENCY win does not exist yet for
-    background and scheduled work, which was an explicit target.
+    D01.2 exists because its own premise was FALSE. The wave-1 handoff predicted
+    it was "likely a no-op — NeraAiRaw is OpenAI-protocol, where prefix caching
+    is automatic". True for this box; false for the platform. anthropic_provider
+    .py is 802 LIVE lines, built at registry.py:81, shipped in
+    setup/providers/anthropic.yaml and handled in setup/minimal.py:44 — anyone
+    who picks Anthropic at onboarding gets a fully wired provider with ZERO
+    prompt caching, because `grep -rn "cache_control" src/` returns nothing.
+    The design is settled: 4 breakpoints on tools + full system + last 2
+    messages. The STABLE TIER marker was dropped deliberately — at ~928 tokens
+    it is below Anthropic's minimum cacheable prefix on every model except
+    Opus 5, so it would have been a silently dead marker.
   what_D01_1_taught_that_outlives_it: >
     An assertion that cannot fail reads as coverage without being coverage. The
     intent-class equality test in test_assemble_skill_catalogue.py passed for a
@@ -275,36 +278,74 @@ current:
     not the freeze works. Mutate something that only a rebuild would pick up —
     D01.1's gateway test mutates the owl's persona — and then MUTATION-TEST the
     test itself by breaking the code on purpose.
+  what_D01_2_has_taught_so_far: >
+    THREE stated premises were wrong, each in a different direction, and each
+    was caught by a different check. The handoff's "no-op" prediction — caught
+    by reading the tree. The MAP's claim that cached_tokens appears nowhere in
+    src/ — stale, caught by grepping (D01.6 added a reader at
+    openai_provider.py:114). A recollection of Anthropic's minimum cacheable
+    prefix — caught by loading the API reference instead of trusting memory, and
+    the real answer is model-dependent AND non-monotonic (512/1024/2048/4096).
+    None would have surfaced by writing the design first and checking later.
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl. NOTE: grepping the word 'dangling' matches the audit lines that REPORT '0 dangling' — check fields.dangling_handlers == [] instead."
-    - "uv run python -m stackowl db migrate   # expect: up to date (version 0103)"
+    - "uv run python -m stackowl db migrate   # expect: up to date (version 0103). D01.2 will add 0104."
     - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1065 passed"
     - "timeout 800 uv run pytest tests/sessions/ tests/owls/ -q -p no:randomly   # expect 425 passed (147 + 278)"
     - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
     - "NEVER run the two pytest invocations in parallel on this box, and never combine them under one timeout — both were tried on 2026-07-27 and both were killed at their deadline (exit 143). Sequential, separate budgets."
+  git_state:
+    branch: main
+    unpushed: >
+      FIVE commits are committed locally and NOT pushed: 3d6c09b5 (D01.1
+      cleanup), 6b5017aa (D01.1 test), 32b5f617 (D01.1 document), 178a522e
+      (D01.2 brainstorm), ab33d6e4 (D01.2 architect). Bakir has been asked twice
+      and has not yet said push — ASK, do not push unprompted.
   next_task_in_order:
     1: >
-      D01.2 brainstorm — but FIRST spend ten minutes disproving the premise,
-      because it decides the size of the item. The D01.1 brainstorm recorded:
-      "D01.2 is likely a no-op for this deployment: NeraAiRaw is OpenAI-protocol,
-      where prefix caching is automatic." If that holds there is no cache_control
-      marker to place and the item is a documented no_change_needed rather than
-      25 questions. Evidence to gather before asking Bakir anything:
-      (a) `grep -rn "cache_control\|cached_tokens" src/` — D01.1 recorded ZERO
-      occurrences anywhere in src/; confirm that is still true.
-      (b) D01.6 already established that NeraAiRaw reports NO cache fields in any
-      of the three accepted shapes, so metric 1 is not measurable on this
-      deployment (see D01.6 notes and invariant I4 there: 0-with-0-reporting is a
-      silent gateway, NOT a cold cache). That is the single most important prior.
-      (c) `no_change_needed` is a legitimate outcome per PROCESS — but silence is
-      not. Whatever the answer, D01.2 still ships a document.
+      D01.2 IMPLEMENT — tests first (superpowers:test-driven-development), and
+      MUTATION-TEST them (see what_D01_1_taught_that_outlives_it). Build order:
+      (a) providers/_cache_control.py — ONE pure function
+          apply_cache_breakpoints(tools, system, messages, *, model, ttl) ->
+          (tools, system, messages). No I/O, no provider dependency.
+      (b) providers/base.py — supports_cache_breakpoints property, default
+          False, matching the supports_vision/supports_document pattern at
+          base.py:240-275.
+      (c) providers/anthropic_provider.py — return True; add ONE private
+          wrapper that the 3 messages.create() sites (lines 361, 604, 721) AND
+          the stream path all route through. Populate cached_input_tokens at
+          _record_stream_usage_safe:163 and _record_usage_safe:675 —
+          base.py:158 has accepted that parameter since D01.6 and Anthropic has
+          never fed it.
+      (d) config/provider.py — cache_ttl on ProviderConfig, default "5m".
+      (e) migration 0104 — probe state keyed by (provider, model). Idempotent.
+      (f) pipeline/steps/assemble.py — silent-invalidator audit at cold build.
+      (g) tests/providers/test_cache_control.py — replay fixture: byte-exact
+          outgoing request shape + a canned usage response built from the API
+          docs (NOT captured from the real API — say so in the test).
     2: >
-      DEBT-27 needs a decision from Bakir before D01.7 can close it, and it is
+      THE ONE THING NOT TO GET WRONG: learn ASYMMETRICALLY. Persist only
+      POSITIVE probe results. A zero cache reading must NEVER be persisted and
+      NEVER treated as "marker is dead" — a field-stripping gateway guarantees a
+      zero on turn one, and persisting it would disable the feature forever with
+      no error. D01.6 already measured that NeraAiRaw reports no cache fields in
+      any accepted shape. This was a contradiction Bakir resolved explicitly;
+      see the item's contradictions block.
+    3: >
+      DEBT-27 needs a decision FROM BAKIR before D01.7 can close it, and it is
       the highest-value open thread in wave 1: background and scheduled lanes get
-      no benefit from the freeze at all. The question is what session identity a
-      scheduled job should have — per-run, per-day, or a standing per-owl one.
-      Do NOT resolve it by deleting the session_id guard in assemble.
-    3: "then D01.4, D01.5, D01.3."
+      no benefit from D01.1's freeze at all (measured: 1 cached vs 51
+      cold_build). The question is what session identity a scheduled job should
+      have — per-run, per-day, or a standing per-owl one. Do NOT resolve it by
+      deleting the session_id guard in assemble; that guard is deliberate and
+      tested, and removing it would serve one owl's frozen prompt to every other
+      background owl.
+    4: "then D01.4, D01.5, D01.3."
+  what_needs_bakir:
+    - "DEBT-27 — the session-identity design call for background/scheduled lanes. Blocks D01.7 closing."
+    - "Whether to push the five local commits."
+    - "DEBT-17 — one assertion; he decides what it should say instead of the exact hint string."
+  known_open_debt: "DEBT-1, 3, 8, 9, 14, 16, 17, 19, 25, 26, 27, 28, 29, 30, 31. Resolved: DEBT-22, 23, 24. See known_debt for evidence and decisions."
   the_pattern_that_caught_everything_this_session:
     name: "Measure before changing; the code alone will lie to you"
     instances:
@@ -313,10 +354,6 @@ current:
       - "`FOCUS_TRACKER` looked like assemble's private business; skill_view depended on it, and removing the scoring would have sent focus hysteresis silently to zero."
       - "`skills.global_catalog` looked dead; it is a live user-facing setting with a reachability probe. I removed it by accident and the tests caught me."
       - "`/new` looked finished and had NEVER worked — the composite lane it looked up cannot exist at command time."
-  what_needs_bakir:
-    - "DEBT-17 — one assertion; he decides what it should say instead of the exact hint string."
-    - "Nothing else is blocked on him. Validation now needs only ordinary use, not a special action."
-  known_open_debt: "DEBT-1, 3, 8, 9, 14, 16, 17, 19. See known_debt for evidence and decisions."
 
 # ---------------------------------------------------------------------------
 # WALK ORDER — waves, in sequence
@@ -1640,9 +1677,12 @@ summary:
     P2: 56
     P3: 32
   by_status:
-    not_started: 108
-    in_progress: 2      # D01.6 (6/7), D01.7 (2/7 + implement live)
-    done: 1             # D01.1 — all seven stages, doc live, closed 2026-07-27 @ 6b5017aa
+    not_started: 107
+    in_progress: 2      # D01.2 (2/7 — brainstorm+architect), D01.6 (6/7 — brainstorm never run)
+    done: 2             # D01.1 (closed 2026-07-27 @ 6b5017aa) and D01.7 (7/7 with a doc; the
+                        # old comment here called it "2/7 + implement live", which was stale —
+                        # caught 2026-07-27 by validating the summary against the items rather
+                        # than trusting the counter)
     # D01.6 is functionally closed but its brainstorm stage was never run, so it
     # is NOT counted done. Same rule as everything else: seven stages or it is
     # in_progress.
