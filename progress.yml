@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.4
-  stage: architect
+  stage: implement
   stage_status: not_started
   one_line: >
     D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
@@ -2575,14 +2575,14 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
+    doc: "docs/hermes-mapping/designs/D01.4.md"
+    doc_last_verified: 2026-07-28  # against commit 35493542; every path, line number and the 56-site count checked
     the_premise_was_INVERTED_before_the_first_question: >
       The map asks "Is deferred-by-default acceptable UX, or does StackOwl's
       proactive posture need immediate application?" That question is MOOT:
@@ -2667,6 +2667,76 @@ items:
           freeze, enforcement silently becomes as stale as the prompt. This must
           be written into the design doc as a stated invariant, not left implicit.
         no_migration_needed: "DELETE requires no schema change. D01.4 is the first item in this wave with zero migrations."
+    architect_result:
+      date: 2026-07-28
+      round: "11 architect questions over 3 rounds (32 total with brainstorm), Hermes and the StackOwl call sites read BEFORE asking"
+      ladder_rung: "1 — extend existing code. No new module, no new table, no new core tool, and NO MIGRATION: a DELETE needs no schema change. First item in this wave with zero migrations."
+      law_1: >
+        Invalidation never touches a turn in flight — it changes only what the
+        NEXT turn builds, so nothing mutates past context. Stated plainly in the
+        doc: this makes invalidation the SECOND sanctioned way a frozen prompt's
+        life can end early, alongside compression. A reader who assumes rollover
+        is the only release will be wrong.
+      law_2: "Nothing added to the model's tool surface. One method pair on an existing store, one line in an existing set_services call, call sites that already exist."
+      files_to_change:
+        - "sessions/prompt_store.py — invalidate_owl(*, owl_name, cause) and invalidate_all(*, cause), beside load/save. Two explicit names so the dangerous case is never the default; both return a row count for the log line."
+        - "commands/owls_command.py — await invalidation in _edit; and ADD session_prompt_store to the StepServices built at line 1077."
+        - "skills/store.py — invalidate_all at set_enabled (line 305) and the install path, bound to the WRITE not the caller."
+        - "pipeline/cache_audit.py — accept a `cause` so an explained change logs info instead of warning."
+        - "tests/pipeline/test_d014_prompt_invalidation_gateway_integration.py (new) — the business requirement."
+      the_seam_problem_and_its_answer: >
+        THE CENTRAL ARCHITECTURAL FINDING. The trigger sites have no shared route
+        to the store. OwlsCommand takes a DbPool, but every dependency defaults to
+        None and owl_build.py constructs `OwlsCommand()` BARE at four sites (829,
+        1047, 1158, 1214) — so the self-extension path has db=None and cannot
+        invalidate. get_services() is the one seam all four can see, and
+        owls_command.py:1077 already establishes the pattern, calling
+        set_services(StepServices(owl_registry=..., db_pool=...)) with a comment
+        explaining that "slash-command dispatch never runs the LLM pipeline
+        backend, which is the ONLY other place that populates get_services()".
+        But that StepServices is PARTIAL — no session_prompt_store — so an
+        invalidation reading it would get None and silently no-op. The fix is one
+        line filling that gap, using the codebase's own established pattern.
+      my_brainstorm_reasoning_was_wrong_on_the_facts: >
+        I rejected the EventBus during brainstorm because it "makes a synchronous
+        action asynchronous". EventBus.emit actually runs SYNC handlers INLINE on
+        the caller's thread, so that reason was false. The conclusion survives for
+        a different reason: invalidation must await a DB write, only ASYNC
+        handlers may await, and those are "scheduled on the running loop" —
+        scheduled is not ordered. Right answer, wrong reason, corrected here
+        rather than left as a plausible-sounding justification.
+      cross_item_clash_caught_at_design_time: >
+        D01.2's audit_prompt_parts warns whenever a prompt part changes between
+        cold builds — so after D01.4 EVERY deliberate edit would emit a warning
+        about a change the user just asked for. That is the same cry-wolf failure
+        D01.2's validate stage caught, arriving from the other direction.
+        Resolved by threading `cause` through: an explained change logs info as
+        "changed as requested", an UNexplained one stays a warning, so the audit
+        keeps doing the one job it exists for.
+      the_load_bearing_condition: >
+        I5 (enforcement never depends on prompt freshness) holds ONLY while the
+        owl registry stays live. Verified in authz_compose.py: bounds are
+        `owl.bounds(now) ∩ creation_ceiling`, resolved at dispatch, fail-closed,
+        with task_envelope explicitly excluded from enforcement (E2-S3). Written
+        into the doc as a named fragile condition because if anyone ever caches
+        the registry per session to mirror the prompt freeze, enforcement becomes
+        as stale as the prompt and I5 fails with no test to catch it.
+      decided_at_architect:
+        seam: "Fill the session_prompt_store gap in the existing set_services call."
+        missing_store: "Log at ERROR and continue — the edit persisted and must never be rolled back over a cache concern. Mirrors D01.2's I3."
+        dead_event: "owls_command.py:379 emits owl_edited with ZERO subscribers. Left alone — not D01.4's to fix, and recorded as debt rather than quietly deleted."
+        signature: "Two explicit methods, not one with an optional owl. The destructive case must not be the default."
+        multi_principal: "invalidate_all is global across principals, deliberately. The skills catalogue and capabilities block are machine-wide facts, and migration 0102 says NO owner_id DELIBERATELY."
+        observability: "INFO with cause + scope + owl + rows. The missing half of D01.2's audit: that one names WHICH PART changed, this names WHAT CAUSED the rebuild."
+        ordering: "Guaranteed by the call stack — the command awaits invalidation before returning its confirmation, and the next turn cannot start until the user has that reply. No race to test for."
+        permissions: "No grant/revoke seam exists in authz/ or commands/permissions.py. Ship the other three triggers; locate it during implement — if permissions are only ever changed via owl bounds it is already covered by invalidate_owl."
+        skills_hook: "At the STORE, next to the write, so a future non-command writer still invalidates. Same reasoning that put marking at one chokepoint in D01.2 — and the exact gap the D01.2 cleanup stage found in the stream path."
+      every_claim_verified_against_the_tree: >
+        5 paths present; owls_command.py:379 does emit owl_edited;
+        skills/store.py:305 is set_enabled; coding_context.py:37 does name the
+        --now contract; _evict_cached_agent really is 56 call sites (counted, not
+        estimated); test_d011 line 342 is the `not in` assertion; migration 0102
+        does say "NO owner_id, DELIBERATELY".
     changes: []
     notes: null
 
