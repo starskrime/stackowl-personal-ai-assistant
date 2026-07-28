@@ -242,7 +242,7 @@ deployment:
 current:
   wave: 1
   item: D01.2
-  stage: architect
+  stage: implement
   stage_status: not_started
   one_line: >
     D01.1 is COMPLETE — all seven stages, doc closed and status live. Next is
@@ -387,6 +387,89 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-31
+    found: 2026-07-27
+    what: "D01.3's premise — that context_budget varies the tools array every turn — has never been MEASURED."
+    evidence: >
+      The map states it as fact ("pipeline/context_budget.py runs a greedy
+      relevance-ranked budgeter every turn ... the tools array therefore differs
+      turn to turn"), and D01.3's whole resolution depends on it. But no
+      measurement exists, exactly as D01.2's own "no-op" premise was asserted and
+      turned out false.
+    why_it_matters_for_D01_2: >
+      Tools render at position 0, so a varying tools array invalidates EVERY
+      breakpoint on every turn. D01.2's most valuable marker is worth nothing
+      until this is resolved.
+    decision: >
+      D01.2 does not fix it, but its design ships a per-session tools-array hash
+      that logs a WARNING when the array changes between turns. That converts
+      D01.3's premise from an assumption into a measured fact before D01.3 is
+      picked up. Marker still placed — it costs nothing extra and pays off the
+      moment D01.3 lands.
+    hand_to: D01.3
+    status: open
+  - id: DEBT-30
+    found: 2026-07-27
+    what: "The 20-block cache lookback is exceeded by 9.6% of our tool-using turns."
+    evidence: >
+      Anthropic documents that a cache breakpoint searches back at most 20
+      CONTENT BLOCKS for a prior entry; beyond that it silently misses. Measured
+      across all rotated logs: 666 tool-using traces, p50 3 tool calls, p90 10
+      (~20 blocks — exactly the threshold), max 42 (~84 blocks). 64 traces
+      (9.6%) exceed it.
+    how_hermes_avoids_it: >
+      They do not. Zero references to the lookback anywhere in their tree. They
+      are protected only incidentally: the marker is re-placed on every request
+      (so the gap stays small in MESSAGE terms), and context_engine
+      prune_tool_results_only plus automatic compaction keeps block counts down.
+    decision: >
+      MATCH Hermes for now rather than spend one of only four breakpoints on an
+      intermediate marker. D03's tool-result pruning removes the cause; a marker
+      would only mask the symptom. Recorded with the measurement so D03 inherits
+      evidence rather than a hunch.
+    hand_to: D03
+    status: open
+  - id: DEBT-29
+    found: 2026-07-27
+    what: "Parliament's parallel fan-out forfeits the shared-prefix cache discount."
+    evidence: >
+      parliament/round_runner.py:73 uses asyncio.gather, and orchestrator.py:28
+      documents "parallel fan-out via asyncio.gather". Anthropic's docs are
+      explicit: N concurrent requests sharing a prefix ALL pay full price,
+      because none can read a cache entry the others are still writing. Every
+      owl in a Parliament round shares the tools prefix at position 0 — the
+      largest shared span.
+    the_documented_fix: "Send one request, await its first streamed token, then release the remaining N-1."
+    decision: >
+      FLAG ONLY, do not edit. Staggering trades latency for cost in a feature
+      built specifically for parallelism — that is a product decision for
+      whoever owns Parliament, not something D01.2 should make from inside an
+      item about provider markers. Bakir initially chose to fix it here, then
+      reversed when the inconsistency was put back to him (see D01.2 brainstorm
+      contradiction 1): editing parliament/ for an UNMEASURED discount while
+      accepting a MEASURED 9.6% loss elsewhere was incoherent.
+    status: open
+  - id: DEBT-28
+    found: 2026-07-27
+    what: "The Anthropic-shaped cached-token probe lives in the OpenAI provider; the Anthropic provider reads neither cache field."
+    evidence: >
+      openai_provider.py:138 probes for `cache_read_input_tokens` — an
+      ANTHROPIC usage field name — inside its three-shape reader. Meanwhile
+      `grep -in "cache" src/stackowl/providers/anthropic_provider.py` returns
+      NOTHING: it reads input_tokens/output_tokens at
+      _record_stream_usage_safe:163 and _record_usage_safe:675 and never
+      populates cached_input_tokens, even though base.py:158 has accepted that
+      parameter since D01.6.
+    decision: >
+      D01.2 writes a NATIVE Anthropic reader rather than extracting a shared one
+      — Anthropic returns cache_read_input_tokens and
+      cache_creation_input_tokens as first-class usage fields, so shape-probing
+      there would be dishonest. The misplacement in openai_provider is tracked
+      here rather than fixed in-flight, because it is a separate concern from
+      making Anthropic report at all. Noted that this is duplication accepted
+      for the READER while rejected for the WRITER — the asymmetry was put back
+      to Bakir and confirmed deliberate (D01.2 brainstorm contradiction 2).
+    status: open
   - id: DEBT-27
     found: 2026-07-27
     what: >
@@ -1772,14 +1855,74 @@ items:
     started: 2026-07-27
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
+    doc: "docs/hermes-mapping/designs/D01.2.md"
+    doc_last_verified: 2026-07-27
+    architect_result:
+      date: 2026-07-27
+      round: "25 architect questions, batched 4 per round"
+      ladder_rung: "1 — extend existing code. No new core tool, no plugin, no MCP server."
+      law_1: >
+        Not merely respected — this item is the MECHANISM that enforces Law 1 on
+        the Anthropic path. D01.1 made the prompt byte-identical; D01.2 is what
+        actually claims the discount for it.
+      law_2: >
+        Nothing is added to the model's tool surface; the change is
+        provider-internal and invisible to every prompt. ONE stated exception:
+        the invalidator audit hooks pipeline/steps/assemble.py, because that is
+        where the frozen prompt is built and so the only place a silent
+        invalidator can be caught at its source.
+      files_to_create:
+        - "src/stackowl/providers/_cache_control.py — ONE pure function, apply_cache_breakpoints(tools, system, messages, *, model, ttl) -> (tools, system, messages). No I/O, no provider dependency, unit-testable with no client."
+        - "src/stackowl/db/migrations/0104_*.sql — probe state keyed by (provider, model)."
+        - "tests/providers/test_cache_control.py — replay fixture: byte-exact outgoing request shape + a canned usage response."
+      files_to_change:
+        - "providers/base.py — supports_cache_breakpoints property, default False (matches supports_vision/supports_document)."
+        - "providers/anthropic_provider.py — returns True; ONE private wrapper that all 3 create() sites (361, 604, 721) AND the stream path route through; populate cached_input_tokens at _record_stream_usage_safe:163 and _record_usage_safe:675."
+        - "config/provider.py — cache_ttl on ProviderConfig (per provider, alongside context_chars/max_output_tokens). Default '5m'."
+        - "pipeline/steps/assemble.py — silent-invalidator audit at cold build."
+      layout_chosen: "tools + full system + last 2 messages = exactly 4. The STABLE TIER marker is dropped."
+      why_the_stable_tier_lost: >
+        It is the span Hermes considers the whole point — the cross-conversation
+        prefix a NEW session still hits. But it is ~928 tokens, below the
+        cacheable minimum on every model except Opus 5 (512). On Opus 4.8 it
+        misses by ~96; on Opus 4.6/Haiku 4.5 the floor is 4096 and even the FULL
+        system prompt (~2712) misses. Spending a breakpoint there would be
+        spending it on nothing for most deployments.
+      the_guard: >
+        Minimum is NOT in the Models API, so nothing live can be asked for it.
+        Instead: measure with count_tokens (once per session, cached; falls back
+        to chars/4 with margin when a gateway lacks the endpoint), then PROBE by
+        reading cache_creation_input_tokens. Learn ASYMMETRICALLY — persist only
+        POSITIVE results. A zero is never persisted and never treated as dead,
+        and only counts as "below minimum" after that endpoint has reported a
+        non-zero cache field at least once (D01.6's I4 reused).
+      why_asymmetric_learning_is_load_bearing: >
+        Bakir first chose "trust cache_creation on the first response" AND
+        "persist to the database". Put back to him because the two interact
+        badly: a field-stripping gateway guarantees a zero on turn one, which
+        would be persisted as "marker is dead" and disable the feature FOREVER,
+        across restarts, with no error. D01.6 already measured that NeraAiRaw
+        reports no cache fields in any accepted shape. He resolved it to
+        positives-only, which self-heals.
+      invariants:
+        I1: "Never more than 4 cache_control markers in one request."
+        I2: "A marker is never placed on a span below the model's minimum."
+        I3: "A marking failure never fails the turn — log at error, send unmarked. Mirrors D01.1's I2."
+        I4: "A provider without the capability sends a byte-identical request to today's — what makes shipping ON safe here."
+        I5: "A zero cache reading is never persisted and never disables marking."
+      ships: "ON by default, capability-gated. No enable flag — the gate already makes it inert on every non-Anthropic provider, so the standing rule is satisfied honestly rather than with a flag that defaults off forever."
+      cannot_be_verified_here: >
+        Whether Anthropic honours these markers. This box runs no Anthropic
+        backend, and D01.6 established NeraAiRaw reports no cache fields at all,
+        so even pointing StackOwl at a gateway would not settle it. The DONE
+        criterion explicitly requires the document's Status line to say the live
+        half is UNVERIFIED — no green check that reads as proof it ran.
     the_premise_was_DISPROVED_first: >
       The handoff said D01.2 was "likely a no-op — NeraAiRaw is OpenAI-protocol,
       where prefix caching is automatic". Ten minutes of checking killed that:
