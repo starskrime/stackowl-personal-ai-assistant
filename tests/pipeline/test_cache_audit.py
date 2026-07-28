@@ -29,7 +29,10 @@ def _schemas(*names: str) -> list[dict[str, Any]]:
 
 
 def setup_function() -> None:
+    from stackowl.infra.prompt_invalidation import reset_expected_changes
+
     reset_audit_state()
+    reset_expected_changes()
 
 
 # ---------------------------------------------------------------------------
@@ -171,3 +174,67 @@ def test_identical_prompt_parts_report_nothing(caplog: Any) -> None:
         audit_prompt_parts("lane", {"persona": "a", "skills": "b"})
         audit_prompt_parts("lane", {"persona": "a", "skills": "b"})
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] == []
+
+
+# ---------------------------------------------------------------------------
+# D01.4 — an EXPLAINED change must not warn.
+#
+# D01.2's audit warns whenever a prompt part moves between cold builds. Once
+# D01.4 lets an edit invalidate immediately, every deliberate edit produces
+# exactly that — a warning about a change the user just asked for. That is the
+# same cry-wolf failure D01.2's validate stage caught (the audit reporting the
+# staged RCA's three owls as three violations), arriving from the other
+# direction.
+#
+# So invalidation records WHY, and the audit consumes it: an explained change is
+# INFO, an unexplained one stays a WARNING. The audit keeps doing the one job it
+# exists for — catching invalidators nobody asked for.
+# ---------------------------------------------------------------------------
+
+def test_an_explained_change_does_not_warn(caplog: Any) -> None:
+    from stackowl.infra.prompt_invalidation import note_expected_change
+
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    note_expected_change("scout", cause="owl_edit")
+    with caplog.at_level("INFO"):
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="scout")
+
+    assert [r for r in caplog.records if "prompt part CHANGED" in r.message] == [], (
+        "a change the user asked for must not be reported as an invalidator"
+    )
+    assert any("as requested" in r.message for r in caplog.records)
+
+
+def test_an_unexplained_change_still_warns(caplog: Any) -> None:
+    """The other jaw: the fix must not silence the signal the audit exists for."""
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="scout")
+
+    assert [r for r in caplog.records if "prompt part CHANGED" in r.message] != []
+
+
+def test_the_explanation_is_consumed_once(caplog: Any) -> None:
+    """One invalidation explains ONE rebuild. A second, unexplained change after
+    it must warn again, or a single edit would blind the audit indefinitely."""
+    from stackowl.infra.prompt_invalidation import note_expected_change
+
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    note_expected_change("scout", cause="owl_edit")
+    audit_prompt_parts("lane", {"persona": "b"}, owl="scout")   # explained, quiet
+
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("lane", {"persona": "c"}, owl="scout")  # unexplained
+    assert [r for r in caplog.records if "prompt part CHANGED" in r.message] != []
+
+
+def test_an_explanation_for_one_owl_does_not_cover_another(caplog: Any) -> None:
+    from stackowl.infra.prompt_invalidation import note_expected_change
+
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    audit_prompt_parts("lane", {"persona": "a"}, owl="researcher")
+    note_expected_change("scout", cause="owl_edit")
+
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="researcher")
+    assert [r for r in caplog.records if "prompt part CHANGED" in r.message] != []

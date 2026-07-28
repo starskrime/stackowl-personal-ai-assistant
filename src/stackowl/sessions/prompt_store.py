@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.infra.prompt_invalidation import note_expected_change
 from stackowl.infra.prompt_metrics import digest
 
 
@@ -144,6 +145,11 @@ class SessionPromptStore:
         lets D01.2's part-audit distinguish a change the user ASKED for from a
         silent invalidator, which is the whole reason that audit exists.
         """
+        # D01.4 — tell the audit this rebuild was asked for, so D01.2's part
+        # audit reports it at info instead of warning about a change the user
+        # deliberately made. Recorded BEFORE the delete so the explanation is
+        # already in place if the very next turn races in behind it.
+        note_expected_change(owl_name, cause=cause)
         return await self._invalidate(
             sql="DELETE FROM session_prompts WHERE owl_name = ?",
             params=(owl_name,), cause=cause, scope="owl", owl=owl_name,

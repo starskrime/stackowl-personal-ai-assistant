@@ -27,6 +27,7 @@ from collections import OrderedDict
 from typing import Any
 
 from stackowl.infra.observability import log
+from stackowl.infra.prompt_invalidation import take_expected_change
 from stackowl.infra.prompt_metrics import digest
 
 # Bound on the per-lane maps. A long-lived server sees unbounded lanes, so the
@@ -153,6 +154,20 @@ def audit_prompt_parts(
         name for name, value in current.items() if previous.get(name, value) != value
     )
     if not changed:
+        return
+    # D01.4 — a change the user ASKED for is not an invalidator. Without this,
+    # every deliberate edit would warn about itself, and an audit that cries wolf
+    # on the commonest cause of a rebuild is one people learn to ignore. The
+    # explanation is CONSUMED, so a single edit cannot blind the audit for good.
+    expected = take_expected_change(owl)
+    if expected is not None:
+        log.engine.info(
+            "[cache] breakpoints: prompt part changed as requested",
+            extra={"_fields": {
+                "session_key": session_key, "owl": owl,
+                "parts": changed, "cause": expected,
+            }},
+        )
         return
     log.engine.warning(
         "[cache] breakpoints: prompt part CHANGED — the cached prefix is lost from here",
