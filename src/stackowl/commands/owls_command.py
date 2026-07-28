@@ -37,6 +37,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 from stackowl.owls.registry import _SECRETARY_NAME
 from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.sessions.prompt_store import SessionPromptStore
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:
@@ -346,6 +347,26 @@ class OwlsCommand(SlashCommand):
         return result.output if result.success else f"✗ /owls create: {result.error}"
 
     # ------------------------------------------------------------------ edit
+    async def _invalidate_prompt(self, owl_name: str, *, cause: str) -> None:
+        """Clear ``owl_name``'s frozen prompt so an edit applies to the next turn.
+
+        Fail-open by design (I3): the edit has already persisted, so a missing or
+        broken store must cost a stale prompt until rollover, never the operation
+        the user asked for. But NEVER silent — an invalidation that cannot run
+        presents to the user as "my edit did nothing", which is precisely the
+        confusion this item exists to remove.
+        """
+        if self._db is None:
+            log.gateway.error(
+                "[commands] owls.edit: cannot invalidate the frozen prompt — no DB; "
+                "the change will not apply until the session rolls over",
+                extra={"_fields": {"owl": owl_name, "cause": cause}},
+            )
+            return
+        await SessionPromptStore(self._db).invalidate_owl(
+            owl_name=owl_name, cause=cause
+        )
+
     async def _edit(self, rest: str) -> str:
         log.gateway.debug(
             "[commands] owls.edit: entry",
@@ -375,6 +396,12 @@ class OwlsCommand(SlashCommand):
         updated = type(current).model_validate({**current.model_dump(), **changes})
         self._registry.replace(updated)
         self._upsert_to_yaml(manifest_to_yaml_entry(updated))
+        # D01.4 — clear this owl's frozen prompt on EVERY lane, so the edit
+        # reaches the very next turn instead of waiting for a rollover that
+        # D01.7 may not perform until 04:00. Awaited HERE, before the
+        # confirmation is returned, so ordering is guaranteed by the call stack:
+        # the next turn cannot begin until the user has this reply.
+        await self._invalidate_prompt(updated.name, cause="owl_edit")
         if self._bus is not None:
             self._bus.emit("owl_edited", {"name": updated.name})
         log.gateway.info(
@@ -1074,7 +1101,19 @@ class OwlCommand(OwlsCommand):
         # reads (e.g. _toggle_schedule's pause/resume) always see an empty
         # StepServices() and fail closed with "scheduling unavailable" even
         # though this command was constructed with real registry/db deps.
-        svc_token = set_services(StepServices(owl_registry=self._registry, db_pool=self._db))
+        # D01.4 — session_prompt_store is included DELIBERATELY. Without it this
+        # StepServices is partial, and an owl_build that self-extends would read
+        # None here and silently invalidate nothing: the new capability would be
+        # invisible to the model until the session rolled over, with no error
+        # anywhere. That is the same silent-no-op shape D01.2's cleanup stage
+        # found in the stream path.
+        svc_token = set_services(StepServices(
+            owl_registry=self._registry,
+            db_pool=self._db,
+            session_prompt_store=(
+                SessionPromptStore(self._db) if self._db is not None else None
+            ),
+        ))
         try:
             result = await OwlBuildTool().execute(action=action, **kwargs)
         finally:

@@ -317,9 +317,27 @@ class SkillIndexStore(OwnedRepository):
         # (loader.py upserts all skills) — sync now so hybrid_recall's
         # keyword tier sees it immediately.
         await self._sync_fts(skill_id)
+        # D01.4 — the skills catalogue is the largest movable part of the frozen
+        # prompt (~4153 chars), so toggling a skill makes every frozen prompt
+        # stale. Invalidated HERE, next to the write, rather than in the /skill
+        # command: a future writer that reaches the catalogue by another route
+        # then still invalidates. Not owl-scoped — the catalogue is a
+        # machine-wide fact, which is why invalidate_all and not invalidate_owl.
+        await self._invalidate_prompts(cause="skill_enabled" if enabled else "skill_disabled")
         # 4. EXIT
         log.skills.info("[skills] store.set_enabled: stored",
                  extra={"_fields": {"skill_id": skill_id, "enabled": enabled}})
+
+    async def _invalidate_prompts(self, *, cause: str) -> None:
+        """Clear every frozen prompt after a catalogue change (D01.4).
+
+        Fail-open: the catalogue write has already committed, so a failure here
+        must cost a stale prompt until rollover, never the toggle the user asked
+        for. ``invalidate_all`` already logs and swallows its own errors.
+        """
+        from stackowl.sessions.prompt_store import SessionPromptStore
+
+        await SessionPromptStore(self._db).invalidate_all(cause=cause)
 
     async def set_embedding(
         self, skill_id: int, embedding: list[float] | None, model: str | None,
