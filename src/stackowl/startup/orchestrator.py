@@ -1300,6 +1300,15 @@ class StartupOrchestrator:
         # provider.complete, so they no longer record separately (no double-count).
         provider_registry.set_cost_tracker(cost_tracker)
 
+        # D01.2 — durable "this endpoint honours cache_control" state. Injected
+        # here for the same reason as the tracker above: this is the first point
+        # where both the registry and db_pool exist. Ships ON, not behind a flag —
+        # the capability gate already makes it inert on every provider that does
+        # not need markers, so a setting would only ever default off forever.
+        from stackowl.providers.cache_probe_store import CacheProbeStore
+
+        provider_registry.set_cache_probe_store(CacheProbeStore(db_pool))
+
         # DEBT-7 — the SECOND consumer on D01.7's session.rollover boundary
         # (X3: one boundary, many consumers, no second scheduler). Registered
         # here rather than beside register_rollover_consumer because this is

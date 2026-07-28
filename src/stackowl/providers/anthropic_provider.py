@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal
@@ -18,7 +19,7 @@ from stackowl.pipeline.delivery_gate import is_consequential_giveup_now
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER, summarize_tool_outcomes
 from stackowl.pipeline.supervisor import decide_nudge, synthesize_from_calls
 from stackowl.providers._blocks import anthropic_user_content, message_has_blocks
-from stackowl.providers._cache_control import apply_cache_breakpoints
+from stackowl.providers._cache_control import apply_cache_breakpoints, count_markers
 from stackowl.providers._react import LoopGuard, looks_like_tool_call, parse_react_action
 from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers._truncate import (
@@ -82,6 +83,15 @@ _ROUND_DEADLINE_FALLBACK_S = 600.0
 # the life of the process; clearing wholesale costs one re-measure per live
 # session, which is cheaper than tracking recency for a cache this small.
 _SPAN_CACHE_MAX = 256
+
+# D01.2 — how many markers the CURRENT round put on the wire, carried from the
+# chokepoint to the recording site. A ContextVar rather than an instance
+# attribute because one provider object serves many concurrent turns: an
+# attribute would let a parallel round's count leak into this round's probe. Per
+# asyncio task by construction, which is exactly the scope of one round.
+_MARKERS_PLACED: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "anthropic_markers_placed", default=0
+)
 
 
 def _cache_read_tokens(usage: Any) -> int:
@@ -237,6 +247,34 @@ class AnthropicProvider(ModelProvider):
         )
         return measured
 
+    async def _record_cache_probe(
+        self, model: str, cache_read: int, cache_creation: int
+    ) -> None:
+        """Hand one response's cache reading to the probe store (D01.2, I5).
+
+        The store itself drops zeros — the guard lives there rather than here so a
+        second caller cannot forget it. This method's only job is to be
+        fail-open: losing a probe must cost knowledge, never the turn that already
+        succeeded.
+        """
+        store = self._cache_probe_store
+        if store is None:
+            return
+        try:
+            await store.record(  # type: ignore[attr-defined]
+                provider_name=self._name,
+                model=model,
+                markers_placed=_MARKERS_PLACED.get(),
+                cache_creation_tokens=cache_creation,
+                cache_read_tokens=cache_read,
+            )
+        except Exception as exc:
+            log.engine.error(
+                "[cache] probe: recording failed — the turn is unaffected",
+                exc_info=exc,
+                extra={"_fields": {"provider": self._name, "model": model}},
+            )
+
     async def _request_kwargs(
         self,
         *,
@@ -271,6 +309,7 @@ class AnthropicProvider(ModelProvider):
             kwargs["system"] = system
 
         if not (self.supports_cache_breakpoints if capable is None else capable):
+            _MARKERS_PLACED.set(0)
             return kwargs
 
         try:
@@ -287,6 +326,7 @@ class AnthropicProvider(ModelProvider):
                 exc_info=exc,
                 extra={"_fields": {"provider": self._name, "model": model}},
             )
+            _MARKERS_PLACED.set(0)
             return kwargs
 
         kwargs["messages"] = marked_messages
@@ -294,6 +334,7 @@ class AnthropicProvider(ModelProvider):
             kwargs["tools"] = marked_tools
         if system is not None:
             kwargs["system"] = marked_system
+        _MARKERS_PLACED.set(count_markers(kwargs))
         return kwargs
 
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
@@ -916,6 +957,7 @@ class AnthropicProvider(ModelProvider):
                                "cache_read": cached_tok, "cache_creation": created_tok,
                                "input_tokens": in_tok}},
         )
+        await self._record_cache_probe(model, cached_tok, created_tok)
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
             cached_input_tokens=cached_tok,

@@ -98,6 +98,23 @@ def _content_text(content: Any) -> str:
     return ""
 
 
+def count_markers(value: Any) -> int:
+    """How many ``cache_control`` markers ``value`` carries, at any depth.
+
+    Lives here rather than at the call site because this module owns the concept:
+    invariant I1 is a statement about this number, so the thing that places
+    markers and the thing that counts them must agree by construction.
+    """
+    if isinstance(value, dict):
+        return sum(
+            1 if key == "cache_control" else count_markers(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return sum(count_markers(item) for item in value)
+    return 0
+
+
 def _marker(ttl: str) -> dict[str, str]:
     """The ``cache_control`` value for ``ttl``.
 

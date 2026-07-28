@@ -92,6 +92,10 @@ class ModelProvider(ABC):
     # cost-pause can fire. None by default (tests / standalone providers) → the
     # recording helper is a no-op. NEVER let recording break a completion (B5).
     _cost_tracker: CostTracker | None = None
+    # D01.2 — durable "this endpoint honours cache_control" state, injected after
+    # construction (set_cache_probe_store) exactly like _cost_tracker. None means
+    # nothing is recorded; the feature still works, it just does not accumulate.
+    _cache_probe_store: object | None = None
 
     # C2/F115 — the registry-owned CircuitBreaker + RateLimiter the cascade READS,
     # injected after construction (set_resilience) exactly like _cost_tracker. The
@@ -105,6 +109,16 @@ class ModelProvider(ABC):
     # injected by ProviderRegistry alongside breaker/limiter. None (default)
     # → the RATE_LIMIT branch in _resilient_round has no config fallback.
     _cooldown_hours: float | None = None
+
+    def set_cache_probe_store(self, store: object | None) -> None:
+        """Inject the D01.2 cache-probe store (optional, injected after construction).
+
+        Typed ``object`` deliberately: ``providers/`` must not import a concrete
+        store type to satisfy an optional measurement seam, and every call site
+        goes through the duck-typed ``record(**kwargs)`` below. Absent store means
+        probes are simply not recorded — never an error.
+        """
+        self._cache_probe_store = store
 
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker (idempotent; ProviderRegistry calls this)."""

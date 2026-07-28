@@ -306,6 +306,84 @@ async def test_cached_input_tokens_are_recorded_from_the_stream_response() -> No
     assert tracker.records[0]["cached_input_tokens"] == 640
 
 
+class _RecordingProbeStore:
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+
+    async def record(self, **kwargs: Any) -> None:
+        self.records.append(kwargs)
+
+
+async def test_a_confirmed_response_records_a_probe() -> None:
+    provider = _provider()
+    provider.set_cost_tracker(_RecordingTracker())  # type: ignore[arg-type]
+    probes = _RecordingProbeStore()
+    provider.set_cache_probe_store(probes)  # type: ignore[arg-type]
+
+    class _Usage:
+        input_tokens = 5000
+        output_tokens = 120
+        cache_read_input_tokens = 0
+        cache_creation_input_tokens = 2712
+
+    response = type("R", (), {"usage": _Usage(), "model": "claude-opus-5"})()
+    await provider._record_usage_safe(response, 42.0)
+
+    assert len(probes.records) == 1
+    assert probes.records[0]["cache_creation_tokens"] == 2712
+    assert probes.records[0]["provider_name"] == "anthropic-main"
+
+
+async def test_the_provider_reports_a_zero_faithfully_and_the_store_drops_it() -> None:
+    """I5 lives in ONE place — the store — and this pins which place that is.
+
+    The provider's job is to report what the endpoint said, honestly, including a
+    zero. The store's job is to refuse to persist it. Putting the guard at the
+    call site instead would mean every future caller has to remember it, which is
+    exactly how a "disable itself forever" bug gets reintroduced.
+    """
+    provider = _provider()
+    provider.set_cost_tracker(_RecordingTracker())  # type: ignore[arg-type]
+    probes = _RecordingProbeStore()
+    provider.set_cache_probe_store(probes)  # type: ignore[arg-type]
+
+    class _Usage:
+        input_tokens = 5000
+        output_tokens = 120
+
+    response = type("R", (), {"usage": _Usage(), "model": "claude-opus-5"})()
+    await provider._record_usage_safe(response, 42.0)
+
+    # Reported faithfully, not suppressed at the provider ...
+    assert len(probes.records) == 1
+    assert probes.records[0]["cache_creation_tokens"] == 0
+    assert probes.records[0]["cache_read_tokens"] == 0
+    # ... and test_a_zero_reading_is_never_persisted (test_cache_probe_store.py)
+    # is what proves the real store refuses it.
+
+
+async def test_a_probe_write_failure_never_breaks_the_turn() -> None:
+    """Fail-open, like every other measurement seam in this provider."""
+    class _Exploding:
+        async def record(self, **_kwargs: Any) -> None:
+            raise RuntimeError("probe store is down")
+
+    provider = _provider()
+    tracker = _RecordingTracker()
+    provider.set_cost_tracker(tracker)  # type: ignore[arg-type]
+    provider.set_cache_probe_store(_Exploding())  # type: ignore[arg-type]
+
+    class _Usage:
+        input_tokens = 5000
+        output_tokens = 120
+        cache_creation_input_tokens = 2712
+
+    response = type("R", (), {"usage": _Usage(), "model": "claude-opus-5"})()
+    await provider._record_usage_safe(response, 42.0)  # must not raise
+    # And the cost was still recorded — the probe is the optional half.
+    assert len(tracker.records) == 1
+
+
 async def test_a_response_without_cache_fields_records_zero_not_an_error() -> None:
     """D01.6's I4 — a gateway that strips usage cache fields reads 0 HONESTLY.
 

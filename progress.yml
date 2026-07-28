@@ -2124,6 +2124,53 @@ items:
           lint: "ruff clean on all 5 touched files; src/ total 46 (DEBT-1) — zero added."
           types: "mypy src/ 78 (DEBT-8) — zero added, after fixing the one this slice introduced."
           baseline: "tests/sessions/ + tests/owls/ 425 passed (475s) — matches the stated pre-start baseline exactly."
+      - date: 2026-07-27
+        commit: pending
+        stage: implement
+        slice: "4 — migration 0104 + CacheProbeStore, wired ON at startup"
+        files:
+          - "src/stackowl/db/migrations/0104_cache_breakpoint_probes.sql (new)"
+          - "src/stackowl/providers/cache_probe_store.py (new) — CacheProbe + CacheProbeStore"
+          - "src/stackowl/providers/base.py — set_cache_probe_store / _cache_probe_store"
+          - "src/stackowl/providers/registry.py — set_cache_probe_store, remembered so later registrations inherit it"
+          - "src/stackowl/startup/orchestrator.py — CacheProbeStore(db_pool) injected beside set_cost_tracker"
+          - "src/stackowl/providers/anthropic_provider.py — _record_cache_probe + _MARKERS_PLACED ContextVar + count_markers"
+          - "src/stackowl/providers/_cache_control.py — count_markers() exported (I1 is a claim about this number, so the placer and the counter must agree by construction)"
+          - "tests/providers/test_cache_probe_store.py (new, 10 tests)"
+        what_the_table_records_and_why_not_more: >
+          ENDPOINT-CONFIRMED, per (provider_name, model) — Bakir's call, 2026-07-27.
+          The design said persist "this span works at N tokens"; that is not
+          obtainable. Anthropic returns ONE cache_creation_input_tokens for the
+          whole request, not one per marker, so with four markers a token count
+          cannot be attributed to a span. The only honest durable fact is "this
+          endpoint honours cache_control at all". Token columns are HIGH-WATER
+          MARKS, not last-seen: a later smaller reading is a smaller prompt, not a
+          degraded endpoint. Key is (provider, model) and not provider alone
+          because the minimum is model-dependent and non-monotonic, so one model
+          confirming says nothing about its sibling on the same connection.
+        where_i5_lives: >
+          IN THE STORE, as the first statement of record(), not at the call site.
+          A test asserting the PROVIDER suppressed zeros failed, and the test was
+          the thing that was wrong: the provider's job is to report what the
+          endpoint said, honestly, including a zero; the store's job is to refuse
+          to persist it. Guarding at the call site would mean every future caller
+          has to remember, which is precisely how a "disables itself forever" bug
+          gets reintroduced. The test was rewritten to pin that split explicitly.
+        markers_placed_is_a_contextvar: >
+          NOT an instance attribute. One provider object serves many concurrent
+          turns (Parliament fans out N owls at once), so an attribute would let a
+          parallel round's marker count leak into this round's probe row.
+          ContextVars are per-asyncio-task, which is exactly one round's scope —
+          the same reasoning D01.6 used for prompt_metrics.
+        caught_by_checking_rather_than_assuming: >
+          The orchestrator wiring was first written as CacheProbeStore(self._db_pool).
+          There is no such attribute — the pool is a local `db_pool` at that point.
+          Found by grepping the file before running anything, not by a stack trace.
+        verified:
+          tests: "10 new store tests + 3 new provider-probe tests. tests/providers/ 520 passed."
+          migration: "uv run python -m stackowl db migrate applied 0104, then reported 'already applied' on a second run. Schema version 0104."
+          lint: "ruff clean on all new files; src/ total 46 (DEBT-1) — zero added."
+          types: "mypy src/ 78 (DEBT-8) — zero added."
     notes: >
       The lesson that generalises: the handoff's premise, the map's own text, and
       my first recollection of the minimum-prefix threshold were EACH wrong in a

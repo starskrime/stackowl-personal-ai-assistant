@@ -122,6 +122,9 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # E8-S0cost — the ONE shared CostTracker; remembered so providers registered
         # later (mocks, hot additions) still inherit it (single recording site).
         self._cost_tracker: CostTracker | None = None
+        # D01.2 — the ONE shared CacheProbeStore, remembered for the same reason
+        # as the tracker above: providers registered later still inherit it.
+        self._cache_probe_store: object | None = None
         # F-multi-tier — round-robin selector for the "which of N healthy
         # providers in this tier" decision (get_with_cascade delegates to it).
         self._tier_selector = TierSelector()
@@ -129,6 +132,27 @@ class ProviderRegistry(RegistryAccessorsMixin):
         # models that serve the SAME tier — a smaller, separate concern from
         # self._tier_selector's round-robin ACROSS different providers.
         self._model_cursor: dict[tuple[str, str], int] = {}
+
+    def set_cache_probe_store(self, store: object | None) -> None:
+        """Inject the D01.2 cache-probe store into every provider.
+
+        Same shape as ``set_cost_tracker`` and for the same reason: the store is
+        remembered so providers registered LATER (mocks, hot additions) inherit it
+        too, instead of silently never recording.
+
+        Duck-typed via ``getattr`` — a test fake that is not a ``ModelProvider``
+        subclass simply opts out rather than breaking.
+        """
+        self._cache_probe_store = store
+        for provider in self._providers.values():
+            setter = getattr(provider, "set_cache_probe_store", None)
+            if callable(setter):
+                setter(store)
+        log.engine.debug(
+            "[registry] set_cache_probe_store: injected into providers",
+            extra={"_fields": {"provider_count": len(self._providers),
+                               "has_store": store is not None}},
+        )
 
     def set_cost_tracker(self, cost_tracker: CostTracker | None) -> None:
         """Inject the shared CostTracker into every provider (the SINGLE recording
