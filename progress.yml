@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.2
-  stage: test
+  stage: validate
   stage_status: not_started
   one_line: >
     D01.1 is COMPLETE (7/7, doc live). D01.2 has brainstorm + architect DONE and
@@ -1942,7 +1942,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       not_started
+      test:       done
       validate:   not_started
       document:   not_started
     implement_result:
@@ -2008,6 +2008,61 @@ items:
         "duplication" framing (contradiction 2 of the brainstorm) was resolved
         the right way for the wrong reason.
       also_confirmed: "No Anthropic provider is configured at all in ~/.stackowl/stackowl.yaml — all four entries are protocol: openai, three disabled. This is the direct evidence for the doc's LIVE HALF UNVERIFIED banner, now checked rather than assumed."
+    test_result:
+      date: 2026-07-27
+      file: "tests/pipeline/test_d012_cache_breakpoints_gateway_integration.py (4 tests)"
+      business_requirement: >
+        "When my assistant talks to an Anthropic backend, the request it sends is
+        marked so the provider bills a long conversation at the cached rate — and
+        what the model READS is not changed by that."
+      only_the_ai_provider_is_faked: >
+        The scanner, the router decision, the pipeline steps, the owl registry,
+        SessionPromptStore, CostTracker, CacheProbeStore and the database are all
+        real, per the standing gateway-integration rule.
+      THE_FINDING_THAT_JUSTIFIES_THE_STAGE: >
+        THE PIPELINE'S ANSWER PATH STREAMS. The first run of this file called
+        messages.create() ZERO times and messages.stream() once — the fake had no
+        stream() and blew up. Every provider unit test in this item drives
+        create(), so the whole marker layer was proven on a path a real
+        interactive turn does not take. It also means the cleanup stage's finding
+        was not a tidiness fix at all: for that slice the probe store was fed ONLY
+        from _record_usage_safe, i.e. never on the path a real turn actually uses.
+        Caching would have worked and recorded nothing, forever, on the live path.
+        Neither the unit tests nor the design would have surfaced this; driving
+        the real gateway did — which is exactly what the rule is for.
+      the_assertion_that_does_the_work: >
+        NOT "markers are present" — that passes on almost anything. It is that the
+        text the model reads is byte-identical to the frozen prompt D01.1 stored
+        in the database. Marking rewrites the system prompt from a string into a
+        block list and rewrites message contents; getting that wrong would
+        silently change the model's input to buy a cache entry. Mutation G2
+        (truncate the text when marking a string block) kills exactly that test
+        and nothing else.
+      mutations:
+        G1: "capability off -> stream path sends unmarked. 2 tests die."
+        G2: "truncate text when marking a string block. 1 test dies — the byte-identity one."
+        G3: "persist zeros too (break I5). 2 tests die."
+        G4: "stream path stops recording the probe. 2 tests die."
+        all_killed: true
+      two_bugs_in_my_own_test_probe_not_the_code: >
+        _visible_text first concatenated EVERY value of a content-block dict,
+        folding the block's own "type": "text" discriminator into the comparison
+        and failing with a spurious leading "text". Then it handled only block
+        dicts and not message dicts, so the messages assertion read "". Both were
+        faults in the probe, fixed in the probe — the code under test was correct
+        each time.
+      a_restore_that_did_not_restore: >
+        The mutation harness restored two files but G2 had mutated a THIRD
+        (_cache_control.py), so the post-battery run reported 1 failed and I
+        nearly recorded a green stage over a still-mutated tree. Caught by running
+        the restore verification instead of trusting it; `git diff --stat src/`
+        showed the single stray line. The lesson generalises past this item: a
+        mutation harness needs its restore VERIFIED, not assumed, or it silently
+        poisons every result after the first miss.
+      verified:
+        tests: "tests/pipeline/ 1080 passed = the 1076 baseline plus exactly the 4 new gateway tests. Zero regressions."
+        gates: "ruff src/ 46 = DEBT-1 baseline; ruff clean on the new test file; mypy src/ 78 = DEBT-8 baseline. Zero added."
+        mutations: "4 run, 4 killed. The post-battery restore was VERIFIED with `git diff --stat src/` rather than trusted — it had missed a file."
     doc: "docs/hermes-mapping/designs/D01.2.md"
     doc_last_verified: 2026-07-27
     architect_result:
@@ -2472,6 +2527,21 @@ items:
     doc_last_verified: null
     decisions: []
     changes: []
+    hermes_pointers_found_2026_07_27: >
+      Found while working D01.2, recorded so it is not re-discovered. Hermes
+      handles role alternation in three places worth reading BEFORE brainstorming
+      this item: agent/turn_finalizer.py:48 and :278 (a tool -> user alternation
+      that strict providers reject, and the "role-alternation breaks poison the
+      resumed transcript" note), agent/conversation_compression.py:1022 and :1102
+      (choosing the summary's role to preserve alternation, and inserting the
+      latest human turn without breaking it), and agent/moa_loop.py:1017 (an
+      advisory view that is deliberately NOT strictly alternating). The
+      compression one matters most to us: Law 1 names compression as the ONLY
+      sanctioned mutation of past context, so it is the one place message
+      positions can move under a placed cache marker. D01.2 is unaffected —
+      apply_cache_breakpoints re-marks from a stripped copy every round and never
+      mutates the caller's list — but a future item that caches marker POSITIONS
+      rather than recomputing them would be.
     notes: null
 
   - id: D01.6
