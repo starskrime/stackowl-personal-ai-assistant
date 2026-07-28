@@ -242,7 +242,7 @@ deployment:
 current:
   wave: 1
   item: D01.2
-  stage: brainstorm
+  stage: architect
   stage_status: not_started
   one_line: >
     D01.1 is COMPLETE — all seven stages, doc closed and status live. Next is
@@ -1769,8 +1769,9 @@ items:
     depends_on: [D01.1]
     blocks: []
     dedup_target: null
+    started: 2026-07-27
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -1779,9 +1780,74 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    the_premise_was_DISPROVED_first: >
+      The handoff said D01.2 was "likely a no-op — NeraAiRaw is OpenAI-protocol,
+      where prefix caching is automatic". Ten minutes of checking killed that:
+      anthropic_provider.py is 802 LIVE lines, constructed at registry.py:81,
+      shipped with setup/providers/anthropic.yaml and handled in
+      setup/minimal.py:44. Anyone who picks Anthropic during setup gets a fully
+      reachable path with ZERO prompt caching. It is a no-op for Bakir's own box,
+      not for the four protocols StackOwl ships.
+      Also corrected: the map claims "no occurrence of cached_tokens anywhere in
+      src/". Stale — D01.6 added a 3-shape READER at openai_provider.py:114.
+      What genuinely does not exist is the WRITER: zero `cache_control` in src/.
+    facts_from_the_api_reference:
+      note: "Loaded via the claude-api skill rather than quoted from memory — the first estimate of the minimum was hedged for exactly this reason."
+      minimum_cacheable_prefix: >
+        MODEL-DEPENDENT and NOT monotonic: 512 tokens (Opus 5, Fable 5), 1024
+        (Opus 4.8, Sonnet 5/4.6/4.5), 2048 (Opus 4.7, Haiku 3.5), 4096 (Opus
+        4.6/4.5, Haiku 4.5). Below-minimum markers fail SILENTLY —
+        cache_creation_input_tokens: 0, no error.
+      what_that_means_for_us: >
+        Our stable tier is ~928 tokens (3713 chars) and our whole frozen system
+        prompt ~2712 (10847 chars). So a marker at the end of
+        build_stable_base_prompt() — the elegant idea D01.1 seemed to hand us —
+        only works on Opus 5. On Opus 4.6/4.5/Haiku 4.5 even the FULL system
+        prompt is below the floor and nothing caches at all.
+      breakpoint_limit: "4 per request — Hermes' constraint is real."
+      ttl_and_pricing: "ephemeral = 5min; {'ttl':'1h'} = 1 hour. Writes 1.25x (5m) / 2x (1h); reads 0.1x. Break-even 2 requests at 5m, 3+ at 1h."
+      render_order: "tools -> system -> messages. Tools at position 0, so a tools marker covers the largest shared span."
+      lookback: "A breakpoint searches back at most 20 CONTENT BLOCKS for a prior entry."
+      concurrency: "N parallel requests sharing a prefix ALL pay full price — none can read what the others are still writing."
+      auto_caching_availability: "Top-level auto-caching is 1P-only: NOT on Bedrock or Vertex, beta on Foundry."
+    decisions:
+      - date: 2026-07-27
+        stage: brainstorm
+        round: "25-question grill + 3 contradictions put back"
+        by: Bakir
+        answers:
+          scope: "Wire Anthropic FULLY — read + write. Not reading-only, not no_change_needed."
+          layout: "Full Hermes-style 4-marker layout, INCLUDING the tools marker."
+          tools_marker: "YES — highest-value breakpoint (position 0, largest shared span, and the only one that comfortably clears the minimum)."
+          minimum_guard: "Measure and skip. NEVER place a dead marker — resolve the model's minimum, measure the candidate prefix, place only if it clears. Turns a silent failure into a logged decision."
+          capability_gate: "New supports_* capability alongside supports_vision/supports_document/supports_tools. Default False; AnthropicProvider True. Dispatches on declared capability, never a provider name."
+          single_seam: "ONE module owns every marker — tools, system and messages. Hermes splits this across prompt_caching.py, anthropic_adapter.py and run_agent.py, which is why their own docs undercount their layout."
+          placement: "providers/_cache_control.py — matches the existing _blocks/_react/_truncate/_wrapup/_resilient_round convention. (Placement voted, per standing rule.)"
+          wire_shape: "Convert `system` string -> block list ONLY when actually placing a marker. Unmarked requests stay byte-identical to today."
+          ttl: "5min default; config key for 1h. 1h doubles write cost and needs 3+ turns to break even."
+          reader: "Native Anthropic reader — its usage fields are first-class, so shape-probing is dishonest here."
+          invalidator_audit: "Ship a startup audit against Anthropic's documented silent-invalidator list. prompt_hash already detects instability; this names the CAUSE instead of the symptom."
+          verification: "Replay fixture built from the real API docs — no key, no network."
+          done_criteria: "Unit-green + fixture + the doc STATING PLAINLY in its Status line that the live half is UNVERIFIED on this deployment. No green checkmark that reads as proof it ran against the real API."
+          out_of_scope_flag_only:
+            - "Parliament parallel fan-out (round_runner.py:73 asyncio.gather) forfeits the shared-prefix discount — N concurrent owls all pay full price. FLAG, do not edit."
+            - "The 20-block lookback: MEASURED 9.6% of our tool-using turns exceed it (666 traces; p50 3 calls, p90 10, max 42). Match Hermes for now; D03 tool-result pruning fixes it at the root rather than spending a breakpoint."
+            - "D01.3's varying tools array invalidates everything at position 0, so the tools marker delivers little until D01.3/D05.4 land. Flag loudly; it is measured evidence FOR D01.3 rather than a reason to skip the marker."
+        contradictions_put_back_and_resolved:
+          - conflict: "Would edit parliament/ (another item's territory, costs latency) for an UNMEASURED discount, while accepting a MEASURED 9.6% loss rather than spend one breakpoint."
+            resolution: "BOTH CONSERVATIVE. Flag both, edit neither. D01.2 builds markers; Parliament staggering belongs to whoever owns Parliament, and D03 pruning removes the 20-block exposure at its root."
+          - conflict: "Duplication rejected for the marker writer ('one module owns every marker') but accepted for the reader, leaving an Anthropic-shaped cache_read_input_tokens probe inside openai_provider.py."
+            resolution: "Keep the native reader — Anthropic's usage fields are first-class, so a direct read genuinely beats a shape-prober. File the misplaced openai_provider probe as its own tracked debt rather than silently leaving it."
+          - conflict: "'Never place a dead marker' (invisible-change-averse) vs 'always convert the wire shape' (changes every Anthropic request including non-beneficiaries)."
+            resolution: "Convert ONLY when marking. Blast radius matches benefit; unmarked requests stay byte-identical."
     changes: []
-    notes: null
+    notes: >
+      The lesson that generalises: the handoff's premise, the map's own text, and
+      my first recollection of the minimum-prefix threshold were EACH wrong in a
+      different direction. The premise was disproved by reading the tree, the map
+      by grepping it, and the threshold by loading the API reference instead of
+      trusting memory. None of the three would have been caught by writing the
+      design first and checking later.
 
   - id: D01.3
     title: "Per-turn tool-schema selection"
