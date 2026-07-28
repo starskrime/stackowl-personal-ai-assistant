@@ -115,7 +115,15 @@ def _cache_read_tokens(usage: Any) -> int:
     try:
         value = getattr(usage, "cache_read_input_tokens", None)
         return int(value) if value else 0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        # Never silent, per the standing rule. A usage object whose cache field
+        # is not int-able is data we do not have, not an error — but if it ever
+        # happens, "cache_read is always 0" must be traceable to THIS rather than
+        # looking like an honest cold cache.
+        log.engine.error(
+            "[cache] breakpoints: cache_read_input_tokens not readable — recording 0",
+            exc_info=exc, extra={"_fields": {"value": repr(value)}},
+        )
         return 0
 
 
@@ -130,7 +138,14 @@ def _cache_creation_tokens(usage: Any) -> int:
     try:
         value = getattr(usage, "cache_creation_input_tokens", None)
         return int(value) if value else 0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        # Never silent — and this one matters more than its sibling: a creation
+        # figure that cannot be read means the probe never confirms, so the
+        # endpoint reads "never proven" forever with nothing to blame.
+        log.engine.error(
+            "[cache] breakpoints: cache_creation_input_tokens not readable — recording 0",
+            exc_info=exc, extra={"_fields": {"value": repr(value)}},
+        )
         return 0
 
 
@@ -246,6 +261,38 @@ class AnthropicProvider(ModelProvider):
                                "session_id": session_id, **measured}},
         )
         return measured
+
+    async def _report_cache_outcome(
+        self, model: str, usage: Any, input_tokens: int
+    ) -> int:
+        """Log and persist one response's cache outcome; return the read tokens.
+
+        THE single cache-outcome site, shared by the tool-loop path and the
+        stream path. Cleanup found them asymmetric: stream() routes through the
+        same chokepoint and so its requests ARE marked, but only the tool loop
+        fed the probe store and emitted the result line. A streaming deployment
+        would have placed markers, had them honoured, and recorded no evidence —
+        the endpoint would read "never confirmed" forever. Asymmetric
+        instrumentation is what makes a measurement silently blind, which is the
+        failure D01.6 exists to prevent, so the two paths now share one site
+        rather than two copies that can drift apart again.
+        """
+        cache_read = _cache_read_tokens(usage)
+        cache_creation = _cache_creation_tokens(usage)
+        # INFO, not debug, and deliberately so. D01.6 learned this the hard way:
+        # the per-part prompt sizes it needed were logged at debug and appeared in
+        # 0 of 17403 live log lines, which is why prompt composition was
+        # unmeasurable for days. This line is how "is caching actually working?"
+        # gets answered from the JSONL instead of guessed.
+        log.engine.info(
+            "[cache] breakpoints: result",
+            extra={"_fields": {"provider": self._name, "model": model,
+                               "cache_read": cache_read,
+                               "cache_creation": cache_creation,
+                               "input_tokens": input_tokens}},
+        )
+        await self._record_cache_probe(model, cache_read, cache_creation)
+        return cache_read
 
     async def _record_cache_probe(
         self, model: str, cache_read: int, cache_creation: int
@@ -424,15 +471,16 @@ class AnthropicProvider(ModelProvider):
             in_tok = int(getattr(usage, "input_tokens", 0) or 0)
             out_tok = int(getattr(usage, "output_tokens", 0) or 0)
             rec_model = getattr(final, "model", model) or model
-            # D01.2 — base.py::_record_cost has accepted this since D01.6 and the
-            # Anthropic path has fed it 0 every time. This is the reader half.
-            cached_tok = _cache_read_tokens(usage)
         except Exception as exc:  # B5 — never break the stream on cost accounting.
             log.engine.debug(
                 "[anthropic] stream: usage extraction skipped",
                 extra={"_fields": {"provider": self._name, "err": str(exc)}},
             )
             return
+        # D01.2 — base.py::_record_cost has accepted cached_input_tokens since
+        # D01.6 and the Anthropic path fed it 0 every time. Same shared outcome
+        # site as the tool loop, so the two paths cannot drift apart.
+        cached_tok = await self._report_cache_outcome(rec_model, usage, in_tok)
         await self._record_cost(
             model=rec_model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
             cached_input_tokens=cached_tok,
@@ -936,28 +984,16 @@ class AnthropicProvider(ModelProvider):
             in_tok = usage.input_tokens if usage else 0
             out_tok = usage.output_tokens if usage else 0
             model = getattr(response, "model", "") or ""
-            # D01.2 — the reader half. See _cache_read_tokens for why a 0 here is
-            # ambiguous rather than proof the markers are dead.
-            cached_tok = _cache_read_tokens(usage)
-            created_tok = _cache_creation_tokens(usage)
         except Exception as exc:  # B5 — usage shape varies / may be absent on fakes.
             log.engine.debug(
                 "[anthropic] _record_usage_safe: usage extraction skipped",
                 extra={"_fields": {"provider": self._name, "err": str(exc)}},
             )
             return
-        # INFO, not debug, and deliberately so. D01.6 learned this the hard way:
-        # the per-part prompt sizes it needed were logged at debug and appeared in
-        # 0 of 17403 live log lines, which is why prompt composition was
-        # unmeasurable for days. This line is how "is caching actually working?"
-        # gets answered from the JSONL instead of guessed.
-        log.engine.info(
-            "[cache] breakpoints: result",
-            extra={"_fields": {"provider": self._name, "model": model,
-                               "cache_read": cached_tok, "cache_creation": created_tok,
-                               "input_tokens": in_tok}},
-        )
-        await self._record_cache_probe(model, cached_tok, created_tok)
+        # D01.2 — the reader half, on the SAME shared outcome site the stream path
+        # uses. See _cache_read_tokens for why a 0 here is ambiguous rather than
+        # proof the markers are dead.
+        cached_tok = await self._report_cache_outcome(model, usage, in_tok)
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
             cached_input_tokens=cached_tok,

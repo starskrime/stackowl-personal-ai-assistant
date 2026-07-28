@@ -418,6 +418,60 @@ async def test_the_provider_reports_a_zero_faithfully_and_the_store_drops_it() -
     # is what proves the real store refuses it.
 
 
+async def test_the_stream_path_records_a_probe_too() -> None:
+    """Found in cleanup: the stream path is MARKED but was not instrumented.
+
+    stream() routes through the same chokepoint as the three create() sites, so
+    its requests carry markers — but only _record_usage_safe fed the probe store.
+    A streaming deployment would therefore have placed markers, been honoured,
+    and recorded no evidence of it: the endpoint would read "never confirmed"
+    forever. Asymmetric instrumentation is what makes a measurement silently
+    blind, which is the whole failure D01.6 exists to prevent.
+    """
+    provider = _provider()
+    provider.set_cost_tracker(_RecordingTracker())  # type: ignore[arg-type]
+    probes = _RecordingProbeStore()
+    provider.set_cache_probe_store(probes)  # type: ignore[arg-type]
+
+    class _Usage:
+        input_tokens = 800
+        output_tokens = 60
+        cache_read_input_tokens = 640
+        cache_creation_input_tokens = 128
+
+    class _Stream:
+        async def get_final_message(self) -> Any:
+            return type("M", (), {"usage": _Usage(), "model": "claude-opus-5"})()
+
+    await provider._record_stream_usage_safe(_Stream(), "claude-opus-5", 17.0)
+
+    assert len(probes.records) == 1
+    assert probes.records[0]["cache_creation_tokens"] == 128
+    assert probes.records[0]["cache_read_tokens"] == 640
+
+
+async def test_the_stream_path_emits_the_result_line(caplog: Any) -> None:
+    """The INFO line is how "is caching working?" gets answered from the JSONL.
+    A streaming deployment must not be the one that cannot answer it."""
+    provider = _provider()
+    provider.set_cost_tracker(_RecordingTracker())  # type: ignore[arg-type]
+
+    class _Usage:
+        input_tokens = 800
+        output_tokens = 60
+        cache_read_input_tokens = 640
+        cache_creation_input_tokens = 0
+
+    class _Stream:
+        async def get_final_message(self) -> Any:
+            return type("M", (), {"usage": _Usage(), "model": "claude-opus-5"})()
+
+    with caplog.at_level("INFO"):
+        await provider._record_stream_usage_safe(_Stream(), "claude-opus-5", 17.0)
+
+    assert any(r.message == "[cache] breakpoints: result" for r in caplog.records)
+
+
 async def test_a_probe_write_failure_never_breaks_the_turn() -> None:
     """Fail-open, like every other measurement seam in this provider."""
     class _Exploding:

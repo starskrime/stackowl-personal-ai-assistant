@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.2
-  stage: cleanup
+  stage: test
   stage_status: not_started
   one_line: >
     D01.1 is COMPLETE (7/7, doc live). D01.2 has brainstorm + architect DONE and
@@ -1941,7 +1941,7 @@ items:
       brainstorm: done
       architect:  done
       implement:  done
-      cleanup:    not_started
+      cleanup:    done
       test:       not_started
       validate:   not_started
       document:   not_started
@@ -1969,6 +1969,45 @@ items:
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added — including one mypy error this stage introduced and then fixed (stream()'s dict[str, object] kwargs bag)."
         migration: "0104 applied, then reported 'already applied' on a second run. Schema version 0104."
       no_capability_removed: "Checked explicitly. Every change adds a marker, a reader, a store or a log line. Nothing was disabled, stubbed or deleted to make a check pass."
+    cleanup_record:
+      date: 2026-07-27
+      dedup_target: "null for this item — nothing to resolve."
+      what_it_found:
+        stream_path_was_marked_but_not_instrumented: >
+          THE REAL FIND. stream() routes through the same chokepoint as the three
+          create() sites, so its requests DO carry markers — but only
+          _record_usage_safe fed the probe store and emitted the
+          "[cache] breakpoints: result" line. A streaming deployment would have
+          placed markers, had them honoured, and recorded no evidence of it: the
+          endpoint would read "never confirmed" forever with nothing to blame.
+          Asymmetric instrumentation is what makes a measurement silently blind —
+          the exact failure D01.6 exists to prevent. Fixed by extracting ONE
+          shared outcome site, _report_cache_outcome(), that both paths call,
+          rather than duplicating the block into the stream path where the two
+          copies could drift apart again. Pinned by two new tests.
+        two_silent_excepts_i_introduced: >
+          _cache_read_tokens and _cache_creation_tokens caught (TypeError,
+          ValueError) and returned 0 with NO log — a standing-rule violation in
+          my own new code, and a nasty one here specifically: an unreadable cache
+          field is indistinguishable from an honest cold cache, so "always 0"
+          would have had nothing to blame. Both now log at error. Note the D01.6
+          sibling _cached_input_tokens has the same shape and is NOT touched —
+          out of scope, and it is pre-existing.
+      the_phantom_debt_the_design_created_and_this_stage_CLOSES: >
+        designs/D01.2.md records "Debt created: misplaced cache_read_input_tokens
+        probe in openai_provider.py:138". IT IS NOT MISPLACED and there is no
+        debt. Verified against the live config rather than reasoned about: the
+        only ENABLED provider, NeraAiRaw, is `protocol: openai` pointed at
+        http://llm-gateway.dev.nera.gov:4000/v1 — a LiteLLM gateway, which passes
+        an upstream Anthropic model's `cache_read_input_tokens` through verbatim
+        on an OpenAI-protocol response. That branch is therefore a LIVE path for
+        Bakir's own deployment, not an Anthropic concept leaking into the wrong
+        file. D01.2 does not obsolete it either: D01.2's reader is on the
+        Anthropic PROTOCOL path, a different code path entirely. Removing it
+        would have blinded the only backend that exists here. The design's
+        "duplication" framing (contradiction 2 of the brainstorm) was resolved
+        the right way for the wrong reason.
+      also_confirmed: "No Anthropic provider is configured at all in ~/.stackowl/stackowl.yaml — all four entries are protocol: openai, three disabled. This is the direct evidence for the doc's LIVE HALF UNVERIFIED banner, now checked rather than assumed."
     doc: "docs/hermes-mapping/designs/D01.2.md"
     doc_last_verified: 2026-07-27
     architect_result:
