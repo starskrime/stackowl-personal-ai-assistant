@@ -418,6 +418,51 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-33
+    found: 2026-07-28
+    what: "tests/tools/meta/test_owl_build_gateway.py::test_j3b_cannot_edit_human_owl asserts a policy the code DELIBERATELY superseded."
+    evidence: >
+      Fails at HEAD without any D01.4 change (provenance established by swapping
+      the modified file out and re-running). It asserts `not result.success` for
+      editing a human owl, but owl_build returns
+      ToolResult(success=True, output="Updated owl 'planner'."). The fixture is
+      correct — origin="human" is set explicitly — so this is not fixture rot.
+    NOT_a_security_hole: >
+      CHECKED BEFORE REPORTING, and the first reading was wrong. The edit path no
+      longer calls `can_modify`; it calls `can_edit` (owl_build.py:167), which
+      returns None for origin in {builtin, human} with a documented reason:
+      those owls "were never creator/ceiling-bound (operator-configured, not
+      agent-minted), so the authority-ratchet machinery in _edit ... must not run
+      for them — it would incorrectly refuse them for having no ceiling to ratchet
+      against. Preserves /owls edit's historical scope (e.g. changing the
+      Secretary's tier) so retiring /owls loses no capability." The policy changed
+      on purpose; the test was never updated to match.
+    why_it_matters: >
+      Same class as DEBT-17: a test encoding a superseded contract trains people
+      to ignore red, and this one is worse because it LOOKS like a failing
+      authorisation boundary — the most alarming thing a red test can look like.
+      Anyone triaging it in a hurry could either panic or, worse, "fix" the
+      production gate back and silently remove /owls edit's documented scope.
+    decision: >
+      NOT autonomously patched — the standing rule is to stop and inform. It also
+      needs a judgement call that is Bakir's: either update the test to assert
+      can_edit's actual contract (human/builtin editable, agent-minted owls you
+      did not create refused), or decide the looser gate was wrong and restore
+      the stricter one. The code carries a long rationale for the looser gate, so
+      the test is the more likely thing to be stale.
+    status: open
+  - id: DEBT-34
+    found: 2026-07-28
+    what: "tests/tools/meta/test_owl_build_report_flag.py::test_owl_create_report_flag_end_to_end_no_capability_or_specialty fails with 'owl registry unavailable'."
+    evidence: >
+      Fails at HEAD without any D01.4 change, same provenance method. The
+      assertion trips on '✗ /owl create: owl registry unavailable — cannot create
+      an owl.' — the harness does not wire an owl registry, so the command
+      refuses before reaching the behaviour under test.
+    why_it_matters: "A test that cannot reach its subject proves nothing while still counting as coverage — the same trap D01.1 recorded when an intent-class assertion passed for a whole slice because its harness registered no tool_registry."
+    decision: "NOT autonomously patched. Tracked; likely a harness wiring fix rather than a product defect."
+    status: open
+
   - id: DEBT-32
     found: 2026-07-28
     what: "The `dream-50fd10ab` scheduled job has failure_count=17 while still enabled and scheduled."
@@ -2616,7 +2661,7 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
+      implement:  done
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -2777,7 +2822,69 @@ items:
         --now contract; _evict_cached_agent really is 56 call sites (counted, not
         estimated); test_d011 line 342 is the `not in` assertion; migration 0102
         does say "NO owner_id, DELIBERATELY".
-    changes: []
+    changes:
+      - date: 2026-07-28
+        stage: implement
+        commits: [2a13b172, 5afa1915, 3cf0c2c2, a3ec2273]
+        slices:
+          1: "sessions/prompt_store.py — invalidate_owl / invalidate_all, two explicit methods so the destructive case is never the default. 5/5 mutations killed."
+          2: "owls_command._edit awaits invalidate_owl; the PARTIAL StepServices at the owl_build dispatch now carries session_prompt_store; skills/store.py set_enabled invalidates, bound to the WRITE not the caller."
+          3: "infra/prompt_invalidation.py — cause carrier, so D01.2's audit logs an explained change at info instead of warning about a change the user asked for. Consumed once."
+          4: "tests/pipeline/test_d014_prompt_invalidation_gateway_integration.py — the business requirement, mutation-proven to be able to fail."
+        three_mistakes_of_mine_worth_keeping:
+          assumed_an_api: >
+            Wrote `cleared = await self._db.execute(...)` expecting a rowcount.
+            execute() returns None, and the pool ALREADY had
+            execute_returning_rowcount(). Caught by three failing count
+            assertions — which is the argument for asserting the COUNT rather
+            than just "the row is gone".
+          destroyed_uncommitted_work: >
+            The mutation harness timed out mid-battery leaving a mutation in the
+            tree; I "restored" with `git checkout --` on UNCOMMITTED work, which
+            deleted the implementation and kept nothing. Recovered from the
+            snapshot the harness itself takes. NEW RULE, now followed: COMMIT
+            BEFORE MUTATING — then git checkout is a real restore and the worst
+            case is losing a mutation, not a feature.
+          scripted_edit_broke_a_decorator: >
+            An insertion script placed a new method between `@staticmethod` and
+            `def _yaml_snapshot`, so the decorator attached to the wrong
+            function. mypy went 78 -> 88 and a test failed with "_yaml_snapshot()
+            takes 0 positional arguments". Reverted and re-applied as an explicit
+            edit. THE PATTERN across three such mishaps this session: text
+            scripts are fine for repeated mechanical substitution and wrong for
+            STRUCTURAL insertion, where an anchor can land inside a construct I
+            did not think to check.
+        two_bugs_in_my_own_test_probes_not_the_code:
+          - "Probed the gateway test with `--role`. DNAPromptInjector emits manifest.system_prompt; `role` appears only in the OWLS BLOCK, which lists the OTHER owls. Editing --role changes nothing in that owl's own prompt, so the assertion would have failed forever while the code was correct. Localised because the row-cleared and re-frozen assertions passed FIRST."
+          - "The skills fixture invented a `body` column; the real table has body_text/source/path. Read the schema instead of guessing."
+        the_live_path_streams_AGAIN: >
+          The gateway test's create()-only fake blew up with "'async for'
+          requires __aiter__" — in the OPENAI provider this time. D01.2's test
+          stage made the identical discovery about the Anthropic provider. Twice
+          in two items is a pattern, not a coincidence: a provider-level test
+          that drives create() proves a path production does not take.
+    cleanup_record:
+      date: 2026-07-28
+      dedup_target: "null for this item."
+      THE_GAP_IT_FOUND: >
+        owl_build — the SELF-EXTENSION path Bakir explicitly selected as a
+        trigger — never invalidated. Slice 2 had filled the session_prompt_store
+        gap so it COULD reach the store, and then nothing called it: the seam
+        existed and was unreachable. That is "registered but never wired", one
+        item after D01.2's cleanup found the same shape in the stream path. It
+        matters more here than for the slash command: an owl that rewrites its
+        own specialty mid-task and does not invalidate keeps reasoning under the
+        persona it started the session with, so the autonomy loop silently
+        ignores its own change until 04:00. Now wired at all three rebuild sites
+        via one _invalidate_prompt helper, with the in-flight turn still
+        finishing on its original prompt so Law 1 holds.
+      dead_event_left_alone: "owls_command.py:379 still emits owl_edited with ZERO subscribers. Left deliberately, per the architect decision — not D01.4's to fix, and deleting a hook someone may have planned around is not cleanup."
+      permissions_trigger: "Still unlocated — there is no grant/revoke seam in authz/ or commands/permissions.py. Per Bakir's architect decision the other three triggers ship; if permissions are only ever changed via owl bounds, invalidate_owl already covers them."
+      test_run_discipline_relearned: >
+        `tests/tools/` exceeded 600s and was killed (exit 143). That is the
+        standing rule about full-suite runs on this box, which I should have
+        scoped in the first place. Re-run against the owl_build-covering paths
+        only.
     notes: null
 
   - id: D01.5

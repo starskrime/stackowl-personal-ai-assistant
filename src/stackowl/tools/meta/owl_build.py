@@ -962,6 +962,29 @@ class OwlBuildTool(Tool):
         except Exception:  # OwlNotFoundError — the not-found path is expected
             return False
 
+    async def _invalidate_prompt(self, owl_name: str, *, cause: str) -> None:
+        """Clear an edited owl's frozen prompt so the change lands next turn (D01.4).
+
+        The IN-FLIGHT turn deliberately keeps the prompt it started with — an owl
+        never rewrites the prompt it is currently reasoning under, which is what
+        keeps Law 1 true. Clearing the row now means the NEXT turn cold-builds,
+        so a self-extending owl can use what it just changed instead of stalling
+        until the 04:00 rollover.
+
+        Fail-open: the owl edit has already persisted, so a missing store costs a
+        stale prompt until rollover, never the edit. Logged all the same — an owl
+        silently ignoring its own change is indistinguishable from a bug.
+        """
+        store = getattr(get_services(), "session_prompt_store", None)
+        if store is None:
+            log.tool.error(
+                "owl_build.execute: cannot invalidate the frozen prompt — no store "
+                "wired; the change will not apply until the session rolls over",
+                extra={"_fields": {"owl": owl_name, "cause": cause}},
+            )
+            return
+        await store.invalidate_owl(owl_name=owl_name, cause=cause)
+
     @staticmethod
     def _yaml_snapshot() -> bytes | None:
         """Read the owls yaml file's raw bytes (the same file ``_upsert_to_yaml``
@@ -1046,6 +1069,7 @@ class OwlBuildTool(Tool):
         try:
             OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
             registry.replace(rebuilt)
+            await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
             log.tool.error(
                 "owl_build.execute: builtin/human edit persist failed — rolling back yaml",
@@ -1157,6 +1181,7 @@ class OwlBuildTool(Tool):
         try:
             OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
             registry.replace(rebuilt)
+            await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
             log.tool.error(
                 "owl_build.execute: edit persist/register failed — rolling back yaml",
@@ -1213,6 +1238,7 @@ class OwlBuildTool(Tool):
         try:
             OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
             registry.replace(rebuilt)
+            await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
             log.tool.error(
                 "owl_build.execute: rename persist/register failed — rolling back yaml",
