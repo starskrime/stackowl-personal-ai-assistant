@@ -128,3 +128,105 @@ async def test_an_empty_prompt_is_not_persisted(tmp_db: DbPool) -> None:
                      prompt_text="", model_window=None)
 
     assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
+
+
+# ---------------------------------------------------------------------------
+# D01.4 — invalidation, the seam D01.1 never built.
+#
+# Until this existed, NOTHING in the tree could clear a frozen prompt: the store
+# only ever INSERTed/UPSERTed, and the sole release was a rollover minting a new
+# session_id. So an owl edit was invisible to the conversation you made it in —
+# for up to twelve hours, since D01.7 rolls daily at 04:00.
+# ---------------------------------------------------------------------------
+
+OTHER_LANE = "owl:secretary:cli:dm:1"
+
+
+async def _freeze(store: SessionPromptStore, lane: str, owl: str) -> None:
+    await store.save(
+        session_key=lane, owl_name=owl, session_id=RUN,
+        prompt_text=f"prompt for {owl} on {lane}", model_window=None,
+    )
+
+
+async def test_invalidating_an_owl_clears_it_on_every_lane(tmp_db: DbPool) -> None:
+    """You edited the OWL, not one conversation.
+
+    Anything narrower lets telegram-secretary and cli-secretary silently disagree
+    about who they are, which is the harder bug to diagnose.
+    """
+    store = SessionPromptStore(tmp_db)
+    await _freeze(store, LANE, "secretary")
+    await _freeze(store, OTHER_LANE, "secretary")
+
+    cleared = await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
+
+    assert cleared == 2
+    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
+    assert await store.load(session_key=OTHER_LANE, owl_name="secretary", session_id=RUN) is None
+
+
+async def test_invalidating_an_owl_leaves_other_owls_alone(tmp_db: DbPool) -> None:
+    """A lane can run several owls — the staged RCA drives three against one."""
+    store = SessionPromptStore(tmp_db)
+    await _freeze(store, LANE, "secretary")
+    await _freeze(store, LANE, "researcher")
+
+    await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
+
+    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
+    survivor = await store.load(session_key=LANE, owl_name="researcher", session_id=RUN)
+    assert survivor is not None, "editing one owl must not clear another's prompt"
+
+
+async def test_invalidate_all_clears_every_owl_and_lane(tmp_db: DbPool) -> None:
+    """The skills catalogue and capabilities block are machine-wide facts, so
+    every prompt containing them genuinely IS stale after an install."""
+    store = SessionPromptStore(tmp_db)
+    await _freeze(store, LANE, "secretary")
+    await _freeze(store, OTHER_LANE, "researcher")
+
+    cleared = await store.invalidate_all(cause="skill_install")
+
+    assert cleared == 2
+    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
+    assert await store.load(session_key=OTHER_LANE, owl_name="researcher", session_id=RUN) is None
+
+
+async def test_invalidating_nothing_is_not_an_error(tmp_db: DbPool) -> None:
+    """I4 — background lanes never froze a prompt (DEBT-27: empty session_id), so
+    a delete clears 0 rows and costs nothing. It starts mattering automatically
+    once DEBT-27 lands, with no change here."""
+    store = SessionPromptStore(tmp_db)
+    assert await store.invalidate_owl(owl_name="nobody", cause="owl_edit") == 0
+    assert await store.invalidate_all(cause="skill_install") == 0
+
+
+async def test_invalidation_is_idempotent(tmp_db: DbPool) -> None:
+    store = SessionPromptStore(tmp_db)
+    await _freeze(store, LANE, "secretary")
+    assert await store.invalidate_owl(owl_name="secretary", cause="owl_edit") == 1
+    assert await store.invalidate_owl(owl_name="secretary", cause="owl_edit") == 0
+
+
+async def test_a_rebuild_after_invalidation_is_stored_again(tmp_db: DbPool) -> None:
+    """Invalidation reuses the existing miss path — the row simply reappears."""
+    store = SessionPromptStore(tmp_db)
+    await _freeze(store, LANE, "secretary")
+    await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
+
+    await store.save(
+        session_key=LANE, owl_name="secretary", session_id=RUN,
+        prompt_text="the REBUILT prompt", model_window=None,
+    )
+    found = await store.load(session_key=LANE, owl_name="secretary", session_id=RUN)
+    assert found is not None
+    assert found.prompt_text == "the REBUILT prompt"
+
+
+async def test_a_delete_failure_never_raises(tmp_db: DbPool) -> None:
+    """I3 — the edit persisted; losing the cache clear must not fail the turn."""
+    await tmp_db.execute("DROP TABLE session_prompts")
+    store = SessionPromptStore(tmp_db)
+    assert await store.invalidate_owl(owl_name="secretary", cause="owl_edit") == 0
+    assert await store.invalidate_all(cause="skill_install") == 0

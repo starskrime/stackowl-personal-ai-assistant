@@ -99,6 +99,77 @@ class SessionPromptStore:
         )
         return found
 
+    async def _invalidate(
+        self, *, sql: str, params: tuple[str, ...], cause: str, scope: str, owl: str
+    ) -> int:
+        """Run one invalidating DELETE and report how many prompts it cleared.
+
+        Shared by both public methods so the logging contract and the fail-open
+        behaviour are written once. Never raises: the change that triggered this
+        has already persisted, and losing the cache clear must cost a stale
+        prompt until rollover, never the operation the user asked for (I3).
+        """
+        try:
+            # execute() returns None; the pool already has a rowcount variant, so
+            # the count reported in the log line is measured, not assumed.
+            cleared = await self._db.execute_returning_rowcount(sql, params)
+        except Exception as exc:
+            log.gateway.error(
+                "[prompt] invalidate: FAILED — the change will not apply until rollover",
+                exc_info=exc,
+                extra={"_fields": {"cause": cause, "scope": scope, "owl": owl}},
+            )
+            return 0
+        rows = int(cleared or 0)
+        # INFO, not debug, deliberately. This is the missing half of D01.2's
+        # audit: that one names WHICH PART of the prompt changed, this names WHAT
+        # CAUSED the rebuild. Together they answer "why did this cost me a cache
+        # miss" from the JSONL alone. D01.6 learned what debug-level costs — the
+        # diagnostics it needed appeared in 0 of 17403 live log lines.
+        log.gateway.info(
+            "[prompt] invalidate: exit",
+            extra={"_fields": {"cause": cause, "scope": scope, "owl": owl, "rows": rows}},
+        )
+        return rows
+
+    async def invalidate_owl(self, *, owl_name: str, cause: str) -> int:
+        """Clear this owl's frozen prompt on EVERY lane. Returns rows cleared.
+
+        Per-owl and not per-lane on purpose: you edited the OWL, not one
+        conversation, so ``secretary`` on Telegram, on the CLI and on two incident
+        lanes all rebuild. Anything narrower lets the same owl silently disagree
+        with itself across channels.
+
+        ``cause`` is not decoration — it travels into the log line and is what
+        lets D01.2's part-audit distinguish a change the user ASKED for from a
+        silent invalidator, which is the whole reason that audit exists.
+        """
+        return await self._invalidate(
+            sql="DELETE FROM session_prompts WHERE owl_name = ?",
+            params=(owl_name,), cause=cause, scope="owl", owl=owl_name,
+        )
+
+    async def invalidate_all(self, *, cause: str) -> int:
+        """Clear EVERY frozen prompt. Returns rows cleared.
+
+        For changes that are not owl-scoped — the skills catalogue, the
+        capabilities block, global permissions. Those are machine-wide facts, so
+        every prompt containing them genuinely is stale.
+
+        Global across principals, deliberately: ``session_prompts`` has no
+        ``owner_id`` (migration 0102, "NO owner_id, DELIBERATELY"), because the
+        parent ``sessions`` table has none either. Inventing a scoping model here
+        would contradict that decision for no benefit — the catalogue really is
+        shared.
+
+        A separate method rather than ``invalidate(owl_name=None)`` so the
+        destructive case can never be reached by forgetting an argument.
+        """
+        return await self._invalidate(
+            sql="DELETE FROM session_prompts", params=(), cause=cause,
+            scope="all", owl="",
+        )
+
     async def save(
         self,
         *,
