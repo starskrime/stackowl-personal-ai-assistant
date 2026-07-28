@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.4
-  stage: brainstorm
+  stage: architect
   stage_status: not_started
   one_line: >
     D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
@@ -2574,7 +2574,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -2583,7 +2583,90 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    the_premise_was_INVERTED_before_the_first_question: >
+      The map asks "Is deferred-by-default acceptable UX, or does StackOwl's
+      proactive posture need immediate application?" That question is MOOT:
+      StackOwl already defers, silently, and has since D01.1. Proven, not
+      asserted — tests/pipeline/test_d011_frozen_prompt_gateway_integration.py
+      MUTATES an owl's persona between turn 1 and turn 2 and asserts turn 2 does
+      NOT see it (line 342, `assert _PERSONA_AFTER not in systems[1]`), while a
+      new incarnation does (line 382). Three tests, run 2026-07-28, all passing.
+      Structurally too: nothing outside sessions/prompt_store.py touches
+      session_prompts, the store only INSERTs/UPSERTs and never deletes, and owl
+      edits do not touch session_id. So the behaviour shipped without the
+      vocabulary, and D01.4's real subject is the SILENCE plus the missing
+      invalidation seam.
+    the_map_is_wrong_again_third_time: >
+      The map states "any command that would mutate system-prompt state (install
+      a skill, enable a tool, change memory) takes effect next session by
+      default, with --now for immediate. This is the canonical pattern,
+      documented as such." Only half true. Hermes DOES have the contract, named
+      and reused — hermes_cli/skills_hub.py carries "--now invalidates prompt
+      cache immediately (costs more money). Default: defer to next session to
+      preserve cache", and agent/coding_context.py:37 calls the /coding flip
+      "the same contract as ``/skills install`` vs ``--now``". But it covers
+      skills and /coding ONLY. Everywhere else the gateway calls
+      _evict_cached_agent(session_key) at 56 call sites, applying the change at
+      the NEXT MESSAGE with no deferral and no cost message. Hermes has two
+      conflicting behaviours, not one canonical pattern, and no doc/ file
+      describes the deferral at all.
+    decisions:
+      - date: 2026-07-28
+        stage: brainstorm
+        round: "21 questions over 6 rounds, Hermes source read BEFORE asking (the new standing rule)"
+        by: Bakir
+        answers:
+          who_defers: >
+            A1 — HUMAN-initiated changes apply IMMEDIATELY; MACHINE-initiated
+            ones (nightly DNA evolution, background curator writes) defer. Bakir
+            asked to discuss rather than pick an option, and the discussion
+            changed my recommendation: silent deferral is probably the MOST
+            expensive choice, not the cheapest. A cache miss on the ~2712-token
+            frozen prompt is ~4c against the D01.6 baseline; a confused user
+            re-editing costs ~57c per turn, ~13x more. And the retry loop is not
+            hypothetical — assemble.py already documents the model retrying
+            owl_build with name variants until the owls block stopped it.
+            Silence causes retries; retries cost more than the miss.
+          the_real_line: "Not deferred-vs-immediate but WHO IS SURPRISED. A change you just made at a keyboard expecting an effect — surprise is expensive. A change nobody asked for right now — nobody is watching, deferral is free."
+          owl_self_change: "Next TURN boundary, never mid-turn. The turn finishes on its frozen prompt; the rebuild lands before the next turn. Autonomy stalls seconds rather than until 04:00, and Law 1 holds because nothing mutates PAST context."
+          in_flight: "Finishes on the prompt it started with — the SAME rule as owl self-changes, so there is ONE rule for both actors."
+          invalidation_mechanism: "DELETE the row. Reuses the existing cache-miss path exactly; assemble needs NO new code."
+          granularity: "Whole prompt, always. Per-part would make the frozen prompt a composition rather than a string, and prompt_hash would stop identifying one stored artifact."
+          blast_radius: "DELETE WHERE owl_name = ? — every lane that owl is on. You edited the OWL, not one conversation; anything narrower lets telegram-secretary and cli-secretary silently disagree about who they are."
+          no_new_tables: >
+            No pending-changes queue and no rollover notice. Bakir first chose to
+            build the queue and then chose to drop its only reader; put back as a
+            contradiction, he resolved it to DROP BOTH. Deferred machine changes
+            need no queue at all — a rollover mints a new session_id, the stored
+            row stops matching, and the next turn cold-builds. D01.1's
+            self-enforcing design already does the work. Zero migrations.
+          revoke_safety: >
+            No conflict, and VERIFIED rather than assumed. authz_compose.py:61
+            computes `owl.bounds(now) ∩ creation_ceiling` — live at dispatch —
+            and its docstring states the fail-closed contract plus "task_envelope
+            is intentionally excluded from enforcement (E2-S3) ... the hard
+            boundary must not depend on an LLM-derived hint". So a mid-turn
+            revoke is enforced immediately however stale the prompt is; the cost
+            is one wasted tool attempt, never an unauthorised action.
+          placement: "SessionPromptStore.invalidate(owl_name=...), beside load/save. No new module. The store stays the only thing touching session_prompts — which is what made the blast-radius question easy to answer. (Placement voted, per standing rule.)"
+          trigger_sites: "All four: human owl persona/DNA edit, skill install/uninstall/enable, owl self-extension (at the next turn boundary), permission/authz changes."
+          wording: "Nothing extra — the normal confirmation only. Under A1 the change IS live from the next turn, so there is nothing surprising left to explain, and explaining an implementation detail invites worry about it."
+          background_lanes: "No-op today (they never freeze, per DEBT-27), and correct AUTOMATICALLY once DEBT-27's per-day identity lands — the same invalidate() call simply starts mattering. No special-casing, nothing to revisit."
+          vs_D01_2: "No reconsideration. A settings edit is a few times a day, not per turn; the markers protect the 99% of turns where nothing changed."
+          test_target: "\"An edit I just made is reflected in the next reply.\" Drive a turn, edit the persona, drive another, assert the NEW persona reached the provider. This assertion currently FAILS BY DESIGN — D01.1 proves it — so it is guaranteed to be able to fail."
+        contradictions_put_back_and_resolved:
+          - conflict: "\"Nothing should be deferred\" vs \"humans defer, owls apply immediately\" vs \"tell them at rollover\" — and vs the shipped behaviour, since deferral is already live and tested."
+            resolution: "Bakir asked to discuss rather than choose. Outcome: A1 above. \"Nothing defers\" was read as \"add no NEW deferrals\", which is right — D01.1 already defers everything in the prompt, so D01.4 adds an INVALIDATION seam rather than more deferral."
+          - conflict: "Build a pending-changes queue, but drop the rollover notice that was its only reader — a table, migration and writer with nothing consuming them."
+            resolution: "DROP BOTH. If a reader is ever wanted the queue can be added then, with a consumer."
+          - conflict: "\"In-flight turns finish on the old prompt\" (correct for Law 1) vs \"permission changes apply immediately\" (a revoke would then be ignored for the rest of a turn)."
+            resolution: "Not a real conflict — enforcement is at dispatch on live bounds, and the prompt is presentation only. VERIFIED in authz_compose.py before accepting it."
+        load_bearing_condition_for_the_document: >
+          The revoke-safety answer holds ONLY while the owl registry stays live.
+          If anyone ever caches the registry per session to match the prompt
+          freeze, enforcement silently becomes as stale as the prompt. This must
+          be written into the design doc as a stated invariant, not left implicit.
+        no_migration_needed: "DELETE requires no schema change. D01.4 is the first item in this wave with zero migrations."
     changes: []
     notes: null
 
