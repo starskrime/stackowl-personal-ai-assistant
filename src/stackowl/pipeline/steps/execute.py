@@ -41,6 +41,7 @@ from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
+from stackowl.pipeline.cache_audit import audit_tools_stability
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.progress.emitter import get_turn_callback, make_progress_callback
@@ -1156,6 +1157,12 @@ async def _run_with_tools(
     # the pinned/durable path and as the gateway's floor-tier seed (it rebuilds per tier).
     _window = await _resolve_execute_window(state, provider)
     tool_schemas = await build_tool_schemas(provider)
+    # D01.2 — measure D01.3's premise instead of asserting it. The schemas above
+    # are selected from `request_text`, so they can differ per turn; on an
+    # Anthropic-protocol backend `tools` renders at position 0, which means a
+    # varying array invalidates EVERY downstream breakpoint on every turn.
+    # Reports only — this never changes what is sent.
+    audit_tools_stability(state.session_key, tool_schemas)
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(
         "[pipeline] execute: context budget",

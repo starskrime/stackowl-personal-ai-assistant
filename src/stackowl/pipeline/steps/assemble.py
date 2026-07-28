@@ -15,6 +15,7 @@ from stackowl.infra import prompt_metrics
 from stackowl.infra.observability import log
 from stackowl.owls.base_prompt import build_stable_base_prompt
 from stackowl.owls.dna_injector import DNAPromptInjector
+from stackowl.pipeline.cache_audit import audit_prompt_parts
 from stackowl.pipeline.capability_manifest import CapabilityManifest
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -387,6 +388,18 @@ async def run(state: PipelineState) -> PipelineState:
     # (providers/base.py::_record_cost) can attach it without threading arguments
     # through every provider signature. Never raises.
     prompt_hash, prompt_chars = prompt_metrics.stamp(system_prompt)
+    # D01.2 — prompt_hash says the prompt MOVED; this says which part moved. The
+    # cold build is the only place a silent invalidator can be caught at its
+    # source, because it is the only place the parts still exist separately.
+    audit_prompt_parts(state.session_key, {
+        "base": base,
+        "capabilities": capabilities,
+        "persona": persona,
+        "owls": owls_block,
+        "skills": skills_block,
+        "profile": profile,
+        "stable_context": state.stable_context or "",
+    })
     # INFO, not DEBUG. These per-part sizes are the diagnostic D01.6 exists to
     # obtain, and at debug level they vanished entirely: 0 of 17403 lines in the
     # live log carried them, which is why prompt composition was unmeasurable.

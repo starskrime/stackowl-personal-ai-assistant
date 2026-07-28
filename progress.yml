@@ -189,6 +189,23 @@ rules:
   process:
     - "READ docs/hermes-mapping/PROCESS.md before picking up any item. It is the method."
     - "Port the DESIGN, never the code. Read Hermes until you can explain it, then write our own in our idiom, then state the divergence in the doc."
+    - >
+      READ HERMES BEFORE ASKING (Bakir, 2026-07-27, standing). Hermes is the
+      PARENT GOLDEN PROJECT, not merely a mapping input. Before putting a design
+      question to Bakir, open the corresponding Hermes source — a large share of
+      the questions worth asking are already answered in it. His words: "always
+      use Hermes project as a parent golden project and learn from the experience
+      and be creative how we can implement to the platform ... I see you asking so
+      many questions, which some of them can be found in Hermes project."
+      This does NOT replace the 25-question grill; it changes WHICH questions get
+      asked — the ones Hermes cannot answer (product intent, StackOwl seams,
+      divergence calls). Reading the MAP is not reading the source: the map has
+      already been caught stale once (D01.2, the cached_tokens claim). Be
+      creative about how the idea lands here — the goal is stability, features and
+      proactiveness, not transcription. PROVEN IMMEDIATELY: acting on this rule
+      mid-D01.2 produced slice 6, two real improvements (budget reallocation and
+      carrier pre-filtering) that were sitting in a 165-line file I had only ever
+      read a summary of.
     - "One item at a time. Finish all six stages before starting the next item."
     - "GRILL RULE (Bakir, 2026-07-25): ask 25 questions per item during brainstorm, and 25 more for each architecture design. Batch 4 per round. Purpose is to extract his full vision and knowledge, not to confirm ours."
     - "Never skip a stage. `no_change_needed` is an allowed outcome; silence is not."
@@ -564,7 +581,23 @@ known_debt:
       was not folded into slice 4b. Needs Bakir.
     qualifies: "D01.1 validate_result — I1 PASSES as measured, but the cache-hit claim should be read as ingress-only until this is resolved."
     hand_to: D01.7
-    status: open
+    bakir_decision:
+      date: 2026-07-27
+      answer: "PER-DAY, reusing D01.7's existing daily reset."
+      shape: >
+        A background/scheduled lane gets an incarnation that rolls at the SAME
+        hour D01.7 already resets interactive lanes (reset_policy at_hour 4).
+        Reuse across every run within a day, a guaranteed daily refresh, and —
+        the reason it was chosen over the alternatives — it invents NO third
+        lifecycle: it reuses the reset policy that already exists. That is the
+        dedup-by-seam move PROCESS.md asks for, the same one D01.7's
+        session.rollover made for D09.1/D09.3/Q17.
+      rejected_and_why:
+        per_run: "Reuse only WITHIN one run. Smallest change, but leaves most of the latency win on the table — the 51 cold builds would largely remain."
+        standing_per_owl: "Maximum reuse but NO refresh boundary at all: an owl whose persona or skills change keeps serving a stale frozen prompt until an explicit invalidation path is built, which does not exist."
+      accepted_cost: "A mid-day owl edit is not reflected in background work until 04:00."
+      still_true: "The `and state.session_id` guard is NOT to be deleted. The fix is to give background lanes a real identity; removing the guard would serve one owl's frozen prompt to every other background owl."
+    status: "decided — implementation belongs to D01.7, not D01.2"
   - id: DEBT-26
     found: 2026-07-27
     what: "tests/ has its own ruff debt that nothing tracks — DEBT-1 counts src/ only."
@@ -1052,7 +1085,18 @@ known_debt:
       what was done for DEBT-4: assert the invariant it was reaching for (the
       block names a way to load the full skill) rather than the exact command
       string.
-    status: open
+    bakir_decision:
+      date: 2026-07-27
+      answer: "Assert the INVARIANT it was reaching for, not the exact command string."
+      applied: >
+        tests/skills/test_skill_retrieval.py — `assert "/skill show" in block`
+        became `assert "skill_view" in block or "/skill show" in block`, with a
+        message naming the actual property ("the block must tell the reader how
+        to load the full playbook"). Reproduced FIRST to confirm it was
+        pre-existing exactly as documented, then fixed WITH explicit approval:
+        the standing rule against autonomously patching a failing test was not
+        bypassed, it was satisfied by asking.
+    status: resolved
   - id: DEBT-16
     found: 2026-07-26
     what: "Eleven tests in tests/smoke/ fail, in five files, unrelated to any current item."
@@ -2171,6 +2215,113 @@ items:
           migration: "uv run python -m stackowl db migrate applied 0104, then reported 'already applied' on a second run. Schema version 0104."
           lint: "ruff clean on all new files; src/ total 46 (DEBT-1) — zero added."
           types: "mypy src/ 78 (DEBT-8) — zero added."
+      - date: 2026-07-27
+        commit: pending
+        stage: implement
+        slice: "5 — the silent-invalidator audit"
+        files:
+          - "src/stackowl/pipeline/cache_audit.py (new) — tools_digest, audit_tools_stability, audit_prompt_parts"
+          - "src/stackowl/pipeline/steps/execute.py — audit_tools_stability right after build_tool_schemas"
+          - "src/stackowl/pipeline/steps/assemble.py — audit_prompt_parts at cold build, over the 7 named parts"
+          - "tests/pipeline/test_cache_audit.py (new, 11 tests)"
+        divergence_from_design_stated_loudly: >
+          THE DESIGN PUT THE TOOLS AUDIT IN THE ANTHROPIC PROVIDER. It is in the
+          shared pipeline path instead, and that is the whole point of it. The
+          audit's stated purpose is to turn D01.3's premise — "context_budget
+          varies the tools array every turn" — from an assertion into a
+          measurement. execute.py:1129 builds the schemas via
+          to_provider_schema(request_text=state.input_text, budget=...) for EVERY
+          protocol, and this deployment runs an OpenAI-protocol gateway with no
+          Anthropic backend at all. An audit on the Anthropic path would have
+          measured exactly nothing on the one box where the question is being
+          asked — an assertion that cannot fire, which is the precise trap D01.1
+          taught. Same msg string ("[cache] breakpoints: tools array CHANGED"),
+          different home. The design doc's Observability table must be corrected
+          in the `document` stage.
+        what_it_reports: >
+          Two things prompt_hash cannot. (1) The TOOLS array changed on this lane
+          — which prompt_hash never saw, and which matters more than the system
+          prompt on the Anthropic path because tools render at position 0, before
+          system, so a varying array invalidates every downstream breakpoint.
+          (2) WHICH system-prompt part changed, by name, out of base /
+          capabilities / persona / owls / skills / profile / stable_context.
+          D01.1 spent a whole slice discovering by hand that the culprit was
+          per-turn memory recall; this makes that a log line.
+        deliberate_details:
+          - "Order is NOT normalised out of the tools digest. Keys WITHIN a schema are sorted (dict order is not in the emitted JSON), but the array's own order is part of the cached bytes, so a reordered array with identical members is a real invalidation and must not be hidden. Pinned by test_reordering_alone_counts_as_a_change."
+          - "An empty session_key is not tracked. Background and utility calls legitimately have no lane, and bucketing them all under '' would report a change on nearly every one — noise that trains a reader to ignore the line."
+          - "The first turn of a lane is never a change: there is nothing to have changed FROM, and reporting one would make every new conversation look like an invalidation."
+          - "WARNING, not error. A varying tools array is not a fault, it is a COST, and it is legitimately allowed to vary (a delegated child has spawn tools removed; restrict_to narrows it). The point is that the price becomes visible instead of silent."
+          - "Both maps are FIFO-bounded at 512 lanes — a long-lived server sees unbounded lanes. Pinned by test_the_tracker_is_bounded."
+        reused_not_rebuilt: >
+          Hashing goes through infra.prompt_metrics.digest, which D01.6 already
+          built, rather than a second hasher. Checked before writing, per the
+          three-question dedup rule.
+        verified:
+          tests: "11 passed. tests/pipeline/ 1076 passed — the 1065 baseline plus exactly the 11 new tests, so zero regressions from touching execute.py and assemble.py."
+          lint: "ruff clean on all 3 touched files; src/ total 46 (DEBT-1) — zero added."
+          types: "mypy src/ 78 (DEBT-8) — zero added."
+          mutations: "6 run, 6 killed: sort the tools array (hides reordering), report a change on turn one, track the empty session key, remove the lane bound, let an unserialisable schema raise, report only the first changed part."
+      - date: 2026-07-27
+        commit: pending
+        stage: implement
+        slice: "6 — budget reallocation, learned by READING Hermes rather than our summary of it"
+        why_this_slice_exists: >
+          Bakir, mid-session: "always use Hermes as a parent golden project and
+          learn from the experience and be creative how we can implement to the
+          platform ... I see you asking so many questions, which some of them can
+          be found in Hermes project." Acting on that immediately, I opened
+          agent/prompt_caching.py (165 lines) for the first time this session —
+          I had been working from the D01.2 design doc's SUMMARY of it. Two real
+          improvements were sitting in it. Saved as a standing rule in
+          feedback_read_hermes_before_asking.
+        what_hermes_taught:
+          reallocation: >
+            apply_anthropic_cache_control computes `remaining = 4 -
+            breakpoints_used` and hands the leftovers to messages, so a layout
+            that cannot use a prefix marker still spends all four (their fallback
+            is literally "one system breakpoint plus the last 3 messages"). OUR
+            DESIGN SAID THE OPPOSITE — "if a span fails the minimum guard its
+            breakpoint is NOT reallocated ... a simpler, assertable layout was
+            chosen over a self-optimising one." That reasoning does not survive
+            contact: reallocation is no less assertable (the property is "spend
+            every breakpoint that has somewhere legal to go", pinned by 4 tests),
+            and the old rule wasted a breakpoint on exactly the deployments the
+            minimum guard exists to protect. A tools array below the floor used
+            to cost us a marker; now it costs nothing.
+          carrier_prefiltering: >
+            Their _can_carry_marker exists so a marker is never spent on a
+            message that cannot hold one. Ours skipped such a message but did NOT
+            try an earlier one, so an empty tool/assistant turn in the tail
+            silently cost a breakpoint. Candidates are now filtered FIRST and the
+            newest `remaining` of them marked.
+        what_we_did_NOT_take_and_why:
+          deepcopy_everything: >
+            They copy.deepcopy the whole message list on every call. We copy only
+            what we mark. Our tool loop re-marks a growing list every round, so a
+            deepcopy of 40 messages per round is real cost on the hot path.
+          their_lack_of_a_minimum_guard: >
+            Hermes places markers unconditionally. On a 4096-floor model several
+            of theirs are silently dead. We keep our guard — this is one of the
+            16 areas where StackOwl is genuinely ahead.
+          envelope_layout_handling: >
+            _can_carry_marker's OpenRouter-specific branches (top-level marker on
+            role:tool causes a silent hang) do not apply — we speak native
+            Anthropic. We took the INSIGHT (never spend a marker on a message
+            that cannot carry it) without the transport-specific complexity.
+        design_doc_correction_required: >
+          designs/D01.2.md's Lifecycle section states "If a span fails the
+          minimum guard its breakpoint is NOT reallocated". That is now FALSE and
+          must be rewritten in the `document` stage. This is the fourth
+          correction the implement stage has produced.
+        verified:
+          tests: "24 in test_cache_control.py (4 new) + 13 provider tests = 40 passed."
+          mutations: "5 run, 5 killed: mark every carrier, take the oldest carriers, ignore markers already placed, drop the message minimum guard, mark uncarriable messages."
+          test_updated_not_weakened: >
+            test_short_tools_lose_their_marker_but_a_long_system_still_gets_one
+            asserted 2 message markers; it now asserts 3 plus a total of 4. That
+            assertion encoded the OLD no-reallocation decision, which was
+            deliberately changed — not a test bent to make code pass.
     notes: >
       The lesson that generalises: the handoff's premise, the map's own text, and
       my first recollection of the minimum-prefix threshold were EACH wrong in a

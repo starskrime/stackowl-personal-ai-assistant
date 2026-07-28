@@ -214,7 +214,18 @@ async def test_gather_relevant_skills_returns_block_when_wired(
     assert "## Relevant Skills" in block
     assert "**pdf**" in block
     assert "summarize pdfs" in block
-    assert "/skill show" in block
+    # DEBT-17 — assert the INVARIANT this reached for, not one exact command
+    # string. It previously pinned "/skill show"; the block now ends "(Use
+    # `skill_view <name>` to load the full playbook.)" and the three assertions
+    # that matter above all passed the whole time, so retrieval was never broken
+    # — only the trailing hint was reworded. A test that freezes a user-facing
+    # string breaks every time that string is legitimately improved, which trains
+    # people to ignore red. Same treatment DEBT-4 got; this is map item D18.6
+    # (change-detector test ban) surfacing in our own tree a second time.
+    # (Bakir, 2026-07-27.)
+    assert "skill_view" in block or "/skill show" in block, (
+        "the block must tell the reader how to load the full playbook"
+    )
 
 
 async def test_gather_relevant_skills_returns_empty_when_unwired() -> None:

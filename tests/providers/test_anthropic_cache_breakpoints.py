@@ -14,7 +14,9 @@ from typing import Any
 import pytest
 
 from stackowl.config.provider import ProviderConfig
+from stackowl.config.test_mode import TestModeGuard
 from stackowl.providers.anthropic_provider import AnthropicProvider
+from stackowl.providers.base import Message
 from stackowl.providers.mock_provider import MockProvider
 
 pytestmark = pytest.mark.asyncio
@@ -304,6 +306,60 @@ async def test_cached_input_tokens_are_recorded_from_the_stream_response() -> No
 
     assert len(tracker.records) == 1
     assert tracker.records[0]["cached_input_tokens"] == 640
+
+
+# ---------------------------------------------------------------------------
+# The ordering invariant — marking must be the LAST mutation before the wire.
+#
+# Learned from the reference platform's own test suite, which locks this by
+# INSPECTING SOURCE ORDER (asserting the marking call appears after every
+# normalisation call in the conversation loop). The hazard is real: marking turns
+# a string into a block list, so any later pass written as `isinstance(content,
+# str)` silently skips marked messages. The same message would then be sent
+# normalised on the turn it is unmarked and raw on the turn it is marked —
+# breaking the byte-identical prefix the breakpoints exist to protect.
+#
+# We assert the OUTCOME instead of the source order: what reaches the SDK carries
+# the markers. That is stronger, and it holds structurally here rather than by
+# convention, because marking lives at the chokepoint immediately before the call
+# — there is no "later pass" for it to be reordered against.
+# ---------------------------------------------------------------------------
+
+async def test_markers_survive_intact_to_the_sdk_call(monkeypatch: Any) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    class _ScriptedMessages:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self.count_tokens = _CountTokens(4000)
+
+        async def create(self, **kwargs: Any) -> Any:
+            self.calls.append(kwargs)
+            usage = type("U", (), {"input_tokens": 10, "output_tokens": 2})()
+            block = type("B", (), {"text": "ok", "type": "text"})()
+            return type("R", (), {
+                "content": [block], "usage": usage,
+                "model": "claude-opus-5", "stop_reason": "end_turn",
+            })()
+
+    provider = _provider()
+    scripted = _ScriptedMessages()
+    provider._client.messages = scripted  # type: ignore[assignment]
+
+    await provider.complete(
+        [Message(role="system", content=_big(900)),
+         Message(role="user", content="hello")],
+        model="claude-opus-5",
+    )
+
+    assert len(scripted.calls) == 1
+    sent = scripted.calls[0]
+    # The markers are on the wire, not merely computed and dropped.
+    assert _markers(sent) != []
+    assert len(_markers(sent)) <= 4
+    # And the system prompt reached the SDK as a BLOCK LIST, which is the shape
+    # change that would hide it from any later string-shaped pass.
+    assert isinstance(sent["system"], list)
 
 
 class _RecordingProbeStore:

@@ -49,6 +49,9 @@ from stackowl.infra.observability import log
 # ``minimum_tokens`` and gets the sharper guard.
 MIN_CACHEABLE_TOKENS = 512
 
+# The hard API limit, and the reason one module owns all marking (invariant I1).
+_MAX_BREAKPOINTS = 4
+
 # Characters per token, and the margin applied to the estimate. The margin makes
 # the estimate UNDER-count, so estimation error fails toward NOT marking: a
 # borderline span is skipped rather than spending a breakpoint on a dead marker.
@@ -238,37 +241,52 @@ def apply_cache_breakpoints(
                                "minimum": floor, "reason": "below_minimum"}},
         )
 
-    # ---- markers 3 and 4: the last two messages
+    # ---- the remaining markers: the most recent CARRIABLE messages
     #
     # Marking the tail is what makes the cache ROLL: this turn writes an entry
     # ending at the newest message, and the next turn reads it back as its own
     # prefix instead of re-reading the whole conversation at full price.
+    #
+    # THE BUDGET IS REALLOCATED, and that is a correction to our own design,
+    # learned by reading the reference implementation rather than our summary of
+    # it. Theirs computes `remaining = 4 - breakpoints_used` and gives the
+    # leftovers to messages. Ours originally fixed the layout at
+    # tools+system+2, so a tools array below the minimum simply LOST its
+    # breakpoint — wasting one on exactly the deployments the guard exists to
+    # protect. Reallocation is no less assertable: the property is "spend every
+    # breakpoint that has somewhere legal to go", which is what the tests pin.
+    #
+    # Two reasons a message is passed over, both of which must NOT cost a
+    # breakpoint: its cumulative prefix is below the floor (a dead marker), or it
+    # has no content block able to carry one (an empty tool/assistant turn — the
+    # reference platform's `_can_carry_marker` insight). Candidates are filtered
+    # FIRST and the newest `remaining` of them are marked, so a skipped message
+    # moves the marker to an earlier one instead of dropping it.
     message_tokens = [_estimate_tokens(_content_text(m.get("content"))) for m in messages]
-    for offset in (2, 1):
-        index = len(out_messages) - offset
-        if index < 0:
-            continue
+    remaining = _MAX_BREAKPOINTS - len(placed)
+    carriers: list[tuple[int, Any]] = []
+    for index in range(len(out_messages)):
         prefix = cumulative + sum(message_tokens[: index + 1])
         if prefix < floor:
-            log.engine.debug(
-                "[cache] breakpoints: span skipped",
-                extra={"_fields": {"span": f"message[-{offset}]", "tokens": prefix,
-                                   "minimum": floor, "reason": "below_minimum"}},
-            )
             continue
         marked_content = _mark_last_block(out_messages[index].get("content"), marker)
         if marked_content is None:
             # An empty content list cannot carry a marker. Skip it rather than
             # inventing a block — a fabricated block would change what the model
             # reads to buy a cache entry, which is never a trade worth making.
-            log.engine.debug(
-                "[cache] breakpoints: span skipped",
-                extra={"_fields": {"span": f"message[-{offset}]",
-                                   "reason": "no_block_to_carry_marker"}},
-            )
             continue
+        carriers.append((index, marked_content))
+
+    skipped = len(out_messages) - len(carriers)
+    if skipped:
+        log.engine.debug(
+            "[cache] breakpoints: messages passed over",
+            extra={"_fields": {"skipped": skipped, "carriers": len(carriers),
+                               "minimum": floor}},
+        )
+    for index, marked_content in carriers[-remaining:] if remaining > 0 else []:
         out_messages[index] = {**out_messages[index], "content": marked_content}
-        placed.append(f"message[-{offset}]")
+        placed.append(f"message[{index}]")
 
     log.engine.debug(
         "[cache] breakpoints: exit",

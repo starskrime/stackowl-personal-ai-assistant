@@ -155,7 +155,11 @@ def test_short_tools_lose_their_marker_but_a_long_system_still_gets_one() -> Non
     )
     assert _markers(tools) == []
     assert _markers(system) == [{"type": "ephemeral"}]
-    assert len(_markers(messages)) == 2
+    # THREE, not two: since budget reallocation was adopted from the reference
+    # implementation, the breakpoint the tools array could not use is spent on an
+    # extra message instead of being lost. See the reallocation tests below.
+    assert len(_markers(messages)) == 3
+    assert len(_all_markers(tools, system, messages)) == 4
 
 
 def test_two_spans_that_each_miss_the_floor_still_clear_it_together() -> None:
@@ -311,6 +315,72 @@ def test_repeated_application_still_yields_four_markers() -> None:
             tools, system, messages, model="claude-opus-5", ttl="5m",
         )
     assert len(_all_markers(tools, system, messages)) == 4
+
+
+# ---------------------------------------------------------------------------
+# Budget reallocation — learned by reading Hermes' agent/prompt_caching.py
+#
+# Their apply_anthropic_cache_control computes `remaining = 4 - breakpoints_used`
+# and hands the leftovers to messages, so a layout that cannot use a prefix
+# marker still spends all four. Our design said the opposite ("a span that fails
+# the guard does NOT have its breakpoint reallocated"), which silently wasted a
+# breakpoint on exactly the deployments the guard exists to protect. Adopted.
+# ---------------------------------------------------------------------------
+
+def test_a_skipped_tools_marker_is_reallocated_to_another_message() -> None:
+    """A wasted breakpoint is pure loss — there is always another message."""
+    tools, system, messages = apply_cache_breakpoints(
+        [{"name": "t", "description": "d", "input_schema": {}}],  # below the floor
+        _big_text(900),
+        [{"role": "user", "content": f"turn {i}"} for i in range(6)],
+        model="claude-opus-5",
+        ttl="5m",
+    )
+    assert _markers(tools) == []
+    assert _markers(system) == [{"type": "ephemeral"}]
+    # The tools breakpoint went to a THIRD message rather than being lost.
+    assert len(_markers(messages)) == 3
+    assert len(_all_markers(tools, system, messages)) == 4
+
+
+def test_no_tools_and_no_system_spends_all_four_on_messages() -> None:
+    tools, system, messages = apply_cache_breakpoints(
+        None, None,
+        [{"role": "user", "content": _big_text(200)} for _ in range(8)],
+        model="claude-opus-5", ttl="5m",
+    )
+    assert len(_markers(messages)) == 4
+
+
+def test_a_message_that_cannot_carry_a_marker_does_not_cost_a_breakpoint() -> None:
+    """Hermes' _can_carry_marker insight, applied to our layout.
+
+    An empty content list has no block to hold a marker. Skipping it is right;
+    skipping it AND losing the breakpoint is not — the marker moves to an earlier
+    message that can actually carry one.
+    """
+    messages = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "two"},
+        {"role": "user", "content": "three"},
+        {"role": "assistant", "content": []},   # cannot carry a marker
+    ]
+    tools, system, out = apply_cache_breakpoints(
+        _tools(), _big_text(800), messages, model="claude-opus-5", ttl="5m",
+    )
+    assert _markers(out[-1]) == []          # the empty one is still skipped ...
+    assert len(_markers(out)) == 2          # ... but two messages are still marked
+    assert len(_all_markers(tools, system, out)) == 4
+
+
+def test_reallocation_still_respects_the_minimum_guard() -> None:
+    """Spending every breakpoint must never mean spending one on a dead marker."""
+    tools, system, messages = apply_cache_breakpoints(
+        None, None,
+        [{"role": "user", "content": "tiny"} for _ in range(8)],
+        model="claude-opus-5", ttl="5m",
+    )
+    assert _all_markers(tools, system, messages) == []
 
 
 def test_a_growing_conversation_never_accumulates_markers() -> None:
