@@ -2023,7 +2023,65 @@ items:
             resolution: "Keep the native reader — Anthropic's usage fields are first-class, so a direct read genuinely beats a shape-prober. File the misplaced openai_provider probe as its own tracked debt rather than silently leaving it."
           - conflict: "'Never place a dead marker' (invisible-change-averse) vs 'always convert the wire shape' (changes every Anthropic request including non-beneficiaries)."
             resolution: "Convert ONLY when marking. Blast radius matches benefit; unmarked requests stay byte-identical."
-    changes: []
+    changes:
+      - date: 2026-07-27
+        commit: pending
+        stage: implement
+        slice: "1 — _cache_control.py, the pure marker-placement function"
+        files:
+          - "src/stackowl/providers/_cache_control.py (new, 258 lines) — apply_cache_breakpoints(tools, system, messages, *, model, ttl, measured_tokens, minimum_tokens)"
+          - "tests/providers/test_cache_control.py (new, 20 tests)"
+        design_note: >
+          THE GUARD IS CUMULATIVE, NOT PER-SPAN — a correction the design doc does
+          not state and the `document` stage must fold in. A breakpoint caches the
+          whole prefix BEFORE it, so what has to clear the model's minimum is the
+          running total up to the marker, never the individual span. The doc's own
+          table already reasons this way (it compares "full system ~2712" rather
+          than "system alone"), but the Lifecycle section reads as a per-span
+          check. Concretely: a ~330-token tools array and a ~301-token system
+          prompt each miss the 512 floor alone, yet together they clear it, so
+          marker 2 IS placed while marker 1 is not. A per-span guard drops both.
+        divergence_from_design: >
+          I2 says "a marker is never placed on a span below the model's minimum",
+          but the design ALSO rejects hardcoding the per-model minimum table
+          (512/1024/2048/4096) because it rots, and Bakir's probe-state decision
+          (2026-07-27) confirmed the learned state CANNOT recover it: Anthropic
+          returns ONE cache_creation_input_tokens for the whole request, not one
+          per marker, so a positive is not attributable to a span. The guard
+          therefore defaults to MIN_CACHEABLE_TOKENS = 512 — the floor UNDER the
+          floors, below which nothing caches on ANY model — and takes an explicit
+          `minimum_tokens` override for a caller that knows better. CONSEQUENCE,
+          stated plainly rather than hidden: on a 4096-floor model (Opus 4.6/4.5,
+          Haiku 4.5) markers WILL be placed that do not cache. They cost nothing
+          but a wasted breakpoint, and that is the price of not shipping a table
+          that goes stale on the next model release.
+        the_mutation_that_earned_its_keep: >
+          8 mutations run against the suite. SEVEN were killed on the first
+          attempt; M2 (replace the cumulative guard with a per-span one) SURVIVED
+          — 20/20 still passed. The cumulative test could not fail, because its
+          system span cleared 512 on its own, so both designs gave the same
+          answer. Exactly the D01.1 trap: coverage that reads as coverage without
+          being it. Fixed by adding a case where NEITHER span clears the floor
+          alone but their sum does; M2 now dies. Also caught in passing: the
+          growing-conversation test initially asserted `== 4` when round 0
+          legitimately has one message and so three markers — the assertion was
+          wrong, not the code, and was sharpened to I1 (<=4) plus "markers sit on
+          the TAIL", which is what actually catches accumulation.
+        i1_hazard_found_while_building: >
+          NOT in the design. complete_with_tools appends to ONE messages list and
+          re-marks it every round, so without stripping, round 2's markers land on
+          the new tail while round 1's are still on messages that are no longer the
+          tail — six markers on the wire, invariant I1 broken on the second tool
+          iteration. apply_cache_breakpoints therefore STRIPS every existing
+          cache_control before placing its four. Safe precisely because this module
+          owns every marker in the codebase (`grep -rn cache_control src/` returned
+          zero before this slice), and it is what makes I1 provable rather than
+          hoped for.
+        verified:
+          tests: "20 passed in tests/providers/test_cache_control.py. 8/8 mutations killed after the M2 fix."
+          lint: "ruff clean on both new files; src/ total unchanged at 46 (DEBT-1) — zero added."
+          types: "mypy clean on _cache_control.py; src/ total unchanged at 78 (DEBT-8) — zero added."
+          baseline: "tests/pipeline/ 1065 passed (450s) — matches the stated pre-start baseline exactly."
     notes: >
       The lesson that generalises: the handoff's premise, the map's own text, and
       my first recollection of the minimum-prefix threshold were EACH wrong in a
