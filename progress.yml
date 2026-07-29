@@ -451,7 +451,15 @@ known_debt:
       did not create refused), or decide the looser gate was wrong and restore
       the stricter one. The code carries a long rationale for the looser gate, so
       the test is the more likely thing to be stale.
-    status: open
+    fix_2026_07_29: >
+      The TEST was stale, not the gate — confirmed by reading can_edit's
+      documented rationale before touching anything. Updated to assert what
+      can_edit actually guarantees (a human/builtin owl IS editable, because
+      those owls were never creator/ceiling-bound and refusing them would lose
+      /owls edit's historical scope), while KEEPING the boundary that does hold:
+      an edit can never launder a human owl into an agent-minted one, so
+      origin stays 'human'.
+    status: resolved
   - id: DEBT-34
     found: 2026-07-28
     what: "tests/tools/meta/test_owl_build_report_flag.py::test_owl_create_report_flag_end_to_end_no_capability_or_specialty fails with 'owl registry unavailable'."
@@ -462,7 +470,21 @@ known_debt:
       refuses before reaching the behaviour under test.
     why_it_matters: "A test that cannot reach its subject proves nothing while still counting as coverage — the same trap D01.1 recorded when an intent-class assertion passed for a whole slice because its harness registered no tool_registry."
     decision: "NOT autonomously patched. Tracked; likely a harness wiring fix rather than a product defect."
-    status: open
+    root_cause_2026_07_29: >
+      A PRODUCTION defect, not a harness one. OwlsCommand._build called
+      set_services(StepServices(...)) with only three fields, silently DISCARDING
+      everything the caller had wired — consent_gate, tool_registry,
+      provider_registry, skill_store. The test wired seven fields and got three,
+      so OwlBuildTool refused fail-closed with "no consent gate wired" and the
+      test could never reach its subject.
+    fix: >
+      _build now MERGES onto the current services (dataclasses.replace) and
+      overrides only the fields it owns, and only when it actually has one — so a
+      real outer value is never replaced by None. Byte-equivalent in production,
+      where slash-command dispatch is reached with empty services (the comment
+      above that call says exactly that); it only ever helped a caller that had
+      wiring to lose. The harness also now passes the deps production passes.
+    status: resolved
 
   - id: DEBT-32
     found: 2026-07-28
@@ -484,7 +506,30 @@ known_debt:
       (2026-07-28) — one item in flight at a time, and this is not a regression
       from anything in D01.2. Pick it up after D01.2 closes: read jobs.last_error
       and the recent job_runs/job_results rows for this job_id first.
-    status: open
+    root_cause_2026_07_29: >
+      NOT a hang — a RATCHET, and a live money leak. Measured on the live
+      database: 928 sessions staged for mining, one LLM call each at 15-35s
+      observed, so a full pass was 5 to 9 HOURS against the scheduler's 1200s
+      handler timeout. Every run was killed. The vicious part: _mine() runs
+      BEFORE _run_phases, and the PRUNING phase is what DELETEs from
+      staged_facts. Mining never finished, so the phases never ran, so the
+      backlog never drained, so mining could never finish. Each run burned ~$1.50
+      re-mining the same first ~60 sessions and produced nothing — roughly
+      $24/day for weeks. scheduler.py even documents the stale assumption it grew
+      out of: "20 minutes comfortably clears the slowest observed legitimate run
+      (dream_worker: ~16 min)".
+    fix: >
+      A TIME BUDGET, not a session cap. mine_all(budget_s=...) stops STARTING new
+      sessions once the budget is spent (the in-flight one always finishes, so a
+      fact is never half extracted) and logs how many were deferred. The budget is
+      DERIVED from the scheduler's own _HANDLER_TIMEOUT_SEC rather than invented,
+      so retuning the timeout carries it automatically instead of letting the same
+      assumption rot again. A "mine N per run" cap would have been exactly the
+      arbitrary numeric limit the numeric-limits arc removed, and wrong the moment
+      a session got slower.
+    also_fixed: "A test spy's mine_all signature had drifted from the interface it stands in for — widened the spy, not the assertion."
+    verified: "3 new tests + 23 passed across the memory suites; 179 passed across the full affected surface; ruff 46 / mypy 78 at baseline."
+    status: resolved
 
   - id: DEBT-31
     found: 2026-07-27

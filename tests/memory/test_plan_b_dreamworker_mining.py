@@ -17,8 +17,13 @@ class _SpyMiner:
         self._result = result
         self._raises = raises
 
-    async def mine_all(self):
+    async def mine_all(self, budget_s: float | None = None):
+        # DEBT-32 — the real mine_all now takes a time budget, and a double whose
+        # signature has drifted from the interface it stands in for tests nothing.
+        # Recorded rather than quietly widened: this test broke because the
+        # PRODUCTION signature changed, which is the double doing its job.
         self.called += 1
+        self.budget_s = budget_s
         if self._raises:
             raise RuntimeError("boom")
         return self._result

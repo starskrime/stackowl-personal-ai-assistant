@@ -104,7 +104,19 @@ async def test_owl_create_report_flag_end_to_end_no_capability_or_specialty(
         delegation_depth=0, owl_name="secretary",
     )
     try:
-        out = await OwlCommand().handle(
+        # DEBT-34 — the deps are REQUIRED, not decoration. OwlCommand._build
+        # calls set_services(StepServices(owl_registry=self._registry, ...))
+        # before dispatching to OwlBuildTool, which OVERWRITES the outer
+        # set_services above. Constructed bare, self._registry is None, so the
+        # tool saw an empty registry and refused with "owl registry unavailable"
+        # — the command never reached the behaviour under test. Production wires
+        # these for real (commands/assembly.py), so the harness now matches it.
+        #
+        # A test that cannot reach its own subject proves nothing while still
+        # counting as coverage — the trap D01.1 recorded when an intent-class
+        # assertion passed for a whole slice because its harness registered no
+        # tool_registry.
+        out = await OwlCommand(owl_registry=registry, db=tmp_db).handle(
             'create --name BriefOwl --report morning_brief --schedule "daily@08:00"',
             _State(),
         )

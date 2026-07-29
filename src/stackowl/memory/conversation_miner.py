@@ -8,6 +8,7 @@ can commit them. Idempotent: re-mining the same turns does not duplicate facts.
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -102,15 +103,51 @@ class ConversationMiner:
             self._clock.now() - timedelta(minutes=self._settle_minutes)
         ).isoformat()
 
-    async def mine_all(self) -> int:
-        """Mine all sessions with staged conversation turns. Returns total facts staged."""
+    async def mine_all(self, budget_s: float | None = None) -> int:
+        """Mine sessions with staged conversation turns. Returns total facts staged.
+
+        ``budget_s`` bounds how long mining may spend BEFORE STARTING a new
+        session; the session in flight always finishes, so a fact is never half
+        extracted. ``None`` (the default) preserves the historical
+        mine-everything behaviour for direct callers and tests.
+
+        WHY A BOUND EXISTS AT ALL (DEBT-32, measured 2026-07-29). Each session
+        costs one LLM call — 15-35s observed live — and there were 928 sessions
+        staged, so a full pass was 5 to 9 HOURS against the scheduler's 1200s
+        handler timeout. Every run was killed, 30 consecutive failures and
+        climbing.
+
+        And it was a RATCHET, not merely a slow job: the dream worker calls this
+        BEFORE its phases, and the pruning phase is what DELETEs from
+        staged_facts. Mining never finished, so the phases never ran, so the
+        backlog never drained, so mining could never finish. Each run burned
+        ~$1.50 of LLM calls re-mining the same first sessions and produced
+        nothing.
+
+        WHY TIME AND NOT A SESSION COUNT. A "mine N per run" cap would be exactly
+        the arbitrary numeric limit this codebase spent an arc removing, and it
+        would be wrong the moment a session got slower. The real constraint is
+        the caller's deadline, so the caller passes it and this stops when it is
+        spent — leaving the rest for the next run, which now HAPPENS because the
+        pass completes.
+        """
         # 1. ENTRY
-        log.memory.info("[memory] conversation_miner.mine_all: entry")
+        log.memory.info(
+            "[memory] conversation_miner.mine_all: entry",
+            extra={"_fields": {"budget_s": budget_s}},
+        )
         rows = await self._db.fetch_all(_DISTINCT_SESSIONS_SQL)
+        started = time.monotonic()
         total = 0
         failed = 0
+        mined = 0
         for row in rows:
+            # 2. DECISION — stop STARTING work once the budget is spent. Checked
+            # before the call so the in-flight session always completes.
+            if budget_s is not None and (time.monotonic() - started) >= budget_s:
+                break
             session_key = row["source_ref"]
+            mined += 1
             try:
                 total += await self.mine_session(session_key)
             except Exception as exc:  # B5
@@ -120,16 +157,29 @@ class ConversationMiner:
                     exc_info=exc,
                     extra={"_fields": {"session_key": session_key}},
                 )
+        deferred = len(rows) - mined
         # 4. EXIT
         if failed > 0:
             log.memory.error(
                 "[memory] conversation_miner.mine_all: completed with failures",
-                extra={"_fields": {"sessions": len(rows), "staged": total, "failed": failed}},
+                extra={"_fields": {"sessions": len(rows), "mined": mined,
+                                   "deferred": deferred, "staged": total, "failed": failed}},
             )
         else:
             log.memory.info(
                 "[memory] conversation_miner.mine_all: exit",
-                extra={"_fields": {"sessions": len(rows), "staged": total, "failed": 0}},
+                extra={"_fields": {"sessions": len(rows), "mined": mined,
+                                   "deferred": deferred, "staged": total, "failed": 0}},
+            )
+        if deferred > 0:
+            # NEVER silent. A capped run that reports nothing reads as "finished",
+            # which is precisely why this defect survived 30 consecutive failures
+            # with the backlog growing the whole time.
+            log.memory.info(
+                "[memory] conversation_miner.mine_all: budget spent — sessions deferred "
+                "to the next run",
+                extra={"_fields": {"deferred": deferred, "mined": mined,
+                                   "budget_s": budget_s}},
             )
         return total
 

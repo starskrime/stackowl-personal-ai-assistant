@@ -12,6 +12,7 @@ layer can decide whether to give it a real :class:`OwlRegistry`, a real
 from __future__ import annotations
 
 import shlex
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from stackowl.commands.base import SlashCommand
@@ -36,7 +37,11 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
 from stackowl.owls.registry import _SECRETARY_NAME
-from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.pipeline.services import (
+    get_services,
+    reset_services,
+    set_services,
+)
 from stackowl.sessions.prompt_store import SessionPromptStore
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
@@ -1107,11 +1112,24 @@ class OwlCommand(OwlsCommand):
         # invisible to the model until the session rolled over, with no error
         # anywhere. That is the same silent-no-op shape D01.2's cleanup stage
         # found in the stream path.
-        svc_token = set_services(StepServices(
-            owl_registry=self._registry,
-            db_pool=self._db,
+        # DEBT-34 — MERGE onto whatever is already wired instead of replacing it.
+        # This used to construct a fresh StepServices carrying only the three
+        # fields below, silently DISCARDING everything else the caller had set up
+        # (consent_gate, tool_registry, provider_registry, skill_store...). In
+        # production that is invisible, because slash-command dispatch is reached
+        # with empty services — the comment above says exactly that — so the merge
+        # is byte-equivalent there. It is only visible to a caller that HAS wired
+        # services, which then had them dropped and hit a fail-closed refusal it
+        # could not diagnose. Fields are overridden only when this command
+        # actually has one, so a real outer value is never replaced by None.
+        _current = get_services()
+        svc_token = set_services(replace(
+            _current,
+            owl_registry=self._registry or _current.owl_registry,
+            db_pool=self._db or _current.db_pool,
             session_prompt_store=(
-                SessionPromptStore(self._db) if self._db is not None else None
+                SessionPromptStore(self._db) if self._db is not None
+                else _current.session_prompt_store
             ),
         ))
         try:

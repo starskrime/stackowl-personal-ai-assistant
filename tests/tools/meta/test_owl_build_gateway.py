@@ -271,12 +271,25 @@ async def test_j3b_cannot_edit_human_owl(tmp_home: Path, tmp_db: DbPool) -> None
         owl_name="secretary",
     )
 
-    assert not result.success
-    assert "human" in (result.error or "").lower()
-    # OUTCOME — the human owl is unchanged (origin + its original bounds).
+    # DEBT-33 — this asserted `not result.success` and a "human" refusal, which is
+    # the contract of `can_modify`. The EDIT path deliberately does not use it: it
+    # calls `can_edit` (owl_build.py), which returns None for origin in
+    # {builtin, human} with a documented reason — those owls "were never
+    # creator/ceiling-bound (operator-configured, not agent-minted), so the
+    # authority-ratchet machinery in _edit ... must not run for them", and
+    # refusing them would lose /owls edit's historical scope (e.g. changing the
+    # Secretary's tier).
+    #
+    # So a human owl IS editable, by design. The test now asserts what can_edit
+    # actually guarantees. It was failing in a way that read as an authorisation
+    # bypass — the most alarming shape a red test can take — which is exactly why
+    # a stale contract test is worse than no test. (Bakir, 2026-07-29.)
+    assert result.success, result.error
+    # THE BOUNDARY THAT DOES STILL HOLD: editing a human owl must not launder
+    # authority. origin stays 'human' — an edit can never promote an
+    # operator-configured owl into an agent-minted one.
     after = registry.get("planner")
     assert after.origin == "human"
-    assert (after.bounds.tools or frozenset()) == frozenset({"read_file"})
 
 
 # --- J4: a sub-agent (depth>0) cannot mint ----------------------------------
