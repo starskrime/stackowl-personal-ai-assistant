@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.4
-  stage: implement
+  stage: test
   stage_status: not_started
   one_line: >
     D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
@@ -2662,7 +2662,7 @@ items:
       brainstorm: done
       architect:  done
       implement:  done
-      cleanup:    not_started
+      cleanup:    done
       test:       not_started
       validate:   not_started
       document:   not_started
@@ -2885,6 +2885,19 @@ items:
         standing rule about full-suite runs on this box, which I should have
         scoped in the first place. Re-run against the owl_build-covering paths
         only.
+      verified:
+        tests: "157 passed across tests/tools/meta/ plus the owl_build presentation and D01.4 files. The 2 failures are PRE-EXISTING (DEBT-33, DEBT-34) — provenance established by swapping the modified file out and re-running at HEAD, where both still fail."
+        gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added, after fixing the 10 a bad scripted insertion briefly introduced."
+        no_capability_removed: "Checked. Every change adds an invalidation call, a helper or a log line. Nothing disabled or stubbed."
+      the_near_miss_worth_recording: >
+        DEBT-33 initially read as an AUTHORISATION BYPASS — a test named
+        "cannot_edit_human_owl" failing with the edit succeeding. Reporting that
+        as a security hole would have been wrong and alarming. Reading the code
+        first showed the edit path deliberately calls `can_edit`, not
+        `can_modify`, and can_edit returns None for human/builtin owls with a
+        documented rationale. The test encodes a superseded policy, not a hole.
+        Verify before reporting — and especially before reporting something
+        frightening.
     notes: null
 
   - id: D01.5
