@@ -286,13 +286,12 @@ current:
     3: "Then architect (25 questions), implement, cleanup, test, validate, document."
     4: "Then D01.3 — it now opens with a measured rate and a located cause, not an assertion."
   the_one_thing_to_do_first_next_session: >
-    RESTART AND VERIFY DEBT-32. The live platform is still running the
-    PRE-MARKING dream-worker code. The fix is committed and migration 0105 is
-    applied, but the honest evidence is TWO consecutive runs mining DISJOINT
-    session sets. Run ./start.sh, wait for two bounded runs, then:
-      jq -r 'select(.msg=="[memory] conversation_miner.mine_session: exit") | .fields.session_key'
-    and confirm the second run's set does not repeat the first's. Until that is
-    seen, DEBT-32 is fixed in code and unproven in production.
+    BACKFILL D01.5's DESIGN DOC. Its implementation landed before the architect
+    stage (see the item's process_deviation) — Rule 5 and migration 0106 are both
+    live and tested, but DOC_STANDARD's document does not exist, and the
+    `document` stage cannot close an item whose design was never written down.
+    DEBT-32 no longer needs verifying: it is PROVEN in production (marked rose
+    23 -> 29 after the first post-deploy run; see the item).
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0105)"
@@ -570,11 +569,22 @@ known_debt:
       without widening its READER is a trap, and the test that catches it is the
       one asserting the data is still readable, not the one asserting it was
       written.
-    NOT_YET_PROVEN: >
-      The live platform is still running the PRE-MARKING code. The honest
-      evidence is two consecutive runs mining DISJOINT session sets; that needs a
-      restart. Held off deliberately at the end of a long session rather than
-      interrupting live work.
+    PROVEN_IN_PRODUCTION:
+      date: 2026-07-29
+      evidence: >
+        Deployed and observed. At deploy: queue(staged)=920, marked(mined)=23,
+        total 943 — the arithmetic holding exactly, with 950 conversation rows
+        marked and STILL PRESENT, so mined turns remain readable for context
+        rather than deleted. After the first post-deploy run (04:34:54): marked
+        rose 23 -> 29. Sessions now leave the queue permanently, which is the
+        mechanism the whole fix rests on.
+      the_queue_still_barely_moves_and_that_is_DEBT_35: >
+        Net queue movement was 920 -> 919 while 6 sessions drained, because new
+        conversations arrived in the same window. That is NOT a failure of this
+        fix — it is the arrival-vs-drain arithmetic recorded as DEBT-35 (25
+        arrivals/hour against ~13.6 drained, and 92% of the queue being machine
+        lanes that can never yield a user fact). DEBT-32 made the job correct;
+        DEBT-35 is about whether the work is worth doing at all.
     status: resolved
 
   - id: DEBT-31
