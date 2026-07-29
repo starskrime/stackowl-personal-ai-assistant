@@ -258,14 +258,15 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 1
-  item: D01.4
-  stage: document
+  item: D01.5
+  stage: brainstorm
   stage_status: not_started
   one_line: >
-    D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
-    D01.4 "Deferred invalidation as a UX pattern" is next and NOTHING has been
-    done on it — start at brainstorm with the 25-question grill. After D01.4:
-    D01.5, then D01.3.
+    D01.2 and D01.4 are both COMPLETE (7/7 each, docs live, everything pushed).
+    D01.5 "Message-role alternation invariant" is next and NOTHING has been done
+    on it — start at brainstorm. Its Hermes pointers were already found during
+    D01.2 and are recorded ON THE ITEM. After D01.5: D01.3, whose premise is now
+    MEASURED rather than asserted.
   read_first: >
     (1) This block. (2) docs/hermes-mapping/PROCESS.md and DOC_STANDARD.md.
     (3) designs/D01.2.md — not for D01.4's content, but because its front matter
@@ -2665,9 +2666,9 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      document:   not_started
+      document:   done
     doc: "docs/hermes-mapping/designs/D01.4.md"
-    doc_last_verified: 2026-07-28  # against commit 35493542; every path, line number and the 56-site count checked
+    doc_last_verified: 2026-07-28  # against commit 7fd1ee84; 13 paths + 5 behavioural claims re-checked at close
     the_premise_was_INVERTED_before_the_first_question: >
       The map asks "Is deferred-by-default acceptable UX, or does StackOwl's
       proactive posture need immediate application?" That question is MOOT:
@@ -2947,6 +2948,37 @@ items:
       not_proven_here:
         - "The gateway process itself performing an invalidation. The probe drove the real command in a SEPARATE process against the same database, so the code and the data are real but the running gateway was not the actor. A real /owls edit through a channel would close that, and needs Bakir."
         - "The interactive D01.3 measurement — still zero interactive turns since the owl-scoped restart, checked rather than assumed."
+    document_result:
+      date: 2026-07-28
+      status: "CLOSED. 7/7. Status moved design -> live; every Verification command RUN, not predicted."
+      two_things_the_design_did_not_have_now_marked_ADDED:
+        cause_carrier: >
+          The design said "thread the cause through" without saying HOW it crosses
+          a turn boundary. infra/prompt_invalidation.py, and both halves of that
+          placement are load-bearing: infra/ because sessions must not import
+          pipeline (the prompt_metrics precedent), and a module-level map rather
+          than a ContextVar because the two halves happen in DIFFERENT turns — the
+          invalidation during a slash command, the audit during the next turn's
+          cold build, by which time a ContextVar is empty.
+        owl_build_trigger: >
+          The design NAMED owl self-extension as a trigger and never said where it
+          hooks. Implementation filled the session_prompt_store gap so the path
+          COULD reach the store, and then nothing called it. Cleanup found the
+          seam reachable and unused. Now wired at three rebuild sites.
+      verification_was_RUN: >
+        43 passed across the six D01.4 files; tests/pipeline/ 1089 reconciling
+        exactly; ruff 46 / mypy 78 at baseline; and the live proof pasted into the
+        doc verbatim — cause=owl_edit rows=1 followed by cause=validate_cleanup
+        rows=0, which is idempotence demonstrated on the live database rather than
+        asserted.
+      a_trap_documented_for_the_next_person: >
+        setup_logging() is called ONLY by cli/app.py, so a standalone script has
+        NO JSONL handler and none of its lines reach the log. The first live probe
+        cleared the row and produced no log line — which reads exactly like a
+        missing-logging defect and is not one. Written into the Verification
+        section so the next person validating a store from a script does not spend
+        the same twenty minutes.
+      every_claim_re_checked_at_close: "13 source and test paths present; invalidate_owl/invalidate_all both defined; owl_build wired at exactly 3 sites; the skills hook bound to the write; the cause consumed via pop (once, not read); and the newest migration still 0104 (D01.2's), confirming D01.4 added none."
     notes: null
 
   - id: D01.5
