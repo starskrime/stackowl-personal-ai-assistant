@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.5
-  stage: validate
+  stage: document
   stage_status: not_started
   one_line: >
     D01.2 and D01.4 are both COMPLETE (7/7 each, docs live). DEBT-17/32/33/34 are
@@ -3127,7 +3127,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   not_started
+      validate:   done
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.5.md"
     doc_last_verified: 2026-07-29  # against 4e40a4a8; 4 paths + 5 behavioural claims re-checked
@@ -3262,6 +3262,41 @@ items:
       verified:
         tests: "tests/providers/ 533 passed (531 + 2 new)."
         gates: "ruff src/ 46 = DEBT-1; mypy src/ 78 = DEBT-8. Zero added."
+    validate_result:
+      date: 2026-07-29
+      status: "PARTIAL by nature — one invariant proven live, one unexercised, and the difference is stated rather than blurred."
+      PROVEN_LIVE:
+        i3_constraint_fires: >
+          Attempted the bad write against the REAL database and rolled back: a
+          `tool` row is REFUSED, and the live CHECK reads
+          role IN ('user','assistant'). Worth noting HOW this was checked —
+          reading the DDL would only show the constraint EXISTS; attempting the
+          write proves it FIRES. That distinction is exactly what caught the
+          models.py Literal during DEBT-32, where the database accepted 'mined'
+          and the READER would have raised.
+        platform_healthy: "Restarted; 1233 new log lines, ZERO ERROR/CRITICAL."
+      NOT_PROVEN_LIVE_and_why:
+        writes_still_succeed: >
+          messages is still at 44 rows, unchanged since the migration — no new
+          turn was written in the observation window, so there is NO live
+          evidence that writes still succeed under the tighter CHECK. The absence
+          of errors is not evidence when nothing attempted a write. Covered by
+          TESTS instead: the suite runs all migrations, so
+          test_transcript_store.py exercises record_turn UNDER 0106 and passed.
+          Real evidence, just not live.
+        rule_5_never_fired: >
+          Zero live firings, as expected. Rule 5 needs an interrupted turn
+          resumed with a NEW user message — a /stop mid-tool-loop or a budget
+          kill. A quiet window is NO OPPORTUNITY, not success. It is proven by
+          construction (mutation M1 kills the wiring test, M2 kills the rule) and
+          would show up live as:
+            jq 'select((.fields.exc // "") | test("ResumeTranscriptError"))'
+      why_this_is_an_honest_PASS: >
+        The two halves of D01.5 have different verifiability. The migration is a
+        boundary that can be poked directly, so it was. Rule 5 guards a rare
+        recovery path that cannot be conjured on demand without staging an
+        interrupt — so it is proven where it CAN be proven and its live gap is
+        named, rather than letting a silent log read as success.
     changes: []
     hermes_pointers_found_2026_07_27: >
       Found while working D01.2, recorded so it is not re-discovered. Hermes
