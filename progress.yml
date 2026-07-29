@@ -258,60 +258,60 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 1
-  item: D01.5
-  stage: document
+  item: D01.3
+  stage: brainstorm
   stage_status: not_started
   one_line: >
-    D01.2 and D01.4 are both COMPLETE (7/7 each, docs live). DEBT-17/32/33/34 are
-    all resolved. D01.5 "Message-role alternation invariant" is IN BRAINSTORM —
-    scope and both design decisions are already settled and recorded on the item;
-    what remains is the implementation. After D01.5: D01.3, whose premise is now
-    MEASURED rather than asserted.
+    D01.2, D01.4 and D01.5 are all COMPLETE (7/7 each, docs live). DEBT-17/32/33/34
+    resolved; DEBT-35 and DEBT-36 recorded and awaiting Bakir. D01.3
+    "Per-turn tool-schema selection" is the LAST item in wave 1, and unlike every
+    other item so far its premise is already MEASURED rather than asserted.
   read_first: >
-    (1) This block. (2) The D01.5 item's `decisions` — scope and the two calls are
-    made; do not re-litigate them. (3) docs/hermes-mapping/PROCESS.md and
-    DOC_STANDARD.md. (4) The standing rule READ HERMES BEFORE ASKING in
-    `rules.process` — it has now paid off three times running.
-  what_D01_5_already_knows: >
-    Hermes #48879: an interrupted turn persists a `tool -> user` tail that Gemini
-    and Claude reject, hallucinating a continuation of the user's message.
-    StackOwl cannot hit that in PERSISTED history (record_turn has no role
-    parameter; one writer, one caller). The exposure is the DURABLE-RESUME path.
-    validate_resume_transcript's Rule 3 catches a DANGLING call but nothing
-    catches a transcript ending ON a tool_result — and checkpoints are written
-    after tool results are appended, so that tail is the normal shape.
+    (1) This block. (2) D01.3's THE_PREMISE_IS_NOW_MEASURED block — it opens with
+    a rate, a located cause and a named consequence, so the brainstorm should not
+    re-ask whether the array varies. (3) PROCESS.md and DOC_STANDARD.md.
+    (4) The standing rule READ HERMES BEFORE ASKING — it has now paid off on
+    every item it has been applied to.
+  what_D01_3_already_knows: >
+    MEASURED 2026-07-29: 5 (lane, owl) pairs reported a tools-array change, 15
+    events, and in 4 of the 5 the tool COUNT itself oscillated (sysfup
+    5->4->5->5->5, Brain 4->4->3->4, scout 4->3->4, headhunter 5->4). Same owl,
+    same lane, so owl-switching is excluded. CAUSE: execute.py builds the
+    presented set via to_provider_schema(request_text=state.input_text, budget=..),
+    so it is re-selected per query. CONSEQUENCE: on an Anthropic backend `tools`
+    renders at position 0, so a per-turn array invalidates D01.2's marker 1 and
+    every marker downstream of it on essentially every turn.
+    STILL UNMEASURED: the INTERACTIVE path — every pair observed was a background
+    lane. Needs a couple of real Telegram messages to ONE owl.
   next_task_in_order:
-    1: "D01.5 — add Rule 5 (no tool_result tail) + a closer in resume_validation.py."
-    2: "D01.5 — idempotent migration narrowing messages.role to ('user','assistant'). Pre-checked SAFE: 38 rows, 0 violations."
-    3: "Then architect (25 questions), implement, cleanup, test, validate, document."
-    4: "Then D01.3 — it now opens with a measured rate and a located cause, not an assertion."
-  the_one_thing_to_do_first_next_session: >
-    D01.5 CLEANUP, then test / validate / document. Brainstorm, architect and
-    implement are all done: Rule 5 and migration 0106 are live, tested and
-    mutation-proven, and designs/D01.5.md now exists (written as a BACKFILL —
-    the doc says so above the fold). Nothing is blocked.
+    1: "D01.3 brainstorm — but READ HERMES FIRST, and do not re-ask whether the array varies. The open question is whether it SHOULD, and what it costs."
+    2: "Then architect, implement, cleanup, test, validate, document."
+    3: "Wave 1 closes with D01.3. Wave 2 is D05 (tool architecture — toolsets, gating, disclosure), which D01.3's answer feeds directly."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
-    - "uv run python -m stackowl db migrate   # expect: up to date (version 0105)"
+    - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
+    - "timeout 600 uv run pytest tests/providers/ -q -p no:randomly  # expect 533 passed"
     - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1089 passed"
-    - "timeout 600 uv run pytest tests/providers/ -q -p no:randomly  # expect 527 passed"
     - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF; never chase to zero."
-    - "NEVER run two pytest invocations in parallel, and NEVER run tests/tools/ whole — it exceeded 600s and was killed. Targeted paths only."
-    - "sqlite3 is NOT installed. Query via `uv run python -c 'import sqlite3...'`. This has bitten two documents."
+    - "NEVER run two pytest invocations in parallel, and NEVER run tests/tools/ whole — it exceeded 600s and was killed."
+    - "sqlite3 is NOT installed. Query via `uv run python -c 'import sqlite3...'`."
   git_state:
     branch: main
-    unpushed: "NONE. Everything is pushed through f277574d. Tree clean."
+    unpushed: "NONE. Tree clean."
   what_needs_bakir:
-    - "Nothing is blocking. All four debts raised this session were decided and closed."
-    - "The INTERACTIVE half of the D01.3 measurement still needs real traffic — a couple of Telegram messages to ONE owl, then the tools-array jq answers it for the interactive path."
+    - "DEBT-35 — 92% of the conversation-mining queue is machine incident lanes that can never yield a user fact, and arrivals (25/hr) outpace drain (13.6/hr). Filter to human lanes, mine machine lanes differently, or accept ~$15-22/day producing nothing."
+    - "DEBT-36 — the transcripts tool advertises include_tool_calls, a parameter the MODEL can pass that has never been able to do anything. Drop it, or wire tool-turn persistence deliberately."
+    - "The INTERACTIVE half of the D01.3 measurement — a couple of real messages to one owl."
   the_lessons_this_session_paid_for:
-    - "THE LIVE ANSWER PATH STREAMS, in BOTH providers. D01.2's test stage found it for Anthropic, D01.4's for OpenAI. Any provider-level test driving create() proves a path production does not take — that indicts existing tests, not just new ones."
-    - "REGISTERED != REACHABLE, three times in two items: the stream path uninstrumented, owl_build's seam reachable but uncalled, _build discarding a caller's services."
-    - "A STALE TEST CAN LOOK EXACTLY LIKE A SECURITY HOLE. DEBT-33 read as an authorisation bypass until the code was read. Verify before reporting, especially before reporting something frightening."
-    - "WIDENING A DB CONSTRAINT WITHOUT WIDENING ITS READER is a trap. Migration 0105 would have made every mined conversation unreadable; the test asserting the data is still READABLE caught it, not the one asserting it was written."
+    - "THE LIVE ANSWER PATH STREAMS, in BOTH providers. Any provider-level test driving create() proves a path production does not take — that indicts existing tests, not just new ones."
+    - "REGISTERED != REACHABLE, four times in three items: D01.2's stream path marked-but-uninstrumented, owl_build's seam reachable-but-uncalled, _build discarding the caller's services, and D01.5's rule needing a wiring test to prove it is reached at all."
+    - "A STALE TEST CAN LOOK EXACTLY LIKE A SECURITY HOLE (DEBT-33). Verify before reporting, especially before reporting something frightening."
+    - "WIDENING A DB CONSTRAINT WITHOUT WIDENING ITS READER is a trap. Migration 0105 would have made every mined conversation unreadable; only the test asserting the data is still READABLE caught it."
     - "A TEST THAT MODELS ONLY THE HAPPY PATH makes a broken fix look fixed. DEBT-32's second attempt passed its test and failed in production because the stub always produced a fact."
-    - "COMMIT BEFORE MUTATING. A mutation harness that times out mid-battery plus `git checkout` on uncommitted work deletes the feature, not the mutation."
-    - "SCRIPTED TEXT EDITS ARE FOR MECHANICAL SUBSTITUTION, NOT STRUCTURAL INSERTION. Four went wrong this session — one split a decorator from its function (mypy 78->88), one silently failed its assertion while the commit went ahead anyway."
+    - "READ THE DDL PROVES A CONSTRAINT EXISTS; ATTEMPTING THE WRITE PROVES IT FIRES. Both D01.5's migration and DEBT-32's Literal turned on that difference."
+    - "COMMIT BEFORE MUTATING. A harness that times out mid-battery plus `git checkout` on uncommitted work deletes the feature, not the mutation."
+    - "SCRIPTED TEXT EDITS ARE FOR MECHANICAL SUBSTITUTION, NOT STRUCTURAL INSERTION. Several went wrong this session — one split a decorator from its function, others silently failed their assertions while the commit went ahead."
+    - "SILENCE IS NOT SUCCESS. Three times a quiet result was NO OPPORTUNITY rather than health: the D01.3 measurement, the DEBT-32 queue, and D01.5's Rule 5. Check the denominator before reporting a rate."
 
 # ---------------------------------------------------------------------------
 # WALK ORDER — waves, in sequence
@@ -3128,7 +3128,7 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      document:   not_started
+      document:   done
     doc: "docs/hermes-mapping/designs/D01.5.md"
     doc_last_verified: 2026-07-29  # against 4e40a4a8; 4 paths + 5 behavioural claims re-checked
     decisions:
@@ -3313,6 +3313,23 @@ items:
       apply_cache_breakpoints re-marks from a stripped copy every round and never
       mutates the caller's list — but a future item that caches marker POSITIONS
       rather than recomputing them would be.
+    document_result:
+      date: 2026-07-29
+      status: "CLOSED. 7/7 — though the ORDER was wrong; see process_deviation."
+      the_doc_caught_its_own_stale_citation: >
+        It cited the call sites as anthropic_provider.py:554 and
+        openai_provider.py:554. Both had moved to 555 — my own cleanup-stage
+        comment edits shifted them by one line AFTER the doc was written. Caught
+        by re-verifying at close rather than trusting a number written an hour
+        earlier, which is exactly the failure DOC_STANDARD rule 3 exists for and
+        which D01.6's first draft demonstrated.
+      verification_was_RUN: "15 passed, 9 passed, schema 0106, ruff 46, mypy 78 — each command executed and matching the documented output."
+      what_the_doc_states_it_CANNOT_prove: >
+        Two things, each with the command that would settle it: that writes still
+        SUCCEED under the tighter CHECK (no turn was written in the live window —
+        covered by tests, which run migrations), and Rule 5 firing in production
+        (needs a staged interrupt). Reported at the strength each has rather than
+        rounded up.
     notes: null
 
   - id: D01.6
