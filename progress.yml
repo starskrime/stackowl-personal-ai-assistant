@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.5
-  stage: test
+  stage: validate
   stage_status: not_started
   one_line: >
     D01.2 and D01.4 are both COMPLETE (7/7 each, docs live). DEBT-17/32/33/34 are
@@ -3126,7 +3126,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       not_started
+      test:       done
       validate:   not_started
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.5.md"
@@ -3235,6 +3235,33 @@ items:
         a transcript ENDING on a tool result is valid; only the adjacency is not.
       found_and_recorded_not_fixed: "DEBT-36 — the transcripts tool's include_tool_calls parameter has never been able to do anything, because nothing ever wrote a tool row. Pre-existing; 0106 made it provably dead rather than incidentally dead. Removing a user-facing parameter is a capability decision, not cleanup."
       verified: "22 passed across the resume suites; ruff src/ 46 and mypy src/ 78, both at the DEBT-1/DEBT-8 baselines."
+    test_result:
+      date: 2026-07-29
+      unit: "tests/providers/test_resume_validation.py — 15 tests. Proves the RULE."
+      business_requirement: >
+        tests/providers/test_resume_messages.py — 2 new tests driving the REAL
+        provider resume branch. These prove the rule is WIRED, which the unit
+        tests cannot: a bad checkpoint is refused inside the actual
+        complete_with_tools call, and `client.calls == []` asserts the refusal
+        happens BEFORE any API request goes out. A correct-but-unreached rule
+        passes every unit test and does nothing.
+      the_mutation_that_matters: >
+        M1 unwires validate_resume_transcript from the provider — the rule itself
+        is untouched and every unit test still passes, but the business-
+        requirement test DIES. That is the whole point of the stage: this program
+        has hit "registered but never reachable" four times in three items (D01.2's
+        stream path marked-but-uninstrumented, owl_build's seam reachable-but-
+        uncalled, _build discarding the caller's services, and now this).
+        M2 disables Rule 5 itself and also dies. Restore verified via git status.
+      the_counterweight: >
+        The second test asserts a transcript ENDING on a tool result STILL
+        RESUMES. That is the normal interrupted checkpoint and exactly what my
+        first Rule 5 would have broken — now pinned at the integration level as
+        well as the unit level, because the mistake was plausible enough to make
+        twice.
+      verified:
+        tests: "tests/providers/ 533 passed (531 + 2 new)."
+        gates: "ruff src/ 46 = DEBT-1; mypy src/ 78 = DEBT-8. Zero added."
     changes: []
     hermes_pointers_found_2026_07_27: >
       Found while working D01.2, recorded so it is not re-discovered. Hermes

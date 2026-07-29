@@ -20,6 +20,7 @@ import pytest
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.exceptions import ResumeTranscriptError
 from stackowl.providers.anthropic_provider import AnthropicProvider
 from stackowl.providers.openai_provider import OpenAIProvider
 from stackowl.providers.react_callback import ReActIterationState
@@ -483,3 +484,94 @@ async def test_anthropic_resume_with_more_tool_iterations(
 
     # Running messages grew from prior_transcript
     assert len(captured[0].messages) > len(prior_transcript)
+
+
+# ---------------------------------------------------------------------------
+# D01.5 — the business requirement, on the production resume branch.
+#
+# "If my turn is interrupted mid-tool-call and I then send another message, the
+#  assistant must answer my NEW message — not continue my old one."
+#
+# The production chain is durable/recovery.py -> execute.py -> the provider's
+# resume branch -> validate_resume_transcript. The unit tests in
+# test_resume_validation.py prove the RULE; these prove it is actually WIRED —
+# that a bad checkpoint is refused inside the real provider call, BEFORE any API
+# request goes out. A rule that is correct but unreached is the failure shape
+# this program has hit repeatedly.
+#
+# Refused rather than repaired, and refused EARLY: the whole point of the
+# validator's contract is a typed ResumeTranscriptError instead of an opaque 400
+# — or worse, a 200 in which the model continues the user's sentence.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_anthropic_refuses_a_resume_with_a_user_turn_after_a_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    interrupted: list[dict[str, Any]] = [
+        {"role": "user", "content": "compute 3*4"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tu0", "name": "calc",
+                         "input": {"expr": "3*4"}}],
+        },
+        {"role": "user",
+         "content": [{"type": "tool_result", "tool_use_id": "tu0", "content": "12"}]},
+        # The interrupt: the user's NEXT message lands on the unclosed sequence.
+        {"role": "user", "content": "actually, what's the weather?"},
+    ]
+
+    client = _FakeAnthropicClient([_anthropic_final_resp("should never be reached")])
+    provider = _make_anthropic_provider(client)
+
+    with pytest.raises(ResumeTranscriptError):
+        await provider.complete_with_tools(
+            user_text="",
+            system_text="you are a calculator",
+            tool_schemas=_TOOL_SCHEMAS,
+            tool_dispatcher=_dispatcher,
+            resume_messages=interrupted,
+        )
+
+    assert client.calls == [], (
+        "the malformed transcript reached the API — the refusal must happen "
+        "BEFORE the request, or the model answers the wrong thing at full price"
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_still_resumes_a_transcript_ending_on_a_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The jaw that keeps the fix honest.
+
+    This is the NORMAL interrupted checkpoint — written after tool results are
+    appended — and it must still resume. My first Rule 5 rejected exactly this
+    and would have broken every legitimate resume.
+    """
+    monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
+
+    normal: list[dict[str, Any]] = [
+        {"role": "user", "content": "compute 3*4"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tu0", "name": "calc",
+                         "input": {"expr": "3*4"}}],
+        },
+        {"role": "user",
+         "content": [{"type": "tool_result", "tool_use_id": "tu0", "content": "12"}]},
+    ]
+
+    client = _FakeAnthropicClient([_anthropic_final_resp("resumed: answer is 12")])
+    provider = _make_anthropic_provider(client)
+
+    text, _ = await provider.complete_with_tools(
+        user_text="", system_text="you are a calculator",
+        tool_schemas=_TOOL_SCHEMAS, tool_dispatcher=_dispatcher,
+        resume_messages=normal,
+    )
+    assert text == "resumed: answer is 12"
+    assert client.calls, "a valid resume must still reach the provider"
