@@ -133,3 +133,63 @@ async def test_consecutive_runs_make_FORWARD_PROGRESS(tmp_db: DbPool) -> None:
         f"({sorted(second_pass)}) — no forward progress, so the backlog can "
         f"never drain however many times the job runs"
     )
+
+
+class _BarrenExtractor:
+    """Finds nothing durable — the case that broke the first forward-progress fix.
+
+    Most conversations yield no lasting fact. Ordering the queue by facts
+    PRODUCED therefore leaves these sessions with no timestamp at all, so they
+    sort first forever and are re-mined every run at full LLM cost for nothing.
+    Verified live: 4 of 5 sessions in one run had zero staged AND zero committed
+    facts. The queue must record the ATTEMPT, not the outcome.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def extract(self, messages: list[object], session_key: str) -> list[StagedFact]:
+        self.calls.append(session_key)
+        return []
+
+
+async def test_a_barren_session_still_leaves_the_queue(tmp_db: DbPool) -> None:
+    """The defect the previous fix missed, because its stub always produced a fact."""
+    await _stage_sessions(tmp_db, 3)
+    extractor = _BarrenExtractor()
+    miner = ConversationMiner(tmp_db, extractor, SqliteMemoryBridge(tmp_db))  # type: ignore[arg-type]
+
+    await miner.mine_all()
+    first = list(extractor.calls)
+    extractor.calls.clear()
+
+    await miner.mine_all()
+
+    assert first, "the first pass mined nothing at all"
+    assert not extractor.calls, (
+        f"a second pass re-mined {extractor.calls} — sessions that yield no facts "
+        f"never leave the queue, so they are re-mined forever at full LLM cost"
+    )
+
+
+async def test_marking_mined_does_not_hide_turns_from_context(tmp_db: DbPool) -> None:
+    """The risk this approach carries, pinned.
+
+    Mining flips the conversation rows' status. Every context read of
+    source_type='conversation' is status-agnostic today (verified before
+    choosing this approach) — this test is what stops someone adding a
+    status filter later and silently deleting conversation memory.
+    """
+    await _stage_sessions(tmp_db, 1)
+    bridge = SqliteMemoryBridge(tmp_db)
+    miner = ConversationMiner(tmp_db, _BarrenExtractor(), bridge)  # type: ignore[arg-type]
+
+    before = await bridge.recent_conversation_turns("lane-0", limit=10)
+    await miner.mine_all()
+    after = await bridge.recent_conversation_turns("lane-0", limit=10)
+
+    assert before, "fixture staged no turns"
+    assert len(after) == len(before), (
+        "mining hid conversation turns from context — the model would silently "
+        "lose the history it had before"
+    )

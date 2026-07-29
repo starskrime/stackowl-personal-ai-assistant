@@ -35,7 +35,14 @@ class StagedFact(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     staged_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     reinforcement_count: int = 0
-    status: Literal["staged", "committed", "rejected"] = "staged"
+    # DEBT-32 — "mined" marks a conversation turn whose session the miner has
+    # already attempted, so it leaves the mining queue whether or not it yielded
+    # a fact. It must be readable here as well as writable: migration 0105
+    # widened the DB CHECK, and without widening this Literal too the row would
+    # be written happily and then RAISE on every read back, silently breaking
+    # context recall for every mined conversation — worse than the bug it fixes.
+    # Caught by test_marking_mined_does_not_hide_turns_from_context.
+    status: Literal["staged", "committed", "rejected", "mined"] = "staged"
     embedding: list[float] | None = None
     embedding_model: str | None = None
     # Provenance trust tier (Story E). Default 'untrusted' = fail-safe (a forgotten stamp recalls fenced).

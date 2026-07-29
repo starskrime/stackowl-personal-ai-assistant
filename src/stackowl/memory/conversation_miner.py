@@ -25,29 +25,38 @@ if TYPE_CHECKING:  # pragma: no cover
     from stackowl.memory.fact_extractor import FactExtractor
     from stackowl.memory.models import StagedFact
 
-# DEBT-32 (second half) — LEAST-RECENTLY-MINED FIRST, never-mined before that.
+# DEBT-32 (second half) — THE QUEUE RECORDS THE ATTEMPT, NOT THE OUTCOME.
 #
 # Bounding the run stopped the timeout but did not make it progress. Nothing
-# removes a session from this queue: the only caller of clear_session is /reset.
-# So an unordered DISTINCT returns the same rows every time, and a budgeted run
-# re-mines the SAME first N sessions forever while sessions N+1.. are never
-# reached. The job stops failing while still achieving nothing — which looks
-# healthy, and is worse than an obvious failure.
+# removes a session from this queue — the only caller of clear_session is /reset
+# — so an unbounded DISTINCT returns the same rows every run and a budgeted pass
+# re-mines the SAME first N sessions forever while the rest are never reached.
+# The job stops failing while achieving nothing, which looks healthy and is worse
+# than an obvious failure.
 #
-# Ordering by the newest conversation_fact this session has produced makes the
-# queue rotate: never-mined sessions sort first (SQLite orders NULL first on
-# ASC), then the longest-neglected. Reinforcement is preserved — re-mining is
-# how _REINFORCE_SQL counts repetition — because every session comes back round
-# rather than being excluded forever.
+# A first attempt ordered by the newest fact each session had PRODUCED. That
+# fails for BARREN sessions — conversations the extractor finds nothing durable
+# in, which is most of them. They never acquire a timestamp, so they sort first
+# forever and are re-mined every run at full LLM cost for nothing. Measured live:
+# 4 of 5 sessions in one run had zero staged AND zero committed facts.
+#
+# So a mined session is MARKED, and the queue takes only unmarked ones. Progress
+# is then structural: a session leaves the queue because it was attempted, not
+# because it happened to yield something.
+#
+# `status` is an existing column — no migration. Safe because every read of
+# source_type='conversation' is status-agnostic (verified across src/ before
+# choosing this, and pinned by
+# test_marking_mined_does_not_hide_turns_from_context): the turns stay fully
+# visible to context recall, they simply stop being queued for mining.
+_MINED_STATUS = "mined"
 _DISTINCT_SESSIONS_SQL = (
-    "SELECT c.source_ref AS source_ref FROM ("
-    "  SELECT DISTINCT source_ref FROM staged_facts WHERE source_type = 'conversation'"
-    ") AS c "
-    "LEFT JOIN ("
-    "  SELECT source_ref, MAX(staged_at) AS last_mined FROM staged_facts "
-    "  WHERE source_type = 'conversation_fact' GROUP BY source_ref"
-    ") AS m ON m.source_ref = c.source_ref "
-    "ORDER BY m.last_mined ASC"
+    "SELECT DISTINCT source_ref FROM staged_facts "
+    "WHERE source_type = 'conversation' AND status = 'staged'"
+)
+_MARK_SESSION_MINED_SQL = (
+    "UPDATE staged_facts SET status = ? "
+    "WHERE source_type = 'conversation' AND source_ref = ? AND status = 'staged'"
 )
 _EXISTS_STAGED_SQL = (
     "SELECT 1 FROM staged_facts WHERE source_type = ? AND source_ref = ? AND content = ? LIMIT 1"
@@ -178,6 +187,13 @@ class ConversationMiner:
                     exc_info=exc,
                     extra={"_fields": {"session_key": session_key}},
                 )
+                # NOT marked — a transient failure must be retried next run, not
+                # silently dropped from the queue forever.
+                continue
+            # Marked on SUCCESS, including a success that produced nothing. That
+            # is the whole point: a barren session has been attempted and must
+            # not be paid for again every 30 minutes.
+            await self._mark_session_mined(session_key)
         deferred = len(rows) - mined
         # 4. EXIT
         if failed > 0:
@@ -203,6 +219,25 @@ class ConversationMiner:
                                    "budget_s": budget_s}},
             )
         return total
+
+    async def _mark_session_mined(self, session_key: str) -> None:
+        """Take a mined session out of the queue. Never raises.
+
+        A failure here costs one repeated mining pass next run, never the pass
+        that just succeeded — but it is logged, because a mark that silently
+        stops working restores the exact forever-re-mining loop this fixes.
+        """
+        try:
+            await self._db.execute(
+                _MARK_SESSION_MINED_SQL, (_MINED_STATUS, session_key)
+            )
+        except Exception as exc:
+            log.memory.error(
+                "[memory] conversation_miner: could not mark the session mined — "
+                "it will be re-mined next run",
+                exc_info=exc,
+                extra={"_fields": {"session_key": session_key}},
+            )
 
     async def mine_session(self, session_key: str) -> int:
         """Mine one session. Returns count of NEWLY staged facts (0 on re-mine; reinforcements not counted)."""
