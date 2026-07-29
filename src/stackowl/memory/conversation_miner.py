@@ -25,8 +25,29 @@ if TYPE_CHECKING:  # pragma: no cover
     from stackowl.memory.fact_extractor import FactExtractor
     from stackowl.memory.models import StagedFact
 
+# DEBT-32 (second half) — LEAST-RECENTLY-MINED FIRST, never-mined before that.
+#
+# Bounding the run stopped the timeout but did not make it progress. Nothing
+# removes a session from this queue: the only caller of clear_session is /reset.
+# So an unordered DISTINCT returns the same rows every time, and a budgeted run
+# re-mines the SAME first N sessions forever while sessions N+1.. are never
+# reached. The job stops failing while still achieving nothing — which looks
+# healthy, and is worse than an obvious failure.
+#
+# Ordering by the newest conversation_fact this session has produced makes the
+# queue rotate: never-mined sessions sort first (SQLite orders NULL first on
+# ASC), then the longest-neglected. Reinforcement is preserved — re-mining is
+# how _REINFORCE_SQL counts repetition — because every session comes back round
+# rather than being excluded forever.
 _DISTINCT_SESSIONS_SQL = (
-    "SELECT DISTINCT source_ref FROM staged_facts WHERE source_type = 'conversation'"
+    "SELECT c.source_ref AS source_ref FROM ("
+    "  SELECT DISTINCT source_ref FROM staged_facts WHERE source_type = 'conversation'"
+    ") AS c "
+    "LEFT JOIN ("
+    "  SELECT source_ref, MAX(staged_at) AS last_mined FROM staged_facts "
+    "  WHERE source_type = 'conversation_fact' GROUP BY source_ref"
+    ") AS m ON m.source_ref = c.source_ref "
+    "ORDER BY m.last_mined ASC"
 )
 _EXISTS_STAGED_SQL = (
     "SELECT 1 FROM staged_facts WHERE source_type = ? AND source_ref = ? AND content = ? LIMIT 1"

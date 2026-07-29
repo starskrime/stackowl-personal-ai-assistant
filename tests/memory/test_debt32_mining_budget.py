@@ -100,3 +100,36 @@ async def test_deferred_sessions_are_reported_not_silent(
     assert any("deferred" in r.message.lower() for r in caplog.records), (
         "the run must say how much backlog it left behind"
     )
+
+
+async def test_consecutive_runs_make_FORWARD_PROGRESS(tmp_db: DbPool) -> None:
+    """The second half of DEBT-32, and the one that nearly got missed.
+
+    Bounding the run stopped the timeout, but nothing removes a session from
+    mine_all's own work queue — the only caller of clear_session is /reset. So an
+    unordered SELECT DISTINCT returns the same rows every time and a budgeted run
+    re-mines the SAME first N sessions forever, never reaching the rest. The job
+    stops failing while still making no progress, which is arguably worse: it
+    looks healthy.
+
+    Sessions are therefore ordered by when they were LAST MINED, never-mined
+    first. That guarantees progress without losing reinforcement — every session
+    comes back round eventually.
+    """
+    await _stage_sessions(tmp_db, 6)
+    extractor = _SlowExtractor(seconds=0.05)
+    miner = ConversationMiner(tmp_db, extractor, SqliteMemoryBridge(tmp_db))  # type: ignore[arg-type]
+
+    await miner.mine_all(budget_s=0.12)
+    first_pass = set(extractor.calls)
+    extractor.calls.clear()
+
+    await miner.mine_all(budget_s=0.12)
+    second_pass = set(extractor.calls)
+
+    assert second_pass, "the second run mined nothing at all"
+    assert second_pass - first_pass, (
+        f"the second run re-mined only sessions the first already did "
+        f"({sorted(second_pass)}) — no forward progress, so the backlog can "
+        f"never drain however many times the job runs"
+    )
