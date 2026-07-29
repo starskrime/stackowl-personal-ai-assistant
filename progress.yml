@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.4
-  stage: test
+  stage: validate
   stage_status: not_started
   one_line: >
     D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
@@ -2663,7 +2663,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       not_started
+      test:       done
       validate:   not_started
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.4.md"
@@ -2898,6 +2898,24 @@ items:
         documented rationale. The test encodes a superseded policy, not a hole.
         Verify before reporting — and especially before reporting something
         frightening.
+    test_result:
+      date: 2026-07-28
+      total: "43 passed across six files, all targeted paths."
+      coverage:
+        store: "tests/sessions/test_prompt_store.py (15) — invalidate_owl clears one owl on every lane, invalidate_all clears everything, both idempotent, both return a count, both fail-open, and the store RECORDS the explanation."
+        command: "tests/commands/test_d014_owl_edit_invalidates.py (4) — driven through the real command, because the store tests prove the mechanism and NOTHING about whether anything calls it."
+        skills: "tests/skills/test_d014_skill_change_invalidates.py (2) — bound to the write."
+        self_extension: "tests/tools/test_d014_owl_build_invalidates.py (2) — the gap cleanup found, plus its I3 fail-open."
+        audit: "tests/pipeline/test_cache_audit.py (18) — an explained change is info, an unexplained one still warns, and the explanation is consumed once."
+        business_requirement: "tests/pipeline/test_d014_prompt_invalidation_gateway_integration.py (2) — gateway-driven, only the AI provider faked."
+      two_gaps_closed_in_this_stage:
+        - "I3 on the SELF-EXTENSION path — an owl edit must survive a missing store and must LOG when it cannot invalidate. That is the path with no human watching, so a silent failure there is indistinguishable from a bug."
+        - "That invalidate_owl itself records the explanation, tested AT THE STORE rather than only at the audit's unit level. That is the seam carrying the behaviour: if the store stopped noting, the audit would warn on every deliberate edit and nothing in cache_audit's own tests would notice."
+      mutation_proven: "The gateway test dies when the invalidation call is removed (both cases). The store's 5 mutations all die. Restores verified with git status after the harness failures earlier in the item."
+      verified:
+        tests: "43 passed. tests/pipeline/ 1089 earlier in the item, reconciling exactly against the 1080 D01.2 baseline."
+        gates: "ruff src/ 46 = DEBT-1; mypy src/ 78 = DEBT-8. Zero added."
+      known_reds_untouched: "DEBT-33 and DEBT-34 remain red and were NOT patched — both proven pre-existing at HEAD."
     notes: null
 
   - id: D01.5

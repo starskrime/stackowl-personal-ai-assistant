@@ -230,3 +230,26 @@ async def test_a_delete_failure_never_raises(tmp_db: DbPool) -> None:
     store = SessionPromptStore(tmp_db)
     assert await store.invalidate_owl(owl_name="secretary", cause="owl_edit") == 0
     assert await store.invalidate_all(cause="skill_install") == 0
+
+
+async def test_invalidating_records_the_explanation_for_the_audit(tmp_db: DbPool) -> None:
+    """D01.4 — the store itself notes WHY, so D01.2's audit does not warn about a
+    change the user asked for.
+
+    Tested here rather than only at the audit's own unit level because this is
+    the seam that carries it: if invalidate_owl stopped noting, the audit would
+    warn on every deliberate edit and nothing in cache_audit's own tests would
+    notice.
+    """
+    from stackowl.infra.prompt_invalidation import (
+        reset_expected_changes,
+        take_expected_change,
+    )
+
+    reset_expected_changes()
+    store = SessionPromptStore(tmp_db)
+    await _freeze(store, LANE, "secretary")
+
+    await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
+
+    assert take_expected_change("secretary") == "owl_edit"
