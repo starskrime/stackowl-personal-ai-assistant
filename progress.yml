@@ -14,8 +14,8 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-07-25
-updated_by: "claude-opus-5 (session 0682205b)"
+updated: 2026-07-29
+updated_by: "claude-opus-5 (session 0682205b) — D01.2 + D01.4 closed 7/7; DEBT-17/32/33/34 resolved; migration 0105 live"
 
 program:
   name: "StackOwl ← Hermes"
@@ -260,95 +260,61 @@ current:
   wave: 1
   item: D01.5
   stage: brainstorm
-  stage_status: not_started
+  stage_status: in_progress
   one_line: >
-    D01.2 and D01.4 are both COMPLETE (7/7 each, docs live, everything pushed).
-    D01.5 "Message-role alternation invariant" is next and NOTHING has been done
-    on it — start at brainstorm. Its Hermes pointers were already found during
-    D01.2 and are recorded ON THE ITEM. After D01.5: D01.3, whose premise is now
+    D01.2 and D01.4 are both COMPLETE (7/7 each, docs live). DEBT-17/32/33/34 are
+    all resolved. D01.5 "Message-role alternation invariant" is IN BRAINSTORM —
+    scope and both design decisions are already settled and recorded on the item;
+    what remains is the implementation. After D01.5: D01.3, whose premise is now
     MEASURED rather than asserted.
   read_first: >
-    (1) This block. (2) docs/hermes-mapping/PROCESS.md and DOC_STANDARD.md.
-    (3) designs/D01.2.md — not for D01.4's content, but because its front matter
-    shows the shape a CLOSED document takes, including how an unprovable half is
-    declared above the fold instead of quietly omitted.
-    (4) The NEW standing rule in `rules.process`: READ HERMES BEFORE ASKING.
-    Bakir gave it mid-D01.2 and it immediately produced two improvements that
-    were sitting in a 165-line file nobody had opened.
-    (5) DEBT-27 (DECIDED — per-day, implementation belongs to D01.7) and
-    DEBT-32 (new, dream job failing 17 times, tracked not investigated).
-  the_headline: >
-    D01.2 shipped and the four stages after `implement` each found something the
-    stage before could not. `cleanup` found the stream path was MARKED but never
-    INSTRUMENTED. `test` found the reason that mattered: THE LIVE ANSWER PATH
-    STREAMS — every provider unit test drives create(), so the whole marker layer
-    had been proven on a path a real turn does not take. `validate` found the
-    invalidator audit keyed on session_key alone, so it reported the staged RCA's
-    three owls as three violations — DEBT-21's mistake, reproduced one item later
-    — and nearly let me report D01.3's premise as MEASURED on artifact data.
-    `document` found the Verification section told the reader to use `sqlite3`,
-    which is not installed here, exactly as D01.6's first draft did.
-  what_D01_2_taught_that_outlives_it: >
-    A test suite proves the path it exercises, not the path production takes. 24
-    unit tests, a 4-mutation gateway battery and 527 provider tests all drove
-    messages.create(); the live pipeline calls messages.stream(). The gap was
-    invisible until a gateway test instantiated the real thing and the fake blew
-    up for lacking a stream(). Before trusting a provider-level test, ASK WHICH
-    ENTRY POINT PRODUCTION USES — and if the answer is not in front of you, that
-    is the first thing to go and measure.
-  the_second_lesson: >
-    A measurement can be confounded rather than wrong, which is worse because it
-    looks like data. Lane-keyed, the audit reported 3 TOOLS ARRAY CHANGED on
-    incident lanes; owl-keyed, on identical traffic, it reported 0. Had I written
-    up the first number, D01.3 would have inherited a false premise from the very
-    mechanism built to give it a true one. Check the DENOMINATOR before reporting
-    a rate: zero changes across pairs that each had one turn is no opportunity,
-    not stability.
+    (1) This block. (2) The D01.5 item's `decisions` — scope and the two calls are
+    made; do not re-litigate them. (3) docs/hermes-mapping/PROCESS.md and
+    DOC_STANDARD.md. (4) The standing rule READ HERMES BEFORE ASKING in
+    `rules.process` — it has now paid off three times running.
+  what_D01_5_already_knows: >
+    Hermes #48879: an interrupted turn persists a `tool -> user` tail that Gemini
+    and Claude reject, hallucinating a continuation of the user's message.
+    StackOwl cannot hit that in PERSISTED history (record_turn has no role
+    parameter; one writer, one caller). The exposure is the DURABLE-RESUME path.
+    validate_resume_transcript's Rule 3 catches a DANGLING call but nothing
+    catches a transcript ending ON a tool_result — and checkpoints are written
+    after tool results are appended, so that tail is the normal shape.
+  next_task_in_order:
+    1: "D01.5 — add Rule 5 (no tool_result tail) + a closer in resume_validation.py."
+    2: "D01.5 — idempotent migration narrowing messages.role to ('user','assistant'). Pre-checked SAFE: 38 rows, 0 violations."
+    3: "Then architect (25 questions), implement, cleanup, test, validate, document."
+    4: "Then D01.3 — it now opens with a measured rate and a located cause, not an assertion."
+  the_one_thing_to_do_first_next_session: >
+    RESTART AND VERIFY DEBT-32. The live platform is still running the
+    PRE-MARKING dream-worker code. The fix is committed and migration 0105 is
+    applied, but the honest evidence is TWO consecutive runs mining DISJOINT
+    session sets. Run ./start.sh, wait for two bounded runs, then:
+      jq -r 'select(.msg=="[memory] conversation_miner.mine_session: exit") | .fields.session_key'
+    and confirm the second run's set does not repeat the first's. Until that is
+    seen, DEBT-32 is fixed in code and unproven in production.
   verify_the_platform_before_you_start:
-    - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl. NOTE: grepping the word 'dangling' matches the audit lines that REPORT '0 dangling' — check fields.dangling_handlers == [] instead."
-    - "uv run python -m stackowl db migrate   # expect: up to date (version 0104)."
-    - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1080 passed"
+    - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
+    - "uv run python -m stackowl db migrate   # expect: up to date (version 0105)"
+    - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1089 passed"
     - "timeout 600 uv run pytest tests/providers/ -q -p no:randomly  # expect 527 passed"
-    - "timeout 800 uv run pytest tests/sessions/ tests/owls/ -q -p no:randomly   # expect 425 passed"
-    - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF against these; never chase them to zero."
-    - "NEVER run two pytest invocations in parallel on this box, and never combine them under one timeout — tried twice, killed at the deadline both times (exit 143). Sequential, separate budgets."
-    - "sqlite3 is NOT installed. Query the DB through `uv run python -c 'import sqlite3...'` instead. This has now bitten two documents."
+    - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF; never chase to zero."
+    - "NEVER run two pytest invocations in parallel, and NEVER run tests/tools/ whole — it exceeded 600s and was killed. Targeted paths only."
+    - "sqlite3 is NOT installed. Query via `uv run python -c 'import sqlite3...'`. This has bitten two documents."
   git_state:
     branch: main
-    unpushed: "NONE. Everything through D01.2 is pushed to origin/main (last: 2f3a43f7 + the document-stage commit). Bakir approved the push on 2026-07-27 after ten commits had accumulated."
-  next_task_in_order:
-    1: >
-      D01.4 BRAINSTORM — 25 questions, batched 4 per round, per the GRILL RULE.
-      BUT READ HERMES FIRST (the new standing rule): find their deferred-
-      invalidation / "this would cost you money right now" vocabulary before
-      asking, so the questions are the ones Hermes cannot answer.
-    2: "Then D01.4 architect (25 more questions), implement, cleanup, test, validate, document."
-    3: "Then D01.5 — its Hermes pointers are already recorded on the item, found during D01.2."
-    4: "Then D01.3 — but see the OPEN MEASUREMENT below; it may be answerable with data by then."
-  the_open_measurement_that_CAME_IN: >
-    ANSWERED 2026-07-28. D01.2 shipped the instrument that measures D01.3's
-    premise, and it has now returned a reading. 5 (lane, owl) pairs reported a
-    tools-array change, 15 events total, and in 4 of the 5 the tool COUNT itself
-    oscillated (sysfup 5->4->5->5->5, Brain 4->4->3->4, scout 4->3->4,
-    headhunter 5->4) — same owl, same lane, so owl-switching is excluded. The
-    earlier zero-result was NO OPPORTUNITY, not stability, exactly as recorded.
-    See D01.3's THE_PREMISE_IS_NOW_MEASURED block for the full figures, the
-    cause (execute.py's to_provider_schema(request_text=...)) and the
-    consequence for D01.2's position-0 marker.
-    STILL OPEN: every pair is a BACKGROUND lane. The INTERACTIVE path needs 2+
-    Telegram turns to one owl before the same claim can be made for it.
+    unpushed: "NONE. Everything is pushed through f277574d. Tree clean."
   what_needs_bakir:
-    - "Nothing is BLOCKING. DEBT-27 and DEBT-17 were both decided on 2026-07-27; the push was approved and done."
-    - "DEBT-32 — the dream job has failed 17 times while still enabled. He chose to track it and finish D01.2 first; it is now the top non-item thread."
-    - "The D01.3 measurement above needs him to simply USE the assistant for a few turns. No work required, just traffic."
-  the_pattern_that_caught_everything_this_session:
-    name: "Each stage catches what the stage before structurally cannot"
-    instances:
-      - "unit tests proved the marker layout; they could not know production streams."
-      - "the gateway test found the streaming path; it could not know the audit was lane-keyed, because its harness has one owl."
-      - "live traffic found the lane-keying, because incident lanes run three owls; no test harness had that shape."
-      - "the document stage found `sqlite3` is not installed, because it is the only stage that RUNS the instructions a reader would follow."
-      - "MUTATION TESTING found a test that could not fail (M2), and later a RESTORE that did not restore — verify the harness, not just the code."
+    - "Nothing is blocking. All four debts raised this session were decided and closed."
+    - "The INTERACTIVE half of the D01.3 measurement still needs real traffic — a couple of Telegram messages to ONE owl, then the tools-array jq answers it for the interactive path."
+  the_lessons_this_session_paid_for:
+    - "THE LIVE ANSWER PATH STREAMS, in BOTH providers. D01.2's test stage found it for Anthropic, D01.4's for OpenAI. Any provider-level test driving create() proves a path production does not take — that indicts existing tests, not just new ones."
+    - "REGISTERED != REACHABLE, three times in two items: the stream path uninstrumented, owl_build's seam reachable but uncalled, _build discarding a caller's services."
+    - "A STALE TEST CAN LOOK EXACTLY LIKE A SECURITY HOLE. DEBT-33 read as an authorisation bypass until the code was read. Verify before reporting, especially before reporting something frightening."
+    - "WIDENING A DB CONSTRAINT WITHOUT WIDENING ITS READER is a trap. Migration 0105 would have made every mined conversation unreadable; the test asserting the data is still READABLE caught it, not the one asserting it was written."
+    - "A TEST THAT MODELS ONLY THE HAPPY PATH makes a broken fix look fixed. DEBT-32's second attempt passed its test and failed in production because the stub always produced a fact."
+    - "COMMIT BEFORE MUTATING. A mutation harness that times out mid-battery plus `git checkout` on uncommitted work deletes the feature, not the mutation."
+    - "SCRIPTED TEXT EDITS ARE FOR MECHANICAL SUBSTITUTION, NOT STRUCTURAL INSERTION. Four went wrong this session — one split a decorator from its function (mypy 78->88), one silently failed its assertion while the commit went ahead anyway."
 
 # ---------------------------------------------------------------------------
 # WALK ORDER — waves, in sequence
@@ -529,6 +495,56 @@ known_debt:
       a session got slower.
     also_fixed: "A test spy's mine_all signature had drifted from the interface it stands in for — widened the spy, not the assertion."
     verified: "3 new tests + 23 passed across the memory suites; 179 passed across the full affected surface; ruff 46 / mypy 78 at baseline."
+    the_fix_took_THREE_attempts_and_the_first_two_were_wrong:
+      attempt_1_time_budget: >
+        CORRECT AND NECESSARY. mine_all(budget_s=) derived from the scheduler's
+        own _HANDLER_TIMEOUT_SEC. Broke the ratchet — verified live: the run
+        completes, all four phases execute for the first time in 30 runs, no more
+        timeouts. But it did NOT make the job progress.
+      attempt_2_order_by_outcome: >
+        DID NOT WORK, and the live platform said so. Ordering the queue by the
+        newest fact each session had PRODUCED fails for BARREN sessions — most
+        conversations yield nothing durable, so they never acquire a timestamp,
+        sort first forever, and are re-mined every run at full LLM cost for
+        nothing. Measured after it shipped: 4 of the 5 sessions in one run had
+        ZERO staged and ZERO committed facts. The unit test passed only because
+        its stub extractor always returned a fact — the barren case was exactly
+        what it failed to model. A test that models only the happy path is how a
+        broken fix looks fixed.
+      attempt_3_mark_the_attempt: >
+        STRUCTURAL. A mined session is MARKED and the queue takes only unmarked
+        rows, so a session leaves because it was ATTEMPTED, not because it
+        yielded something. A FAILED mine is deliberately left unmarked so a
+        transient error retries rather than being dropped forever.
+    migration_0105:
+      what: "Rebuilt staged_facts to allow status='mined'."
+      my_error: >
+        I offered the marking approach as needing NO migration. Wrong — the CHECK
+        forbids 'mined' — and it was the SECOND unchecked schema claim of the
+        session (the first was asserting messages.role was constrained to
+        user/assistant when it also permits system/tool). Bakir chose the rebuild
+        over a separate state table with the real cost visible: 113,335 rows on a
+        live database.
+      mitigations_PERFORMED_not_assumed:
+        - "543MB hot backup taken first (~/.stackowl/backups/pre-0105-20260728-213814.db)."
+        - "Full rehearsal against a COPY of the real database — rows, status distribution and all three indexes verified identical before touching the live one."
+        - "The runner wraps every migration in BEGIN EXCLUSIVE with ROLLBACK, so the rebuild is atomic."
+      live_result: "113,335 rows preserved, status distribution unchanged, all three indexes intact, idempotent on re-run. Schema version 0105."
+    THE_TEST_THAT_SAVED_IT: >
+      models.py mirrored the OLD CHECK as Literal["staged","committed",
+      "rejected"]. The database would have accepted 'mined' and the model would
+      have RAISED on every read back — silently breaking context recall for every
+      mined conversation, which is WORSE than the bug being fixed.
+      test_marking_mined_does_not_hide_turns_from_context caught it before it
+      shipped. THE LESSON THAT GENERALISES: widening a database constraint
+      without widening its READER is a trap, and the test that catches it is the
+      one asserting the data is still readable, not the one asserting it was
+      written.
+    NOT_YET_PROVEN: >
+      The live platform is still running the PRE-MARKING code. The honest
+      evidence is two consecutive runs mining DISJOINT session sets; that needs a
+      restart. Held off deliberately at the end of a long session rather than
+      interrupting live work.
     status: resolved
 
   - id: DEBT-31
@@ -3040,7 +3056,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: in_progress
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -3049,7 +3065,42 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-07-29
+        stage: brainstorm
+        round: "2 questions answered; Hermes source read FIRST, per the standing rule"
+        by: Bakir
+        the_premise_narrowed_before_any_question: >
+          Hermes incident #48879 (turn_finalizer.py:278): an interrupted turn
+          persists a `tool -> user` tail which "strict providers (Gemini, Claude)
+          reject, causing them to hallucinate a continuation of the user's
+          message on the next turn". StackOwl CANNOT hit that in PERSISTED
+          history — record_turn has no `role` parameter at all (it takes
+          user_text/assistant_text and hardcodes the roles), there is exactly ONE
+          INSERT into messages and ONE caller, so a tool row cannot be written
+          today. The exposure is only in the DURABLE-RESUME path, which carries
+          provider-shaped transcripts including tool_result.
+        the_gap_located: >
+          validate_resume_transcript has 4 rules. Rule 3 catches a DANGLING tool
+          call (assistant -> END). NOTHING catches a transcript ending ON a
+          tool_result. And nothing in src/ closes an interrupted tool tail —
+          while anthropic_provider states checkpoints are "written after tool
+          results are appended", so the checkpoint tail IS a tool_result by
+          construction.
+        answers:
+          scope: "RESUME PATH ONLY — add the missing rule (a Rule 5: no tool_result tail) plus a closer, so an interrupted checkpoint is resumable rather than rejected. Targeted at where the real exposure is."
+          pin_the_invariant: >
+            TIGHTEN THE CHECK. Bakir first said "need to dig on it" rather than
+            accepting my claim — and the dig proved me half wrong. The schema
+            does NOT protect us: CHECK (role IN ('user','assistant','system',
+            'tool')) permits both. The INTERFACE protects us (one writer, one
+            caller, no role parameter). A test over stored data would be an
+            assertion that CANNOT FAIL — the D01.1 trap. So the invariant gets
+            enforced at the boundary: an idempotent migration narrowing
+            messages.role to ('user','assistant'), which survives a future second
+            writer in a way the interface argument does not.
+        migration_safety_pre_checked: "messages holds 38 rows, 0 of which violate the tighter CHECK — verified before proposing it."
+        what_is_left_for_this_item: "Rule 5 + the tail closer in resume_validation.py, the messages.role migration, then architect/implement/cleanup/test/validate/document."
     changes: []
     hermes_pointers_found_2026_07_27: >
       Found while working D01.2, recorded so it is not re-discovered. Hermes
