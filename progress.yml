@@ -259,8 +259,8 @@ deployment:
 current:
   wave: 1
   item: D01.5
-  stage: architect
-  stage_status: not_started  # BACKFILL — implementation ran ahead, see the item's process_deviation
+  stage: cleanup
+  stage_status: not_started
   one_line: >
     D01.2 and D01.4 are both COMPLETE (7/7 each, docs live). DEBT-17/32/33/34 are
     all resolved. D01.5 "Message-role alternation invariant" is IN BRAINSTORM —
@@ -286,12 +286,10 @@ current:
     3: "Then architect (25 questions), implement, cleanup, test, validate, document."
     4: "Then D01.3 — it now opens with a measured rate and a located cause, not an assertion."
   the_one_thing_to_do_first_next_session: >
-    BACKFILL D01.5's DESIGN DOC. Its implementation landed before the architect
-    stage (see the item's process_deviation) — Rule 5 and migration 0106 are both
-    live and tested, but DOC_STANDARD's document does not exist, and the
-    `document` stage cannot close an item whose design was never written down.
-    DEBT-32 no longer needs verifying: it is PROVEN in production (marked rose
-    23 -> 29 after the first post-deploy run; see the item).
+    D01.5 CLEANUP, then test / validate / document. Brainstorm, architect and
+    implement are all done: Rule 5 and migration 0106 are live, tested and
+    mutation-proven, and designs/D01.5.md now exists (written as a BACKFILL —
+    the doc says so above the fold). Nothing is blocked.
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0105)"
@@ -3097,14 +3095,14 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
+      architect:  done
+      implement:  done
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
+    doc: "docs/hermes-mapping/designs/D01.5.md"
+    doc_last_verified: 2026-07-29  # against 4e40a4a8; 4 paths + 5 behavioural claims re-checked
     decisions:
       - date: 2026-07-29
         stage: brainstorm
@@ -3156,6 +3154,13 @@ items:
         DOC_STANDARD requires is missing, and the `document` stage cannot close
         an item whose design was never written down.
       correction: "Backfill the design doc as the architect stage before cleanup/test/validate/document. Recorded rather than quietly reordered — quiet drift is the one thing the process forbids."
+      correction_DONE: >
+        2026-07-29 — designs/D01.5.md written, with the backfill stated ABOVE THE
+        FOLD rather than hidden: DOC_STANDARD rule 2 says the design section IS
+        the architect stage's output, and this one was not. The cost is visible in
+        the doc itself — its Verification section describes commands that were RUN
+        during implementation rather than commands the design predicted, which is
+        a weaker form of that section and is labelled as such.
     implement_progress:
       date: 2026-07-29
       commits: [4c5bdbfe, b1329202]

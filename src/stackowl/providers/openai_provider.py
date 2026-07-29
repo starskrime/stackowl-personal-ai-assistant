@@ -546,7 +546,8 @@ class OpenAIProvider(ModelProvider):
         # (that would cause the double-injection the S5 caveat warns about).
         if resume_messages is not None:
             # Fail loud on a malformed transcript (empty / dangling unanswered
-            # tool call / unmatched pair) BEFORE the first API call, so the cause
+            # tool call / unmatched pair / a user message directly after a tool
+            # result — D01.5 Rule 5) BEFORE the first API call, so the cause
             # is a typed ResumeTranscriptError rather than an opaque ProviderError
             # 400.  Defense-in-depth: a well-formed checkpoint (written after tool
             # results are appended) never dangles; this guards future/cross-provider

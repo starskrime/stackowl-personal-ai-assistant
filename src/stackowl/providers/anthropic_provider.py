@@ -546,7 +546,8 @@ class AnthropicProvider(ModelProvider):
         # there is no double-injection risk for Anthropic.
         if resume_messages is not None:
             # Fail loud on a malformed transcript (empty / stray system turn /
-            # dangling unanswered tool call / unmatched pair) BEFORE the first API
+            # dangling unanswered tool call / unmatched pair / a user message
+            # directly after a tool result — D01.5 Rule 5) BEFORE the first API
             # call, so the cause is a typed ResumeTranscriptError instead of an
             # opaque ProviderError 400.  Defense-in-depth: a well-formed checkpoint
             # (written after tool results are appended) never dangles; this guards
