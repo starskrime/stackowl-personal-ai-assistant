@@ -385,6 +385,36 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-35
+    found: 2026-07-29
+    what: "92% of the conversation-mining queue is machine-generated incident lanes that can never yield a user fact."
+    evidence: >
+      Measured on the live database while verifying DEBT-32: of 943 sessions
+      queued for mining, 871 (92%) are `incident-*` self-heal RCA lanes, 33 are
+      `goal-*` job lanes, 5 are machine uuid lanes, and only 34 (4%) look
+      human. Each mined session costs one LLM call (~$0.025, 15-60s), so a full
+      pass spends roughly $22 mining automated RCA transcripts for "durable facts
+      about the user" — which is exactly why the barren sessions found earlier
+      (1af39853, 3a6a705e, e67385de and the incident-* set) returned ZERO staged
+      and ZERO committed facts. There is nothing personal in an RCA transcript.
+    the_arithmetic_that_makes_it_urgent: >
+      Drain is ~13.6 sessions/hour (10 per run, runs observed starting 02:20 and
+      03:04). Arrivals are 25 new sessions/hour. The queue therefore GROWS by
+      ~11/hour and was observed doing exactly that: 925 -> 933 -> 943. DEBT-32's
+      fixes stop the crash and guarantee forward progress, but they cannot make a
+      queue drain that fills faster than it empties — they make a worthless
+      workload run efficiently.
+    why_this_is_NOT_part_of_DEBT_32: >
+      DEBT-32 was "the job fails every run", and it is genuinely fixed: bounded,
+      progressing, phases running. This is a different question — WHAT SHOULD BE
+      MINED AT ALL — and it is a product decision about what the memory system is
+      for, not a defect to patch. Recorded rather than decided unilaterally.
+    options_for_bakir:
+      filter_at_the_queue: "Mine only human-originated lanes. Cheapest by far (drops 96% of the work), and the barren evidence says nothing is lost. Needs a rule for what counts as human-originated that is not a hardcoded prefix list."
+      mine_machine_lanes_differently: "Machine lanes may hold durable facts about the SYSTEM (recurring failure modes) rather than the user. That is arguably valuable but it is a different extractor and a different store — closer to the incident-learning arc than to user memory."
+      leave_it: "Accept the cost. ~$15-22/day of mining that produces nothing, and a queue that grows forever."
+    status: open
+
   - id: DEBT-33
     found: 2026-07-28
     what: "tests/tools/meta/test_owl_build_gateway.py::test_j3b_cannot_edit_human_owl asserts a policy the code DELIBERATELY superseded."
