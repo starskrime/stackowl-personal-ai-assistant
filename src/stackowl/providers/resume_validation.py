@@ -37,6 +37,28 @@ log = logging.getLogger("stackowl.engine")
 ProviderKind = Literal["anthropic", "openai"]
 
 
+def _is_tool_result_turn(message: dict[str, Any], provider_kind: str) -> bool:
+    """Whether this turn IS a tool result (D01.5, Rule 5).
+
+    The two wire shapes differ enough to be worth naming rather than inlining:
+
+    * openai — a dedicated ``role: "tool"`` message.
+    * anthropic — a ``user`` turn whose content blocks are ``tool_result``. The
+      role is genuinely ``user`` there, which is exactly why this is easy to miss:
+      the turn looks like an ordinary user message to anything checking roles
+      alone, and only the block type distinguishes it.
+    """
+    if provider_kind == "openai":
+        return message.get("role") == "tool"
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
 def _openai_tool_call_ids(message: dict[str, Any]) -> list[str]:
     """Return the tool_call ids declared in an OpenAI assistant turn (or [])."""
     if message.get("role") != "assistant":
@@ -172,6 +194,37 @@ def validate_resume_transcript(
             "(resuming mid-dispatch would 400)",
             dangling_ids=last_call_ids,
         )
+
+    # Rule 5 (D01.5) — no USER turn may directly follow a TOOL RESULT.
+    #
+    # NOT "the transcript must not end on a tool result". That was the first
+    # formulation and it was wrong: a transcript ending on a tool result is the
+    # NORMAL resume seed — the model is called next and answers it, which is
+    # exactly what test_well_formed_openai_transcript_passes has always pinned.
+    # Rejecting that tail would have broken every legitimate resume. The existing
+    # suite caught it.
+    #
+    # The real defect is the ADJACENCY. It appears when a user message is
+    # appended after a tool result — an interrupted turn whose next user message
+    # lands on the unclosed tool sequence. Strict providers reject that pairing;
+    # the reference platform recorded it causing the model to hallucinate a
+    # continuation of the user's message instead
+    # (hermes agent/turn_finalizer.py:278, incident #48879).
+    #
+    # An Anthropic tool_result rides IN a user turn, so the check compares
+    # SHAPES, not roles: a tool-result turn followed by a user turn that is NOT
+    # itself carrying tool results.
+    for i in range(len(messages) - 1):
+        if not _is_tool_result_turn(messages[i], provider_kind):
+            continue
+        nxt = messages[i + 1]
+        if nxt.get("role") == "user" and not _is_tool_result_turn(nxt, provider_kind):
+            raise ResumeTranscriptError(
+                "transcript puts a user message directly after a tool result "
+                "(strict providers reject this pairing and may continue the "
+                "user's message instead of answering it) — the tool sequence "
+                "must be closed by an assistant turn first",
+            )
 
     # 4. EXIT
     log.debug(

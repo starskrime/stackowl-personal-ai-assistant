@@ -333,3 +333,110 @@ async def test_no_resume_tool_calls_starts_empty(
     )
 
     assert [c["id"] for c in calls] == ["only_1"]
+
+
+# ---------------------------------------------------------------------------
+# D01.5 — a transcript ending ON a tool_result.
+#
+# THE GAP. Rule 3 catches a transcript ending on an assistant turn with an
+# UNANSWERED tool call. Nothing catches the opposite tail: a transcript whose
+# last turn IS the tool result. Rule 4 passes it (every call is answered) and
+# Rule 3 passes it (the last turn declares no call), so it validates clean.
+#
+# WHY THAT MATTERS. anthropic_provider states checkpoints are "written after tool
+# results are appended", so that tail is the NORMAL shape of an interrupted
+# checkpoint — every /stop or budget-kill mid-tool-loop produces one. The
+# reference platform hit this as a real incident: resuming from it and then
+# appending the user's next message yields a `tool -> user` alternation which
+# "strict providers (Gemini, Claude) reject, causing them to hallucinate a
+# continuation of the user's message on the next turn"
+# (hermes agent/turn_finalizer.py:278).
+#
+# StackOwl's PERSISTED history cannot produce this — record_turn has no role
+# parameter and only ever writes user/assistant — so the exposure is the
+# durable-resume path alone. Which is exactly what these cover.
+# ---------------------------------------------------------------------------
+
+
+def test_anthropic_user_message_after_a_tool_result_is_rejected() -> None:
+    """The real defect: the ADJACENCY, not the tail.
+
+    An Anthropic tool_result rides IN a user turn, so this is a user turn
+    carrying results followed by an ordinary user turn — which is what an
+    interrupted turn produces when the next user message lands on the unclosed
+    tool sequence.
+    """
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "what is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tu1", "name": "calc", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tu1", "content": "4"}],
+        },
+        {"role": "user", "content": "actually, never mind"},
+    ]
+    with pytest.raises(ResumeTranscriptError):
+        validate_resume_transcript(messages, provider_kind="anthropic")
+
+
+def test_openai_user_message_after_a_tool_message_is_rejected() -> None:
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "what is 2+2?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "calc", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "4"},
+        {"role": "user", "content": "actually, never mind"},
+    ]
+    with pytest.raises(ResumeTranscriptError):
+        validate_resume_transcript(messages, provider_kind="openai")
+
+
+def test_a_transcript_ENDING_on_a_tool_result_is_still_valid() -> None:
+    """The jaw that caught my first formulation.
+
+    A transcript ending on a tool result is the NORMAL resume seed — the model is
+    called next and answers it. My first Rule 5 rejected this and broke three
+    existing tests, which were right. Pinned here so the mistake is not repeated.
+    """
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "what is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tu1", "name": "calc", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tu1", "content": "4"}],
+        },
+    ]
+    validate_resume_transcript(messages, provider_kind="anthropic")  # must not raise
+
+
+def test_a_tool_result_followed_by_an_assistant_turn_is_fine() -> None:
+    """The other jaw: only the TAIL is the problem.
+
+    A tool result mid-transcript with the assistant's answer after it is the
+    normal, correct shape — rejecting that would break every legitimate resume.
+    """
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "what is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tu1", "name": "calc", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tu1", "content": "4"}],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "It is 4."}]},
+    ]
+    validate_resume_transcript(messages, provider_kind="anthropic")  # must not raise
