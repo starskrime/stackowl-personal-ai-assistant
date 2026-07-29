@@ -47,6 +47,14 @@ def _is_tool_result_turn(message: dict[str, Any], provider_kind: str) -> bool:
       role is genuinely ``user`` there, which is exactly why this is easy to miss:
       the turn looks like an ordinary user message to anything checking roles
       alone, and only the block type distinguishes it.
+
+    NOT expressible as ``bool(_anthropic_result_ids(message))``, though it looks
+    like it should be — a future reader will see the near-duplicate block scan and
+    want to merge them. That helper additionally requires ``tool_use_id`` to be
+    present, because its job is to COLLECT ids for the matched-pairs check. A
+    tool_result block missing its id is still SHAPED like a tool result, and Rule
+    5 must reject a user turn following it; folding the two would silently stop
+    Rule 5 firing on malformed blocks. Rule 4 catches the missing id separately.
     """
     if provider_kind == "openai":
         return message.get("role") == "tool"
@@ -129,6 +137,13 @@ def validate_resume_transcript(
          Resuming mid-dispatch would 400; the dangling id(s) are reported.
       4. Every declared ``tool_use`` / ``tool_calls`` id has a matching result
          message somewhere later in the transcript (matched-pairs invariant).
+      5. No ``user`` turn directly FOLLOWS a tool result (D01.5). An interrupted
+         turn whose next user message lands on an unclosed tool sequence produces
+         that pairing, and strict providers do not merely reject it — they
+         continue the user's message instead of answering it.
+         NOTE the asymmetry with rule 3: a transcript ENDING on a tool result is
+         perfectly valid (the model is called next and answers it). Only the
+         ``tool result -> user`` adjacency is a defect.
 
     Pure and side-effect-free apart from a debug entry/exit log.  Safe to call
     at the top of a provider's resume branch before the first API call.

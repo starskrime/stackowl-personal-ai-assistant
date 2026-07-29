@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.5
-  stage: cleanup
+  stage: test
   stage_status: not_started
   one_line: >
     D01.2 and D01.4 are both COMPLETE (7/7 each, docs live). DEBT-17/32/33/34 are
@@ -382,6 +382,34 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-36
+    found: 2026-07-29
+    what: "The transcripts tool advertises an `include_tool_calls` parameter that has never been able to do anything."
+    evidence: >
+      Found during D01.5 cleanup. tools/knowledge/transcripts.py:147 filters
+      `role != 'tool'` from the `messages` table when include_tool_calls is
+      False. But nothing has ever written a tool row: TranscriptStore.record_turn
+      has no `role` parameter at all (it takes user_text/assistant_text and
+      hardcodes the roles), and there is exactly ONE INSERT into messages with
+      ONE caller. The live table has only ever held user and assistant rows.
+    why_it_matters: >
+      It is a parameter the MODEL can pass, and it provably changes nothing —
+      a capability advertised on the tool surface that cannot be exercised. That
+      is the "registered but never reachable" shape this program has hit
+      repeatedly, showing up as a user-facing option rather than a wiring gap.
+    NOT_caused_by_D01_5: >
+      Migration 0106 (role CHECK narrowed to user/assistant) made this
+      PROVABLY dead rather than incidentally dead. It was already dead before —
+      0106 did not remove a working capability, it removed the possibility of one
+      ever appearing without a deliberate schema change.
+    decision: >
+      NOT removed. Deleting a user-facing parameter is a capability decision, not
+      cleanup, and the standing rule is never to disable a feature without asking.
+      Two honest options for Bakir: drop the parameter (and the filter) as dead
+      surface, or decide tool turns SHOULD be persisted and wire a writer — which
+      would then need D01.5's Rule 5 reasoning applied to persisted history too.
+    status: open
+
   - id: DEBT-35
     found: 2026-07-29
     what: "92% of the conversation-mining queue is machine-generated incident lanes that can never yield a user fact."
@@ -3097,7 +3125,7 @@ items:
       brainstorm: done
       architect:  done
       implement:  done
-      cleanup:    not_started
+      cleanup:    done
       test:       not_started
       validate:   not_started
       document:   not_started
@@ -3185,6 +3213,28 @@ items:
         pre_checked: "0 violating rows; NO other table's DDL REFERENCES messages; no triggers. The inbound-FK check matters because SQLite rewrites other tables' REFERENCES clauses during ALTER TABLE ... RENAME."
         rehearsed_then_applied: "Rehearsed against a copy of the live database (rows, role distribution, both indexes identical; a tool-row INSERT confirmed REFUSED), then applied live. Idempotent. Schema 0106."
       verified: "tests/providers/ 531 passed; 26 passed across transcript store + the D01.4 gateway test + the resume validator; ruff 46 / mypy 78 at baseline."
+    cleanup_record:
+      date: 2026-07-29
+      dedup_target: "null for this item."
+      the_near_duplicate_that_is_NOT_a_merge: >
+        _is_tool_result_turn and _anthropic_result_ids both walk content blocks
+        for type == 'tool_result', and a future reader will want to fold them.
+        They must stay separate: _anthropic_result_ids additionally requires
+        tool_use_id to be present, because its job is COLLECTING ids for the
+        matched-pairs check. A tool_result block missing its id is still SHAPED
+        like a tool result, and Rule 5 must reject a user turn after it — folding
+        them would silently stop Rule 5 firing on malformed blocks, while Rule 4
+        catches the missing id separately. The reason is now in the docstring so
+        the merge is not attempted blind.
+      stale_enumerations_fixed: >
+        Adding Rule 5 left THREE places listing the validator's rules and omitting
+        it: both providers' call-site comments and the validator's own docstring
+        ("Rules enforced: 1..4"). A comment that enumerates rules and silently
+        drops one is worse than no comment — it reads as authoritative. All three
+        updated, and the docstring now also states the asymmetry that caught me:
+        a transcript ENDING on a tool result is valid; only the adjacency is not.
+      found_and_recorded_not_fixed: "DEBT-36 — the transcripts tool's include_tool_calls parameter has never been able to do anything, because nothing ever wrote a tool row. Pre-existing; 0106 made it provably dead rather than incidentally dead. Removing a user-facing parameter is a capability decision, not cleanup."
+      verified: "22 passed across the resume suites; ruff src/ 46 and mypy src/ 78, both at the DEBT-1/DEBT-8 baselines."
     changes: []
     hermes_pointers_found_2026_07_27: >
       Found while working D01.2, recorded so it is not re-discovered. Hermes
