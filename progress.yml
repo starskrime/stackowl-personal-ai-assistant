@@ -259,7 +259,7 @@ deployment:
 current:
   wave: 1
   item: D01.4
-  stage: validate
+  stage: document
   stage_status: not_started
   one_line: >
     D01.2 is COMPLETE (7/7, doc live at designs/D01.2.md, all commits pushed).
@@ -2664,7 +2664,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   not_started
+      validate:   done
       document:   not_started
     doc: "docs/hermes-mapping/designs/D01.4.md"
     doc_last_verified: 2026-07-28  # against commit 35493542; every path, line number and the 56-site count checked
@@ -2916,6 +2916,37 @@ items:
         tests: "43 passed. tests/pipeline/ 1089 earlier in the item, reconciling exactly against the 1080 D01.2 baseline."
         gates: "ruff src/ 46 = DEBT-1; mypy src/ 78 = DEBT-8. Zero added."
       known_reds_untouched: "DEBT-33 and DEBT-34 remain red and were NOT patched — both proven pre-existing at HEAD."
+    validate_result:
+      date: 2026-07-28
+      status: "PASS — and unlike D01.2, this item's live half IS provable here: it needs no Anthropic backend."
+      restart: "1192 new log lines, ZERO ERROR/CRITICAL."
+      the_live_proof:
+        method: >
+          Bakir approved a throwaway-owl probe rather than editing one of his own
+          owls. stackowl.yaml was SNAPSHOT first (the edit path writes to it), a
+          probe owl was registered, a prompt frozen through the real
+          SessionPromptStore against the LIVE database, then the REAL
+          OwlsCommand._edit was driven against it.
+        evidence: |
+          [prompt] invalidate: exit  cause=owl_edit          scope=owl owl=d014probe rows=1
+          [prompt] invalidate: exit  cause=validate_cleanup  scope=owl owl=d014probe rows=0
+        what_that_proves: >
+          The real command reached the real store, cleared a real row in the live
+          database, and emitted the INFO line with cause/scope/owl/rows. The
+          second line proves IDEMPOTENCE live for free — the same call against an
+          already-cleared owl reports rows=0 rather than failing.
+        cleanup_verified: "stackowl.yaml restored IDENTICAL to the snapshot (diff empty); zero d014probe rows remain; the live table is back to Brain(2) + secretary(2), exactly as before."
+      the_first_attempt_looked_like_a_defect_and_was_not: >
+        Run one cleared the row but produced NO log line in the JSONL, which
+        reads exactly like a missing-logging bug. Diagnosed before recording
+        anything: setup_logging() is called ONLY from cli/app.py, so a standalone
+        script has no JSONL handler at all — ZERO of its lines reached the log,
+        not just the invalidation one. Re-ran with setup_logging() called and the
+        line appeared. Not a defect; my harness was wrong. Worth keeping because
+        the same trap will catch anyone validating a store from a script.
+      not_proven_here:
+        - "The gateway process itself performing an invalidation. The probe drove the real command in a SEPARATE process against the same database, so the code and the data are real but the running gateway was not the actor. A real /owls edit through a channel would close that, and needs Bakir."
+        - "The interactive D01.3 measurement — still zero interactive turns since the owl-scoped restart, checked rather than assumed."
     notes: null
 
   - id: D01.5
