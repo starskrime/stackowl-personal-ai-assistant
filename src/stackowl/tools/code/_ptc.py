@@ -27,18 +27,25 @@ __all__ = ["build_ptc_factory", "consent_callback_note", "ptc_enabled"]
 # The consent-prompt sentence disclosing the curated host-tool callback (GAP-A). Shown
 # only when PTC is enabled so the user consents to that capability, not just the run.
 _CONSENT_CALLBACK_NOTE = (
-    " The code may call a CURATED set of host tools (read a file, search the "
-    "web, read/search memory, and write/edit files INSIDE the sandbox "
-    "workspace only) via 'import owl'."
+    " The code may call ANY of this agent's tools via 'import owl' — including "
+    "ones that act on the outside world (send a message, create an owl or tool, "
+    "write files) — WITHOUT asking again. Only sandbox-escape tools (shell, "
+    "execute_code, process, claude_code, delegate_task, sessions_*) are refused. "
+    "Approving this run approves everything the script does."
 )
 
 
 def ptc_enabled() -> bool:
-    """PTC is on by DEFAULT when a tool registry is wired (the safer default).
+    """PTC is on by DEFAULT when a tool registry is wired.
 
-    The allowlist is read + sandbox-workspace-write only and the hard-exclusions
-    (shell/execute_code/process/…) are enforced HOST-side regardless. With no
-    registry wired there is nothing to call back into, so PTC is simply absent.
+    D05.5 — this docstring used to justify the default with "the allowlist is
+    read + sandbox-workspace-write only". That is no longer true: PTC is now
+    default-ALLOW minus sandbox-escape vectors, so the default is wider than the
+    one that reasoning defended. It stays ON by operator decision; the guardrails
+    that remain are the escape denylist, owl bounds, write-confinement, the
+    per-run rate cap and the audit log — plus the consent note above, which now
+    tells the user that approving the run approves everything the script does.
+    With no registry wired there is nothing to call back into, so PTC is absent.
     """
     return get_services().tool_registry is not None
 

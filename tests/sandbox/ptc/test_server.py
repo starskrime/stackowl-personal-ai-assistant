@@ -102,7 +102,16 @@ def _server(
 # --- allowlist / hard-exclusion --------------------------------------------------
 
 
-class TestAllowlistDefaultDeny:
+class TestEscapeFenceDefaultAllow:
+    """D05.5 — the policy inverted: default-ALLOW minus SANDBOX-ESCAPE vectors.
+
+    This class used to be TestAllowlistDefaultDeny and asserted that only five
+    names were callable. That changed by operator decision, with the cost stated:
+    consequential tools are now reachable from a script and are NOT consent-
+    prompted per call. The tests below are rewritten to the NEW contract, and the
+    escape fence — the part that did NOT change — is tested harder than before.
+    """
+
     async def test_allowed_tool_runs_via_registry(self, tmp_path: Path) -> None:
         spy = _SpyTool(output="hello")
         server, _ = _server(tmp_path, tools={"read_file": spy})
@@ -111,24 +120,71 @@ class TestAllowlistDefaultDeny:
         assert resp["result"] == "hello"
         assert spy.calls == [{"path": "x.txt"}], "the allowed tool was actually invoked"
 
-    @pytest.mark.parametrize("excluded", ["shell", "execute_code", "process", "delegate_task", "send_message"])
-    async def test_hard_excluded_refused_without_invoking(self, tmp_path: Path, excluded: str) -> None:
-        # A hard-excluded name must be refused WITHOUT the registry ever resolving it.
+    @pytest.mark.parametrize(
+        "escape_vector",
+        ["shell", "execute_code", "process", "claude_code", "delegate_task",
+         "sessions_spawn", "sessions_send"],
+    )
+    async def test_escape_vector_refused_without_invoking(
+        self, tmp_path: Path, escape_vector: str
+    ) -> None:
+        """THE INVARIANT THAT DID NOT CHANGE, and must never regress.
+
+        Widening PTC to default-ALLOW is only defensible while the sandbox cannot
+        break OUT of itself. Each of these would do exactly that: run host
+        commands, nest another sandbox, control host processes, launch an agent
+        with host FS access, or bypass the delegation-depth ceiling.
+
+        Asserted on the REGISTRY LOOKUP as well as the invocation — refusal has to
+        happen before resolution, so a tool cannot be constructed at all.
+        """
         spy = _SpyTool()
-        server, registry = _server(tmp_path, tools={excluded: spy})
+        server, registry = _server(tmp_path, tools={escape_vector: spy})
         async with server:
-            resp = await _call(server.socket_path, excluded, {"x": 1})
+            resp = await _call(server.socket_path, escape_vector, {"x": 1})
         assert "error" in resp
         assert "not callable from a sandbox" in resp["error"]
-        assert spy.calls == [], f"{excluded} was INVOKED — hard-exclusion breached"
-        assert excluded not in registry.lookups, f"{excluded} was even looked up in the registry"
+        assert spy.calls == [], f"{escape_vector} was INVOKED — escape fence breached"
+        assert escape_vector not in registry.lookups, (
+            f"{escape_vector} was looked up in the registry — refusal came too late"
+        )
 
-    async def test_unknown_tool_refused(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("consequential", ["send_message", "owl_build", "tool_build"])
+    async def test_a_consequential_tool_is_now_callable(
+        self, tmp_path: Path, consequential: str
+    ) -> None:
+        """The deliberate widening, asserted explicitly rather than left implied.
+
+        This is the cost the operator accepted: a sandboxed script can take a
+        real-world action, and execute_code's own consent is the only consent
+        covering it. Pinning it means the change is visible in the test suite
+        instead of only in a commit message.
+        """
+        spy = _SpyTool(output="done")
+        server, _ = _server(tmp_path, tools={consequential: spy})
+        async with server:
+            resp = await _call(server.socket_path, consequential, {"x": 1})
+        assert resp.get("result") == "done", f"{consequential} was refused: {resp}"
+        assert spy.calls == [{"x": 1}]
+
+    async def test_an_unregistered_tool_fails_at_the_registry_not_the_fence(
+        self, tmp_path: Path
+    ) -> None:
+        """Under default-ALLOW an unknown NAME is no longer refused by policy.
+
+        It passes the escape fence and fails one layer down because nothing is
+        registered under it. Still refused, still no invocation — but the error
+        now names the real cause instead of implying a policy decision that was
+        not made.
+        """
         server, registry = _server(tmp_path, tools={})
         async with server:
             resp = await _call(server.socket_path, "totally_made_up", {})
-        assert "not callable from a sandbox" in resp["error"]
-        assert registry.lookups == []
+        assert "error" in resp
+        assert "not registered" in resp["error"], resp
+        assert registry.lookups == ["totally_made_up"], (
+            "the fence should have let it through to the registry"
+        )
 
 
 # --- write-confinement to the sandbox workspace ----------------------------------

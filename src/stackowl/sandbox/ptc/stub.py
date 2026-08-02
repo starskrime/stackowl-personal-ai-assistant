@@ -18,25 +18,37 @@ NOT hardcoded here so the host stays the single source of truth for the path).
 
 from __future__ import annotations
 
-from stackowl.sandbox.ptc.protocol import PTC_ALLOWLIST, PTC_SOCK_ENV
+from stackowl.sandbox.ptc.protocol import PTC_DENYLIST, PTC_SOCK_ENV
 
 __all__ = ["render_stub"]
 
-# The stub body. ``{ALLOWLIST}`` / ``{SOCK_ENV}`` are filled from the host policy so
-# the in-sandbox client mirrors the host's allowlist + env var (one source of truth).
+# The stub body. ``{denylist}`` / ``{sock_env}`` are filled from the host policy so
+# the in-sandbox client mirrors the host's denylist + env var (one source of truth).
 _STUB_TEMPLATE = '''\
-"""owl — call a curated allowlist of HOST tools from inside the StackOwl sandbox.
+"""owl — call HOST tools from inside the StackOwl sandbox.
 
-Available functions: read_file, write_file, edit, web_search, memory.
-Any other name (e.g. owl.shell) raises immediately — those tools are NOT callable
-from a sandbox. The host enforces this regardless of what this module does.
+Named helpers with friendly signatures: read_file, write_file, edit, web_search,
+memory. EVERY other host tool is reachable generically by attribute, passing the
+tool's own arguments as keywords:
+
+    owl.web_fetch(url="https://example.com")
+    owl.cronjob(action="list")
+
+Chaining several calls in ONE script is the point: intermediate results never
+enter the model's context, so a multi-step task costs one inference turn instead
+of one per step.
+
+A small set of SANDBOX-ESCAPE tools raises immediately (owl.shell,
+owl.execute_code, owl.process, owl.claude_code, owl.delegate_task,
+owl.sessions_spawn, owl.sessions_send). The host refuses them regardless of what
+this module does — this is courtesy, not security.
 """
 import json as _json
 import os as _os
 import socket as _socket
 import struct as _struct
 
-_ALLOWLIST = frozenset({allowlist!r})
+_DENYLIST = frozenset({denylist!r})
 _SOCK_ENV = {sock_env!r}
 _LEN = _struct.Struct(">I")
 _MAX_FRAME = 1_048_576
@@ -119,18 +131,28 @@ def memory(action, **kwargs):
 
 
 def __getattr__(name):
-    # Any non-allowlisted attribute (e.g. owl.shell) raises a clean, honest error.
-    # The host ALSO refuses such a call default-DENY — this is courtesy, not security.
-    if name not in _ALLOWLIST:
+    # D05.5 — default-ALLOW. Any host tool that is not a sandbox-escape vector is
+    # reachable generically, with the tool's own arguments passed as keywords.
+    # Private/dunder names are NOT tools; let those raise AttributeError normally
+    # so `import owl` and introspection (copy, pickle, pytest) keep working
+    # instead of being turned into an RPC call for `__wrapped__`.
+    if name.startswith("_"):
+        raise AttributeError(name)
+    if name in _DENYLIST:
         raise OwlToolError(
-            "tool %r is not callable from a sandbox" % name
+            "tool %r is not callable from a sandbox (escape vector)" % name
         )
-    raise AttributeError(name)
+
+    def _generic(**kwargs):
+        return _call(name, dict(kwargs))
+
+    _generic.__name__ = name
+    return _generic
 '''
 
 
 def render_stub() -> str:
     """Return the python source of the in-sandbox ``owl`` module (stdlib-only)."""
     return _STUB_TEMPLATE.format(
-        allowlist=sorted(PTC_ALLOWLIST), sock_env=PTC_SOCK_ENV
+        denylist=sorted(PTC_DENYLIST), sock_env=PTC_SOCK_ENV
     )

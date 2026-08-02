@@ -9,10 +9,14 @@ trust boundary and assumes the in-sandbox code is FULLY MALICIOUS.
 The load-bearing guarantees (all enforced HOST-side; the sandbox is never trusted to
 self-limit):
 
-* **Default-DENY allowlist** — ONLY the five names in :data:`PTC_ALLOWLIST`
-  (``read_file``, ``web_search``, ``memory``, ``write_file``, ``edit``) are callable.
-  Every other name — ``shell``, ``execute_code``, ``process``, ``delegate_task``, any
-  consequential tool — is refused WITHOUT invoking anything.
+* **Default-ALLOW minus escape vectors** (D05.5; was a five-name default-DENY
+  allowlist). Every host tool is callable EXCEPT :data:`PTC_DENYLIST` —
+  ``shell``, ``execute_code``, ``process``, ``claude_code``, ``delegate_task``,
+  ``sessions_spawn``, ``sessions_send`` — which are refused WITHOUT invoking
+  anything. THIS INCLUDES CONSEQUENTIAL TOOLS, and PTC does not re-prompt consent
+  per call: ``execute_code``'s own consent is the only consent covering a whole
+  script. Changed by operator decision with that cost stated; the denylist is now
+  a sandbox-ESCAPE fence, not a capability fence.
 * **Write-confinement to the SANDBOX workspace** — ``write_file``/``edit`` may only
   touch paths resolving inside the run's own sandbox workspace, never the host
   project tree, ``~/.stackowl`` secrets, or the agent data_root.
@@ -29,7 +33,7 @@ self-limit):
 from __future__ import annotations
 
 from stackowl.sandbox.ptc.protocol import (
-    PTC_ALLOWLIST,
+    PTC_DENYLIST,
     PTC_SOCK_ENV,
     PtcLimits,
     in_sandbox_sock_path,
@@ -38,7 +42,7 @@ from stackowl.sandbox.ptc.server import PtcServer
 from stackowl.sandbox.ptc.stub import render_stub
 
 __all__ = [
-    "PTC_ALLOWLIST",
+    "PTC_DENYLIST",
     "PTC_SOCK_ENV",
     "PtcLimits",
     "PtcServer",

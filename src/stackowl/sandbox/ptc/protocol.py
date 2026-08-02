@@ -33,12 +33,66 @@ __all__ = [
     "pack_frame",
 ]
 
-# ---------------------------------------------------------------- policy: allowlist
-# The ONLY host tools callable from inside a sandbox (default-DENY: everything not
-# here is refused without invoking anything). Quoted in the server's refusal message.
-PTC_ALLOWLIST: frozenset[str] = frozenset(
-    {"read_file", "web_search", "memory", "write_file", "edit"}
+# ---------------------------------------------------------------- policy: denylist
+#
+# D05.5 — THE TRUST MODEL CHANGED HERE, DELIBERATELY, BY OPERATOR DECISION.
+#
+# This was a default-DENY allowlist of five names
+# ({read_file, web_search, memory, write_file, edit}). It is now default-ALLOW
+# minus :data:`PTC_DENYLIST`, matching the reference platform's shape.
+#
+# WHY: measured on 1,470 tool-using turns, 84% were multi-call chains (810 used
+# 5+ calls, the longest 46) but only 20% fitted inside the five names — so PTC
+# could collapse a fifth of the opportunity it was built for. The single largest
+# blocker was web_fetch (4,102 appearances in chains) which was denied while its
+# read-only sibling web_search was allowed.
+#
+# WHAT THIS COSTS, STATED PLAINLY RATHER THAN DISCOVERED LATER: sandboxed,
+# LLM-authored code can now call every host tool except those below, INCLUDING
+# the 13 consequential ones (send_message, owl_build, tool_build, skill_manage,
+# send_file, browser_eval_js, …), and PTC does not re-prompt consent per call
+# (see PtcToolInvoker.invoke). execute_code's own consent is therefore the ONLY
+# consent covering everything a script does. The operator was shown this exact
+# consequence and chose it.
+#
+# WHAT STILL HOLDS: bounds (owl ∩ creation_ceiling) are enforced per call by the
+# invoker, every call is audited, write-confinement still applies to
+# PTC_WRITE_TOOLS, and the rate-limit / arg-bound / frame caps are unchanged.
+# The denylist below is no longer a safety fence around capability — it is
+# strictly a SANDBOX-ESCAPE fence.
+PTC_DENYLIST: frozenset[str] = frozenset(
+    {
+        # Arbitrary host command execution — the escape itself.
+        "shell",
+        # Recursion: a sandboxed run starting another sandboxed run.
+        "execute_code",
+        # Host process control.
+        "process",
+        # Spawns an external coding agent that runs OUTSIDE the sandbox with
+        # host filesystem access — an escape wearing a different name.
+        "claude_code",
+        # Fork-bomb vectors. E8-S0 already caps delegation depth for the model's
+        # own calls; a script must not be a way around that ceiling.
+        "delegate_task",
+        "sessions_spawn",
+        "sessions_send",
+    }
 )
+
+#: Retained for callers that still ask "is this callable?" by name. NO LONGER a
+#: five-name allowlist — it is now derived, and is the complement of the denylist
+#: over whatever the registry holds. Kept as a function rather than a frozenset
+#: so it cannot go stale as tools are registered.
+def ptc_callable(tool: str) -> bool:
+    """Whether ``tool`` may be invoked from inside a sandbox (default-ALLOW)."""
+    return bool(tool) and tool not in PTC_DENYLIST
+
+
+# Back-compat shim: the old name, now meaning "the tools that are NOT escape
+# vectors". Anything importing PTC_ALLOWLIST for a membership test still gets a
+# correct answer via ptc_callable(); this constant remains only so the denied
+# set can be quoted in refusal messages.
+PTC_ALLOWLIST: frozenset[str] = frozenset()
 
 # The subset whose target path MUST be confined to the run's sandbox workspace (never
 # the host project tree / ~/.stackowl secrets / agent data_root). read_file uses its

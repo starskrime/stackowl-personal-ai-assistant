@@ -4,10 +4,13 @@ This is the load-bearing security component. It listens on a per-run unix-domain
 socket (0600) that is the ONLY channel out of the otherwise no-network sandbox, and
 for each framed request from the (UNTRUSTED, assumed-malicious) sandbox code it:
 
-1. **Allowlist enforce (default-DENY, HOST-side).** Refuses any ``tool`` not in
-   :data:`~stackowl.sandbox.ptc.protocol.PTC_ALLOWLIST` — ``shell``, ``execute_code``,
-   ``process``, ``delegate_task``, every consequential tool — WITHOUT invoking
-   anything. The sandbox is never trusted to self-limit.
+1. **Denylist enforce (default-ALLOW since D05.5, HOST-side).** Refuses the
+   sandbox-ESCAPE vectors in :data:`~stackowl.sandbox.ptc.protocol.PTC_DENYLIST`
+   — ``shell``, ``execute_code``, ``process``, ``claude_code``, ``delegate_task``,
+   ``sessions_spawn``/``sessions_send`` — WITHOUT invoking anything. The sandbox
+   is still never trusted to self-limit; what changed is the SIZE of what it may
+   reach. Everything else, INCLUDING consequential tools, is now callable and is
+   NOT consent-prompted per call — see PTC_DENYLIST for the full cost.
 2. **Rate-limit / arg bound.** A per-run call CAP (anti-DoS) and per-arg size bounds;
    past the cap, or an oversized arg, → refused.
 3. **Write-confinement.** ``write_file``/``edit`` are re-anchored to the run's SANDBOX
@@ -33,11 +36,12 @@ from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.sandbox.ptc.dispatch import PtcToolInvoker
 from stackowl.sandbox.ptc.protocol import (
-    PTC_ALLOWLIST,
+    PTC_DENYLIST,
     FrameError,
     PtcLimits,
     decode_request,
     encode_response,
+    ptc_callable,
 )
 
 __all__ = ["PtcServer"]
@@ -47,7 +51,7 @@ _LEN_PREFIX_BYTES = 4
 
 
 class PtcServer:
-    """Per-run host-tool callback server (default-DENY allowlist; the trust boundary).
+    """Per-run host-tool callback server (default-ALLOW denylist; the trust boundary).
 
     Construct one PER sandbox run, bound to that run's scratch ``workspace`` and the
     HOST tool registry. ``start()`` binds a 0600 socket; ``aclose()`` tears it down +
@@ -189,15 +193,22 @@ class PtcServer:
             extra={"_fields": {"tool": tool, "arg_keys": sorted(args.keys()), "session": self._session_key or "-"}},
         )
 
-        # 2. DECISION (allowlist, default-DENY) — refuse anything not in the 5 names
-        #    WITHOUT invoking anything. The sandbox is never trusted to self-limit.
-        if tool not in PTC_ALLOWLIST:
-            self._invoker.audit(tool, args, allowed=False, reason="not_allowlisted")
+        # 2. DECISION (denylist, default-ALLOW since D05.5) — refuse the
+        #    sandbox-ESCAPE vectors WITHOUT invoking anything. The sandbox is
+        #    still never trusted to self-limit; what changed is the SIZE of what
+        #    it may reach, not who enforces it. See PTC_DENYLIST for the full
+        #    rationale and the cost this trades away.
+        if not ptc_callable(tool):
+            self._invoker.audit(tool, args, allowed=False, reason="denylisted")
             log.tool.warning(
-                "[sandbox.ptc] call: REFUSED (not allowlisted)",
-                extra={"_fields": {"tool": tool}},
+                "[sandbox.ptc] call: REFUSED (sandbox-escape vector)",
+                extra={"_fields": {"tool": tool, "denylist": sorted(PTC_DENYLIST)}},
             )
-            return self._error(req_id, f"tool '{tool}' is not callable from a sandbox")
+            return self._error(
+                req_id,
+                f"tool '{tool}' is not callable from a sandbox "
+                f"(escape vector; denied: {', '.join(sorted(PTC_DENYLIST))})",
+            )
 
         # Rate-limit: a per-run cap on callbacks (anti-spam / anti-DoS).
         async with self._lock:

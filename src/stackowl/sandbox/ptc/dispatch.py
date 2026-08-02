@@ -51,9 +51,19 @@ class PtcToolInvoker:
         Write tools (``write_file``/``edit``) are confined to the SANDBOX workspace via
         the path_guard root override (defense-in-depth: the path is independently
         re-resolved + escape-checked first). ``tool.execute`` is called DIRECTLY (not
-        ``__call__``) so the per-call consent gate is NOT re-prompted — the
-        execute_code consent already covered this run, the allowlist is
-        read+workspace-write only — and so it also works under a test-mode guard.
+        ``__call__``) so the per-call consent gate is NOT re-prompted, and so it
+        also works under a test-mode guard.
+
+        D05.5 — THE STATED REASON FOR THAT BYPASS IS NO LONGER TRUE, and is
+        rewritten here rather than left standing. It used to read "the allowlist
+        is read+workspace-write only", which made skipping consent safe by
+        construction. PTC is now default-ALLOW minus sandbox-escape vectors
+        (:data:`PTC_DENYLIST`), so consequential tools — send_message, owl_build,
+        tool_build, skill_manage, send_file — ARE reachable from a script and are
+        NOT prompted. execute_code's own consent is now the ONLY consent covering
+        everything a script does. Operator decision, taken with that consequence
+        stated. What still constrains a call: owl bounds ∩ creation_ceiling,
+        write-confinement, arg bounds, the per-run rate cap, and the audit log.
         """
         get = getattr(self._registry, "get", None)
         instance = get(tool) if callable(get) else None
