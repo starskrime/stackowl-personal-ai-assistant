@@ -258,18 +258,21 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.5
+  item: D05.1
   stage: brainstorm
   stage_status: not_started
   one_line: >
-    D05.2 AND D05.3 ARE BOTH 7/7 AND LIVE; D05.4 closed with D05.2 as subsumed.
+    D05.2, D05.3 AND D05.5 ARE ALL 7/7; D05.4 closed with D05.2 as subsumed.
     Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
     as a process_deviation and still needing Bakir's call). Dedup target X2 is
     RESOLVED, though not the way it was written — read its
     resolved_2026_08_02_BUT_NOT_AS_WRITTEN before repeating "the budgeter should
-    go", because it did not go. Wave 2 has 5 D05 items left; next in order is
-    D05.5 (Programmatic tool calling), whose map entry explicitly asks to walk
-    the existing _ptc.py together before deciding anything.
+    go", because it did not go. Wave 2 has 4 D05 items left (D05.1, D05.6,
+    D05.7, D05.8).
+    D05.5 CHANGED A SECURITY BOUNDARY by operator decision: PTC went default-DENY
+    (5 tools) to default-ALLOW minus 7 sandbox-escape vectors, and sandboxed code
+    can now call consequential tools UNPROMPTED. Read designs/D05.5.md before
+    touching anything under sandbox/ptc/.
   read_first: >
     (1) This block. (2) designs/D05.2.md — three corrections and a fourth finding,
     all recorded in sequence because the sequence is the lesson. (3) PROCESS.md
@@ -313,9 +316,10 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.5 (Programmatic tool calling) brainstorm — the map itself says 'Walk the current _ptc.py together — is this already 80% there?'. Two items running have now shown the answer is usually yes."
+    1: "D05.1 brainstorm. THE PATTERN IS NOW THREE FOR THREE: D05.2's signal, D05.3's HealableResource and D05.5's whole RPC transport were all already built. Read the tree before writing a single question."
     2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
-    3: "Wave 2 is D05 entire: 8 items. D05.2, D05.3 and D05.4 are closed; 5 remain (D05.1, D05.5, D05.6, D05.7, D05.8)."
+    3: "Wave 2 is D05 entire: 8 items. D05.2/3/4/5 closed; 4 remain (D05.1, D05.6, D05.7, D05.8)."
+    4: "NEW: DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
@@ -412,6 +416,41 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-37
+    found: 2026-08-02
+    what: "Long tool chains are overwhelmingly ONE tool repeated, not multi-step plans — 46 web_search calls in a single turn."
+    evidence: >
+      MEASURED during D05.5's brainstorm, over the 1,470 task_outcomes rows that
+      called at least one tool:
+        * 810 turns used 5+ tool calls; 341 used 15 or more.
+        * The longest chain was 46 calls — web_search FORTY-SIX TIMES, ONE
+          distinct tool (owl: headhunter).
+        * Runners-up: scout 38x web_search (1 distinct), scout 37x web_fetch
+          (1 distinct), secretary 39 calls across only 4 distinct tools.
+        * 311 of the 341 long chains (91%) are >=50% a SINGLE repeated tool.
+      So these are loops, not plans.
+    why_it_matters: >
+      Two readings and they need different fixes, which is exactly why this must
+      not be guessed at:
+        (a) LEGITIMATE FAN-OUT — 46 genuinely different search queries. Then the
+            fix is batching/parallelism, and D05.5's PTC already helps a lot: one
+            script can run the fan-out in a single inference turn.
+        (b) A THRASH LOOP — the same query retried because nothing satisfied the
+            model. Then every one of those calls is wasted latency and money, and
+            the real defect is upstream in the turn supervisor / give-up logic.
+      A 46-call turn is also a hard latency floor no caching can fix.
+    how_to_tell: >
+      The input_text and the per-call ARGS distinguish them: 46 distinct queries
+      is fan-out, 46 near-identical queries is thrash. tool_sequence stores only
+      NAMES, so the args are not in this table — check the JSONL trace for one of
+      the long-chain trace_ids instead.
+    NOT_caused_by_D05_5: >
+      Pre-existing and unrelated; surfaced only because D05.5 measured chain
+      lengths to size PTC's benefit. Deliberately NOT folded into D05.5 (Bakir's
+      call) — an item named "Programmatic tool calling" is where an unrelated
+      loop-behaviour obligation would go to be forgotten.
+    status: open
+
   - id: DEBT-36
     found: 2026-07-29
     what: "The transcripts tool advertises an `include_tool_calls` parameter that has never been able to do anything."
@@ -6000,16 +6039,89 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/hermes-mapping/designs/D05.5.md"
+    doc_last_verified: "2026-08-02"
+    decisions:
+      - date: 2026-08-02
+        stage: all_seven
+        by: Bakir
+        round: "4 questions over 2 rounds. The map's own question — 'walk _ptc.py, is this already 80% there?' — was answered by READING, which retired most of the planned grill."
+        THE_MAPS_QUESTION_ANSWERED: >
+          THE TRANSPORT IS ~100% THERE. THE SURFACE WAS 6.5%.
+          StackOwl's PTC already had: per-run UDS at 0600 unlinked on teardown, a
+          generated in-sandbox stub (import owl), HOST-side default-DENY
+          enforcement, per-call bounds (owl ∩ creation_ceiling), write-confinement
+          to the run workspace, rate limits, arg/frame caps, audit, never-raise.
+          It was architecturally STRICTER than the reference on every axis except
+          the one that decides whether the feature does anything: it could call 5
+          of 77 tools.
+        THE_PREMISE_MEASURED: >
+          1,470 turns called at least one tool. 1,237 (84%) were MULTI-CALL
+          chains; 810 used 5+ calls; the longest was 46. Only 256 of the 1,237
+          (20%) fitted inside the five allowlisted names — so PTC could collapse
+          a fifth of the opportunity it exists for.
+          The single largest blocker was web_fetch: 4,102 appearances in chains,
+          DENIED, while its read-only sibling web_search was ALLOWED. That
+          asymmetry is what made the narrow allowlist look accidental rather than
+          principled.
+        answers:
+          allowlist_rule: "DEFAULT-ALLOW MINUS EXCLUSIONS (the reference platform's shape). Bakir chose this over my 'curated read-only, still default-DENY' recommendation."
+          web_fetch: "ALLOW — the asymmetry with web_search was unintended."
+          long_chains: "INVESTIGATE AS ITS OWN ITEM, not folded into D05.5. Recorded as a backlog entry with the measurement attached."
+          consent: >
+            DEFAULT-ALLOW EVERYTHING, NO CONSENT (literal Hermes). Chosen AFTER I
+            surfaced the specific consequence: dispatch.py:54 deliberately skips
+            the per-call consent gate, and the reason given in the code was that
+            the allowlist was read+sandbox-write only. Removing that premise makes
+            13 consequential tools (send_message, owl_build, tool_build,
+            skill_manage, claude_code, browser_eval_js, ...) callable from a
+            sandboxed script with no prompt. Bakir was shown exactly that and
+            chose it. Concern raised once, decision taken, proceeded in full.
+        what_shipped:
+          policy: "PTC_ALLOWLIST (5 names, default-DENY) -> PTC_DENYLIST (7 names, default-ALLOW). ptc_callable() is a function, not a frozenset, so it cannot go stale as tools register."
+          denylist_meaning_changed: "It is now a SANDBOX-ESCAPE fence, not a capability fence: shell, execute_code, process, claude_code, delegate_task, sessions_spawn, sessions_send. Each would let code break OUT — host commands, nested sandbox, host process control, an agent with host FS access, or a bypass of E8-S0's delegation-depth ceiling."
+          stub: "Generic __getattr__ so any non-denied tool is owl.<tool>(**kwargs). Dunder names still raise AttributeError — otherwise `import owl`, copy, pickle and pytest collection each become an RPC call for __wrapped__."
+        THREE_SELF_JUSTIFYING_COMMENTS_REWRITTEN_not_left_standing: >
+          The most important cleanup in this item. Three places justified
+          themselves on the five-name allowlist and would have been left asserting
+          a safety that no longer holds — worse than no comment at all:
+            * dispatch.invoke — "the allowlist is read+workspace-write only" was
+              the stated reason for skipping consent. Now states that
+              consequential tools are reachable and unprompted, and lists what
+              DOES still constrain a call.
+            * sandbox/ptc/__init__ — "Default-DENY allowlist — ONLY the five
+              names". Now default-ALLOW minus escape vectors, consent cost named.
+            * _ptc.ptc_enabled — ON by default because "the allowlist is read +
+              sandbox-workspace-write only". Now ON by operator decision, naming
+              the guardrails that actually remain.
+          The USER-FACING consent text was also wrong and is fixed: it described a
+          curated five-tool surface. It now says approving the run approves
+          everything the script does.
+        what_still_constrains_a_call: "Bounds (owl ∩ creation_ceiling) per call, write-confinement, per-run rate cap, arg/frame caps, audit with bounded args, never-raise. None removed — which is why this is still a narrower grant than the reference platform's despite matching its shape."
+        mutation_M4: >
+          Make ptc_callable() return True unconditionally. Fails ALL SEVEN
+          escape-vector tests and nothing else. That is the mutation that matters
+          here — it is the one that would let sandboxed code out. The tests assert
+          on the REGISTRY LOOKUP as well as invocation, because refusal after
+          resolution means the tool was already constructed, which for
+          execute_code or process is too late.
+        tests: "tests/sandbox/ 165 passed. TestAllowlistDefaultDeny rewritten to TestEscapeFenceDefaultAllow: 7 escape-vector params (was 5), plus a new test PINNING that send_message/owl_build/tool_build ARE now callable — the widening is asserted explicitly rather than left implied, so it is visible in the suite and not only in a commit message."
+        gates: "src ruff 46 / mypy 78 unchanged. NOTE: ruff on tests/sandbox/ptc/ reports 2 errors, both in test_ptc_bwrap.py which this item never touched — pre-existing, verified not introduced."
+        NOT_verified_live: "No sandboxed run was executed against the widened surface. Evidence is the suite plus M4. A live execute_code run calling owl.web_fetch is what would close it."
+        STANDING_LIABILITY_recorded_not_solved: >
+          THE FENCE IS A HAND-KEPT LIST. A future tool that can escape the sandbox
+          is callable until someone remembers to add it to PTC_DENYLIST. Deriving
+          the fence (e.g. from action_severity) was considered and REJECTED: that
+          field is authored for consent, and a mislabelled tool would silently
+          open the fence rather than merely mis-prompt. Stated as a failure mode
+          in the design doc rather than left implicit.
     changes: []
     notes: null
 
