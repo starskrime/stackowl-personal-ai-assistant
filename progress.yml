@@ -258,47 +258,55 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.2
-  stage: architect
+  item: D05.3
+  stage: brainstorm
   stage_status: not_started
   one_line: >
-    WAVE 1 IS 6 OF 7 ITEMS COMPLETE. D01.1, D01.2, D01.3, D01.4, D01.5 and D01.7
-    are all 7/7 with live docs. D01.6 is 6/7 — its BRAINSTORM was never run (it
-    was item #1, built the same day the grill rule was written) and that is
-    recorded as a process_deviation rather than papered over. Wave 2 opens at
-    D05.2 (Toolsets), which D01.3 has already handed binding constraints to.
+    D05.2 IS 7/7 AND LIVE, and D05.4 closed with it as subsumed. Wave 1 stands at
+    6 of 7 items complete (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
+    as a process_deviation and still needing Bakir's call). Dedup target X2 is
+    RESOLVED, though not the way it was written — read its
+    resolved_2026_08_02_BUT_NOT_AS_WRITTEN before repeating "the budgeter should
+    go", because it did not go. Next is D05.3 (Service gating / check_fn), which
+    depended on D05.2 and is now unblocked.
   read_first: >
-    (1) This block. (2) designs/D01.3.md — it DECIDED X2 and lists the three
-    constraints D05.2 must honour plus the three questions D05.2 owns.
-    (3) PROCESS.md and DOC_STANDARD.md. (4) The standing rule READ HERMES BEFORE
-    ASKING — it has paid off on every item it has been applied to, most recently
-    proving Hermes builds agent.tools ONCE at init and never per turn.
-  what_D05_2_inherits_from_D01_3:
-    must_honour:
-      1: "The tools array must be STABLE for the life of a session — D01.2's position-0 marker is worthless otherwise."
-      2: "WINDOW-AWARE SIZING must survive. Hermes solves this by DEFERRING overflow behind a bridge rather than dropping it, which is strictly better than our budgeter."
-      3: "A toolset change must INVALIDATE the frozen prompt. D01.4 already built that seam (SessionPromptStore.invalidate_all)."
-    the_measurement_that_justifies_it: "15 change events across 5 (lane, owl) pairs, the tool COUNT oscillating in 4 of 5. Cause at execute.py:1134. Background lanes only."
-  D05_2_design_SETTLED:
-    what_it_actually_is: >
-      SMALLER THAN THE MAP IMPLIES. StackOwl already has toolsets —
-      Tool.toolset_group (base.py:86), 54 tools declare one, and an owl's
-      capability_profile selects groups (ADR-11 / E1-S4). The budgeter runs ON
-      TOP and re-selects per query. So D05.2 is "make the existing toolsets
-      AUTHORITATIVE and delete the per-query re-selection", not "build toolsets".
-    decisions:
-      - "PORT THE BRIDGE — defer, never drop. Our budgeter silently makes dropped tools uncallable; tool_search/describe/call keeps everything reachable while the array stays stable."
-      - "The three bridge tools are CORE and always present, inside D01.2's cached prefix. Fixed schemas, so position 0 never moves."
-      - "LEARNED PER-OWL CORE, recomputed at SESSION BOUNDARIES only — beyond the reference platform, which has one agent and static config."
-      - "Learning signal = frequency x success, recency-weighted. Demote after N ROLLOVERS unused. Core respects max_tools. Never deletes — only moves between core and bridge."
-      - "tool_search results FILTERED by the owl's envelope — not for security (dispatch already denies) but so the model is not shown dead ends that burn a 15-35s round-trip."
-      - "COLD START = the owl's declared capability preset, which already exists and is already the authz basis."
-      - "D05.4 MERGED IN (bridge only). Its unrelated DEBT-25 skill-tiering inheritance is rehomed to D10.6."
-    known_scope_gap: "NO durable per-(owl, tool) usage record exists — the outcome ledger is turn-scoped, task_outcomes lacks tool names, tool_heuristics lacks the owl. The learning half needs a migration."
+    (1) This block. (2) designs/D05.2.md — three corrections and a fourth finding,
+    all recorded in sequence because the sequence is the lesson. (3) PROCESS.md
+    and DOC_STANDARD.md. (4) The standing rule READ HERMES BEFORE ASKING.
+  THE_LESSON_FROM_D05_2_READ_THIS_BEFORE_D05_3: >
+    FOUR TIMES ON ONE ITEM I DESCRIBED THE TREE FROM THE MAP INSTEAD OF READING
+    IT, and every correction changed the work:
+      1. "Build a toolset system" -> Tool.toolset_group already exists (77
+         declarations across 54 files).
+      2. "Our budgeter drops tools, they become unreachable" -> FALSE. It defers
+         behind tool_search, exactly as Hermes does. That false claim had already
+         driven a decision ("port the bridge") before it was caught.
+      3. "The learning half needs a new store and a migration" -> FALSE.
+         task_outcomes has carried owl_name + tool_sequence on every turn since
+         2026-05-28, with a write gap of ZERO.
+      4. The one that went the other way: reading the CALL SITE found a second,
+         independent defect nobody had named (the budget shrinks as history
+         grows), which no amount of fixing the ordering would have addressed.
+    The item ended at roughly a quarter of its mapped size, plus one defect the
+    map never mentioned. THE MAP IS A HYPOTHESIS. Measure the tree first — and
+    measure the LIVE DB, not the columns you remember (the row counts came from
+    ~/.stackowl/workspace/stackowl.db; ~/.stackowl/stackowl.db is a 0-byte decoy).
+  AND_THE_TESTING_LESSON: >
+    Mutation M1 (disable the memo in execute.py, leave the module alone) SURVIVED
+    the first test suite — 19 green while the platform rebuilt the array every
+    turn. New modules invite module tests, and a module test proves CORRECT, not
+    WIRED. Same gap D01.5 caught. Every item from here gets a test that drives
+    the real call path, and a mutation that proves it discriminates.
+  what_D05_2_shipped:
+    defect_A: "rank_candidates ordered by lexical relevance to request_text -> now by measured per-owl usage from task_outcomes. No migration."
+    defect_B: "the fitted set was recomputed every turn against a fixed_cost that includes the growing history -> now memoized per (session_key, owl, protocol, window, hydrated) in infra/presented_tools.py."
+    kept_deliberately: "fit_items, the window measurement, the tool_search bridge, the guaranteed base set, max_tools. All unchanged."
+    invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
+    live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.2 brainstorm — READ HERMES FIRST (agent_init.py:1386 and the toolset registry), then the 25-question grill."
-    2: "D05.4 is SUBSUMED into D05.2 — do not work it separately. Its DEBT-25 inheritance moved to D10.6."
-    3: "Wave 2 is D05 entire: 8 items, tool architecture."
+    1: "D05.3 (Service gating / check_fn) brainstorm — READ HERMES FIRST, then the grill. Hermes has a per-tool check_fn predicate, TTL-cached, plus requires_env (already noted in D05.2's brainstorm notes)."
+    2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections were all avoidable that way."
+    3: "Wave 2 is D05 entire: 8 items. D05.2 and D05.4 are closed; 6 remain."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
@@ -1856,7 +1864,25 @@ dedup_targets:
       survive. D01.3's doc records the three constraints D05.2 must honour.
       The premise is no longer an assertion: 15 measured change events, the tool
       COUNT itself oscillating in 4 of 5 (lane, owl) pairs.
-    status: "decided — closes when D05.2/D05.4 land"
+    resolved_2026_08_02_BUT_NOT_AS_WRITTEN: >
+      D05.2 shipped 7/7 and X2 is resolved — but read the detail line above
+      before recording this as "done as planned", because THE BUDGETER DID NOT
+      GO. It is still there: fit_items, tool_budget_tokens and the window
+      measurement all survive untouched.
+      What was actually wrong with it turned out to be two things, neither of
+      which is the budgeter existing:
+        (1) its ORDERING INPUT was the turn's request_text — replaced by measured
+            per-owl usage;
+        (2) it RAN EVERY TURN against a fixed_cost that includes the growing
+            history, so the fit shrank as the session went on — the result is now
+            memoized per session.
+      So there are no longer two competing tool-selection mechanisms, which is
+      what X2 was really about: there is ONE, running once per session, ordered
+      by a stable signal. "Budgeter should go" was the right diagnosis of a
+      duplication and the wrong prescription for it — deleting it would have
+      taken the window-awareness with it, which is exactly the loss D01.3's
+      constraint 2 forbade.
+    status: "RESOLVED 2026-08-02 by D05.2 — but by reducing the budgeter to once-per-session, NOT by deleting it. See resolved_2026_08_02_BUT_NOT_AS_WRITTEN."
   X3:
     name: "Two learning paths"
     detail: "Scheduled learning/ miners vs per-turn background review fork. Compose or replace?"
@@ -5299,8 +5325,8 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   not_started
-      document:   not_started
+      validate:   done
+      document:   done
     doc: "docs/hermes-mapping/designs/D05.2.md"
     doc_last_verified: "2026-08-01"
     decisions:
@@ -5653,6 +5679,50 @@ items:
           instead; the slices covering every file this item touched are listed
           above. Stated rather than implied: directory-wide green was NOT
           demonstrated.
+      - date: 2026-08-02
+        stage: validate
+        by: Claude
+        a_stronger_test_added_here: >
+          The wiring tests substituted the tool registry, which is what makes the
+          budget behaviour observable — but a fake registry can also hide an
+          integration defect, and this codebase's standing rule is that an
+          implementation gets a test mocking ONLY the AI provider. Added
+          test_the_real_registry_and_real_budgeter_are_stable_across_turns: real
+          ToolRegistry.with_defaults(), real ToolPresentation, real fit_items, a
+          16k window so the budget genuinely binds, 0 vs 40 history messages.
+          CONFIRMED NON-VACUOUS: M1 kills it too. The real budgeter really does
+          shrink the real presented set under a grown history — this is no longer
+          only a property of the fake.
+        what_IS_proven_live:
+          - "The platform boots clean under the change. ./start.sh, pid 112860; 173 new log lines; 196 INFO, 16 WARNING, 0 ERROR, 0 CRITICAL."
+          - "All 16 warnings are pre-existing and unrelated: browser system libs (2), thin tool descriptions (24 across earlier lines), telegram healer setup, browser binary missing."
+          - "The last 'tools array CHANGED' in the whole log is line 9418 at 01:51:19Z — BEFORE this shipped. Nothing since."
+        what_is_NOT_proven_live_and_why: >
+          THE ACCEPTANCE TEST HAS HAD NO OPPORTUNITY. Measured, not guessed: ZERO
+          turns have run since the restart — `jq 'select(.msg|test("tool_loop
+          entry"))'` over the post-restart region returns nothing. The audit only
+          fires on the SECOND turn of a given (session_key, owl), so an empty
+          result today means no traffic, NOT a stable array. Reading it as success
+          would repeat exactly the false negative D01.3's first observation window
+          produced and recorded.
+          The detector itself is proven still live by a different route: under
+          mutation M1 it emitted "[cache] breakpoints: tools array CHANGED —
+          position 0 invalidated this turn" inside the unit run, and was silent
+          without it. So when turns do arrive, silence will be meaningful.
+        the_command_that_closes_it: >
+          After any (lane, owl) pair has had 2+ turns:
+            jq -r 'select(.msg|test("tools array CHANGED"))
+                   | "\(.fields.session_key) owl=\(.fields.owl) n=\(.fields.tool_count)"' \
+              ~/.stackowl/logs/stackowl.jsonl
+          Read the DENOMINATOR first — count tool_loop entries per (session_key,
+          owl) — then read the result. Expect silence for repeat pairs.
+        note_on_log_level: >
+          The memo hit/rebuild lines are DEBUG and the deployment runs at INFO, so
+          they are invisible in production today. Deliberate, and NOT D01.6's
+          mistake: D01.6's lesson applies to a measurement obtainable no other
+          way. Here the acceptance signal is the cache_audit WARNING, which is
+          visible; the DEBUG lines are supplementary detail for a debug session.
+        gates: "ruff src/ = 46, mypy src/ = 78, ruff on the new test file clean. 33 tests green after restoring both mutations."
     changes: []
     notes: null
 
@@ -5721,6 +5791,19 @@ items:
         literally that subject. Caught before merging: a straight fold would have
         buried a tracked obligation inside an item nobody would look in.
       status_note: "This item is closed as subsumed, not as done. Its work lives in D05.2; its unrelated inheritance lives in D10.6."
+      outcome_2026_08_02: >
+        D05.2 shipped 7/7. What this item was going to BUILD turned out to exist
+        already — tool_search does "discovery over the FULL tool catalog"
+        (tool_search.py:1) and promotes hits "into the NEXT turn's presented
+        schema" (:158), and to_provider_schema:417 states "overflow stays
+        reachable through tool_search". So the bridge was not ported; it was
+        found. D05.2's contribution at this seam was narrower and unplanned:
+        the bridge's promotion mechanism COLLIDES with a session-stable array,
+        and the collision is resolved in the bridge's favour — the hydrated set
+        is part of the memo key, so a discovery invalidates and costs one
+        rebuild rather than being silently swallowed. Without that, this item's
+        subject matter would have been quietly disabled by the item that
+        absorbed it.
 
   - id: D05.5
     title: "Programmatic tool calling (PTC)"

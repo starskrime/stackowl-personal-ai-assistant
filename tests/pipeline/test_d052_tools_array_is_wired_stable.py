@@ -89,7 +89,9 @@ class _FakeProviderRegistry:
         return self._p
 
 
-async def _run_turn(registry, sink, *, history_messages: int) -> None:
+async def _run_turn_with_registry(
+    registry, sink, *, history_messages: int, window: int | None = None,
+) -> None:
     from stackowl.pipeline.services import StepServices, reset_services, set_services
     from stackowl.pipeline.state import PipelineState
     from stackowl.pipeline.steps import execute
@@ -105,6 +107,7 @@ async def _run_turn(registry, sink, *, history_messages: int) -> None:
             trace_id=f"t-{history_messages}", session_key="one-session",
             input_text="a question", channel="cli", owl_name="secretary",
             pipeline_step="execute", system_prompt="SYS",
+            model_window=window,
             history=tuple(
                 Message(role="user", content="x" * 400)
                 for _ in range(history_messages)
@@ -113,6 +116,12 @@ async def _run_turn(registry, sink, *, history_messages: int) -> None:
         await execute.run(state)
     finally:
         reset_services(token)
+
+
+async def _run_turn(registry, sink, *, history_messages: int) -> None:
+    await _run_turn_with_registry(
+        registry, sink, history_messages=history_messages,
+    )
 
 
 @pytest.mark.asyncio
@@ -146,6 +155,35 @@ async def test_a_growing_history_does_not_change_the_tools_the_provider_receives
         "the tools array changed between turns of one session — the memo is not "
         f"wired. Turn 1 had {len(sink[0])} tools, turn 2 had {len(sink[1])}. "
         f"Registry saw fixed_cost values {reg.calls}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_real_registry_and_real_budgeter_are_stable_across_turns():
+    """Same property, with ONLY the AI provider mocked.
+
+    The tests above substitute the registry, which is what makes the budget
+    behaviour observable — but a fake registry can also hide an integration
+    defect, and the standing rule for this codebase is that an implementation
+    gets a test mocking only the provider. So this one runs the REAL
+    ToolRegistry.with_defaults(), the REAL ToolPresentation, and the REAL
+    fit_items against a window small enough that the budget genuinely binds.
+
+    Without the memo, turn 2's larger history shrinks the real fitted set.
+    """
+    from stackowl.tools.registry import ToolRegistry
+
+    real = ToolRegistry.with_defaults()
+    sink: list = []
+
+    # A small window so `window - fixed_cost` actually constrains the real
+    # budgeter rather than admitting the whole catalogue on both turns.
+    await _run_turn_with_registry(real, sink, history_messages=0, window=16_000)
+    await _run_turn_with_registry(real, sink, history_messages=40, window=16_000)
+
+    assert len(sink) == 2
+    assert [s["name"] for s in sink[0]] == [s["name"] for s in sink[1]], (
+        f"the real presented set moved: {len(sink[0])} tools -> {len(sink[1])}"
     )
 
 
