@@ -127,6 +127,17 @@ class BrowserVisionTool(Tool):
             parameters=self.parameters,
             action_severity="read",
             toolset_group=_TOOLSET_GROUP,
+            # D05.3 — this tool is grouped under "media" (it analyses an image)
+            # but it cannot run without the BROWSER runtime: it screenshots a
+            # live page via sessions.get_page + runtime.settings.screenshots_dir.
+            #
+            # Worth stating because it is the counter-example that justifies
+            # requires_capability existing as its own field: toolset_group is
+            # NOT a reliable proxy for what a tool depends on. A sweep that
+            # gated "everything in the browser group" would have missed this one
+            # and left it advertised on a box with no browser. Caught by a test
+            # asserting on tool NAMES rather than on the grouping the code uses.
+            requires_capability="browser",
         )
 
     # --------------------------------------------------------------- execute

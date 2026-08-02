@@ -49,6 +49,8 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
+from stackowl.infra.observability import log
+
 __all__ = ["clear", "clear_owl", "get", "make_key", "put"]
 
 #: Bounded LRU across all sessions. Each entry is a list of schema dicts, so the
@@ -59,6 +61,33 @@ _lock = threading.Lock()
 _memo: OrderedDict[tuple[str, str, str, int, tuple[str, ...]], list[dict[str, Any]]] = (
     OrderedDict()
 )
+
+
+def _on_capability_change(capability: str) -> None:
+    """Drop every memoized array when a capability's verdict changes (D05.3).
+
+    Without this the availability gate would be evaluated once per session and a
+    newly-configured capability would not appear until rollover — "I added the
+    API key and nothing happened".
+
+    Deliberately clears EVERYTHING rather than only the affected entries: the
+    memo key does not record which capabilities a given array depended on, and
+    inventing that bookkeeping to save a rebuild that happens on a human-scale
+    event would be the expensive kind of clever. Capability flips are rare; a
+    turn-frequency invalidation this is not.
+    """
+    log.infra.info(
+        "[presented_tools] capability changed — dropping every memoized tool array",
+        extra={"_fields": {"capability": capability or "(all)", "dropped": len(_memo)}},
+    )
+    clear()
+
+
+def _subscribe_once() -> None:
+    """Wire the capability→memo invalidation exactly once, on first import."""
+    from stackowl.infra import capabilities
+
+    capabilities.subscribe_to_changes(_on_capability_change)
 
 
 def make_key(
@@ -130,3 +159,11 @@ def clear(session_key: str | None = None) -> None:
             return
         for key in [k for k in _memo if k[0] == session_key]:
             del _memo[key]
+
+
+# Wire the capability→memo invalidation at import. Done here rather than in the
+# orchestrator so it holds in tests and in any process that builds schemas, not
+# only the one that happens to run startup wiring — the failure it prevents
+# ("I added the API key and nothing happened") is silent, and a wiring step that
+# can be forgotten is how it would come back.
+_subscribe_once()

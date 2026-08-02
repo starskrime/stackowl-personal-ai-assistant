@@ -59,6 +59,18 @@ class HealableResource(Protocol):
         """Make the resource usable. Raise if it cannot be recovered."""
         ...
 
+    # ``remedy`` is DELIBERATELY NOT declared here (D05.3). It is optional: the
+    # capability registry reads it with ``getattr(resource, "remedy", None)`` so
+    # a resource that has nothing useful to say simply omits it, and none of the
+    # ten existing implementers had to change to keep satisfying this protocol.
+    # Declaring it would make every implementer's conformance depend on adding a
+    # property whose honest value is usually None.
+    #
+    # Implement it when the subsystem knows a CONCRETE operator action — e.g.
+    # the browser runtime knowing "sudo apt install libx11-xcb1" — because a
+    # gated tool stays visible through tool_search and a remedy is what makes
+    # that visibility actionable rather than merely informative.
+
     def register_on_recycled(self, cb: Callable[[], None]) -> None:
         """Register a sync callback fired whenever the resource is recycled.
 

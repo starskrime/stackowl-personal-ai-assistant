@@ -1002,6 +1002,15 @@ class StartupOrchestrator:
                 browser_settings = browser_settings.model_copy(update={"headless_mode": "true"})
             browser_runtime = CamoufoxRuntime(browser_settings)
             await browser_runtime.start()
+            # D05.3 — bind the "browser" capability to the live runtime so the 25
+            # tools declaring requires_capability="browser" resolve against it.
+            # Registered BEFORE the availability check below: a runtime that
+            # failed to start is exactly the case the gate exists for, and
+            # registering only on success would leave the capability unknown —
+            # which fails OPEN and presents all 25 tools anyway.
+            from stackowl.infra import capabilities as _capabilities
+
+            _capabilities.register("browser", browser_runtime)
             if not browser_runtime.available:
                 log.warning(
                     "[startup] gateway: browser runtime failed to start — tools will be unavailable (%s)",
@@ -1082,7 +1091,21 @@ class StartupOrchestrator:
 
                 await seed_browser_maintenance_schedules(db_pool)
         else:
-            reason = "binary not found" if probe is not None else "probe did not run"
+            # The guard above is `role != "gateway" AND probe is not None AND
+            # probe.binary_ok`, but this message used to report "binary not
+            # found" for ALL THREE causes. On a gateway-role process with the
+            # binary present it printed "binary not found" two lines after the
+            # probe logged binary=True — two lines from one boot contradicting
+            # each other. Found while reading for D05.3, where it cost ten
+            # minutes of chasing a non-existent missing binary.
+            if self._role == "gateway":
+                reason = "this process runs the gateway role; the browser is hosted by core"
+            elif probe is None:
+                reason = "probe did not run"
+            elif not probe.binary_ok:
+                reason = "camoufox binary not found"
+            else:
+                reason = "unknown — the guard rejected it but no cause matched"
             log.warning("[startup] gateway: browser runtime skipped — %s", reason)
 
         # E0-S1 — consent gate: combination consent policy + per-channel prompters.

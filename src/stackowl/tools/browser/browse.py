@@ -187,6 +187,9 @@ class BrowserBrowseTool(Tool):
             parameters=self.parameters, action_severity="consequential",
             commit_coupling="unconfirmed",
             toolset_group="browser",
+            # D05.3 — needs the Camoufox runtime. Declared here rather than
+            # inherited: this tool subclasses Tool directly, not _BrowserTool.
+            requires_capability="browser",
             capability_tag="web_knowledge",
             progress_key="BROWSE",
         )

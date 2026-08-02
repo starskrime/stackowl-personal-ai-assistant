@@ -162,6 +162,12 @@ class _BrowserTool(Tool):
             commit_coupling=self._commit_coupling,
             consent_category=self._consent_category,
             toolset_group="browser",
+            # D05.3 — every browser tool needs the Camoufox runtime. Declared on
+            # the shared base so the 18 subclasses inherit it; the SEVEN browser
+            # tools that subclass Tool directly (browse, snapshot, back, press,
+            # get_images, console, dialog) each declare it themselves. Editing
+            # only this base would have left those seven silently ungated.
+            requires_capability="browser",
         )
 
 

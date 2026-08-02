@@ -105,6 +105,21 @@ _DEFAULT_BASE = frozenset({
 _DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
 
 
+def _capability_ok(tool: Tool) -> bool:
+    """Whether ``tool``'s required subsystem can run (D05.3). Fails OPEN.
+
+    Callers must apply this to the DISCRETIONARY set only — the guaranteed base
+    set is never availability-gated (invariant I2), so that a probe bug cannot
+    leave an owl with an empty toolbox.
+    """
+    from stackowl.infra.capabilities import resolve
+
+    required = getattr(tool.manifest, "requires_capability", None)
+    if not required:
+        return True
+    return resolve(required).ok
+
+
 @dataclass(frozen=True)
 class PresentationConfig:
     """Tunable presentation policy (cap + the always/base membership sets)."""
@@ -167,14 +182,26 @@ class ToolPresentation:
 
         # Discretionary tiers, highest priority first: pins → hydrated → group tools.
         # Each tier sorted by name for a total, reproducible order.
+        #
+        # D05.3 — every tier below is filtered by _capability_ok. All three are
+        # DISCRETIONARY; `guaranteed` above is built without the filter, which is
+        # invariant I2 (a probe bug must never empty an owl's toolbox).
         guaranteed_set = set(guaranteed)
-        pins_tier = sorted(n for n in pin_names if n in by_name and n not in guaranteed_set)
+        pins_tier = sorted(
+            n for n in pin_names
+            if n in by_name and n not in guaranteed_set and _capability_ok(by_name[n])
+        )
         taken = guaranteed_set | set(pins_tier)
-        hydrated_tier = sorted(n for n in hydrated_names if n in by_name and n not in taken)
+        hydrated_tier = sorted(
+            n for n in hydrated_names
+            if n in by_name and n not in taken and _capability_ok(by_name[n])
+        )
         taken |= set(hydrated_tier)
         group_tier = sorted(
             n for n, t in by_name.items()
-            if t.manifest.toolset_group in profile_groups and n not in taken
+            if t.manifest.toolset_group in profile_groups
+            and n not in taken
+            and _capability_ok(t)
         )
 
         # Assemble: guaranteed first (never dropped), then fill discretionary tiers
@@ -240,6 +267,14 @@ class ToolPresentation:
 
         def _eligible(t: Tool) -> bool:
             if t.name in gset:
+                return False
+            # D05.3 — never offer a tool whose subsystem cannot run. Applied to
+            # the DISCRETIONARY set only: `gset` (base ∪ always_present) returned
+            # False above, so protected tools are never reached by this check.
+            # That is invariant I2 — a probe bug must not be able to leave an owl
+            # with an empty toolbox — and its stated cost is that with no network
+            # web_fetch stays visible and fails when called.
+            if not _capability_ok(t):
                 return False
             if not profile_groups and not pin_names and not hydrated_names:
                 return True

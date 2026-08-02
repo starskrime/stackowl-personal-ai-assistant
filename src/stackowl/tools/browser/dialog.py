@@ -74,6 +74,9 @@ class BrowserDialogTool(Tool):
             action_severity="consequential",  # gated on every call (always-ask)
             commit_coupling="unconfirmed",
             toolset_group="browser",
+            # D05.3 — needs the Camoufox runtime. Declared here rather than
+            # inherited: this tool subclasses Tool directly, not _BrowserTool.
+            requires_capability="browser",
         )
 
     async def execute(self, **kwargs: object) -> ToolResult:

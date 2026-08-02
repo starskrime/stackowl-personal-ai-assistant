@@ -153,11 +153,39 @@ class ToolSearchTool(Tool):
                 )
         ranked = rank_tools(entries, query, limit)
         if ranked:
-            lines = [f"- {e.name}: {e.description.splitlines()[0] if e.description else ''}" for e in ranked]
+            # D05.3 — a tool whose subsystem is down is ABSENT from the schema but
+            # still listed HERE, annotated with why and how to fix it. That is the
+            # whole reason gated tools stay discoverable: an owl that cannot see a
+            # capability can never report what is blocking it, let alone ask for it
+            # to be enabled. Reason and remedy come from ADR-6's HealableResource.
+            from stackowl.infra.capabilities import resolve
+
+            by_name = {t.name: t for t in registry.all()}
+
+            def _line(e: CatalogEntry) -> str:
+                head = e.description.splitlines()[0] if e.description else ""
+                tool = by_name.get(e.name)
+                required = getattr(getattr(tool, "manifest", None), "requires_capability", None)
+                if not required:
+                    return f"- {e.name}: {head}"
+                verdict = resolve(required)
+                if verdict.ok:
+                    return f"- {e.name}: {head}"
+                note = f"UNAVAILABLE: {verdict.reason}"
+                if verdict.remedy:
+                    note += f" — fix: {verdict.remedy}"
+                return f"- {e.name}: {head} [{note}]"
+
+            lines = [_line(e) for e in ranked]
             output = "\n".join(lines)
             # FX-07 — promote these hits into the NEXT turn's presented schema
             # (see pipeline/steps/execute.py's build_tool_schemas) instead of
             # making the model re-discover the same tool every turn.
+            #
+            # Hydration is NOT filtered by availability. A promoted-but-unavailable
+            # tool is still refused by the presentation gate, and suppressing the
+            # record here would mean a capability that comes back mid-session
+            # silently loses the promotion the model already paid a search for.
             hydrated_tools.record(TraceContext.get()["session_key"], [e.name for e in ranked])
         else:
             # Distinguish "catalog empty" from "catalog had tools but none matched"

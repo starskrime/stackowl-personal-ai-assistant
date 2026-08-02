@@ -88,6 +88,21 @@ class ToolManifest(BaseModel):
     # self-healing substitution: when a tool in a capability class fails, the
     # supervisor can route to a sibling with the same tag (W3 substitution actuator).
     capability_tag: str | None = None
+    # D05.3 — the SUBSYSTEM this tool cannot work without, by name (e.g.
+    # "browser"). Resolved lazily through infra/capabilities.py to one of ADR-6's
+    # HealableResource implementations; when that resource reports unavailable,
+    # the tool is not presented, tool_search still lists it WITH the reason, and
+    # dispatch refuses with the reason rather than letting the tool's own code
+    # fail deep.
+    #
+    # NOT capability_tag (above), despite the similar name: that groups tools by
+    # the KIND of result they produce so a failed tool can be substituted by a
+    # sibling. This names a PREREQUISITE. A tool can have both.
+    #
+    # None ⇒ ungated, which is also what an unknown name resolves to. Fail OPEN
+    # is deliberate: a typo here must present the tool, never silently delete a
+    # whole toolset.
+    requires_capability: str | None = None
     # Live-progress vocabulary key (e.g. "SEARCH_WEB", "READ_FILES"). Maps this
     # tool to a friendly, localized "what I'm doing now" status line shown to the
     # user while a turn runs (pipeline/progress/vocabulary.py). None ⇒ the generic

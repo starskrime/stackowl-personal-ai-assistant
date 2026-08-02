@@ -1430,6 +1430,41 @@ async def _run_with_tools(
                 f"'{name}' is not available to a delegated sub-agent (delegation depth "
                 f"limit reached). Complete the task yourself and return your result."
             )
+        # D05.3 — PRECONDITION check, and deliberately NOT an authorization one.
+        # A gated tool stays dispatchable by name (that is how tool_search
+        # overflow remains callable), so a model can reach a tool whose subsystem
+        # is down. Refusing here with the structured reason beats letting the
+        # tool's own code fail deep with whatever error it happens to raise, and
+        # it carries the remedy the operator needs.
+        #
+        # Ordered BEFORE the bounds check on purpose: "this cannot run" is a
+        # cheaper and more honest answer than "you may not run this", and it
+        # needs no owl registry. It does NOT weaken authz — bounds still gate
+        # every tool that passes this, and an available tool is not thereby
+        # permitted.
+        _tool_obj = tool_registry.get(name)
+        _required_cap = getattr(getattr(_tool_obj, "manifest", None), "requires_capability", None)
+        if _required_cap:
+            from stackowl.infra.capabilities import resolve as _resolve_capability
+
+            _verdict = _resolve_capability(_required_cap)
+            if not _verdict.ok:
+                log.engine.warning(
+                    "[pipeline] execute: tool refused — required capability unavailable",
+                    extra={"_fields": {
+                        "tool": name, "capability": _required_cap,
+                        "reason": _verdict.reason, "remedy": _verdict.remedy,
+                        "trace_id": state.trace_id,
+                    }},
+                )
+                msg = (
+                    f"'{name}' cannot run: the '{_required_cap}' subsystem is "
+                    f"unavailable ({_verdict.reason})."
+                )
+                if _verdict.remedy:
+                    msg += f" To fix it: {_verdict.remedy}"
+                return msg
+
         # E2-S2 (FR33/FR35-adjacent) — BOUNDS check against EFFECTIVE bounds:
         # owl.bounds(now) ∩ state.creation_ceiling (enforcement). Checked
         # before consent/execution. Fail-closed: a bounded-owl computation error
