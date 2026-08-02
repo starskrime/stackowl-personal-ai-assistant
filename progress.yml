@@ -259,8 +259,8 @@ deployment:
 current:
   wave: 2
   item: D05.2
-  stage: brainstorm
-  stage_status: in_progress  # 5 of the questions answered; 5 named ones remain on the item
+  stage: architect
+  stage_status: not_started
   one_line: >
     WAVE 1 IS 6 OF 7 ITEMS COMPLETE. D01.1, D01.2, D01.3, D01.4, D01.5 and D01.7
     are all 7/7 with live docs. D01.6 is 6/7 — its BRAINSTORM was never run (it
@@ -279,17 +279,25 @@ current:
       2: "WINDOW-AWARE SIZING must survive. Hermes solves this by DEFERRING overflow behind a bridge rather than dropping it, which is strictly better than our budgeter."
       3: "A toolset change must INVALIDATE the frozen prompt. D01.4 already built that seam (SessionPromptStore.invalidate_all)."
     the_measurement_that_justifies_it: "15 change events across 5 (lane, owl) pairs, the tool COUNT oscillating in 4 of 5. Cause at execute.py:1134. Background lanes only."
-  D05_2_design_so_far:
-    settled:
-      - "PORT THE BRIDGE — defer, never drop. Our budgeter silently makes dropped tools uncallable; Hermes' tool_search/describe/call keeps everything reachable while the array stays stable."
-      - "LEARNED PER-OWL TOOLSETS, recomputed at SESSION BOUNDARIES only — beyond the reference platform, which has one agent and static config."
-      - "tool_search results FILTERED by the owl's envelope. Not for security (dispatch already denies) but so the model is not shown dead ends it will burn a turn calling."
+  D05_2_design_SETTLED:
+    what_it_actually_is: >
+      SMALLER THAN THE MAP IMPLIES. StackOwl already has toolsets —
+      Tool.toolset_group (base.py:86), 54 tools declare one, and an owl's
+      capability_profile selects groups (ADR-11 / E1-S4). The budgeter runs ON
+      TOP and re-selects per query. So D05.2 is "make the existing toolsets
+      AUTHORITATIVE and delete the per-query re-selection", not "build toolsets".
+    decisions:
+      - "PORT THE BRIDGE — defer, never drop. Our budgeter silently makes dropped tools uncallable; tool_search/describe/call keeps everything reachable while the array stays stable."
+      - "The three bridge tools are CORE and always present, inside D01.2's cached prefix. Fixed schemas, so position 0 never moves."
+      - "LEARNED PER-OWL CORE, recomputed at SESSION BOUNDARIES only — beyond the reference platform, which has one agent and static config."
+      - "Learning signal = frequency x success, recency-weighted. Demote after N ROLLOVERS unused. Core respects max_tools. Never deletes — only moves between core and bridge."
+      - "tool_search results FILTERED by the owl's envelope — not for security (dispatch already denies) but so the model is not shown dead ends that burn a 15-35s round-trip."
       - "COLD START = the owl's declared capability preset, which already exists and is already the authz basis."
-      - "LEARNING SIGNAL = frequency x success, recency-weighted. Never deletes — only moves a tool between core and bridge."
-    known_scope_gap: "NO durable per-(owl, tool) usage record exists. The turn-scoped ledger does not persist; task_outcomes lacks tool names; tool_heuristics lacks the owl. The learning half needs a migration."
+      - "D05.4 MERGED IN (bridge only). Its unrelated DEBT-25 skill-tiering inheritance is rehomed to D10.6."
+    known_scope_gap: "NO durable per-(owl, tool) usage record exists — the outcome ledger is turn-scoped, task_outcomes lacks tool names, tool_heuristics lacks the owl. The learning half needs a migration."
   next_task_in_order:
     1: "D05.2 brainstorm — READ HERMES FIRST (agent_init.py:1386 and the toolset registry), then the 25-question grill."
-    2: "Then D05.4 (Progressive tool disclosure) — together these close X2 and delete the budgeter."
+    2: "D05.4 is SUBSUMED into D05.2 — do not work it separately. Its DEBT-25 inheritance moved to D10.6."
     3: "Wave 2 is D05 entire: 8 items, tool architecture."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
@@ -821,9 +829,18 @@ known_debt:
       The re-wiring itself is explicitly OUT of scope for D01.1: any reader that
       scores against the query would put per-query work back into the turn path,
       which is precisely what this item removed to win the byte-identical prompt.
-      D05.4 must design a cache-safe reader — one that scores WITHOUT touching
-      the frozen prompt.
-    hand_to: D05.4
+      The eventual owner must design a cache-safe reader — one that scores
+      WITHOUT touching the frozen prompt.
+    rehomed_2026_07_29: >
+      MOVED FROM D05.4 TO D10.6 (Skill relevance scoring). D05.4's bridge half
+      was merged into D05.2 (Bakir, 2026-07-29), and folding a ~700-line SKILLS
+      obligation into an item named Toolsets is where obligations go to be
+      forgotten. D10.6 is literally "Skill relevance scoring" — this IS that
+      item's subject. The requirement is unchanged: a reader that scores without
+      putting per-query work back into the turn path, which is precisely what
+      D01.1 removed to win the byte-identical prompt. The bridge and this reader
+      share a CONSTRAINT (cache safety) but not a mechanism.
+    hand_to: D10.6
     status: open
   - id: DEBT-24
     found: 2026-07-27
@@ -5277,7 +5294,7 @@ items:
     blocks: [D01.3, D05.3, D05.4]
     dedup_target: X2
     stages:
-      brainstorm: in_progress
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -5342,7 +5359,26 @@ items:
           - "Does the bridge itself count against the four D01.2 cache breakpoints, i.e. do the three bridge tools sit in the stable prefix?"
           - "What is the demotion threshold — N sessions unused? — and is it time-based or session-count based?"
           - "Does a learned promotion need to respect max_tools, or is the core set unbounded once it is stable?"
-          - "How does this interact with D05.4 (Progressive tool disclosure), which is the SAME bridge — are they one item or two?"
+          - "ANSWERED: D05.4's bridge is merged INTO this item; its unrelated DEBT-25 inheritance is rehomed to D10.6."
+        round_2_answers:
+          what_D05_2_actually_IS: >
+            SMALLER THAN THE MAP IMPLIES — and this was found by reading the tree,
+            not the map. StackOwl ALREADY HAS TOOLSETS: Tool.toolset_group exists
+            (base.py:86), 54 tools declare one, and base.py:83 states an owl's
+            capability_profile selects groups (ADR-11 / E1-S4). The budgeter then
+            runs ON TOP and re-selects per query, which is what breaks stability.
+            So D05.2 is "make the existing toolsets AUTHORITATIVE and delete the
+            per-query re-selection", not "build a toolset system". Wire and
+            extend, never recreate.
+          d05_4_merge: "MERGED. The bridge folds into this item — disclosure is what happens to whatever the stable toolset does not present, so splitting it would mean designing one mechanism twice."
+          debt_25_rehomed: >
+            CAUGHT BEFORE MERGING. D05.4 also carried DEBT-25 — ~700 lines of
+            half-wired SKILL tiering that D01.1 deliberately kept — which is not
+            about tools at all. Rehomed to D10.6 (Skill relevance scoring), whose
+            subject it literally is. A straight merge would have buried a tracked
+            obligation inside an item named Toolsets.
+          bridge_tools_are_core: "The three bridge tools sit INSIDE D01.2's cached prefix, always present. Their schemas are fixed (a query, a name, a name plus args) so nothing is runtime-derived and position 0 never moves. Presenting them only when overflow exists would make the array vary with the overflow condition — reintroducing exactly the instability D01.3 measured."
+          demotion: "Unused for N ROLLOVERS (session-boundary count, not wall-clock) so an owl that runs rarely is not punished for being idle. The learned core still respects max_tools; an unbounded core would grow back into the window pressure the bridge exists to relieve."
     changes: []
     notes: null
 
@@ -5399,6 +5435,18 @@ items:
     decisions: []
     changes: []
     notes: null
+    subsumed_by:
+      date: 2026-07-29
+      into: D05.2
+      by: Bakir
+      what_moved: "Progressive tool disclosure — the tool_search / tool_describe / tool_call bridge. It is the SAME mechanism as D05.2's overflow handling: disclosure is simply what happens to whatever the stable toolset does not present, so splitting one bridge across two items would have meant designing it twice."
+      what_did_NOT_move: >
+        DEBT-25 (skill_relevance.py + assign_tiers, ~700 lines of half-wired
+        SKILL tiering) was handed to D05.4 by D01.1's cleanup and is NOT about
+        tools. It is rehomed to D10.6 (Skill relevance scoring), which is
+        literally that subject. Caught before merging: a straight fold would have
+        buried a tracked obligation inside an item nobody would look in.
+      status_note: "This item is closed as subsumed, not as done. Its work lives in D05.2; its unrelated inheritance lives in D10.6."
 
   - id: D05.5
     title: "Programmatic tool calling (PTC)"
