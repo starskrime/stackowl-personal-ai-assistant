@@ -5296,8 +5296,8 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
-      cleanup:    not_started
+      implement:  done
+      cleanup:    done
       test:       not_started
       validate:   not_started
       document:   not_started
@@ -5515,6 +5515,92 @@ items:
           THE TWO FIXES MUST BE TESTED INDEPENDENTLY — reverting the memo while
           keeping the learned ordering must fail the history-growth test and pass
           the query-invariance test, or one fix is being credited for both.
+      - date: 2026-08-02
+        stage: implement+cleanup
+        by: Claude
+        what_shipped:
+          defect_A_ordering: >
+            presentation.rank_candidates: request_text -> usage_scores
+            (Mapping[str, float]). Sort key is (-score, NAME) — the name is
+            ALWAYS in the key, not just a tiebreak for unscored tools, or two
+            tools on an equal score would order by registry iteration position
+            and the stability would be luck. registry.to_provider_schema's
+            parameter renamed in lockstep; there is no second path.
+          defect_B_budget: >
+            NEW infra/presented_tools.py — session-scoped LRU memo of the FITTED
+            schemas, keyed (session_key, owl, protocol, window, sorted-hydrated).
+            execute.build_tool_schemas consults it before the budgeter, so the
+            per-turn fixed_cost can no longer resize the array mid-session.
+            get() returns a COPY: execute.py filters the list in place for the
+            depth>0 spawn exclusion, and handing out the stored list would pin a
+            delegated child's exclusion onto the parent's whole session.
+          the_signal: >
+            NEW tools/_infra/tool_usage.py::score_tools_for_owl — frequency x
+            recency (0.5 ** age/half_life, half_life=10d, lookback=30d) over
+            task_outcomes. Positives-only via the SHARED is_positive_signal, not
+            a re-implementation. NEW outcome_store.list_tool_usage_for_owl with
+            three deliberate differences from its neighbours, each of which
+            would be a silent defect: DESC not ASC (ASC + LIMIT returns the
+            OLDEST rows — wrong end for a recency score), no
+            quality_score IS NOT NULL (an unscored turn still evidences USAGE),
+            and approach_rating IS selected (omitting it defaults every row to
+            None and blinds is_positive_signal to a user Dislike — the exact bug
+            already fixed once in list_scored_for_owl_global).
+          no_migration: "Confirmed in code. Nothing was added to the schema."
+        THREE_INVALIDATION_SITES_FOUND_DURING_IMPLEMENT: >
+          NOT IN THE DESIGN, and the item would have shipped a real bug without
+          them. The memo key holds the owl's NAME, not a fingerprint of its
+          manifest — so an edit that changed capability_profile or tools would
+          leave the owl being handed its PRE-EDIT toolset for the rest of the
+          session, unable to use the capability it had just given itself. Found
+          by asking what already calls D01.4's invalidate_owl and why:
+            * tools/meta/owl_build.py::_invalidate_prompt   -> clear_owl(owl)
+            * commands/owls_command.py::_invalidate_prompt  -> clear_owl(owl)
+            * skills/store.py::_invalidate_prompts          -> clear() (machine-wide;
+              an owl's presented PINS include its owned skills' tool names, so a
+              skill toggle changes the presented set too)
+          In all three the memo clear runs BEFORE the store lookup, so a missing
+          or broken prompt store cannot skip it — that half needs no DB.
+          Checked and NOT needed: DNA evolution. owls/evolution.py and owls/dna.py
+          never touch capability_profile, so an evolution run cannot stale the memo.
+        PRE_EXISTING_FAILURE_FOUND_AND_FIXED: >
+          test_presentation_budget's tight-budget tests (openai + anthropic) were
+          RED BEFORE THIS WORK — confirmed on a clean worktree at 2db29222 with
+          none of D05.2 applied. They carried arithmetic from a deleted budget
+          model ("usable=7372, tool_budget=7372-2048-7000 < 0"); the 0.9 safety
+          fraction and the 2048 response reserve were both removed on 2026-07-22
+          by owner decision. MEASURED: the real budget is 8192-7000 = 1192 tokens
+          and the 14 test schemas cost ~518, so everything fit and the assertion
+          read 14 < 14. Not detecting a regression — asserting deleted behaviour.
+          Fixed by making the budget genuinely bind (fixed_cost 7000 -> 8000),
+          NOT by relaxing the assertion, which would have deleted the coverage.
+        one_test_changed_MEANING_not_just_shape: >
+          test_relevance_ranks_request_matched_tool_first asserted that
+          request_text="please send an email to my boss" put send_email first.
+          DELETED ON PURPOSE — that behaviour is the defect. Replaced by
+          test_ordering_is_independent_of_the_request_text (asserts the opposite
+          property AND that the parameter is gone from the signature) plus
+          test_usage_ranks_the_owls_most_used_tool_first. Every other test change
+          was the mechanical kwarg rename.
+        supporting_evidence_the_base_set_was_a_workaround: >
+          presentation.py's own comments document Defect A being patched one tool
+          at a time — cronjob was promoted into the non-evictable base set because
+          "lexical relevance to the request text decided whether a reminder ask
+          ('ping me in 5 min' scored well; 'remind me ... at 15:00' didn't) ever
+          got cronjob a slot", and owl_build for the same reason after the
+          "create an agent named Brain" incident. This item removes the reason to
+          keep growing that set. test_presentation_owl_build_budget now passes
+          with NO request text at all, which is a stronger assertion than before.
+        tests:
+          new_files:
+            - "tests/infra/test_presented_tools_memo.py — 10 tests. Includes test_the_defect_is_real_growing_history_shrinks_the_unmemoized_array, which asserts the DEFECT directly so the fix cannot be mistaken for a no-op on a box where the budget never bound."
+            - "tests/tools/test_tool_usage_scoring.py — 10 tests, incl. the user-Dislike gate and 'a db failure returns empty rather than raising'."
+          mutation_check_TO_RUN_at_validate: >
+            Revert the memo in execute.build_tool_schemas while KEEPING the
+            learned ordering. test_history_growth_does_not_shrink_the_array must
+            FAIL and the ordering tests must still PASS. If both survive, one fix
+            is being credited for two defects.
+        gates: "ruff src/ = 46 (DEBT-1), mypy src/ = 78 (DEBT-8). Held exactly, checked after every edit."
     changes: []
     notes: null
 

@@ -57,7 +57,7 @@ async def test_execute_tool_loop_passes_history_and_system_prompt(monkeypatch):
         def all(self):
             return [object()]  # truthy — triggers tool-loop branch
 
-        def to_provider_schema(self, protocol, *, profile=None, pins=None, hydrated=None, restrict_to=None, request_text=None, budget=None):
+        def to_provider_schema(self, protocol, *, profile=None, pins=None, hydrated=None, restrict_to=None, usage_scores=None, budget=None):
             return []
 
         def get(self, name):

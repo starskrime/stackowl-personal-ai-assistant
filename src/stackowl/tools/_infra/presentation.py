@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from stackowl.tools.base import Tool
 
 __all__ = ["PresentationConfig", "ToolPresentation"]
@@ -204,18 +206,26 @@ class ToolPresentation:
         profile: list[str] | None,
         pins: list[str] | None,
         hydrated: set[str] | None,
-        request_text: str | None,
+        usage_scores: Mapping[str, float] | None = None,
     ) -> tuple[list[Tool], list[Tool]]:
         """Return (guaranteed, discretionary-ranked) for budgeted presentation.
 
         Guaranteed = always_present ∪ base (non-evictable). Discretionary =
         pins ∪ hydrated ∪ group-tools; when `profile`/pins/hydrated are all empty,
         ALL non-guaranteed tools are eligible (no full-catalog bypass). Discretionary
-        is ordered by lexical relevance to `request_text` (reusing rank_tools);
-        unmatched tools follow in a deterministic by-name tail so none are dropped.
-        """
-        from stackowl.tools.meta.tool_search import CatalogEntry, rank_tools
+        is ordered by MEASURED PER-OWL USAGE (`usage_scores`, highest first);
+        unscored tools follow in a deterministic by-name tail so none are dropped.
 
+        D05.2 — this used to rank by lexical relevance to the turn's `request_text`.
+        That made the presented array a function of the QUESTION, so it changed
+        every turn and defeated the position-0 prompt-cache marker D01.2 places
+        (D01.3 measured 15 change events across 5 (lane, owl) pairs). The ordering
+        signal is now stable for the life of a session by construction: it comes
+        from what this owl has historically used, not from what was just asked.
+
+        `usage_scores` empty or None → pure by-name order, which is what the
+        cold-start path wants and is already deterministic. NOT a degraded mode.
+        """
         cfg = self._cfg
         by_name = {t.name: t for t in all_tools}
         guaranteed_names = sorted(
@@ -240,19 +250,18 @@ class ToolPresentation:
             )
 
         candidates = [t for t in all_tools if _eligible(t)]
-        if request_text:
-            entries = [CatalogEntry(t.name, t.description, None) for t in candidates]
-            hit_names = [e.name for e in rank_tools(entries, request_text, limit=len(entries))]
-            order = {n: i for i, n in enumerate(hit_names)}
-            ranked = sorted(candidates, key=lambda t: (order.get(t.name, len(order)), t.name))
-        else:
-            ranked = sorted(candidates, key=lambda t: t.name)
+        # Highest score first, then by name. The name is ALWAYS part of the key,
+        # not just a fallback for unscored tools — two tools on an equal score
+        # must not order by list position, or the array would depend on registry
+        # iteration order and the stability this exists for would be luck.
+        scores = usage_scores or {}
+        ranked = sorted(candidates, key=lambda t: (-scores.get(t.name, 0.0), t.name))
 
         log.tool.debug(
             "[presentation] rank_candidates: exit",
             extra={"_fields": {
                 "guaranteed": len(guaranteed), "candidates": len(ranked),
-                "no_profile": not profile_groups,
+                "no_profile": not profile_groups, "scored": len(scores),
             }},
         )
         return guaranteed, ranked

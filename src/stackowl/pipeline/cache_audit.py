@@ -8,13 +8,20 @@ every turn. The symptom was already visible; the cause was not.
 
 **Why the tools audit lives on the shared pipeline path, not in the provider.**
 The design put this in the Anthropic provider's observability table. It is here
-instead, and deliberately: ``execute.py`` builds the schemas from
-``request_text`` for EVERY protocol, and this deployment runs an
-OpenAI-protocol gateway. An audit on the Anthropic path would have measured
-exactly nothing on the one box where the question is being asked. Its whole
-purpose is to turn D01.3's premise — "the per-turn context budget varies the
-tools array" — from an assertion into a measurement, and an assertion that
-cannot fire is the trap D01.1 already taught us about.
+instead, and deliberately: ``execute.py`` builds the schemas the same way for
+EVERY protocol, and this deployment runs an OpenAI-protocol gateway. An audit on
+the Anthropic path would have measured exactly nothing on the one box where the
+question is being asked. Its whole purpose is to turn D01.3's premise — "the
+per-turn context budget varies the tools array" — from an assertion into a
+measurement, and an assertion that cannot fire is the trap D01.1 already taught
+us about.
+
+D05.2 has since removed both causes of that variance: the ordering came from the
+turn's ``request_text``, and the budget shrank as history grew. This audit is
+therefore now the ACCEPTANCE TEST for that item rather than its diagnosis — it
+should stay silent for any ``(lane, owl)`` pair with two or more turns. Read the
+denominator before reading the result: silence with no repeat turns is no
+opportunity, not success.
 
 Reports only. Nothing here changes a request; a change is logged and the turn
 proceeds. Measurement must never become an outage.

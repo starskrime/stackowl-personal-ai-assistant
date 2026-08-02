@@ -335,8 +335,14 @@ class SkillIndexStore(OwnedRepository):
         must cost a stale prompt until rollover, never the toggle the user asked
         for. ``invalidate_all`` already logs and swallows its own errors.
         """
+        from stackowl.infra import presented_tools
         from stackowl.sessions.prompt_store import SessionPromptStore
 
+        # D05.2 — a skill toggle moves more than the prompt. An owl's presented
+        # PINS are its base tools ∪ its owned skills' tool names, so enabling a
+        # skill adds tools that the session-scoped tool memo would otherwise keep
+        # withholding until rollover. Machine-wide, like the catalogue itself.
+        presented_tools.clear()
         await SessionPromptStore(self._db).invalidate_all(cause=cause)
 
     async def set_embedding(

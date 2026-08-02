@@ -25,7 +25,12 @@ from stackowl.exceptions import (
     ToolUseUnsupportedError,
     TurnStopped,
 )
-from stackowl.infra import hydrated_tools, recovery_context, tool_outcome_ledger
+from stackowl.infra import (
+    hydrated_tools,
+    presented_tools,
+    recovery_context,
+    tool_outcome_ledger,
+)
 from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
@@ -1023,6 +1028,48 @@ def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = N
     return f"{context}\n\n{state.input_text}"
 
 
+async def _tool_usage_scores(state: PipelineState) -> dict[str, float]:
+    """Per-owl measured tool usage, ordering the discretionary presented set (D05.2).
+
+    Replaces a lexical match against ``state.input_text``, which made the tools
+    array a function of the QUESTION and so changed it every turn — the
+    instability D01.3 measured and D01.2's position-0 cache marker cannot survive.
+
+    Returns ``{}`` on no db, no owl, or any read failure. That empty mapping is a
+    real fallback and not a degraded one: ``rank_candidates`` then orders by name,
+    which is deterministic and therefore still stable across turns. Ordering must
+    never be able to cost a turn its tools.
+    """
+    # 1. ENTRY
+    services = get_services()
+    db = services.db_pool
+    if db is None or not state.owl_name:
+        # 2. DECISION — not wired (tests / dry-run) or no owl identity to score.
+        log.engine.debug(
+            "[pipeline] execute: _tool_usage_scores: exit — no db_pool or no owl",
+            extra={"_fields": {"has_db": db is not None, "owl": state.owl_name}},
+        )
+        return {}
+    try:
+        from stackowl.memory.outcome_store import TaskOutcomeStore
+        from stackowl.tools._infra.tool_usage import score_tools_for_owl
+
+        scores = await score_tools_for_owl(TaskOutcomeStore(db), state.owl_name)
+    except Exception as exc:  # no-hidden-errors: ordering must not break the turn
+        log.engine.error(
+            "[pipeline] execute: _tool_usage_scores FAILED — by-name order this turn",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+        )
+        return {}
+    # 4. EXIT
+    log.engine.debug(
+        "[pipeline] execute: _tool_usage_scores: exit",
+        extra={"_fields": {"owl": state.owl_name, "tools_scored": len(scores)}},
+    )
+    return scores
+
+
 async def _run_with_tools(
     state: PipelineState,
     choice: ToolProviderChoice | ModelProvider,
@@ -1119,25 +1166,66 @@ async def _run_with_tools(
         restrict_to/fixed_cost/max_tools) are captured from the enclosing scope; the
         window is resolved per provider (REACT-1/F032+F090: a hit on the stamped
         state.model_window on the steady path, a bounded safe-defaulted probe otherwise).
+
+        D05.2 — the budgeted result is MEMOIZED for the session. Not an
+        optimisation: ``_fixed_cost`` includes the history, which grows every
+        turn, so recomputing the fit per turn shrinks the presented array as the
+        session proceeds and defeats the position-0 prompt-cache marker even
+        though the ordering is now stable. See ``infra/presented_tools.py``.
         """
         # Per-model context budget: size the presented set to the model's real window
         # so a weak/small-window model is not drowned in tool schemas.
         _window = await _resolve_execute_window(state, prov)
         if restrict_to is not None:
+            # NOT memoized: a planned envelope is per-task by construction and
+            # already routes through the deterministic select() path, never the
+            # budgeter. It has neither the ordering nor the budget defect.
             schemas = tool_registry.to_provider_schema(
                 prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
                 restrict_to=restrict_to,
             )
         else:
-            schemas = tool_registry.to_provider_schema(
-                prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
-                request_text=state.input_text,
-                budget={
-                    "window": _window,
-                    "fixed_cost_tokens": _fixed_cost,
-                    "max_tools": _max_tools,
-                },
+            memo_key = presented_tools.make_key(
+                session_key=state.session_key or "",
+                owl=state.owl_name or "",
+                protocol=prov.protocol,
+                window=_window,
+                hydrated=_hydrated,
             )
+            cached = presented_tools.get(memo_key) if state.session_key else None
+            if cached is not None:
+                # 2. DECISION — reuse the session's fitted set. This branch is what
+                # keeps the array byte-stable across turns; a miss here every turn
+                # would mean the item shipped and measured unchanged.
+                log.engine.debug(
+                    "[pipeline] execute: presented tools — memo hit",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id, "owl": state.owl_name,
+                        "protocol": prov.protocol, "tools": len(cached),
+                    }},
+                )
+                schemas = cached
+            else:
+                usage_scores = await _tool_usage_scores(state)
+                schemas = tool_registry.to_provider_schema(
+                    prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
+                    usage_scores=usage_scores,
+                    budget={
+                        "window": _window,
+                        "fixed_cost_tokens": _fixed_cost,
+                        "max_tools": _max_tools,
+                    },
+                )
+                if state.session_key:
+                    presented_tools.put(memo_key, schemas)
+                log.engine.debug(
+                    "[pipeline] execute: presented tools — rebuilt",
+                    extra={"_fields": {
+                        "trace_id": state.trace_id, "owl": state.owl_name,
+                        "protocol": prov.protocol, "window": _window,
+                        "tools": len(schemas), "scored_tools": len(usage_scores),
+                    }},
+                )
         # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
         # (delegation_depth>0) may not itself spawn/delegate, so remove those tools
         # from the PRESENTED set. Excluded by NAME defensively.
@@ -1157,11 +1245,14 @@ async def _run_with_tools(
     # the pinned/durable path and as the gateway's floor-tier seed (it rebuilds per tier).
     _window = await _resolve_execute_window(state, provider)
     tool_schemas = await build_tool_schemas(provider)
-    # D01.2 — measure D01.3's premise instead of asserting it. The schemas above
-    # are selected from `request_text`, so they can differ per turn; on an
-    # Anthropic-protocol backend `tools` renders at position 0, which means a
-    # varying array invalidates EVERY downstream breakpoint on every turn.
-    # Reports only — this never changes what is sent.
+    # D01.2 — measure D01.3's premise instead of asserting it. On an
+    # Anthropic-protocol backend `tools` renders at position 0, so an array that
+    # varies per turn invalidates EVERY downstream breakpoint on every turn.
+    # D05.2 addressed both causes of that variance (a request_text-driven
+    # ordering, and a per-turn budget that shrank as history grew), so this is
+    # now the ACCEPTANCE TEST rather than a diagnosis: it should stay silent for
+    # any (lane, owl) pair with two or more turns. Reports only — this never
+    # changes what is sent.
     audit_tools_stability(state.session_key, tool_schemas, owl=state.owl_name)
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(

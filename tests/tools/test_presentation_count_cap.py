@@ -64,7 +64,7 @@ def _budget(window: int, *, max_tools: int | None) -> dict[str, int]:
 def test_low_max_tools_caps_the_roster() -> None:
     reg = _wide_registry()
     schemas = reg.to_provider_schema(
-        "openai", request_text="hi", budget=_budget(16384, max_tools=12),
+        "openai", budget=_budget(16384, max_tools=12),
     )
     assert len(schemas) == 12
     names = {s["function"]["name"] for s in schemas}
@@ -75,7 +75,7 @@ def test_absent_max_tools_is_byte_identical_full_catalog() -> None:
     reg = _wide_registry()
     full = len(reg.to_provider_schema("openai"))
     schemas = reg.to_provider_schema(
-        "openai", request_text="hi", budget=_budget(16384, max_tools=None),
+        "openai", budget=_budget(16384, max_tools=None),
     )
     assert len(schemas) == full == 20  # default cap 40 ≥ 20 → all presented
 

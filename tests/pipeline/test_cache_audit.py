@@ -7,10 +7,17 @@ varies per turn invalidates everything downstream of it on every single turn.
 
 The tools audit exists to turn D01.3's premise into a measured fact. D01.3
 asserts that the per-turn context budget varies the tools array; that assertion
-has never been measured. It is measurable here on EVERY protocol — the schemas
-are built in execute.py from ``request_text`` — which matters because this
+has never been measured. It is measurable here on EVERY protocol — execute.py
+builds the schemas the same way for all of them — which matters because this
 deployment runs an OpenAI-protocol gateway and would observe nothing at all if
 the audit lived on the Anthropic path.
+
+D05.2 has since fixed both causes of the variance (a request_text-driven
+ordering, and a budget that shrank as history grew), so in production this audit
+is now that item's acceptance test. The tests below are unaffected: they drive
+``audit_tools_stability`` directly and assert it still REPORTS a change when one
+is handed to it. A detector that stopped detecting would look identical to a
+fixed pipeline from the logs alone.
 """
 
 from __future__ import annotations

@@ -373,6 +373,59 @@ class TaskOutcomeStore(OwnedRepository):
         )
         return results
 
+    async def list_tool_usage_for_owl(
+        self, *, owl_name: str, since_epoch: float = 0.0, limit: int = 500,
+    ) -> list[TaskOutcome]:
+        """Return one owl's tool-invoking outcomes, NEWEST FIRST (D05.2).
+
+        Feeds :func:`stackowl.tools._infra.tool_usage.score_tools_for_owl`, which
+        orders the presented tool set by what this owl measurably uses.
+
+        Three deliberate differences from the neighbouring helpers, each of which
+        would be a silent defect if this reused one of them instead:
+
+        * ``ORDER BY captured_at DESC``. ``list_successful_with_sequence`` is ASC
+          because its consumer (skill synthesis) wants a pattern's chronological
+          development. Under a LIMIT that returns the OLDEST rows in the window —
+          the wrong end for a recency-weighted score.
+        * No ``quality_score IS NOT NULL``. A turn that dispatched tools and was
+          never critic-scored is still evidence of USAGE. Requiring a score would
+          silently narrow the signal to whatever the scorer happened to reach.
+        * ``approach_rating`` IS selected. Omitting it defaults every row to
+          ``None`` and makes :func:`is_positive_signal` blind to a user Dislike —
+          the exact bug fixed in ``list_scored_for_owl_global`` above. ``success``
+          and ``failure_class``, the gate's other two inputs, likewise.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] list_tool_usage_for_owl: entry",
+            extra={"_fields": {
+                "owl_name": owl_name, "since_epoch": since_epoch, "limit": limit,
+            }},
+        )
+        rows = await self._db.fetch_all(
+            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
+                      success, latency_ms, tool_call_count, failure_class,
+                      quality_score, step_durations, input_text, response_text,
+                      captured_at, scored_at, tool_sequence, dna_snapshot,
+                      approach_rating
+               FROM task_outcomes
+               WHERE owner_id = ?
+                 AND owl_name = ?
+                 AND captured_at >= ?
+                 AND tool_sequence != '[]'
+               ORDER BY captured_at DESC
+               LIMIT ?""",
+            (self._owner_id, owl_name, since_epoch, limit),
+        )
+        results = [_row_to_outcome(r) for r in rows]
+        # 4. EXIT
+        log.memory.debug(
+            "[outcomes] list_tool_usage_for_owl: exit",
+            extra={"_fields": {"owl_name": owl_name, "n": len(results)}},
+        )
+        return results
+
     async def list_failed_global(
         self, *, since_epoch: float = 0.0, limit: int = 2000,
     ) -> list[TaskOutcome]:

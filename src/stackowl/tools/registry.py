@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from stackowl.infra.observability import log
@@ -406,7 +406,7 @@ class ToolRegistry:
         pins: list[str] | None = None,
         hydrated: set[str] | None = None,
         restrict_to: frozenset[str] | None = None,
-        request_text: str | None = None,
+        usage_scores: Mapping[str, float] | None = None,
         budget: dict[str, int] | None = None,
     ) -> list[dict[str, object]]:
         """Emit tool schemas for the given provider protocol.
@@ -427,8 +427,18 @@ class ToolRegistry:
         :class:`ToolPresentation.rank_candidates` and greedy-fits them into the
         measured token budget via :func:`fit_items`. Guaranteed (base + always-
         present) are never dropped. When ``None`` (default) behavior is byte-
-        identical to the previous implementation. ``request_text`` is forwarded
-        to the relevance ranker when ``budget`` is set.
+        identical to the previous implementation. ``usage_scores`` is forwarded
+        to the ranker when ``budget`` is set.
+
+        ``usage_scores`` (D05.2) replaced a ``request_text`` relevance ranker.
+        The old signal made this method's output a function of the turn's
+        question; the new one is a function of the owl's measured history, which
+        is stable for the life of a session. NOTE that the caller is still
+        responsible for the OTHER half of that stability: ``budget`` carries a
+        per-turn ``fixed_cost_tokens``, so calling this every turn with a growing
+        history shrinks the fit even under a fixed ordering. See
+        ``infra/presented_tools.py`` — the caller memoizes the result rather than
+        this method pretending to be pure across turns it cannot see.
         """
 
         def _schema_for(t: Tool) -> dict[str, object]:
@@ -460,7 +470,7 @@ class ToolRegistry:
 
             guaranteed, ranked = ToolPresentation().rank_candidates(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
-                request_text=request_text,
+                usage_scores=usage_scores,
             )
             b = tool_budget_tokens(
                 window=budget["window"], fixed_cost_tokens=budget["fixed_cost_tokens"],

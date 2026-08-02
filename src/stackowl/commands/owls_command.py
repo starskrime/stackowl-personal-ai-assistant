@@ -33,6 +33,7 @@ from stackowl.exceptions import (
     ManifestValidationError,
     OwlNotFoundError,
 )
+from stackowl.infra import presented_tools
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveNotFoundError, ObjectiveStore
@@ -361,6 +362,11 @@ class OwlsCommand(SlashCommand):
         presents to the user as "my edit did nothing", which is precisely the
         confusion this item exists to remove.
         """
+        # D05.2 — same reasoning, applied to the session-scoped presented-tool
+        # memo: an edit to capability_profile or tools changes which tools should
+        # be presented, and the memo is keyed on the owl's NAME. Cleared before
+        # the DB check so a missing store cannot skip it — this half needs no DB.
+        presented_tools.clear_owl(owl_name)
         if self._db is None:
             log.gateway.error(
                 "[commands] owls.edit: cannot invalidate the frozen prompt — no DB; "

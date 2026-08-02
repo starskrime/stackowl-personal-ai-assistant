@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from stackowl.commands.config_helpers import config_path
 from stackowl.commands.owls_command import OwlsCommand
 from stackowl.commands.owls_helpers import manifest_to_yaml_entry
+from stackowl.infra import presented_tools
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.clarify_gateway import CLARIFY_TTL_SECONDS, OUTCOME_ANSWERED
@@ -975,6 +976,13 @@ class OwlBuildTool(Tool):
         stale prompt until rollover, never the edit. Logged all the same — an owl
         silently ignoring its own change is indistinguishable from a bug.
         """
+        # D05.2 — the presented TOOL set is memoized per session and keyed on the
+        # owl's NAME, not a fingerprint of its manifest. An edit that touched
+        # capability_profile or tools must drop it for the same reason it drops
+        # the prompt: otherwise the owl keeps being handed its pre-edit toolset
+        # for the rest of the session and cannot use what it just gave itself.
+        # Done before the store lookup so a missing prompt store cannot skip it.
+        presented_tools.clear_owl(owl_name)
         store = getattr(get_services(), "session_prompt_store", None)
         if store is None:
             log.tool.error(

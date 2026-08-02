@@ -14,9 +14,16 @@ def test_owl_build_in_provider_schema_under_realistic_budget() -> None:
     """owl_build is in the provider schema for Secretary with realistic budget.
 
     Secretary has empty profile + real pins (web_fetch, browser_extract,
-    browser_recall_url), request_text "create an agent named Brain", and a
-    realistic budget (window=200_000, fixed_cost_tokens=2000). The owl_build
-    tool should be in the resulting schema.
+    browser_recall_url) and a realistic budget (window=200_000,
+    fixed_cost_tokens=2000). The owl_build tool should be in the resulting schema.
+
+    D05.2 dropped this call's ``request_text="create an agent named Brain"``.
+    The scenario is unchanged and the assertion is STRONGER for it: owl_build
+    used to be a discretionary candidate whose slot depended on the request's
+    wording (the original "create an agent named Brain" incident), and it was
+    fixed by promoting owl_build into the non-evictable base set. Passing with
+    no request text at all is what proves that promotion — not the phrasing —
+    is what keeps it presented.
     """
     reg = ToolRegistry.with_defaults()
 
@@ -30,7 +37,6 @@ def test_owl_build_in_provider_schema_under_realistic_budget() -> None:
         "anthropic",
         profile=[],  # empty profile (Secretary)
         pins=pins,
-        request_text="create an agent named Brain",
         budget=budget,
     )
 
