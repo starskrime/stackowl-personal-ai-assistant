@@ -5298,7 +5298,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       not_started
+      test:       done
       validate:   not_started
       document:   not_started
     doc: "docs/hermes-mapping/designs/D05.2.md"
@@ -5601,6 +5601,58 @@ items:
             FAIL and the ordering tests must still PASS. If both survive, one fix
             is being credited for two defects.
         gates: "ruff src/ = 46 (DEBT-1), mypy src/ = 78 (DEBT-8). Held exactly, checked after every edit."
+      - date: 2026-08-02
+        stage: test
+        by: Claude
+        MUTATION_M1_SURVIVED_FIRST_and_that_was_the_finding: >
+          Ran M1 (replace execute.build_tool_schemas' memo lookup with
+          `cached = None`, leaving the module and the ordering untouched) against
+          the tests as first written. ALL 19 PASSED. The memo tests exercise
+          infra/presented_tools directly and never go through execute.py, so they
+          proved the module CORRECT while proving nothing about it being WIRED.
+          Under M1 the shipped platform would have rebuilt the array every turn —
+          the exact defect the item claims to fix — with a green suite. Same
+          class of gap D01.5 caught ("prove the rule is WIRED, not merely
+          correct"); it recurred here because a new module invites module tests.
+        the_test_that_closes_it: >
+          NEW tests/pipeline/test_d052_tools_array_is_wired_stable.py. Drives
+          execute.run TWICE on one session with a history that grows in between,
+          through a fake registry that returns fewer schemas as
+          fixed_cost_tokens rises — modelling exactly what fit_items does when
+          history eats the window — and asserts the provider received a
+          byte-identical array both times. A second test asserts the registry was
+          consulted only ONCE, which is stronger: equality alone could hold by
+          luck if a rebuild happened to fit the same count.
+        mutation_results_BOTH_DIRECTIONS: >
+          M1 (memo disabled, ordering intact): kills EXACTLY the 2 wiring tests;
+          all 20 module + ordering tests still pass.
+          M2 (learned scores ignored, sort by name only, memo intact): kills
+          EXACTLY test_usage_ranks_the_owls_most_used_tool_first; both wiring
+          tests still pass.
+          Neither fix is being credited for the other's defect — which was the
+          stated obligation from the architect stage.
+        D01_2s_DETECTOR_FIRED_UNDER_M1: >
+          Unplanned and worth recording: with M1 applied the test run emitted
+          "[cache] breakpoints: tools array CHANGED — position 0 invalidated this
+          turn" from cache_audit.py:120, twice. Silent without it. That is D01.2's
+          instrument catching D05.2's defect inside a unit test — the acceptance
+          test demonstrably still detects, so a silent production log after this
+          ships means the array is stable, not that the detector rotted.
+        suites_green:
+          - "tests/pipeline/test_d052_tools_array_is_wired_stable.py — 3"
+          - "tests/infra/ — 127 (incl. the 10 memo tests)"
+          - "tests/tools/ presentation+registry slice — 42"
+          - "tests/tools/test_tool_usage_scoring.py — 10"
+          - "tests/skills/test_d014_skill_change_invalidates.py + tests/tools/test_d014_owl_build_invalidates.py — 4"
+          - "tests/tools/meta owl_build slice — 19"
+          - "tests/pipeline/test_cache_audit.py + test_plan_a_history_threading.py — 23"
+        NOT_run_and_why: >
+          `pytest tests/tools/` and `pytest tests/skills/` as whole directories
+          were each killed at the 590s timeout (exit 143) — the standing
+          "never a full pytest run, it hangs on this box" rule. Run as slices
+          instead; the slices covering every file this item touched are listed
+          above. Stated rather than implied: directory-wide green was NOT
+          demonstrated.
     changes: []
     notes: null
 
