@@ -260,7 +260,7 @@ current:
   wave: 2
   item: D05.2
   stage: brainstorm
-  stage_status: not_started
+  stage_status: in_progress  # 5 of the questions answered; 5 named ones remain on the item
   one_line: >
     WAVE 1 IS 6 OF 7 ITEMS COMPLETE. D01.1, D01.2, D01.3, D01.4, D01.5 and D01.7
     are all 7/7 with live docs. D01.6 is 6/7 — its BRAINSTORM was never run (it
@@ -276,13 +276,17 @@ current:
   what_D05_2_inherits_from_D01_3:
     must_honour:
       1: "The tools array must be STABLE for the life of a session — D01.2's position-0 marker is worthless otherwise."
-      2: "WINDOW-AWARE SIZING must survive. context_budget.tool_budget_tokens sizes the presented set to window minus the turn's real fixed cost; losing that to gain cache stability trades one defect for another."
-      3: "A toolset change must INVALIDATE the frozen prompt. D01.4 already built that seam (SessionPromptStore.invalidate_all) and the capabilities block is already a named trigger — wiring, not new machinery."
-    owns_these_questions:
-      - "Are toolsets per-owl or global? Hermes has ONE agent, so its answer does not transfer."
-      - "May the model's context window still SHRINK a configured toolset, or is the configuration absolute?"
-      - "Mid-session toolset change: immediate (paying a rebuild via D01.4) or deferred to the next incarnation?"
-    the_measurement_that_justifies_it: "15 change events across 5 (lane, owl) pairs, the tool COUNT oscillating in 4 of 5. Cause at execute.py:1134. Background lanes only — the interactive path is still unmeasured."
+      2: "WINDOW-AWARE SIZING must survive. Hermes solves this by DEFERRING overflow behind a bridge rather than dropping it, which is strictly better than our budgeter."
+      3: "A toolset change must INVALIDATE the frozen prompt. D01.4 already built that seam (SessionPromptStore.invalidate_all)."
+    the_measurement_that_justifies_it: "15 change events across 5 (lane, owl) pairs, the tool COUNT oscillating in 4 of 5. Cause at execute.py:1134. Background lanes only."
+  D05_2_design_so_far:
+    settled:
+      - "PORT THE BRIDGE — defer, never drop. Our budgeter silently makes dropped tools uncallable; Hermes' tool_search/describe/call keeps everything reachable while the array stays stable."
+      - "LEARNED PER-OWL TOOLSETS, recomputed at SESSION BOUNDARIES only — beyond the reference platform, which has one agent and static config."
+      - "tool_search results FILTERED by the owl's envelope. Not for security (dispatch already denies) but so the model is not shown dead ends it will burn a turn calling."
+      - "COLD START = the owl's declared capability preset, which already exists and is already the authz basis."
+      - "LEARNING SIGNAL = frequency x success, recency-weighted. Never deletes — only moves a tool between core and bridge."
+    known_scope_gap: "NO durable per-(owl, tool) usage record exists. The turn-scoped ledger does not persist; task_outcomes lacks tool names; tool_heuristics lacks the owl. The learning half needs a migration."
   next_task_in_order:
     1: "D05.2 brainstorm — READ HERMES FIRST (agent_init.py:1386 and the toolset registry), then the 25-question grill."
     2: "Then D05.4 (Progressive tool disclosure) — together these close X2 and delete the budgeter."
@@ -5273,7 +5277,7 @@ items:
     blocks: [D01.3, D05.3, D05.4]
     dedup_target: X2
     stages:
-      brainstorm: not_started
+      brainstorm: in_progress
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -5282,7 +5286,63 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-07-29
+        stage: brainstorm
+        round: "5 questions over 2 rounds; Hermes read FIRST per the standing rule. Brainstorm is IN PROGRESS, not complete — the remaining questions are named below rather than the count being padded."
+        by: Bakir
+        what_hermes_actually_does:
+          toolsets: "Mandatory membership — 'All tools must be part of a toolset to be accessible'. enabled_toolsets (allowlist) or disabled_toolsets (denylist). Built ONCE at agent init (agent_init.py:1386); the conversation loop never rebuilds it."
+          availability: "Per-tool check_fn predicate, TTL-cached, plus requires_env."
+          dynamic_schema_overrides: "A zero-arg callable returning schema overrides applied at get_definitions() time, so e.g. delegate_task's description reflects the user's REAL limits. NOTE THE TENSION: this makes the schema config-dependent, which is a cache-stability risk they absorb via a config-mtime fingerprint in their memo key."
+          progressive_disclosure: >
+            THE KEY MECHANISM. tools/tool_search.py: when deferrable (MCP /
+            non-core plugin) tools would consume more than threshold_pct
+            (default 10%) of the model's CONTEXT WINDOW, they are REPLACED in the
+            model-visible list by three bridge tools — tool_search /
+            tool_describe / tool_call. Config is enabled: auto|on|off.
+          memoization: "Cache key = enabled/disabled toolsets + registry generation + config mtime fingerprint + delegated-child context."
+        THE_CAPABILITY_DIFFERENCE_THAT_DECIDED_IT: >
+          HERMES NEVER DROPS A TOOL. Ours does: context_budget selects a subset
+          per query, and the tools left out are simply not callable that turn —
+          a silent capability loss on top of the cache instability D01.3
+          measured. Hermes defers behind a bridge instead, so the array is stable
+          AND nothing becomes unreachable. That is not a caching refinement, it
+          is a strictly better answer to the same constraint.
+        answers:
+          overflow: "PORT THE BRIDGE — defer, never drop. Stable core toolset always present; overflow reachable via tool_search/describe/call."
+          next_level: >
+            LEARNED PER-OWL TOOLSETS, SESSION-BOUNDARY ONLY. Each owl's core set
+            is derived from MEASURED usage and recomputed at rollover, never
+            mid-session — so cache stability holds because it changes only where
+            D01.1 already permits change, and D01.4's invalidation seam applies
+            it. This is genuinely beyond the reference platform: they have ONE
+            agent and static human-edited config, so they cannot do it.
+          search_scope: >
+            FILTER SEARCH RESULTS BY THE OWL'S ENVELOPE. Security does not
+            require it — authz is enforced at dispatch and execute.py:430 states
+            a tool can be 'visible but still DENIED' — but efficiency does: an
+            unfiltered search advertises dead ends the model will call and get
+            refused for, burning a 15-35s round-trip. Presentation and
+            authorisation stay separate mechanisms; the search surface simply
+            stops suggesting the impossible.
+          cold_start: "THE OWL'S DECLARED CAPABILITY PRESET. owl_build already infers a capability from a plain-language goal (owl_build_infer.infer_capability) and manifests carry capability_profile — the declaration exists and is already the authz basis, so nothing new is invented."
+          learning_signal: "FREQUENCY x SUCCESS, RECENCY-WEIGHTED. Promote what the owl calls often and succeeds with; demote what it has not called. Never DELETES — only moves a tool between core and bridge, so nothing becomes unreachable by learning either."
+        the_signal_source_DOES_NOT_EXIST_YET: >
+          Checked before assuming. infra/tool_outcome_ledger.py records
+          (name, severity, success) but is TURN-SCOPED — it does not persist.
+          task_outcomes (10,311 rows) has owl_name and tool_call_count but NOT
+          tool names. tool_heuristics (34 rows) has tool_name, evidence_count and
+          mean_quality but no owl and is condition-based outcome PREDICTION, not
+          usage. So there is no durable per-(owl, tool) usage record, and the
+          learning half needs one — a migration, scoped in architect rather than
+          discovered during implement.
+        questions_still_to_ask:
+          - "Where does toolset membership live — the tool's own declaration, the owl manifest, or both (and which wins)?"
+          - "Does the bridge itself count against the four D01.2 cache breakpoints, i.e. do the three bridge tools sit in the stable prefix?"
+          - "What is the demotion threshold — N sessions unused? — and is it time-based or session-count based?"
+          - "Does a learned promotion need to respect max_tools, or is the core set unbounded once it is stable?"
+          - "How does this interact with D05.4 (Progressive tool disclosure), which is the SAME bridge — are they one item or two?"
     changes: []
     notes: null
 
