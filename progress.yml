@@ -15,7 +15,7 @@
 
 schema_version: 1
 updated: 2026-07-29
-updated_by: "claude-opus-5 (session 0682205b) — D01.2 + D01.4 closed 7/7; DEBT-17/32/33/34 resolved; migration 0105 live"
+updated_by: "claude-opus-5 — wave 1 at 6/7 items (D01.2, D01.3, D01.4, D01.5 closed this session); X2 decided; migrations 0104-0106 live; D01.6 brainstorm gap recorded"
 
 program:
   name: "StackOwl ← Hermes"
@@ -257,36 +257,36 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  wave: 1
-  item: D01.3
+  wave: 2
+  item: D05.2
   stage: brainstorm
   stage_status: not_started
   one_line: >
-    D01.2, D01.4 and D01.5 are all COMPLETE (7/7 each, docs live). DEBT-17/32/33/34
-    resolved; DEBT-35 and DEBT-36 recorded and awaiting Bakir. D01.3
-    "Per-turn tool-schema selection" is the LAST item in wave 1, and unlike every
-    other item so far its premise is already MEASURED rather than asserted.
+    WAVE 1 IS 6 OF 7 ITEMS COMPLETE. D01.1, D01.2, D01.3, D01.4, D01.5 and D01.7
+    are all 7/7 with live docs. D01.6 is 6/7 — its BRAINSTORM was never run (it
+    was item #1, built the same day the grill rule was written) and that is
+    recorded as a process_deviation rather than papered over. Wave 2 opens at
+    D05.2 (Toolsets), which D01.3 has already handed binding constraints to.
   read_first: >
-    (1) This block. (2) D01.3's THE_PREMISE_IS_NOW_MEASURED block — it opens with
-    a rate, a located cause and a named consequence, so the brainstorm should not
-    re-ask whether the array varies. (3) PROCESS.md and DOC_STANDARD.md.
-    (4) The standing rule READ HERMES BEFORE ASKING — it has now paid off on
-    every item it has been applied to.
-  what_D01_3_already_knows: >
-    MEASURED 2026-07-29: 5 (lane, owl) pairs reported a tools-array change, 15
-    events, and in 4 of the 5 the tool COUNT itself oscillated (sysfup
-    5->4->5->5->5, Brain 4->4->3->4, scout 4->3->4, headhunter 5->4). Same owl,
-    same lane, so owl-switching is excluded. CAUSE: execute.py builds the
-    presented set via to_provider_schema(request_text=state.input_text, budget=..),
-    so it is re-selected per query. CONSEQUENCE: on an Anthropic backend `tools`
-    renders at position 0, so a per-turn array invalidates D01.2's marker 1 and
-    every marker downstream of it on essentially every turn.
-    STILL UNMEASURED: the INTERACTIVE path — every pair observed was a background
-    lane. Needs a couple of real Telegram messages to ONE owl.
+    (1) This block. (2) designs/D01.3.md — it DECIDED X2 and lists the three
+    constraints D05.2 must honour plus the three questions D05.2 owns.
+    (3) PROCESS.md and DOC_STANDARD.md. (4) The standing rule READ HERMES BEFORE
+    ASKING — it has paid off on every item it has been applied to, most recently
+    proving Hermes builds agent.tools ONCE at init and never per turn.
+  what_D05_2_inherits_from_D01_3:
+    must_honour:
+      1: "The tools array must be STABLE for the life of a session — D01.2's position-0 marker is worthless otherwise."
+      2: "WINDOW-AWARE SIZING must survive. context_budget.tool_budget_tokens sizes the presented set to window minus the turn's real fixed cost; losing that to gain cache stability trades one defect for another."
+      3: "A toolset change must INVALIDATE the frozen prompt. D01.4 already built that seam (SessionPromptStore.invalidate_all) and the capabilities block is already a named trigger — wiring, not new machinery."
+    owns_these_questions:
+      - "Are toolsets per-owl or global? Hermes has ONE agent, so its answer does not transfer."
+      - "May the model's context window still SHRINK a configured toolset, or is the configuration absolute?"
+      - "Mid-session toolset change: immediate (paying a rebuild via D01.4) or deferred to the next incarnation?"
+    the_measurement_that_justifies_it: "15 change events across 5 (lane, owl) pairs, the tool COUNT oscillating in 4 of 5. Cause at execute.py:1134. Background lanes only — the interactive path is still unmeasured."
   next_task_in_order:
-    1: "D01.3 brainstorm — but READ HERMES FIRST, and do not re-ask whether the array varies. The open question is whether it SHOULD, and what it costs."
-    2: "Then architect, implement, cleanup, test, validate, document."
-    3: "Wave 1 closes with D01.3. Wave 2 is D05 (tool architecture — toolsets, gating, disclosure), which D01.3's answer feeds directly."
+    1: "D05.2 brainstorm — READ HERMES FIRST (agent_init.py:1386 and the toolset registry), then the 25-question grill."
+    2: "Then D05.4 (Progressive tool disclosure) — together these close X2 and delete the budgeter."
+    3: "Wave 2 is D05 entire: 8 items, tool architecture."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
@@ -299,19 +299,20 @@ current:
     branch: main
     unpushed: "NONE. Tree clean."
   what_needs_bakir:
-    - "DEBT-35 — 92% of the conversation-mining queue is machine incident lanes that can never yield a user fact, and arrivals (25/hr) outpace drain (13.6/hr). Filter to human lanes, mine machine lanes differently, or accept ~$15-22/day producing nothing."
-    - "DEBT-36 — the transcripts tool advertises include_tool_calls, a parameter the MODEL can pass that has never been able to do anything. Drop it, or wire tool-turn persistence deliberately."
+    - "D01.6's missing brainstorm — retro-record the decisions actually made, or accept it as a documented pre-process exception. It is the ONLY thing between the programme and a clean wave 1."
+    - "DEBT-35 — 92% of the conversation-mining queue is machine incident lanes that can never yield a user fact, and arrivals (25/hr) outpace drain (13.6/hr). Filter, mine differently, or accept ~$15-22/day producing nothing."
+    - "DEBT-36 — the transcripts tool advertises include_tool_calls, a parameter the MODEL can pass that has never been able to do anything."
     - "The INTERACTIVE half of the D01.3 measurement — a couple of real messages to one owl."
-  the_lessons_this_session_paid_for:
-    - "THE LIVE ANSWER PATH STREAMS, in BOTH providers. Any provider-level test driving create() proves a path production does not take — that indicts existing tests, not just new ones."
-    - "REGISTERED != REACHABLE, four times in three items: D01.2's stream path marked-but-uninstrumented, owl_build's seam reachable-but-uncalled, _build discarding the caller's services, and D01.5's rule needing a wiring test to prove it is reached at all."
-    - "A STALE TEST CAN LOOK EXACTLY LIKE A SECURITY HOLE (DEBT-33). Verify before reporting, especially before reporting something frightening."
-    - "WIDENING A DB CONSTRAINT WITHOUT WIDENING ITS READER is a trap. Migration 0105 would have made every mined conversation unreadable; only the test asserting the data is still READABLE caught it."
-    - "A TEST THAT MODELS ONLY THE HAPPY PATH makes a broken fix look fixed. DEBT-32's second attempt passed its test and failed in production because the stub always produced a fact."
-    - "READ THE DDL PROVES A CONSTRAINT EXISTS; ATTEMPTING THE WRITE PROVES IT FIRES. Both D01.5's migration and DEBT-32's Literal turned on that difference."
-    - "COMMIT BEFORE MUTATING. A harness that times out mid-battery plus `git checkout` on uncommitted work deletes the feature, not the mutation."
-    - "SCRIPTED TEXT EDITS ARE FOR MECHANICAL SUBSTITUTION, NOT STRUCTURAL INSERTION. Several went wrong this session — one split a decorator from its function, others silently failed their assertions while the commit went ahead."
-    - "SILENCE IS NOT SUCCESS. Three times a quiet result was NO OPPORTUNITY rather than health: the D01.3 measurement, the DEBT-32 queue, and D01.5's Rule 5. Check the denominator before reporting a rate."
+  the_lessons_this_programme_has_paid_for:
+    - "SILENCE IS NOT SUCCESS. Four times a quiet result was NO OPPORTUNITY rather than health: the D01.3 measurement, the DEBT-32 queue, D01.5's Rule 5, and D01.3's interactive half. Check the denominator before reporting a rate."
+    - "REGISTERED != REACHABLE, four times in three items. A rule that is correct but unreached passes every unit test and does nothing — which is why D01.5 has a test that dies when the validator is unwired but the rule is untouched."
+    - "THE LIVE ANSWER PATH STREAMS, in BOTH providers. Any provider-level test driving create() proves a path production does not take."
+    - "READING THE DDL PROVES A CONSTRAINT EXISTS; ATTEMPTING THE WRITE PROVES IT FIRES. Both D01.5's migration and DEBT-32's Literal turned on that difference."
+    - "WIDENING A DB CONSTRAINT WITHOUT WIDENING ITS READER is a trap only a read-side test catches."
+    - "A TEST THAT MODELS ONLY THE HAPPY PATH makes a broken fix look fixed (DEBT-32's barren sessions)."
+    - "THE EXISTING SUITE IS THE BEST REVIEWER. Three times it rejected a plausible fix whose own new test passed — D01.5's first Rule 5 would have broken every legitimate resume."
+    - "COMMIT BEFORE MUTATING, and verify the restore. Twice a mutation harness left the tree dirty or deleted uncommitted work."
+    - "SCRIPTED TEXT EDITS ARE FOR MECHANICAL SUBSTITUTION, NOT STRUCTURAL INSERTION."
 
 # ---------------------------------------------------------------------------
 # WALK ORDER — waves, in sequence
@@ -1826,7 +1827,15 @@ dedup_targets:
     name: "Two tool-selection mechanisms"
     detail: "Per-turn context_budget budgeter vs toolsets + progressive disclosure. Budgeter should go."
     items: [D01.3, D05.2, D05.4]
-    status: unresolved
+    decided_2026_07_29: >
+      D01.3 DECIDED it and handed the implementation to D05.2/D05.4. The budgeter
+      goes; toolsets replace it. It is NOT deleted yet because the replacement is
+      0/7 and context_budget.tool_budget_tokens carries a real capability
+      (sizing the presented set to window minus the turn's fixed cost) that must
+      survive. D01.3's doc records the three constraints D05.2 must honour.
+      The premise is no longer an assertion: 15 measured change events, the tool
+      COUNT itself oscillating in 4 of 5 (lane, owl) pairs.
+    status: "decided — closes when D05.2/D05.4 land"
   X3:
     name: "Two learning paths"
     detail: "Scheduled learning/ miners vs per-turn background review fork. Compose or replace?"
@@ -2723,16 +2732,53 @@ items:
     blocks: []
     dedup_target: X2
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/hermes-mapping/designs/D01.3.md"
+    doc_last_verified: 2026-07-29  # against 2c117fce; every Verification command RUN, including the negative one
+    decisions:
+      - date: 2026-07-29
+        stage: "brainstorm + architect (decision-only item, track: decide)"
+        by: Bakir
+        the_scope_question_asked_FIRST: >
+          Rather than opening a 25-question grill on an item whose resolution
+          provably lives in another wave, the scoping question went first: X2 says
+          "budgeter should go", replaced by D05.2 (Toolsets) and D05.4
+          (Progressive disclosure) — and BOTH are 0/7. Deleting the budgeter now
+          would remove a working capability (context_budget.tool_budget_tokens
+          sizes the presented set to window minus the turn's real fixed cost) with
+          nothing behind it.
+        answers:
+          scope: "DECISION-ONLY. Record the decision, the measurement and what D05.2 must honour; mark implement..validate no_change_needed; let wave 2 carry the implementation. Wave 1 closes with all seven stages run and nothing pretended."
+          interactive_gap: "Record it as a STATED GAP and proceed. The cause is a single call site shared by every path, so there is no reason interactive would differ — but that is an inference, not a reading, and the doc says so."
+        the_cheap_fix_was_considered_and_REJECTED: >
+          Stabilising the budgeter within a session (select once per (lane, owl),
+          reuse) would buy D01.2's markers immediately. Rejected because it is a
+          THIRD mechanism — exactly what X2 exists to prevent — and would need
+          unpicking the moment toolsets land. Recorded so the option is visibly
+          declined rather than unconsidered.
+        what_D05_2_must_honour:
+          1: "The array must be STABLE for the life of a session — D01.2's position-0 marker is worthless otherwise."
+          2: "WINDOW-AWARE SIZING must survive. Losing it to gain cache stability trades one defect for another."
+          3: "A toolset change must INVALIDATE the frozen prompt. D01.4 already built that seam (invalidate_all) and the capabilities block is already a named trigger — wiring, not new machinery."
+        questions_left_OPEN_for_D05_2: >
+          Deliberately not pre-empted, because answering them here would decide
+          D05.2 without its own brainstorm: are toolsets per-owl or global (their
+          one-agent answer does not transfer); may the context window still SHRINK
+          a configured toolset; and does a mid-session toolset change apply
+          immediately (paying a rebuild) or defer to the next incarnation.
+        hermes_read_first_as_always: >
+          agent/agent_init.py:1386 builds agent.tools ONCE from
+          enabled_toolsets/disabled_toolsets, and the conversation loop never
+          rebuilds it — Law 2 stated literally, and precisely what makes their
+          position-0 marker viable. The honest reading is that StackOwl is BEHIND
+          here: we grew a per-query budgeter they never needed. This item is the
+          decision to catch up, not a defence of the difference.
     changes: []
     THE_PREMISE_IS_NOW_MEASURED:
       date: 2026-07-28
@@ -3356,6 +3402,27 @@ items:
       document:   done
     doc: "docs/hermes-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25  # against commit a717c4e9
+    process_deviation:
+      found: 2026-07-29
+      what: "BRAINSTORM WAS NEVER RUN. stages.brainstorm is not_started and `decisions` is empty, yet the item shipped complete — doc closed, baseline captured, validate done."
+      why_it_happened: >
+        D01.6 was the FIRST item worked, and the GRILL RULE (25 questions per
+        item, batched four per round) is itself dated 2026-07-25 — the same day.
+        The item was built before the process that now governs every other item
+        existed. Its decisions were made in conversation and never landed in
+        `decisions`.
+      why_it_is_NOT_being_backfilled_silently: >
+        Marking brainstorm `done` would be a lie — no grill happened.
+        `no_change_needed` would also be wrong: that outcome means "this stage
+        examined the item and found nothing to change", which is not what
+        occurred. Left as not_started with this note, so the record says what
+        actually happened.
+      consequence: >
+        WAVE 1 IS 6/7 ITEMS, NOT 7/7. D01.6 is functionally complete and live —
+        the cost spine it built is what every later item measured itself against —
+        but the programme cannot claim a clean wave until this is resolved one way
+        or the other. Bakir's call: retro-record the decisions that were actually
+        made, or accept it as a documented pre-process exception.
     decisions: []
     changes:
       - date: 2026-07-25
