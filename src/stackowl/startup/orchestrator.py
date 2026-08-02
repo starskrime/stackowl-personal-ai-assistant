@@ -328,6 +328,41 @@ def _resolve_socket_path(settings: Settings) -> Path:
     return StackowlHome.core_socket()
 
 
+class _UnavailableCapability:
+    """A capability that is definitively absent from THIS process (D05.3).
+
+    Satisfies the read half of ADR-6's ``HealableResource`` so
+    ``infra.capabilities`` can serve a real "no" instead of falling open. Needed
+    because a process that simply never registers a capability presents its tools
+    anyway — fail-open is for names nobody has an answer for, not for ones we do.
+
+    ``ensure_available`` deliberately raises rather than pretending to heal: a
+    process that does not host the subsystem cannot start it, and silently
+    succeeding would report a repair that never happened.
+    """
+
+    def __init__(self, reason: str, remedy: str | None = None) -> None:
+        self._reason, self._remedy = reason, remedy
+
+    @property
+    def available(self) -> bool:
+        return False
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        return self._reason
+
+    @property
+    def remedy(self) -> str | None:
+        return self._remedy
+
+    async def ensure_available(self) -> None:
+        raise RuntimeError(f"cannot be started in this process: {self._reason}")
+
+    def register_on_recycled(self, cb: object) -> None:
+        """No-op — there is nothing here to recycle."""
+
+
 class StartupOrchestrator:
     """Boots StackOwl through 6 named phases; raises StartupError on any failure."""
 
@@ -1107,6 +1142,21 @@ class StartupOrchestrator:
             else:
                 reason = "unknown — the guard rejected it but no cause matched"
             log.warning("[startup] gateway: browser runtime skipped — %s", reason)
+            # D05.3 — REGISTER THE CAPABILITY AS UNAVAILABLE, do not just skip.
+            #
+            # Found during validate, and it made the whole item a no-op on this
+            # box: capabilities.resolve() fails OPEN on an unregistered name (a
+            # typo must never delete a toolset), so a process that merely omits
+            # the registration presents all 25 browser tools regardless. The
+            # gateway role skips the runtime, so it registered nothing, so it
+            # gated nothing — the gate was correct, wired, and inert.
+            #
+            # "There is no browser in this process" is a real availability
+            # verdict and has to be stated as one. The fail-open default is for
+            # names nobody has an answer for, not for ones we do.
+            from stackowl.infra import capabilities as _capabilities
+
+            _capabilities.register("browser", _UnavailableCapability(reason))
 
         # E0-S1 — consent gate: combination consent policy + per-channel prompters.
         # Routing prompter is mutable so the Telegram prompter can register after

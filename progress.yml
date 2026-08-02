@@ -258,17 +258,18 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.3
+  item: D05.5
   stage: brainstorm
   stage_status: not_started
   one_line: >
-    D05.2 IS 7/7 AND LIVE, and D05.4 closed with it as subsumed. Wave 1 stands at
-    6 of 7 items complete (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
+    D05.2 AND D05.3 ARE BOTH 7/7 AND LIVE; D05.4 closed with D05.2 as subsumed.
+    Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
     as a process_deviation and still needing Bakir's call). Dedup target X2 is
     RESOLVED, though not the way it was written — read its
     resolved_2026_08_02_BUT_NOT_AS_WRITTEN before repeating "the budgeter should
-    go", because it did not go. Next is D05.3 (Service gating / check_fn), which
-    depended on D05.2 and is now unblocked.
+    go", because it did not go. Wave 2 has 5 D05 items left; next in order is
+    D05.5 (Programmatic tool calling), whose map entry explicitly asks to walk
+    the existing _ptc.py together before deciding anything.
   read_first: >
     (1) This block. (2) designs/D05.2.md — three corrections and a fourth finding,
     all recorded in sequence because the sequence is the lesson. (3) PROCESS.md
@@ -291,6 +292,14 @@ current:
     map never mentioned. THE MAP IS A HYPOTHESIS. Measure the tree first — and
     measure the LIVE DB, not the columns you remember (the row counts came from
     ~/.stackowl/workspace/stackowl.db; ~/.stackowl/stackowl.db is a 0-byte decoy).
+  AND_THE_D05_3_LESSON_GREEN_TESTS_CAN_SHIP_AN_INERT_FEATURE: >
+    D05.3 passed 20 tests, held both gates, and was COMPLETELY INERT on this box.
+    The gate fails OPEN on an unregistered capability (correct — a typo must not
+    delete a toolset), and the orchestrator registered the browser capability only
+    inside the branch that CONSTRUCTS the runtime, which the gateway role skips.
+    So the gateway registered nothing and gated nothing. Only restarting and
+    reading the live log showed it. RESTART AND READ THE LOG IS NOT A FORMALITY —
+    it is the only stage that catches "correct, wired, and does nothing here".
   AND_THE_TESTING_LESSON: >
     Mutation M1 (disable the memo in execute.py, leave the module alone) SURVIVED
     the first test suite — 19 green while the platform rebuilt the array every
@@ -304,9 +313,9 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.3 (Service gating / check_fn) brainstorm — READ HERMES FIRST, then the grill. Hermes has a per-tool check_fn predicate, TTL-cached, plus requires_env (already noted in D05.2's brainstorm notes)."
-    2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections were all avoidable that way."
-    3: "Wave 2 is D05 entire: 8 items. D05.2 and D05.4 are closed; 6 remain."
+    1: "D05.5 (Programmatic tool calling) brainstorm — the map itself says 'Walk the current _ptc.py together — is this already 80% there?'. Two items running have now shown the answer is usually yes."
+    2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
+    3: "Wave 2 is D05 entire: 8 items. D05.2, D05.3 and D05.4 are closed; 5 remain (D05.1, D05.5, D05.6, D05.7, D05.8)."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
@@ -5742,11 +5751,11 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
     doc: "docs/hermes-mapping/designs/D05.3.md"
     doc_last_verified: "2026-08-02"
     decisions:
@@ -5844,6 +5853,84 @@ items:
           deliberately `binary_ok` alone. Recorded because I nearly reported it,
           and the "understand the design intent before fixing" rule is what
           stopped me.
+      - date: 2026-08-02
+        stage: implement+cleanup+test+validate+document
+        by: Claude
+        what_shipped:
+          registry: "NEW infra/capabilities.py — name -> HealableResource, 30s TTL, 60s failure-grace, fail-open on every uncertainty. Availability(ok, reason, remedy)."
+          manifest: "ToolManifest.requires_capability. Declared on all 25 browser tools + browser_vision."
+          presentation: "_capability_ok filters the DISCRETIONARY tiers in both select() and rank_candidates(). The guaranteed set is built WITHOUT it — invariant I2."
+          tool_search: "A gated tool is still listed, annotated '[UNAVAILABLE: reason — fix: remedy]'. Hydration deliberately NOT filtered: a capability that returns mid-session must not lose a promotion the model already paid a search for."
+          dispatch: "Refuses with reason + remedy, ordered BEFORE the bounds check — 'this cannot run' is cheaper and more honest than 'you may not run this', and needs no owl registry. Authz unchanged."
+          protocol: "HealableResource gained an OPTIONAL remedy, read via getattr. Deliberately NOT declared on the Protocol — all ten existing implementers predate it and must keep conforming without edits."
+        THREE_DEFECTS_FOUND_BY_WRITING_THE_TESTS_all_mine: >
+          1. THE DIFF LOOKED COMPLETE AND WAS NOT. requires_capability on the
+             shared _BrowserTool base covers only 18 of the 25 browser tools;
+             SEVEN (browse, snapshot, back, press, get_images, console, dialog)
+             subclass Tool directly and would have shipped silently ungated.
+          2. browser_vision is grouped under "media" but screenshots a live page
+             via sessions.get_page, so it needs the browser runtime. A sweep over
+             the browser GROUP misses it. THIS IS THE COUNTER-EXAMPLE THAT
+             JUSTIFIES requires_capability BEING ITS OWN FIELD rather than
+             inferred from toolset_group. Caught only because the test asserted
+             on tool NAMES instead of on the grouping the code already uses — an
+             assertion deliberately stricter than the implementation.
+          3. capabilities.clear() was wiping SUBSCRIBERS, which are import-time
+             wiring, not state. That silently unhooked D05.2's memo invalidation
+             for the rest of the process: a capability could recover and its
+             tools stayed hidden until rollover. Also fixed register() to NOTIFY
+             rather than merely drop its own cache — re-registration is exactly
+             what a recovered subsystem looks like.
+        THE_ITEM_WAS_INERT_ON_THIS_BOX_until_validate: >
+          THE MOST IMPORTANT FINDING, and it surfaced only by restarting and
+          reading live logs rather than trusting a green suite.
+          resolve() fails OPEN on an unregistered name — correct, and the reason
+          a typo cannot delete a toolset. But the orchestrator registered the
+          browser capability only INSIDE the branch that constructs the runtime,
+          and the gateway role skips that branch. So on this box the gateway
+          registered nothing, gated nothing, and presented all 25 browser tools:
+          THE GATE WAS CORRECT, WIRED, AND COMPLETELY INERT.
+          Fixed by registering an _UnavailableCapability stub on the skip path.
+          "There is no browser in this process" is a real availability verdict
+          and must be stated as one; fail-open is for names nobody has an answer
+          for, not for ones we do. Its ensure_available() RAISES rather than
+          pretending to heal — a process that does not host a subsystem cannot
+          start it, and silently succeeding would report a repair that never
+          happened.
+        THE_MAPS_FRAMING_IS_HALF_WRONG_measured: >
+          The map says "unconfigured capability still costs tokens on every
+          call". Measured both ways; the benefit depends on whether the cap binds:
+            UNCAPPED (generous window): 59 -> 33 tools, 12,467 -> 9,553 tokens.
+            A real 2,914-token / 23% saving — the pure availability effect.
+            CAPPED at 36 (a browser-profiled owl): 36 -> 33 tools but tokens went
+            UP, 7,285 -> 9,553. The cap was already binding, so gating frees 26
+            slots that refill with other groups' LARGER schemas.
+          The second case is not a token saving at all, it is CAPABILITY
+          SUBSTITUTION: dead tools replaced by live ones. Arguably the bigger
+          win, and not what the map claims. Both are wins; only one was predicted.
+        mutation_M3: >
+          Make _capability_ok return True unconditionally. Kills EXACTLY the
+          three gating tests; all 15 registry tests still pass. Written BEFORE
+          implementing this time, because D05.2's M1 survived its first suite —
+          module tests prove correct, not wired.
+        tests:
+          - "tests/infra/test_capabilities.py — 15, weighted toward the REFUSALS to hide: fail-open on an unknown name, the grace window, a raising probe, a flake not being cached."
+          - "tests/pipeline/test_d053_capability_gating_is_wired.py — 5. Real registry, real presentation, real budgeter, only the AI provider mocked. Asserts on what the PROVIDER received."
+        suites_green: "D05.3 5, infra 143, presentation+registry 30, tools/meta 157, search+pipeline 35, D05.2 regression suite still green. ruff 46 / mypy 78 throughout."
+        live_validation: >
+          ./start.sh twice (pids 177475, 178216). Zero ERROR/CRITICAL both times.
+          PROVEN LIVE:
+            * the corrected skip message — "browser runtime skipped — this
+              process runs the gateway role; the browser is hosted by core" —
+              which no longer contradicts the probe's binary=True two lines away
+            * "[presented_tools] capability changed — dropping every memoized
+              tool array" — the registration fired and the capability -> memo
+              invalidation chain works END TO END in production
+          NOT PROVEN LIVE: the gating itself. ZERO turns have run since restart,
+          so no schema has been built and "[capabilities] resolve: capability
+          UNAVAILABLE" has had no opportunity to fire. Same denominator caveat as
+          D05.2 — silence here is no traffic, not success.
+        cleanup_done: "The misleading orchestrator log now distinguishes all three causes (gateway role / probe did not run / binary missing) instead of hardcoding 'binary not found' for all of them."
     changes: []
     notes: null
 
