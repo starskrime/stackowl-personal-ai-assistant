@@ -5740,7 +5740,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -5749,7 +5749,101 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-02
+        stage: brainstorm
+        by: Bakir
+        round: >
+          17 questions over 5 rounds, NOT the nominal 25 — stated rather than
+          padded. The D05.2 lesson was applied first: read Hermes, then read the
+          TREE, then ask only what neither answers. Roughly a third of the
+          planned questions were retired by reading rather than by asking, and
+          one round was spent putting a contradiction back (see THE_BIG_FINDING).
+        THE_PREMISE_IS_MEASURED_not_asserted: >
+          On this box, right now: 77 tools registered, 18,061 tokens of schema.
+          BROWSER IS 25 TOOLS / 2,652 TOKENS = 14% of the entire tool surface,
+          and the browser runtime is NOT running in this process. All 25 are
+          presented anyway. That is D05.3's gap, live and quantified, without
+          needing a synthetic scenario.
+        what_hermes_does:
+          check_fn: "A per-tool predicate. A tool with a failing check_fn is ABSENT from the schema entirely. registry.py:_check_fn_cached."
+          ttl: "30s TTL cached on the FUNCTION OBJECT, so 25 tools sharing one predicate probe once."
+          failure_grace: >
+            THE HARD-WON DETAIL, and worth more than the mechanism. 60s grace:
+            a probe that fails within 60s of its last success is treated as a
+            FLAKE — last-good True is served, the failure is NOT cached, and a
+            WARNING is logged. Scar tissue from their incidents #21658/#5304,
+            where one timed-out `docker version` under load silently stripped a
+            whole toolset mid-session and a delegate_task subagent then reported
+            "Tool read_file does not exist".
+          invalidate: "invalidate_check_fn_cache() after config changes."
+        THE_BIG_FINDING_it_is_already_built: >
+          ADR-6's HealableResource (infra/resilience.py:47) is a Protocol with
+          EXACTLY the four things this item needs — available, unavailable_reason,
+          ensure_available() (the heal), register_on_recycled() (the invalidation
+          hook) — and it is implemented by TEN subsystems: browser runtime, the
+          telegram/slack/discord/whatsapp adapters, LanceDB, Kuzu, the embedding
+          registry, providers, the db pool and the MCP client.
+          Health is further along than that: BrowserContributor.health_check()
+          ALREADY returns "unavailable: {reason}", and health_sweep ALREADY
+          collects it periodically and already has a heal path.
+          So D05.3 is a LINK, not a subsystem. Same shape as D05.2, where the
+          usage signal had been recorded for two months and only the consumer was
+          missing. This time it was caught BEFORE designing, not after.
+          The contradiction was put back to Bakir rather than absorbed: it
+          changed the answer to two questions already given (Q8 and Q9).
+        answers:
+          gating_unit: "PER TOOL — but via a capability NAME, so 25 browser tools share one probe naturally (Hermes gets the same effect by caching on the fn object)."
+          when_unavailable: "ABSENT from the schema, still findable via tool_search WITH the reason. Zero token cost, but an owl can still discover that the capability exists and report what is blocking it — a capability it cannot see is one it can never ask to have enabled."
+          heal: "HEAL AT BOOT, then gate on the result. And heal EVERYTHING, no consent — Bakir overrode the 'ask for sudo/622MB' recommendation. CONSISTENT WITH THE TREE: browser_probe already auto-fetches the 622MB binary at boot today (fetch_if_missing=True), so this extends existing behaviour rather than introducing a new risk. Also matches the standing feedback_agent_auto_install rule."
+          vs_D05_2_memo: "An availability flip INVALIDATES the memo — the same resolution D05.2 used for tool_search hydration: the toolset genuinely changed, which is what a cache miss is supposed to mean."
+          predicate_shape: "(available, reason, remedy) — structured, not a bare bool. A bool cannot tell tool_search why, which would undercut the whole reason for keeping the tool discoverable."
+          flake_handling: "ADOPT BOTH the TTL and the 60s grace window. StackOwl is MORE exposed than Hermes, not less — our probes run on a Jetson under load, and losing 25 tools to one timed-out probe is precisely the silent capability loss this repo has a standing rule against."
+          protected_tools: "NEVER availability-gated. _DEFAULT_BASE ∪ _DEFAULT_ALWAYS are always presented even if their capability is down. Bakir chose this over my recommendation, accepting that web_fetch stays visible with no network, in exchange for a probe bug never being able to empty an owl's toolbox."
+          manifest_field: "requires_capability: str | None on ToolManifest — Bakir's chosen PLACEMENT unchanged, but holding a NAME that resolves to one of the 10 existing HealableResources rather than 25 hand-written callables that would only wrap them."
+          detection: "BOTH. register_on_recycled gives instant push for recycles; health_sweep polls for availability that APPEARS where nothing was recycled (an API key added, Docker started). Neither direction is covered by the other."
+          dispatch: "REFUSE with the reason and remedy. A hidden tool is still dispatchable by name (that is how tool_search overflow stays callable), so the precondition is checked at dispatch instead of letting the tool's own code fail deep with an opaque error."
+          remedy_source: "EXTEND HealableResource with an optional remedy. Bakir chose the precise-but-wider option over declaring it statically on the manifest: the subsystem knows WHY it is down, and a missing lib needs different advice than a dead socket. Touches all 10 implementations."
+          degraded: "GATE ON `available` ONLY. Degraded means working-but-slow; hiding a working tool because it is slow removes capability the agent could still use."
+          scope: "MAP EVERY CAPABILITY NOW — Bakir overrode my 'browser only' recommendation."
+          registry_placement: "infra/capabilities.py, beside resilience.py which defines the protocol it serves. Same layer as hydrated_tools and presented_tools. Subsystems self-register at startup, because tools are registered statically by with_defaults() long before any runtime exists — so resolution MUST be lazy."
+        THE_RISK_I_FLAGGED_WAS_ALREADY_MITIGATED_two_rounds_earlier: >
+          I warned that "map every capability now" risks a Kuzu/LanceDB blip
+          hiding the agent's MEMORY tools, against the standing rule about never
+          silently disabling features. MEASURED instead of argued, and the
+          warning turns out to be already covered by Bakir's own Q7 answer:
+            18 of 77 tools are PROTECTED and can never be gated, including
+            memory, reflect_now, evolve_now, skill_view (5 of the 9 knowledge
+            tools), read_file, shell, web_fetch, tool_build, owl_build,
+            skill_manage, synthesize_skills, cronjob, send_file, tool_search,
+            tool_describe.
+            Only 59 tools are gateable at all, and every self-extension tool is
+            immune.
+          So a vector-store hiccup CANNOT hide the memory tool. Two answers given
+          three rounds apart compose into a safe outcome; recorded because the
+          composition is not obvious from either answer alone.
+        blast_radius_measured:
+          gateable_by_group: "browser 25, code 7, agents 4, knowledge 4, media 4, (none) 4, scheduling 3, planning 2, interaction 2, process 2, web 1, tasks 1 = 59"
+          never_gateable: "18 (the _DEFAULT_BASE ∪ _DEFAULT_ALWAYS protected set)"
+        DEFECT_FOUND_WHILE_READING_misleading_startup_log: >
+          orchestrator.py:1084-1086. The browser-runtime guard is
+          `if self._role != "gateway" and probe is not None and probe.binary_ok:`
+          but the else-branch logs `reason = "binary not found" if probe is not
+          None else "probe did not run"` — it CANNOT say "this process is the
+          gateway", which is the actual reason on this box. Live proof: the same
+          boot logs `browser_probe.check: exit ... binary=True` and then
+          `gateway: browser runtime skipped — binary not found`. Two lines from
+          one boot contradicting each other, and it misled ME for ten minutes
+          during this brainstorm. Small, real, and in scope for an item about
+          what "available" means and who reports it. Fix in cleanup.
+        NOT_a_defect_checked_before_flagging: >
+          `browser_probe.check: exit libs=False xvfb=True binary=True ready=True`
+          looks wrong — ready=True with libs=False. It is CORRECT BY DESIGN:
+          browser_probe.py:30-35 documents that missing libs/xvfb are recoverable
+          at runtime because Camoufox falls back to headless, so `ready` is
+          deliberately `binary_ok` alone. Recorded because I nearly reported it,
+          and the "understand the design intent before fixing" rule is what
+          stopped me.
     changes: []
     notes: null
 
