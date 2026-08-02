@@ -702,7 +702,14 @@ known_debt:
       picked up. Marker still placed — it costs nothing extra and pays off the
       moment D01.3 lands.
     hand_to: D01.3
-    status: open
+    status: >
+      RESOLVED 2026-08-02 — and it was already stale when this session started.
+      D01.3 MEASURED the premise on 2026-07-29 (15 change events across 5
+      (lane, owl) pairs, the tool COUNT oscillating in 4 of 5) using the
+      cache_audit instrument D01.2 shipped. D05.2 then fixed BOTH causes: the
+      request_text ordering and the history-driven budget. This entry outlived
+      its own subject by two items because nothing closes a debt when the work
+      that answers it lands under a different id.
   - id: DEBT-30
     found: 2026-07-27
     what: "The 20-block cache lookback is exceeded by 9.6% of our tool-using turns."
