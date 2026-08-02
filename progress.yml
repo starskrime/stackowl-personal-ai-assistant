@@ -5741,14 +5741,14 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
+    doc: "docs/hermes-mapping/designs/D05.3.md"
+    doc_last_verified: "2026-08-02"
     decisions:
       - date: 2026-08-02
         stage: brainstorm
