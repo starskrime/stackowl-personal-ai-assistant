@@ -5295,14 +5295,14 @@ items:
     dedup_target: X2
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
+    doc: "docs/hermes-mapping/designs/D05.2.md"
+    doc_last_verified: "2026-08-01"
     decisions:
       - date: 2026-07-29
         stage: brainstorm
@@ -5319,7 +5319,31 @@ items:
             model-visible list by three bridge tools — tool_search /
             tool_describe / tool_call. Config is enabled: auto|on|off.
           memoization: "Cache key = enabled/disabled toolsets + registry generation + config mtime fingerprint + delegated-child context."
-        THE_CAPABILITY_DIFFERENCE_THAT_DECIDED_IT: >
+        CORRECTION_2026_07_29_I_WAS_WRONG: >
+          THE CLAIM BELOW IS FALSE AND DROVE A DECISION. I told Bakir our
+          budgeter "drops tools outright — they become unreachable", making it a
+          CAPABILITY difference from Hermes. The tree says otherwise, and I found
+          it while designing the seam:
+            * tools/meta/tool_search.py:1 — "lexical, deterministic discovery
+              over the FULL tool catalog"
+            * tool_search.py:158 — hits are "promote[d] into the NEXT turn's
+              presented schema"
+            * presentation.rank_candidates — unmatched tools follow "in a
+              deterministic by-name tail so none are dropped"
+            * registry.to_provider_schema:417 — "overflow stays reachable
+              through tool_search"
+          StackOwl ALREADY defers-not-drops, exactly as Hermes does. The bridge,
+          the toolsets and the promotion-into-next-turn all exist. "Port the
+          bridge" was porting something we already have, and is MOOT.
+          WHAT IS GENUINELY BROKEN is narrower: the discretionary set is ORDERED
+          BY LEXICAL RELEVANCE TO request_text, so the presented set changes with
+          every query. That is D01.3's measured instability — an ordering
+          problem, not a capability loss.
+          WHY IT MATTERS THAT THIS SURFACED: the learned per-owl core is not an
+          addition on top of a port, it is the DIRECT REPLACEMENT for the
+          request_text ranking. Same seam, a stable input instead of a per-query
+          one. The design got smaller and better aimed by being wrong first.
+        SUPERSEDED_the_capability_difference_that_decided_it: >
           HERMES NEVER DROPS A TOOL. Ours does: context_budget selects a subset
           per query, and the tools left out are simply not callable that turn —
           a silent capability loss on top of the cache instability D01.3
@@ -5345,17 +5369,16 @@ items:
             stops suggesting the impossible.
           cold_start: "THE OWL'S DECLARED CAPABILITY PRESET. owl_build already infers a capability from a plain-language goal (owl_build_infer.infer_capability) and manifests carry capability_profile — the declaration exists and is already the authz basis, so nothing new is invented."
           learning_signal: "FREQUENCY x SUCCESS, RECENCY-WEIGHTED. Promote what the owl calls often and succeeds with; demote what it has not called. Never DELETES — only moves a tool between core and bridge, so nothing becomes unreachable by learning either."
-        the_signal_source_DOES_NOT_EXIST_YET: >
-          Checked before assuming. infra/tool_outcome_ledger.py records
-          (name, severity, success) but is TURN-SCOPED — it does not persist.
-          task_outcomes (10,311 rows) has owl_name and tool_call_count but NOT
-          tool names. tool_heuristics (34 rows) has tool_name, evidence_count and
-          mean_quality but no owl and is condition-based outcome PREDICTION, not
-          usage. So there is no durable per-(owl, tool) usage record, and the
-          learning half needs one — a migration, scoped in architect rather than
-          discovered during implement.
+        SUPERSEDED_the_signal_source_DOES_NOT_EXIST_YET: >
+          FALSE — corrected during architect, see
+          CORRECTION_2026_08_01_NO_MIGRATION_IS_NEEDED below. The claim that
+          "task_outcomes has owl_name and tool_call_count but NOT tool names" was
+          asserted from the column list I remembered rather than the one the
+          database has. It has tool_sequence. Kept here because it is the third
+          time in this item that I described the tree instead of reading it, and
+          the pattern is the finding.
         questions_still_to_ask:
-          - "Where does toolset membership live — the tool's own declaration, the owl manifest, or both (and which wins)?"
+          - "ANSWERED BY THE TREE during architect, no decision taken: membership lives at BOTH ends and neither wins. base.py:82-86 — the tool declares its toolset_group, the owl's capability_profile lists group names, and a tool joins the presented set when its group is in that profile. Presentation is the intersection. A manifest-side per-tool override would add a second expression of membership plus a precedence rule; nothing here needs one."
           - "Does the bridge itself count against the four D01.2 cache breakpoints, i.e. do the three bridge tools sit in the stable prefix?"
           - "What is the demotion threshold — N sessions unused? — and is it time-based or session-count based?"
           - "Does a learned promotion need to respect max_tools, or is the core set unbounded once it is stable?"
@@ -5379,6 +5402,55 @@ items:
             obligation inside an item named Toolsets.
           bridge_tools_are_core: "The three bridge tools sit INSIDE D01.2's cached prefix, always present. Their schemas are fixed (a query, a name, a name plus args) so nothing is runtime-derived and position 0 never moves. Presenting them only when overflow exists would make the array vary with the overflow condition — reintroducing exactly the instability D01.3 measured."
           demotion: "Unused for N ROLLOVERS (session-boundary count, not wall-clock) so an owl that runs rarely is not punished for being idle. The learned core still respects max_tools; an unbounded core would grow back into the window pressure the bridge exists to relieve."
+      - date: 2026-08-01
+        stage: architect
+        by: Claude
+        doc_written: "docs/hermes-mapping/designs/D05.2.md"
+        CORRECTION_2026_08_01_NO_MIGRATION_IS_NEEDED: >
+          THE THIRD CORRECTION ON THIS ITEM, and it removes the last piece of new
+          machinery. The brainstorm concluded the learning half needed a durable
+          per-(owl, tool) store plus a migration. MEASURED on the live database
+          (~/.stackowl/workspace/stackowl.db — note: NOT ~/.stackowl/stackowl.db,
+          which is a 0-byte stale file; StackowlHome.db_path() resolves to
+          workspace/):
+            * task_outcomes: 10,311 rows, span 2026-05-28 -> 2026-08-02
+            * it HAS tool_sequence — a JSON array of tool names — alongside
+              owl_name, success, quality_score and captured_at
+            * 1,449 rows carry a non-empty sequence; 128 distinct (owl, tool)
+              pairs are recoverable TODAY, e.g. (headhunter, web_search) 2425,
+              (secretary, web_fetch) 1919, (secretary, shell) 1557
+            * WRITE GAP = 0. Every row with tool_call_count > 0 has a sequence;
+              the 8,862 empty ones genuinely made no tool calls. Single writer:
+              pipeline/backends/shared.py:532.
+          The READ helper exists too — outcome_store.list_successful_with_sequence
+          (outcome_store.py:501) already returns scored outcomes with owl_name and
+          a non-empty tool_sequence, and is already used by SkillSynthesizerHandler.
+          The positives-only gate exists as is_positive_signal (outcome_store.py:76).
+          SO: NO TABLE, NO MIGRATION. The aggregation is a group-by over <=500 rows
+          once per session boundary. Persisting it would add a fourth store
+          overlapping three existing ones — recreating X2, the duplication this
+          item exists to resolve. Recorded as invariant I6 in the doc.
+        rejected_reusing_ToolOutcomeMiner: >
+          learning/tool_outcome_miner.py already scans these outcomes daily and
+          writes tool_heuristics — but it buckets by (tool, failure_label) and
+          DISCARDS o.owl_name, which is sitting on the outcome it iterates
+          (tool_outcome_miner.py:122). Adding owl to its bucket key was considered
+          and rejected: its read surface (find_for_tool, list_all) is keyed on tool
+          by design, and its question is "does this tool tend to succeed" (global,
+          predictive) not "does THIS OWL reach for it" (per-owl, descriptive).
+        two_parameter_traps_for_implement: >
+          list_successful_with_sequence defaults must NOT be inherited blindly.
+          (1) min_quality=0.75 is a SKILL-SYNTHESIS bar — stricter than "this owl
+          uses this tool". (2) limit=500 with ORDER BY captured_at ASC returns the
+          OLDEST 500 in the window, which is the wrong end for a recency-weighted
+          signal. Either narrow the window so the limit cannot bind, or add an
+          owl-scoped DESC variant — do not reuse the default and call it recent.
+        scope_after_three_corrections: >
+          One argument and one aggregation. Replace rank_candidates' request_text
+          ordering with a learned per-owl usage score computed at session
+          boundaries. fit_items window sizing, the tool_search bridge, the
+          guaranteed set and max_tools all stay EXACTLY as they are. No migration,
+          no new tool, no new store.
     changes: []
     notes: null
 
