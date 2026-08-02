@@ -5445,12 +5445,76 @@ items:
           OLDEST 500 in the window, which is the wrong end for a recency-weighted
           signal. Either narrow the window so the limit cannot bind, or add an
           owl-scoped DESC variant — do not reuse the default and call it recent.
-        scope_after_three_corrections: >
-          One argument and one aggregation. Replace rank_candidates' request_text
-          ordering with a learned per-owl usage score computed at session
-          boundaries. fit_items window sizing, the tool_search bridge, the
-          guaranteed set and max_tools all stay EXACTLY as they are. No migration,
-          no new tool, no new store.
+        DEFECT_B_FOUND_IN_ARCHITECT_the_budget_moves_too: >
+          THE FOURTH FINDING, AND THE ONLY ONE THAT MADE THE ITEM BIGGER. Every
+          prior analysis (mine, the brainstorm, D01.3's doc) named ONE cause: the
+          request_text ordering. Reading the call site found a second, independent
+          one:
+            execute.py:1100 — _fixed_cost = est(system_prompt) + est(EVERY
+            history message), recomputed every turn
+            context_budget.py:41 — tool_budget_tokens = window - fixed_cost
+          History GROWS every turn, so the tool-token budget SHRINKS monotonically
+          and fit_items admits fewer candidates — EVEN WITH A PERFECTLY STABLE
+          ORDERING. When history is trimmed/compacted the budget recovers and the
+          tool returns.
+          THIS IS THE MISSING EXPLANATION FOR D01.3'S COUNT OSCILLATION. 4 of 5
+          pairs oscillated in tool COUNT (5->4->5->5->5, 4->4->3->4). An ordering
+          defect reshuffles a fixed-size array; it cannot change its LENGTH.
+          Defect B can. Fixing only the ordering would have shipped an item that
+          looked correct and measured unchanged.
+        rejected_removing_history_from_fixed_cost: >
+          Smaller diff, and WRONG. The budget exists to stop a small-window model
+          being handed more schemas than it has room for, and on turn 40 the
+          history IS the room. Removing it yields a budget that is stable and
+          wrong precisely when the window is tightest — satisfying the letter of
+          I3 while hollowing it out. Memoize the FIT instead: same measurement,
+          taken once, at the session's first turn where D01.1 already freezes and
+          D01.4 already invalidates.
+        memo_key_and_the_three_things_it_must_carry: >
+          (session_key, owl, protocol, window, hydrated-fingerprint).
+            * protocol + window because build_tool_schemas is deliberately
+              re-invoked PER ESCALATION TIER — execute.py:1113 states the tiers
+              "can speak different wire protocols and have different context
+              windows". A session-only key would hand an Anthropic-shaped array
+              to an OpenAI-protocol tier.
+            * hydrated because FX-07 promotes a tool_search hit into the NEXT
+              turn's schema (tool_search.py:158). Under a naive memo that
+              promotion SILENTLY STOPS WORKING — the model searches, finds the
+              tool, and never receives it.
+          NOT memoized: the restrict_to path (per-task by construction, already
+          deterministic, has neither defect) and the depth>0 spawn exclusion
+          (a property of the TURN — caching it would pin a delegated child's
+          exclusion onto its parent's lane).
+        I1_vs_I2_collision_resolved_in_favour_of_I2: >
+          Stated rather than resolved by omission. A hydration is a mid-session
+          array change — exactly what I1 forbids — so it invalidates the memo:
+          one cache miss at the moment the model discovers a tool it needs. Right
+          trade on three counts: BOUNDED (the hydrated set is monotonic and grows
+          only on an explicit tool_search, so invalidations = discoveries, not
+          turns); CAUSED (the prefix changes because the toolset genuinely
+          changed, which is what an invalidation is supposed to mean); and the
+          alternative is a permanently broken bridge. Hermes avoids the collision
+          only because their bridge DISPATCHES (tool_call) instead of promoting.
+          Ours promotes, which is better for the model, and costs one rebuild.
+        supporting_evidence_already_in_the_tree: >
+          presentation.py's cronjob comment documents this exact bug being patched
+          one tool at a time: "as a discretionary/ranked candidate, LEXICAL
+          RELEVANCE TO THE REQUEST TEXT decided whether a reminder ask ('ping me
+          in 5 min' scored well; 'remind me ... at 15:00' didn't) ever got cronjob
+          a slot ... guarantee it instead of gambling on wording." owl_build got
+          the same treatment (the "create an agent named Brain" incident). The
+          base set has been growing as a workaround for Defect A; this item
+          removes the reason to keep growing it.
+        scope_after_four_findings: >
+          An ordering signal and a memo. (1) Replace rank_candidates' request_text
+          ordering with a learned per-owl usage score from task_outcomes.
+          (2) Memoize the fitted result per (session_key, owl, protocol, window,
+          hydrated) so the per-turn budget stops resizing it. fit_items, the
+          tool_search bridge, the guaranteed set, max_tools and window-awareness
+          all stay EXACTLY as they are. No migration, no new tool, no new store.
+          THE TWO FIXES MUST BE TESTED INDEPENDENTLY — reverting the memo while
+          keeping the learned ordering must fail the history-growth test and pass
+          the query-invariance test, or one fix is being credited for both.
     changes: []
     notes: null
 
