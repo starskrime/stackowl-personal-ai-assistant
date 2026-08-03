@@ -6,7 +6,7 @@ Mirrors :class:`MemoryAssembly` / :class:`NotificationAssembly` /
 
 Per the placement vote — shipped builtin skills live in
 ``src/stackowl/skills/_builtin/`` and are idempotently copied into the user's
-``~/.stackowl/workspace/skills/builtin/`` on every boot so package upgrades
+``~/.stackowl/skills/builtin/`` on every boot so package upgrades
 propagate. The agent NEVER writes to ``builtin/`` (security boundary).
 """
 
@@ -73,7 +73,7 @@ class SkillsAssembly:
         path (``startup/orchestrator.py``) can defer them to a background
         task instead of blocking turn-readiness on serial LLM round-trips.
 
-        ``skills_root`` defaults to ``~/.stackowl/workspace/skills/`` via
+        ``skills_root`` defaults to ``~/.stackowl/skills/`` via
         :class:`StackowlHome`. ``builtin_seed_dir`` defaults to the package's
         bundled ``_builtin/`` directory; passing a different path is useful
         for tests.

@@ -869,7 +869,7 @@ class StartupOrchestrator:
         tool_registry = ToolRegistry.with_defaults()
         # Skills subsystem — unified Skill workspace (builtin/installed/user/learned).
         # Seeds shipped builtins from src/stackowl/skills/_builtin/ on every boot,
-        # scans all four source dirs under ~/.stackowl/workspace/skills/, registers
+        # scans all four source dirs under ~/.stackowl/skills/, registers
         # each skill's tools/owls extensions into the running registries, caches
         # manifests in SQLite for fast retrieval. See plan gleaming-finding-puppy.md
         # Learning Commit 3, sub-phase 3a.

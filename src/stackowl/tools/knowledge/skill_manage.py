@@ -25,7 +25,7 @@ worst case, and an off-TTY consent prompt simply denies.
 ``knowledge`` group so a read-only-knowledge owl never gets self-mutation hydrated.
 
 Agent-authored skills live under the ``learned`` source
-(``~/.stackowl/workspace/skills/learned/<name>/``) — distinct from human-authored
+(``~/.stackowl/skills/learned/<name>/``) — distinct from human-authored
 ``user`` skills and shipped ``builtin`` skills (which the agent may not mutate).
 
 Provenance / port-vs-build: HYBRID — the validators + static security scan are

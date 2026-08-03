@@ -1,7 +1,7 @@
 """SkillIndexStore — SQLite cache + audit log over the skills/ workspace.
 
 Files are source of truth (one directory per skill under
-``~/.stackowl/workspace/skills/<source>/<name>/``). This store caches the
+``~/.stackowl/skills/<source>/<name>/``). This store caches the
 parsed manifest + body + embedding for fast retrieval, plus a ``skill_audit``
 forensic trail so ``/skill diff`` and ``/skill restore`` can show every agent
 edit. Mirrors :class:`TaskOutcomeStore` (Commit 1) and :class:`ReflectionStore`

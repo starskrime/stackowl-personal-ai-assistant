@@ -1,7 +1,7 @@
 """SkillManifest — frozen Pydantic shape of one ``skill.yaml`` file.
 
 Each skill on disk lives at
-``~/.stackowl/workspace/skills/<source>/<name>/skill.yaml`` and validates
+``~/.stackowl/skills/<source>/<name>/skill.yaml`` and validates
 against this model. The model mirrors :class:`stackowl.plugins.manifest.PluginManifest`
 conventions (frozen, extra=forbid, semver-checked version) but adds the
 fields needed for the learning loop: ``when_to_use``, ``success_rate``,

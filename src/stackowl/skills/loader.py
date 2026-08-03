@@ -7,7 +7,7 @@ so StackOwl skills are portable across the wider ecosystem.
 
 Skill directory layout (each source dir contains many of these):
 
-    ~/.stackowl/workspace/skills/<source>/<name>/
+    ~/.stackowl/skills/<source>/<name>/
     ├── SKILL.md            ← REQUIRED frontmatter + markdown body
     ├── references/         ← optional — agent reads on demand (not auto-loaded)
     ├── scripts/            ← optional — agent invokes on demand (not auto-loaded)
@@ -398,7 +398,7 @@ class SkillLoader:
         return count
 
     def _seed_builtins(self, seed_src: Path, seed_dst: Path) -> None:
-        """Idempotent copy of shipped builtin skills into workspace/skills/builtin/.
+        """Idempotent copy of shipped builtin skills into skills/builtin/.
 
         Runs on every boot. If a skill exists at the destination already, we
         REPLACE it from the package source so upgrades propagate. (Builtin

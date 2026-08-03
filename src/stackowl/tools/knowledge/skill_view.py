@@ -15,7 +15,7 @@ Resolution routes through :class:`SkillIndexStore`:
 
 The skill *body* and the on-disk ``references/`` directory are located via the
 indexed ``Skill.path`` (the skill's directory under
-``~/.stackowl/workspace/skills/<source>/<name>/``); the body itself comes from
+``~/.stackowl/skills/<source>/<name>/``); the body itself comes from
 the index (``Skill.body_text``) so a view never re-parses SKILL.md.
 
 Reference subload is ONE LEVEL (the ``references/`` dir, non-recursive — impl

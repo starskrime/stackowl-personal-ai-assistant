@@ -416,6 +416,52 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: INCIDENT-2026-08-03-skills-migration
+    found: 2026-08-03
+    what: "MY OWN D05.1 MIGRATION DELETED 419 OF 420 SKILLS. Fully recovered from the DB; nothing lost."
+    what_happened: >
+      migrate_legacy_skills() was written to relocate the skills tree out of the
+      model-writable workspace. It ran against LIVE DATA and destroyed it.
+      ensure_exists() mkdirs skills/{builtin,installed,user,learned} BEFORE
+      calling the migration. The first version SKIPPED any entry whose
+      destination already existed — treating those four freshly-created EMPTY
+      directories as "already migrated" — and then VERIFIED only that each NAME
+      existed at the target. Four empty dirs satisfied that check, verify passed,
+      and shutil.rmtree deleted the source tree.
+    why_it_was_not_caught: >
+      The design doc for this very item said "COPY, VERIFY, THEN REMOVE" and
+      listed "migration interrupted half-way" as a failure mode. The verify I
+      then wrote was the kind that PASSES WHEN NOTHING HAPPENED — it asked
+      whether a path with the right name existed, which an empty directory
+      satisfies. Writing the right principle in the doc did not stop me
+      implementing a check too weak to enforce it.
+    recovery: >
+      COMPLETE. The skills table stores body_text and manifest_json — the full
+      SKILL.md content — because the SQLite index is a cache of files that are
+      the source of truth, and the cache happened to hold everything. All 421
+      rows were rewritten to disk; 422/422 parse with the real frontmatter
+      regex. Verified live: 421 loaded at the next boot, 0 ERROR/CRITICAL, and
+      the DB self-healed its stale path column (0 rows on the old path, 421 on
+      the new) because upsert is keyed on (owner_id, source, name) with
+      path = excluded.path.
+    the_fix: >
+      Two corrections, both load-bearing:
+        1. copytree(dirs_exist_ok=True) — an existing destination means PARTIALLY
+           migrated, NEVER "done".
+        2. Verify by COUNTING FILES under both trees, not by testing that a name
+           exists. Nothing is deleted unless the target holds at least as many
+           files as the source.
+      Regression test: tests/paths/test_skills_relocation.py::
+      test_migration_survives_ensure_exists_having_precreated_the_subdirs
+      reproduces the REAL precondition (the four pre-created empty dirs) rather
+      than a synthetic one. Mutation M5 restores the destructive logic and fails
+      exactly that one test.
+    lessons:
+      - "I ran a destructive migration against live data without snapshotting first. A ~/.stackowl/backups snapshot existed only because an unrelated DB migration made one in July."
+      - "A verification that cannot distinguish success from no-op is not a verification. 'Does a path with this name exist' passed on empty directories."
+      - "The data survived because a CACHE happened to hold the source of truth. That was luck, not design."
+    status: resolved
+
   - id: DEBT-37
     found: 2026-08-02
     what: "Long tool chains are overwhelmingly ONE tool repeated, not multi-step plans — 46 web_search calls in a single turn."

@@ -1,6 +1,6 @@
 """Unified Skill subsystem (Learning Commit 3).
 
-Skills are file-based artifacts under ``~/.stackowl/workspace/skills/<source>/<name>/``
+Skills are file-based artifacts under ``~/.stackowl/skills/<source>/<name>/``
 with four origin sources:
 
 - ``builtin/``   — shipped with StackOwl; read-only-by-agent.
