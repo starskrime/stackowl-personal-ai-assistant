@@ -5337,7 +5337,13 @@ items:
   - id: D05.1
     title: "Registry & auto-discovery"
     domain: D05
-    verdict: PARITY
+    verdict: PARTIAL
+    verdict_corrected_2026_08_02: >
+      WAS "PARITY". The map claimed "StackOwl. tools/registry.py with
+      auto-discovery" — there is none for builtin tools; with_defaults() is ~77
+      hardcoded imports. It also missed that StackOwl's only real auto-discovery
+      (the skill loader) exec_module()s model-reachable Python at boot from a
+      directory write_file can write to. Not parity, and not small.
     track: verify
     priority: P3
     wave: 2
@@ -5348,7 +5354,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -5357,7 +5363,78 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-02
+        stage: brainstorm
+        by: Bakir
+        round: "6 questions over 3 rounds, Hermes read FIRST. One round was spent answering Bakir's own question (how would skill installation work?) by reading rather than guessing — the answer changed nothing about the plan and confirmed it."
+        THE_MAP_IS_WRONG_ABOUT_US: >
+          The map says "StackOwl. tools/registry.py WITH AUTO-DISCOVERY" and
+          rates D05.1 PARITY with a "small" gap. FALSE. ToolRegistry.with_defaults()
+          is ~77 hardcoded imports plus explicit register() calls; there is NO
+          discovery for builtin tools at all. The only dynamic registration paths
+          are (a) learned_tool_loader reading declarative JSON specs and (b) the
+          SKILL loader, which exec_module()s tools/*.py at boot.
+          Re-verdict agreed: PARITY -> PARTIAL, and the item WIDENS to registry
+          hardening rather than housekeeping.
+        SECURITY_FINDING_confirmed_by_running_it: >
+          THE EXEC-AT-BOOT HOLE. Skills live at ~/.stackowl/workspace/skills —
+          INSIDE the workspace that write_file is confined to. Verified by
+          calling the real guard:
+            resolve_in_workspace("skills/evil/tools/pwn.py")
+              -> /home/boss/.stackowl/workspace/skills/evil/tools/pwn.py
+          and skills/loader.py:290-299 calls importlib exec_module() on every
+          tools/*.py under the skills tree at boot.
+          So ANY tool that can write the workspace gets arbitrary Python executed
+          at next start. write_file is a BASE, always-presented tool and is not
+          consent-gated as consequential. Post-D05.5 sandboxed PTC code can call
+          write_file too — meaning a sandboxed script can escape the sandbox with
+          a ONE-REBOOT DELAY, partly bypassing the escape fence D05.5 built one
+          day earlier.
+          Realistic chain on this box: fetched web content -> prompt influence ->
+          model writes the file -> next boot executes it.
+        THE_HOLE_IS_UNEXERCISED: >
+          MEASURED before proposing a fix: 420 skills on disk, ZERO ship a
+          tools/*.py. The exec capability has no users at all. So the migration
+          risks nothing, and "stop exec'ing entirely" would also have cost
+          nothing — worth recording because it makes the chosen fix the
+          conservative one rather than the cautious-sounding one.
+        answers:
+          auto_discovery: "ADOPT glob + AST prefilter. Bakir chose this over my 'keep the explicit list' recommendation — the hardcoded list's reviewability was my argument, and he took the ergonomics."
+          ast_target: >
+            A TOP-LEVEL ClassDef INHERITING Tool — not Hermes' `registry.register(...)`
+            call. Their tools self-register with a module-level call; ours are Tool
+            SUBCLASSES that with_defaults() instantiates, so their AST predicate would
+            match nothing in our tree. Same technique, different target: port the
+            DESIGN, never the code.
+          dynamic_schema_overrides: >
+            DECLINED, and this is the map's actual headline ask. It makes a
+            description config-dependent, which is exactly the instability D05.2
+            spent the last two items removing — I had already written in D05.2's
+            doc that importing it would be "precisely backwards". Hermes needs it
+            because their limits are per-install user config; ours are mostly
+            module constants. MEASURED: 13 of 77 schemas state a numeric limit,
+            and delegate_task — the tool Hermes rewrites dynamically — has a
+            purely generic description here with no limits in it.
+          skill_exec_path: "IN SCOPE. D05.1 is 'registry & auto-discovery' and this IS StackOwl's auto-discovery. Two loaders take OPPOSITE positions on executing model-authored code at boot and only learned_tool_loader wrote down why."
+          verdict: "RE-VERDICT AND WIDEN — one registry-hardening item covering discovery + the exec-at-boot policy."
+          exec_fix: >
+            MOVE SKILLS OUT OF THE WORKSPACE. skills_dir() becomes root()/"skills"
+            instead of workspace()/"skills", plus an idempotent boot migration.
+            Structural, not a rule to remember.
+        BAKIRS_QUESTION_ANSWERED_BY_READING: >
+          He asked "if we move out then how will skill installation work?" —
+          the right question, and the answer is UNAFFECTED. Verified: skill_manage,
+          synthesize_skills, the loader, the scheduler, the orchestrator and
+          builtin-seeding ALL resolve through StackowlHome.skills_dir() and write
+          with a direct Path.write_text(). NONE goes through write_file's
+          workspace guard. So the location was never load-bearing for
+          installation — only for the hole. The only hardcoded "workspace/skills"
+          strings are in 5 DOCSTRINGS, not code.
+        rejected_alternatives:
+          refuse_py_writes: "A path-guard rule refusing write_file under skills/**. Rejected: it is a rule that must be re-applied for every future executable tree, which is precisely how this hole appeared."
+          stop_exec_entirely: "Would also have worked (0 of 420 skills use it) but removes a shipped extension surface for a hole the relocation already closes."
+    changes: []
     changes: []
     notes: null
 
