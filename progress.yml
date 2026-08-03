@@ -258,11 +258,12 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.1
+  item: D05.6
   stage: brainstorm
   stage_status: not_started
   one_line: >
-    D05.2, D05.3 AND D05.5 ARE ALL 7/7; D05.4 closed with D05.2 as subsumed.
+    D05.1, D05.2, D05.3 AND D05.5 ARE ALL 7/7; D05.4 closed with D05.2 as
+    subsumed. Only D05.6, D05.7 and D05.8 remain in wave 2.
     Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
     as a process_deviation and still needing Bakir's call). Dedup target X2 is
     RESOLVED, though not the way it was written — read its
@@ -295,6 +296,15 @@ current:
     map never mentioned. THE MAP IS A HYPOTHESIS. Measure the tree first — and
     measure the LIVE DB, not the columns you remember (the row counts came from
     ~/.stackowl/workspace/stackowl.db; ~/.stackowl/stackowl.db is a 0-byte decoy).
+  AND_THE_D05_1_LESSON_I_DESTROYED_LIVE_DATA: >
+    My skills migration deleted 419 of 420 skills. Recovered in full, but only
+    because the SQLite cache happened to hold body_text — luck, not design. Two
+    habits to keep: (1) SNAPSHOT before running a destructive migration against
+    live data, every time; (2) a verify that cannot distinguish success from
+    no-op is not a verify — mine asked "does a path with this name exist", which
+    an empty directory satisfies. This item's own design doc had already said
+    "copy, verify, then remove". Writing the principle down did not stop me
+    implementing a check too weak to enforce it.
   AND_THE_D05_3_LESSON_GREEN_TESTS_CAN_SHIP_AN_INERT_FEATURE: >
     D05.3 passed 20 tests, held both gates, and was COMPLETELY INERT on this box.
     The gate fails OPEN on an unregistered capability (correct — a typo must not
@@ -316,7 +326,7 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.1 brainstorm. THE PATTERN IS NOW THREE FOR THREE: D05.2's signal, D05.3's HealableResource and D05.5's whole RPC transport were all already built. Read the tree before writing a single question."
+    1: "D05.6 (Cross-tool references in schemas) brainstorm. THE PATTERN IS NOW FOUR FOR FOUR: D05.2's signal, D05.3's HealableResource, D05.5's whole RPC transport and D05.1's skills-exec path were all already there. Read the tree before writing a single question."
     2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
     3: "Wave 2 is D05 entire: 8 items. D05.2/3/4/5 closed; 4 remain (D05.1, D05.6, D05.7, D05.8)."
     4: "NEW: DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
@@ -5402,11 +5412,11 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
     doc: "docs/hermes-mapping/designs/D05.1.md"
     doc_last_verified: "2026-08-03"
     decisions:
@@ -5480,6 +5490,50 @@ items:
         rejected_alternatives:
           refuse_py_writes: "A path-guard rule refusing write_file under skills/**. Rejected: it is a rule that must be re-applied for every future executable tree, which is precisely how this hole appeared."
           stop_exec_entirely: "Would also have worked (0 of 420 skills use it) but removes a shipped extension surface for a hole the relocation already closes."
+      - date: 2026-08-03
+        stage: implement+cleanup+test+validate+document
+        by: Claude
+        what_shipped:
+          security: "skills_dir() -> home()/'skills'. NEW skills_dir_is_outside_workspace() makes the property CHECKABLE — it is NOT implied by reading skills_dir(), because STACKOWL_DATA_DIR moves workspace() but not home(). NEW migrate_legacy_skills(), called from ensure_exists() beside the existing downloads migration."
+          discovery: "NEW tools/_infra/discovery.py. AST prefilter -> import only the 61 modules declaring a top-level Tool subclass (69 helpers untouched) -> issubclass is the real check. with_defaults() went from 61 imports + 60 register() calls to a loop."
+          wiring: "Discovery yields CLASSES. 5 tools in 2 groups stay hand-wired for their SHARED stores; 11 more are named in _DEFAULT_CONSTRUCTIBLE to record that cls() is correct; anything else with a constructor param RAISES at boot."
+          excluded: "LearnedShellTool — ONE class that becomes MANY tools, one per agent-authored JSON spec. Auto-registering the class would add a nameless template tool beside the real ones."
+        comments_were_relocated_not_deleted: >
+          with_defaults held 153 comment lines of per-tool rationale — more than
+          half the method. Deleting that to save 61 imports would have been a bad
+          trade, so 31 blocks were moved VERBATIM into each tool's own module
+          docstring under a "Registration note" heading. They described the TOOL,
+          not the line that constructed it, and a reader looks in the tool's file.
+        parity_verified_against_a_clean_worktree: >
+          Not against my own expectation: checked out HEAD into a separate
+          worktree, dumped its registered tool names, and diffed. 77 both sides,
+          0 lost, 0 added, sets IDENTICAL. Shared stores asserted by IDENTITY
+          (`is`), not equality — equality would pass with two separate stores.
+        THE_INCIDENT: >
+          MY MIGRATION DELETED 419 OF 420 SKILLS ON ITS FIRST RUN, against live
+          data. Fully recovered from the DB. Full account in
+          INCIDENT-2026-08-03-skills-migration; the short version is that
+          ensure_exists() pre-creates the four skills subdirs, my migration
+          treated those empty dirs as "already migrated", and my verify only
+          asked whether each NAME existed at the target — which empty dirs
+          satisfy. Verify passed; rmtree deleted the source. The data survived
+          because a CACHE happened to hold the source of truth: luck, not design.
+        mutations:
+          M6: "AST filter always True -> fails the 5 prefilter tests, nothing else. Proves the prefilter does work rather than being incidental."
+          M7: "Drop the wiring table -> fails exactly the shared-store tests. Proves the wiring is load-bearing."
+          M5: "Restore the destructive migration logic -> fails precisely test_migration_survives_ensure_exists_having_precreated_the_subdirs."
+        tests: "tests/tools/test_discovery.py (14) + tests/paths/test_skills_relocation.py (8). The prefilter tests name the REAL helper modules (_infra/presentation.py, agents/schema.py, code/_ptc.py) rather than synthetic strings."
+        suites_green: "discovery 14, paths 24, registry+presentation slices 48, infra 143, D05.2/D05.3 wiring suites 167. ruff src 46 / mypy 78 unchanged."
+        live_validation: >
+          ./start.sh (pid 366908). 0 ERROR/CRITICAL.
+          "[tools] registry.with_defaults: discovered {tools:77}" in BOTH the
+          gateway and core processes. "[skills] loader.load_all: exit
+          {loaded_count:421, by_source:{builtin:14, learned:407}}" — the relocated
+          tree loads and the DB holds 421 rows.
+          TRAP FOR THE NEXT READER, which caught me twice: the gateway logs
+          "skills loaded {count:0}" and that is NOT a failure — it is a role-side
+          counter. The authoritative line is loader.load_all: exit.
+        declined_dynamic_schema_overrides: "The map's headline ask. Declined on the grounds of D05.2's shipped work, not taste: it makes a description a function of live config, which is the instability D05.2 removed. Measured — delegate_task, the tool the reference platform rewrites dynamically, has a generic description here with no limits in it."
     changes: []
     changes: []
     notes: null
