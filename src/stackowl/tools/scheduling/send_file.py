@@ -31,6 +31,17 @@ Mirrors ``send_message`` exactly:
 * **Self-healing:** missing file / outside workspace / too large / no target /
   unknown channel / missing deliverer / ``"failed"`` / a deliverer that raises →
   structured result, logged (B5), NEVER raises out of ``execute``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    send_file — agent-initiated outbound FILE/media; threads a workspace-scoped
+    path through a Notification(file_path=...) into get_services().
+    proactive_deliverer (the S0 chokepoint), which routes it to the channel
+    adapter's send_file. Consequential: the consent gate fires before execute
+    (fails closed off-TTY). Workspace-scoped + size-capped + flood-capped.
 """
 
 from __future__ import annotations

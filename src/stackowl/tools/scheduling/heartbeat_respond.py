@@ -19,6 +19,15 @@ Three properties make this a gate, not a megaphone:
 ``next_check`` is RECORD-ONLY (the scheduler owns scheduling). Severity ``read``;
 ``toolset_group`` ``scheduling``. Provenance: BUILD-to-spec from a reference agent's
 heartbeat-response primitive — see ``_bmad-output/research/tool-port-analysis.md``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    heartbeat_respond — declares a heartbeat turn's outcome and (notify=True)
+    routes a clamped Notification through get_services().proactive_deliverer
+    at execute time (the S0 transport chokepoint); no constructor wiring.
 """
 
 from __future__ import annotations

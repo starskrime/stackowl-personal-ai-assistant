@@ -6,6 +6,15 @@ query/list action (create/edit/retire only, per ``OwlBuildSpec``), so a
 owl_build call missing required fields. This is the read-only survey seam —
 one terse line per owl (name, role, lifecycle + schedule, model tier) — so
 that check can succeed without ever touching owl_build.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    owls_list — read-only survey of already-configured owls (mirrors
+    skills_list), so a "check what owls exist" request never has to
+    misuse owl_build's create/edit/retire-only surface just to look.
 """
 
 from __future__ import annotations

@@ -18,6 +18,17 @@ Self-healing throughout (B5): a missing registry, an unknown ``process_id``, an
 unknown ``action``, or any registry error degrades to a STRUCTURED result — the
 tool NEVER raises. Severity ``write`` (ungated — the catastrophic gate is inside
 ``start``); ``toolset_group`` ``process``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    process — run/supervise a long-running or interactive background OS
+    process (start/poll/log/write/submit/kill/close/list). A thin surface over
+    get_services().process_registry (E9-S0): the catastrophic gate + concurrency
+    cap + mandatory TTL live INSIDE the registry; the tool surfaces its
+    structured refusals as clean results. No constructor wiring; severity write.
 """
 
 from __future__ import annotations

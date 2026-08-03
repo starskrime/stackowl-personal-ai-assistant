@@ -25,6 +25,19 @@ Origin is SERVER-STAMPED from :class:`stackowl.infra.trace.TraceContext` (the tr
 caller owl) — there is no ``from``/origin arg, so a caller cannot spoof who sent.
 Severity ``write``; ``toolset_group`` ``agents``. In ``_CHILD_EXCLUDED_TOOLS`` so a
 delegated child (delegation_depth>0) cannot drive sessions.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    sessions_send — CONTINUE-RUN: looks an existing session up by label in
+    the DI SessionRegistry (get_services().session_registry) and runs its owl
+    once with the persisted history + the new message under the shared
+    delegation_governor (depth=1), persisting the grown history. Self-healing:
+    unknown session / run failure / timeout / rate-limit → structured, session
+    preserved, never raises. The S0 execution gate withholds it at
+    delegation_depth>0 (it is in _CHILD_EXCLUDED_TOOLS). Severity write (E8-S4).
 """
 
 from __future__ import annotations

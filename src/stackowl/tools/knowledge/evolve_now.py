@@ -27,6 +27,18 @@ raise; any coordinator exception is logged at ERROR and surfaced as a
 structured failure (no hidden errors). A coordinator return of ``False``
 (no deltas proposed, or the shadow gate rejected the mutation) is a NORMAL
 outcome, not a tool failure — only a genuine exception is.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    evolve_now (Story 3.1) — constructs EvolutionCoordinator off
+    get_services() at execute time and calls the EXISTING
+    evolve_one_owl_now() (forced LLM-fallback, routed through the same
+    shadow-validation gate as the nightly batch). Read severity, same
+    rationale as reflect_now: it evolves the agent's OWN DNA, not the
+    user's data and not an external side effect.
 """
 
 from __future__ import annotations

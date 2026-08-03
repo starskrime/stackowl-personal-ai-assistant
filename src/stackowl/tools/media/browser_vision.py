@@ -29,6 +29,21 @@ Severity ``read`` (it reads the page + analyzes; the only host side-effect is th
 screenshot file under ``screenshots_dir``). ``toolset_group`` ``"media"``.
 Sensitive-data (B5): only the screenshot PATH + SIZE + backend NAME are logged —
 never image bytes; the question is logged by LENGTH only.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    browser_vision — screenshot the CURRENT browser page (the E2 mechanism:
+    sessions.get_page + page.screenshot under screenshots_dir) and analyze it
+    on the same LOCAL-FIRST vision substrate as vision_analyze (the shared
+    analyze_image_bytes core). The screenshot lives outside the workspace, so
+    the captured bytes are fed straight to the analyzer (not the workspace-
+    confined ImageLoader). Returns the description + screenshot path; a CLOUD
+    backend is disclosed (egress). Reads get_services() at execute time (no
+    constructor wiring); self-healing → structured result, never raises.
+    Severity read; group media.
 """
 
 from __future__ import annotations

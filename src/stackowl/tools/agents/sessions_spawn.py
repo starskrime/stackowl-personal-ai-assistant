@@ -25,6 +25,17 @@ THREE rails, all self-healing / no-hidden-errors:
 
 Reads :class:`stackowl.infra.trace.TraceContext` (trace/session/owl/depth) — never
 ``PipelineState`` directly. Severity ``write``; ``toolset_group`` ``agents``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    sessions_spawn — creates a named persistent owl session in the DI
+    SessionRegistry resolved off get_services().session_registry at execute
+    time (no constructor wiring; the cap/TTL/drain rails live in the
+    registry). The S0 execution gate withholds it at delegation_depth>0
+    (it is in _CHILD_EXCLUDED_TOOLS) so a child cannot spawn (E8-S3).
 """
 
 from __future__ import annotations

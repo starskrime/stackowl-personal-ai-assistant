@@ -21,6 +21,21 @@ Load-bearing invariants:
 
 Sensitive-data: logs record code LENGTH + language + network + backend, never the
 code content (the consent prompt is the one trusted place the code is shown).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    execute_code — run code in an ISOLATED sandbox (E11-S5, the keystone tool).
+    Reads get_services().sandbox_selector at execute time (no constructor
+    wiring; the bwrap-primary/Docker-for-network policy + capability probe live
+    in the selector). Consequential + always-ask: the consent gate fires before
+    execute and shows the actual code (bounded) + language + network (GAP-A) via
+    consent_summary; a delegated child (depth>0) is refused at dispatch (GAP-B).
+    Self-healing: no selector / selector-unavailable / backend error →
+    structured "unavailable", NEVER a host subprocess. Severity consequential;
+    group code.
 """
 
 from __future__ import annotations

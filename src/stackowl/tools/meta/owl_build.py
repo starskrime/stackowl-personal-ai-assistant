@@ -11,6 +11,14 @@ creation_ceiling / bounds are forced server-side in the ``create`` / ``edit`` /
 ``retire`` handlers. A ``create`` may also carry a ``schedule`` cadence, which makes
 the owl a SCHEDULED persona (lifecycle="scheduled" + a CronTrigger) auto-provisioned
 into a recurring job by the UniOwl reconcile loop.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    owl_build — self-extending owl-builder (Phase-2 A): create/edit/retire a
+    specialist owl (consent-gated, depth-0 only, child-excluded at dispatch).
 """
 
 from __future__ import annotations

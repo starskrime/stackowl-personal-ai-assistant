@@ -16,6 +16,15 @@ back as structured results (never raises). EVERY by-job_id action (update / run 
 pause / resume / remove) is OWNERSHIP-gated: a job owned by another owl is rejected
 identically to a missing one (no existence oracle). Owner owl derives from the
 session's ``conversations.owl_name``. Severity ``write``; group ``scheduling``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    cronjob — schedules agent-goal jobs via the JobScheduler facade it
+    builds from get_services().db_pool at execute time (no constructor
+    wiring; reuses the goal_execution handler — E7-S1).
 """
 
 from __future__ import annotations

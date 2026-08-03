@@ -27,6 +27,17 @@ story's steps). A non-git ``workdir`` also skips isolation unchanged.
 
 Requires the ``claude`` CLI on PATH. Not found → structured "unavailable",
 never a silent no-op or host fallback.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    claude_code — delegates an open-ended coding task to a headless Claude
+    Code CLI subprocess (reuses shell.run_argv for the actual spawn/timeout/
+    logging seam). Consequential + child-excluded (SEC-3): it can edit files
+    and run shell commands on the HOST in workdir, so the consent gate fires
+    before every call and a delegated child (depth>0) is refused.
 """
 
 from __future__ import annotations

@@ -25,6 +25,16 @@ target, and delegate errors all surface as structured results (logged, B5); the
 tool never raises. Severity ``write``; ``toolset_group`` ``agents``. Provenance:
 HYBRID — StackOwl ``A2ADelegator`` round-trip + a minimal ported delegate
 schema/safety shape (see ``_bmad-output`` research, not src).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    delegate_task — hands a sub-task to a specialist owl via the shared
+    A2ADelegator resolved off get_services().a2a_delegator at execute time
+    (no constructor wiring; the depth/width rails live in the tool). The S0
+    execution gate withholds it at delegation_depth>0 (E8-S1).
 """
 
 from __future__ import annotations

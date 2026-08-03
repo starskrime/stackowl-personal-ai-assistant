@@ -9,6 +9,14 @@ providers itself.
 The tool is read-severity (ungated) and self-healing: a missing registry or a
 provider cascade failure comes back as the frozen ``WebSearchResult`` failure shape
 rather than a raised exception.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    web_search — reads get_services().web_search_registry at execute time, so
+    no constructor wiring here (the registry is built in the gateway phase).
 """
 
 from __future__ import annotations

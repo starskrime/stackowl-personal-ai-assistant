@@ -31,6 +31,19 @@ direct execution live in :mod:`_batch_support`.
 
 Provenance: BUILD — this is the StackOwl brainstorming-Q8 batch-consent UX. It
 reuses the live clarify round-trip and tool registry; no vendor pattern ported.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    batch_approve — present N planned consequential actions as ONE batch
+    consent (J8). Reuses the clarify_gateway round-trip for the single
+    prompt; on approve-all it executes each action DIRECTLY (pre-consented,
+    bypassing the per-action gate) + audits. Severity write (NOT
+    consequential) so the per-action dispatch gate does not double-prompt:
+    the batch presentation IS the consent. No constructor wiring — it reads
+    tool_registry / clarify_gateway / audit_logger off get_services().
 """
 
 from __future__ import annotations

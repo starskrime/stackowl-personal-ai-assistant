@@ -22,6 +22,18 @@ Self-healing (B5): a down/missing learning subsystem (no db / provider /
 embeddings / lessons index) degrades to a STRUCTURED failed ``ToolResult``, never
 a raise; any handler exception is logged at ERROR and surfaced as a structured
 failure (no hidden errors).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    Phase B — wire the EXISTING self-improvement engines as owl tools.
+    reflect_now constructs ReflectionWriterHandler off get_services() at
+    execute time (self-learning); synthesize_skills constructs
+    SkillSynthesizerHandler (gap-analysis + skill-build). REUSE the handlers
+    (no logic reimplemented). synthesize_skills is consequential (authors
+    learned/ skills) → consent-gated; reflect_now is read.
 """
 
 from __future__ import annotations

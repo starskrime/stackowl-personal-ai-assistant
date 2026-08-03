@@ -21,6 +21,15 @@ This is the producer of the REAL ``verified`` signal the Phase 1 aggregation
 across an epic's steps: it declares a
 :class:`~stackowl.pipeline.acceptance_authority.TestsPassed` post-condition
 built from these same parsed counts.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    run_tests — structured pass/fail/failure-list test-run tool, reusing
+    shell.run_argv (host subprocess, so it can see the actual repo checkout).
+    Declares a TestsPassed post-condition (ADR-1) from its own parsed counts.
 """
 
 from __future__ import annotations

@@ -19,6 +19,22 @@ into the media dir; cloud egress is disclosed in-output). Group ``media``.
 
 Sensitive-data (B5): only the prompt LENGTH + the chosen size + backend are logged
 — never the full prompt (image prompts can be sensitive) and never the image bytes.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    image_generate — generate an image from a prompt on the LOCAL-FIRST image
+    substrate (E10-S4). Composes the ImageSelector (a capability-PROBED local
+    SDXL model first — only where x86+CUDA+enough memory/disk clears, so an
+    incapable Tegra host NEVER pip-installs a multi-GB wheel the probe rejects;
+    opt-in cloud fallback only when enabled + configured). The prompt stays
+    on-box when local is available; a CLOUD fallback discloses egress + cost.
+    Returns the image PATH under media_dir (send_file delivers it), never raw
+    bytes. Builds its selector from Settings().image at execute time (no
+    constructor wiring); self-healing → structured result, never raises.
+    Severity read; group media.
 """
 
 from __future__ import annotations

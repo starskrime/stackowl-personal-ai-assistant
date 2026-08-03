@@ -27,6 +27,17 @@ absent ``process_id`` → structured "no such process"; the tool NEVER raises.
 CANCELLATION IS HONORED: a new user message cancels the turn → the in-flight wait
 must propagate ``asyncio.CancelledError`` (never swallow it) so the turn unwinds
 promptly. Every OTHER ``except`` logs (B5). ``toolset_group`` ``process``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    wait — pause the turn for a duration OR (the correct way to await a
+    background process) block until a `process`-started process exits. A thin
+    read-severity surface over get_services().process_registry (E9-S2): the
+    deadline uses an injected Clock; the poll loop sleeps between polls (never
+    a busy spin) and honors cancellation. No constructor wiring; severity read.
 """
 
 from __future__ import annotations

@@ -26,6 +26,14 @@ Severity: ``read`` — asking a question mutates nothing. ``toolset_group``:
 Provenance: the choices affordance and the cron-cannot-ask rule are ported
 HYBRID from a reference agent's clarify primitive. See
 ``_bmad-output/research/tool-port-analysis.md`` (E5 ``clarify`` row).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    clarify — ask the user mid-turn and BLOCK until they answer (default
+    30-minute park timeout; the concurrent gateway loop frees the loop).
 """
 
 from __future__ import annotations

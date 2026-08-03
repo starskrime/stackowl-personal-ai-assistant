@@ -9,6 +9,14 @@ is replaced with ``\\w`` so multilingual queries tokenize intact) per the
 no-hardcoded-English rule. Model-free, RNG-free, never "unavailable".
 
 ADR-10 locks lexical/BM25 ranking (no embedding dependency at the registry layer).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    E1 meta tools — always present (tool_search is the overflow-discovery
+    primitive per ADR-11; tool_describe is its inspect sibling).
 """
 
 from __future__ import annotations

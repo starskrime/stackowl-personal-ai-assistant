@@ -23,6 +23,16 @@ cannot raise a critical alert).
 ``list`` enumerates the registered channel names so the model can pick a target.
 Provenance: BUILD-to-documented-shape — see
 ``_bmad-output/research/tool-port-analysis.md`` (E7 ``send_message`` row).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    send_message — agent-initiated outbound text; routes a clamped (normal)
+    Notification through get_services().proactive_deliverer (the S0 transport
+    chokepoint) at execute time. Consequential: the registry's consent gate
+    fires before execute (fails closed off-TTY). No constructor wiring.
 """
 
 from __future__ import annotations

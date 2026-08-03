@@ -22,6 +22,16 @@ mining here).
 Severity ``read``; no owner-scoping — log records carry no ``owner_id``
 (unlike ``task_outcomes``/etc, which use ``OwnedRepository``): this is a
 single-tenant local file, not a per-user store.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    read_logs — CLAUDE.md's long-documented self-observability capability,
+    never actually implemented until now (PATHFINDER-2026-07-22 Proposal
+    5). Bounded query over the live stackowl.jsonl file; no constructor
+    wiring (resolves its own log path at execute time).
 """
 
 from __future__ import annotations

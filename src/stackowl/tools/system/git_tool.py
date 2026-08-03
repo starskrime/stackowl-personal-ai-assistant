@@ -11,6 +11,16 @@ Six operations: ``status``, ``diff``, ``commit``, ``branch``, ``worktree_add``,
 ``worktree_remove``. Not a full git CLI wrapper — only what epic orchestration
 (Task #4) needs: read the repo state, inspect a change, commit it, and manage
 worktrees for isolated story execution.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    git — structured status/diff/commit/branch/worktree operations, reusing
+    shell.run_argv for the actual spawn (exec mode, no shell interpretation).
+    'write' severity (mirrors shell): mutates the repo/filesystem but is
+    locally reversible git state, not a consent-gated consequential action.
 """
 
 from __future__ import annotations

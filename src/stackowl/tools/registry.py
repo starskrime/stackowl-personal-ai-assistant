@@ -552,286 +552,90 @@ class ToolRegistry:
         )
         return catalog
 
+    #: Tool classes whose constructor takes parameters BUT for which ``cls()`` is
+    #: correct — the defaults are what ``with_defaults`` always passed. Listed
+    #: explicitly so that adding a tool with a constructor forces a decision here
+    #: rather than silently getting whatever its defaults happen to be.
+    _DEFAULT_CONSTRUCTIBLE: frozenset[str] = frozenset({
+        "BatchApproveTool", "ClarifyTool", "CronjobTool", "HeartbeatRespondTool",
+        "ImageGenerateTool", "OwlBuildTool", "SendFileTool", "SendMessageTool",
+        "TtsTool", "VisionAnalyzeTool", "WaitTool",
+    })
+
     @classmethod
     def with_defaults(cls) -> ToolRegistry:
-        """Bootstrap the registry with the foundation tools + browser family."""
-        from stackowl.tools.agents.delegate_task import DelegateTaskTool
-        from stackowl.tools.agents.mixture_of_agents import MixtureOfAgentsTool
-        from stackowl.tools.agents.sessions_send import SessionsSendTool
-        from stackowl.tools.agents.sessions_spawn import SessionsSpawnTool
-        from stackowl.tools.browser.back import BrowserBackTool
-        from stackowl.tools.browser.browse import BrowserBrowseTool
-        from stackowl.tools.browser.console import BrowserConsoleTool
-        from stackowl.tools.browser.dialog import BrowserDialogTool
-        from stackowl.tools.browser.get_images import BrowserGetImagesTool
-        from stackowl.tools.browser.press import BrowserPressTool
-        from stackowl.tools.browser.snapshot import BrowserSnapshotTool
-        from stackowl.tools.browser.tools import ATOMIC_BROWSER_TOOLS
-        from stackowl.tools.code.execute_code import ExecuteCodeTool
-        from stackowl.tools.interaction.batch_approve import BatchApproveTool
-        from stackowl.tools.interaction.clarify import ClarifyTool
-        from stackowl.tools.io.apply_patch import ApplyPatchTool
-        from stackowl.tools.io.edit import EditTool
-        from stackowl.tools.io.pdf import PdfTool
-        from stackowl.tools.io.read_file import ReadFileTool
-        from stackowl.tools.io.search_files import SearchFilesTool
-        from stackowl.tools.io.undo_store import UndoStore, UndoWriteTool
-        from stackowl.tools.io.web_fetch import WebFetchTool
-        from stackowl.tools.io.write_file import WriteFileTool
-        from stackowl.tools.knowledge.evolve_now import EvolveNowTool
-        from stackowl.tools.knowledge.memory import MemoryTool
-        from stackowl.tools.knowledge.output_preference import SetOutputPreferenceTool
-        from stackowl.tools.knowledge.read_logs import ReadLogsTool
-        from stackowl.tools.knowledge.reflect_now import ReflectNowTool
-        from stackowl.tools.knowledge.session_search import SessionSearchTool
-        from stackowl.tools.knowledge.skill_manage import SkillManageTool
-        from stackowl.tools.knowledge.skill_view import SkillViewTool
-        from stackowl.tools.knowledge.skills_list import SkillsListTool
-        from stackowl.tools.knowledge.synthesize_skills import SynthesizeSkillsTool
-        from stackowl.tools.knowledge.transcripts import TranscriptsTool
-        from stackowl.tools.media.browser_vision import BrowserVisionTool
-        from stackowl.tools.media.image_generate import ImageGenerateTool
-        from stackowl.tools.media.tts import TtsTool
-        from stackowl.tools.media.vision_analyze import VisionAnalyzeTool
-        from stackowl.tools.meta.note_applied_lesson import NoteAppliedLessonTool
-        from stackowl.tools.meta.owl_build import OwlBuildTool
-        from stackowl.tools.meta.owls_list import OwlsListTool
-        from stackowl.tools.meta.tool_build import ToolBuildTool
-        from stackowl.tools.meta.tool_describe import ToolDescribeTool
-        from stackowl.tools.meta.tool_search import ToolSearchTool
+        """Bootstrap the registry by DISCOVERING every tool under ``tools/`` (D05.1).
+
+        This was ~61 hand-written imports and ~60 ``register()`` calls. A tool is
+        now registered by existing; there is no line to forget.
+
+        The per-tool rationale that used to live in the comments here was moved
+        VERBATIM into each tool's own module docstring, under a "Registration
+        note" heading — it described the tool, not the line that constructed it,
+        and a reader looks in the tool's file.
+
+        TWO GROUPS SHARE A DEPENDENCY AND ARE STILL WIRED BY HAND. This is the
+        whole reason discovery yields CLASSES rather than instances:
+        ``edit``/``apply_patch``/``undo_write`` must share ONE ``UndoStore`` so
+        undo can restore what edit snapshotted, and ``todo``/``update_plan`` must
+        share one ``PlanStore``. Every one of those constructors accepts
+        ``store=None`` and quietly builds its own, so auto-instantiating them
+        would register five working tools and leave undo silently unable to undo
+        anything — green tests, broken behaviour.
+
+        Anything else with a constructor parameter must be named in
+        :data:`_DEFAULT_CONSTRUCTIBLE`, or this raises. Failing loudly at boot is
+        the point: the alternative is a future shared-dependency tool quietly
+        getting a private instance, which is exactly the bug above.
+        """
+        from stackowl.tools._infra.discovery import (
+            discover_tool_classes,
+            requires_explicit_wiring,
+        )
+        from stackowl.tools.io.undo_store import UndoStore
         from stackowl.tools.planning.store import PlanStore
-        from stackowl.tools.planning.todo import TodoTool
-        from stackowl.tools.planning.update_plan import UpdatePlanTool
-        from stackowl.tools.process.process_tool import ProcessTool
-        from stackowl.tools.process.wait_tool import WaitTool
-        from stackowl.tools.scheduling.cronjob import CronjobTool
-        from stackowl.tools.scheduling.heartbeat_respond import HeartbeatRespondTool
-        from stackowl.tools.scheduling.objective_tool import ObjectiveTool
-        from stackowl.tools.scheduling.owl_schedule import OwlScheduleTool
-        from stackowl.tools.scheduling.send_file import SendFileTool
-        from stackowl.tools.scheduling.send_message import SendMessageTool
-        from stackowl.tools.search.web_search import WebSearchTool
-        from stackowl.tools.system.claude_code import ClaudeCodeTool
-        from stackowl.tools.system.git_tool import GitTool
-        from stackowl.tools.system.run_tests import RunTestsTool
-        from stackowl.tools.system.shell import ShellTool
-        from stackowl.tools.tasks.task_status import TaskStatusTool
 
         registry = cls()
-        registry.register(ReadFileTool())
-        registry.register(WriteFileTool())
-        registry.register(SearchFilesTool())
-        registry.register(PdfTool())
+
         # edit + apply_patch + undo_write share one UndoStore so undo_write can
         # restore the pre-image that edit/apply_patch snapshotted (E3-S2/E3-S3).
-        _undo_store = UndoStore()
-        registry.register(EditTool(store=_undo_store))
-        registry.register(ApplyPatchTool(store=_undo_store))
-        registry.register(UndoWriteTool(store=_undo_store))
-        registry.register(ShellTool())
-        # claude_code — delegates an open-ended coding task to a headless Claude
-        # Code CLI subprocess (reuses shell.run_argv for the actual spawn/timeout/
-        # logging seam). Consequential + child-excluded (SEC-3): it can edit files
-        # and run shell commands on the HOST in workdir, so the consent gate fires
-        # before every call and a delegated child (depth>0) is refused.
-        registry.register(ClaudeCodeTool())
-        # git — structured status/diff/commit/branch/worktree operations, reusing
-        # shell.run_argv for the actual spawn (exec mode, no shell interpretation).
-        # 'write' severity (mirrors shell): mutates the repo/filesystem but is
-        # locally reversible git state, not a consent-gated consequential action.
-        registry.register(GitTool())
-        # run_tests — structured pass/fail/failure-list test-run tool, reusing
-        # shell.run_argv (host subprocess, so it can see the actual repo checkout).
-        # Declares a TestsPassed post-condition (ADR-1) from its own parsed counts.
-        registry.register(RunTestsTool())
-        registry.register(WebFetchTool())
-        # web_search — reads get_services().web_search_registry at execute time, so
-        # no constructor wiring here (the registry is built in the gateway phase).
-        registry.register(WebSearchTool())
-        # cronjob — schedules agent-goal jobs via the JobScheduler facade it
-        # builds from get_services().db_pool at execute time (no constructor
-        # wiring; reuses the goal_execution handler — E7-S1).
-        registry.register(CronjobTool())
-        # objective — creates a STANDING OBJECTIVE (decomposed + driven by the
-        # objective_driver handler) from get_services().db_pool +
-        # provider_registry at execute time (no constructor wiring — 1D).
-        registry.register(ObjectiveTool())
-        # heartbeat_respond — declares a heartbeat turn's outcome and (notify=True)
-        # routes a clamped Notification through get_services().proactive_deliverer
-        # at execute time (the S0 transport chokepoint); no constructor wiring.
-        registry.register(HeartbeatRespondTool())
-        # send_message — agent-initiated outbound text; routes a clamped (normal)
-        # Notification through get_services().proactive_deliverer (the S0 transport
-        # chokepoint) at execute time. Consequential: the registry's consent gate
-        # fires before execute (fails closed off-TTY). No constructor wiring.
-        registry.register(SendMessageTool())
-        # send_file — agent-initiated outbound FILE/media; threads a workspace-scoped
-        # path through a Notification(file_path=...) into get_services().
-        # proactive_deliverer (the S0 chokepoint), which routes it to the channel
-        # adapter's send_file. Consequential: the consent gate fires before execute
-        # (fails closed off-TTY). Workspace-scoped + size-capped + flood-capped.
-        registry.register(SendFileTool())
-        # delegate_task — hands a sub-task to a specialist owl via the shared
-        # A2ADelegator resolved off get_services().a2a_delegator at execute time
-        # (no constructor wiring; the depth/width rails live in the tool). The S0
-        # execution gate withholds it at delegation_depth>0 (E8-S1).
-        registry.register(DelegateTaskTool())
-        registry.register(TaskStatusTool())
-        # mixture_of_agents — fans one hard question across healthy_distinct()
-        # providers, then synthesizes via the parliament synthesizer. Reads
-        # provider_registry/db_pool/event_bus off get_services() at execute time
-        # (no constructor wiring). Self-healing: partial-ensemble tolerant,
-        # structured refusal on a thin roster. Severity read (E8-S2).
-        registry.register(MixtureOfAgentsTool())
-        # sessions_spawn — creates a named persistent owl session in the DI
-        # SessionRegistry resolved off get_services().session_registry at execute
-        # time (no constructor wiring; the cap/TTL/drain rails live in the
-        # registry). The S0 execution gate withholds it at delegation_depth>0
-        # (it is in _CHILD_EXCLUDED_TOOLS) so a child cannot spawn (E8-S3).
-        registry.register(SessionsSpawnTool())
-        # sessions_send — CONTINUE-RUN: looks an existing session up by label in
-        # the DI SessionRegistry (get_services().session_registry) and runs its owl
-        # once with the persisted history + the new message under the shared
-        # delegation_governor (depth=1), persisting the grown history. Self-healing:
-        # unknown session / run failure / timeout / rate-limit → structured, session
-        # preserved, never raises. The S0 execution gate withholds it at
-        # delegation_depth>0 (it is in _CHILD_EXCLUDED_TOOLS). Severity write (E8-S4).
-        registry.register(SessionsSendTool())
-        for tool_cls in ATOMIC_BROWSER_TOOLS:
+        undo_store = UndoStore()
+        # todo + update_plan share one PlanStore so a plan written by one is
+        # visible to the other.
+        plan_store = PlanStore()
+        wired: dict[str, object] = {
+            "EditTool": {"store": undo_store},
+            "ApplyPatchTool": {"store": undo_store},
+            "UndoWriteTool": {"store": undo_store},
+            "TodoTool": {"store": plan_store},
+            "UpdatePlanTool": {"store": plan_store},
+        }
+
+        unwired: list[str] = []
+        for tool_cls in discover_tool_classes():
+            name = tool_cls.__name__
+            kwargs = wired.get(name)
+            if kwargs is not None:
+                registry.register(tool_cls(**kwargs))  # type: ignore[arg-type]
+                continue
+            if requires_explicit_wiring(tool_cls) and name not in cls._DEFAULT_CONSTRUCTIBLE:
+                unwired.append(name)
+                continue
             registry.register(tool_cls())
-        registry.register(BrowserBrowseTool())
-        registry.register(BrowserSnapshotTool())
-        registry.register(BrowserBackTool())
-        registry.register(BrowserPressTool())
-        registry.register(BrowserGetImagesTool())
-        registry.register(BrowserConsoleTool())
-        registry.register(BrowserDialogTool())
-        # E1 meta tools — always present (tool_search is the overflow-discovery
-        # primitive per ADR-11; tool_describe is its inspect sibling).
-        registry.register(ToolSearchTool())
-        registry.register(ToolDescribeTool())
-        # note_applied_lesson — non-consequential pillar ④ self-report: the model
-        # honestly records that a surfaced lesson changed its actions this turn.
-        registry.register(NoteAppliedLessonTool())
-        # tool_build — self-extension meta-tool (H4): the agent authors a NEW
-        # declarative tool (validate → security-scan → consent → persist →
-        # register live → reload on every boot). Authored tools run only via the
-        # allowlisted shell argv boundary (no in-process eval). Consequential:
-        # consent-gated at dispatch + a second internal consent at the persist step.
-        registry.register(ToolBuildTool())
-        # owl_build — self-extending owl-builder (Phase-2 A): create/edit/retire a
-        # specialist owl (consent-gated, depth-0 only, child-excluded at dispatch).
-        registry.register(OwlBuildTool())
-        # owls_list — read-only survey of already-configured owls (mirrors
-        # skills_list), so a "check what owls exist" request never has to
-        # misuse owl_build's create/edit/retire-only surface just to look.
-        registry.register(OwlsListTool())
-        # owl_schedule — the user's off-ramp (TS11): pause/snooze/resume a scheduled
-        # owl's proactive pokes (recoverable; never deletes the owl). write-severity
-        # (instant, no consent); toggles the owl's projected job row via the scheduler.
-        registry.register(OwlScheduleTool())
-        registry.register(MemoryTool())
-        registry.register(SetOutputPreferenceTool())
-        registry.register(SkillManageTool())
-        registry.register(SkillViewTool())
-        registry.register(SkillsListTool())
-        # Phase B — wire the EXISTING self-improvement engines as owl tools.
-        # reflect_now constructs ReflectionWriterHandler off get_services() at
-        # execute time (self-learning); synthesize_skills constructs
-        # SkillSynthesizerHandler (gap-analysis + skill-build). REUSE the handlers
-        # (no logic reimplemented). synthesize_skills is consequential (authors
-        # learned/ skills) → consent-gated; reflect_now is read.
-        registry.register(ReflectNowTool())
-        registry.register(SynthesizeSkillsTool())
-        # evolve_now (Story 3.1) — constructs EvolutionCoordinator off
-        # get_services() at execute time and calls the EXISTING
-        # evolve_one_owl_now() (forced LLM-fallback, routed through the same
-        # shadow-validation gate as the nightly batch). Read severity, same
-        # rationale as reflect_now: it evolves the agent's OWN DNA, not the
-        # user's data and not an external side effect.
-        registry.register(EvolveNowTool())
-        registry.register(SessionSearchTool())
-        registry.register(TranscriptsTool())
-        # read_logs — CLAUDE.md's long-documented self-observability capability,
-        # never actually implemented until now (PATHFINDER-2026-07-22 Proposal
-        # 5). Bounded query over the live stackowl.jsonl file; no constructor
-        # wiring (resolves its own log path at execute time).
-        registry.register(ReadLogsTool())
-        # todo + update_plan share ONE PlanStore so they write a single plan slot
-        # (operator decision): todo mutates individual items; update_plan replaces
-        # the whole plan — same source of truth (cf. the shared UndoStore above).
-        _plan_store = PlanStore()
-        registry.register(TodoTool(store=_plan_store))
-        registry.register(UpdatePlanTool(store=_plan_store))
-        # clarify — ask the user mid-turn and BLOCK until they answer (default
-        # 30-minute park timeout; the concurrent gateway loop frees the loop).
-        registry.register(ClarifyTool())
-        # batch_approve — present N planned consequential actions as ONE batch
-        # consent (J8). Reuses the clarify_gateway round-trip for the single
-        # prompt; on approve-all it executes each action DIRECTLY (pre-consented,
-        # bypassing the per-action gate) + audits. Severity write (NOT
-        # consequential) so the per-action dispatch gate does not double-prompt:
-        # the batch presentation IS the consent. No constructor wiring — it reads
-        # tool_registry / clarify_gateway / audit_logger off get_services().
-        registry.register(BatchApproveTool())
-        # process — run/supervise a long-running or interactive background OS
-        # process (start/poll/log/write/submit/kill/close/list). A thin surface over
-        # get_services().process_registry (E9-S0): the catastrophic gate + concurrency
-        # cap + mandatory TTL live INSIDE the registry; the tool surfaces its
-        # structured refusals as clean results. No constructor wiring; severity write.
-        registry.register(ProcessTool())
-        # wait — pause the turn for a duration OR (the correct way to await a
-        # background process) block until a `process`-started process exits. A thin
-        # read-severity surface over get_services().process_registry (E9-S2): the
-        # deadline uses an injected Clock; the poll loop sleeps between polls (never
-        # a busy spin) and honors cancellation. No constructor wiring; severity read.
-        registry.register(WaitTool())
-        # vision_analyze — describe / answer a question about an image (local path
-        # or http(s) URL) on the LOCAL-FIRST vision substrate (E10-S1). Composes the
-        # ImageLoader + VisionSelector + a provider.complete() image-block call; the
-        # image stays on-box when a local vision model is configured, and a CLOUD
-        # backend is disclosed in the output (egress, mirroring pdf Mode B). Reads
-        # get_services().provider_registry at execute time (no constructor wiring);
-        # self-healing → structured result, never raises. Severity read; group media.
-        registry.register(VisionAnalyzeTool())
-        # browser_vision — screenshot the CURRENT browser page (the E2 mechanism:
-        # sessions.get_page + page.screenshot under screenshots_dir) and analyze it
-        # on the same LOCAL-FIRST vision substrate as vision_analyze (the shared
-        # analyze_image_bytes core). The screenshot lives outside the workspace, so
-        # the captured bytes are fed straight to the analyzer (not the workspace-
-        # confined ImageLoader). Returns the description + screenshot path; a CLOUD
-        # backend is disclosed (egress). Reads get_services() at execute time (no
-        # constructor wiring); self-healing → structured result, never raises.
-        # Severity read; group media.
-        registry.register(BrowserVisionTool())
-        # tts — synthesize speech from text on the LOCAL-FIRST TTS substrate
-        # (E10-S3). Composes the TtsSelector (local OSS engine first, opt-in cloud
-        # fallback only when enabled + configured) over the media/tts backends. The
-        # text stays on-box when the local engine is available; a CLOUD fallback is
-        # disclosed in the output (egress, mirroring pdf Mode B). Returns the audio
-        # PATH under media_dir (send_file delivers it), never raw bytes. Builds its
-        # selector from Settings().tts at execute time (no constructor wiring);
-        # self-healing → structured result, never raises. Severity read; group media.
-        registry.register(TtsTool())
-        # image_generate — generate an image from a prompt on the LOCAL-FIRST image
-        # substrate (E10-S4). Composes the ImageSelector (a capability-PROBED local
-        # SDXL model first — only where x86+CUDA+enough memory/disk clears, so an
-        # incapable Tegra host NEVER pip-installs a multi-GB wheel the probe rejects;
-        # opt-in cloud fallback only when enabled + configured). The prompt stays
-        # on-box when local is available; a CLOUD fallback discloses egress + cost.
-        # Returns the image PATH under media_dir (send_file delivers it), never raw
-        # bytes. Builds its selector from Settings().image at execute time (no
-        # constructor wiring); self-healing → structured result, never raises.
-        # Severity read; group media.
-        registry.register(ImageGenerateTool())
-        # execute_code — run code in an ISOLATED sandbox (E11-S5, the keystone tool).
-        # Reads get_services().sandbox_selector at execute time (no constructor
-        # wiring; the bwrap-primary/Docker-for-network policy + capability probe live
-        # in the selector). Consequential + always-ask: the consent gate fires before
-        # execute and shows the actual code (bounded) + language + network (GAP-A) via
-        # consent_summary; a delegated child (depth>0) is refused at dispatch (GAP-B).
-        # Self-healing: no selector / selector-unavailable / backend error →
-        # structured "unavailable", NEVER a host subprocess. Severity consequential;
-        # group code.
-        registry.register(ExecuteCodeTool())
+
+        if unwired:
+            # Loud, not silent. A tool with a constructor that nobody decided
+            # about is either a shared dependency (and must be wired) or safe on
+            # its defaults (and must say so) — guessing is how undo broke.
+            raise RuntimeError(
+                "tool(s) with constructor parameters are neither wired nor listed "
+                f"in _DEFAULT_CONSTRUCTIBLE: {sorted(unwired)}. Add the shared "
+                "dependency to `wired`, or add the class to _DEFAULT_CONSTRUCTIBLE "
+                "to record that its defaults are correct."
+            )
+
+        log.tool.info(
+            "[tools] registry.with_defaults: discovered",
+            extra={"_fields": {"tools": len(registry.all())}},
+        )
         return registry

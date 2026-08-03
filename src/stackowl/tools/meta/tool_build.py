@@ -19,6 +19,17 @@ REUSES the ``skill_manage`` machinery:
 
 NOTHING is persisted or registered if ANY gate fails. ``delete`` removes the spec +
 unregisters (resurrectable via the audit snapshot); ``list`` lists learned tools.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    tool_build — self-extension meta-tool (H4): the agent authors a NEW
+    declarative tool (validate → security-scan → consent → persist →
+    register live → reload on every boot). Authored tools run only via the
+    allowlisted shell argv boundary (no in-process eval). Consequential:
+    consent-gated at dispatch + a second internal consent at the persist step.
 """
 
 from __future__ import annotations

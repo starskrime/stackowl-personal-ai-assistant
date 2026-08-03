@@ -10,6 +10,15 @@ driver can report back even from a session-less tick), decomposes the intent
 EAGERLY into ordered sub-goals (so the user immediately sees the plan), and
 persists objective + sub-goals + an activity log. The ``objective_driver``
 scheduler handler then advances it. Severity ``write``; group ``scheduling``.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    objective — creates a STANDING OBJECTIVE (decomposed + driven by the
+    objective_driver handler) from get_services().db_pool +
+    provider_registry at execute time (no constructor wiring — 1D).
 """
 
 from __future__ import annotations

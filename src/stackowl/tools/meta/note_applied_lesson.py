@@ -5,6 +5,14 @@ Non-consequential: it has NO side effect beyond recording an in-turn note (no
 consent gate). The render step (``surface_applied_lessons``) turns recorded notes
 into one user-facing line — ONLY when this tool was called, so the assistant can
 never claim a lesson it didn't act on.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    note_applied_lesson — non-consequential pillar ④ self-report: the model
+    honestly records that a surfaced lesson changed its actions this turn.
 """
 
 from __future__ import annotations

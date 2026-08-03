@@ -13,6 +13,15 @@ tool. There is no English verb wordlist anywhere on the path — the model maps 
 ``action``, and the deterministic effect lives here. It REUSES the existing pieces:
 vocative routing already resolves "Brain" → the owl; :func:`_job_id_for` keys the
 projected row; :meth:`JobScheduler.pause`/``resume``/``snooze`` toggle it.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    owl_schedule — the user's off-ramp (TS11): pause/snooze/resume a scheduled
+    owl's proactive pokes (recoverable; never deletes the owl). write-severity
+    (instant, no consent); toggles the owl's projected job row via the scheduler.
 """
 
 from __future__ import annotations

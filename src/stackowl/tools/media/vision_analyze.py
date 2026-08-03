@@ -25,6 +25,19 @@ side-effects; cloud egress is disclosed in-output). ``toolset_group`` ``"media"`
 
 Sensitive-data (B5): only the image SIZE + MIME and the backend NAME are logged —
 never the image bytes; the question is logged by LENGTH only.
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    vision_analyze — describe / answer a question about an image (local path
+    or http(s) URL) on the LOCAL-FIRST vision substrate (E10-S1). Composes the
+    ImageLoader + VisionSelector + a provider.complete() image-block call; the
+    image stays on-box when a local vision model is configured, and a CLOUD
+    backend is disclosed in the output (egress, mirroring pdf Mode B). Reads
+    get_services().provider_registry at execute time (no constructor wiring);
+    self-healing → structured result, never raises. Severity read; group media.
 """
 
 from __future__ import annotations

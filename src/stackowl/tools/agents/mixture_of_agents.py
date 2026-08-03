@@ -23,6 +23,17 @@ refusal (never a fake one-model "consensus"); all proposers failing →
 Severity ``read`` (queries models; no side effects). ``toolset_group`` ``agents``.
 Provenance: HYBRID — a reference agent's 2-layer MoA shape (MoA paper) over our own
 ``ProviderRegistry`` + parliament synthesizer (see ``_bmad-output`` research, not src).
+
+
+Registration note (moved verbatim from ToolRegistry.with_defaults by D05.1,
+when auto-discovery replaced the hand-written register() calls; the rationale
+belongs with the tool, not with the line that used to construct it):
+
+    mixture_of_agents — fans one hard question across healthy_distinct()
+    providers, then synthesizes via the parliament synthesizer. Reads
+    provider_registry/db_pool/event_bus off get_services() at execute time
+    (no constructor wiring). Self-healing: partial-ensemble tolerant,
+    structured refusal on a thin roster. Severity read (E8-S2).
 """
 
 from __future__ import annotations
