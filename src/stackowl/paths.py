@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["StackowlHome"]
+__all__ = ["StackowlHome", "migrate_legacy_skills", "skills_dir_is_outside_workspace"]
 
 
 class StackowlHome:
@@ -81,13 +81,31 @@ class StackowlHome:
 
     @classmethod
     def skills_dir(cls) -> Path:
-        """Workspace root for the unified Skills concept (Learning Commit 3).
+        """Root for the unified Skills concept (Learning Commit 3).
 
         Subdirs: builtin/ (shipped, read-only-by-agent), installed/, user/,
         learned/. Files in here are the source of truth; the ``skills`` index
         in SQLite is a cache.
+
+        D05.1 — DELIBERATELY A SIBLING OF ``workspace()``, NOT A CHILD OF IT.
+        This used to be ``workspace() / "skills"``, which put an EXECUTABLE tree
+        inside the one ``write_file`` is confined to: ``SkillLoader`` calls
+        ``exec_module()`` on every ``skills/**/tools/*.py`` at boot, so any tool
+        able to write the workspace could get arbitrary Python executed at the
+        next start. ``write_file`` is a base, always-presented tool, and after
+        D05.5 sandboxed PTC code can call it too — making it a sandbox escape
+        with a one-reboot delay.
+
+        Moved rather than fenced with a "no .py writes under skills/" rule,
+        because such a rule has to be re-applied for every future executable
+        tree, which is exactly how the hole appeared. Nothing about skill
+        INSTALLATION depended on the location: every writer resolves through this
+        method and writes directly, never through write_file's guard.
+
+        Verified by :func:`skills_dir_is_outside_workspace`, which the startup
+        path asserts — see its docstring for the STACKOWL_DATA_DIR edge case.
         """
-        return cls.workspace() / "skills"
+        return cls.home() / "skills"
 
     @classmethod
     def logs_dir(cls) -> Path:
@@ -144,8 +162,9 @@ class StackowlHome:
 
         Lives UNDER the workspace (not the home root) so ``send_file`` can deliver
         from it, yet is a sibling of — not mixed in with — the persistent stores
-        (stackowl.db / lancedb / kuzu / skills / knowledge) that live at the
-        workspace ROOT. That separation lets the downloads janitor prune this
+        (stackowl.db / lancedb / kuzu / knowledge) that live at the workspace
+        ROOT. (``skills`` was in that list until D05.1 moved it OUT of the
+        workspace entirely — see :meth:`skills_dir`.) That separation lets the downloads janitor prune this
         folder on a schedule without ever touching durable state.
         """
         return cls.workspace() / "downloads"
@@ -210,6 +229,11 @@ class StackowlHome:
         # Both the legacy and the new downloads dir now exist (the mkdir loop
         # created the new one); migrate any files left in the legacy location.
         cls.migrate_legacy_downloads()
+        # D05.1 — relocate skills out of the model-writable workspace. Runs AFTER
+        # the mkdir loop so the target tree already exists, and beside the
+        # downloads migration because this is the one place every process calls
+        # on the way up.
+        migrate_legacy_skills()
 
     @classmethod
     def migrate_legacy_downloads(cls) -> None:
@@ -277,3 +301,130 @@ class StackowlHome:
                 "[paths] migrate_legacy_downloads: unexpected failure — skipped",
                 exc_info=exc,
             )
+
+
+def skills_dir_is_outside_workspace() -> bool:
+    """Whether the skills tree sits OUTSIDE the model-writable workspace (D05.1).
+
+    The security property this item exists to establish, expressed as something
+    checkable rather than as a comment. ``write_file`` confines to
+    ``workspace()``; ``SkillLoader`` executes ``skills/**/tools/*.py`` at boot. If
+    those two trees ever overlap again, the model can write code that runs at the
+    next start.
+
+    NOT redundant with reading ``skills_dir()``: the two are independent under
+    ``STACKOWL_DATA_DIR``, which relocates ``workspace()`` but not ``home()``. In
+    the normal case they are siblings under ``~/.stackowl``; a pathological
+    ``STACKOWL_DATA_DIR=~/.stackowl`` would make workspace the PARENT of skills
+    and silently restore the hole. Hence a runtime check, not an assumption.
+    """
+    try:
+        skills = StackowlHome.skills_dir().resolve()
+        workspace = StackowlHome.workspace().resolve()
+    except OSError:
+        return False  # cannot prove it is safe → report unsafe
+    return workspace not in skills.parents and skills != workspace
+
+
+def migrate_legacy_skills() -> None:
+    """Relocate ``workspace/skills`` → ``skills`` (D05.1). Idempotent. Never raises.
+
+    COPY, VERIFY, THEN REMOVE — deliberately not ``shutil.move``. An interrupted
+    move would leave skills split across two trees with no record of which half
+    landed. A crash mid-copy leaves the ORIGINAL intact and the migration re-runs.
+
+    THIS FUNCTION DESTROYED 419 SKILLS ON ITS FIRST RUN. The bug is worth stating
+    because the shape of it is generic and the fix is not obvious from the outside:
+
+      ``ensure_exists()`` mkdirs ``skills/{builtin,installed,user,learned}``
+      BEFORE calling this. The first version skipped any entry whose destination
+      already existed — treating those four freshly-created EMPTY directories as
+      "already migrated" — and then its verify only asked whether each name
+      existed at the target. Four empty dirs existed, so verify passed, and
+      ``rmtree`` deleted the source.
+
+    Two corrections, both load-bearing:
+      1. RECURSE into a destination directory that already exists instead of
+         skipping it. An existing directory means "partially migrated", never
+         "done".
+      2. VERIFY BY COUNTING FILES, not by testing that a name exists. A name
+         proves nothing; the original failure passed a name check with an empty
+         directory. Nothing is deleted unless the target holds at least as many
+         files as the source.
+    """
+    import contextlib
+    import shutil
+
+    from stackowl.infra.observability import log
+
+    try:
+        legacy = StackowlHome.workspace() / "skills"
+        target = StackowlHome.skills_dir()
+        if not legacy.is_dir():
+            return
+        try:
+            if legacy.resolve() == target.resolve():
+                return  # already the same tree (e.g. an odd STACKOWL_DATA_DIR)
+        except OSError:
+            return
+
+        entries = list(legacy.iterdir())
+        log.startup.info(
+            "[paths] migrate_legacy_skills: relocating skills out of the "
+            "model-writable workspace (D05.1)",
+            extra={"_fields": {
+                "from": str(legacy), "to": str(target), "entries": len(entries),
+            }},
+        )
+        if not entries:
+            with contextlib.suppress(OSError):
+                legacy.rmdir()
+            return
+
+        target.mkdir(parents=True, exist_ok=True)
+
+        def _n_files(root: Path) -> int:
+            """Count files under a tree. The unit of verification — see below."""
+            return sum(1 for p in root.rglob("*") if p.is_file())
+
+        source_files = _n_files(legacy)
+        copied = 0
+        for entry in entries:
+            dest = target / entry.name
+            if entry.is_dir():
+                # dirs_exist_ok: ensure_exists() has ALREADY created the four
+                # standard subdirs, so a pre-existing destination is the normal
+                # case and means PARTIALLY migrated, never "done". Skipping it
+                # here is what destroyed 419 skills on the first run.
+                shutil.copytree(entry, dest, dirs_exist_ok=True)
+            elif not dest.exists():
+                shutil.copy2(entry, dest)
+            copied += 1
+
+        # VERIFY BY FILE COUNT, not by name existence. The original check asked
+        # "does a path with this name exist at the target?" — which four empty
+        # directories satisfied, so it passed and the source was deleted.
+        target_files = _n_files(target)
+        if target_files < source_files:
+            log.startup.error(
+                "[paths] migrate_legacy_skills: verify FAILED — target holds "
+                "fewer files than the source; KEEPING the legacy tree",
+                extra={"_fields": {
+                    "source_files": source_files, "target_files": target_files,
+                }},
+            )
+            return
+
+        shutil.rmtree(legacy, ignore_errors=True)
+        log.startup.info(
+            "[paths] migrate_legacy_skills: done",
+            extra={"_fields": {
+                "copied_entries": copied, "source_files": source_files,
+                "target_files": target_files,
+            }},
+        )
+    except Exception as exc:  # never let a migration crash startup
+        log.startup.error(
+            "[paths] migrate_legacy_skills: unexpected failure — skipped",
+            exc_info=exc,
+        )
