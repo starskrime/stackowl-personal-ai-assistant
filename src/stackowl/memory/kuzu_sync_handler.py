@@ -133,8 +133,20 @@ class KuzuSyncJobHandler(JobHandler):
     def defer_under_load(self) -> bool:
         return True  # Phase L — per-fact LLM extract + graph upserts; yield to turns
 
-    async def execute(self, job: Job) -> JobResult:
-        """Sync the next batch of un-mirrored facts into Kuzu."""
+    async def execute(self, job: Job, *, budget_s: float | None = None) -> JobResult:
+        """Sync the next batch of un-mirrored facts into Kuzu.
+
+        ``budget_s`` — seconds this call may spend. The dream worker passes the
+        run's REMAINING time; the scheduler (which calls ``execute(job)``) gets
+        the conservative default share.
+
+        A fixed share was the first attempt and it was WRONG, measured live: this
+        is the last phase, so a fixed fraction ignores how much of the window the
+        earlier phases actually used. On a run where mining had nothing to do,
+        0.33 left ~800s unused and cut throughput roughly in half — below the rate
+        at which new facts arrive, which would have turned a shrinking backlog
+        into a growing one.
+        """
         # 1. ENTRY
         log.memory.info(
             "[memory] kuzu_sync_handler.execute: entry",
@@ -206,7 +218,7 @@ class KuzuSyncJobHandler(JobHandler):
         # starving contradiction/promotion/pruning and logging 47 errors a day.
         # Stopping early and returning SUCCESS drains the backlog at the same rate
         # while letting the run actually finish.
-        budget_s = _sync_budget_s()
+        budget_s = _sync_budget_s() if budget_s is None else max(budget_s, 0.0)
         synced_count = 0
         entity_total = 0
         deferred = 0

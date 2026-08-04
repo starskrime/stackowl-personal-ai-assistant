@@ -132,3 +132,70 @@ async def test_deferred_facts_stay_unmirrored_for_the_next_tick(monkeypatch):
     assert len(db.executed) == ex.calls, (
         "a sync-log row was written for a fact that was never extracted"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The REGRESSION I nearly shipped: a fixed share ignores how much of the window
+# the earlier phases actually used.
+#
+# Measured live with a fixed 0.33 share: synced=8, deferred=42, elapsed=403.8s of
+# a 1200s window — ~800s left unused. That halved backfill throughput to ~384
+# facts/day against an arrival rate of ~419/day, which would have turned a
+# shrinking backlog into a growing one.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_budget_overrides_the_default_share():
+    db = _Db(50)
+    ex = _SlowExtractor(0.01)
+    h = KuzuSyncJobHandler(_Kuzu(), ex, db, batch_size=50)
+
+    await h.execute(_job(), budget_s=0.03)
+    few = ex.calls
+
+    ex.calls = 0
+    db2 = _Db(50)
+    h2 = KuzuSyncJobHandler(_Kuzu(), ex, db2, batch_size=50)
+    await h2.execute(_job(), budget_s=10.0)
+
+    assert ex.calls > few, "a larger budget must process more facts"
+
+
+def test_the_dream_worker_gives_kuzu_sync_the_REMAINING_time():
+    """Not a fixed fraction. kuzu_sync is the last phase, so its budget is
+    whatever the earlier work did not use."""
+    import time as _t
+
+    from stackowl.memory.dream_worker import (
+        _KUZU_MIN_BUDGET_S,
+        _RETURN_MARGIN_S,
+        DreamWorkerJobHandler,
+    )
+    from stackowl.scheduler.scheduler import _HANDLER_TIMEOUT_SEC
+
+    h = object.__new__(DreamWorkerJobHandler)
+
+    # Fresh run: nearly the whole window is still available.
+    h._handler_started = _t.monotonic()
+    fresh = h._remaining_budget_s()
+    assert fresh > float(_HANDLER_TIMEOUT_SEC) * 0.5, (
+        f"a fresh run should get most of the window, got {fresh}"
+    )
+    assert fresh <= float(_HANDLER_TIMEOUT_SEC) - _RETURN_MARGIN_S
+
+    # Late run: most of the window is gone.
+    h._handler_started = _t.monotonic() - (float(_HANDLER_TIMEOUT_SEC) - 30.0)
+    late = h._remaining_budget_s()
+    assert late == _KUZU_MIN_BUDGET_S, "a late run still gets the floor, not zero"
+
+
+def test_a_standalone_call_falls_back_to_the_safe_default():
+    """The scheduler calls execute(job) with no budget; there is no run clock."""
+    from stackowl.memory.dream_worker import (
+        _KUZU_FALLBACK_BUDGET_S,
+        DreamWorkerJobHandler,
+    )
+
+    h = object.__new__(DreamWorkerJobHandler)
+    assert h._remaining_budget_s() == _KUZU_FALLBACK_BUDGET_S

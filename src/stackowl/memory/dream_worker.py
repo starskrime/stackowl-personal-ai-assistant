@@ -64,6 +64,15 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # starving it would preserve the very ratchet this fixes.
 _MINING_DEADLINE_SHARE = 0.5
 
+#: Seconds reserved so the handler can checkpoint and RETURN rather than being
+#: killed one fact short — the whole point of DEBT-19.
+_RETURN_MARGIN_S = 60.0
+#: Floor, so a run that is already near its deadline still makes some progress
+#: instead of deferring the entire batch forever.
+_KUZU_MIN_BUDGET_S = 60.0
+#: Used when kuzu_sync is invoked outside a dream-worker run (no start clock).
+_KUZU_FALLBACK_BUDGET_S = 396.0
+
 
 def _mining_budget_s() -> float:
     """Seconds mining may spend before deferring the rest to the next run.
@@ -141,8 +150,13 @@ class DreamWorkerJobHandler(JobHandler):
             extra={"_fields": {"job_id": job.job_id}},
         )
         TestModeGuard.assert_not_test_mode("dream_worker.execute")
+        # Clock the WHOLE handler, not just the phases: mining runs first and can
+        # consume up to half the window, and the last phase needs to know what is
+        # actually left rather than assuming a fixed fraction.
+        handler_started = time.monotonic()
         await self._mine()
         t0 = time.monotonic()
+        self._handler_started = handler_started
         db: DbPool = self._bridge._db  # JobHandler reuses the bridge's pool
 
         # 2. DECISION — resume in-flight run or start a fresh one
@@ -500,8 +514,28 @@ class DreamWorkerJobHandler(JobHandler):
             next_run_at=datetime.now(UTC).isoformat(),
             status="pending",
         )
-        await self._kuzu.execute(kuzu_job)
+        await self._kuzu.execute(kuzu_job, budget_s=self._remaining_budget_s())
         return checkpoint
+
+    def _remaining_budget_s(self) -> float:
+        """Seconds left in this handler run, less a margin to return cleanly.
+
+        kuzu_sync is the LAST phase, so its budget is whatever the earlier work
+        did not use — not a fixed share. Measured: a fixed 0.33 share left ~800s
+        of a 1200s window unused on runs where mining had nothing to do, halving
+        backfill throughput to below the rate new facts arrive.
+        """
+        started = getattr(self, "_handler_started", None)
+        if started is None:  # standalone call — fall back to the safe default
+            return _KUZU_FALLBACK_BUDGET_S
+        try:
+            from stackowl.scheduler.scheduler import _HANDLER_TIMEOUT_SEC
+
+            total = float(_HANDLER_TIMEOUT_SEC)
+        except Exception:
+            total = 1200.0
+        remaining = total - (time.monotonic() - float(started)) - _RETURN_MARGIN_S
+        return float(max(remaining, _KUZU_MIN_BUDGET_S))
 
     async def _record_contradictions(
         self, db: DbPool, reports: list[ContradictionReport]
