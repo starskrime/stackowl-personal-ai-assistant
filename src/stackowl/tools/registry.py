@@ -441,13 +441,52 @@ class ToolRegistry:
         this method pretending to be pure across turns it cannot see.
         """
 
-        def _schema_for(t: Tool) -> dict[str, object]:
+        catalog = frozenset(t.name for t in self.all())
+
+        def _schema_for(t: Tool, description: str | None = None) -> dict[str, object]:
+            desc = t.description if description is None else description
             if protocol == "anthropic":
-                return {"name": t.name, "description": t.description, "input_schema": t.parameters}
+                return {"name": t.name, "description": desc, "input_schema": t.parameters}
             return {
                 "type": "function",
-                "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+                "function": {"name": t.name, "description": desc, "parameters": t.parameters},
             }
+
+        def _emit(tools: list[Tool]) -> list[dict[str, object]]:
+            """Build schemas for the FINAL presented set (D05.6).
+
+            The single exit for all three paths. Cross-reference stripping can
+            only happen here, because it needs to know which tools are present —
+            which is not decided until the list is final. Running inside
+            to_provider_schema also means D05.2's memo caches the already-stripped
+            array, so descriptions stay byte-stable for the session rather than
+            varying per turn.
+            """
+            from stackowl.tools._infra.cross_refs import strip_dangling_references
+
+            presented = frozenset(t.name for t in tools)
+            capability_of = {
+                t.name: getattr(t.manifest, "requires_capability", None)
+                for t in self.all()
+            }
+            out: list[dict[str, object]] = []
+            for t in tools:
+                try:
+                    desc = strip_dangling_references(
+                        t.description,
+                        tool_name=t.name,
+                        presented=presented,
+                        catalog=catalog,
+                        capability_of=capability_of,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never cost a turn its tools
+                    log.tool.error(
+                        "[tools] cross-reference strip failed — using the raw description",
+                        exc_info=exc, extra={"_fields": {"tool": t.name}},
+                    )
+                    desc = t.description
+                out.append(_schema_for(t, desc))
+            return out
 
         if restrict_to is not None:
             from stackowl.tools._infra.presentation import ToolPresentation
@@ -456,7 +495,7 @@ class ToolRegistry:
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
                 restrict_to=restrict_to,
             )
-            return [_schema_for(t) for t in tools]
+            return _emit(tools)
 
         if budget is not None:
             import json
@@ -500,7 +539,7 @@ class ToolRegistry:
                 guaranteed=guaranteed, candidates=ranked, budget=b, size_of=_size,
                 hard_cap=hard_cap,
             )
-            return [_schema_for(t) for t in fitted]
+            return _emit(fitted)
 
         if profile is None and pins is None and hydrated is None:
             tools = self.all()
@@ -510,7 +549,7 @@ class ToolRegistry:
             tools = ToolPresentation().select(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated
             )
-        return [_schema_for(t) for t in tools]
+        return _emit(tools)
 
     def render_text_catalog(self, schemas: list[dict[str, Any]]) -> str:
         """Render presented tool schemas into a compact text block for text-protocol mode.
