@@ -258,12 +258,13 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.6
+  item: D05.7
   stage: brainstorm
   stage_status: not_started
   one_line: >
-    D05.1, D05.2, D05.3 AND D05.5 ARE ALL 7/7; D05.4 closed with D05.2 as
-    subsumed. Only D05.6, D05.7 and D05.8 remain in wave 2.
+    D05.1, D05.2, D05.3, D05.5 AND D05.6 ARE ALL 7/7; D05.4 closed with D05.2
+    as subsumed. Only D05.7 (Tool-loop guardrails) and D05.8 (Tool count) remain
+    in wave 2.
     Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
     as a process_deviation and still needing Bakir's call). Dedup target X2 is
     RESOLVED, though not the way it was written — read its
@@ -326,10 +327,11 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.6 (Cross-tool references in schemas) brainstorm. THE PATTERN IS NOW FOUR FOR FOUR: D05.2's signal, D05.3's HealableResource, D05.5's whole RPC transport and D05.1's skills-exec path were all already there. Read the tree before writing a single question."
+    1: "D05.7 (Tool-loop guardrails) brainstorm. Read Hermes, then the TREE, then ask only what neither answers — five items running, and every one found the mechanism (or the defect) already present."
     2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
     3: "Wave 2 is D05 entire: 8 items. D05.2/3/4/5 closed; 4 remain (D05.1, D05.6, D05.7, D05.8)."
-    4: "NEW: DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
+    4: "D05.6 note: the items now COMPOUND. D05.3's gating is what made D05.6's dangling references real, and browser_vision is safe only because a D05.3 test caught it. Check what the last item changed before assuming an issue is theoretical."
+    5: "DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
@@ -6324,14 +6326,14 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/hermes-mapping/designs/D05.6.md"
+    doc_last_verified: "2026-08-04"
     decisions:
       - date: 2026-08-04
         stage: brainstorm
@@ -6386,6 +6388,53 @@ items:
           Re-asked with the REAL read_logs sentence and the exact before/after for
           each option, it was answered immediately. Recording because the fix was
           to show our own text, not to add words.
+      - date: 2026-08-04
+        stage: architect+implement+cleanup+test+validate+document
+        by: Claude
+        what_shipped:
+          module: "NEW tools/_infra/cross_refs.py::strip_dangling_references — sentence-level removal driven by the presented set."
+          seam: "to_provider_schema had THREE separate `return [_schema_for(t) ...]` exits; they now share one _emit(), because the strip needs the FINAL presented set, which is not known until the list is complete."
+          placement: "Inside to_provider_schema, BEFORE D05.2's memo stores the array — so descriptions are session-stable, not per-turn. A capability flip already invalidates that memo, so a returning tool regains its hints with NO new invalidation path."
+          exemptions: "(1) only names in the CATALOG count — memory/process/wait/git/edit are all real tool names AND ordinary English words; (2) same-capability targets are exempt, since they vanish together."
+        A_TEST_FOUND_A_FLAW_IN_THE_CHOSEN_STRATEGY: >
+          Sentence-level removal was chosen with its bluntness accepted (read_logs
+          loses a still-valid "use memory" half). The test found a WORSE case the
+          decision had not anticipated: undo_write opens "Undo the most recent
+          file write/edit by restoring the file's pre-image", and \bedit\b
+          matches inside "write/edit" — so the blunt rule deleted the tool's own
+          DEFINITION, leaving a schema that described only its 'token' argument
+          and never said what the tool does.
+          RULE ADDED: the first sentence is never dropped. It states what the tool
+          IS; later sentences elaborate or route. The trade is explicit — a first
+          sentence naming an absent tool in passing keeps that word, which is
+          prose rather than an instruction to call it, and far less harmful than a
+          schema that no longer says what the tool does.
+          My TEST assertion was then wrong, not the code: it asserted "edit" not
+          in the description, when "write/edit" legitimately survives. Corrected
+          to assert the ROUTING sentence is gone and the DEFINITION remains.
+        mutations:
+          M8: "stripper returns the description unchanged -> fails 4 tests."
+          M9: "drop the same-capability exemption -> fails exactly the exemption test."
+        tests: "tests/tools/test_cross_refs.py — 12, including an end-to-end case through the REAL registry rather than only the pure function."
+        suites_green: "209 across cross_refs, discovery, all presentation slices, the D05.2/D05.3 wiring suites and infra. ruff src 46 / mypy 78 unchanged."
+        live_validation: >
+          ./start.sh (pid 384003). 77 tools discovered in both processes; 421
+          skills loaded; 2 learned tools registered.
+          TWO ERRORs in the log, and they are NOT from this item: "dream-*:
+          handler timed out" is DEBT-19 (the dream worker exceeds the scheduler's
+          20-minute handler timeout), which fired 48 times in yesterday's rotated
+          log before any of this work. Checked rather than claimed clean.
+        not_adopted_registration_lint: >
+          Considered and rejected as a REPLACEMENT: StackOwl already has a
+          _lint_description seam that warns on thin descriptions, so a
+          cross-reference lint would fit there. But registration cannot know what
+          will be PRESENTED, so it would flag all 31 references forever —
+          including the ones that are correct whenever their target is present.
+        standing_liability: >
+          A future tool named after a common English word (`list`, `run`) would
+          strip innocent prose. The catalog check bounds the damage to REGISTERED
+          names — edit/process/wait/memory/git are already both — but the risk
+          grows with the catalog. Recorded as a failure-mode row, not solved.
     changes: []
     changes: []
     notes: null
