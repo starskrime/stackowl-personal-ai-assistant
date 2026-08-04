@@ -258,13 +258,16 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.7
+  item: D05.8
   stage: brainstorm
   stage_status: not_started
   one_line: >
-    D05.1, D05.2, D05.3, D05.5 AND D05.6 ARE ALL 7/7; D05.4 closed with D05.2
-    as subsumed. Only D05.7 (Tool-loop guardrails) and D05.8 (Tool count) remain
-    in wave 2.
+    D05.1, D05.2, D05.3, D05.5, D05.6 AND D05.7 ARE ALL 7/7; D05.4 closed with
+    D05.2 as subsumed. ONE ITEM LEFT IN WAVE 2: D05.8 (Tool count), which the map
+    rates PARITY — both platforms register ~75 tools and the difference is
+    "exposure discipline" (they ship ~40 by default and gate the rest; we present
+    up to 150). D05.2/D05.3/D05.6 have all changed our exposure since that was
+    written, so RE-MEASURE before assuming the gap still exists.
     Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
     as a process_deviation and still needing Bakir's call). Dedup target X2 is
     RESOLVED, though not the way it was written — read its
@@ -327,11 +330,11 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.7 (Tool-loop guardrails) brainstorm. Read Hermes, then the TREE, then ask only what neither answers — five items running, and every one found the mechanism (or the defect) already present."
+    1: "D05.8 (Tool count) brainstorm — the LAST wave-2 item. Its premise is a NUMBER (we present up to 150), and D05.2 (stable ordering), D05.3 (capability gating) and D05.6 (reference stripping) have all moved it since. Measure the real presented count per owl FIRST; the map's figure is stale by three items."
     2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
     3: "Wave 2 is D05 entire: 8 items. D05.2/3/4/5 closed; 4 remain (D05.1, D05.6, D05.7, D05.8)."
     4: "D05.6 note: the items now COMPOUND. D05.3's gating is what made D05.6's dangling references real, and browser_vision is safe only because a D05.3 test caught it. Check what the last item changed before assuming an issue is theoretical."
-    5: "DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
+    5: "DEBT-37 IS HALF-RESOLVED by D05.7 (fan-out, not thrash). Its residual — median quality falls 0.85 -> 0.10 as tool-call count rises while success stays ~96% — is a DIFFERENT question and still open. DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
   verify_the_platform_before_you_start:
     - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
     - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
@@ -6454,14 +6457,14 @@ items:
     dedup_target: X5
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/hermes-mapping/designs/D05.7.md"
+    doc_last_verified: "2026-08-04"
     decisions:
       - date: 2026-08-04
         stage: brainstorm
@@ -6527,6 +6530,36 @@ items:
           headline case, with a real synthesized answer. The residual concern is
           the quality cliff, which is a DIFFERENT question (critic scoring vs task
           difficulty vs loop pathology) and deliberately not folded in here.
+      - date: 2026-08-04
+        stage: architect+implement+cleanup+test+validate+document
+        by: Claude
+        what_shipped:
+          module: "NEW pipeline/tool_guardrails.py — ToolCallGuardrailController, ported DESIGN (side-effect-free: it returns decisions, the runtime acts). Three detectors: exact-repeat (tool+args), same-tool-failure, idempotent-no-progress."
+          wiring: "execute.py _dispatch — after_call() placed where BOTH the result and the value returned to the model are in scope, so guidance actually reaches the model. A warn appends '[loop-guard] ...' to the tool output."
+          alongside_not_instead: "guardrails DECIDE; TurnProgressTracker SIGNALS (turn_made_progress/no_progress_tools -> delivery_gate). Only one component makes decisions, so this is not two competing breakers."
+        two_divergences_from_the_reference:
+          idempotence: "Read from manifest.action_severity == 'read', NOT their hardcoded IDEMPOTENT_TOOL_NAMES / MUTATING_TOOL_NAMES frozensets. A new read-only tool is covered the day it is written. Hardcoded tool-name lists are against a standing rule here."
+          failure_signal: "`failed` is REQUIRED — no result-text sniffing. Theirs falls back to substring-matching '\"error\"' in the blob with hardcoded `terminal`/`memory` cases, but their own docstring says production ALWAYS passes failed= explicitly. So requiring it is the faithful port AND keeps B4a (an unverified effect counts as failure, not progress)."
+        args_are_hashed_never_stored: "ToolCallSignature keeps a sha256 prefix, not the args. A tool call can carry a token or a file's contents and this object is logged. Pinned by a test asserting a secret does not appear in the signature or its repr."
+        A_TEST_I_WROTE_WAS_WRONG_AND_THE_CODE_WAS_RIGHT: >
+          test_success_clears_the_failure_counters assumed a success with
+          DIFFERENT args should clear another signature's failure count. It should
+          NOT: if t{a:1} has failed identically three times that IS a loop, whether
+          or not t{a:2} worked in between. The reference implementation behaves
+          the same way. Replaced with two tests pinning the real semantics — same
+          args clear that signature, different args do not.
+        mutations:
+          M10: "drop `+ _guard_note` from the return -> kills ONLY the wiring test. The 15 unit tests stay green, which is exactly the D05.2 hole this test exists to close."
+          M11: "key the signature on tool NAME only -> kills test_a_fan_out_with_distinct_args_never_warns. Proves args-awareness is what protects the measured headhunter case."
+        tests: "tests/pipeline/test_tool_guardrails.py — 16, including the fan-out case built from the real 46-query measurement and an end-to-end wiring test through execute.run."
+        suites_green: "246 across guardrails, progress_tracker, progress liveness, dispatch, the D05.2/D05.3/D05.6 suites, the progress-supervisor journey, discovery and infra. ruff src 46 / mypy 78 unchanged."
+        DEBT_37_RESOLVED_BY_MEASUREMENT: >
+          Its open question was "legitimate fan-out or thrash loop?" ANSWERED:
+          fan-out. The 46-call turn produced a real synthesized answer. The
+          residual finding — median quality falls 0.85 -> 0.10 as call count rises
+          while success% stays ~96% — is a DIFFERENT question (critic scoring vs
+          task difficulty vs loop pathology) and is deliberately NOT what this
+          item guards on. Stated as correlation, not causation.
     changes: []
     changes: []
     notes: null
