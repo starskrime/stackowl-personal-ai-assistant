@@ -1388,7 +1388,40 @@ known_debt:
       faster model, on a subsystem whose failure is invisible because the
       recovery path looks like success in the log.
     decision: "NOT fixed alongside DEBT-18 — different subsystem, different budget, and raising the OUTER handler timeout affects every job, so it needs its own measurement rather than a sympathetic guess."
-    status: open
+    resolved: 2026-08-04
+    THE_ORIGINAL_DIAGNOSIS_WAS_WRONG: >
+      This entry said "the dream worker never COMPLETES, so whatever it produces
+      is never produced", and hypothesised "a budget calibrated against a faster
+      model". MEASURED on the live box, both halves are wrong:
+        * It PRODUCES ~828 facts/day (kuzu_sync_log, 5-day average). 15,256 of
+          43,032 committed facts are mirrored; 27,780 remain -> ~34 days of
+          backlog at the current rate.
+        * It is not a model-speed problem. kuzu_sync_handler step 2 is an LLM
+          call PER FACT and the loop ran to completion however long that took,
+          so a 50-fact batch simply outran the 1200s handler timeout.
+      What it fails to do is RETURN. The dream worker checkpoints its phase, so a
+      phase that never returns is resumed forever: kuzu_sync started 42-49x/DAY
+      while contradiction/promotion/pruning started 1-5x. THE REAL COST IS PHASE
+      STARVATION, not lost production — and that is not what this entry said.
+      Also: the handler logged "entry" and then NOTHING until it was killed. No
+      exit, no error, no per-fact progress. Twenty minutes invisible.
+    the_fix: >
+      Applied the pattern its own sibling already established. dream_worker
+      ._mining_budget_s bounds mining at HALF the handler timeout, and its comment
+      explains why: the later phases "need the other half... starving it would
+      preserve the very ratchet this fixes". Mining was budgeted; kuzu_sync was
+      NOT, so it consumed whatever mining left and then overran.
+      kuzu_sync now takes a THIRD (it is the last phase, so it inherits whatever
+      the earlier ones spent), returns SUCCESS with partial progress, and defers
+      the remainder to the next tick. Deferred facts are never marked synced, so
+      the backlog drains at the same rate — the run just finishes.
+      Plus the missing per-fact STEP logging, per this repo's own rule.
+    tests: "tests/memory/test_kuzu_sync_deadline.py — 5. Mutation M12 (remove the deadline break) fails exactly the bounded-batch test."
+    note_on_my_own_test: >
+      The first _Kuzu stub had the wrong method names, so every fact 'failed' and
+      the deferral assertion passed for the wrong reason. Method names are now
+      read from the handler rather than guessed.
+    status: "RESOLVED 2026-08-04 — pending live confirmation that the 47/day timeouts stop."
   - id: DEBT-17
     found: 2026-07-26
     what: "tests/skills/test_skill_retrieval.py::test_gather_relevant_skills_returns_block_when_wired is a CHANGE-DETECTOR test on hint wording."
