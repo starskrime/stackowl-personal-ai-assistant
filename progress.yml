@@ -259,15 +259,18 @@ deployment:
 current:
   wave: 2
   item: D05.8
-  stage: brainstorm
-  stage_status: not_started
+  stage: architect
+  stage_status: blocked
   one_line: >
-    D05.1, D05.2, D05.3, D05.5, D05.6 AND D05.7 ARE ALL 7/7; D05.4 closed with
-    D05.2 as subsumed. ONE ITEM LEFT IN WAVE 2: D05.8 (Tool count), which the map
-    rates PARITY — both platforms register ~75 tools and the difference is
-    "exposure discipline" (they ship ~40 by default and gate the rest; we present
-    up to 150). D05.2/D05.3/D05.6 have all changed our exposure since that was
-    written, so RE-MEASURE before assuming the gap still exists.
+    WAVE 2 IS 7 OF 8 COMPLETE. D05.1, D05.2, D05.3, D05.5, D05.6 and D05.7 are
+    all 7/7; D05.4 closed as subsumed into D05.2. D05.8 (Tool count) is
+    brainstormed and BLOCKED — not on a decision, on TRAFFIC.
+    ITS PREMISE DID NOT SURVIVE MEASUREMENT: the map says "Hermes ships ~40 by
+    default; StackOwl presents up to 150". Measured — their default set is 54,
+    our configured cap is 40 (the 150 is a pathological backstop), and live goal
+    lanes average 4.0 tools per turn. WE PRESENT FEWER THAN THEY DO. Bakir chose
+    to measure the INTERACTIVE path before deciding rather than close on
+    background-lane data, which is the blind spot D01.3 recorded about itself.
     Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
     as a process_deviation and still needing Bakir's call). Dedup target X2 is
     RESOLVED, though not the way it was written — read its
@@ -330,7 +333,11 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "D05.8 (Tool count) brainstorm — the LAST wave-2 item. Its premise is a NUMBER (we present up to 150), and D05.2 (stable ordering), D05.3 (capability gating) and D05.6 (reference stripping) have all moved it since. Measure the real presented count per owl FIRST; the map's figure is stale by three items."
+    1: "NOTHING IS BLOCKED ON A DECISION. Three items now wait on the SAME thing — ordinary interactive use of the platform — and none needs new instrumentation:
+         * D05.2 acceptance: cache_audit should stay silent for a (lane, owl) pair with 2+ turns
+         * D05.3 acceptance: 'capability UNAVAILABLE' should fire once for the browser
+         * D05.8 architect: interactive tools_count distribution vs Hermes' 54 and our 40 cap
+       A handful of normal Telegram messages to one owl settles all three."
     2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
     3: "Wave 2 is D05 entire: 8 items. D05.2/3/4/5 closed; 4 remain (D05.1, D05.6, D05.7, D05.8)."
     4: "D05.6 note: the items now COMPOUND. D05.3's gating is what made D05.6's dangling references real, and browser_vision is safe only because a D05.3 test caught it. Check what the last item changed before assuming an issue is theoretical."
@@ -6578,16 +6585,65 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
+      brainstorm: done
+      architect:  blocked
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
+    blocked_on: "INTERACTIVE TRAFFIC. All 64 measured turns are goal (background) lanes; the interactive path is unmeasured. Bakir chose to measure it before deciding rather than close on background data alone."
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-04
+        stage: brainstorm
+        by: Bakir
+        round: "2 questions, 1 round. Most of the item was settled by MEASURING rather than asking — the map's premise did not survive contact with the numbers."
+        THE_MAPS_ENTRY_IS_WRONG_ON_BOTH_SIDES: >
+          It reads: "Both register 75 tools. The difference is entirely in
+          exposure discipline: Hermes ships ~40 by default and gates the rest;
+          StackOwl presents up to 150."
+          MEASURED:
+            * Hermes' CLI default set (_HERMES_CORE_TOOLS) is 54 tools, not ~40.
+            * StackOwl registers 77, not 75.
+            * Our CONFIGURED cap is 40 (OrchestratorSettings.tool_count_cap).
+              The 150 is HARD_TOOL_COUNT_CAP — a pathological-catalog backstop
+              whose own comment says it "should sit comfortably above any real
+              toolset, not below it". The map compares OUR BACKSTOP against
+              THEIR DEFAULT.
+            * Real presentation by profile, measured through to_provider_schema:
+              25-40 tools / 7,105-8,889 tokens.
+            * LIVE production, from the tools_count field already in the logs:
+              64 turns, avg 4.0 tools, max 24. Distribution: 3 x32, 4 x23,
+              5 x4, 6 x2, 7 x2, 24 x1.
+          SO THE GAP IS INVERTED: we present FEWER tools than Hermes, not more.
+          Their default is 54; our live average is 4.
+        why_the_map_could_be_this_stale: >
+          The entry predates three items that all moved exposure: D05.2 (stable
+          ordering + session memo), D05.3 (capability gating — 25 browser tools
+          vanish on a box with no browser) and D05.6 (cross-reference stripping).
+          A number in a map is a measurement with an expiry date.
+        answers:
+          verdict: "MEASURE THE INTERACTIVE PATH FIRST, then decide. Bakir chose this over closing as no_change_needed — all 64 measured turns are GOAL lanes, and closing on background-lane data alone would repeat exactly the blind spot D01.3 recorded about itself."
+          the_150_backstop: "LEAVE IT. Its own comment says it is 'a backstop against a pathological catalog, not a shaping lever'. It was raised from 40 to 150 in July precisely because the catalog outgrew 40 and real tools were being silently trimmed. Nothing reaches it in practice."
+        THE_OPPOSITE_QUESTION_now_open: >
+          If we present an average of 4 tools from a 77-tool catalog, the risk
+          worth investigating is UNDER-presentation, not over-presentation. That
+          may be correct (narrow owl profiles by design, plus tool_search overflow
+          as the escape hatch) or it may be starving the model. It is a DIFFERENT
+          question from the one the map wrote, and is deliberately not folded in.
+        the_instrument_already_exists: >
+          No new telemetry is needed — `tools_count` is already logged per turn by
+          execute.py's context-budget line. The blocker is TRAFFIC, not
+          instrumentation. Same blocker as D05.2's and D05.3's live acceptance
+          tests: all three settle from ordinary interactive use.
+        what_settles_it: >
+          jq -r 'select(.fields.tools_count) | "\(.fields.tools_count)\t\(.session_key)"'
+            ~/.stackowl/logs/stackowl.jsonl | grep -v $'\tgoal-' | grep -v $'\tincident-'
+          Non-empty output = interactive turns measured. Compare the distribution
+          against Hermes' 54-tool default and against our 40 cap.
+    changes: []
     changes: []
     notes: null
 
