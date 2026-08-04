@@ -11,6 +11,27 @@ On each tick the handler:
 
 All Kuzu and LLM exceptions are caught per-fact so a single bad row never
 poisons the batch.
+
+DEADLINE-BOUNDED (DEBT-19). Step 2 is an LLM call PER FACT, and the batch was
+processed to completion however long that took. Measured on the live box:
+
+  * 27,780 facts still unmirrored; ~828 sync per day, so ~34 days of backlog.
+  * ``kuzu_sync`` started 42-49 times a DAY while contradiction/promotion/pruning
+    started 1-5 — because the dream worker checkpoints its phase, and a phase
+    that never returns is resumed forever.
+  * 47 ERROR lines a day: "handler timed out — freed for retry/re-arm".
+
+The handler was NOT failing to produce — it synced ~828 facts/day. It was failing
+to RETURN, which pinned the dream worker's checkpoint at this phase and starved
+the three phases after it. Note that ``dream_worker._mining_budget_s`` already
+solved exactly this for mining and its comment says why: the later phases "need
+the other half... starving it would preserve the very ratchet this fixes". Mining
+was budgeted; this phase was not, so it consumed whatever mining left and then
+overran the timeout.
+
+The fix is the same pattern: process facts until a budget expires, then RETURN
+SUCCESS with partial progress. The backlog drains at the same rate — the run just
+finishes, so the remaining phases get their turn and the log goes quiet.
 """
 
 from __future__ import annotations
@@ -23,6 +44,35 @@ from typing import TYPE_CHECKING, ClassVar
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
+
+#: Share of the scheduler's handler timeout this phase may consume.
+#: Deliberately smaller than mining's 0.5: this handler is the LAST dream-worker
+#: phase, so it inherits whatever the earlier phases already spent. A third
+#: leaves headroom for the run to checkpoint and return rather than being killed
+#: one fact short.
+_SYNC_DEADLINE_SHARE = 0.33
+
+
+def _sync_budget_s() -> float:
+    """Seconds this handler may spend before deferring the rest to the next tick.
+
+    Reads the scheduler's own timeout so a retune follows automatically instead
+    of silently going stale — the exact rot that produced DEBT-19, where a budget
+    calibrated against a smaller backlog was never revisited. Never raises: an
+    unbounded default here is the defect, not the safe case.
+    """
+    try:
+        from stackowl.scheduler.scheduler import _HANDLER_TIMEOUT_SEC
+
+        return float(_HANDLER_TIMEOUT_SEC) * _SYNC_DEADLINE_SHARE
+    except Exception as exc:  # never silent
+        log.memory.error(
+            "[memory] kuzu_sync_handler: could not read the handler timeout — "
+            "using a conservative sync budget",
+            exc_info=exc,
+        )
+        return 1200.0 * _SYNC_DEADLINE_SHARE
+
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
@@ -148,16 +198,53 @@ class KuzuSyncJobHandler(JobHandler):
                 duration_ms=duration_ms,
             )
 
-        # 3. STEP — process each fact
+        # 3. STEP — process each fact, BOUNDED BY A DEADLINE (DEBT-19).
+        #
+        # Each iteration is an LLM extract. Unbounded, a 50-fact batch outran the
+        # scheduler's 1200s handler timeout, so the handler never returned and the
+        # dream worker's checkpoint stayed pinned on this phase — resumed forever,
+        # starving contradiction/promotion/pruning and logging 47 errors a day.
+        # Stopping early and returning SUCCESS drains the backlog at the same rate
+        # while letting the run actually finish.
+        budget_s = _sync_budget_s()
         synced_count = 0
         entity_total = 0
-        for row in rows:
+        deferred = 0
+        for index, row in enumerate(rows):
+            elapsed = time.monotonic() - t0
+            if elapsed >= budget_s:
+                # Not an error: the remaining rows are still un-mirrored, so the
+                # next tick picks them up unchanged. Logged at INFO because a
+                # silently truncated batch is how a backlog hides.
+                deferred = len(rows) - index
+                log.memory.info(
+                    "[memory] kuzu_sync_handler.execute: budget reached — deferring "
+                    "the rest of this batch to the next tick",
+                    extra={"_fields": {
+                        "job_id": job.job_id, "synced": synced_count,
+                        "deferred": deferred, "elapsed_s": round(elapsed, 1),
+                        "budget_s": round(budget_s, 1),
+                    }},
+                )
+                break
             fact_id = row["fact_id"]
             content = row["content"]
             entity_count = await self._sync_one_fact(fact_id, content)
             if entity_count >= 0:
                 synced_count += 1
                 entity_total += entity_count
+            # 3. STEP — per-fact progress. The loop previously logged NOTHING
+            # between entry and exit, so a run killed mid-batch left no record of
+            # how far it got; the whole 20-minute window was invisible. Debug
+            # level: one line per fact is too much for INFO, but "silent code is
+            # undebuggable code" and this loop is where the time goes.
+            log.memory.debug(
+                "[memory] kuzu_sync_handler.execute: fact synced",
+                extra={"_fields": {
+                    "job_id": job.job_id, "fact_id": fact_id,
+                    "entities": entity_count, "index": index + 1, "of": len(rows),
+                }},
+            )
             # F067 (C-5) — the Kuzu Connection is serialized onto ONE worker
             # thread, so a long sync batch could starve a live classify traverse.
             # Yield to the event loop between facts so interleaved traverse ops
@@ -173,6 +260,7 @@ class KuzuSyncJobHandler(JobHandler):
                     "job_id": job.job_id,
                     "batch_rows": len(rows),
                     "synced": synced_count,
+                    "deferred": deferred,
                     "entities": entity_total,
                     "duration_ms": duration_ms,
                 }
@@ -182,7 +270,10 @@ class KuzuSyncJobHandler(JobHandler):
             job_id=job.job_id,
             effect_class="state_change",
             success=True,
-            output=f"synced_count={synced_count} entities={entity_total}",
+            output=(
+                f"synced_count={synced_count} entities={entity_total}"
+                + (f" deferred={deferred}" if deferred else "")
+            ),
             error=None,
             duration_ms=duration_ms,
         )
