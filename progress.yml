@@ -6453,7 +6453,7 @@ items:
     blocks: []
     dedup_target: X5
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -6462,7 +6462,72 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-04
+        stage: brainstorm
+        by: Bakir
+        round: "4 questions over 2 rounds. Bakir asked a direct question back — 'why not replace ours with Hermes?' — which turned out to expose an error in MY framing, not his."
+        THE_PREMISE_INVERTED_WHILE_MEASURING_IT: >
+          DEBT-37 (filed by me yesterday) assumed long tool chains were thrash
+          loops. THEY ARE NOT, at least not the headline case. The 46-call chain
+          was `headhunter` running 46 web_searches and returning a real
+          synthesized list of live job postings in Plano TX — productive fan-out.
+          Across 365 turns with >=15 calls: 72% succeeded, median response 7,303
+          chars. A naive "same tool N times -> halt" rule would have BROKEN A
+          WORKING FEATURE.
+        BUT_QUALITY_FALLS_OFF_A_CLIFF_with_the_baseline_measured: >
+          Measured per call-count band (median quality_score, n, success%):
+            0 calls  n=3822  q=0.85  99%   1007 chars
+            1-2      n=432   q=0.75  99%    981
+            3-4      n=238   q=0.70  97%    995
+            5-14     n=476   q=0.40  94%   2261
+            15+      n=273   q=0.10  96%   8000
+          Monotonic collapse 0.85 -> 0.10 while success% stays ~96%: the turns
+          SUCCEED and produce long answers the critic rates near zero.
+          STATED AS CORRELATION, NOT CAUSATION: hard tasks may need more tools AND
+          be harder to answer well, and the critic may penalise verbosity. That is
+          why it is NOT the thing being guarded on — see the scope answer.
+        the_dedup_answer_the_map_asked_for: >
+          "Is our TurnProgressSupervisor the same thing?" NO, and it is provable.
+          Ours counts consecutive ZERO-PROGRESS dispatches per TOOL NAME
+          (threshold 3, or 2 on a lean window) and bounces the tool for the turn.
+          Hermes has THREE detectors: exact-failure (tool + ARGS), same-tool-
+          failure, and idempotent-no-progress (same RESULT).
+          The gap is not theoretical: execute.py:1737 calls
+          is_trustworthy_success(r.success, r.verified) -> record_progress, so a
+          SUCCESSFUL repeat RESETS our streak. That is exactly why 46 successful
+          web_searches never touched the breaker. Ours catches FAILURE loops;
+          it is blind to productive-looking loops that go nowhere.
+        I_WAS_WRONG_ABOUT_THE_COST_OF_REPLACING: >
+          I framed "replace ours wholesale" as regressing failure detection to
+          string-matching, because classify_tool_failure does
+          '"error"' in result[:500].lower() with hardcoded `terminal`/`memory`
+          cases. Bakir pushed back with "why not replace ours with Hermes" and
+          checking the call path proved MY FRAMING WRONG:
+            after_call(..., failed: bool | None = None) and
+            `if failed is None: failed, _ = classify_tool_failure(...)`
+            run_agent.py:6495 production ALWAYS passes failed= explicitly.
+          Their own docstring: "safety-fallback classifier used only when callers
+          don't pass failed... Production callers always pass an explicit failed=".
+          So the string-matcher is NOT their production path. Porting the
+          controller faithfully means feeding it OUR structured verdict, and no
+          failure-detection regression occurs. His instinct was right and my
+          option text overstated the cost.
+        answers:
+          scope: "CATCH REPETITION, NOT LENGTH. A 46-call fan-out with 46 different queries is legitimate and must not be halted; what is worth catching is the SAME call repeated — same tool AND same args — which a name-only counter cannot distinguish from fan-out."
+          dedup: "REPLACE OURS WITH THEIR CONTROLLER WHOLESALE — Bakir's call, taken against my 'take the detector, not the controller' recommendation, and cheaper than I represented once the failed= contract was checked."
+          warn_vs_halt: "WARN ONLY, NEVER HARD-STOP ON REPETITION. Repetition is a smell, not proof — the headhunter case shows a high count can be correct. A genuine loop then runs to the iteration cap rather than risking a truncated valid fan-out."
+        what_must_survive_the_replacement:
+          - "is_trustworthy_success(success, verified) as the failure signal — B4a, a SHIPPED FIX: a claimed-but-unobserved effect must not disarm the breaker. Fed in via failed=, which is their production contract anyway."
+          - "reset() on tier escalation, so a stronger tier is not pre-bounced by the weak tier's open breaker. Hermes has no tiers and no equivalent."
+          - "deterministic_dead / _is_transient_failure classification, which routes an open breaker into StackOwl's recovery ladder."
+          - "NO hardcoded tool names. Their classify_tool_failure special-cases `terminal` and `memory` by name; that fallback path must not be ported — standing rule."
+        DEBT_37_IS_RESOLVED_BY_THIS_MEASUREMENT: >
+          Its open question was "fan-out or thrash?". ANSWERED: fan-out, for the
+          headline case, with a real synthesized answer. The residual concern is
+          the quality cliff, which is a DIFFERENT question (critic scoring vs task
+          difficulty vs loop pathology) and deliberately not folded in here.
+    changes: []
     changes: []
     notes: null
 

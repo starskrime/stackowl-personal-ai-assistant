@@ -1332,6 +1332,21 @@ async def _run_with_tools(
     _np_threshold = resolve_no_progress_threshold(state.model_window)
     progress = TurnProgressTracker(threshold=_np_threshold)
 
+    # D05.7 — the loop-detection controller, ported from the reference platform's
+    # side-effect-free design. It runs ALONGSIDE TurnProgressTracker, not instead
+    # of it, and the split is deliberate:
+    #
+    #   guardrails  -> DECIDES (three detectors, warn-only, args-aware)
+    #   progress    -> SIGNALS (turn_made_progress / no_progress_tools feed
+    #                  delivery_gate's honesty check, a TRUST-ARC feature that has
+    #                  nothing to do with loop containment)
+    #
+    # Replacing the tracker outright would have deleted that honesty feed with it.
+    # Only one component makes decisions, so this is not two competing breakers.
+    from stackowl.pipeline.tool_guardrails import ToolCallGuardrailController
+
+    guardrails = ToolCallGuardrailController()
+
     def _stamp_progress(st: PipelineState) -> PipelineState:
         """Stamp turn-progress summary onto state at every _run_with_tools exit."""
         return st.evolve(
@@ -1767,6 +1782,35 @@ async def _run_with_tools(
             return r
 
         tr = await _guarded_dispatch(args)
+
+        # D05.7 — observe this completed call. Placed HERE, where both the result
+        # and the value returned to the model are in scope, so the guidance can
+        # actually reach the model rather than only the log.
+        #
+        # `failed=` is fed the SAME structured verdict the tracker uses, which is
+        # the reference platform's production contract (their result-text sniffer
+        # is only a fallback for standalone callers) and keeps B4a: an unverified
+        # effect counts as a failure, never as progress.
+        _guard_note = ""
+        if tr is not None:
+            try:
+                _tool_obj = tool_registry.get(name)
+                _sev = getattr(getattr(_tool_obj, "manifest", None), "action_severity", None)
+                _decision = guardrails.after_call(
+                    name, args, tr.output,
+                    failed=not is_trustworthy_success(tr.success, tr.verified),
+                    # Idempotence from the DECLARED severity — no hardcoded tool-name
+                    # list. "read" is the tool's own claim that repeating it is safe.
+                    idempotent=_sev == "read",
+                )
+                if _decision.action == "warn":
+                    _guard_note = f"\n\n[loop-guard] {_decision.message}"
+            except Exception as exc:  # noqa: BLE001 — a guardrail must never cost a turn its tools
+                log.engine.error(
+                    "[pipeline] execute: tool-loop guardrail raised — ignoring",
+                    exc_info=exc, extra={"_fields": {"tool": name, "trace_id": state.trace_id}},
+                )
+
         if tr is None:
             return (
                 f"{TOOL_FAILED_MARKER}The action '{name}' was cancelled after exceeding the "
@@ -1784,7 +1828,10 @@ async def _run_with_tools(
             # learned hints to the model needs its own design — weak-model
             # amplification safety + a real consumer — per the note in
             # learning/heuristic_matcher.py. Do not add a heuristic store read here.
-            return tr.output
+            # Warn-only by operator decision: guidance rides along with the result
+            # the model sees; execution is never blocked. A genuine loop is bounded
+            # by the turn iteration cap (DEFAULT_TURN_MAX_STEPS) instead.
+            return tr.output + _guard_note
         # B4a recovery ladder — RUNG 1: RETRY-ONCE on a recoverable failure. Two
         # recoverable shapes self-heal on a second attempt and so earn one retry:
         #   (1) an UNVERIFIED EFFECT — a non-consequential effectful tool that CLAIMED
