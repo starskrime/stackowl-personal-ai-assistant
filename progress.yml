@@ -1421,7 +1421,35 @@ known_debt:
       The first _Kuzu stub had the wrong method names, so every fact 'failed' and
       the deferral assertion passed for the wrong reason. Method names are now
       read from the handler rather than guessed.
-    status: "RESOLVED 2026-08-04 — pending live confirmation that the 47/day timeouts stop."
+    LIVE_CONFIRMED_AND_THEN_I_FOUND_MY_OWN_REGRESSION: >
+      FIRST FIX, confirmed live after restart:
+        23:53:05 "budget reached — deferring" synced=8 deferred=42 elapsed_s=403.8
+        0 "handler timed out" errors since restart (was 47/day).
+      The handler returns. Phase starvation is fixed.
+      BUT THE SAME LOG LINE SHOWED A REGRESSION I HAD INTRODUCED. 403.8s of a
+      1200s window — a fixed 0.33 share left ~800s unused, because it ignores how
+      much the EARLIER phases actually spent (on that run mining had nothing to
+      do). Measured rates:
+        arrival ~419 facts/day
+        drain BEFORE ~774/day  -> backlog shrinking ~355/day
+        drain AFTER  ~384/day  -> backlog GROWING
+      The old behaviour got its throughput precisely BECAUSE it ran the full
+      window before being killed. Trading that for a clean return was the right
+      goal and the wrong shape.
+    second_fix: >
+      Budget by REMAINING time, not a fixed share. kuzu_sync is the last phase, so
+      it gets whatever is left: the dream worker now clocks the WHOLE handler
+      (t0 was set after _mine(), so it never covered mining), passes
+      total - elapsed - 60s margin, with a 60s floor so a late run still makes
+      progress. A standalone scheduler call, which has no run clock, keeps the
+      conservative default. Also fixed the mypy 78->79 this introduced.
+    what_this_cost_me: >
+      I declared the first fix good on the strength of "0 timeouts" and would have
+      left a backlog that grows instead of shrinks. The number that caught it —
+      elapsed_s=403.8 against a 1200s window — was in the very log line I used to
+      claim success. Reading a metric for the ONE thing I was hoping to see is how
+      a regression ships next to a green tick.
+    status: "RESOLVED 2026-08-05 — first fix live-confirmed (0 timeouts); second fix pending the next tick."
   - id: DEBT-17
     found: 2026-07-26
     what: "tests/skills/test_skill_retrieval.py::test_gather_relevant_skills_returns_block_when_wired is a CHANGE-DETECTOR test on hint wording."
