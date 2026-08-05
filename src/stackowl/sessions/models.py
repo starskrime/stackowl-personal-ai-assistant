@@ -188,6 +188,32 @@ def new_session_id(now: datetime.datetime) -> str:
     return f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
+#: Prefixes of session keys minted by the PLATFORM for its own work, not by a
+#: human conversation. Kept here beside :func:`build_session_key` because this is
+#: where lane naming is owned; they were previously f-strings duplicated at the
+#: two mint sites with nothing tying them together.
+#:
+#:   ``goal-``      scheduler/handlers/goal_execution.py — job lanes
+#:   ``incident-``  scheduler/handlers/incident_escalation.py — self-heal RCA lanes
+#:
+#: A human lane is ``owl:{owl}:{channel}:...`` (see build_session_key below), so
+#: these prefixes cannot collide with one.
+MACHINE_LANE_PREFIXES: tuple[str, ...] = ("goal-", "incident-")
+
+
+def is_machine_lane(session_key: str | None) -> bool:
+    """Whether this lane is the platform talking to itself (DEBT-35).
+
+    Used by the conversation miner to skip lanes that cannot contain a user fact
+    by construction. Deliberately a PREFIX check on our own minted keys, not a
+    heuristic over content: a wrong answer here silently drops real user facts,
+    so it keys on something we control rather than something we infer.
+    """
+    if not session_key:
+        return False
+    return session_key.startswith(MACHINE_LANE_PREFIXES)
+
+
 def build_session_key(source: SessionSource, *, group_per_user: bool = True,
                       thread_per_user: bool = False) -> str:
     """Derive the lane name. Deterministic: same source, same key, forever (I1).

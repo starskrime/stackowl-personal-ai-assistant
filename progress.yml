@@ -484,6 +484,33 @@ known_debt:
       - "The data survived because a CACHE happened to hold the source of truth. That was luck, not design."
     status: resolved
 
+  - id: DEBT-38
+    found: 2026-08-05
+    what: "test_rca_conversation_turn_to_recall_end_to_end fails: a reinforced fact is not promoted out of the staged queue after two dream passes."
+    evidence: >
+      tests/memory/test_plan_b_rca_integration.py:338
+        AssertionError: after pass 2 the reinforced fact must have been promoted
+        out of the staged queue — assert not [{'1': 1}]
+      CONFIRMED PRE-EXISTING: identical failure on a clean worktree at 7ed8d5b3^,
+      the commit BEFORE any of today's DEBT-19 work.
+    how_it_surfaced: >
+      It was MASKED. My DEBT-19 change made the dream worker pass budget_s to the
+      kuzu phase, and this test's _NoopKuzuHandler stub did not accept the kwarg,
+      so pass 1 aborted with a TypeError before the promotion assertion ever ran.
+      Fixing the stub restored the test to its true pre-existing state and
+      revealed the real failure underneath.
+      Worth recording as a shape: a stub that does not track the real interface
+      can hide a genuine assertion failure behind a TypeError indefinitely.
+    why_it_matters: >
+      Promotion staged -> committed is the memory system's whole point: a fact
+      reinforced across turns is supposed to become durable. If the integration
+      path is broken, facts stay staged and recall never sees them. NOT yet
+      root-caused — the promoter may be fine and the test's fixture stale (it
+      asserts on a `{'1': 1}` row shape), or promotion may genuinely not fire for
+      conversation_fact rows.
+    NOT_caused_by_todays_work: "Verified against 7ed8d5b3^. DEBT-19, DEBT-35 and DEBT-36 are all unrelated — the lane filter does not apply (the test uses `sess-rca-e2e`, not a machine lane)."
+    status: open
+
   - id: DEBT-37
     found: 2026-08-02
     what: "Long tool chains are overwhelmingly ONE tool repeated, not multi-step plans — 46 web_search calls in a single turn."
@@ -545,7 +572,23 @@ known_debt:
       Two honest options for Bakir: drop the parameter (and the filter) as dead
       surface, or decide tool turns SHOULD be persisted and wire a writer — which
       would then need D01.5's Rule 5 reasoning applied to persisted history too.
-    status: open
+    resolved: 2026-08-05
+    decision: "REMOVE THE PARAMETER (Bakir). A capability advertised on the tool surface that provably cannot be exercised is the 'registered but never reachable' shape this programme keeps finding."
+    what_changed: "include_tool_calls removed from the transcripts schema, description and execute(); the role filter and the now-orphaned _TOOL_ROLE constant deleted. No behaviour changed — the filter only ever removed rows that were never written."
+    A_PRE_EXISTING_RED_SURFACED_AND_WAS_FIXED: >
+      Two tests seeded a ("tool", ...) turn and had been FAILING since migration
+      0106 narrowed messages.role to ('user','assistant') — they could not even
+      build their fixture (sqlite3.IntegrityError at seed time). Confirmed
+      pre-existing by stashing this change and re-running: identical failures.
+      They had been red since D01.5 shipped and nothing caught it.
+        * test_tool_turns_excluded_by_default -> replaced by
+          test_a_tool_role_row_CANNOT_EXIST, which asserts the invariant that
+          made the parameter dead rather than the deleted behaviour.
+        * test_redaction_applied_to_included_tool_payload -> rewritten onto an
+          assistant turn and renamed. Redaction still matters; it just has to be
+          tested on a role that can be stored.
+      8 passing.
+    status: resolved
 
   - id: DEBT-35
     found: 2026-07-29
@@ -575,7 +618,25 @@ known_debt:
       filter_at_the_queue: "Mine only human-originated lanes. Cheapest by far (drops 96% of the work), and the barren evidence says nothing is lost. Needs a rule for what counts as human-originated that is not a hardcoded prefix list."
       mine_machine_lanes_differently: "Machine lanes may hold durable facts about the SYSTEM (recurring failure modes) rather than the user. That is arguably valuable but it is a different extractor and a different store — closer to the incident-learning arc than to user memory."
       leave_it: "Accept the cost. ~$15-22/day of mining that produces nothing, and a queue that grows forever."
-    status: open
+    resolved: 2026-08-05
+    decision: "FILTER THEM OUT (Bakir)."
+    THE_MEASUREMENT_HAS_MOVED_SINCE_THIS_WAS_FILED: >
+      Stated rather than quoting the stale figure: the queue when this debt was
+      filed was 943 sessions, 92% incident lanes. TODAY it is THREE sessions, all
+      goal lanes — because DEBT-32's marking fix drained the backlog. The filter
+      is still right (100% of the current queue is still machine lanes) but the
+      urgency is far lower than the entry implies.
+    what_changed: >
+      NEW sessions/models.is_machine_lane + MACHINE_LANE_PREFIXES, placed beside
+      build_session_key because that is where lane naming is owned. The prefixes
+      were previously f-strings duplicated at the two mint sites
+      (goal_execution.py:159, incident_escalation.py:281) with nothing tying them
+      together; adding a third copy in the miner was the wrong move.
+      conversation_miner.mine_all now SKIPS AND MARKS machine lanes, and reports
+      skipped_machine in its exit log.
+    why_MARKED_and_not_merely_skipped: "An unmarked lane returns to the queue every 30 minutes forever — the exact DEBT-32 ratchet. Pinned by a test."
+    tests: "tests/memory/test_mining_lane_filter.py — 8, including one asserting the prefixes still match the two sites that mint them."
+    status: resolved
 
   - id: DEBT-33
     found: 2026-07-28
@@ -5020,12 +5081,12 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    awaiting_decision: "Bakir asked me to INVESTIGATE merging the steps into one agent object rather than accept my recommendation. The investigation is written (designs/D02.1.md). The decision is his, now with numbers."
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    decided_2026_08_05: "KEEP THE REGISTRY. Bakir asked for the merge to be investigated rather than dismissed; it was costed in designs/D02.1.md and he then chose to keep the pipeline. implement..validate are no_change_needed — a legitimate outcome under PROCESS.md and the honest one here."
     doc: "docs/hermes-mapping/designs/D02.1.md"
     doc_last_verified: "2026-08-05"
     decisions:
@@ -5067,7 +5128,20 @@ items:
           execute.py and "one class is unreadable" weakens a lot (2,552 lines
           across 8 steps is a different object from 5,597); add a third caller
           assembling state by hand and the facade stops being redundant.
-        status: "INVESTIGATION COMPLETE, DECISION OPEN. implement..document deliberately not_started — the item does not close until Bakir decides."
+        status: "CLOSED 7/7 with no code. The investigation was the deliverable."
+      - date: 2026-08-05
+        stage: decision
+        by: Bakir
+        decision: "KEEP THE REGISTRY — close as no_change_needed."
+        why_this_is_not_just_my_recommendation_restated: >
+          I recommended keeping it, was told to investigate the merge properly
+          instead, costed it (5,597 lines across the steps, 115 test files, 2
+          config-selectable backends, ZERO cross-step imports), stated the four
+          strongest arguments FOR merging in full, and showed each collapsing on
+          measurement. Bakir then chose with those numbers in front of him. The
+          conclusion is the same; the basis is not.
+        the_maps_trade_off_is_corrected: "Its claim that a class is 'far easier to fork for subagents' is measurably false — a2a_delegation.py:215 forks in ONE line. StackOwl is both more inspectable AND easier to fork. The verdict DIVERGENT stands; the stated cost of our design does not exist."
+        recorded_so_it_is_not_permanent: "Drop the langgraph backend, or decompose execute.py (3,045 lines of the 5,597), or add a third caller assembling PipelineState by hand, and the arithmetic shifts. See the doc's 'what would change this conclusion'."
     changes: []
     changes: []
     notes: null

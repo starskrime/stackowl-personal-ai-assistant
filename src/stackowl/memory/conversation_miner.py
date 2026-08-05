@@ -18,6 +18,7 @@ from stackowl.infra.observability import log
 from stackowl.memory.fact_extractor import EXTRACTED_FACT_SOURCE_TYPE
 from stackowl.memory.sqlite_helpers import cosine_similarity, unpack_embedding
 from stackowl.providers.base import Message
+from stackowl.sessions.models import is_machine_lane
 
 if TYPE_CHECKING:  # pragma: no cover
     from stackowl.db.pool import DbPool
@@ -171,12 +172,27 @@ class ConversationMiner:
         total = 0
         failed = 0
         mined = 0
+        skipped_machine = 0
         for row in rows:
             # 2. DECISION — stop STARTING work once the budget is spent. Checked
             # before the call so the in-flight session always completes.
             if budget_s is not None and (time.monotonic() - started) >= budget_s:
                 break
             session_key = row["source_ref"]
+            # 2. DECISION — skip lanes the PLATFORM minted for its own work
+            # (DEBT-35). An incident/goal lane is the machine talking to itself,
+            # so it cannot contain a fact about the USER by construction — yet
+            # each one costs a full LLM call. Measured when the debt was filed:
+            # 871 of 943 queued sessions (92%) were incident lanes and only 34
+            # (4%) looked human, so a full pass spent almost its entire budget on
+            # lanes that could never produce anything.
+            #
+            # MARKED, not merely skipped: leaving it unmarked would re-queue it
+            # every 30 minutes forever, which is the DEBT-32 ratchet again.
+            if is_machine_lane(session_key):
+                skipped_machine += 1
+                await self._mark_session_mined(session_key)
+                continue
             mined += 1
             try:
                 total += await self.mine_session(session_key)
@@ -194,7 +210,7 @@ class ConversationMiner:
             # is the whole point: a barren session has been attempted and must
             # not be paid for again every 30 minutes.
             await self._mark_session_mined(session_key)
-        deferred = len(rows) - mined
+        deferred = len(rows) - mined - skipped_machine
         # 4. EXIT
         if failed > 0:
             log.memory.error(
@@ -206,6 +222,7 @@ class ConversationMiner:
             log.memory.info(
                 "[memory] conversation_miner.mine_all: exit",
                 extra={"_fields": {"sessions": len(rows), "mined": mined,
+                                   "skipped_machine": skipped_machine,
                                    "deferred": deferred, "staged": total, "failed": 0}},
             )
         if deferred > 0:

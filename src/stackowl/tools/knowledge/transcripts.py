@@ -15,10 +15,18 @@ Shared substrate (with ``session_search`` via :mod:`session_access`):
   the caller's current session by default; another session only if same owner
   (``owl_name``). Cross-owner reads are refused.
 
-Tool-call payloads (impl vote): user/assistant turns are returned by default and
-``tool`` turns are EXCLUDED (they are bulky and the most likely place for a
-leaked secret/raw blob). Pass ``include_tool_calls=True`` to include them — and
-when included, their content is ALSO run through :func:`redact_secrets`.
+Tool-call payloads: user/assistant turns are ALL there is. There is no ``tool``
+turn to include or exclude — ``TranscriptStore.record_turn`` has no ``role``
+parameter at all (it takes user_text/assistant_text and hardcodes the roles), and
+migration 0106 narrowed ``messages.role`` to ``('user','assistant')`` at the
+database boundary.
+
+DEBT-36 — this module used to advertise an ``include_tool_calls`` parameter the
+MODEL could pass, which filtered a row type that has never existed. A capability
+offered on the tool surface that provably cannot be exercised is the "registered
+but never reachable" shape this codebase keeps finding; it was removed rather
+than left inert. Nothing behavioural changed: the filter only ever removed rows
+that were never written.
 
 Live-meeting capture is explicitly NOT implemented here (Phase 2 backlog): this
 tool reads ALREADY-PERSISTED conversation turns; capturing a live audio/meeting
@@ -53,7 +61,6 @@ ORDER BY m.created_at ASC, m.id ASC
 LIMIT ? OFFSET ?
 """
 
-_TOOL_ROLE = "tool"
 
 
 class TranscriptsTool(Tool):
@@ -68,9 +75,8 @@ class TranscriptsTool(Tool):
         return (
             "Return the ORDERED full transcript (message log) of a past session "
             "by session_key. Distinct from session_search: this is the complete "
-            "in-order conversation, not a ranked search. user/assistant turns by "
-            "default; pass include_tool_calls=true to also include (redacted) "
-            "tool turns. Reads the current session by default; another session "
+            "in-order conversation, not a ranked search. Reads the current "
+            "session by default; another session "
             "must share the owner (cross-owner reads are refused). Secrets are "
             "masked. "
             "LANE: reading a whole prior conversation in order. "
@@ -89,11 +95,6 @@ class TranscriptsTool(Tool):
                         "Session whose transcript to return. Defaults to the "
                         "current session; another session must share the owner."
                     ),
-                },
-                "include_tool_calls": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Include (redacted) tool turns. Default off.",
                 },
                 "limit": {
                     "type": "integer",
@@ -138,17 +139,15 @@ class TranscriptsTool(Tool):
             if not vis.allowed:
                 return self._err(vis.reason, t0)
 
-            include_tools = bool(kwargs.get("include_tool_calls", False))
             limit = self._coerce(kwargs.get("limit"), _DEFAULT_LIMIT, _MAX_LIMIT)
             offset = self._coerce(kwargs.get("offset"), 0, 10**9, lo=0)
 
             rows = await db.fetch_all(_TRANSCRIPT_SQL, (vis.session_key, limit, offset))
-            if not include_tools:
-                rows = [r for r in rows if str(r.get("role")) != _TOOL_ROLE]
-            # 3. STEP
+            # 3. STEP — no role filter: migration 0106 constrains messages.role to
+            # ('user','assistant'), so there is nothing else to filter out.
             log.tool.debug(
                 "transcripts.execute: fetched",
-                extra={"_fields": {"rows": len(rows), "include_tools": include_tools}},
+                extra={"_fields": {"rows": len(rows)}},
             )
             return self._ok(self._render(rows, vis.session_key), t0, len(rows))
         except Exception as exc:  # self-healing — degrade, never raise.

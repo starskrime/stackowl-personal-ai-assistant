@@ -164,7 +164,10 @@ class _NoopKuzuHandler:
     def handler_name(self) -> str:
         return "kuzu_sync"
 
-    async def execute(self, job: Job) -> JobResult:
+    async def execute(self, job: Job, *, budget_s: float | None = None) -> JobResult:
+        # budget_s accepted (and ignored) to match the real handler: DEBT-19 made
+        # the dream worker pass its REMAINING time to this phase, and a stub that
+        # does not accept it fails the whole pass with a TypeError.
         return JobResult(
             job_id=job.job_id, success=True, output="noop", error=None, duration_ms=0.0
         )

@@ -99,28 +99,24 @@ async def test_returns_ordered_transcript(services_with_db: DbPool) -> None:
     assert res.output.index("first") < res.output.index("second") < res.output.index("third")
 
 
-async def test_tool_turns_excluded_by_default(services_with_db: DbPool) -> None:
+async def test_a_tool_role_row_CANNOT_EXIST(services_with_db: DbPool) -> None:
+    """DEBT-36 — the replacement for test_tool_turns_excluded_by_default.
+
+    That test seeded a ``("tool", ...)`` turn and asserted the tool filtered it
+    out. It had been RED since migration 0106 narrowed ``messages.role`` to
+    ('user','assistant') — it could not even seed its fixture, and nothing caught
+    that until the parameter was removed.
+
+    The honest replacement asserts the invariant that made the parameter dead:
+    the database refuses the row type the filter existed to hide.
+    """
     db = services_with_db
-    await _seed_session(
-        db,
-        session_key="s1",
-        owl_name="scout",
-        turns=[
-            ("user", "ask"),
-            ("tool", "TOOL_PAYLOAD_XYZ"),
-            ("assistant", "answer"),
-        ],
-    )
-    token = _in_session("s1")
-    try:
-        default = await TranscriptsTool().execute(session_key="s1")
-        with_tools = await TranscriptsTool().execute(
-            session_key="s1", include_tool_calls=True,
+    with pytest.raises(Exception) as exc:
+        await _seed_session(
+            db, session_key="s_tool", owl_name="scout",
+            turns=[("tool", "TOOL_PAYLOAD_XYZ")],
         )
-    finally:
-        TraceContext.reset(token)  # type: ignore[arg-type]
-    assert default.success and "TOOL_PAYLOAD_XYZ" not in default.output
-    assert with_tools.success and "TOOL_PAYLOAD_XYZ" in with_tools.output
+    assert "role" in str(exc.value).lower()
 
 
 # ----------------------------------------------------------------------- redaction
@@ -143,20 +139,21 @@ async def test_redaction_applied(services_with_db: DbPool) -> None:
     assert "REDACTED" in res.output
 
 
-async def test_redaction_applied_to_included_tool_payload(
+async def test_redaction_applied_to_transcript_content(
     services_with_db: DbPool,
 ) -> None:
     db = services_with_db
     secret = "sk-SECRETSECRETSECRETSECRET1234567890"
+    # DEBT-36 — was seeded as a ("tool", ...) turn, which migration 0106 makes
+    # impossible. Redaction still matters and is still tested; it just has to be
+    # tested on a role that can actually be stored.
     await _seed_session(
         db, session_key="s1", owl_name="scout",
-        turns=[("tool", f"result with {secret}")],
+        turns=[("assistant", f"result with {secret}")],
     )
     token = _in_session("s1")
     try:
-        res = await TranscriptsTool().execute(
-            session_key="s1", include_tool_calls=True,
-        )
+        res = await TranscriptsTool().execute(session_key="s1")
     finally:
         TraceContext.reset(token)  # type: ignore[arg-type]
     assert res.success
