@@ -30,6 +30,7 @@ from stackowl.providers._truncate import (
 from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.escalation_signal import escalation_requested
+from stackowl.providers.iteration_budget import IterationBudget
 from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.model_config import resolve_model_override
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
@@ -636,7 +637,21 @@ class AnthropicProvider(ModelProvider):
         }
         _fmt_fix_count = 0  # bounded re-prompts when a final answer leaks as a tool call
         _MAX_FORMAT_FIX = 2
-        for _iter_idx in range(resolved_iterations):
+        # D02.2 — a consumable budget rather than a bare range, so a CORRECTIVE
+        # round (steer fold, leak guard, give-up directive) can be refunded
+        # instead of eating the budget the turn needs to finish. The ceiling is
+        # unchanged; only what counts against it is.
+        # NOTE the name: `budget` is ALREADY the token budget passed to
+        # trim_messages_to_budget in this scope. Shadowing it here silently fed
+        # an IterationBudget into the trimmer — caught by mypy, not by a test.
+        iter_budget = IterationBudget(resolved_iterations)
+        while iter_budget.consume():
+            # ZERO-BASED, exactly as the old `range()` loop variable was. This
+            # value is recorded in telemetry and asserted in the resume tests, so
+            # `budget.used` (1-based) would have silently shifted every reported
+            # iteration by one — a semantic change dressed up as preservation.
+            # Caught by test_resume_messages, not by review.
+            _iter_idx = iter_budget.used - 1
             # PA3 — a circuit breaker opened on a PRIOR iteration's dispatch (the
             # pipeline set the turn-scoped escalation flag). Escalate to a stronger
             # tier instead of dead-ending. No-op for pinned owls (can_escalate
@@ -743,6 +758,10 @@ class AnthropicProvider(ModelProvider):
                         "boundary — pre-empting give-up nudge",
                         extra={"_fields": {"provider": self._name}},
                     )
+                    # D02.2 — a steer is the USER correcting course, not the model
+                    # spending a step on the answer. Charging the turn for it takes
+                    # budget away from the work the steer just asked for.
+                    iter_budget.refund("steer_folded")
                     continue
                 # Text-protocol parity with openai: a model that emitted a tool call
                 # as TEXT (an ACTION block) instead of a native tool_use block is
@@ -801,6 +820,11 @@ class AnthropicProvider(ModelProvider):
                             extra={"_fields": {"provider": self._name, "attempt": _fmt_fix_count}},
                         )
                         messages.append({"role": "user", "content": FORMAT_FIX_DIRECTIVE})
+                        # D02.2 — the model emitted a malformed tool call and is
+                        # being asked to restate it. A formatting correction is not
+                        # a step toward the answer. Bounded separately by
+                        # _fmt_fix_count, so refunding cannot loop forever.
+                        iter_budget.refund("format_fix")
                         continue
                     if can_escalate:
                         log.engine.warning(
@@ -820,6 +844,11 @@ class AnthropicProvider(ModelProvider):
                 directive = await _enforce(text)
                 if directive:
                     messages.append({"role": "user", "content": directive})
+                    # D02.2 — the judge decided the model gave up and pushed it to
+                    # continue. That round produced no answer, and the turn is
+                    # already struggling: charging it makes give-up MORE likely,
+                    # not less. Measured at 18-42 of these a day.
+                    iter_budget.refund("give_up_directive")
                     continue
                 log.engine.debug(
                     "[anthropic] complete_with_tools: exit",

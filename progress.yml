@@ -5160,16 +5160,75 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
       validate:   not_started
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-05
+        stage: brainstorm+architect+implement+test
+        by: Bakir
+        THE_MAP_IS_WRONG_AGAIN_the_sixth_time: >
+          It rates D02.2 MISSING: "No iteration cap found in the pipeline or the
+          ReAct runner. No bound on a runaway loop other than the tool-call
+          breaker." MEASURED, we were ahead on every axis BEFORE this item:
+            * anthropic_provider.py:639 / openai_provider.py:662 — an ENFORCED
+              `for _iter_idx in range(resolved_iterations)`.
+            * Context-differentiated caps: DEFAULT_TURN_MAX_STEPS=20 interactive,
+              DEFAULT_SCHEDULED_TURN_MAX_STEPS=45 background — the latter sized
+              from live incident evidence ("production saw a real recurring
+              goal_execution job max out at 20, then 23"), not guessed.
+            * DEFAULT_TURN_MAX_TIME_S=600.0 — a TIME ceiling the reference has no
+              equivalent for.
+            * Per-owl ResourceCaps (max_cost_usd / max_time_s / max_steps /
+              max_concurrency) on the bounds axis.
+            * "Phase F — graceful max-out": one final model call WITHOUT tools
+              after a wrap-up directive. That IS the "grace call" the map says we
+              lack.
+          Production: the cap fired ONCE in five days — a correctly sized backstop.
+        the_maps_own_question_answered_empirically: >
+          "Does the budget belong per-turn or per-objective?" PER-TURN, because
+          objectives have never run: objectives=0 rows, objective_subgoals=0,
+          objective_events=0, and the objective tool has been called 0 times in
+          task_outcomes. A cumulative per-objective ceiling is a real gap in code
+          and entirely theoretical in practice. NOT built — that would be
+          speculative work on a feature with no usage.
+        I_RECOMMENDED_no_change_needed_AND_BAKIR_OVERRODE_ME_CORRECTLY: >
+          I proposed closing it, arguing consume/refund had "no measured benefit".
+          Bakir chose to adopt it anyway. I then went looking for where a refund
+          would earn its keep INSTEAD of implementing it for symmetry, and found
+          it — so the override was right and my dismissal was under-researched.
+          THREE SITES `continue` after CORRECTING the model rather than advancing
+          the answer, each consuming an iteration:
+            * a user steer folded at the give-up boundary,
+            * the leak guard rejecting a "final answer" that was an unparsed tool
+              call,
+            * the persistence judge injecting a give-up directive.
+          MEASURED over four days of production logs: 10-16 leak/loop-guard events
+          and 18-42 give-up directives PER DAY. Against a 20-iteration interactive
+          budget, a turn corrected three times loses 15% of the budget it needs to
+          finish — and the correction fires precisely because that turn is already
+          struggling. Charging a give-up nudge makes give-up MORE likely.
+        what_shipped:
+          module: "NEW providers/iteration_budget.py — consume/refund, thread-safe, refund clamped at zero so it can NEVER exceed max_total."
+          loops: "Both providers: `for _iter_idx in range(...)` -> `while iter_budget.consume():`. _iter_idx preserved as budget.used so existing telemetry still reports ROUNDS ATTEMPTED — a refunded round still appears in a trace."
+          refunds: "3 per provider: steer_folded, format_fix, give_up_directive."
+          unchanged: "The ceilings themselves (20/45/600s), ResourceCaps, and the graceful max-out. Only what COUNTS against the budget changed."
+        A_REAL_BUG_THIS_CAUGHT: >
+          My first version named the object `budget` — which is ALREADY the token
+          budget passed to trim_messages_to_budget in that same scope. It silently
+          fed an IterationBudget into the trimmer. Caught by mypy (78 -> 84), NOT
+          by any test, so a test now pins the naming in both providers.
+        not_adopted: "A separate subagent cap (delegation.max_iterations=50). Unnecessary: a delegated child runs its own turn via backend.run with its own cap, and E8-S0 already bounds delegation depth. Refunds for PTC are also unnecessary — our PTC calls happen INSIDE one tool call, so they never consume an iteration."
+        tests: "tests/providers/test_iteration_budget.py — 10, including one asserting all three refunds exist in BOTH providers (a budget object without refunds is just a slower range) and one pinning the token-budget shadowing bug."
+        mutation_M14: "Strip the refunds from anthropic -> fails exactly the both-providers refund test."
+        gates: "ruff src 46 / mypy 78 — restored after the shadowing fix took them to 48/84."
+    changes: []
     changes: []
     notes: null
 

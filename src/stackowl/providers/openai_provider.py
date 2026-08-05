@@ -33,6 +33,7 @@ from stackowl.providers._truncate import (
 from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.escalation_signal import escalation_requested
+from stackowl.providers.iteration_budget import IterationBudget
 from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
@@ -659,7 +660,21 @@ class OpenAIProvider(ModelProvider):
         }
         _fmt_fix_count = 0  # bounded re-prompts when a final answer leaks as a tool call
         _MAX_FORMAT_FIX = 2
-        for _iter_idx in range(resolved_iterations):
+        # D02.2 — a consumable budget rather than a bare range, so a CORRECTIVE
+        # round (steer fold, leak guard, give-up directive) can be refunded
+        # instead of eating the budget the turn needs to finish. The ceiling is
+        # unchanged; only what counts against it is.
+        # NOTE the name: `budget` is ALREADY the token budget passed to
+        # trim_messages_to_budget in this scope. Shadowing it here silently fed
+        # an IterationBudget into the trimmer — caught by mypy, not by a test.
+        iter_budget = IterationBudget(resolved_iterations)
+        while iter_budget.consume():
+            # ZERO-BASED, exactly as the old `range()` loop variable was. This
+            # value is recorded in telemetry and asserted in the resume tests, so
+            # `budget.used` (1-based) would have silently shifted every reported
+            # iteration by one — a semantic change dressed up as preservation.
+            # Caught by test_resume_messages, not by review.
+            _iter_idx = iter_budget.used - 1
             # PA3 — a circuit breaker opened on a PRIOR iteration's dispatch (the
             # pipeline set the turn-scoped escalation flag). Escalate to a stronger
             # tier instead of dead-ending. No-op for pinned owls (can_escalate
@@ -832,6 +847,9 @@ class OpenAIProvider(ModelProvider):
                         "boundary — pre-empting give-up nudge",
                         extra={"_fields": {"provider": self._name}},
                     )
+                    # D02.2 — a user steer is a course correction, not a step
+                    # toward the answer. See the anthropic twin.
+                    iter_budget.refund("steer_folded")
                     continue
                 # LEAK GUARD: the "final answer" is actually an unparsed tool call
                 # (an ACTION block / bare JSON we couldn't dispatch). NEVER deliver
@@ -847,6 +865,9 @@ class OpenAIProvider(ModelProvider):
                             extra={"_fields": {"provider": self._name, "attempt": _fmt_fix_count}},
                         )
                         messages.append({"role": "user", "content": FORMAT_FIX_DIRECTIVE})
+                        # D02.2 — a formatting correction is not progress. Bounded
+                        # separately by the fmt-fix counter.
+                        iter_budget.refund("format_fix")
                         continue
                     if can_escalate:
                         log.engine.warning(
@@ -878,6 +899,11 @@ class OpenAIProvider(ModelProvider):
                         )
                         return ESCALATE_SENTINEL, all_calls
                     messages.append({"role": "user", "content": directive})
+                    # D02.2 — charging a give-up nudge makes give-up MORE likely:
+                    # the turn is already struggling and this round produced no
+                    # answer. Only reached at the TOP tier — below it the judge
+                    # escalates instead, which leaves this loop entirely.
+                    iter_budget.refund("give_up_directive")
                     continue
                 log.engine.debug(
                     "[openai] complete_with_tools: exit",
