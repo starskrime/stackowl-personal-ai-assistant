@@ -76,6 +76,12 @@ class CompletionResult(BaseModel):
 # broken one; 16 returns a complete reply with finish_reason="stop".
 _PROBE_MAX_TOKENS = 16
 
+# How many times ONE round may be compressed before the rejection is surfaced.
+# Each attempt halves the context, so three attempts reach 1/8 of the configured
+# budget — past that the request is not "slightly too big", something else is
+# wrong, and shrinking further would destroy the conversation to hide it.
+_MAX_COMPRESS_ATTEMPTS = 3
+
 
 class ModelProvider(ABC):
     """Abstract interface for all AI provider backends.
@@ -96,6 +102,10 @@ class ModelProvider(ABC):
     # construction (set_cache_probe_store) exactly like _cost_tracker. None means
     # nothing is recorded; the feature still works, it just does not accumulate.
     _cache_probe_store: object | None = None
+    # D02.6 — the largest context this provider has been SHOWN to accept, learned
+    # from a payload-too-large rejection. None until one happens, so a provider
+    # that never rejects is byte-identical to before. See note_payload_limit.
+    _learned_context_chars: int | None = None
 
     # C2/F115 — the registry-owned CircuitBreaker + RateLimiter the cascade READS,
     # injected after construction (set_resilience) exactly like _cost_tracker. The
@@ -146,6 +156,8 @@ class ModelProvider(ABC):
     async def _resilient_round[T](
         self,
         do_round: Callable[[], Awaitable[T]],
+        *,
+        shrink: Callable[[int], Callable[[], Awaitable[T]] | None] | None = None,
     ) -> T:
         """Run ONE remote round through the shared breaker+limiter site (SP-2).
 
@@ -155,12 +167,96 @@ class ModelProvider(ABC):
         wrap-up round, the ``complete()``/``stream()`` round) in this so
         breaker-record + limiter-acquire + quota-cooldown share ONE audited site.
         Pass-through when nothing is injected.
-        """
-        from stackowl.providers._resilient_round import resilient_round
 
-        return await resilient_round(
-            self._breaker, self._limiter, do_round, cooldown_hours=self._cooldown_hours,
+        ``shrink`` is the COMPRESS actuator (D02.6). When the provider rejects the
+        request as too large, D02.6's taxonomy prescribes ``RecoveryAction.COMPRESS``
+        — and until now nothing could perform it, so the taxonomy named a recovery
+        it could not carry out. A caller that can rebuild its round against a
+        smaller context passes ``shrink(attempt) -> new_round | None``; ``None``
+        means it has nothing left to give and the error propagates honestly.
+
+        Bounded by ``_MAX_COMPRESS_ATTEMPTS``: a provider that rejects every size
+        must not become an infinite shrink loop. Every attempt is logged at
+        WARNING, because a silent self-heal is indistinguishable from a system
+        that never had the problem.
+        """
+        from stackowl.providers._resilient_round import (
+            RecoveryAction,
+            recovery_for,
+            resilient_round,
         )
+
+        attempt = 0
+        round_fn = do_round
+        while True:
+            try:
+                return await resilient_round(
+                    self._breaker, self._limiter, round_fn,
+                    cooldown_hours=self._cooldown_hours,
+                )
+            except Exception as exc:
+                if shrink is None or recovery_for(exc) is not RecoveryAction.COMPRESS:
+                    raise
+                if attempt >= _MAX_COMPRESS_ATTEMPTS:
+                    log.engine.error(
+                        "[provider] payload still too large after every compression "
+                        "attempt — surfacing honestly",
+                        extra={"_fields": {
+                            "provider": self.name, "attempts": attempt,
+                        }},
+                    )
+                    raise
+                attempt += 1
+                smaller = shrink(attempt)
+                if smaller is None:
+                    log.engine.error(
+                        "[provider] payload rejected as too large and nothing left "
+                        "to compress — surfacing honestly",
+                        extra={"_fields": {"provider": self.name, "attempts": attempt}},
+                    )
+                    raise
+                log.engine.warning(
+                    "[provider] payload too large — compressed and retrying "
+                    "(D02.6 COMPRESS actuator)",
+                    extra={"_fields": {
+                        "provider": self.name,
+                        "attempt": attempt,
+                        "max_attempts": _MAX_COMPRESS_ATTEMPTS,
+                        "exc_type": type(exc).__name__,
+                    }},
+                )
+                round_fn = smaller
+
+    def note_payload_limit(self, working_chars: int) -> None:
+        """Remember a context size this provider actually ACCEPTED.
+
+        The retry above rescues one call; without this the next call rebuilds the
+        same oversized request and pays the same rejection. Healing means the
+        system stops re-entering the failure, not that it recovers from it
+        repeatedly — so the learned ceiling is kept for the process lifetime and
+        only ever moves DOWN.
+
+        Deliberately in-memory: a restart re-probes rather than inheriting a
+        pessimistic ceiling learned during a provider-side incident.
+        """
+        if working_chars <= 0:
+            return
+        previous = self._learned_context_chars
+        if previous is not None and previous <= working_chars:
+            return
+        self._learned_context_chars = working_chars
+        log.engine.warning(
+            "[provider] learned a smaller working context — later calls start here",
+            extra={"_fields": {
+                "provider": self.name, "learned_chars": working_chars,
+                "previous": previous,
+            }},
+        )
+
+    def _effective_context_budget(self, configured: int) -> int:
+        """``configured``, lowered to whatever this provider has been shown to accept."""
+        learned = self._learned_context_chars
+        return min(configured, learned) if learned is not None else configured
 
     async def _record_cost(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import functools
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal
@@ -23,7 +24,9 @@ from stackowl.providers._cache_control import apply_cache_breakpoints, count_mar
 from stackowl.providers._react import LoopGuard, looks_like_tool_call, parse_react_action
 from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers._truncate import (
+    COMPRESS_FLOOR_CHARS,
     CONTEXT_CHAR_BUDGET,
+    total_content_chars,
     trim_messages_to_budget,
     truncate_observation,
 )
@@ -625,7 +628,12 @@ class AnthropicProvider(ModelProvider):
         # Full resolved context_chars, no artificial 80% shrink (owner decision
         # 2026-07-22) — CONTEXT_CHAR_BUDGET only backstops the case where
         # context_chars is entirely unconfigured, not a normal-path ceiling.
-        budget = self._config.context_chars or CONTEXT_CHAR_BUDGET
+        # D02.6 — lowered to any size this provider has already been shown to
+        # accept, so a learned payload limit is applied BEFORE the first call
+        # rather than rediscovered by another rejection.
+        budget = self._effective_context_budget(
+            self._config.context_chars or CONTEXT_CHAR_BUDGET
+        )
 
         guard = LoopGuard()
         # Known tool names (anthropic schema shape: {"name": ...}) — lets the ReAct
@@ -682,6 +690,35 @@ class AnthropicProvider(ModelProvider):
                     )
                 )
 
+            def _shrink(attempt: int) -> Callable[[], Awaitable[Any]] | None:
+                """D02.6 COMPRESS actuator — rebuild this round against a halved
+                context. Returns None when shrinking changes nothing, so a
+                pointless identical retry is never issued."""
+                nonlocal messages, budget
+                # Relative to what is ACTUALLY on the wire, not to the configured
+                # ceiling: halving a 1M budget does nothing to a 100k payload, so
+                # the "smaller retry" would be byte-identical. Caught by the
+                # wiring test, not by the unit tests.
+                current = total_content_chars(messages)
+                tighter = max(current >> attempt, COMPRESS_FLOOR_CHARS)
+                if tighter >= current:
+                    return None
+                shrunk = trim_messages_to_budget(messages, tighter)
+                # SIZE, not identity: the trimmer elides in place and returns the
+                # SAME list object, so `shrunk == messages` is always True and
+                # would have disabled this actuator entirely. Found by the wiring
+                # test after the unit tests were all green.
+                if total_content_chars(shrunk) >= current:
+                    # At the trimmer's floor: the oversize is the system prompt or
+                    # one huge message, neither of which this elides.
+                    return None
+                messages = shrunk
+                budget = tighter
+                # Heal, don't just recover: later rounds and later turns on this
+                # provider start from the smaller size.
+                self.note_payload_limit(tighter)
+                return functools.partial(_round, shrunk)
+
             async with TraceContext.span("provider.round"):
                 try:
                     # F115 — per-round breaker/limiter site (NOT a wrap of the whole loop,
@@ -690,7 +727,7 @@ class AnthropicProvider(ModelProvider):
                     # never stall the turn past the residual budget (or the fallback
                     # when no budget was threaded in).
                     response = await asyncio.wait_for(
-                        self._resilient_round(_round),
+                        self._resilient_round(_round, shrink=_shrink),
                         timeout=wrapup_deadline_s
                         if wrapup_deadline_s is not None
                         else _ROUND_DEADLINE_FALLBACK_S,

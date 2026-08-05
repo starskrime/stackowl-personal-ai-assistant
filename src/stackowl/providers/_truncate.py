@@ -27,6 +27,12 @@ from stackowl.infra.observability import log
 MAX_OBSERVATION_CHARS = 100_000  # ~25k tokens; a single tool result this large is pathological
 CONTEXT_CHAR_BUDGET = 1_000_000  # ~250k tokens; fallback only, real callers pass context_chars
 
+# D02.6 — the floor the COMPRESS actuator will not shrink a rejected request
+# below. A provider still rejecting ~8k chars is not telling us the payload is
+# too big; compressing further would strip the conversation to hide a different
+# fault, and an honest error beats a mutilated request that also fails.
+COMPRESS_FLOOR_CHARS = 32_000
+
 _ELIDED_PLACEHOLDER = "[earlier tool output elided to fit context]"
 
 
@@ -87,6 +93,25 @@ def _elide(message: dict[str, Any]) -> None:
                 block["content"] = _ELIDED_PLACEHOLDER
     else:
         message["content"] = _ELIDED_PLACEHOLDER
+
+
+def total_content_chars(messages: list[dict[str, Any]]) -> int:
+    """Total content size of ``messages`` — the SAME measure the trimmer budgets against.
+
+    Exists so the COMPRESS actuator can shrink relative to what is actually on the
+    wire rather than to the configured ceiling. Halving a 1,000,000-char *budget*
+    does nothing when the payload is 100,000 chars: the trimmer is already under
+    budget and returns the messages untouched, so the "retry smaller" is a retry
+    identical. Measured against reality, the first halving always bites.
+    """
+    try:
+        return sum(_content_chars(m.get("content", "")) for m in messages)
+    except Exception as exc:  # noqa: BLE001 — sizing must never break a round.
+        log.engine.debug(
+            "[truncate] total_content_chars: unmeasurable — reporting 0",
+            exc_info=exc,
+        )
+        return 0
 
 
 def trim_messages_to_budget(

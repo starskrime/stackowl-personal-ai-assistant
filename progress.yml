@@ -570,7 +570,36 @@ known_debt:
       does not is worse than an honest gap.
       Zero 413s in 15 days of logs, so this is not urgent — it is a known,
       un-actuated rung, recorded so nobody reads the taxonomy and assumes it works.
-    status: open
+    status: RESOLVED 2026-08-05 — the actuator was BUILT rather than deferred.
+    resolution: >
+      Bakir, same day, unprompted: "one of the biggest rules on each implementation
+      is Agentic Self Healing. It is a must to remember and always be as guide
+      star." Filing an un-actuated recovery rung as debt is exactly what that
+      forbids — a taxonomy that names a treatment it cannot administer.
+      Built at ModelProvider._resilient_round (base.py) — the ONE bracket all 13
+      remote-round call sites in all 3 providers already share, so one seam covers
+      every round. On PAYLOAD_TOO_LARGE the caller's `shrink(attempt)` rebuilds the
+      round against a halved context; bounded at 3 attempts; every attempt logged
+      at WARNING; returns None to surface honestly when there is nothing to give.
+      HEALS rather than recovers: note_payload_limit() records the working size and
+      _effective_context_budget() applies it to later calls, so the same rejection
+      is not re-earned every round. Learned ceiling only ever moves DOWN, and is
+      in-memory so a restart re-probes instead of inheriting a pessimistic limit.
+      TWO BUGS THE WIRING TEST CAUGHT that 9 green unit tests did not:
+        1. Shrinking was relative to the CONFIGURED budget. Halving a 1,000,000
+           ceiling does nothing to a 100,000-char payload — the trimmer is already
+           under budget, so every "smaller retry" was byte-identical. Now relative
+           to total_content_chars(messages), the real size on the wire.
+        2. `if shrunk == messages: return None` was ALWAYS true — the trimmer
+           elides IN PLACE and returns the same list object. That guard silently
+           disabled the entire actuator. Now compares SIZE, not identity.
+      HONEST LIMIT, pinned by its own test: the trimmer elides tool OBSERVATIONS
+      only, never the system prompt, the first user message, or the two most
+      recent. A single enormous user message therefore cannot be compressed at
+      all, and the actuator surfaces the error rather than retrying identically.
+      COMPRESS serves a long tool loop; it does not serve one huge message.
+      Verified: 12 new tests (9 unit + 3 wiring), 589 passed across tests/providers,
+      ruff 46 / mypy 78 held.
 
   - id: DEBT-37
     found: 2026-08-02
