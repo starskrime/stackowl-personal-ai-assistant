@@ -89,18 +89,44 @@ mark an incident handled without a verdict, which is the trust arc working. But 
 loop that runs 1,103 times and yields a verdict 378 times is spending its budget
 on the sensing half.
 
-### Loop 3 — lesson → application
+### Loop 3 — lesson → application — **the VERIFY leg, not the feedback leg**
+
+> **Second correction, 2026-08-05.** The first draft read "2,680 lessons written,
+> 31 retrieved, 1 applied" and concluded lessons were never fed back. **The
+> retrieval count was a logging artifact.** `classify._gather_lessons` logs its
+> entry and exit at `log.engine.debug`, and this deployment runs at INFO — so the
+> 31 measured the log level, not the system. The same trap D02.6 documented for
+> its `cause` field, hit again one day later.
+
+Read from the code instead of inferred from counts:
+
+* `classify.py:700` calls `_gather_lessons` **unconditionally, every turn**.
+* The selector is deliberately query-INDEPENDENT — keyed on the owl's identity,
+  not on what the user just typed — because D01.1 needed the injected block to be
+  identical across a session for prompt-cache stability.
+* INFO-level anchor for real volume: **2,193 `classify: exit`** and 2,839
+  `assemble: exit` in the window.
 
 | stage | measured |
 |---|---:|
-| lessons stored (`lessons_lance.publish`) | **2,680** |
-| lesson retrievals (`classify._gather_lessons`) | 31 |
-| lessons surfaced into a turn | 93 |
-| **`note_applied_lesson` calls (15 days)** | **1** |
+| lessons stored | 2,680 |
+| turns that classified (INFO, reliable) | **2,193** |
+| turns lessons were injected into | **all of them** (unconditional call) |
+| **`note_applied_lesson` calls** | **1** |
 
-**2,680 lessons written, 1 applied.** And the mechanism explains it: application
-requires the *model* to voluntarily call `note_applied_lesson`. The loop's final
-leg is delegated to the discretion of the thing being corrected.
+**So the feedback leg exists.** Lessons are written into the prompt the agent
+already reads — obligation ⑤ satisfied, and by the best available design.
+
+What is missing is obligation ③: **nothing measures whether injecting them
+changes anything.** The sole signal that a lesson mattered is a tool the model
+must voluntarily call, and it called it once in fifteen days across 2,193 turns.
+We are paying prompt tokens on every turn for a mechanism whose effect has never
+been observed — not because it doesn't work, but because nothing looks.
+
+That reframes the intervention completely. The work is not "inject lessons"
+(done). It is "make injection falsifiable" — e.g. hold the block out on a sample
+of turns and compare outcome quality, which the `task_outcomes` table already
+records. A cheap, honest experiment beats a bigger mechanism built on faith.
 
 ### Loop 4 — skill creation → catalog health
 
@@ -249,7 +275,7 @@ Ordered by (measured value × confidence), not by effort.
 | ~~1b~~ | **Reinforce, don't duplicate** — the synthesizer deduped on evidence (trace_ids), so a lesson re-derived from a new incident always looked new | ④ FEEDBACK | 265 of 407 skills are numbered duplicates; one exists 21x | **SHIPPED** `48dbffd4` |
 | ~~2~~ | **Structural death detection** — exception types instead of 19 English substrings | ① SIGNAL | governs every tool's retry path | **SHIPPED** `e6d09c1e` |
 | ~~3~~ | ~~Adaptive breaker probe~~ — **WITHDRAWN.** Already implemented by `FX-02`; the probe count is explained to within 2.7% by the existing 900s backoff cap. Nothing to fix. | — | — | — |
-| **4** | **Lesson injection** — inject at assembly instead of waiting for `note_applied_lesson` | ④ FEEDBACK | 2,680 stored → 1 applied | medium — touches the prompt (Law 1) |
+| **4** | **Make lesson injection falsifiable** — lessons ARE injected every turn; nothing measures whether it helps. Hold-out a sample, compare `task_outcomes` quality | ③ VERIFY | 2,193 turns injected, effect never observed | low — measurement only, no prompt change |
 | **5** | **Post-turn review fork** — the reference platform's loop, on our verification primitive | ②③④ | no equivalent exists | high — new subsystem |
 
 Intervention **1** was first on merit, not convenience: the only one whose signal
@@ -263,8 +289,29 @@ and `cronjob_fail_recovery_and_routing_fix-1/-2/-3`. Measuring that turned up
 exactly the way the ADR describes, inside itself. Building the decay leg is what
 made the duplication visible; that is the contract paying for itself immediately.
 
-**Remaining: 4 and 5.** Lesson injection is the bigger prize (2,680 stored, 1
-applied) and the riskier change, because it touches prompt assembly and Law 1.
+**Remaining: 4 and 5.** Intervention 4 got *cheaper* once measured properly:
+lessons are already injected every turn, so the work is a hold-out experiment
+against `task_outcomes`, not a prompt change — no Law 1 exposure at all.
+
+### A methodological warning, earned twice in one session
+
+Two of the four loops were characterised wrongly in the first draft, and both
+times the same way: **I inferred a mechanism from outcome counts instead of
+reading the mechanism.**
+
+* Loop 1 — concluded "no adaptive backoff" from a 0.57% success rate. `FX-02` had
+  built it; the arithmetic matched the design to within 2.7%.
+* Loop 3 — concluded "lessons are never retrieved" from a count of 31. Those
+  lines are DEBUG in an INFO deployment; the true figure is every turn.
+
+**A count drawn from DEBUG lines in an INFO-level deployment measures the log
+level, not the system.** D02.6 recorded exactly this trap for its `cause` field
+one day earlier, and it still caught me twice. Any future measurement under this
+ADR must state the log level of every line it counts, and must read the call site
+before drawing a conclusion about the mechanism.
+
+It is worth naming plainly, because it is the *same* failure the platform makes:
+asserting a conclusion the evidence does not actually support.
 
 ## Invariants for anything built under this ADR
 
