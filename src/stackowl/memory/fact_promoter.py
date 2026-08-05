@@ -54,12 +54,23 @@ status = 'staged'
   AND staged_at <= ?
 """
 
+#: Rows promoted per run (DEBT-38). Promotion embeds each fact and writes it to
+#: LanceDB, so an unbounded pass is an unbounded LLM/IO loop inside the dream
+#: worker's 1200s handler window — the DEBT-19 failure mode, in a different phase.
+#:
+#: It became reachable the moment conversation facts stopped requiring a
+#: re-read to promote: 71,303 rows were eligible on nothing but that change.
+#: A cap turns a one-shot flood into a drain that completes every run.
+PROMOTE_MAX_PER_RUN = 200
+
 _SELECT_ELIGIBLE_SQL = f"""
 SELECT fact_id, content, source_type, source_ref, confidence,
        staged_at, reinforcement_count, status, embedding, embedding_model, trust,
        scope_key
 FROM staged_facts
 WHERE {ELIGIBLE_PREDICATE_SQL}
+ORDER BY staged_at ASC
+LIMIT {PROMOTE_MAX_PER_RUN}
 """
 
 _SELECT_BY_ID_SQL = """

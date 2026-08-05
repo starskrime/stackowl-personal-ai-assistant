@@ -511,8 +511,23 @@ class MemorySettings(BaseModel):
     reinforcement_required: int = Field(default=3, ge=1)
     # Corroborations (re-derivations by the conversation miner) before a mined
     # conversation fact promotes to long-term committed memory.
-    # 1 = commit after being seen in a second dream pass.
-    conversation_fact_reinforcement_required: int = Field(default=1, ge=0)
+    #
+    # DEFAULT CHANGED 1 -> 0 (DEBT-38). At 1, a fact promoted only after the
+    # miner re-extracted the SAME text in a later pass — which required the
+    # session to stay in the mining queue forever. DEBT-32 fixed that queue
+    # ratchet (a barren session must not be re-mined every 30 minutes at ~$0.025
+    # a call), and in doing so removed the only path by which a single-mention
+    # fact ever reinforced. 71,303 staged facts were left blocked on nothing but
+    # this counter, having already cleared confidence (>=0.8) and settle (15m).
+    #
+    # Re-reading the same sentence was never corroboration — the user said it
+    # ONCE. This now matches AUTHORED_ONCE_SOURCE_TYPES (conversation_summary),
+    # which the promoter has always promoted at 0 for exactly that reason. The
+    # real quality gates are confidence and the settle window; contradiction
+    # detection and pruning remain downstream.
+    #
+    # Raise it above 0 only if you want a fact stated once to NEVER promote.
+    conversation_fact_reinforcement_required: int = Field(default=0, ge=0)
     # Cosine-similarity threshold (over stored embeddings) above which a newly
     # mined conversation_fact is treated as a re-derivation of an existing staged
     # fact and REINFORCES it instead of staging a near-duplicate. A reworded

@@ -283,7 +283,13 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
         tmp_db,
         confidence_threshold=0.8,
         reinforcement_required=3,
-        conversation_fact_reinforcement_required=1,
+        # DEBT-38 — 0, matching the shipped default. This test used to hard-code
+        # 1 and drive TWO dream passes, relying on the miner RE-EXTRACTING the
+        # same sentence to reinforce it. DEBT-32 removed that re-mine (a barren
+        # session must not be re-queued forever), which stranded the fact at
+        # count 0 permanently. Re-reading one sentence was never corroboration;
+        # the fact was stated once.
+        conversation_fact_reinforcement_required=0,
     )
     extractor = _StubExtractor()
     miner = ConversationMiner(
@@ -300,43 +306,27 @@ async def test_rca_conversation_turn_to_recall_end_to_end(
         miner=miner,
     )
 
-    # --- (d) neutralise TestModeGuard, then run execute() TWICE ----------------
+    # --- (d) neutralise TestModeGuard, then run execute() ----------------------
     monkeypatch.setattr(
         TestModeGuard, "assert_not_test_mode", staticmethod(lambda op: None)
     )
 
-    # PASS 1 — mine stages the conversation_fact at reinforcement_count 0; the
-    # promotion phase must NOT promote it yet (needs reinforcement_count >= 1).
+    # ONE PASS — mine stages the conversation_fact, and the promotion phase
+    # commits it in the same run. It no longer takes a second pass, because a
+    # second pass would only have re-read the same sentence.
     result1 = await handler.execute(_make_job())
     assert result1.success, f"dream pass 1 failed: {result1.error}"
     assert extractor.calls, "miner.extract was never called — _mine() did not run in execute()"
 
-    rows_after_1 = await _staged_conversation_fact_rows(tmp_db, session_key)
-    assert len(rows_after_1) == 1, f"expected exactly one staged fact, got {rows_after_1}"
-    assert rows_after_1[0]["content"] == _FIXED_FACT_CONTENT
-    assert rows_after_1[0]["reinforcement_count"] == 0, (
-        "after pass 1 the conversation_fact must be staged at reinforcement_count 0"
-    )
-    not_yet = await tmp_db.fetch_all(
-        "SELECT content FROM committed_facts WHERE content=?", (_FIXED_FACT_CONTENT,)
-    )
-    assert not not_yet, "fact must NOT be committed after a single pass (count still 0)"
-
-    # PASS 2 — re-mine reinforces the SAME row to count 1, then the promotion
-    # phase commits it (conversation_fact_reinforcement_required=1).
-    result2 = await handler.execute(_make_job())
-    assert result2.success, f"dream pass 2 failed: {result2.error}"
-
-    # The staged row was reinforced to 1 then consumed by promotion. After
-    # promotion it leaves the staged queue, so assert it is no longer 'staged'
-    # and is now present in committed_facts.
+    # The staged row was promoted, so it must have LEFT the staged queue.
     remaining_staged = await tmp_db.fetch_all(
         "SELECT 1 FROM staged_facts WHERE source_type='conversation_fact' "
         "AND source_ref=? AND content=? AND status='staged'",
         (session_key, _FIXED_FACT_CONTENT),
     )
     assert not remaining_staged, (
-        "after pass 2 the reinforced fact must have been promoted out of the staged queue"
+        "a single-mention conversation fact must promote out of the staged queue "
+        "in one pass — requiring a re-read was the DEBT-38 defect"
     )
 
     # --- (e) FINAL RC-A acceptance: committed AND recallable -------------------
