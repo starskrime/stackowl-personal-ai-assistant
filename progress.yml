@@ -5018,16 +5018,57 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
+      brainstorm: done
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+    awaiting_decision: "Bakir asked me to INVESTIGATE merging the steps into one agent object rather than accept my recommendation. The investigation is written (designs/D02.1.md). The decision is his, now with numbers."
+    doc: "docs/hermes-mapping/designs/D02.1.md"
+    doc_last_verified: "2026-08-05"
+    decisions:
+      - date: 2026-08-05
+        stage: brainstorm+architect
+        by: Bakir
+        round: "1 question, measured first. Bakir chose 'investigate merging' over my recommendation to close it — a fair correction: I had presented a conclusion, not a costed alternative."
+        THE_MAPS_TRADE_OFF_IS_HALF_FALSE: >
+          It says "StackOwl's pipeline is more inspectable; Hermes' class is more
+          portable and FAR EASIER TO FORK for subagents/background review."
+          The second half is measurably false. StackOwl forks a subagent in ONE
+          line — owls/a2a_delegation.py:215, `return await backend.run(sub_state)`.
+          Build a PipelineState, call backend.run. Forking a class with ~60
+          constructor params is not easier than that.
+          And the registry buys something a class cannot: PIPELINE_STEPS feeds TWO
+          interchangeable backends chosen by config
+          (OrchestratorSettings.backend: Literal["langgraph","asyncio"]). asyncio
+          runs production; langgraph is real and provides StateGraph, Send fan-out
+          and CHECKPOINTING via AsyncSqliteSaver.
+        the_merge_costed:
+          lines_across_steps: "5,597 (execute.py alone 3,045) — a merged class would be ~5,600 lines"
+          test_files_touching_steps: 115
+          per_step_test_files: 9
+          backends_consuming_the_registry: 2
+          cross_step_imports: "ZERO. Every step is `async def run(state) -> state` and they communicate ONLY through an immutable PipelineState. There is no coupling to unpick because there is none."
+        strongest_case_FOR_merging_stated_properly: >
+          Recorded rather than strawmanned, because dismissing it is what I was
+          told not to do: (1) one object to hand around; (2) one class reads as one
+          turn; (3) portability into another process/harness; (4) fewer
+          indirections than backend -> registry -> step -> services.
+          Each collapses on measurement: (1) StepServices already is that object;
+          (2) execute.py at 3,045 lines is where reading difficulty actually
+          lives, and merging makes it bigger; (3) measured false, one line;
+          (4) the indirection IS the two-backend seam and the per-step tests.
+        middle_path_recorded_not_taken: "A thin Agent facade over backend.run would deliver the ergonomic half without touching the registry. Rejected as CURRENTLY unnecessary rather than wrong — it wraps a one-line call. Worth doing the day a third caller assembles PipelineState by hand."
+        what_would_change_the_conclusion: >
+          Stated so the answer is not treated as permanent: remove the langgraph
+          backend and the strongest structural argument goes with it; decompose
+          execute.py and "one class is unreadable" weakens a lot (2,552 lines
+          across 8 steps is a different object from 5,597); add a third caller
+          assembling state by hand and the facade stops being redundant.
+        status: "INVESTIGATION COMPLETE, DECISION OPEN. implement..document deliberately not_started — the item does not close until Bakir decides."
+    changes: []
     changes: []
     notes: null
 
