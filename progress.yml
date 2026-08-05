@@ -573,6 +573,53 @@ known_debt:
       sends. Raised here rather than fixed while he was asleep.
     status: open
 
+  - id: DEBT-46
+    found: 2026-08-05
+    what: "The shared LLM-JSON parser rejected 2 of 5 realistic model outputs, while its docstring claimed it tolerated all of them."
+    evidence: >
+      memory/json_parser.py::parse_json_response docstring: "Tolerates ```json
+      fenced blocks, leading prose, and trailing prose." Two of the three were
+      real. RUN against five realistic shapes, two were rejected:
+        FAIL  'Here is the result:\n{"a": 1}\nHope that helps.'
+        FAIL  '**Result:**\n```json\n{"a": 1}\n```'
+      CAUSES, both structural:
+        * The fence was only stripped when `text.startswith("```")`, so any
+          prose before the fence left the fence in place.
+        * Trailing prose was never handled AT ALL — the code sliced from the
+          first `{` to EOF, so json.loads received '{"a": 1}\nHope that helps.'
+    why_it_matters: >
+      This parser feeds the critic scorer, the reflection writer and the skill
+      synthesizer (parse_new_skill_response). A model that adds one polite
+      closing sentence silently lost its ENTIRE response, and the caller could
+      not tell that apart from "the model produced nothing usable".
+      It is also the SECOND instance found the same day of the same shape: a
+      docstring describing behaviour the code does not implement, with the
+      docstring being the part people read (the first was
+      infra/resilience.py's "works across SDKs" status gate, DEBT-41; a third
+      was providers/_resilient_round's identical claim, fixed in D02.6).
+    status: FIXED 2026-08-05 — memory/json_parser.py.
+    resolution: >
+      Fence stripped wherever it appears, and _first_json_object() extracts the
+      first BALANCED object by brace counting instead of slicing to EOF.
+      String-aware: a brace inside a JSON string literal must not move the
+      depth, or any value containing one (a regex, a template, a code snippet —
+      all of which this platform's models genuinely emit) would be truncated at
+      the wrong place. Contract unchanged: a top-level array is still rejected
+      (every caller indexes by key) and truncated output still returns None
+      rather than half-parsing into a plausible-looking dict.
+      Verified: 15 tests, 24 passed in tests/memory (excluding the pre-existing
+      kuzu failure), 66 passed across parser consumers, ruff 46 / mypy 78 held,
+      clean restart with 0 errors.
+
+  - id: DEBT-47
+    found: 2026-08-05
+    what: "PRE-EXISTING RED — tests/memory/test_assembly.py::test_build_wires_all_eleven_components fails: components.kuzu_adapter is None."
+    evidence: "Confirmed in a detached worktree at HEAD before any of today's json_parser change. assert components.kuzu_adapter is not None -> None."
+    NOT_caused_by_todays_work: "Verified at HEAD in an isolated worktree. A JSON-parsing change cannot affect Kuzu adapter construction."
+    why_it_matters: "The graph adapter is one of the eleven components the memory assembly is supposed to wire; while red, nothing guards that wiring."
+    NOT_FIXED_deliberately: "Standing rule: never autonomously patch a failing integration test. Reported instead."
+    status: open
+
   - id: DEBT-45
     found: 2026-08-05
     what: "ADR-19 Loop 2 — 64% of RCAs produced no verdict. The dominant live cause is a BLOCK PARSER that rejected markdown."
