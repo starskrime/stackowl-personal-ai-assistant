@@ -82,12 +82,89 @@ class HealableResource(Protocol):
         ...
 
 
+#: Exception TYPES that are a dead handle by construction, no message reading
+#: required. These are stdlib and cover the majority of real cases: a reset or
+#: refused connection, a broken pipe, an unexpected EOF.
+#:
+#: ``ConnectionError`` already covers BrokenPipe / Reset / Refused / Aborted —
+#: all four are its subclasses. Listed as the single base rather than
+#: enumerated, so a stdlib addition to that family is covered automatically.
+_DEAD_HANDLE_TYPES: tuple[type[BaseException], ...] = (
+    ConnectionError,
+    EOFError,
+)
+
+#: Optional third-party error types, probed lazily by (module, attribute) so a
+#: missing optional dependency can never break classification. Same shape as
+#: ``providers/_resilient_round._classify_transport_cause``, which is the
+#: established pattern in this codebase for exactly this problem.
+_OPTIONAL_DEAD_HANDLE_TYPES: tuple[tuple[str, str], ...] = (
+    ("playwright._impl._errors", "TargetClosedError"),
+    ("aiohttp", "ServerDisconnectedError"),
+    ("aiohttp", "ClientConnectionError"),
+    ("httpx", "RemoteProtocolError"),
+    ("httpx", "ConnectError"),
+    ("websockets.exceptions", "ConnectionClosedError"),
+)
+
+
+def _is_dead_handle_type(exc: BaseException) -> bool:
+    """Structural check: is ``exc`` a dead handle by its TYPE alone?"""
+    if isinstance(exc, _DEAD_HANDLE_TYPES):
+        return True
+    for module_name, attr in _OPTIONAL_DEAD_HANDLE_TYPES:
+        try:
+            import importlib
+
+            candidate = getattr(importlib.import_module(module_name), attr, None)
+        except Exception:  # noqa: BLE001 — optional dep absent; never crash classification
+            continue
+        if isinstance(candidate, type) and isinstance(exc, candidate):
+            return True
+    return False
+
+
 def looks_like_dead_handle(
     exc: BaseException, markers: tuple[str, ...] = DEFAULT_DEAD_HANDLE_MARKERS
 ) -> bool:
-    """True if ``exc`` looks like a dead-handle / dead-connection failure."""
+    """True if ``exc`` is a dead-handle / dead-connection failure.
+
+    ADR-19 obligation ① — SIGNALS ARE STRUCTURAL. This used to be nothing but
+    ``any(m in str(exc) for m in markers)``: nineteen hardcoded English
+    substrings, at the root of the platform's own self-healing primitive,
+    governing the retry decision for EVERY tool (``tools/base.py``) and the whole
+    browser stack. D02.6 refused to port exactly that design from the reference
+    platform for provider errors; it was already here for resource errors.
+
+    Why it matters concretely: the markers are English, so a non-English locale
+    or a reworded SDK message silently stops healing — with no error, because a
+    missed heal looks identical to "there was nothing to heal". Observed on
+    2026-08-05: a shutdown-race raised ``sqlite3.ProgrammingError("Cannot
+    operate on a closed database.")``, a string NOT in the markers, and healing
+    only triggered because the chained ``ValueError("Connection closed")``
+    happened to contain one that was. That is luck, not classification.
+
+    TYPE FIRST, text last. The substring pass is kept because some libraries
+    (notably Playwright) raise a generic ``Error`` carrying the only useful
+    signal in its message — there is genuinely nothing else to read. But it is
+    now the LAST RESORT rather than the whole mechanism, and every use of it is
+    logged, so how much we still depend on the fragile path is a measurement
+    instead of a guess.
+    """
+    if _is_dead_handle_type(exc):
+        return True
     msg = str(exc)
-    return any(m in msg for m in markers)
+    matched = next((m for m in markers if m in msg), None)
+    if matched is None:
+        return False
+    # ADR-19 I6 — make the fragile path VISIBLE. If this line is common in the
+    # logs, the type list above is missing something and the fix is to add the
+    # type, not another string.
+    log.infra.debug(
+        "[resilience] dead handle matched by TEXT, not type — fragile path",
+        extra={"_fields": {"exc_type": type(exc).__name__, "marker": matched}},
+    )
+    return True
 
 
 async def retry_once_on_dead_handle[T](

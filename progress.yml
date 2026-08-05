@@ -573,6 +573,39 @@ known_debt:
       sends. Raised here rather than fixed while he was asleep.
     status: open
 
+  - id: DEBT-41
+    found: 2026-08-05
+    what: "ADR-19 (1) — dead-handle detection was pure English substring matching, at the root of the platform's own self-healing primitive."
+    evidence: >
+      infra/resilience.py::looks_like_dead_handle was
+      `any(m in str(exc) for m in DEFAULT_DEAD_HANDLE_MARKERS)` over 19
+      hardcoded English strings, and it governs the retry decision for EVERY
+      tool (tools/base.py:266) plus the whole browser stack (browse.py x4,
+      runtime.py, _retry.py) and pipeline/recovery_actuator.py.
+      Only DbPool classified structurally (it passes its own `is_dead`).
+      OBSERVED THE SAME DAY: a shutdown race raised
+      sqlite3.ProgrammingError("Cannot operate on a closed database.") — a
+      string NOT in the markers — and healing fired only because the chained
+      ValueError("Connection closed") happened to contain one that was.
+    why_it_matters: >
+      A missed heal is INVISIBLE: it looks identical to "there was nothing to
+      heal". So a non-English locale or a reworded SDK message silently disables
+      self-healing for every tool, with no error anywhere. It is also the exact
+      design D02.6 refused to port from the reference platform for provider
+      errors — it was already here for resource errors.
+    status: FIXED 2026-08-05 — type first, text last.
+    resolution: >
+      _DEAD_HANDLE_TYPES (ConnectionError covering BrokenPipe/Reset/Refused/
+      Aborted, plus EOFError) and _OPTIONAL_DEAD_HANDLE_TYPES probed lazily by
+      (module, attribute) for playwright/aiohttp/httpx/websockets — the same
+      shape providers/_resilient_round already uses, so this is an established
+      pattern rather than a new one. The substring pass is KEPT because
+      Playwright genuinely raises a bare Error whose only signal is its message,
+      but it is now the last resort AND logs every use, so our remaining
+      dependence on the fragile path is a measurement instead of a guess.
+      Verified: 13 tests incl. non-English messages that previously went
+      unhealed; 154 passed in tests/infra; 94 passed across every consumer.
+
   - id: DEBT-42
     found: 2026-08-05
     what: "The skill synthesizer mints numbered near-duplicates instead of recognising it already learned the lesson: 265 of 407 learned skills (65%) are -1/-2/-3 variants of an existing base name."
