@@ -84,3 +84,46 @@ def test_the_iteration_budget_does_not_shadow_the_TOKEN_budget(provider):
     assert "iter_budget = IterationBudget(" in src
     assert "\n        budget = IterationBudget(" not in src
     assert "trim_messages_to_budget(messages, budget)" in src
+
+
+# --------------------------------------------------------------------------- #
+# THE HANG. Refunds made the loop unbounded, and only an integration test caught
+# it: test_enforce_exit_safety folds a steer at the give-up boundary on EVERY
+# round, so `used` never advanced and consume() returned True forever. That is
+# an infinite loop in production, not a slow test.
+# --------------------------------------------------------------------------- #
+
+
+def test_refunding_EVERY_round_still_terminates():
+    """The exact shape that hung: a corrective path firing on every iteration."""
+    b = IterationBudget(3)
+    rounds = 0
+    while b.consume():
+        rounds += 1
+        b.refund("steer_folded")
+        assert rounds <= 10, "loop did not terminate — refunds are unbounded again"
+    assert rounds == 6, f"expected 2x the cap as the worst case, got {rounds}"
+
+
+def test_refunds_are_capped_at_the_budget_size():
+    """Once a turn has been corrected as many times as it had iterations, it is
+    not converging. Further refunds are declined so the budget drains and the
+    graceful max-out can produce an answer."""
+    b = IterationBudget(2)
+    for _ in range(10):
+        if b.consume():
+            b.refund("give_up_directive")
+    assert b.refunded == 2, f"refunds must cap at max_total, got {b.refunded}"
+
+
+def test_the_worst_case_is_exactly_twice_the_cap():
+    """Stated as a property because it is the guarantee that makes refunds safe:
+    a bounded loop stays bounded."""
+    for cap in (1, 5, 20, 45):
+        b = IterationBudget(cap)
+        rounds = 0
+        while b.consume():
+            rounds += 1
+            b.refund("format_fix")
+            assert rounds <= cap * 2 + 1, f"cap={cap} ran away at {rounds}"
+        assert rounds == cap * 2

@@ -45,6 +45,14 @@ class IterationBudget:
 
     def __init__(self, max_total: int) -> None:
         self.max_total = max(int(max_total), 0)
+        # A refund gives an iteration back, so a path that refunds EVERY round
+        # would never advance `_used` and the loop would never end. That is not
+        # hypothetical: it hung test_enforce_exit_safety, whose steer stub folds a
+        # steer at the give-up boundary on every round — the exact shape of a
+        # model stuck being corrected forever. Refunds are therefore themselves
+        # bounded, so the worst case is 2x max_total rounds and the loop always
+        # terminates.
+        self._max_refunds = self.max_total
         self._used = 0
         self._refunded = 0
         self._lock = threading.Lock()
@@ -73,6 +81,20 @@ class IterationBudget:
                 log.engine.warning(
                     "[iteration_budget] refund with nothing consumed — ignored",
                     extra={"_fields": {"reason": reason}},
+                )
+                return
+            if self._refunded >= self._max_refunds:
+                # The turn has now been corrected as many times as it had
+                # iterations. It is not converging, and continuing to refund
+                # would keep it alive forever. Let this round be CHARGED so the
+                # budget drains and the graceful max-out produces an answer.
+                log.engine.warning(
+                    "[iteration_budget] refund cap reached — charging this round "
+                    "so the loop can terminate",
+                    extra={"_fields": {
+                        "reason": reason, "refunded_total": self._refunded,
+                        "max_refunds": self._max_refunds,
+                    }},
                 )
                 return
             self._used -= 1
