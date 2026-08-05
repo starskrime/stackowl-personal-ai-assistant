@@ -89,6 +89,22 @@ class ProviderConfig(BaseModel):
     # an uncounted wrap-up generation run as a 21st+ step). An owl with explicit caps
     # still overrides via max_iterations at the call site.
     tool_max_iterations: int = DEFAULT_TURN_MAX_STEPS
+    # D02.6 — provider QUIRKS, declared here instead of branched on in code.
+    #
+    # The reference platform's error classifier reaches several of its failover
+    # reasons by matching English in the error message and by naming vendors in
+    # the taxonomy itself (a grammar-pattern rejection from one local runtime, a
+    # list-type tool-content rejection from one hosted model, a long-context beta
+    # refused for one auth mode). Every one of those is a fact about a PROVIDER,
+    # not about the platform — so it is configuration, not a branch in src/.
+    #
+    # A quirk is a free-form token the provider adapter interprets; the classifier
+    # never parses it. That keeps `_resilient_round`'s promise intact: structural
+    # classification only, no English matching, no vendor names in code.
+    #
+    # Empty by default — nothing is assumed about any provider until an operator
+    # (or a probe) declares it.
+    quirks: tuple[str, ...] = ()
     # Optional per-model context window in CHARACTERS. When set, the tool loop uses
     # ~80% of this as its total-context trim budget instead of the global default,
     # so a small-context model gets trimmed sooner and a large one less aggressively.

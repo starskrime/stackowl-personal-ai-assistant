@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any
 from stackowl.exceptions import CircuitOpenError, RateLimitError
 from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
-from stackowl.providers._resilient_round import is_provider_fault
+from stackowl.providers._resilient_round import (
+    RecoveryAction,
+    is_provider_fault,
+    recovery_for,
+)
 from stackowl.providers.base import CompletionResult, Message
 
 if TYPE_CHECKING:
@@ -75,8 +79,18 @@ def is_cascadable_fault(exc: BaseException) -> bool:
     higher tier should recover. Control-flow / our-own-bug errors (user-stop,
     budget-kill, malformed-args ValueError, an arbitrary RuntimeError) stay False so
     they propagate immediately, never masked by a silent fallback.
+
+    D02.6 adds a third source: a cause whose prescribed recovery is to try a
+    DIFFERENT model or a DIFFERENT credential. ``is_provider_fault`` says False for
+    both (the provider is healthy; this request is simply unusable against it), so
+    a 404 bad-model-id or a 402 out-of-credit used to dead-end at the user even
+    with other tiers configured. Climbing the ladder IS that recovery — the next
+    tier is a different model behind a different credential. Nothing else in the
+    process can perform either action today, so this is where they land.
     """
     if isinstance(exc, (CircuitOpenError, RateLimitError)):
+        return True
+    if recovery_for(exc) in (RecoveryAction.FALLBACK_MODEL, RecoveryAction.ROTATE_CREDENTIAL):
         return True
     return is_provider_fault(exc)
 

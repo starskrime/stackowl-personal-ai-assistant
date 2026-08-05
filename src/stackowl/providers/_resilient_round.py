@@ -66,10 +66,84 @@ class FailureCause(enum.Enum):
     """
 
     NOT_A_FAULT = "not_a_fault"  # control-flow / our-bug / malformed args
-    AUTH = "auth"                # non-429 4xx from a known SDK error — bad credential/request
+    AUTH = "auth"                # 401/403 or an unrecognised 4xx — bad credential/request
     RATE_LIMIT = "rate_limit"    # 429 — back-pressure, not an outage
     SERVER_5XX = "server_5xx"
     TRANSPORT = "transport"      # connection/timeout, or a status-less SDK transport error
+    # D02.6 — causes split OUT of the old catch-all 4xx -> AUTH. Each exists only
+    # because it unlocks a DIFFERENT recovery action; a taxonomy that does not
+    # change what we do is decoration. Reached by STATUS CODE, never by matching
+    # English in an error message.
+    BILLING = "billing"                    # 402 — credit exhausted; rotate, do not retry
+    MODEL_NOT_FOUND = "model_not_found"    # 404 — bad model id; fall back to another model
+    PAYLOAD_TOO_LARGE = "payload_too_large"  # 413 — compress and retry, never blind-retry
+    TIMEOUT = "timeout"                    # 408 — rebuild the client and retry
+    OVERLOADED = "overloaded"              # 529 — provider saturated; back off harder than a 5xx
+    # 400 — OUR payload is malformed. Split out of AUTH because the two send an
+    # operator to opposite places: measured live, a background miner has been
+    # taking 400s for weeks under a log line reading "credential failure", which
+    # points at the API key for what is a request-construction bug.
+    BAD_REQUEST = "bad_request"
+
+
+class RecoveryAction(enum.Enum):
+    """What to DO about a cause — the reason the taxonomy above earns its keep.
+
+    Ported from the reference platform's failover taxonomy, which is genuinely
+    hard-won incident knowledge. NOT ported: its ``_classify_by_message`` path
+    (English substring matching) and the three of its members named after specific
+    model runtimes — those names belong in the design doc, not here. Both are
+    against standing rules, and every reason they encode is reachable from a status
+    code or a ``ProviderConfig.quirks`` entry instead: same coverage, and a
+    provider-specific fact stays configuration rather than a branch in ``src/``.
+    See ``docs/hermes-mapping/designs/D02.6.md`` for the member-by-member mapping.
+    """
+
+    NONE = "none"                  # not a fault — do nothing
+    RETRY = "retry"                # transient; a plain retry can self-heal
+    BACKOFF = "backoff"            # retry, but slower — saturation
+    ROTATE_CREDENTIAL = "rotate"   # this credential is done; try another
+    COMPRESS = "compress"          # payload too big; shrink before retrying
+    FALLBACK_MODEL = "fallback_model"  # this model is unusable; try another
+    ABORT = "abort"                # nothing here self-heals; surface honestly
+
+
+#: Cause -> action. Kept as data rather than an if-tree so a new cause cannot be
+#: added without someone stating what to DO about it.
+RECOVERY_FOR_CAUSE: dict[FailureCause, RecoveryAction] = {
+    FailureCause.NOT_A_FAULT: RecoveryAction.NONE,
+    FailureCause.TRANSPORT: RecoveryAction.RETRY,
+    FailureCause.SERVER_5XX: RecoveryAction.RETRY,
+    FailureCause.TIMEOUT: RecoveryAction.RETRY,
+    FailureCause.RATE_LIMIT: RecoveryAction.BACKOFF,
+    FailureCause.OVERLOADED: RecoveryAction.BACKOFF,
+    FailureCause.BILLING: RecoveryAction.ROTATE_CREDENTIAL,
+    FailureCause.PAYLOAD_TOO_LARGE: RecoveryAction.COMPRESS,
+    FailureCause.MODEL_NOT_FOUND: RecoveryAction.FALLBACK_MODEL,
+    # A malformed request is OUR bug. Another model would reject it too, and
+    # cascading would only spend the turn's budget hiding it — abort and surface.
+    FailureCause.BAD_REQUEST: RecoveryAction.ABORT,
+    # An auth failure is the one we ALREADY log as "blind retry will not
+    # self-heal this" — now the taxonomy says so rather than a log line.
+    FailureCause.AUTH: RecoveryAction.ABORT,
+}
+
+
+#: A cause counts against the circuit breaker iff its prescribed action is to try
+#: the same provider again (RETRY/BACKOFF) — i.e. we believe the provider itself is
+#: unhealthy. DERIVED rather than listed, so the truth table cannot drift from the
+#: action map above the way it silently would if a new cause were added to one and
+#: not the other.
+_BREAKER_FAULTS: frozenset[FailureCause] = frozenset(
+    cause for cause, action in RECOVERY_FOR_CAUSE.items()
+    if action in (RecoveryAction.RETRY, RecoveryAction.BACKOFF)
+)
+
+
+def recovery_for(exc: BaseException) -> RecoveryAction:
+    """The action to take for ``exc``. Unknown causes ABORT (fail-safe: surface
+    honestly rather than retry something we do not understand)."""
+    return RECOVERY_FOR_CAUSE.get(classify_failure_cause(exc), RecoveryAction.ABORT)
 
 
 def is_provider_fault(exc: BaseException) -> bool:
@@ -81,11 +155,16 @@ def is_provider_fault(exc: BaseException) -> bool:
 
     NOT a fault: ``TurnStopped`` / ``BudgetBreach`` / ``DurableReplayUncertain`` /
     ``ResumeTranscriptError`` / ``CancelledError`` / a malformed-args parse
-    ``ValueError`` / an empty-choices ``ProviderError`` / a non-429 4xx (AUTH).
+    ``ValueError`` / an empty-choices ``ProviderError`` / an auth-shaped 4xx / a
+    billing, model-not-found or payload-too-large 4xx (none of which the provider
+    can heal by being called again).
+
+    D02.6 changed ONE input to this: a **408** used to reach here via the 4xx
+    catch-all as AUTH (not a fault). It is now TIMEOUT, and counts — the same way a
+    status-less ``TimeoutError`` always has. Treating a timeout as a credential
+    problem was never intended; it fell out of collapsing the whole 4xx range.
     """
-    return classify_failure_cause(exc) in (
-        FailureCause.RATE_LIMIT, FailureCause.SERVER_5XX, FailureCause.TRANSPORT,
-    )
+    return classify_failure_cause(exc) in _BREAKER_FAULTS
 
 
 def classify_failure_cause(exc: BaseException) -> FailureCause:
@@ -128,9 +207,27 @@ def _cause_for_status(status: object) -> FailureCause:
     if isinstance(status, int):
         if status == 429:
             return FailureCause.RATE_LIMIT
+        # 529 is a real status some providers return for saturation. Checked
+        # BEFORE the 5xx range so it backs off harder than a generic 500.
+        if status == 529:
+            return FailureCause.OVERLOADED
         if 500 <= status <= 599:
             return FailureCause.SERVER_5XX
+        # D02.6 — specific 4xx codes BEFORE the catch-all. Collapsing all of
+        # 400-499 to AUTH is why a 413 payload-too-large was blind-retried: the
+        # retry cannot self-heal a request that is simply too big.
+        if status == 402:
+            return FailureCause.BILLING
+        if status == 404:
+            return FailureCause.MODEL_NOT_FOUND
+        if status == 408:
+            return FailureCause.TIMEOUT
+        if status == 413:
+            return FailureCause.PAYLOAD_TOO_LARGE
+        if status == 400:
+            return FailureCause.BAD_REQUEST
         if 400 <= status <= 499:
+            # Unrecognised 4xx stays AUTH — fail-safe, unchanged behaviour.
             return FailureCause.AUTH
     return FailureCause.TRANSPORT
 
@@ -148,8 +245,18 @@ def _classify_transport_cause(exc: BaseException) -> FailureCause:
         return FailureCause.TRANSPORT
 
     # Structural HTTP status check (works across SDKs that expose ``status_code``).
+    #
+    # D02.6 — this gate used to admit only 429 and 5xx, so a 402/404/413 raised by
+    # anything outside the three probed SDK hierarchies below fell through to
+    # NOT_A_FAULT and got RecoveryAction.NONE. The comment said "works across SDKs";
+    # the condition said otherwise. Widened to every error status.
+    #
+    # Deliberately floored at 400: a status-less error and a non-error status must
+    # NOT reach ``_cause_for_status``, whose status-less fallthrough is TRANSPORT —
+    # which IS a breaker fault. Widening past this line would start tripping the
+    # circuit breaker on exceptions that merely happen to carry a status attribute.
     status = getattr(exc, "status_code", None)
-    if isinstance(status, int) and (status == 429 or 500 <= status <= 599):
+    if isinstance(status, int) and status >= 400:
         return _cause_for_status(status)
 
     # SDK error hierarchies — lazy-imported so a missing optional dep never crashes.
@@ -188,9 +295,7 @@ def _is_transport_error(exc: BaseException) -> bool:
     re-implemented over :func:`_classify_transport_cause` so the truth table can't
     drift from ``classify_failure_cause``'s.
     """
-    return _classify_transport_cause(exc) in (
-        FailureCause.RATE_LIMIT, FailureCause.SERVER_5XX, FailureCause.TRANSPORT,
-    )
+    return _classify_transport_cause(exc) in _BREAKER_FAULTS
 
 
 def _parse_retry_after_seconds(exc: BaseException) -> float | None:
@@ -338,9 +443,23 @@ async def resilient_round[T](
         cause = classify_failure_cause(exc)
         if cause is FailureCause.AUTH:
             log.engine.error(
-                "[resilient_round] provider request/credential failure (non-429 4xx) — "
+                "[resilient_round] provider credential/permission failure — "
                 "blind retry will not self-heal this",
                 extra={"_fields": {"provider": provider, "exc_type": type(exc).__name__}},
+            )
+        elif cause is FailureCause.BAD_REQUEST:
+            # Detail matters here in a way it does not for a credential failure:
+            # the caller built a request this provider rejects, and the provider's
+            # own words are the only clue to WHICH part. Truncated to 200 chars,
+            # matching the SQL-logging rule — a rejection can echo the payload back.
+            log.engine.error(
+                "[resilient_round] provider rejected the REQUEST (400) — our payload, "
+                "not our credentials; a blind retry sends the same bad request again",
+                extra={"_fields": {
+                    "provider": provider,
+                    "exc_type": type(exc).__name__,
+                    "detail": str(exc)[:200],
+                }},
             )
         elif cause is FailureCause.RATE_LIMIT and limiter is not None:
             try:
@@ -380,6 +499,9 @@ async def resilient_round[T](
                     "provider": provider,
                     "classified_fault": recorded,
                     "cause": cause.value,
+                    # What the taxonomy says to DO — so a live log line answers
+                    # "why did (or didn't) this recover?" without reading the map.
+                    "recovery": RECOVERY_FOR_CAUSE.get(cause, RecoveryAction.ABORT).value,
                     "exc_type": type(exc).__name__,
                 }
             },

@@ -522,6 +522,56 @@ known_debt:
     NOT_caused_by_todays_work: "Verified against 7ed8d5b3^. DEBT-19, DEBT-35 and DEBT-36 are all unrelated — the lane filter does not apply (the test uses `sess-rca-e2e`, not a machine lane)."
     status: open
 
+  - id: DEBT-40
+    found: 2026-08-05
+    what: "The dream worker's conversation_miner has been taking HTTP 400s from one provider for 15 days — 461 of them."
+    evidence: >
+      MEASURED 2026-08-05 across all log rotations, counting the classifier's own
+      ERROR line ("provider request/credential failure"):
+        07-21: 46   07-22: 43   07-23: 11   07-24: 2   07-25: 3
+        07-27: 1    07-29: 342  08-02: 2    08-03: 6   08-04: 5     = 461 total
+      Every one: provider=NeraAiRaw, exc_type=BadRequestError, trace_id=null.
+      The preceding lines identify the caller each time:
+        [scheduler] dream-<id>: entry — running handler dream_worker
+        [memory] dream_worker.execute: entry
+        [memory] conversation_miner.mine_all: entry
+    how_it_surfaced: >
+      Not by looking for it. I was querying production logs for evidence that
+      D02.6's classifier fires at all, and this was the only classified failure on
+      record. It is invisible in normal use because it is a background job with a
+      null trace_id — nothing surfaces it to a user or a turn.
+    why_it_matters: >
+      A 400 is OUR malformed payload, not our credentials. Each occurrence is a
+      mining batch silently lost, and mining is how single-mention facts get
+      reinforced (see DEBT-38 for what happens when that path breaks). The 342-spike
+      on 07-29 suggests it is bursty and probably input-shaped, not constant.
+    fixed_in_d026: >
+      PARTIALLY. D02.6 split BAD_REQUEST out of AUTH and now logs the provider's
+      own rejection text (200-char truncated), so the NEXT occurrence is
+      diagnosable. The underlying malformed request is NOT diagnosed — the old log
+      line carried only provider+exc_type, so there is nothing to root-cause from
+      retrospectively. Needs one live occurrence with the new logging.
+    status: open
+
+  - id: DEBT-39
+    found: 2026-08-05
+    what: "FailureCause.PAYLOAD_TOO_LARGE prescribes COMPRESS, and nothing in the process can perform it."
+    evidence: >
+      D02.6 wired FALLBACK_MODEL and ROTATE_CREDENTIAL into LLMGateway's tier
+      cascade (both are performable: the next tier is a different model behind a
+      different credential). COMPRESS has no equivalent — climbing a tier does not
+      make the payload smaller. Pinned deliberately by
+      test_a_413_does_not_cascade_because_nothing_can_compress_yet.
+    why_it_matters: >
+      We trim proactively before every call, so a 413 means the proactive trim was
+      WRONG about the limit — exactly the case where a reactive shrink-and-retry
+      would save the turn. Today a 413 is named correctly and then surfaces as a
+      failure. Deliberately not faked: an actuator that pretends to compress and
+      does not is worse than an honest gap.
+      Zero 413s in 15 days of logs, so this is not urgent — it is a known,
+      un-actuated rung, recorded so nobody reads the taxonomy and assumes it works.
+    status: open
+
   - id: DEBT-37
     found: 2026-08-02
     what: "Long tool chains are overwhelmingly ONE tool repeated, not multi-step plans — 46 web_search calls in a single turn."
@@ -2173,7 +2223,13 @@ dedup_targets:
     name: "Two provider-error paths"
     detail: "circuit_breaker + escalation_signal vs Hermes error_classifier. Compose: classifier feeds our ladder."
     items: [D02.6, D04.6]
-    status: unresolved
+    status: resolved   # D02.6, 2026-08-05 — composed exactly as the detail says.
+                       # ONE classifier (classify_failure_cause) now feeds all three
+                       # existing actuators: the breaker (_BREAKER_FAULTS, derived
+                       # from the action map), the limiter (RATE_LIMIT penalty +
+                       # quota-aware cooldown), and LLMGateway tier escalation
+                       # (FALLBACK_MODEL / ROTATE_CREDENTIAL). No second policy
+                       # object was added. D04.6 still to confirm against this.
   X10:
     name: "Two config channels"
     detail: "YAML and STACKOWL_* env both blessed. Pick the split."
@@ -2205,17 +2261,16 @@ summary:
     P2: 56
     P3: 32
   by_status:
-    not_started: 107
-    in_progress: 2      # D01.2 (2/7 — brainstorm+architect), D01.6 (6/7 — brainstorm never run)
-    done: 2             # D01.1 (closed 2026-07-27 @ 6b5017aa) and D01.7 (7/7 with a doc; the
-                        # old comment here called it "2/7 + implement live", which was stale —
-                        # caught 2026-07-27 by validating the summary against the items rather
-                        # than trusting the counter)
-    # D01.6 is functionally closed but its brainstorm stage was never run, so it
-    # is NOT counted done. Same rule as everything else: seven stages or it is
-    # in_progress.
-    blocked: 0
-  stages_completed: 11   # recomputed from items, not hand-maintained
+    # RECOMPUTED from the items 2026-08-05 (D02.6). The block previously read
+    # done: 2 / in_progress: 2 / not_started: 107 — stale by SIXTEEN items. This
+    # is the second time the counter has drifted; the rule stands and is the only
+    # thing that catches it: recompute from `items`, never trust the number here.
+    # A stage of `no_change_needed` counts as complete — it is a stated outcome.
+    blocked: 1          # D05.8 (architect) — needs interactive traffic to measure
+    done: 18            # D01.1-.5 D01.7 D02.1-.6 D05.1-.3 D05.5-.7
+    in_progress: 1      # D01.6 (6/7 — brainstorm never run, operator asked for it retroactively)
+    not_started: 91
+  stages_completed: 133   # recomputed from items 2026-08-05 (was 11 — stale); done + no_change_needed
   stages_total: 777   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
@@ -5294,16 +5349,53 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
     doc: null
     doc_last_verified: null
-    decisions: []
+    NOTE: "No design doc — nothing was designed or built. The decision record below IS the finding, per DOC_STANDARD's rule that a doc earns its place when there is a design to explain."
+    decisions:
+      - date: 2026-08-05
+        stage: brainstorm+architect
+        by: Bakir
+        decision: "CLOSE as no_change_needed. We have more than the map credits."
+        THE_MAP_IS_WRONG_AGAIN_the_seventh_time: >
+          It says: "Concurrent/steerable message handling exists via
+          serialize_prior + inflight_router, but there is no steer/redirect
+          distinction and NO PRE-API DRAIN."
+          THE DRAIN CLAIM IS FALSE. anthropic_provider.py:890 —
+          on_iteration_complete fires "after tool calls + observations are
+          appended but BEFORE advancing to the next LLM round", and folds
+          returned steering messages "so the next LLM round observes them". That
+          is a pre-API drain; the steer lands on the next call, not a turn later.
+          It also names serialize_prior as current, which clarify_pump.py:77
+          records as GONE ("the gate that this map once backed is GONE").
+        what_we_actually_have:
+          steer: "TurnRegistry.try_steer — ATOMIC fold-or-convert under the per-turn lock, so a steer can never land in a dead turn's mailbox (the §9 lost-steer guard). If the turn finished during the slow LLM route, it returns NEW and enqueues a fresh turn instead."
+          backpressure: "_put_steer_superseding — bounded asyncio.Queue with SUPERSEDE-OLDEST: under steer-spam the newest instruction always lands, the mailbox stays bounded, and the drain coalesces ALL pending into ONE [steering] message so the context window is never blown by N separate ones."
+          stop: "request_stop — cooperative flag; the iteration callback raises TurnStopped. Covered by test_enforce_exit_safety's no-nudge-on-stop hazard."
+          classification: "route_inflight_message resolves a mid-turn message to STEER/STOP/NEW via an LLM router that SHORT-CIRCUITS explicit /steer and /new tokens at zero cost and fail-safes to NEW on any classifier error."
+          wiring: "orchestrator.py:2522 calls it from _intake, for every channel. Checked because 'registered but not reachable' is this codebase's recurring bug — here it IS reachable."
+        the_only_genuine_gap: "No one-step `redirect` verb (abandon the current goal, adopt a new one). STOP + NEW already achieves it in two steps."
+        why_not_built: >
+          MEASURED: steer has fired TWICE, EVER — one log line on 2026-07-19 and
+          one on 2026-08-02, zero on every other day examined. Adding a third verb
+          to a mechanism whose first two are essentially unexercised is the same
+          trap as D02.2's per-objective budget (objectives = 0 rows) and D05.1's
+          skills exec path (0 of 420 skills use it). Build it when the first two
+          verbs are in use and the two-step redirect proves annoying.
+        the_alternative_I_offered_and_Bakir_declined: >
+          That the problem might be DISCOVERABILITY rather than capability — it is
+          built, wired and unused, which could mean nobody knows it is there.
+          Recorded because if steer usage is ever wanted, surfacing /steer and
+          /stop where a running turn is visible is the cheaper first move, not a
+          new verb.
+    changes: []
     changes: []
     notes: null
 
@@ -5321,16 +5413,22 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-05
+        stage: all_seven
+        by: Claude
+        decision: "CLOSE as no_change_needed. The map says 'Ask: None. Comparable.' — VERIFIED rather than taken on trust."
+        verified_the_assets_exist: "consolidate.py 170 lines, turn_persist.py 327, deliver.py 333. All three present and non-trivial, covering the post-tool-loop seam the reference platform's turn_finalizer.py owns (budget-exhaustion summary, trajectory save, session persist, response shaping)."
+        why_this_was_still_worth_checking: "Six map claims about StackOwl have now been wrong. A PARITY verdict with 'no ask' is exactly the kind of entry that gets skipped — so the assets were confirmed to exist rather than assumed."
     changes: []
     notes: null
 
@@ -5348,16 +5446,35 @@ items:
     blocks: []
     dedup_target: X8
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-05
+        stage: all_seven
+        by: Claude
+        decision: "CLOSE as no_change_needed. The ask was 'Keep. Confirm it survives a rewrite' — it survives."
+        verified: >
+          acceptance_authority.py 414 lines, acceptance_llm.py 134,
+          tools/verification.py 119 — all present. ToolResult.verified tri-state
+          is live and load-bearing: D02.2's iteration budget and D05.x's
+          is_trustworthy_success both key on it, and B4a (a claimed-but-unobserved
+          effect must not look like progress) is enforced through it in the
+          provider loops. tests/tools/test_acceptance_authority_seam.py — 6 pass.
+        THE_FLAG_IS_ON_which_is_the_thing_worth_checking: >
+          The seam reads Settings().acceptance_authority and FAIL-SAFES TO FALSE
+          if the flag cannot be read (tools/base.py:17-28). Default is True and
+          the live value is True — checked, not assumed, because this repo has a
+          standing rule that a finished feature ships ON rather than dormant, and
+          a fail-safe-to-off flag is exactly how an AHEAD asset quietly stops
+          being one.
+        zero_vetoes_in_production_and_why_that_is_not_alarming: "No veto log lines across four days. The module logs only at ERROR on its failure path, so silence is the expected shape of 'nothing warranted a veto' — not evidence of inertness. The seam's reachability is covered by tests instead."
     changes: []
     notes: null
 
@@ -5375,18 +5492,39 @@ items:
     blocks: []
     dedup_target: X9
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: docs/hermes-mapping/designs/D02.6.md
+    doc_last_verified: 2026-08-05
+    decisions:
+      - "Port the WHOLE classifier, not a subset — operator, after I proposed taking only the causes we had evidence for."
+      - "Full taxonomy, rules kept: status codes + config. NO English-message matching (their _classify_by_message is not ported); NO vendor-named members (their three become ProviderConfig.quirks entries)."
+      - "COMPRESS gets no actuator rather than a faked one. Climbing a tier does not shrink a payload. Filed DEBT-39."
+    changes:
+      - "providers/_resilient_round.py: FailureCause +6 (BILLING, MODEL_NOT_FOUND, PAYLOAD_TOO_LARGE, TIMEOUT, OVERLOADED, BAD_REQUEST); new RecoveryAction enum + RECOVERY_FOR_CAUSE data map + recovery_for()."
+      - "providers/_resilient_round.py: the structural status gate admitted only 429/5xx despite a docstring claiming it worked across SDKs — widened to every status >= 400, floored there so a status-less error never becomes TRANSPORT (a breaker fault)."
+      - "providers/_resilient_round.py: _BREAKER_FAULTS DERIVED from the action map (RETRY/BACKOFF) instead of a hand-listed triple that could drift. Changes exactly one input: a 408 now counts, as a status-less TimeoutError always has."
+      - "providers/llm_gateway.py: is_cascadable_fault consults recovery_for — FALLBACK_MODEL (404) and ROTATE_CREDENTIAL (402) now climb a tier instead of dead-ending at the user with other tiers idle."
+      - "config/provider.py: ProviderConfig.quirks: tuple[str, ...] = () — provider-specific facts are configuration, not branches in src/."
+      - "tests/providers/test_failure_taxonomy.py: 31 tests, incl. two that pin the RULES (no message-matching, no vendor names) and four that pin the WIRING."
+    notes: >
+      Three defects found, none of them the item as written. (1) The whole 4xx
+      range collapsed to AUTH, so a 413 payload-too-large was handled as a bad API
+      key — we trim proactively before every call but had no reactive path if a
+      provider rejects on size anyway. (2) The status gate's comment and its
+      condition disagreed, and the comment was the one people read. (3) Found while
+      hunting live evidence: 461 BadRequestErrors over 15 days from the dream
+      worker's conversation_miner, all logged as "credential failure" — pointing a
+      reader at the API key for a request-construction bug. Split into BAD_REQUEST
+      with the provider's own words logged (200-char truncation). Same ABORT
+      action; the fix buys nothing at runtime and everything at 2am.
+      NOT proven live: the new causes firing. 402/404/408/413/529 have never
+      appeared in 15 days of logs. Proven by construction, 31 tests, and M12-M15.
 
   - id: D03.1
     title: "Pluggable context engine"
