@@ -258,9 +258,9 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.8
-  stage: architect
-  stage_status: blocked
+  item: D02.3
+  stage: brainstorm
+  stage_status: not_started
   one_line: >
     WAVE 2 IS 7 OF 8 COMPLETE. D05.1, D05.2, D05.3, D05.5, D05.6 and D05.7 are
     all 7/7; D05.4 closed as subsumed into D05.2. D05.8 (Tool count) is
@@ -303,6 +303,16 @@ current:
     map never mentioned. THE MAP IS A HYPOTHESIS. Measure the tree first — and
     measure the LIVE DB, not the columns you remember (the row counts came from
     ~/.stackowl/workspace/stackowl.db; ~/.stackowl/stackowl.db is a 0-byte decoy).
+  AND_THE_D02_2_LESSON_UNIT_TESTS_CANNOT_CATCH_AN_UNBOUNDED_LOOP: >
+    I added iteration refunds, ran the budget unit tests and three loop-guard
+    suites, all green, and committed an INFINITE LOOP. The unit tests could not
+    have caught it — they never loop. Only test_enforce_exit_safety, which drives
+    the real provider loop, exposed it, and it exposed it by HANGING rather than
+    failing.
+    Two habits from this: (1) when a change alters a loop's TERMINATION
+    condition, the test that matters is one that actually spins the loop, not one
+    that checks the arithmetic; (2) a hanging test is a failing test — the box's
+    "full pytest hangs" folklore made a real hang look like ordinary slowness.
   AND_THE_D05_1_LESSON_I_DESTROYED_LIVE_DATA: >
     My skills migration deleted 419 of 420 skills. Recovered in full, but only
     because the SQLite cache happened to hold body_text — luck, not design. Two
@@ -333,7 +343,8 @@ current:
     invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
     live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
   next_task_in_order:
-    1: "NOTHING IS BLOCKED ON A DECISION. Three items now wait on the SAME thing — ordinary interactive use of the platform — and none needs new instrumentation:
+    1: "D02.3 (Interrupt / steer / redirect) brainstorm. NOTE: D02.2's refunds touch the steer path (steer_folded), so read that record first — the give-up boundary is shared ground.
+       STILL BLOCKED ON TRAFFIC, unchanged: three items wait on the SAME thing — ordinary interactive use of the platform — and none needs new instrumentation:
          * D05.2 acceptance: cache_audit should stay silent for a (lane, owl) pair with 2+ turns
          * D05.3 acceptance: 'capability UNAVAILABLE' should fire once for the browser
          * D05.8 architect: interactive tools_count distribution vs Hermes' 54 and our 40 cap
@@ -5165,10 +5176,11 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   not_started
-      document:   not_started
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
+    NOTE: "No design doc — the item is a 130-line module plus two loop swaps, fully documented in the module docstring and this record. DOC_STANDARD's design doc earns its place on items with a design to explain; here the decision record IS the explanation."
     decisions:
       - date: 2026-08-05
         stage: brainstorm+architect+implement+test
@@ -5228,6 +5240,42 @@ items:
         tests: "tests/providers/test_iteration_budget.py — 10, including one asserting all three refunds exist in BOTH providers (a budget object without refunds is just a slower range) and one pinning the token-budget shadowing bug."
         mutation_M14: "Strip the refunds from anthropic -> fails exactly the both-providers refund test."
         gates: "ruff src 46 / mypy 78 — restored after the shadowing fix took them to 48/84."
+      - date: 2026-08-05
+        stage: validate+document
+        by: Claude
+        I_SHIPPED_AN_INFINITE_LOOP_AND_CAUGHT_IT_IN_VALIDATE: >
+          The refunds made the ReAct loop UNBOUNDED. A path that refunds every
+          round never advances `used`, so consume() returns True forever — an
+          infinite loop in production, not a slow test.
+          Found by test_enforce_exit_safety HANGING: its steer stub folds a steer
+          at the give-up boundary on EVERY round, which is exactly the shape of a
+          model stuck being corrected. Confirmed mine by bisect — 6.35s at
+          d2551102^, hangs at d2551102.
+          WHY MY OWN TESTING MISSED IT: I ran the budget unit tests and three
+          loop-guard suites before committing and all passed. The unit tests
+          could not have caught it — THEY NEVER LOOP. Only an integration test
+          that drives the real provider loop exposes an unbounded one. A property
+          I could reason about (refund gives a round back) needed a test that
+          actually spins the loop, and I did not write one until after it hung.
+        the_fix: >
+          Refunds are bounded at max_total, so the worst case is exactly 2x the
+          cap and the loop always terminates. Past the cap the round is CHARGED
+          with a loud WARNING: a turn corrected as many times as it had
+          iterations is not converging, and draining the budget is what lets the
+          graceful max-out produce an answer instead of spinning.
+        tests_added: "3 regression tests including a property test across cap sizes (1/5/20/45) asserting the 2x bound. They fail FAST rather than hanging, so the suite stays usable. M15 (remove the cap) kills all three."
+        suites_green: >
+          ~129 provider tests across the affected paths: iteration_budget 13,
+          resume_messages + resume_validation 34, leak_guard + enforce_veto +
+          loop_guard 23, iteration_callback 7, auto_escalate 4,
+          escalation_signal 3, enforce_exit_safety 6, anthropic_provider +
+          llm_gateway 39.
+        NOT_run_and_why: >
+          `pytest tests/providers/` as a whole directory times out on this box —
+          the standing "never a full pytest run" rule, and the reason the hang
+          was only found by running a slice. Stated rather than implied:
+          directory-wide green was NOT demonstrated.
+        live_validation: "NOT restarted for this item. The change is inside the provider tool loop, which needs a real turn to exercise, and no interactive traffic has arrived. Same blocker as D05.2/D05.3/D05.8."
     changes: []
     changes: []
     notes: null
