@@ -236,7 +236,16 @@ class TestHandlerExecution:
         handler = KnowledgePruneHandler(pruner=pruner)  # type: ignore[arg-type]
         result = await handler.execute(_job("knowledge_prune"))
         assert result.success is True
-        assert result.metadata == {"pruned_count": 4, "kept_count": 12}
+        # ADR-19 added a second decay pass to this job. Asserting on the
+        # pruner's OWN keys rather than on whole-dict equality: the exact-match
+        # form was a change detector that fails whenever the job reports
+        # anything new, which says nothing about whether the pruner was proxied
+        # correctly — the thing this test is named for.
+        assert result.metadata["pruned_count"] == 4
+        assert result.metadata["kept_count"] == 12
+        # No curator wired here, so the skill pass must be a reported no-op
+        # rather than silently absent.
+        assert result.metadata["skills_curated"] == 0
         assert result.output is not None and "pruned=4" in result.output
 
 

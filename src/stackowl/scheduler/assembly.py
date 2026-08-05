@@ -205,7 +205,16 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(check_in_handler)
 
-        knowledge_prune_handler = KnowledgePruneHandler(pruner=memory_components.pruner)
+        from stackowl.skills.lifecycle import SkillCurator
+
+        # ADR-19 — the skill decay pass rides the existing decay job. Wired HERE
+        # rather than left optional: an unwired curator would pass every one of
+        # its own tests and never run, which is exactly the D05.2 failure this
+        # programme has already paid for once.
+        knowledge_prune_handler = KnowledgePruneHandler(
+            pruner=memory_components.pruner,
+            curator=SkillCurator(skills_components.store),
+        )
         HandlerRegistry.instance().register(knowledge_prune_handler)
 
         # Downloads janitor — needs no browser runtime/services, so it registers

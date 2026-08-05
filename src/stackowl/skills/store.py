@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.memory.sqlite_helpers import pack_embedding, unpack_embedding
+from stackowl.skills.lifecycle import _CurationRow
 from stackowl.skills.manifest import SkillSource
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
@@ -63,6 +64,9 @@ class Skill:
     loaded_at: float
     updated_at: float
     lessons_published_hash: str | None = None
+    #: ADR-19 lifecycle. Defaults to 'active' so any construction
+    #: path that predates the column behaves exactly as before.
+    lifecycle_state: str = "active"
 
 
 @dataclass(frozen=True)
@@ -125,7 +129,8 @@ _SELECT_FIELDS = """
     skill_id, name, source, path, description, when_to_use, version, enabled,
     success_rate, n_executions, parent_traces, embedding, embedding_model,
     manifest_json, body_text, loaded_at, updated_at,
-    summary, summary_source, summary_body_hash, tool_names, lessons_published_hash
+    summary, summary_source, summary_body_hash, tool_names, lessons_published_hash,
+    lifecycle_state
 """
 
 # Same field list, table-prefixed for the hybrid_recall JOIN against skills_fts
@@ -141,6 +146,17 @@ _RRF_K = 60
 
 _FTS_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
+# ADR-19 — archived skills stay in the database (I3: archival is recoverable and
+# nothing is ever deleted) but are not OFFERED. This fragment is the single
+# place that decision is expressed, so a new retrieval path cannot forget it.
+_NOT_ARCHIVED = "AND lifecycle_state <> 'archived'"
+
+# A stale skill is still reachable, just outranked. Multiplicative on the fused
+# RRF score rather than a filter: staleness is evidence about likely usefulness,
+# not proof of uselessness, and a stale skill that is genuinely the best match
+# for a query should still win against nothing.
+_STALE_RANK_PENALTY = 0.5
+
 
 def _sanitize_fts_query(query: str) -> str:
     """Convert free text into a safe FTS5 MATCH expression.
@@ -154,6 +170,10 @@ def _sanitize_fts_query(query: str) -> str:
     if not tokens:
         return ""
     return " OR ".join(f'"{t}"' for t in tokens[:16])
+
+
+#: stackowl_meta key recording that a real curator pass completed (ADR-19).
+_CURATOR_RAN_KEY = "skill_curator_last_run"
 
 
 class SkillIndexStore(OwnedRepository):
@@ -246,7 +266,7 @@ class SkillIndexStore(OwnedRepository):
         log.skills.debug("[skills] store.list_enabled: entry")
         rows = await self._db.fetch_all(
             f"SELECT {_SELECT_FIELDS} FROM skills "
-            "WHERE owner_id = ? AND enabled = 1 ORDER BY source, name",
+            f"WHERE owner_id = ? AND enabled = 1 {_NOT_ARCHIVED} ORDER BY source, name",
             (self._owner_id,),
         )
         results = [_row_to_skill(r) for r in rows]
@@ -467,18 +487,138 @@ class SkillIndexStore(OwnedRepository):
         )
 
     async def increment_n_executions(self, skill_id: int) -> None:
-        """Bump n_executions by 1. Called when the agent uses a skill."""
+        """Bump n_executions by 1. Called when the agent uses a skill.
+
+        ADR-19 — also stamps ``last_used_at`` and REVIVES the skill. Two things
+        matter here:
+
+        * ``updated_at`` cannot serve as a use-clock: re-scans and metadata
+          upserts stamp it too, so a skill nobody has run looks freshly used
+          after any rescan. The curator would then never retire anything.
+        * Using an archived skill brings it straight back to ``active``. This is
+          what makes archival safe to be decisive about — a wrong retirement
+          costs one ranking penalty, not a lost capability.
+        """
         # 1. ENTRY
         log.skills.debug("[skills] store.increment_n_executions: entry",
                   extra={"_fields": {"skill_id": skill_id}})
+        now = time.time()
         await self._db.execute(
-            "UPDATE skills SET n_executions = n_executions + 1, updated_at = ? "
+            "UPDATE skills SET n_executions = n_executions + 1, updated_at = ?, "
+            "last_used_at = ?, "
+            "state_changed_at = CASE WHEN lifecycle_state = 'active' "
+            "                        THEN state_changed_at ELSE ? END, "
+            "lifecycle_state = 'active' "
             "WHERE skill_id = ? AND owner_id = ?",
-            (time.time(), skill_id, self._owner_id),
+            (now, now, now, skill_id, self._owner_id),
         )
         # 4. EXIT
         log.skills.debug("[skills] store.increment_n_executions: exit",
                   extra={"_fields": {"skill_id": skill_id}})
+
+    # ------------------------------------------------------------------ ADR-19 lifecycle
+
+    async def rows_for_curation(self) -> list[_CurationRow]:
+        """The learned catalog, projected to what a decay decision needs.
+
+        LEARNED ONLY. A shipped built-in is a product decision; archiving one
+        automatically would be disabling a feature nobody asked to disable.
+        """
+        log.skills.debug("[skills] store.rows_for_curation: entry")
+        rows = await self._db.fetch_all(
+            "SELECT skill_id, name, lifecycle_state, pinned, n_executions, "
+            "       last_used_at, loaded_at "
+            "FROM skills WHERE owner_id = ? AND source = 'learned'",
+            (self._owner_id,),
+        )
+        out = [
+            _CurationRow(
+                skill_id=int(str(r["skill_id"])),
+                name=str(r["name"]),
+                lifecycle_state=str(r["lifecycle_state"] or "active"),
+                pinned=bool(r["pinned"]),
+                n_executions=int(str(r["n_executions"] or 0)),
+                last_used_at=float(str(r["last_used_at"])) if r["last_used_at"] else None,
+                loaded_at=float(str(r["loaded_at"])) if r["loaded_at"] else None,
+            )
+            for r in rows
+        ]
+        log.skills.debug(
+            "[skills] store.rows_for_curation: exit",
+            extra={"_fields": {"rows": len(out)}},
+        )
+        return out
+
+    async def set_lifecycle_state(self, skill_id: int, state: str, now: float) -> None:
+        """Move one skill's lifecycle state. NEVER deletes (ADR-19 I3)."""
+        log.skills.debug(
+            "[skills] store.set_lifecycle_state: entry",
+            extra={"_fields": {"skill_id": skill_id, "state": state}},
+        )
+        await self._db.execute(
+            "UPDATE skills SET lifecycle_state = ?, state_changed_at = ? "
+            "WHERE skill_id = ? AND owner_id = ? AND pinned = 0",
+            (state, now, skill_id, self._owner_id),
+        )
+        log.skills.debug(
+            "[skills] store.set_lifecycle_state: exit",
+            extra={"_fields": {"skill_id": skill_id, "state": state}},
+        )
+
+    async def set_pinned(self, skill_id: int, pinned: bool) -> None:
+        """The human veto (ADR-19 I4). Pinning also revives, because pinning an
+        archived skill can only mean "this should not have been retired"."""
+        log.skills.info(
+            "[skills] store.set_pinned: entry",
+            extra={"_fields": {"skill_id": skill_id, "pinned": pinned}},
+        )
+        now = time.time()
+        if pinned:
+            await self._db.execute(
+                "UPDATE skills SET pinned = 1, lifecycle_state = 'active', "
+                "state_changed_at = ? WHERE skill_id = ? AND owner_id = ?",
+                (now, skill_id, self._owner_id),
+            )
+        else:
+            await self._db.execute(
+                "UPDATE skills SET pinned = 0 WHERE skill_id = ? AND owner_id = ?",
+                (skill_id, self._owner_id),
+            )
+        log.skills.info(
+            "[skills] store.set_pinned: exit",
+            extra={"_fields": {"skill_id": skill_id, "pinned": pinned}},
+        )
+
+    async def curator_has_run(self) -> bool:
+        """Whether a real (non-dry) curator pass has ever completed.
+
+        Drives the first-pass deferral: on a catalog that has never been
+        curated every unused skill is simultaneously eligible, so an immediate
+        first pass would be the largest change the curator ever makes, taken
+        before anyone could pin anything.
+        """
+        rows = await self._db.fetch_all(
+            "SELECT value FROM stackowl_meta WHERE key = ?", (_CURATOR_RAN_KEY,),
+        )
+        return bool(rows)
+
+    async def mark_curator_ran(self, now: float) -> None:
+        """Record that a pass completed, so the next one acts."""
+        await self._db.execute(
+            "INSERT INTO stackowl_meta (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "updated_at = excluded.updated_at",
+            (_CURATOR_RAN_KEY, str(now), now),
+        )
+
+    async def lifecycle_counts(self) -> dict[str, int]:
+        """``{state: count}`` over learned skills — for reporting and tests."""
+        rows = await self._db.fetch_all(
+            "SELECT lifecycle_state AS s, COUNT(*) AS n FROM skills "
+            "WHERE owner_id = ? AND source = 'learned' GROUP BY lifecycle_state",
+            (self._owner_id,),
+        )
+        return {str(r["s"] or "active"): int(str(r["n"])) for r in rows}
 
     async def set_success_rate(self, skill_id: int, rate: float) -> None:
         """Overwrite the EWMA success rate (caller computes it)."""
@@ -523,7 +663,7 @@ class SkillIndexStore(OwnedRepository):
         )
         rows = await self._db.fetch_all(
             f"SELECT {_SELECT_FIELDS} FROM skills "
-            "WHERE owner_id = ? AND enabled = 1 AND embedding IS NOT NULL",
+            f"WHERE owner_id = ? AND enabled = 1 {_NOT_ARCHIVED} AND embedding IS NOT NULL",
             (self._owner_id,),
         )
         if not rows:
@@ -597,6 +737,12 @@ class SkillIndexStore(OwnedRepository):
         for rank, sk in enumerate(keyword_hits):
             fused[sk.skill_id] = fused.get(sk.skill_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
             by_id[sk.skill_id] = sk
+        # ADR-19 — outrank stale skills rather than hiding them. Applied AFTER
+        # fusion so it never changes the relative order within a pass, only the
+        # standing of a skill nothing has used in a month.
+        for sid, sk in by_id.items():
+            if sk.lifecycle_state == "stale":
+                fused[sid] *= _STALE_RANK_PENALTY
         ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
         results = [(by_id[sid], score) for sid, score in ranked]
         # 4. EXIT
@@ -886,6 +1032,10 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
         lessons_published_hash=(
             str(row["lessons_published_hash"]) if row.get("lessons_published_hash") is not None else None
         ),
+        # ADR-19. `or "active"` covers both a NULL column and a caller that
+        # selected an older field list — a missing lifecycle must never read as
+        # archived, which would silently hide a working skill.
+        lifecycle_state=str(row.get("lifecycle_state") or "active"),
     )
 
 

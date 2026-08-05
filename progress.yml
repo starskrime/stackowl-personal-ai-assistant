@@ -522,6 +522,60 @@ known_debt:
     NOT_caused_by_todays_work: "Verified against 7ed8d5b3^. DEBT-19, DEBT-35 and DEBT-36 are all unrelated — the lane filter does not apply (the test uses `sess-rca-e2e`, not a machine lane)."
     status: open
 
+  - id: DEBT-43
+    found: 2026-08-05
+    what: "PRE-EXISTING RED — tests/scheduler/test_scheduler_assembly.py::test_health_alert_sink_delivers_critical_alert_with_default_brief_settings fails: the test's _FakeTelegramAdapter has no send_ephemeral."
+    evidence: >
+      AttributeError: '_FakeTelegramAdapter' object has no attribute 'send_ephemeral'
+      -> adapter.sends == [] instead of ["CRITICAL: db subsystem is down"]
+      tests/scheduler/test_scheduler_assembly.py:475
+    NOT_caused_by_todays_work: >
+      CONFIRMED. `send_ephemeral` was added to the send path by earlier commits
+      (10b4942c "SocketChannelAdapter missing send_ephemeral crashed
+      telegram_canary", 2de88aba, 4c57a775). The test's local fake adapter was
+      never given the method. Today's ADR-19 change touches scheduler/assembly.py
+      only to pass a `curator=` argument to KnowledgePruneHandler; it cannot
+      cause a missing attribute on a test double.
+    why_it_matters: >
+      The test asserts a REAL past incident — that the default BriefSettings()
+      channel must resolve to something deliverable rather than the structurally
+      dead 'cli' default. While it is red, that regression is unguarded.
+    NOT_FIXED_deliberately: >
+      Standing rule: never autonomously patch a failing integration test. The fix
+      is almost certainly one method on the fake (`async def send_ephemeral(self,
+      *a, **k): ...` delegating to send_text), but confirming that it should
+      delegate rather than no-op is Bakir's call, because the assertion counts
+      sends. Raised here rather than fixed while he was asleep.
+    status: open
+
+  - id: DEBT-42
+    found: 2026-08-05
+    what: "The skill synthesizer mints numbered near-duplicates instead of recognising it already learned the lesson: 265 of 407 learned skills (65%) are -1/-2/-3 variants of an existing base name."
+    evidence: >
+      MEASURED on the live catalog 2026-08-05:
+        407 learned skills / only 142 distinct base names
+        265 rows are numbered duplicates of a base that already exists
+      Worst offenders (count x base name):
+        21x recover_tool_search_unachieved_effect
+        16x tool_build_unachieved_effect_recovery
+        14x web_fetch_unachieved_effect_recovery
+        14x shell_retry_loop_breaker
+        13x skill_management_failure_recovery_and_routing_fix
+      ROOT CAUSE, read directly: skills/synthesizer.py:490-495 proposes a name,
+      and while the target directory exists appends -1, -2, -3 ... then creates a
+      NEW skill. Nothing asks whether this lesson is already known.
+    why_it_matters: >
+      This is the self-IMPROVEMENT loop failing in the same way every other loop
+      in ADR-19 fails: the writer never reads what it already wrote. Learning the
+      same lesson 21 times should STRENGTHEN one skill, not create 21. It is also
+      the direct cause of the catalog rot ADR-19 #1 now decays: the duplicates
+      are unused by construction, because only one of them can ever rank first.
+    next: >
+      Reinforce-instead-of-mint: when the proposed base name already exists,
+      revive + record against the existing skill and do not create a variant.
+      ADR-19 obligation (4) FEEDBACK, applied to the synthesizer.
+    status: open
+
   - id: DEBT-40
     found: 2026-08-05
     what: "The dream worker's conversation_miner has been taking HTTP 400s from one provider for 15 days — 461 of them."
