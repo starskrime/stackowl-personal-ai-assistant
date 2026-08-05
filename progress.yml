@@ -573,6 +573,58 @@ known_debt:
       sends. Raised here rather than fixed while he was asleep.
     status: open
 
+  - id: DEBT-45
+    found: 2026-08-05
+    what: "ADR-19 Loop 2 — 64% of RCAs produced no verdict. The dominant live cause is a BLOCK PARSER that rejected markdown."
+    evidence: >
+      MEASURED over 15 days (all lines INFO/WARNING/ERROR, so visible at the
+      production log level — checked, after being burned twice by DEBUG counts):
+        1,131 incidents opened -> 1,103 RCAs run -> 725 ended with no verdict
+          410  "build_verdict: missing root_cause/fix"
+          315  "staged.analyze: a stage failed"  (ALL TimeoutError)
+      TWO SEPARATE CAUSES, and only one is still live:
+        * The 315 timeouts STOP on 2026-07-27. DEBT-18 raised
+          DEFAULT_PER_STAGE_TIMEOUT_S 30 -> 240 and the fix held. Not re-opened.
+        * The 410 parse failures are CURRENT (258 on 07-29, 16 on 08-01,
+          22 on 08-02), and 409 of the 410 had BOTH root_cause AND fix missing.
+      "Both missing" is the tell: one field omitted is a sloppy model, both
+      missing every single time is a structure nobody could read.
+      PROVEN by running the real parser over eight realistic model outputs:
+      it accepted TWO. It rejected `**ROOT_CAUSE:**` — the most common way a
+      model emits a labelled field — plus list items, headings, numbered lines,
+      and merely INDENTED keys.
+      Also an internal inconsistency, not just strictness: the terminating
+      lookahead already allowed leading whitespace (^\s*[A-Z]) while the match
+      did not, so an indented key was invisible as a field yet still ended the
+      previous one.
+    why_it_matters: >
+      This is the platform's learning-from-incidents path. Every rejected parse
+      is a whole RCA — three LLM stages, up to 240s each — computed, paid for,
+      and thrown away. It is also ADR-19 obligation (3) failing invisibly: the
+      loop reported "no verdict" honestly and nobody asked why 409 times.
+    status: FIXED 2026-08-05 — parliament/staged_rca.py::_block_field.
+    resolution: >
+      Widened the parser to tolerate structural decoration: indentation, list
+      bullets and numbers, heading hashes, and emphasis marks around the key and
+      after the colon. The terminator lookahead is widened the SAME way — the
+      trap in this fix is that a decorated following key would otherwise fail to
+      end the previous field and the first value would swallow the document,
+      turning one parse bug into a worse one. Pinned by its own test.
+      Fixed in the PARSER, not the prompt, deliberately: making a model comply is
+      a per-model negotiation that a weaker or swapped backend re-opens; making
+      the reader tolerant is done once.
+      No English is matched — only decoration. Asserted behaviourally by parsing
+      Russian and Japanese keys, rather than by grepping the source (which would
+      only have read my own comments — the first version of that test did
+      exactly that and passed for the wrong reason).
+      Verified: 19 tests, 129 passed across rca/staged/incident, ruff 46 /
+      mypy 78 held, clean restart with 0 errors.
+    NOT_verified: >
+      Live effect. It needs a real incident to run through the new parser, which
+      cannot be conjured. What to watch:
+        jq 'select(.msg|test("missing root_cause"))' ~/.stackowl/logs/stackowl.jsonl
+      If that line keeps firing at the old rate, the cause is not the parser.
+
   - id: DEBT-41
     found: 2026-08-05
     what: "ADR-19 (1) — dead-handle detection was pure English substring matching, at the root of the platform's own self-healing primitive."

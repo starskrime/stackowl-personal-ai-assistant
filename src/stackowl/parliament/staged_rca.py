@@ -113,16 +113,53 @@ def _block_field(text: str, key: str) -> str | None:
     Value runs from after ``KEY:`` to the next ``ALLCAPS_KEY:`` line or EOF, so a
     multi-line root cause survives. Case-insensitive on the key. Returns None
     when the key is absent (an owl that omitted a field), the empty-string guard
-    is the caller's."""
+    is the caller's.
+
+    TOLERATES MARKDOWN DECORATION. Measured 2026-08-05 over 15 days of production
+    logs: 410 RCAs ended with "missing root_cause/fix — no verdict", and in
+    **409 of them BOTH fields were missing** — not one field omitted, the whole
+    structure unreadable. The old pattern required the key at column zero,
+    bare: ``^ROOT_CAUSE:``. Against eight realistic model outputs it accepted two.
+    It rejected ``**ROOT_CAUSE:**`` — the single most common way a model emits a
+    labelled field — and also list items, headings, and merely INDENTED keys.
+
+    That last one was an internal inconsistency, not just strictness: the
+    terminating lookahead already allowed leading whitespace (``^\\s*[A-Z]``)
+    while the match did not, so an indented key was invisible as a field and yet
+    still ended the previous one.
+
+    This is a PARSER fix, not a prompt fix, on purpose. Making the model comply is
+    a per-model negotiation that a weaker or swapped backend re-opens; making the
+    reader tolerant is done once. No English is matched — only structural
+    decoration (list bullets, heading hashes, emphasis marks).
+    """
+    # Optional leading decoration: indentation, a list bullet or number, a
+    # heading marker, and emphasis marks. Deliberately all optional, so the
+    # previously-accepted bare form still parses identically.
+    decoration = r"[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+)?(?:#{1,6}[ \t]*)?[*_`]{0,3}[ \t]*"
+    # A following key terminates the value — matched with the SAME decoration, or
+    # a decorated key would fail to end the previous field and swallow the rest.
+    terminator = rf"^{decoration}[A-Z][A-Z_]+[*_`]{{0,3}}[ \t]*:"
     pattern = re.compile(
-        rf"^{re.escape(key)}\s*:\s*(.*?)(?=^\s*[A-Z][A-Z_]+\s*:|\Z)",
+        rf"^{decoration}{re.escape(key)}[*_`]{{0,3}}[ \t]*:[ \t]*[*_`]{{0,3}}[ \t]*"
+        rf"(.*?)(?={terminator}|\Z)",
         re.IGNORECASE | re.MULTILINE | re.DOTALL,
     )
     m = pattern.search(text)
     if not m:
         return None
-    val = m.group(1).strip()
+    val = _strip_decoration(m.group(1))
     return val or None
+
+
+#: Trailing artifacts left by a model that wrapped its answer in a code fence or
+#: closed its own emphasis. Stripped from the END of a captured value only.
+_TRAILING_NOISE_RE = re.compile(r"(?:\s|`{3,}|[*_]{1,3})+$")
+
+
+def _strip_decoration(value: str) -> str:
+    """Trim whitespace plus dangling fence/emphasis marks from a captured value."""
+    return _TRAILING_NOISE_RE.sub("", value.strip()).strip()
 
 
 def _slugify(raw: str, fallback: str) -> str:
