@@ -573,6 +573,56 @@ known_debt:
       sends. Raised here rather than fixed while he was asleep.
     status: open
 
+  - id: DEBT-48
+    found: 2026-08-05
+    what: "During an LLM-backend outage the self-healing machinery AMPLIFIED the outage ~10x: 871 of 1,294 turns on 2026-07-29 were the RCA channel."
+    evidence: >
+      MEASURED from task_outcomes (captured_at is a FLOAT epoch, not ISO — the
+      same comparison mistake made during DEBT-38, caught this time):
+        07-27  total=151   ok=150   allprov=0
+        07-28  total=132   ok=127   allprov=0
+        07-29  total=1294  ok=212   allprov=737  providerr=343   <-- outage
+        07-30  total=56    ok=56    allprov=0
+        08-03  total=62    ok=62    allprov=0
+        08-04  total=67    ok=64    allprov=0
+      Normal days are ~100% success at 60-150 turns. On 07-29 the platform
+      attempted 1,294, and the excess is the RCA channel:
+        hypothesis/rca 292, rca_gatherer/rca 291, verifier/rca 288 = 871
+      which does not appear in the top 5 on a healthy day.
+      THE LOOP: provider dies -> turns fail -> failures open incidents -> RCA runs
+      to diagnose -> RCA's own three stages call the SAME dead provider -> more
+      failures. It produced 258 barren verdicts that day (the same 258 counted in
+      DEBT-45).
+      ROOT CAUSE: AllProvidersUnavailableError is an InfrastructureError, so
+      classify_incident_retryability returned "analyze" — a full 3-stage RCA for
+      a condition whose entire content is "there is no model to think with".
+      The dispatch loop's own comment even says "a provider outage during the
+      incident is precisely when the RCA call itself is most likely to also
+      fail" — and answered "retry next tick", which is what generated ~290 cycles.
+    why_it_matters: >
+      This is the self-healing guide star inverted: at the exact moment the
+      system is least healthy, the healing machinery multiplied the load tenfold
+      and produced nothing. It also burned the RCA budget on undiagnosable
+      incidents, so a REAL defect occurring during an outage would have queued
+      behind 290 futile cycles.
+    status: FIXED 2026-08-05 — a third retryability outcome, "defer".
+    resolution: >
+      classify_incident_retryability gains "defer" for _SUBSTRATE_UNAVAILABLE
+      (AllProvidersUnavailableError, CircuitOpenError) — held as class NAMES the
+      outcome store records, checked BEFORE the InfrastructureError branch that
+      was claiming them. Deferred incidents are filtered out before any incident
+      is opened, so no incident_id is minted, no "no verdict" warning fires, and
+      the signature stays unregistered — the condition is self-resolving and
+      re-detects on its own. Logged at WARNING with a count, because "we chose
+      not to diagnose" must never look like "there was nothing to diagnose".
+      SCOPE CORRECTED MID-FIX: RateLimitError was in my first version of the
+      defer set and an EXISTING test caught it — correctly. A rate limit is our
+      own limiter failing closed (F124), a zero refill_rate is a real
+      misconfiguration worth diagnosing, and it appeared ZERO times in the
+      measured outage. Removed on the merits; no existing test was modified.
+      Verified: 9 new tests, 38 passed across incident suites with NO existing
+      test changed, ruff 46 / mypy 78 held, clean restart with 0 errors.
+
   - id: DEBT-46
     found: 2026-08-05
     what: "The shared LLM-JSON parser rejected 2 of 5 realistic model outputs, while its docstring claimed it tolerated all of them."

@@ -106,7 +106,31 @@ _MIN_RECURRENCE = 3  # mirrors FailureOutcomeMiner._MIN_EVIDENCE
 # precisely what is unknown here.
 _MASKED_SUBSTITUTION_FAILURE_CLASS = "RecurringSubstitutionMask"
 
-Retryability = Literal["non_retryable", "analyze"]
+Retryability = Literal["non_retryable", "analyze", "defer"]
+
+#: Failures meaning "there is no model available to think with". Held as
+#: exception CLASSES, not names — same structural discipline as D02.6.
+#:
+#: MEASURED 2026-08-05. On 2026-07-29 the LLM backend was down and the platform
+#: attempted 1,294 turns against a normal day's 60-150. 871 of them were the RCA
+#: channel (hypothesis 292, rca_gatherer 291, verifier 288) — invisible on a
+#: healthy day. The loop was: provider dies -> turns fail -> failures open
+#: incidents -> RCA runs to diagnose them -> RCA's own three stages call the same
+#: dead provider -> more failures. The self-healing machinery consumed the outage
+#: as input and multiplied it ~10x, producing 258 barren verdicts that day.
+#:
+#: A failure whose cause IS "the diagnostic engine is unreachable" cannot be
+#: diagnosed BY the diagnostic engine. The correct action is to wait.
+_SUBSTRATE_UNAVAILABLE: tuple[str, ...] = (
+    "AllProvidersUnavailableError",  # cascade found every provider OPEN
+    "CircuitOpenError",              # this provider's breaker is open
+)
+# DELIBERATELY NOT HERE: RateLimitError. It was in the first version of this
+# tuple and an existing test caught it — correctly. A rate limit is OUR limiter
+# fail-closed (F124), not the substrate vanishing: a zero refill_rate is a
+# genuine misconfiguration worth diagnosing, and the RCA may route to a
+# different tier anyway. It also appeared ZERO times in the measured failure
+# distribution, so deferring it was scope I had no evidence for.
 
 
 def _capability_class_for(tool: str, tag_lookup: CapabilityTagLookup | None) -> str:
@@ -150,6 +174,13 @@ def classify_incident_retryability(failure_class: str) -> Retryability:
       action, missing provider/owl/channel, validation, parse). Retrying or
       recycling the SAME capability is doomed; the fix is always an alternative →
       ``"non_retryable"`` (short-circuit to a substitution verdict, no RCA cycle).
+    * The LLM substrate being unavailable (:data:`_SUBSTRATE_UNAVAILABLE`) →
+      ``"defer"``. Diagnosing "the model is unreachable" REQUIRES the model, so
+      an RCA here cannot succeed and its three stages become three more failures.
+      This is not uncertainty — it is the one case where we know analysis is
+      impossible, so it is exempt from the never-skip-on-uncertainty rule below.
+      The condition is self-resolving; the incident re-detects when it isn't.
+
     * Anything that does not resolve to a known exception class (e.g. a health
       status like ``"down"``, or a truncated fallback string) → ``"analyze"``:
       never SKIP a diagnosis on uncertainty.
@@ -157,6 +188,11 @@ def classify_incident_retryability(failure_class: str) -> Retryability:
     from stackowl import exceptions as exc_mod
 
     name = (failure_class or "").split(".")[-1].strip()
+    # Checked BEFORE the class resolution below: these are InfrastructureError
+    # subclasses, so the "analyze" branch would otherwise claim them — which is
+    # exactly what it did, 290 times in one day.
+    if name in _SUBSTRATE_UNAVAILABLE:
+        return "defer"
     cls = getattr(exc_mod, name, None)
     if not isinstance(cls, type) or not issubclass(cls, BaseException):
         return "analyze"
@@ -275,6 +311,30 @@ class IncidentEscalationHandler(JobHandler):
                 del self._open_incidents[sig]
         new_incidents = [inc for sig, inc in active.items() if sig not in self._open_incidents]
 
+        # ADR-19 — drop incidents whose cause is that the diagnostic engine
+        # itself is unreachable, BEFORE opening them. Filtered here rather than
+        # inside _resolve_incident so no incident_id is minted, no "no verdict"
+        # warning fires, and the signature stays unregistered — the condition is
+        # self-resolving and re-detects on its own once the provider returns.
+        deferred = [
+            inc for inc in new_incidents
+            if classify_incident_retryability(inc.failure_class) == "defer"
+        ]
+        if deferred:
+            new_incidents = [inc for inc in new_incidents if inc not in deferred]
+            # WARNING, not debug: "we chose not to diagnose" must never be
+            # indistinguishable from "there was nothing to diagnose" (ADR-19 I6).
+            log.scheduler.warning(
+                "[scheduler] incident_escalation: deferring %d incident(s) — the LLM "
+                "substrate is unavailable, so an RCA would need the very thing that "
+                "is down. Will re-detect when it recovers.",
+                len(deferred),
+                extra={"_fields": {
+                    "deferred": len(deferred),
+                    "failure_classes": sorted({i.failure_class for i in deferred}),
+                }},
+            )
+
         analyzed = 0
         short_circuited = 0
         for inc in new_incidents:
@@ -328,11 +388,13 @@ class IncidentEscalationHandler(JobHandler):
         return JobResult(
             job_id=job.job_id, effect_class="read_only", success=True,
             output=f"active={len(active)} new={len(new_incidents)} "
-            f"analyzed={analyzed} short_circuited={short_circuited}",
+            f"analyzed={analyzed} short_circuited={short_circuited} "
+            f"deferred={len(deferred)}",
             error=None, duration_ms=duration_ms,
             metadata={
                 "active": len(active), "new": len(new_incidents),
                 "analyzed": analyzed, "short_circuited": short_circuited,
+                "deferred": len(deferred),
             },
         )
 
