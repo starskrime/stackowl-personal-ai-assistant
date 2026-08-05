@@ -240,6 +240,31 @@ Without it a self-improving system poisons itself, which is measurably already
 happening: 421 skills, 33 used, 4 of the top 5 duplicates. Decay is not cleanup;
 it is what keeps the improvement signal legible.
 
+**⑥ A LOOP MUST NOT DEPEND ON WHAT IT HEALS.**
+Added 2026-08-05, from measurement rather than principle. During an LLM-backend
+outage on 07-29 the platform attempted **1,294 turns against a normal day's
+60-150**, and 871 of them were the RCA channel — invisible on a healthy day.
+
+```
+provider dies -> turns fail -> failures open incidents -> RCA runs to diagnose
+   -> RCA's three stages call the SAME dead provider -> more failures -> ...
+```
+
+The healing machinery consumed the outage as input and multiplied it tenfold,
+producing 258 barren verdicts. `AllProvidersUnavailableError` is an
+`InfrastructureError`, so the classifier said "analyze" — a three-stage LLM
+diagnosis of a condition whose entire content is *there is no model to think
+with*.
+
+**The rule: before acting, a loop must ask whether its own actuator depends on
+the thing that failed.** If it does, the correct action is to WAIT, and waiting
+must be logged — "we chose not to diagnose" cannot look like "there was nothing
+to diagnose". Shipped as the `defer` outcome (`DEBT-48`).
+
+This is the obligation with the sharpest teeth, because a loop that violates it
+does its worst damage at exactly the moment the system is least able to absorb
+it.
+
 ## What the reference platform does, and what we take
 
 Read from `agent/background_review.py` (991 lines) and `agent/curator.py` (2,018).
@@ -275,6 +300,9 @@ Ordered by (measured value × confidence), not by effort.
 | ~~1b~~ | **Reinforce, don't duplicate** — the synthesizer deduped on evidence (trace_ids), so a lesson re-derived from a new incident always looked new | ④ FEEDBACK | 265 of 407 skills are numbered duplicates; one exists 21x | **SHIPPED** `48dbffd4` |
 | ~~2~~ | **Structural death detection** — exception types instead of 19 English substrings | ① SIGNAL | governs every tool's retry path | **SHIPPED** `e6d09c1e` |
 | ~~3~~ | ~~Adaptive breaker probe~~ — **WITHDRAWN.** Already implemented by `FX-02`; the probe count is explained to within 2.7% by the existing 900s backoff cap. Nothing to fix. | — | — | — |
+| ~~5~~ | **Defer diagnosis during a substrate outage** — a loop must not depend on what it heals | ⑥ | 871 of 1,294 turns were futile RCA | **SHIPPED** `ae1f2702` |
+| ~~6~~ | **Autonomic health in the brief** — the loops report themselves; live `skills_ever_used:28/411` | visibility | every finding here needed 2am jq | **SHIPPED** `048e74f8` |
+| ~~7~~ | **RCA + JSON parser tolerance** — 409 verdicts discarded to markdown strictness | ③ | 409 of 410 had BOTH fields missing | **SHIPPED** `da4b859d`, `95c485ee` |
 | **4** | **Make lesson injection falsifiable** — lessons ARE injected every turn; nothing measures whether it helps. Hold-out a sample, compare `task_outcomes` quality | ③ VERIFY | 2,193 turns injected, effect never observed | low — measurement only, no prompt change |
 | **5** | **Post-turn review fork** — the reference platform's loop, on our verification primitive | ②③④ | no equivalent exists | high — new subsystem |
 
