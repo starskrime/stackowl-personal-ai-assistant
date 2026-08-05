@@ -522,6 +522,31 @@ known_debt:
     NOT_caused_by_todays_work: "Verified against 7ed8d5b3^. DEBT-19, DEBT-35 and DEBT-36 are all unrelated — the lane filter does not apply (the test uses `sess-rca-e2e`, not a machine lane)."
     status: open
 
+  - id: DEBT-44
+    found: 2026-08-05
+    what: "PRE-EXISTING RED — 18 tests across the parliament synthesizer and the skill-synthesizer phase-B suite fail at HEAD."
+    evidence: >
+      Confirmed by running them in a detached git worktree at HEAD (e45f3d3a),
+      BEFORE any of today's synthesizer change:
+        tests/test_story_5_3.py + tests/test_story_5_4.py -> 17 failed, 25 passed
+        tests/tools/knowledge/test_phaseB_self_improvement.py
+          ::test_synthesize_skills_runs_real_handler_and_authors_skill -> failed
+      The phase-B failure is the interesting one: the handler REPORTS
+      "created:1" and the SKILL.md is not on disk. A create that reports success
+      without producing the artifact is exactly the asserted-not-measured shape
+      the verification arc exists to catch.
+    NOT_caused_by_todays_work: >
+      CONFIRMED in an isolated worktree at HEAD. Separately, story_5_3/5_4
+      import stackowl.parliament.synthesizer — a DIFFERENT module from
+      stackowl.skills.synthesizer, and were only swept in by a `-k synth` filter.
+    why_it_matters: >
+      While red, the skill-authoring path has no green end-to-end guard, which is
+      precisely the path DEBT-42 changes. The DEBT-42 fix is covered by its own
+      10 unit tests, but the on-disk authoring assertion is not currently
+      trustworthy on this tree.
+    NOT_FIXED_deliberately: "Standing rule: never autonomously patch failing integration tests. Root-caused and reported instead."
+    status: open
+
   - id: DEBT-43
     found: 2026-08-05
     what: "PRE-EXISTING RED — tests/scheduler/test_scheduler_assembly.py::test_health_alert_sink_delivers_critical_alert_with_default_brief_settings fails: the test's _FakeTelegramAdapter has no send_ephemeral."
@@ -574,7 +599,23 @@ known_debt:
       Reinforce-instead-of-mint: when the proposed base name already exists,
       revive + record against the existing skill and do not create a variant.
       ADR-19 obligation (4) FEEDBACK, applied to the synthesizer.
-    status: open
+    status: FIXED 2026-08-05 (same day) — skills/synthesizer.py::_reinforce_if_known.
+    resolution: >
+      The suffix was the symptom. The cause is that `_cluster_already_covered`
+      dedupes on parent_traces — on the EVIDENCE — so a lesson re-derived from a
+      NEW incident carries new trace_ids, never matches, and mints a variant.
+      Now dedupes on the CONCLUSION as well: if the proposed name's BASE matches
+      an existing learned skill (so an earlier `foo-3` still answers "we know
+      foo", which matters because 265 such rows already exist), the synthesizer
+      reinforces that skill instead of minting. Reinforcement bumps
+      n_executions, which under ADR-19 also REVIVES a stale/archived skill — a
+      lesson a fresh cluster just re-derived has plainly not stopped mattering.
+      Deliberately does NOT rewrite the skill body: refining content is the
+      refine pass's job, and a synthesizer that silently rewrote skills would be
+      a far larger claim than this fixes. Fails open on any store error (B5) —
+      a dedupe check must never cost a synthesis run.
+      Verified: 10 new tests. NOT verified end-to-end on disk, because that path
+      is red for unrelated reasons — see DEBT-44.
 
   - id: DEBT-40
     found: 2026-08-05

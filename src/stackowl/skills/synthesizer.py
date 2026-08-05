@@ -80,6 +80,19 @@ _SECONDS_PER_DAY = 86_400
 _SAMPLE_LIMIT_PER_CLUSTER = 5  # how many trace samples to include in the LLM prompt
 _DEPRECATED_DIR_NAME = "_deprecated"
 
+#: DEBT-42 — strip the ``-N`` disambiguation suffix the synthesizer used to
+#: append, so an existing ``foo-3`` still answers "do we already know foo?".
+#: Anchored and digits-only: a skill legitimately named ``http-2`` would be
+#: collapsed onto ``http``, which is the acceptable side of the trade — the
+#: measured cost of NOT collapsing is 265 duplicate skills.
+_NAME_SUFFIX_RE = re.compile(r"-\d+$")
+
+
+def _base_name(name: str) -> str:
+    """``foo-3`` -> ``foo``; anything else unchanged."""
+    return _NAME_SUFFIX_RE.sub("", name)
+
+
 
 @dataclass(frozen=True)
 class ToolSequenceCluster:
@@ -457,6 +470,52 @@ class SkillSynthesizer:
         learned = await self._skills.list_for_source("learned")
         return any(set(sk.parent_traces) & traces for sk in learned)
 
+    async def _reinforce_if_known(
+        self, proposed_name: str, cluster: ToolSequenceCluster,
+    ) -> bool:
+        """True when this lesson is already held — reinforce it and mint nothing.
+
+        Matches the proposed name against the BASE name of existing learned
+        skills, so an earlier ``foo-3`` still counts as "we know foo". Without
+        that, the historical duplicates would each be treated as a distinct
+        lesson and the sprawl would keep compounding from where it stands.
+
+        Reinforcement is deliberately modest: revive the skill (an archived or
+        stale skill that a fresh cluster just re-derived has plainly not stopped
+        being relevant) and record the new evidence. It does NOT rewrite the
+        skill body — refining content is the refine pass's job, and a
+        synthesizer that silently rewrote skills would be a much larger claim
+        than this fixes.
+
+        Never raises: failing to dedupe must not lose the synthesis run. On any
+        error we fall through and mint, which is the pre-DEBT-42 behaviour.
+        """
+        try:
+            existing = await self._skills.list_for_source("learned")
+            base = {_base_name(sk.name): sk for sk in existing}
+            match = base.get(_base_name(proposed_name))
+            if match is None:
+                return False
+            await self._skills.increment_n_executions(match.skill_id)
+            log.skills.info(
+                "[synth] synthesize_one: lesson ALREADY KNOWN — reinforcing "
+                "instead of minting a duplicate",
+                extra={"_fields": {
+                    "proposed": proposed_name,
+                    "reinforced": match.name,
+                    "sequence": list(cluster.sequence),
+                    "cluster_size": cluster.size,
+                }},
+            )
+            return True
+        except Exception as exc:  # B5 — dedupe must never cost us the synthesis.
+            log.skills.error(
+                "[synth] synthesize_one: reinforcement check failed — minting as before",
+                exc_info=exc,
+                extra={"_fields": {"proposed": proposed_name}},
+            )
+            return False
+
     async def _synthesize_one(self, cluster: ToolSequenceCluster) -> bool:
         """One LLM call → one new SKILL.md written + indexed + audited."""
         log.skills.debug(
@@ -483,10 +542,27 @@ class SkillSynthesizer:
                 extra={"_fields": {"preview": completion.content[:200]}},
             )
             return False
+        proposed_name = parsed["name"]
+
+        # ADR-19 / DEBT-42 — HAVE WE ALREADY LEARNED THIS?
+        #
+        # `_cluster_already_covered` above dedupes on parent_traces, i.e. on the
+        # EVIDENCE. The same lesson learned from a *new* incident carries new
+        # trace_ids, so it never matches and a `-N` variant is minted instead.
+        # Measured 2026-08-05: 265 of 407 learned skills (65%) are numbered
+        # duplicates of an existing base name, and
+        # `recover_tool_search_unachieved_effect` exists TWENTY-ONE times.
+        #
+        # Dedupe on the CONCLUSION as well. Re-deriving a lesson we already hold
+        # is confirmation, and confirmation should STRENGTHEN one skill rather
+        # than produce a twenty-second copy of it — the same open-loop failure
+        # ADR-19 describes, here inside the improvement loop itself.
+        if await self._reinforce_if_known(proposed_name, cluster):
+            return False
+
         # Pick a not-yet-taken directory name. Just a path decision (no I/O
         # writes) — the real mkdir/write only happens inside gated_skill_write()
         # once BOTH the security scan and consent have passed.
-        proposed_name = parsed["name"]
         target_dir = self._root / "learned" / proposed_name
         i = 1
         while target_dir.exists():
