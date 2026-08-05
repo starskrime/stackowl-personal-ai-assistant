@@ -48,6 +48,8 @@ from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 USER_ID = 858585
+from stackowl.channels.telegram.formatter import escape_md  # noqa: E402
+
 HEARTBEAT_TEXT = "Heads up: CI is red on main."
 
 
@@ -225,7 +227,14 @@ async def test_smoke_heartbeat_respond_delivers_through_real_deliverer(tmp_db: D
 
     # PROOF the REAL ProactiveDeliverer transported the body through the registry
     # adapter to the wire: the heartbeat text is in the fake bot, to the user's chat.
-    heartbeat_msgs = [m for m in bot.messages if m["text"] == HEARTBEAT_TEXT]
+    # The adapter renders MarkdownV2, so what reaches the wire is the ESCAPED
+    # body ("main\\." not "main."). Compared against escape_md(HEARTBEAT_TEXT)
+    # rather than loosened to a substring match: this assertion is the proof the
+    # real deliverer carried the body through, and it must stay exact. Asserting
+    # the raw text here silently stopped being true when MarkdownV2 rendering
+    # was introduced.
+    expected_on_wire = escape_md(HEARTBEAT_TEXT)
+    heartbeat_msgs = [m for m in bot.messages if m["text"] == expected_on_wire]
     assert heartbeat_msgs, [m["text"] for m in bot.messages]
     assert heartbeat_msgs[0]["chat_id"] == USER_ID, heartbeat_msgs[0]
 
@@ -270,6 +279,8 @@ async def test_smoke_heartbeat_respond_delivers_through_real_deliverer(tmp_db: D
     assert log_rows2[1]["urgency"] == "normal", log_rows2[1]  # clamped, not 'critical'
 
     # And the second heartbeat body really hit the wire too.
-    assert any(m["text"] == "Still red on main." for m in bot.messages), [
+    # Same MarkdownV2 point as the first phase — compare against what the
+    # adapter actually puts on the wire, not the pre-render text.
+    assert any(m["text"] == escape_md("Still red on main.") for m in bot.messages), [
         m["text"] for m in bot.messages
     ]

@@ -21,7 +21,7 @@ Design (kept thin — this is StackOwl glue, not a vendor port):
 from __future__ import annotations
 
 import time as _time
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 from stackowl.infra.observability import log
 from stackowl.notifications.router import DeliveryStatus
@@ -62,12 +62,23 @@ class _TargetedFileSender(Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
 class _EphemeralSender(Protocol):
     """An adapter that can send a silent, self-cleaning probe message.
 
-    Only telegram implements this (the health-canary path). Narrowed via
-    Protocol the same way as :class:`_TargetedSender` so the typed call is
-    exact — at runtime this is only ever invoked for a telegram target.
+    Telegram and the socket adapter implement this; slack, discord, whatsapp and
+    cli do NOT.
+
+    ``runtime_checkable`` is load-bearing, not decoration. This docstring used to
+    claim "at runtime this is only ever invoked for a telegram target" — an
+    ASSUMPTION the code did not enforce. The call site ``cast``s to this Protocol
+    and calls the method, so any adapter without it raises ``AttributeError`` and
+    the notification is LOST. That is not hypothetical: commit 10b4942c records
+    "SocketChannelAdapter missing send_ephemeral crashed telegram_canary", and
+    the fix then was to add the method to that one adapter rather than to stop
+    asserting an unverified capability. Four adapters are still missing it.
+
+    A ``cast`` is a promise to the type checker, never a runtime guarantee.
     """
 
     async def send_ephemeral(self, chat_id: str | int, text: str) -> int: ...
@@ -332,11 +343,27 @@ class ProactiveDeliverer:
                 # An explicit target is threaded as a kwarg; ``None`` omits the
                 # kwarg so text-only adapters (no ``chat_id`` param) still accept
                 # the call and telegram falls back to its ``_last_chat_id``.
-                if ephemeral and chat_id is not None:
+                if ephemeral and chat_id is not None and isinstance(adapter, _EphemeralSender):
                     message_id = await cast("_EphemeralSender", adapter).send_ephemeral(
                         chat_id, message
                     )
                     await self._best_effort_delete(adapter, chat_id, message_id)
+                elif ephemeral and chat_id is not None:
+                    # The adapter cannot self-clean. DEGRADE to an ordinary send
+                    # rather than raising: an alert that arrives and stays is
+                    # vastly better than an alert that is lost because it could
+                    # not be tidied up afterwards.
+                    log.notifications.warning(
+                        "[notifications] deliverer._transport: adapter cannot send "
+                        "ephemeral — delivering as a normal message instead",
+                        extra={"_fields": {
+                            "channel": channel,
+                            "adapter": type(adapter).__name__,
+                        }},
+                    )
+                    await cast("_TargetedSender", adapter).send_text(
+                        message, chat_id=chat_id
+                    )
                 elif chat_id is not None:
                     await cast("_TargetedSender", adapter).send_text(
                         message, chat_id=chat_id

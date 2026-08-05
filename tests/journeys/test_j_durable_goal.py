@@ -180,17 +180,33 @@ class _ScriptedSecretary:
 
 
 class _FakeProviderRegistry:
+    """Mirrors the REAL ProviderRegistry's return types.
+
+    ``get`` returns a bare provider; ``get_by_tier`` and ``get_with_cascade``
+    return ``tuple[ModelProvider, str]`` — the provider AND the resolved model
+    name. This double previously returned a bare object from all three, so
+    triage's unpack raised ``TypeError: cannot unpack non-iterable
+    _ScriptedSecretary object`` and the journey failed for a reason that had
+    nothing to do with what it was testing.
+
+    Exactly the shape DEBT-38 recorded: a stub that does not track the real
+    interface hides a genuine assertion behind a TypeError indefinitely.
+    """
+
+    #: What the real registry resolves alongside the provider.
+    MODEL = "scripted-test-model"
+
     def __init__(self, p: _ScriptedSecretary) -> None:
         self._p = p
 
     def get(self, name: str) -> _ScriptedSecretary:
         return self._p
 
-    def get_by_tier(self, tier: str) -> _ScriptedSecretary:
-        return self._p
+    def get_by_tier(self, tier: str) -> tuple[_ScriptedSecretary, str]:
+        return self._p, self.MODEL
 
-    def get_with_cascade(self, tier: str) -> _ScriptedSecretary:
-        return self._p
+    def get_with_cascade(self, tier: str) -> tuple[_ScriptedSecretary, str]:
+        return self._p, self.MODEL
 
 
 # --- fixtures -------------------------------------------------------------------

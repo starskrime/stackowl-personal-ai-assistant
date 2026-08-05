@@ -318,7 +318,13 @@ async def test_scheduled_goal_delivers_answer_to_originating_chat(
 
     # The goal genuinely ran (the backend produced the answer for THIS goal).
     assert len(backend.calls) == 1
-    assert backend.calls[0].input_text == _GOAL
+    # A scheduled run PREPENDS a preamble (today's date, "this is a recurring
+    # check — fetch fresh information", the NO_NOTIFY_NEEDED contract) and puts
+    # the goal last. Asserting equality here was asserting "no preamble", which
+    # was never this test's intent — its own comment above says the point is
+    # that the backend answered THIS goal. endswith pins that AND the structure,
+    # so it stays stronger than a substring match.
+    assert backend.calls[0].input_text.endswith(_GOAL), backend.calls[0].input_text
     assert backend.calls[0].defer_delivery is True, "the handler owns delivery (no double-send)"
 
     # The recorded status is the honest 'completed'.
