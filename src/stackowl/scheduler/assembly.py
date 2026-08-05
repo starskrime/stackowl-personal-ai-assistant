@@ -192,6 +192,10 @@ class SchedulerAssembly:
             settings=settings,
             proactive_deliverer=proactive_deliverer,
             delivery_ledger=delivery_ledger,
+            # ADR-19 — enables the autonomic-health section. Wired HERE, because
+            # an assembler that exists and is never registered is the D05.2
+            # failure this programme has already paid for once.
+            skill_store=skills_components.store,
         )
         HandlerRegistry.instance().register(morning_brief_handler)
 

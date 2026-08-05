@@ -46,7 +46,7 @@ from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
-if TYPE_CHECKING:  # pragma: no cover — typing only
+if TYPE_CHECKING:
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
     from stackowl.events.bus import EventBus
@@ -55,6 +55,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.notifications.deliverer import ProactiveDeliverer
     from stackowl.notifications.delivery_ledger import DeliveryLedger
     from stackowl.scheduler.scheduler import JobScheduler
+    from stackowl.skills.store import SkillIndexStore  # pragma: no cover — typing only
 
 
 _INSERT_JOB_RESULT_SQL = (
@@ -81,6 +82,7 @@ class MorningBriefHandler(JobHandler):
         event_bus: EventBus,
         settings: Settings,
         integration_registry: IntegrationRegistry | None = None,
+        skill_store: SkillIndexStore | None = None,
         proactive_deliverer: ProactiveDeliverer | None = None,
         delivery_ledger: DeliveryLedger | None = None,
     ) -> None:
@@ -111,6 +113,15 @@ class MorningBriefHandler(JobHandler):
             PendingStagedFactsAssembler(memory_bridge=memory_bridge),
             AgentStatusAssembler(scheduler=scheduler),
         ]
+        # ADR-19 — the platform reporting on its own autonomic loops. Optional
+        # so every existing construction site (tests, legacy wiring) is
+        # unchanged; when the skill store is available the section appears.
+        if skill_store is not None:
+            from stackowl.brief.assemblers import AutonomicHealthAssembler
+
+            self._assemblers.append(
+                AutonomicHealthAssembler(skill_store=skill_store, db=db)
+            )
         if integration_registry is not None:
             from stackowl.integrations.integration_assembler import IntegrationSectionAssembler
 

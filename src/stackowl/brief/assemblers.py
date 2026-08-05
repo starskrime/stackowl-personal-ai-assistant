@@ -30,6 +30,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.db.pool import DbPool
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.scheduler.scheduler import JobScheduler
+    from stackowl.skills.store import SkillIndexStore
 
 
 _MAX_HIGHLIGHT_CHARS = 120
@@ -265,6 +266,100 @@ class AgentStatusAssembler:
             items=items,
             omitted=False,
         )
+
+
+# ---------------------------------------------------------------------------
+# 5. Autonomic health (ADR-19) — the platform reporting on its own closed loops
+# ---------------------------------------------------------------------------
+
+
+class AutonomicHealthAssembler:
+    """Fifth section — did the self-healing / self-improving loops do anything?
+
+    ADR-19 measured four autonomic loops and found three of them running with no
+    one looking. The single most expensive consequence was not any individual
+    defect but the SILENCE: 409 RCAs discarded to a parser, 265 duplicate skills
+    minted, and a catalog that was 92% dead weight — all of it discoverable only
+    by someone running ad-hoc log queries at 2am, which is exactly how it WAS
+    discovered.
+
+    A loop nobody can see is a loop nobody maintains. This section costs two
+    cheap queries and turns that from an archaeology exercise into a line in the
+    brief the operator already reads.
+
+    Deliberately DETERMINISTIC — counts from the database, no LLM, no
+    interpretation. An assembler that summarised its findings in prose would be
+    one more thing that can quietly start lying.
+    """
+
+    key: str = "autonomic_health"
+
+    def __init__(self, skill_store: SkillIndexStore, db: DbPool) -> None:
+        self._skills = skill_store
+        self._db = db
+
+    async def assemble(self, ctx: BriefContext) -> BriefSection:
+        # 1. ENTRY
+        log.scheduler.debug(
+            "[brief] autonomic_health.assemble: entry",
+            extra={"_fields": {"job_id": ctx.job_id}},
+        )
+        items: list[str] = []
+
+        # 3. STEP — skill catalog shape (ADR-19 intervention #1's whole point).
+        counts = await self._skills.lifecycle_counts()
+        active = counts.get("active", 0)
+        stale = counts.get("stale", 0)
+        archived = counts.get("archived", 0)
+        total = active + stale + archived
+        if total:
+            items.append(f"skills active:{active} stale:{stale} archived:{archived}")
+            # The number that says whether the catalog is EARNING its size.
+            used = await self._db.fetch_all(
+                "SELECT COUNT(*) AS n FROM skills "
+                "WHERE source = 'learned' AND n_executions > 0",
+            )
+            n_used = int(str(used[0]["n"])) if used else 0
+            items.append(f"skills_ever_used:{n_used}/{total}")
+
+        # 3. STEP — background job health over the last day. A failing autonomic
+        # job is the failure mode that hides every other one: the loop stops and
+        # its silence is indistinguishable from "nothing to report".
+        rows = await self._db.fetch_all(
+            "SELECT status, COUNT(*) AS n FROM job_results "
+            "WHERE run_at >= datetime('now', '-1 day') GROUP BY status",
+        )
+        by_status = {str(r["status"]): int(str(r["n"])) for r in rows}
+        ran = sum(by_status.values())
+        failed = by_status.get("failed", 0)
+        if ran:
+            items.append(f"jobs_24h ran:{ran} failed:{failed}")
+            if failed:
+                worst = await self._db.fetch_all(
+                    "SELECT job_id, COUNT(*) AS n FROM job_results "
+                    "WHERE run_at >= datetime('now', '-1 day') AND status = 'failed' "
+                    "GROUP BY job_id ORDER BY n DESC LIMIT 3",
+                )
+                for r in worst:
+                    items.append(f"failing:{r['job_id']} x{r['n']}")
+
+        # 2. DECISION — nothing measurable is a legitimate outcome, not an error.
+        if not items:
+            log.scheduler.debug(
+                "[brief] autonomic_health.assemble: nothing measurable — omitting",
+                extra={"_fields": {"job_id": ctx.job_id}},
+            )
+            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
+
+        # 4. EXIT
+        log.scheduler.info(
+            "[brief] autonomic_health.assemble: exit",
+            extra={"_fields": {
+                "skills_active": active, "skills_stale": stale,
+                "skills_archived": archived, "jobs_failed_24h": failed,
+            }},
+        )
+        return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
 
 
 def now_iso_utc() -> str:
