@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 
 from stackowl.memory.fact_promoter import (
-    PROMOTE_MAX_PER_RUN,
     _SELECT_ELIGIBLE_SQL,
+    PROMOTE_MAX_PER_RUN,
     FactPromoter,
 )
 
