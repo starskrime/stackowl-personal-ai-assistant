@@ -14,19 +14,34 @@
 
 ## The finding, in one sentence
 
-**StackOwl detects superbly, acts mechanically, and learns nothing — every
-autonomic loop in the platform is open.** The machinery is not missing; it is
-three-quarters built everywhere and finished nowhere. The last quarter — *feeding
-the outcome back so the next attempt differs* — is absent from all four loops.
+**StackOwl detects superbly, acts mechanically, and — in three of its four
+autonomic loops — learns nothing.** The machinery is not missing; it is
+three-quarters built and finished in exactly one place. The last quarter —
+*feeding the outcome back so the next attempt differs* — exists only in the
+circuit breaker, which is measurably the one loop that behaves correctly.
+
+That single working example is the argument. The contract below is not imported
+from the reference platform; it is generalised from the one part of StackOwl
+that already satisfies it.
 
 This is why "self-healing" and "self-improving" are not two projects. They are the
 same control loop, and StackOwl is missing the same leg of it in both.
 
 ## The measurement
 
-Four autonomic loops exist today. All four were measured end to end.
+Four autonomic loops exist today. All four were measured end to end. One has a
+feedback leg and works; three do not and don't.
 
-### Loop 1 — provider health (the circuit breaker)
+### Loop 1 — provider health (the circuit breaker) — **CLOSED, and this is the proof**
+
+> **Correction, 2026-08-05.** The first draft of this document called this loop
+> open, on the grounds that "the probe is identical every time — no adaptive
+> backoff, no memory of the previous 1,390 failures." **That was wrong**, and it
+> was wrong in the specific way this whole ADR warns about: I read the outcome
+> numbers and inferred the mechanism instead of reading the mechanism. The
+> correction is kept in place rather than edited away, because a research
+> document that quietly revises its own claims is worth less than one that shows
+> which claims did not survive checking.
 
 | stage | measured |
 |---|---:|
@@ -34,13 +49,29 @@ Four autonomic loops exist today. All four were measured end to end.
 | threshold trips (`CLOSED → OPEN`) | 26 |
 | recovery probes (`OPEN → HALF_OPEN`) | **1,401** |
 | probe failures (`HALF_OPEN → OPEN`) | 1,391 |
-| **probe successes (`HALF_OPEN → CLOSED`)** | **8** |
+| probe successes (`HALF_OPEN → CLOSED`) | 8 |
 
-**A 0.57% recovery rate over 1,401 attempts.** The loop runs constantly and almost
-never closes. The reason is structural, not bad luck: **the probe is identical
-every time.** It carries no memory of the previous 1,390 failures, no adaptive
-backoff, no record of *which* failure cause was seen, and no change of approach.
-This is a retry loop wearing a recovery loop's clothes.
+`FX-02` already built the feedback leg: `_current_half_open_seconds` **doubles on
+each failed probe** and resets to base on success, capped at
+`_HALF_OPEN_BACKOFF_CAP_SECONDS = 900.0`.
+
+And the arithmetic confirms it is working, rather than merely present:
+
+```
+a provider OPEN continuously, probed at the 900s cap:
+    15 days x 86,400s / 900s  =  1,440 probes
+observed OPEN -> HALF_OPEN    =  1,401 probes
+```
+
+**A 2.7% gap.** The probe count is fully explained by a genuinely-unavailable
+provider being probed at exactly the capped rate the design intends. The 0.57%
+success rate is not a broken loop — it is an accurate measurement of an upstream
+that was down for most of the window, and the loop closed 8 times when it wasn't.
+
+**So this loop belongs in the ADR as the POSITIVE case.** It is the only one of
+the four with a feedback leg, and it is the only one whose behaviour is correct.
+That is the argument for the contract below, made from our own code rather than
+from the reference platform's.
 
 ### Loop 2 — incident → RCA
 
@@ -99,10 +130,11 @@ tool-search ranking and prompt assembly.
 
 ## The root concept: the Closed-Loop Contract
 
-Every one of the four loops implements SENSE → DECIDE → ACT. None implements
-VERIFY → LEARN → FEED BACK. So the root concept is not a new subsystem — it is a
-**contract that every autonomic mechanism in StackOwl must satisfy**, and a
-refusal to call anything "self-healing" until it does.
+All four loops implement SENSE → DECIDE → ACT. Only the circuit breaker
+implements VERIFY → LEARN → FEED BACK — and it is the only one that works. So
+the root concept is not a new subsystem. It is a **contract that every autonomic
+mechanism in StackOwl must satisfy**, generalised from the mechanism that already
+does, plus a refusal to call anything "self-healing" until it satisfies it.
 
 ```
    ┌───────── SENSE ──────────┐        structural signal, never English-matched
@@ -129,12 +161,23 @@ A mechanism that cannot name its actuator is a diagnosis, not a recovery.
 D02.6 established this for provider failures: classify by status code and
 exception type, never by matching English in a message. **The platform violates
 its own rule at the root of its healing primitive:**
-`infra/resilience.py::DEFAULT_DEAD_HANDLE_MARKERS` is a hardcoded list of 19
-English substrings (`"Connection closed"`, `"database is locked"`, `"Broken
-pipe"`…) used to decide whether a resource died. It is the same design D02.6
-explicitly refused to port from the reference platform, sitting in our own ADR-6
-foundation, and it silently fails for any non-English locale or reworded SDK
-message. **This is the highest-leverage correctness fix in the concept.**
+`infra/resilience.py::looks_like_dead_handle` was a hardcoded list of 19 English
+substrings (`"Connection closed"`, `"database is locked"`, `"Broken pipe"`…)
+deciding whether a resource died — governing the retry path for EVERY tool and
+the whole browser stack. The same design D02.6 refused to port from the reference
+platform, sitting in our own ADR-6 foundation.
+
+**SHIPPED 2026-08-05 (`DEBT-41`).** Type first, text last: `ConnectionError` and
+`EOFError`, plus playwright/aiohttp/httpx/websockets probed lazily by (module,
+attribute). The substring pass survives only because Playwright genuinely raises
+a bare `Error` whose sole signal is its message — and every use of it now logs,
+so our remaining dependence on the fragile path is measured rather than assumed.
+
+A detail that makes the case better than argument did: while verifying a restart
+the same day, a shutdown race raised `sqlite3.ProgrammingError("Cannot operate on
+a closed database.")` — a string **not** in the markers. Healing fired only
+because the chained `ValueError("Connection closed")` happened to contain one
+that was. Luck, not classification.
 
 **② ACTUATOR — something that can actually change the outcome.**
 The lesson is one day old and expensive: D02.6 shipped `RecoveryAction.COMPRESS`
@@ -150,10 +193,13 @@ Already solved, and it is the platform's genuine advantage: `ToolResult.verified
 raise.
 
 **④ FEEDBACK — the next attempt must differ.**
-The missing leg, everywhere. Concretely:
-- the breaker probe must carry the failure cause and an adaptive interval;
+The missing leg in three of four. The breaker shows what it looks like when
+present: `_current_half_open_seconds` doubles per failed probe and resets on
+success, so a 30-second outage and a 6-hour one are not probed identically.
+What the other three need:
 - an RCA verdict must change the next turn, not wait for the model to volunteer;
-- a lesson must be injected, not offered.
+- a lesson must be injected, not offered;
+- a skill catalog must age, or its ranking signal drowns (shipped — see #1).
 
 **Architectural principle, taken from the reference platform:** write the
 improvement into **the artifact the agent already reads** — the skill, the
@@ -199,15 +245,26 @@ Ordered by (measured value × confidence), not by effort.
 
 | # | intervention | closes | evidence | risk |
 |---|---|---|---|---|
-| **1** | **Skill lifecycle + decay** — drive `active/stale/archived` off the usage counters we already record; never delete | ⑤ DECAY | 421 skills, 33 used, 0 retired | low — deterministic, reversible |
-| **2** | **Structural death detection** — replace `DEFAULT_DEAD_HANDLE_MARKERS` with exception-type/errno classification | ① SIGNAL | 19 hardcoded English strings in the ADR-6 root | low — same call sites |
-| **3** | **Adaptive breaker probe** — carry the failure cause, widen the interval on repeated failure | ④ FEEDBACK | 1,401 probes → 8 successes | medium |
+| ~~1~~ | **Skill lifecycle + decay** — `active/stale/archived` off the usage counters we already record; never delete | ⑤ DECAY | 421 skills, 33 used, 0 retired | **SHIPPED** `e45f3d3a` |
+| ~~1b~~ | **Reinforce, don't duplicate** — the synthesizer deduped on evidence (trace_ids), so a lesson re-derived from a new incident always looked new | ④ FEEDBACK | 265 of 407 skills are numbered duplicates; one exists 21x | **SHIPPED** `48dbffd4` |
+| ~~2~~ | **Structural death detection** — exception types instead of 19 English substrings | ① SIGNAL | governs every tool's retry path | **SHIPPED** `e6d09c1e` |
+| ~~3~~ | ~~Adaptive breaker probe~~ — **WITHDRAWN.** Already implemented by `FX-02`; the probe count is explained to within 2.7% by the existing 900s backoff cap. Nothing to fix. | — | — | — |
 | **4** | **Lesson injection** — inject at assembly instead of waiting for `note_applied_lesson` | ④ FEEDBACK | 2,680 stored → 1 applied | medium — touches the prompt (Law 1) |
 | **5** | **Post-turn review fork** — the reference platform's loop, on our verification primitive | ②③④ | no equivalent exists | high — new subsystem |
 
-Intervention **1** is first on merit, not convenience: it is the only one whose
-signal is already recorded, whose action is deterministic and reversible, and
-whose effect is immediately measurable in prompt size and tool-search ranking.
+Intervention **1** was first on merit, not convenience: the only one whose signal
+was already recorded, whose action is deterministic and reversible, and whose
+effect is immediately measurable in prompt size and tool-search ranking.
+
+**1b was not on the original list.** It surfaced from the dry run: the first
+names the curator proposed marking stale were `avoid_shell_for_web_fetching-1`
+and `cronjob_fail_recovery_and_routing_fix-1/-2/-3`. Measuring that turned up
+265 numbered duplicates of 142 base names — the improvement loop failing in
+exactly the way the ADR describes, inside itself. Building the decay leg is what
+made the duplication visible; that is the contract paying for itself immediately.
+
+**Remaining: 4 and 5.** Lesson injection is the bigger prize (2,680 stored, 1
+applied) and the riskier change, because it touches prompt assembly and Law 1.
 
 ## Invariants for anything built under this ADR
 
@@ -236,10 +293,11 @@ whose effect is immediately measurable in prompt size and tool-search ranking.
 ```bash
 # RAN 2026-08-05 — every figure in this document
 
-# Loop 1 — breaker transitions
+# Loop 1 — breaker transitions (the POSITIVE case)
 cat ~/.stackowl/logs/stackowl*.jsonl | jq -r 'select(type=="object" and ((.msg//"")
   |test("state transition")))|.msg' | sed 's/.*state transition //' | sort | uniq -c
 # -> 1401 OPEN->HALF_OPEN / 1391 HALF_OPEN->OPEN / 26 CLOSED->OPEN / 8 HALF_OPEN->CLOSED
+# and 15d x 86400s / 900s cap = 1440 predicted -> the backoff is working, not absent
 
 # Loop 3 — lessons stored vs applied
 cat ~/.stackowl/logs/stackowl*.jsonl | jq -r 'select(type=="object" and ((.msg//"")
