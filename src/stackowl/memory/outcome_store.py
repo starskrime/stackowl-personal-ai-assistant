@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 
 from stackowl.db.pool import DbPool
+from stackowl.infra import lesson_experiment
 from stackowl.infra.observability import log
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
@@ -71,6 +72,11 @@ class TaskOutcome:
     # events fired during THIS turn — 0 for the overwhelming common case.
     retry_lineage_id: str | None = None
     retry_event_count: int = 0
+    # ADR-19 #4 (migration 0108) — which arm of the lesson-injection experiment
+    # this turn was in: "injected", "held_out", or None. None means the turn is
+    # not evidence for EITHER side (recorded before the arm was resolved, or
+    # from before the experiment existed) and must never be counted as control.
+    lessons_arm: str | None = None
 
 
 def is_positive_signal(outcome: TaskOutcome) -> bool:
@@ -166,6 +172,7 @@ class TaskOutcomeStore(OwnedRepository):
                 "failed_capability": failed_capability,
                 "retry_lineage_id": retry_lineage_id,
                 "retry_event_count": retry_event_count,
+                "lessons_arm": lesson_experiment.current_arm(),
             }},
         )
         await self._db.execute(
@@ -175,8 +182,8 @@ class TaskOutcomeStore(OwnedRepository):
                    step_durations, input_text, response_text, captured_at,
                    tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
                    recovered_via_tool, failed_capability, retry_lineage_id,
-                   retry_event_count
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   retry_event_count, lessons_arm
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_key, owl_name, channel, int(success),
@@ -191,6 +198,10 @@ class TaskOutcomeStore(OwnedRepository):
                 failed_capability,
                 retry_lineage_id,
                 retry_event_count,
+                # Read from the turn-scoped carrier rather than threaded through
+                # the signature: classify decides the arm, and this recorder is
+                # several hops away. Same idiom as prompt_metrics (D01.6).
+                lesson_experiment.current_arm(),
             ),
         )
         log.memory.info(

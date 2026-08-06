@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 
+from stackowl.infra import lesson_experiment
 from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.pipeline import lesson_context as lc
@@ -697,7 +698,17 @@ async def run(state: PipelineState) -> PipelineState:
     )
     # Cross-source lessons (Learning Commit 5) — reflections/tool heuristics/
     # pellets from the unified LanceDB lessons index.
-    lessons_block = await _gather_lessons(state.input_text, limit=3, owl_name=state.owl_name)
+    #
+    # ADR-19 #4 — a fraction of SESSIONS are held out so the effect of injecting
+    # them is measurable at all. Keyed on the session, never the turn: the block
+    # is part of the system prompt, and a per-turn decision would change the
+    # prompt mid-conversation, which is the exact defect D01.1 fixed.
+    lessons_arm = lesson_experiment.resolve_and_record(state.session_key)
+    lessons_block = (
+        ""
+        if lessons_arm == lesson_experiment.ARM_HELD_OUT
+        else await _gather_lessons(state.input_text, limit=3, owl_name=state.owl_name)
+    )
     # Combine: prefs first (always in view), then skills (what tactics apply),
     # then lessons (cross-source learnings, including reflections — FR-3),
     # then actions (what was done before), then long-term context, then graph.

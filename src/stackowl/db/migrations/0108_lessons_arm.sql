@@ -1,0 +1,27 @@
+-- ADR-19 intervention #4 — make lesson injection FALSIFIABLE.
+--
+-- WHY. Measured 2026-08-05: lessons ARE injected on every turn (classify.py
+-- calls _gather_lessons unconditionally, 2,193 classified turns in the window),
+-- and 2,680 of them are stored. The feedback leg is closed. What is missing is
+-- obligation (3), VERIFY: nothing measures whether injecting them helps. The
+-- only signal is `note_applied_lesson`, a tool the model must volunteer to call,
+-- and it called it ONCE in fifteen days.
+--
+-- So the platform pays prompt tokens on 100% of turns for a mechanism whose
+-- effect has never been observed. Not because it fails — because nothing looks.
+--
+-- WHAT THIS ADDS. One nullable column recording which arm a turn was in, so the
+-- quality_score this table ALREADY records (~400 scored turns/week) becomes a
+-- comparison instead of a single undifferentiated number.
+--
+--   lessons_arm  'injected' | 'held_out' | NULL
+--
+-- NULL is the honest value for every existing row and for any turn recorded
+-- before the arm was resolved: those turns are not evidence for either side and
+-- must not be counted as the control.
+--
+-- SAFE: additive, nullable, no default rewrite, no index needed at this volume.
+-- Reversing the experiment is setting HOLD_OUT_PERCENT to 0 — the column can
+-- stay, holding the record of what was measured.
+
+ALTER TABLE task_outcomes ADD COLUMN lessons_arm TEXT;

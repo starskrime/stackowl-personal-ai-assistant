@@ -621,6 +621,48 @@ known_debt:
       prepends a preamble (changed to endswith, which pins the structure too).
       Verified: 373 passed across delivery/notification/ephemeral/canary.
 
+  - id: DEBT-49
+    found: 2026-08-05
+    what: "ADR-19 (3) — lessons are injected into EVERY turn and nothing has ever measured whether it helps."
+    evidence: >
+      classify.py:700 calls _gather_lessons unconditionally; 2,193 classified
+      turns in the 15-day window; 2,680 lessons stored. The ONLY signal that a
+      lesson mattered is `note_applied_lesson`, a tool the model must volunteer
+      to call — and it called it ONCE in fifteen days.
+      (The earlier reading of "31 retrievals" was a LOGGING ARTIFACT: those lines
+      are log.engine.debug and this deployment runs at INFO. Corrected in ADR-19.)
+    why_it_matters: >
+      Prompt tokens are paid on 100% of turns for a mechanism whose effect has
+      never been observed — not because it fails, but because nothing looks.
+      Obligation (3), VERIFY, is the leg that is missing here; the FEEDBACK leg
+      is closed and closed well.
+    status: 'SHIPPED 2026-08-05 — the experiment, not a conclusion.'
+    resolution: >
+      A hold-out. infra/lesson_experiment.py assigns each SESSION to an arm and
+      classify skips the lessons block for the held-out arm; migration 0108 adds
+      task_outcomes.lessons_arm so the quality_score already recorded (~400
+      scored turns/week) becomes a comparison.
+      KEYED ON THE SESSION, NOT THE TURN — the load-bearing decision. The block
+      is part of the system prompt, so a per-turn coin flip would change the
+      prompt mid-conversation and reintroduce the exact defect D01.1 fixed, in
+      the name of measuring a different one. Hashed rather than random because
+      the gateway and core are separate processes and Python's hash() is salted
+      per process; both must agree about the same session.
+      REPORTED SPLIT BY LANE, corrected before shipping after measuring the
+      population: 3,702 scored MACHINE-lane turns vs 329 interactive over 30
+      days, at 0.52 vs 0.39. A single aggregate would be 92% background jobs,
+      the interactive answer invisible inside it, and any lane-mix difference
+      between arms could flip the sign.
+      Ships ON at HOLD_OUT_PERCENT=20 (measured against the live catalogue:
+      182 of 940 real sessions, 19%). Reversal is setting it to 0 — every turn
+      then reports "injected" and behaviour is exactly as before.
+      Verified: 11 experiment tests + 3 persistence + 11 brief tests, 1,125
+      passed in tests/pipeline, ruff 46 / mypy 78 held, clean restart.
+    NOT_yet_answered: >
+      Whether lessons help. That is the POINT — the deliverable here is a
+      measurement apparatus, not a verdict. The brief prints the comparison only
+      once BOTH arms have scored turns in a lane.
+
   - id: DEBT-48
     found: 2026-08-05
     what: "During an LLM-backend outage the self-healing machinery AMPLIFIED the outage ~10x: 871 of 1,294 turns on 2026-07-29 were the RCA channel."

@@ -125,3 +125,107 @@ async def test_builtin_skills_do_not_inflate_the_used_ratio(tmp_db):
     section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
 
     assert "skills_ever_used:0/1" in section.items
+
+
+# --------------------------------------------------------------------------- #
+# ADR-19 #4 — the lesson experiment reports itself.
+# --------------------------------------------------------------------------- #
+
+
+async def _outcome(
+    db, trace: str, arm: str | None, quality: float | None, session: str = "chat-1",
+) -> None:
+    await db.execute(
+        "INSERT INTO task_outcomes (trace_id, session_key, owl_name, channel, "
+        "success, latency_ms, tool_call_count, captured_at, quality_score, "
+        "lessons_arm, owner_id) "
+        "VALUES (?, ?, 'o', 'cli', 1, 1.0, 0, 1.0, ?, ?, 'principal-default')",
+        (trace, session, quality, arm),
+    )
+
+
+@pytest.mark.asyncio
+async def test_both_arms_are_reported_once_both_have_data(tmp_db):
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _outcome(tmp_db, "t1", "injected", 0.8)
+    await _outcome(tmp_db, "t2", "injected", 0.6)
+    await _outcome(tmp_db, "t3", "held_out", 0.4)
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    line = next(i for i in section.items if i.startswith("lessons_effect"))
+    assert "[interactive]" in line
+    assert "injected:0.70(n=2)" in line
+    assert "held_out:0.40(n=1)" in line
+
+
+@pytest.mark.asyncio
+async def test_a_ONE_SIDED_result_is_not_reported(tmp_db):
+    """A single arm is not a comparison. Printing it would invite a conclusion
+    from noise — which is the failure mode this whole ADR is about."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _outcome(tmp_db, "t1", "injected", 0.8)
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    assert not any(i.startswith("lessons_effect") for i in section.items)
+
+
+@pytest.mark.asyncio
+async def test_unlabelled_and_unscored_turns_are_excluded(tmp_db):
+    """A NULL arm means the turn is evidence for NEITHER side. Counting it as
+    control would quietly bias the comparison toward 'lessons help'."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _outcome(tmp_db, "t1", "injected", 0.8)
+    await _outcome(tmp_db, "t2", "held_out", 0.4)
+    await _outcome(tmp_db, "t3", None, 0.1)        # pre-experiment row
+    await _outcome(tmp_db, "t4", "injected", None)  # never scored
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    line = next(i for i in section.items if i.startswith("lessons_effect"))
+    assert "injected:0.80(n=1)" in line, line
+    assert "held_out:0.40(n=1)" in line, line
+
+
+@pytest.mark.asyncio
+async def test_machine_and_interactive_lanes_are_reported_SEPARATELY(tmp_db):
+    """Measured before shipping: 3,702 scored machine-lane turns against 329
+    interactive ones, at very different baselines (0.52 vs 0.39). A single
+    aggregate would be 92% background jobs, hiding the interactive answer — and
+    a lane-mix difference between arms could flip the sign outright."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _outcome(tmp_db, "i1", "injected", 0.40, session="chat-1")
+    await _outcome(tmp_db, "i2", "held_out", 0.30, session="chat-2")
+    await _outcome(tmp_db, "m1", "injected", 0.90, session="goal-goal_execution-x")
+    await _outcome(tmp_db, "m2", "held_out", 0.80, session="incident-y")
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+    lines = [i for i in section.items if i.startswith("lessons_effect")]
+
+    assert len(lines) == 2, lines
+    inter = next(i for i in lines if "[interactive]" in i)
+    machine = next(i for i in lines if "[machine]" in i)
+    assert "injected:0.40(n=1)" in inter and "held_out:0.30(n=1)" in inter
+    assert "injected:0.90(n=1)" in machine and "held_out:0.80(n=1)" in machine
+
+
+@pytest.mark.asyncio
+async def test_a_lane_with_only_one_arm_is_skipped_while_the_other_reports(tmp_db):
+    """Each lane is judged on its own evidence — a complete comparison must not
+    be withheld because the other lane is one-sided."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _outcome(tmp_db, "i1", "injected", 0.40, session="chat-1")
+    await _outcome(tmp_db, "i2", "held_out", 0.30, session="chat-2")
+    await _outcome(tmp_db, "m1", "injected", 0.90, session="goal-x")
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+    lines = [i for i in section.items if i.startswith("lessons_effect")]
+
+    assert len(lines) == 1
+    assert "[interactive]" in lines[0]

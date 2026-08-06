@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict
 from stackowl.brief.models import BriefSection
 from stackowl.config.settings import Settings
 from stackowl.infra.observability import log
+from stackowl.sessions.models import MACHINE_LANE_PREFIXES
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.db.pool import DbPool
@@ -342,6 +343,47 @@ class AutonomicHealthAssembler:
                 )
                 for r in worst:
                     items.append(f"failing:{r['job_id']} x{r['n']}")
+
+        # 3. STEP — ADR-19 #4: is lesson injection actually helping? Reported
+        # here because an experiment nobody reads is precisely the failure this
+        # ADR is about.
+        #
+        # SPLIT BY LANE, deliberately. Measured before shipping: over 30 days
+        # there were 3,702 scored MACHINE-lane turns against 329 interactive
+        # ones, at very different baselines (0.52 vs 0.39). A single aggregate
+        # would be 92% background jobs — the interactive answer, which is the
+        # one anybody cares about, would be invisible inside it, and any
+        # difference in lane mix between the arms could flip the sign outright.
+        lane_case = " OR ".join(
+            f"session_key LIKE '{prefix}%'" for prefix in MACHINE_LANE_PREFIXES
+        )
+        arms = await self._db.fetch_all(
+            f"SELECT lessons_arm AS arm, "  # noqa: S608 — prefixes are module constants
+            f"CASE WHEN {lane_case} THEN 'machine' ELSE 'interactive' END AS lane, "
+            f"COUNT(*) AS n, AVG(quality_score) AS q "
+            f"FROM task_outcomes "
+            f"WHERE quality_score IS NOT NULL AND lessons_arm IS NOT NULL "
+            f"GROUP BY lessons_arm, lane",
+        )
+        by_lane: dict[str, dict[str, tuple[int, float]]] = {}
+        for r in arms:
+            if r["q"] is None:
+                continue
+            by_lane.setdefault(str(r["lane"]), {})[str(r["arm"])] = (
+                int(str(r["n"])), float(str(r["q"])),
+            )
+        for lane in ("interactive", "machine"):
+            scored = by_lane.get(lane, {})
+            # Only once BOTH arms have scored turns: one side is not a
+            # comparison, and printing it invites a conclusion from noise.
+            if len(scored) != 2:
+                continue
+            inj_n, inj_q = scored["injected"]
+            held_n, held_q = scored["held_out"]
+            items.append(
+                f"lessons_effect[{lane}] injected:{inj_q:.2f}(n={inj_n}) "
+                f"held_out:{held_q:.2f}(n={held_n})"
+            )
 
         # 2. DECISION — nothing measurable is a legitimate outcome, not an error.
         if not items:
