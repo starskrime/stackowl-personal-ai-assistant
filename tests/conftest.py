@@ -145,3 +145,31 @@ def fs_sandbox(tmp_path: Path) -> Generator[dict[str, Path], None, None]:
     finally:
         os.environ.pop("STACKOWL_DATA_DIR", None)
         os.environ.pop("STACKOWL_LOG_DIR", None)
+
+
+@pytest.fixture(autouse=True)
+def _caplog_can_see_stackowl_logs() -> Generator[None, None, None]:
+    """Keep ``caplog`` able to observe ``stackowl.*`` records.
+
+    ``observability.configure_logging`` sets ``propagate = False`` on the
+    ``stackowl`` logger so records go to the JSONL file and not to stderr. That
+    is correct in production — but pytest's ``caplog`` attaches its handler to
+    the TRUE root logger, so once ANY test triggers that configuration, every
+    later ``caplog`` assertion about a ``stackowl.*`` logger silently sees
+    nothing.
+
+    The result is an order-dependent suite: tests that assert "we logged a LOUD
+    ERROR" pass in isolation and fail once something earlier configured logging.
+    Two of them (kuzu degradation) were doing exactly that, and the failure mode
+    is the worst kind — it looks like the code stopped logging.
+
+    Restored per-test rather than once, because configure_logging may run at any
+    point during a test and flip it back.
+    """
+    logger = logging.getLogger("stackowl")
+    previous = logger.propagate
+    logger.propagate = True
+    try:
+        yield
+    finally:
+        logger.propagate = previous

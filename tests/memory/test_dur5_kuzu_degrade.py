@@ -23,6 +23,20 @@ from stackowl.scheduler.base import HandlerRegistry
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Never build the memory assembly against the operator's REAL home.
+
+    MemoryAssembly opens the knowledge graph at StackowlHome.kuzu_dir(), and
+    Kuzu takes an exclusive file lock — so without this, these tests raced the
+    running platform for the live graph and degraded kuzu_adapter to None. The
+    standing rule here is to leave StackOwl running after every fix, which made
+    that a near-permanent red. A test that reads live state is not a slow test,
+    it is a wrong one.
+    """
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "stackowl-home"))
+
+
 class _StubProvider(ModelProvider):
     @property
     def name(self) -> str:

@@ -166,7 +166,9 @@ class MemoryAssembly:
         # status. classify + kuzu_sync already tolerate a None adapter.
         from stackowl.health.contributors import GraphContributor
 
-        kuzu_dir = StackowlHome.home() / "kuzu"
+        # Via the accessor, not a second hand-built path — building it here is
+        # what let this diverge from StackowlHome.kuzu_dir() in the first place.
+        kuzu_dir = StackowlHome.kuzu_dir()
         kuzu_adapter: KuzuAdapter | None
         if not open_graph:
             # This process (the gateway) must NOT open the single-writer Kuzu DB —

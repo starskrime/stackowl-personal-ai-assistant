@@ -45,7 +45,23 @@ class StackowlHome:
 
     @classmethod
     def kuzu_dir(cls) -> Path:
-        return cls.workspace() / "kuzu"
+        """The knowledge-graph directory.
+
+        ``home()/kuzu``, NOT ``workspace()/kuzu``. This accessor used to return
+        the latter while ``MemoryAssembly.build`` opened the former directly,
+        so there were two graph locations and only one of them had ever been
+        written. Measured 2026-08-05:
+
+            ~/.stackowl/kuzu            30M, WAL modified that day   <- live
+            ~/.stackowl/workspace/kuzu  empty, created 2026-05-24
+
+        Unified onto the live path rather than the "tidier" one: the alternative
+        was migrating 30MB of the user's graph to satisfy a naming preference,
+        which is all risk and no benefit. Nothing had pinned this location — no
+        test asserted it and the only consumer passed its own path — which is
+        exactly why the split survived unnoticed.
+        """
+        return cls.home() / "kuzu"
 
     @classmethod
     def lancedb_dir(cls) -> Path:

@@ -123,13 +123,27 @@ class FakePruner:
 
 
 class FakeKuzu:
-    """Captures every kuzu_sync call for assertions."""
+    """Captures every kuzu_sync call for assertions.
+
+    Mirrors the REAL ``KuzuSyncJobHandler.execute(job, *, budget_s=None)``.
+    DEBT-19 added the deadline budget to the real handler and this stub was not
+    updated, so every dream-worker pass died with "FakeKuzu.execute() got an
+    unexpected keyword argument 'budget_s'" — six tests failing for a reason
+    unrelated to anything they assert.
+
+    Third instance of the shape DEBT-38 named: a stub that does not track the
+    real interface hides a genuine assertion behind a TypeError indefinitely.
+    ``budget_s`` is RECORDED, not just accepted — a stub that swallows an
+    argument silently is how this class of drift becomes invisible again.
+    """
 
     def __init__(self) -> None:
         self.calls: list[Job] = []
+        self.budgets: list[float | None] = []
 
-    async def execute(self, job: Job) -> JobResult:
+    async def execute(self, job: Job, *, budget_s: float | None = None) -> JobResult:
         self.calls.append(job)
+        self.budgets.append(budget_s)
         return JobResult(
             job_id=job.job_id,
             success=True,

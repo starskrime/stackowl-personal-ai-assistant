@@ -29,12 +29,46 @@ class TestReadTargetProtected:
         monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
         StackowlHome.ensure_exists()
 
-    @pytest.mark.parametrize("p", ["stackowl.db", "lancedb", "lancedb/data.lance", "kuzu", "skills"])
+    # Workspace-RELATIVE store paths only.
+    #
+    # "kuzu" and "skills" are deliberately NOT here. Both stores now live under
+    # home() rather than under the workspace — skills moved out in D05.1, and
+    # the graph was found on 2026-08-05 to have always been at home()/kuzu — so
+    # no workspace-relative string names either of them, and asserting one only
+    # tested that a non-existent path happened to be refused. Both are asserted
+    # ABSOLUTELY below, against the accessor that resolves the real location,
+    # which is strictly stronger.
+    @pytest.mark.parametrize("p", ["stackowl.db", "lancedb", "lancedb/data.lance"])
     def test_internal_store_reads_are_protected(self, p: str) -> None:
         assert read_target_protected({"path": p}) is True
 
     def test_absolute_store_path_protected(self) -> None:
         assert read_target_protected({"path": str(StackowlHome.db_path())}) is True
+
+    def test_the_REAL_skills_directory_is_protected(self) -> None:
+        """Skills moved to home()/skills in D05.1. The relative "skills" param
+        had been failing ever since — a red test carrying a security assertion,
+        which is the worst kind to leave red."""
+        assert read_target_protected({"path": str(StackowlHome.skills_dir())}) is True
+        assert read_target_protected(
+            {"path": str(StackowlHome.skills_dir() / "learned")}
+        ) is True
+
+    def test_the_REAL_knowledge_graph_is_protected(self) -> None:
+        """The graph is the highest-value bulk-read target after the DB, and
+        until 2026-08-05 it was NOT in the protected roots.
+
+        _protected_roots() calls StackowlHome.kuzu_dir(), which used to return
+        workspace/kuzu — an empty directory nothing had ever written — while
+        MemoryAssembly opened home()/kuzu directly. So the guard protected the
+        wrong path and the live 30MB graph was covered only incidentally, by
+        data_root containment. Now the accessor and the assembly agree, and this
+        asserts the store that actually holds data.
+        """
+        assert read_target_protected({"path": str(StackowlHome.kuzu_dir())}) is True
+        assert read_target_protected(
+            {"path": str(StackowlHome.kuzu_dir() / "graph.kuzu")}
+        ) is True
 
     def test_ordinary_workspace_file_is_allowed(self) -> None:
         # A normal user/input file in the workspace is NOT a protected store → allowed.

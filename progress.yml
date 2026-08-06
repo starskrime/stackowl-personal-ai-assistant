@@ -565,13 +565,34 @@ known_debt:
       The test asserts a REAL past incident — that the default BriefSettings()
       channel must resolve to something deliverable rather than the structurally
       dead 'cli' default. While it is red, that regression is unguarded.
-    NOT_FIXED_deliberately: >
-      Standing rule: never autonomously patch a failing integration test. The fix
-      is almost certainly one method on the fake (`async def send_ephemeral(self,
-      *a, **k): ...` delegating to send_text), but confirming that it should
-      delegate rather than no-op is Bakir's call, because the assertion counts
-      sends. Raised here rather than fixed while he was asleep.
-    status: open
+    my_first_diagnosis_was_WRONG: >
+      I wrote "the fix is almost certainly one method on the fake". It was not.
+      The fake was a legitimate adapter shape; the defect was in PRODUCTION.
+    status: 'FIXED 2026-08-05 — Bakir: "Fix always".' 
+    resolution: >
+      ChannelAdapter never declares send_ephemeral; deliverer.py did
+      `cast("_EphemeralSender", adapter).send_ephemeral(...)`. A cast is a
+      promise to the type checker, never a runtime guarantee — so ANY adapter
+      without the method raises AttributeError and the notification is LOST.
+      Slack, discord, whatsapp and cli are all missing it, so a critical alert
+      routed to any of them dies. The Protocol's docstring claimed "at runtime
+      this is only ever invoked for a telegram target" — an assumption the code
+      did not enforce, and already wrong once in production (10b4942c:
+      "SocketChannelAdapter missing send_ephemeral crashed telegram_canary",
+      fixed then by adding the method to that one adapter instead of removing
+      the unverified assertion).
+      _EphemeralSender is now @runtime_checkable and the call site checks before
+      using it, degrading to an ordinary targeted send with a WARNING: an alert
+      that arrives and stays beats one lost because it could not be tidied up
+      afterwards. Fourth instance in two days of a docstring asserting a
+      guarantee the code does not enforce.
+      Three further pre-existing failures fixed alongside: the fake
+      ProviderRegistry returned a bare object where the real get_by_tier /
+      get_with_cascade return tuple[ModelProvider, str]; the heartbeat smoke
+      compared raw text against a MarkdownV2-escaped wire payload; and
+      scheduled_goal_delivers asserted equality where a scheduled run now
+      prepends a preamble (changed to endswith, which pins the structure too).
+      Verified: 373 passed across delivery/notification/ephemeral/canary.
 
   - id: DEBT-48
     found: 2026-08-05
@@ -667,8 +688,32 @@ known_debt:
     evidence: "Confirmed in a detached worktree at HEAD before any of today's json_parser change. assert components.kuzu_adapter is not None -> None."
     NOT_caused_by_todays_work: "Verified at HEAD in an isolated worktree. A JSON-parsing change cannot affect Kuzu adapter construction."
     why_it_matters: "The graph adapter is one of the eleven components the memory assembly is supposed to wire; while red, nothing guards that wiring."
-    NOT_FIXED_deliberately: "Standing rule: never autonomously patch a failing integration test. Reported instead."
-    status: open
+    status: 'FIXED 2026-08-05 — and it exposed a real gap, not just a red test.'
+    resolution: >
+      TWO defects, one test.
+      (1) The test built MemoryAssembly against the operator's REAL
+      ~/.stackowl graph. Kuzu takes an exclusive file lock, so it failed with
+      "Could not set lock on file" WHENEVER THE PLATFORM WAS RUNNING — and the
+      standing rule here is to leave StackOwl running after every fix, so it was
+      red essentially always. A test that reads live state is not a slow test,
+      it is a wrong one. Now isolated via STACKOWL_HOME.
+      (2) Root-causing that surfaced a SPLIT BRAIN in the graph location:
+      StackowlHome.kuzu_dir() returned workspace()/kuzu while
+      MemoryAssembly.build opened home()/kuzu directly. BOTH existed on disk —
+      ~/.stackowl/kuzu at 30MB with a WAL modified that day, and
+      ~/.stackowl/workspace/kuzu empty since 2026-05-24. Nothing had pinned the
+      location (no test asserted it, and the only consumer passed its own path),
+      which is exactly why it survived.
+      SECURITY CONSEQUENCE: sandbox/ptc/confine.py::_protected_roots calls
+      kuzu_dir(), so the PTC read-guard was protecting an empty directory while
+      the live graph was covered only incidentally by data_root containment.
+      Unified onto home()/kuzu — the path that actually holds data — so no
+      migration of the user's 30MB graph was needed. The confine test now
+      asserts the REAL store absolutely, which is strictly stronger than the
+      workspace-relative string it used to check. The same relative-name rot had
+      ALSO been failing for "skills" ever since D05.1 moved them out of the
+      workspace; fixed the same way.
+      Verified: 147 passed across paths/kuzu/graph_health/confine/story_6_6.
 
   - id: DEBT-45
     found: 2026-08-05

@@ -17,6 +17,23 @@ from stackowl.scheduler.base import HandlerRegistry
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Point StackowlHome at a temp dir for every test in this module.
+
+    MemoryAssembly.build opens the knowledge graph at StackowlHome.kuzu_dir().
+    Without this, these tests opened the operator's REAL ~/.stackowl graph — and
+    Kuzu takes an exclusive file lock, so the build failed with "Could not set
+    lock on file" and degraded kuzu_adapter to None WHENEVER THE PLATFORM WAS
+    RUNNING. Since the standing rule here is to restart and leave StackOwl
+    running after every fix, that meant this test was red essentially always,
+    for a reason that had nothing to do with assembly wiring.
+
+    A test that reads live state is not a slow test, it is a wrong one.
+    """
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "stackowl-home"))
+
+
 class _StubProvider(ModelProvider):
     """Cheapest possible ModelProvider for assembly tests — never called."""
 

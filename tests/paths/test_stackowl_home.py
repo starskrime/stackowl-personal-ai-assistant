@@ -62,7 +62,12 @@ def test_ensure_exists_creates_full_tree_idempotent(tmp_path: Path, monkeypatch:
     assert home.exists()
     assert (home / ".secrets").exists()
     assert (home / "workspace").exists()
-    assert (home / "workspace" / "kuzu").exists()
+    # The knowledge graph lives at home()/kuzu, NOT workspace()/kuzu. Both
+    # directories existed on the operator's box on 2026-08-05 — the live 30MB
+    # graph in the former, an empty directory created 2026-05-24 in the latter —
+    # because StackowlHome.kuzu_dir() and MemoryAssembly disagreed about where
+    # it was. Unified onto the path that actually holds data.
+    assert (home / "kuzu").exists()
     assert (home / "workspace" / "lancedb").exists()
     assert (home / "workspace" / "tools").exists()
     assert (home / "workspace" / "knowledge").exists()
