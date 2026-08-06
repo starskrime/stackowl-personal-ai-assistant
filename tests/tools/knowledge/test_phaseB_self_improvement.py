@@ -221,12 +221,19 @@ async def synth_services(
     The tool builds the handler with ``skills_root=StackowlHome.skills_dir()`` so
     the store must index that SAME root — point both at a tmp workspace.
     """
-    workspace = tmp_path / "workspace"
-    skills_root = workspace / "skills"
-    skills_root.mkdir(parents=True)
+    # Patch HOME, not workspace. D05.1 moved skills out of the workspace, so
+    # StackowlHome.skills_dir() became home()/skills — and this fixture, which
+    # only redirected workspace(), silently stopped isolating anything. The tool
+    # then wrote into the OPERATOR'S REAL ~/.stackowl/skills on every run: five
+    # scrape-and-process* directories were found there on 2026-08-05, one of
+    # them minutes old. The test's own docstring above says "against a tmp
+    # StackowlHome.skills_dir()"; this makes that true again.
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(
-        StackowlHome, "workspace", classmethod(lambda cls: workspace)
+        StackowlHome, "workspace", classmethod(lambda cls: tmp_path / "workspace")
     )
+    skills_root = StackowlHome.skills_dir()
+    skills_root.mkdir(parents=True, exist_ok=True)
     components = await SkillsAssembly.build(
         db=tmp_db, tool_registry=ToolRegistry(), owl_registry=OwlRegistry(),
         skills_root=skills_root, builtin_seed_dir=tmp_path / "no_builtins",

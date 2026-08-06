@@ -51,9 +51,18 @@ def wired(
     Yields (tool, store, reindex_calls) where ``reindex_calls`` records each
     reindex invocation. The skills tree lives under a tmp STACKOWL_DATA_DIR.
     """
+    # STACKOWL_DATA_DIR alone isolates NOTHING here: StackowlHome.skills_dir()
+    # resolves from STACKOWL_HOME (paths.py), so skill_manage was creating,
+    # editing and deleting skills in the OPERATOR'S REAL ~/.stackowl/skills.
+    # Found 2026-08-05: a stray "my-skill" was sitting in the live catalog from
+    # an earlier run, and these tests had started FAILING because of their own
+    # past pollution ("Skill 'my-skill' already exists at
+    # /home/boss/.stackowl/skills/learned/my-skill").
     workspace = tmp_path / "workspace"
     (workspace / "skills" / "learned").mkdir(parents=True)
     monkeypatch.setenv("STACKOWL_DATA_DIR", str(workspace))
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / "skills" / "learned").mkdir(parents=True, exist_ok=True)
 
     store = SkillIndexStore(tmp_db)
 
@@ -284,6 +293,12 @@ async def test_reindex_failure_surfaces_pending(
     workspace = tmp_path / "workspace"
     (workspace / "skills" / "learned").mkdir(parents=True)
     monkeypatch.setenv("STACKOWL_DATA_DIR", str(workspace))
+    # Same isolation as the `wired` fixture — skills_dir() reads STACKOWL_HOME,
+    # so without this the test authored "flaky" into the real catalog (and a
+    # stray one was found there on 2026-08-05, making this test fail on its own
+    # leftovers).
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / "skills" / "learned").mkdir(parents=True, exist_ok=True)
     store = SkillIndexStore(tmp_db)
 
     async def _boom(*a, **k):  # noqa: ANN002, ANN003, ANN202

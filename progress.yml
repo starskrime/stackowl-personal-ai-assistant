@@ -544,8 +544,35 @@ known_debt:
       precisely the path DEBT-42 changes. The DEBT-42 fix is covered by its own
       10 unit tests, but the on-disk authoring assertion is not currently
       trustworthy on this tree.
-    NOT_FIXED_deliberately: "Standing rule: never autonomously patch failing integration tests. Root-caused and reported instead."
-    status: open
+    status: 'FIXED 2026-08-05 — 24 tests, four distinct causes, none of them the code under test.'
+    resolution: >
+      (1) PARLIAMENT (17 tests). The fake registry's resolve_capable_or_degrade
+      returned a 2-tuple while the real one has returned
+      (provider, model, degraded_from) since F125 — every synthesis died on
+      "not enough values to unpack (expected 3, got 2)". Separately the
+      _StubOrchestrator's run() kwarg was still session_key where the real
+      orchestrator takes session_id. NOTE: IngressMessage and PipelineState
+      genuinely DO take session_key, so a blanket rename is wrong — I tried it,
+      it turned 4 failures into 19, and I reverted it.
+      (2) SKILL AUTHORING. NOT the "reports created:1 with no file" defect I
+      suspected. The file WAS written and created:1 was honest — it went to
+      StackowlHome.skills_dir(), which D05.1 moved to home()/skills, while the
+      fixture only redirected workspace(). The fixture's own docstring said
+      "against a tmp StackowlHome.skills_dir()"; it had silently stopped being
+      true.
+      (3) skill_manage (6 tests) isolated on STACKOWL_DATA_DIR, but skills_dir()
+      resolves from STACKOWL_HOME — so it isolated nothing.
+      Verified: 173 passed in tests/tools/knowledge, 54 across the story suites.
+    LIVE_POLLUTION_FOUND_not_cleaned: >
+      Because (2) and (3) were unisolated, these tests have been authoring into
+      the OPERATOR'S REAL catalog. Present in ~/.stackowl/skills/learned on
+      2026-08-05: my-skill, flaky, and scrape-and-process plus -1 -2 -3 -4 (the
+      last created at 19:20 that evening by my own test run — it is what moved
+      the live skill count 421 -> 425).
+      NOT deleted: removing entries from the live catalog is user-data cleanup,
+      which needs an explicit ask. They are also harmless where they sit — being
+      unused, ADR-19's curator will mark them stale and then ARCHIVE them, which
+      is recoverable, so the decay loop cleans this up on its own.
 
   - id: DEBT-43
     found: 2026-08-05

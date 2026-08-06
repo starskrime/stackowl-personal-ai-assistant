@@ -162,10 +162,22 @@ class MockProviderRegistry:
         self.tier_calls.append(tier)
         return self._provider
 
-    def resolve_capable_or_degrade(self, tier: str) -> tuple[ModelProvider, str | None]:
+    #: What the real registry resolves alongside the provider.
+    MODEL = "scripted-test-model"
+
+    def resolve_capable_or_degrade(
+        self, tier: str,
+    ) -> tuple[ModelProvider, str, str | None]:
+        """Mirrors the REAL signature: (provider, MODEL, degraded_from).
+
+        This returned a 2-tuple while the real one has returned 3 since F125
+        added the model to the result, so every synthesis died on
+        "not enough values to unpack (expected 3, got 2)" — 13 tests failing for
+        a reason unrelated to anything they assert.
+        """
         # The mock always serves the requested tier exactly (not degraded).
         self.tier_calls.append(tier)
-        return self._provider, None
+        return self._provider, self.MODEL, None
 
 
 def _make_session_with_rounds(
@@ -452,7 +464,7 @@ class TestPelletGenerator:
         # All carry source_type=parliament and the session id
         for fact in bridge.staged:
             assert fact.source_type == "parliament"
-            assert fact.source_ref == f"parliament:{session.session_key}"
+            assert fact.source_ref == f"parliament:{session.session_id}"
 
     async def test_bridge_failure_continues(
         self,
