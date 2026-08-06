@@ -205,7 +205,10 @@ class _FakeProviderRegistry:
     def get_by_tier(self, tier: str) -> tuple[_ScriptedSecretary, str]:
         return self._p, self.MODEL
 
-    def get_with_cascade(self, tier: str) -> tuple[_ScriptedSecretary, str]:
+    def get_with_cascade(self, preferred_tier: str) -> tuple[_ScriptedSecretary, str]:
+        # Parameter NAME matches the real registry's. It was `tier`, which works
+        # positionally and breaks the moment anyone calls it by keyword — the
+        # kind of latent drift the conformance suite exists to surface.
         return self._p, self.MODEL
 
 

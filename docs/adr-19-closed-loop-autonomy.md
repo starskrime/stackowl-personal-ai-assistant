@@ -303,7 +303,7 @@ Ordered by (measured value × confidence), not by effort.
 | ~~5~~ | **Defer diagnosis during a substrate outage** — a loop must not depend on what it heals | ⑥ | 871 of 1,294 turns were futile RCA | **SHIPPED** `ae1f2702` |
 | ~~6~~ | **Autonomic health in the brief** — the loops report themselves; live `skills_ever_used:28/411` | visibility | every finding here needed 2am jq | **SHIPPED** `048e74f8` |
 | ~~7~~ | **RCA + JSON parser tolerance** — 409 verdicts discarded to markdown strictness | ③ | 409 of 410 had BOTH fields missing | **SHIPPED** `da4b859d`, `95c485ee` |
-| **4** | **Make lesson injection falsifiable** — lessons ARE injected every turn; nothing measures whether it helps. Hold-out a sample, compare `task_outcomes` quality | ③ VERIFY | 2,193 turns injected, effect never observed | low — measurement only, no prompt change |
+| ~~4~~ | **Make lesson injection falsifiable** — hold out a fifth of SESSIONS, label each outcome, compare quality per lane | ③ VERIFY | 2,193 turns injected, effect never observed | **SHIPPED** `f405b25b` |
 | **5** | **Post-turn review fork** — the reference platform's loop, on our verification primitive | ②③④ | no equivalent exists | high — new subsystem |
 
 Intervention **1** was first on merit, not convenience: the only one whose signal
@@ -317,9 +317,16 @@ and `cronjob_fail_recovery_and_routing_fix-1/-2/-3`. Measuring that turned up
 exactly the way the ADR describes, inside itself. Building the decay leg is what
 made the duplication visible; that is the contract paying for itself immediately.
 
-**Remaining: 4 and 5.** Intervention 4 got *cheaper* once measured properly:
-lessons are already injected every turn, so the work is a hold-out experiment
-against `task_outcomes`, not a prompt change — no Law 1 exposure at all.
+**Remaining: 5.** Everything else is shipped.
+
+Intervention 4's design turned on one measurement made *before* building it: the
+scored population is 3,702 machine-lane turns against 329 interactive, at 0.52 vs
+0.39. A single aggregate comparison would have been 92% background jobs, hiding
+the interactive answer entirely, and a lane-mix difference between arms could
+have flipped its sign. It reports per lane instead. The arm is keyed on the
+SESSION rather than the turn, because the lessons block is part of the system
+prompt and a per-turn flip would have reintroduced the D01.1 defect while
+measuring a different one.
 
 ### A methodological warning, earned twice in one session
 
