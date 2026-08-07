@@ -1373,6 +1373,18 @@ class StartupOrchestrator:
         # provider.complete, so they no longer record separately (no double-count).
         provider_registry.set_cost_tracker(cost_tracker)
 
+        # D01.6 follow-up — correct historical rows that were charged the
+        # unknown-cloud fallback while the provider is actually self-hosted.
+        # `is_local_url` was purely syntactic until 2026-08-07, so a provider
+        # configured by HOSTNAME rather than IP literal was billed as cloud:
+        # 82,016 rows and ~$2,328 of imaginary spend on this box. Wired here for
+        # the same reason as the tracker above — first point where both the
+        # settings and db_pool exist. Idempotent, guarded by a stackowl_meta key,
+        # and it never raises (a bookkeeping fix must not block a boot).
+        from stackowl.providers.cost_backfill import reprice_local_history
+
+        await reprice_local_history(db_pool, self._settings)
+
         # D01.2 — durable "this endpoint honours cache_control" state. Injected
         # here for the same reason as the tracker above: this is the first point
         # where both the registry and db_pool exist. Ships ON, not behind a flag —

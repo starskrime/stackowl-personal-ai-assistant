@@ -187,7 +187,7 @@ def _build_registry_with_mocks() -> ProviderRegistry:
 
 async def test_cascade_returns_preferred_when_all_closed() -> None:
     reg = _build_registry_with_mocks()
-    chosen = reg.get_with_cascade("fast")
+    chosen, _model = reg.get_with_cascade("fast")
     assert chosen.name == "fast-mock"
 
 
@@ -200,7 +200,7 @@ async def test_cascade_skips_open_provider_and_falls_to_next_tier() -> None:
             await breaker.call(_boom())
     assert breaker.state is CircuitState.OPEN
 
-    chosen = reg.get_with_cascade("fast")
+    chosen, _model = reg.get_with_cascade("fast")
     assert chosen.name == "std-mock"
 
 
@@ -221,7 +221,8 @@ async def test_cascade_raises_when_all_providers_open() -> None:
 
 async def test_cascade_unknown_tier_falls_back_to_full_order() -> None:
     reg = _build_registry_with_mocks()
-    chosen = reg.get_with_cascade("nonexistent-tier")
+    # get_with_cascade returns (provider, model), not a bare provider.
+    chosen, _model = reg.get_with_cascade("nonexistent-tier")
     # fast comes first in default order
     assert chosen.name == "fast-mock"
 
@@ -370,8 +371,18 @@ async def test_cost_tracker_emits_exceeded_and_blocks_next(tmp_db: DbPool) -> No
     kinds = [e[0] for e in events]
     assert "exceeded" in kinds
 
-    with pytest.raises(ProviderError):
-        await tracker.record("anth", "claude-opus-4-7", 100, 100, 1.0)
+    # DEBT-7 (Bakir, 2026-07-26) REMOVED budget blocking. Recording used to raise
+    # ProviderError for every call once the daily threshold was crossed; the
+    # budget signal is now INFORMATIVE ONLY and "must never block, gate, throttle
+    # or abort a turn" — a cost signal that silently refused to answer was judged
+    # a worse failure than the missing signal it replaced.
+    #
+    # So the contract under test is now the opposite: the event still fires, and
+    # the call still goes through. Asserted explicitly rather than deleted,
+    # because "does not raise" is the behaviour someone might reinstate by
+    # accident.
+    await tracker.record("anth", "claude-opus-4-7", 100, 100, 1.0)
+    assert kinds.count("exceeded") >= 1, "the exceeded signal must still fire"
 
 
 async def test_cost_tracker_update_limit_hot_reload(tmp_db: DbPool) -> None:
