@@ -24,13 +24,25 @@ THE EXPERIMENT. Hold the lessons block out of a fraction of turns and compare
 records that score for ~400 successful turns a week, so the substrate exists; all
 that was missing was a label saying which arm each turn was in.
 
-WHY THE ARM IS KEYED ON THE SESSION, NOT THE TURN. This is the load-bearing
+WHY THE ARM IS KEYED ON THE CONVERSATION, NOT THE TURN. This is the load-bearing
 design decision. Withholding the block changes the system prompt, and D01.1 exists
 precisely because a prompt that changes mid-conversation destroys the
 per-conversation cache (Law 1). A per-TURN coin flip would reintroduce exactly
-that defect in the name of measuring a different one. Keyed on ``session_key``,
-every turn of a conversation gets the same arm, the prompt stays byte-stable
-within the session, and the experiment is invisible to the cache.
+that defect in the name of measuring a different one.
+
+WHY THE INCARNATION AND NOT THE LANE. The first version keyed on ``session_key``
+and it could not have worked. Measured 2026-08-07: the operator's DM lane
+``owl:secretary:telegram:dm:72055773`` had carried 38 turns over 12.8 days under
+ONE key. A lane is permanent, so a lane-keyed arm is permanent — a single-user
+deployment would sit in whichever arm it hashed to forever and the interactive
+comparison could never fill. The experiment would have run indefinitely,
+withholding nothing, and answered nothing.
+
+``session_id`` is the INCARNATION of that lane (``20260807_151636_81f577e3``) and
+rolls over when the conversation does — 23 distinct ones on this box. That is
+exactly the unit whose prompt must stay byte-stable: constant for a whole
+conversation, fresh for the next one. So the arm is stable where Law 1 needs it
+and rotates where the experiment needs it.
 
 HONEST COST. If lessons help, held-out sessions get slightly worse answers. That
 is the price of finding out, and it is bounded by the hold-out rate and instantly
@@ -49,6 +61,7 @@ __all__ = [
     "ARM_HELD_OUT",
     "ARM_INJECTED",
     "arm_for_session",
+    "assignment_key",
     "current_arm",
     "set_arm",
 ]
@@ -71,8 +84,20 @@ HOLD_OUT_PERCENT = 20
 _arm: ContextVar[str] = ContextVar("lesson_arm", default=ARM_INJECTED)
 
 
+def assignment_key(session_id: str | None, session_key: str | None) -> str:
+    """The unit an arm is assigned to: the conversation INCARNATION if there is
+    one, else the lane.
+
+    A background or utility turn has no incarnation; falling back to the lane
+    keeps those stable rather than reassigning them every turn (which would put
+    a machine lane in both arms at once and make its numbers meaningless).
+    """
+    return (session_id or "").strip() or (session_key or "").strip()
+
+
 def arm_for_session(session_key: str | None, *, hold_out_percent: int = HOLD_OUT_PERCENT) -> str:
-    """Which arm this SESSION is in. Deterministic, so a session never flips.
+    """Which arm this conversation is in. Deterministic, so it never flips
+    mid-conversation.
 
     Hashed rather than random: the same session must resolve to the same arm on
     every turn, across restarts and across processes (the gateway and core are
@@ -106,21 +131,29 @@ def current_arm() -> str:
     return _arm.get()
 
 
-def resolve_and_record(session_key: str | None) -> str:
+def resolve_and_record(
+    session_id: str | None = None, session_key: str | None = None,
+) -> str:
     """Decide the arm for this turn, stash it, and log the withholding.
+
+    Takes BOTH identifiers rather than a single pre-resolved string so the
+    precedence (incarnation over lane) lives here, next to the reasoning for it,
+    instead of being re-derived at each call site.
 
     The hold-out is logged at INFO rather than debug: an experiment that
     silently degrades a fraction of traffic is indistinguishable from a bug, and
     ADR-19 I6 exists because of exactly that confusion.
     """
-    arm = arm_for_session(session_key)
+    key = assignment_key(session_id, session_key)
+    arm = arm_for_session(key)
     set_arm(arm)
     if arm == ARM_HELD_OUT:
         log.engine.info(
             "[lessons] holding lessons out of this session — measuring whether "
             "injection helps (ADR-19 #4)",
             extra={"_fields": {
-                "session_key": session_key,
+                "assignment_key": key,
+                "keyed_on": "incarnation" if session_id else "lane",
                 "hold_out_percent": HOLD_OUT_PERCENT,
             }},
         )

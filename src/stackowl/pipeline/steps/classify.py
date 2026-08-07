@@ -703,7 +703,7 @@ async def run(state: PipelineState) -> PipelineState:
     # them is measurable at all. Keyed on the session, never the turn: the block
     # is part of the system prompt, and a per-turn decision would change the
     # prompt mid-conversation, which is the exact defect D01.1 fixed.
-    lessons_arm = lesson_experiment.resolve_and_record(state.session_key)
+    lessons_arm = lesson_experiment.resolve_and_record(state.session_id, state.session_key)
     lessons_block = (
         ""
         if lessons_arm == lesson_experiment.ARM_HELD_OUT

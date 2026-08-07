@@ -19,6 +19,7 @@ from stackowl.infra.lesson_experiment import (
     ARM_HELD_OUT,
     ARM_INJECTED,
     arm_for_session,
+    assignment_key,
     current_arm,
     resolve_and_record,
     set_arm,
@@ -107,7 +108,7 @@ def test_the_default_arm_is_the_CONTROL():
 
 
 def test_resolve_records_the_arm_for_the_outcome_writer():
-    resolve_and_record("sess-held" if False else None)
+    resolve_and_record(None, None)
     assert current_arm() == ARM_INJECTED
     set_arm(ARM_HELD_OUT)
     assert current_arm() == ARM_HELD_OUT
@@ -116,7 +117,7 @@ def test_resolve_records_the_arm_for_the_outcome_writer():
 
 def test_resolve_returns_what_it_records():
     for key in ("a", "b", "c", "d", "e"):
-        assert resolve_and_record(key) == current_arm()
+        assert resolve_and_record(key, None) == current_arm()
 
 
 @pytest.mark.asyncio
@@ -128,7 +129,7 @@ async def test_the_arm_does_not_leak_between_concurrent_turns():
     seen: dict[str, str] = {}
 
     async def _turn(key: str) -> None:
-        resolve_and_record(key)
+        resolve_and_record(key, None)
         await asyncio.sleep(0)  # force interleaving
         seen[key] = current_arm()
 
@@ -137,3 +138,46 @@ async def test_the_arm_does_not_leak_between_concurrent_turns():
 
     for k in keys:
         assert seen[k] == arm_for_session(k), f"{k} saw another turn's arm"
+
+
+# --------------------------------------------------------------------------- #
+# The unit an arm is assigned to. This is what the first version got wrong.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_incarnation_wins_over_the_lane():
+    """A LANE is permanent. Measured 2026-08-07: the operator's DM lane had
+    carried 38 turns over 12.8 days under one key, so a lane-keyed arm would
+    have been permanent too — a single-user deployment would sit in whichever
+    arm it hashed to forever and the interactive comparison could never fill."""
+    assert assignment_key("20260807_151636_81f577e3", "owl:secretary:telegram:dm:1") == (
+        "20260807_151636_81f577e3"
+    )
+
+
+def test_a_turn_with_no_incarnation_falls_back_to_the_lane():
+    """Background and utility turns have no conversation. Keeping them on the
+    lane keeps them stable — reassigning every turn would put one machine lane
+    in BOTH arms at once and make its numbers meaningless."""
+    assert assignment_key(None, "goal-goal_execution-abc") == "goal-goal_execution-abc"
+    assert assignment_key("", "goal-x") == "goal-x"
+    assert assignment_key("   ", "goal-x") == "goal-x"
+
+
+def test_two_incarnations_of_the_SAME_lane_can_land_in_different_arms():
+    """The whole point of rotating: a lane that lives for months must be able to
+    contribute to both arms as its conversations roll over."""
+    lane = "owl:secretary:telegram:dm:72055773"
+    arms = {
+        arm_for_session(assignment_key(f"2026080{i}_120000_aaaa", lane),
+                        hold_out_percent=50)
+        for i in range(1, 9)
+    }
+    assert arms == {ARM_INJECTED, ARM_HELD_OUT}
+
+
+def test_one_incarnation_still_never_flips():
+    """Law 1 is preserved where it matters: every turn of a single conversation
+    gets the same arm, so the prompt stays byte-stable within it."""
+    key = assignment_key("20260807_151636_81f577e3", "lane")
+    assert len({arm_for_session(key, hold_out_percent=50) for _ in range(100)}) == 1
