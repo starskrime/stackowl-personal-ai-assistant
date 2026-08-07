@@ -42,7 +42,7 @@ class InlineKeyboardBuilder:
         self._rows: list[list[dict[str, str]]] = [[]]
         log.telegram.debug("[telegram] keyboard.builder.init: entry")
 
-    def add_button(self, text: str, callback_data: str) -> "InlineKeyboardBuilder":
+    def add_button(self, text: str, callback_data: str) -> InlineKeyboardBuilder:
         """Append a button to the current row.
 
         4-point logging: entry / decision / step / exit.
@@ -77,7 +77,7 @@ class InlineKeyboardBuilder:
         )
         return self
 
-    def add_row(self) -> "InlineKeyboardBuilder":
+    def add_row(self) -> InlineKeyboardBuilder:
         """Start a new button row.
 
         Returns:

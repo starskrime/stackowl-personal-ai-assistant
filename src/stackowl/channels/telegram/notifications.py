@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict
 
 from stackowl.channels.telegram.quiet_hours import QuietHoursChecker
 from stackowl.infra.observability import log
-from stackowl.tui.i18n import localize
 
 if TYPE_CHECKING:
     from stackowl.channels.telegram.adapter import TelegramChannelAdapter

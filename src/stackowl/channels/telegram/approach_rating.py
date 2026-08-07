@@ -56,6 +56,20 @@ class _SupportsEditMessage(Protocol):
         reply_markup: Any | None = None,
     ) -> bool: ...
 
+    async def remove_message_buttons(
+        self, chat_id: str | int, message_id: int,
+    ) -> bool:
+        """Drop the inline keyboard without touching the text.
+
+        DECLARED here rather than reached for with getattr. A capability asserted
+        at the call site but absent from the protocol is exactly the shape that
+        lost a critical alert earlier the same day (deliverer.py cast to
+        _EphemeralSender and called a method four adapters do not have). If a
+        second adapter ever satisfies this protocol, the type checker says so
+        instead of a user finding out.
+        """
+        ...
+
 
 class ApproachRatingTracker(OwnedRepository):
     """DB-backed trace_id -> pending-vote store (migration 0084's
@@ -291,11 +305,12 @@ class ApproachRatingCallbackHandler:
             return
         chat_id, message_id, original_text = location
         suffix = _LIKED_SUFFIX if vote == "positive" else _DISLIKED_SUFFIX
+        acknowledged = False
         try:
             # Append to the ORIGINAL answer text — edit_message is a full-text
             # replace (edit_message_text), never an append, so reconstructing
             # from the stored text is required or the tap destroys the answer.
-            await self._adapter.edit_message(
+            acknowledged = await self._adapter.edit_message(
                 chat_id, message_id, f"{original_text}{suffix}", reply_markup=None
             )
         except Exception as exc:  # message may be too old/deleted — vote already recorded, don't fail the turn
@@ -303,8 +318,30 @@ class ApproachRatingCallbackHandler:
                 "approach_rating.handle: edit failed — vote already recorded",
                 exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
             )
-        finally:
-            await self._tracker.clear(trace_id=trace_id)
+        if not acknowledged:
+            # THE BUTTONS MUST GO regardless. Measured live 2026-08-07: a Like on
+            # a long headhunter answer failed the text edit with
+            # "BadRequest: Message_too_long" (edit_message_text is capped at 4096
+            # chars), so the keyboard stayed on screen and the vote looked lost —
+            # though it had been written to task_outcomes moments earlier. The
+            # operator tapped again, which recorded a SECOND vote and then hit
+            # "no message location" because the tracker had already been cleared.
+            #
+            # Dropping just the markup has no length limit and cannot mangle the
+            # answer, so it always works where the full-text replace cannot. The
+            # "👍 Liked" suffix is the nicety; removing the keyboard is the
+            # acknowledgement, and only one of them is allowed to fail.
+            removed = await self._adapter.remove_message_buttons(chat_id, message_id)
+            log.telegram.warning(
+                "approach_rating.handle: text edit did not apply — removed the "
+                "keyboard on its own so the tap is still acknowledged",
+                extra={"_fields": {
+                    "trace_id": trace_id,
+                    "keyboard_removed": removed,
+                    "answer_len": len(original_text),
+                }},
+            )
+        await self._tracker.clear(trace_id=trace_id)
         # 4. EXIT
         log.telegram.info(
             "approach_rating.handle: exit",

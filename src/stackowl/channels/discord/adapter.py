@@ -29,6 +29,7 @@ from stackowl.channels.discord.helpers import (
 from stackowl.channels.discord.settings import DiscordSettings
 from stackowl.channels.splitter import DiscordMessageSplitter
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
+from stackowl.channels.token import resolve_channel_token
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
@@ -142,7 +143,9 @@ class DiscordChannelAdapter(ChannelAdapter):
         # The live `await client.start(token)` call would block here; we keep
         # it explicit so production wiring is one-line, while tests never
         # reach this branch.
-        await self._client.start(self._settings.bot_token)
+        await self._client.start(
+            resolve_channel_token(self._settings.bot_token, channel="discord")
+        )
         log.discord.debug("[discord] adapter.start: exit")
 
     async def receive(self) -> IngressMessage:

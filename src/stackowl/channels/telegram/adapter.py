@@ -37,6 +37,7 @@ from stackowl.channels.telegram.formatter import TelegramMarkdownFormatter
 from stackowl.channels.telegram.helpers import hash_user_id, is_authorized, strip_bot_mention, strip_command_bot_suffix
 from stackowl.channels.telegram.progress_render import TelegramProgressView
 from stackowl.channels.telegram.settings import TelegramSettings
+from stackowl.channels.token import resolve_channel_token
 from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import DeliveryError
@@ -180,7 +181,10 @@ class TelegramChannelAdapter(ChannelAdapter):
         TestModeGuard.assert_not_test_mode("telegram.start")
 
         app, bot_id, bot_username = await start_bot(
-            self._settings.bot_token,
+            # Resolve a SecretResolver reference (file:/env:/keychain:) before
+            # authenticating. Passing the raw setting is what made this adapter
+            # poll with the literal string "file:/…" and go deaf in silence.
+            resolve_channel_token(self._settings.bot_token, channel="telegram"),
             self._settings.webhook_url,
             self._settings.webhook_secret,
         )
@@ -1171,6 +1175,46 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.acknowledge_callback: decision answer_query")
         await self._bot_app.bot.answer_callback_query(callback_id, text=text or None)
         log.telegram.debug("[telegram] adapter.acknowledge_callback: exit")
+
+    async def remove_message_buttons(self, chat_id: str | int, message_id: int) -> bool:
+        """Strip the inline keyboard from a message WITHOUT resending its text.
+
+        ``edit_message_text`` is a full-text replace and Telegram caps it at 4096
+        characters, so using it merely to drop a keyboard fails on exactly the
+        answers most worth rating. Measured live 2026-08-07: a Like on a long
+        ``headhunter`` answer raised ``BadRequest: Message_too_long``, the buttons
+        stayed on screen, and the vote looked like it had not registered — though
+        it had been written to ``task_outcomes`` a moment earlier.
+
+        ``edit_message_reply_markup`` touches only the markup: no text, no length
+        limit, and no risk of the edit truncating or mangling the answer.
+        """
+        log.telegram.debug(
+            "[telegram] adapter.remove_message_buttons: entry",
+            extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+        )
+        TestModeGuard.assert_not_test_mode("telegram.remove_message_buttons")
+        if self._bot_app is None:
+            log.telegram.warning(
+                "[telegram] adapter.remove_message_buttons: bot not initialised — skipped"
+            )
+            return False
+        try:
+            await self._bot_app.bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=None,
+            )
+        except Exception as exc:
+            if "not modified" in str(exc).lower():
+                # Already had no keyboard — the desired end state, not a failure.
+                return True
+            log.telegram.error(
+                "[telegram] adapter.remove_message_buttons: failed — fail open",
+                exc_info=exc,
+                extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
+            )
+            return False
+        log.telegram.debug("[telegram] adapter.remove_message_buttons: exit")
+        return True
 
     async def edit_message(
         self,

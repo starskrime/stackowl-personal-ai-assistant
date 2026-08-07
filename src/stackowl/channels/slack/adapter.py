@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.channels.base import ChannelAdapter
 from stackowl.channels.splitter import SlackMessageSplitter
+from stackowl.channels.token import resolve_channel_token
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import DeliveryError
 from stackowl.gateway.scanner import IngressMessage
@@ -465,7 +466,8 @@ class SlackChannelAdapter(ChannelAdapter):
             )
             import httpx
 
-            headers = {"Authorization": f"Bearer {self._settings.bot_token}"}
+            token = resolve_channel_token(self._settings.bot_token, channel="slack")
+            headers = {"Authorization": f"Bearer {token}"}
             async with httpx.AsyncClient() as http:
                 resp = await http.get(url_private, headers=headers)
                 resp.raise_for_status()

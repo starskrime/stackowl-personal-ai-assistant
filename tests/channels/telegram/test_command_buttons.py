@@ -499,4 +499,8 @@ async def test_provider_guided_add_flow_via_real_button_taps(
     live_settings = Settings()
     live_registry = ProviderRegistry.from_settings(live_settings)
     assert live_registry.get(catalog_name).name == catalog_name
-    assert live_registry.get_by_tier(tier).name == catalog_name
+    # get_by_tier returns (provider, model); `get` above returns a bare provider,
+    # which is why the two lines read differently. Assuming a bare provider here
+    # raised "'tuple' object has no attribute 'name'".
+    tier_provider, _tier_model = live_registry.get_by_tier(tier)
+    assert tier_provider.name == catalog_name

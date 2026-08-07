@@ -21,7 +21,7 @@ class ChannelRegistry:
     health report.
     """
 
-    _instance: ClassVar["ChannelRegistry | None"] = None
+    _instance: ClassVar[ChannelRegistry | None] = None
 
     contributor_name: ClassVar[str] = "channel_registry"
 
@@ -30,7 +30,7 @@ class ChannelRegistry:
         self._source_map: dict[str, list[str]] = {}
 
     @classmethod
-    def instance(cls) -> "ChannelRegistry":
+    def instance(cls) -> ChannelRegistry:
         """Return the process-wide singleton, constructing it lazily."""
         if cls._instance is None:
             cls._instance = cls()

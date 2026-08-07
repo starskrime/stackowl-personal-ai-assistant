@@ -118,7 +118,7 @@ class CallbackRouter:
     def __init__(
         self,
         db_pool: DbPool,
-        adapter: "TelegramChannelAdapter",
+        adapter: TelegramChannelAdapter,
     ) -> None:
         self._pool = db_pool
         self._adapter = adapter
