@@ -22,6 +22,7 @@ from stackowl.exceptions import (
     OwlConcurrencyError,
     OwlTimeoutError,
     OwlTokenLimitError,
+    ToolCallLeakError,
     ToolUseUnsupportedError,
     TurnStopped,
 )
@@ -2986,7 +2987,11 @@ async def run(state: PipelineState) -> PipelineState:
             # text this guard exists to suppress. Clear it so nothing from
             # this stream reaches the user, only the floored error message.
             chunks.clear()
-            raise OwlTimeoutError(state.owl_name, 0.0)
+            # A DISTINCT class (subclass of OwlTimeoutError, so the flooring
+            # handler below is unchanged) so the outcome records what actually
+            # happened. Recording this as a timeout mislabelled the failure and
+            # sent it for an RCA that could never find one.
+            raise ToolCallLeakError(state.owl_name)
     except OwlTimeoutError as exc:
         log.engine.warning(
             "[pipeline] execute: owl timeout",

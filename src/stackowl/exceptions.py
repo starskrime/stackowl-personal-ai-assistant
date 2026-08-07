@@ -323,6 +323,39 @@ class OwlTimeoutError(InfrastructureError):
         super().__init__(f"Owl '{owl_name}' timed out after {timeout_seconds:.1f}s")
 
 
+class ToolCallLeakError(OwlTimeoutError):
+    """The model's FINAL answer was really an unparsed tool call.
+
+    The leak guard floors such a turn rather than streaming raw
+    ``ACTION: <function>`` text at the user. That flooring is correct; what was
+    wrong is how it was reported. The guard raised ``OwlTimeoutError(owl, 0.0)``
+    purely to reach the existing flooring handler, so the failure landed in
+    ``task_outcomes.failure_class`` as a TIMEOUT — observed live 2026-08-07 as
+    "Owl 'secretary' timed out after 0.0s", which is not a duration and not what
+    happened.
+
+    That mislabelling is not cosmetic: ``classify_incident_retryability`` reads
+    the class name, so a leaked tool call was being triaged as a recurring
+    infrastructure fault and sent for a three-stage RCA that could never find a
+    timeout, while genuine timeout statistics were polluted by turns that never
+    timed out.
+
+    SUBCLASSES OwlTimeoutError deliberately, so every existing
+    ``except OwlTimeoutError`` handler — including the flooring path this is
+    raised to reach — keeps working unchanged. Only the NAME recorded against
+    the outcome differs, which is the entire point.
+    """
+
+    def __init__(self, owl_name: str) -> None:
+        super().__init__(owl_name, 0.0)
+        # Replace the inherited "timed out after 0.0s" message, which reads as a
+        # nonsense duration in any log that surfaces it.
+        self.args = (
+            f"Owl '{owl_name}' produced a tool call where a final answer was "
+            f"required — floored instead of leaking raw text",
+        )
+
+
 class OwlTokenLimitError(DomainError):
     """Raised when an owl response is truncated at max_tokens."""
 

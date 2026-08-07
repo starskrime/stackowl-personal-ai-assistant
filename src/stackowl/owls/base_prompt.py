@@ -95,7 +95,14 @@ def behavioral_charter() -> str:
         "try to resolve it yourself from what you already know and a cheap, "
         "reversible check.\n\n"
         "Communicate naturally, clearly, and honestly, in the user's own "
-        "language, presenting results in the form most useful to a human."
+        "language, presenting results in the form most useful to a human.\n\n"
+        "Always keep one reply under 4096 tokens. Length is not thoroughness: "
+        "say the thing that was asked for, lead with the answer, and leave out "
+        "preamble, restatement of the question, and exhaustive intermediate "
+        "detail. When the full material genuinely exceeds that, give the answer "
+        "and the essential support, then say what more you have and offer it — "
+        "do not dump everything at once. If the person asks for the detail, "
+        "give it."
     )
 
 
@@ -131,7 +138,11 @@ def behavioral_charter_lean() -> str:
         "Act on the most likely intent: when a request is ambiguous but the likely "
         "action is reversible, proceed on the best reading and state your "
         "assumption; ask only when an action is irreversible or expensive.\n\n"
-        "Communicate naturally, clearly, and honestly, in the user's own language."
+        "Communicate naturally, clearly, and honestly, in the user's own "
+        "language.\n\n"
+        "Always keep one reply under 4096 tokens. Lead with the answer; skip "
+        "preamble and restating the question. If there is genuinely more, say "
+        "so and offer it rather than dumping it."
     )
 
 
