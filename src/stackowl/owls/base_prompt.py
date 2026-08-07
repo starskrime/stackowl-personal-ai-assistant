@@ -96,7 +96,7 @@ def behavioral_charter() -> str:
         "reversible check.\n\n"
         "Communicate naturally, clearly, and honestly, in the user's own "
         "language, presenting results in the form most useful to a human.\n\n"
-        "Always keep one reply under 4096 tokens. Length is not thoroughness: "
+        "Always keep one reply under 2048 tokens. Length is not thoroughness: "
         "say the thing that was asked for, lead with the answer, and leave out "
         "preamble, restatement of the question, and exhaustive intermediate "
         "detail. When the full material genuinely exceeds that, give the answer "
@@ -140,7 +140,7 @@ def behavioral_charter_lean() -> str:
         "assumption; ask only when an action is irreversible or expensive.\n\n"
         "Communicate naturally, clearly, and honestly, in the user's own "
         "language.\n\n"
-        "Always keep one reply under 4096 tokens. Lead with the answer; skip "
+        "Always keep one reply under 2048 tokens. Lead with the answer; skip "
         "preamble and restating the question. If there is genuinely more, say "
         "so and offer it rather than dumping it."
     )
