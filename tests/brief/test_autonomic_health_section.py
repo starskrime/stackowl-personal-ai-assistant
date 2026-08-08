@@ -229,3 +229,65 @@ async def test_a_lane_with_only_one_arm_is_skipped_while_the_other_reports(tmp_d
 
     assert len(lines) == 1
     assert "[interactive]" in lines[0]
+
+
+# --------------------------------------------------------------------------- #
+# Reply length — the prompt can only ASK; this is what checks.
+# --------------------------------------------------------------------------- #
+
+
+async def _sized(db, trace: str, chars: int | None, success: int = 1) -> None:
+    import time as _t
+    await db.execute(
+        "INSERT INTO task_outcomes (trace_id, session_key, owl_name, channel, "
+        "success, latency_ms, tool_call_count, captured_at, response_chars, owner_id) "
+        "VALUES (?, 's', 'o', 'cli', ?, 1.0, 0, ?, ?, 'principal-default')",
+        (trace, success, _t.time(), chars),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reply_length_counts_how_many_exceed_ONE_telegram_message(tmp_db):
+    """The average alone hides the problem. What breaks markdown entities and
+    the Like button is a reply crossing 4096 chars into a SPLIT, so the count
+    over that line is the number worth watching."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _sized(tmp_db, "r1", 1000)
+    await _sized(tmp_db, "r2", 9000)
+    await _sized(tmp_db, "r3", 5000)
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    line = next(i for i in section.items if i.startswith("reply_len"))
+    assert "avg:5000" in line
+    assert "over_4096:2/3" in line
+
+
+@pytest.mark.asyncio
+async def test_unmeasured_rows_are_excluded_rather_than_counted_as_zero(tmp_db):
+    """response_chars is NULL on every row written before migration 0109.
+    Counting those as 0 would drag the average down and invent an improvement
+    that never happened."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _sized(tmp_db, "r1", 8000)
+    await _sized(tmp_db, "r2", None)
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    line = next(i for i in section.items if i.startswith("reply_len"))
+    assert "avg:8000" in line, line
+    assert "over_4096:1/1" in line, line
+
+
+@pytest.mark.asyncio
+async def test_no_measured_replies_means_no_line(tmp_db):
+    """Before any turn runs there is nothing to say, and an empty metric in a
+    daily brief teaches the reader to skip the section."""
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    assert not any(i.startswith("reply_len") for i in section.items)

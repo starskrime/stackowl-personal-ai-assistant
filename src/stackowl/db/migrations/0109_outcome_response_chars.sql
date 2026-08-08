@@ -1,0 +1,24 @@
+-- Record how long a reply ACTUALLY was, not how much of it we kept.
+--
+-- WHY. `task_outcomes.response_text` is truncated to 8,000 characters at the
+-- write site (outcome_store.record does `response_text[:8000]`), so every longer
+-- answer is stored as exactly 8,000 and `length(response_text)` silently becomes
+-- a floor rather than a measurement. Counted 2026-08-07: 450 of 3,674 successful
+-- replies in 30 days sit at exactly that boundary.
+--
+-- That censoring made a real question unanswerable. After tightening the system
+-- prompt to a 2048-token reply budget, "did replies actually get shorter?" cannot
+-- be answered from this table: every answer over 8k reads the same before and
+-- after, and those are precisely the answers the budget targets.
+--
+-- It is also the same shape as the phantom pricing and the zero-second timeout —
+-- a column that looks like a measurement and is not.
+--
+-- NULL for every existing row, deliberately: those lengths were never recorded
+-- and inventing them from the truncated text would put a floor in the data
+-- dressed as a fact. Only rows written from now on carry a true length.
+--
+-- SAFE: additive, nullable, no default rewrite, no index (this is aggregated
+-- occasionally, never filtered in a hot path).
+
+ALTER TABLE task_outcomes ADD COLUMN response_chars INTEGER;

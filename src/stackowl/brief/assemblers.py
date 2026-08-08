@@ -16,6 +16,7 @@ Sections (in default render order):
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -274,6 +275,17 @@ class AgentStatusAssembler:
 # ---------------------------------------------------------------------------
 
 
+#: Telegram's hard per-message cap, in characters. A reply above it is SPLIT,
+#: which is what breaks markdown entities across chunks and what made the Like
+#: button fail — so "how many replies exceed one message" is the number worth
+#: watching, not the raw average.
+_ONE_TELEGRAM_MESSAGE = 4096
+
+#: How far back the reply-length figure looks. Long enough to be stable across a
+#: quiet day, short enough that a prompt change shows up within a week.
+_REPLY_WINDOW_S = 7 * 24 * 3600
+
+
 class AutonomicHealthAssembler:
     """Fifth section — did the self-healing / self-improving loops do anything?
 
@@ -383,6 +395,25 @@ class AutonomicHealthAssembler:
             items.append(
                 f"lessons_effect[{lane}] injected:{inj_q:.2f}(n={inj_n}) "
                 f"held_out:{held_q:.2f}(n={held_n})"
+            )
+
+        # 3. STEP — are replies staying inside the budget the system prompt asks
+        # for? Reported because the prompt can only ASK; nothing enforces it, so
+        # without a number "we told the model to be brief" is an assumption.
+        # Uses response_chars (migration 0109), NOT length(response_text), which
+        # is truncated at 8,000 and therefore a floor rather than a measurement.
+        reply = await self._db.fetch_all(
+            "SELECT COUNT(*) AS n, AVG(response_chars) AS avg_len, "
+            "SUM(response_chars > ?) AS over "
+            "FROM task_outcomes WHERE response_chars IS NOT NULL AND success = 1 "
+            "AND captured_at > ?",
+            (_ONE_TELEGRAM_MESSAGE, time.time() - _REPLY_WINDOW_S),
+        )
+        if reply and reply[0]["n"]:
+            r = reply[0]
+            items.append(
+                f"reply_len avg:{int(float(str(r['avg_len'])))} "
+                f"over_{_ONE_TELEGRAM_MESSAGE}:{int(str(r['over'] or 0))}/{int(str(r['n']))}"
             )
 
         # 2. DECISION — nothing measurable is a legitimate outcome, not an error.

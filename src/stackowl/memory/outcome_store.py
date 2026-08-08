@@ -77,6 +77,13 @@ class TaskOutcome:
     # not evidence for EITHER side (recorded before the arm was resolved, or
     # from before the experiment existed) and must never be counted as control.
     lessons_arm: str | None = None
+    # Migration 0109 — the TRUE length of the reply. response_text is truncated
+    # to 8,000 chars on write, so length(response_text) is a floor, not a
+    # measurement: 450 of 3,674 replies in 30 days sat at exactly 8,000. NULL on
+    # rows written before this existed, because those lengths were never
+    # recorded and back-filling them from truncated text would dress a floor up
+    # as a fact.
+    response_chars: int | None = None
 
 
 def is_positive_signal(outcome: TaskOutcome) -> bool:
@@ -182,8 +189,8 @@ class TaskOutcomeStore(OwnedRepository):
                    step_durations, input_text, response_text, captured_at,
                    tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
                    recovered_via_tool, failed_capability, retry_lineage_id,
-                   retry_event_count, lessons_arm
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   retry_event_count, lessons_arm, response_chars
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_key, owl_name, channel, int(success),
@@ -202,6 +209,9 @@ class TaskOutcomeStore(OwnedRepository):
                 # the signature: classify decides the arm, and this recorder is
                 # several hops away. Same idiom as prompt_metrics (D01.6).
                 lesson_experiment.current_arm(),
+                # Measured BEFORE the [:8000] truncation two lines above — that
+                # is the entire point of the column.
+                len(response_text),
             ),
         )
         log.memory.info(
