@@ -7976,13 +7976,13 @@ items:
     dedup_target: X11
     stages:
       brainstorm: done             # 25 questions, 7 rounds, 2026-08-07 (retroactive)
-      architect:  partial          # ADR-19 covers the design; no designs/D09.3.md
+      architect:  done             # designs/D09.3.md — covers D09.3 + D10.2
       implement:  done             # e45f3d3a — SkillCurator + migration 0107
       cleanup:    done             # ruff/mypy baselines held
       test:       done             # 14 tests in tests/skills/test_lifecycle_curator.py
       validate:   done             # dry-run on the live catalog + restart + logs
       document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
-    doc: docs/adr-19-closed-loop-autonomy.md   # ADR, not a per-item design doc
+    doc: docs/hermes-mapping/designs/D09.3.md
     doc_last_verified: null
     decisions:
       - "R1Q1 — PULL D10.2 (Authoring standard) FORWARD INTO WAVE 4. The dependency binds: consolidation rewrites skill bodies, and without a standard the agent writes inconsistent ones — plausibly the root cause of the 265 duplicates. Decay shipped without it because decay never reads or writes content; consolidation will not."
@@ -8163,13 +8163,13 @@ items:
     dedup_target: null
     stages:
       brainstorm: done             # 25 questions, 7 rounds, 2026-08-08
-      architect:  not_started
+      architect:  done             # designs/D09.3.md — shared with D09.3
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: docs/hermes-mapping/designs/D09.3.md
     doc_last_verified: null
     decisions:
       - "R1Q1 — WRITE OURS, TAKING THEIR STRUCTURE. Keep Hermes' bones (fixed section order, real tool names in backticks, scripts/references/templates layout) but set our own values where evidence differs, and make every rule MACHINE-CHECKABLE. Their rubric is reviewer-enforced and assumes a human author; ours must hold when the agent is the author."
