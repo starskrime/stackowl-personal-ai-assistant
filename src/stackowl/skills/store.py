@@ -64,6 +64,9 @@ class Skill:
     #: ADR-19 lifecycle. Defaults to 'active' so any construction
     #: path that predates the column behaves exactly as before.
     lifecycle_state: str = "active"
+    #: Which authoring-standard version this skill was last migrated to. 0 means
+    #: "predates the standard" (D10.2 R6Q24, migration 0111).
+    standard_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -127,7 +130,7 @@ _SELECT_FIELDS = """
     success_rate, n_executions, parent_traces, embedding, embedding_model,
     manifest_json, body_text, loaded_at, updated_at,
     tool_names, lessons_published_hash,
-    lifecycle_state
+    lifecycle_state, standard_version
 """
 
 # Same field list, table-prefixed for the hybrid_recall JOIN against skills_fts
@@ -644,6 +647,26 @@ class SkillIndexStore(OwnedRepository):
         log.skills.info("[skills] store.set_n_executions: stored",
                  extra={"_fields": {"skill_id": skill_id, "n": n}})
 
+    async def set_standard_version(self, skill_id: int, version: int) -> None:
+        """Record that this skill now meets authoring standard ``version``.
+
+        Written ONLY after the rewritten file has passed the validator and been
+        stored — recording conformance we have not verified would make the
+        migrator skip exactly the skills it failed on, which is the one bug that
+        would be invisible in its own report.
+        """
+        # 1. ENTRY
+        log.skills.debug("[skills] store.set_standard_version: entry",
+                  extra={"_fields": {"skill_id": skill_id, "version": version}})
+        await self._db.execute(
+            "UPDATE skills SET standard_version = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (version, time.time(), skill_id, self._owner_id),
+        )
+        # 4. EXIT
+        log.skills.info("[skills] store.set_standard_version: stored",
+                 extra={"_fields": {"skill_id": skill_id, "version": version}})
+
     async def rename(self, skill_id: int, name: str, path: str) -> None:
         """Move a skill onto a new name and path, keeping FTS in step.
 
@@ -1067,6 +1090,10 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
         # selected an older field list — a missing lifecycle must never read as
         # archived, which would silently hide a working skill.
         lifecycle_state=str(row.get("lifecycle_state") or "active"),
+        # 0 = predates the standard. A missing column must read as UNMIGRATED,
+        # never as current — the opposite default would declare the backlog
+        # migrated by fiat and leave the migrator nothing to find.
+        standard_version=int(str(row.get("standard_version") or 0)),
     )
 
 

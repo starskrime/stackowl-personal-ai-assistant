@@ -12,6 +12,9 @@ from stackowl.commands.metadata import render_usage
 from stackowl.commands.skill_command import SkillCommand
 
 _EXPECTED = {
+    # D09.3 slice 4 / D10.2 slice 7 — the two catalog-maintenance passes.
+    "dedupe",
+    "migrate",
     "list",
     "show",
     "add",

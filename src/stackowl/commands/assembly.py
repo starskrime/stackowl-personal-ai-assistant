@@ -105,6 +105,9 @@ class CommandDeps:
     # Cooperative shutdown event (for /bye) — the orchestrator's stop_event.
     shutdown_event: asyncio.Event | None = None
 
+    # Consent gate (for /skill migrate, which writes through gated_skill_write).
+    consent_gate: object | None = None  # ConsequentialActionGate — avoid heavy import
+
 
 
 def register_all_commands(
@@ -205,6 +208,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         loader=deps.skills_loader,
         skills_root=deps.skills_root,
         embedding_registry=deps.embedding_registry,
+        # /skill migrate rewrites content with a model and writes through the
+        # consent gate, so both are wired here rather than left None — an
+        # unwired dependency would make the subcommand exist but never work.
+        provider_registry=deps.provider_registry,
+        consent_gate=deps.consent_gate,
     ))
 
     # /memory

@@ -20,7 +20,7 @@ from __future__ import annotations
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
@@ -37,6 +37,8 @@ from stackowl.commands.skill_helpers import (
     restore_snapshot,
 )
 from stackowl.infra.observability import log
+from stackowl.skills import standard as std
+from stackowl.skills import standard_migration as migration
 from stackowl.skills.loader import SkillLoader
 from stackowl.skills.manifest import SkillSource
 from stackowl.skills.store import Skill, SkillIndexStore
@@ -44,6 +46,7 @@ from stackowl.skills.store import Skill, SkillIndexStore
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.pipeline.state import PipelineState
+    from stackowl.providers.registry import ProviderRegistry
 
 
 _CONFIRMATION = "YES"
@@ -180,6 +183,29 @@ _SKILL_META = CommandMeta(
             ),
         ),
         SubCommand(
+            name="migrate",
+            summary="Rewrite pre-standard skills to the authoring standard",
+            description=(
+                "You bring existing skills up to the current authoring standard: a "
+                "<=60-character description, a rich when_to_use, and the seven required "
+                "body sections. Each rewrite is one LLM call, the original is archived "
+                "first, and a rewrite that fails the standard is REFUSED — the original "
+                "file is left exactly as it was.\n\n"
+                "PREVIEWS BY DEFAULT and works in bounded batches, because this is the "
+                "only pass that rewrites what a skill says."
+            ),
+            args=(
+                Arg(name="--apply", required=False,
+                    summary="carry the rewrites out (default: preview only)"),
+                Arg(name="--limit", required=False,
+                    summary="how many skills this run may rewrite (default 10)"),
+            ),
+            examples=(
+                Example(invocation="/skill migrate"),
+                Example(invocation="/skill migrate --apply --limit 20"),
+            ),
+        ),
+        SubCommand(
             name="restore",
             summary="Roll a skill back to an audited version",
             description=(
@@ -208,6 +234,8 @@ class SkillCommand(SlashCommand):
         skills_root: Path | None = None,
         *,
         embedding_registry: EmbeddingRegistry | None = None,
+        provider_registry: object | None = None,
+        consent_gate: object | None = None,
     ) -> None:
         # 1. ENTRY
         log.skills.debug(
@@ -221,6 +249,11 @@ class SkillCommand(SlashCommand):
         self._loader: SkillLoader = loader  # type: ignore[assignment]  # guarded in handle()
         self._root: Path = skills_root  # type: ignore[assignment]  # guarded in handle()
         self._embedding_registry = embedding_registry
+        # Both optional and both only used by `migrate`, which fails closed and
+        # says so when they are missing — an unwired dependency must not turn
+        # "apply" into a silent preview.
+        self._provider_registry = provider_registry
+        self._consent_gate = consent_gate
         # 4. EXIT
         log.skills.debug("[commands] skill.init: exit")
 
@@ -239,7 +272,7 @@ class SkillCommand(SlashCommand):
     def meta(self) -> CommandMeta:
         return _SKILL_META
 
-    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:
+    async def handle(self, args: str, state: PipelineState) -> str | CommandResponse:  # noqa: C901
         # 1. ENTRY
         log.skills.debug(
             "[commands] skill.handle: entry",
@@ -273,6 +306,8 @@ class SkillCommand(SlashCommand):
                 result = await self._set_enabled(rest.strip(), enabled=False)
             elif sub == "reload":
                 result = await self._reload()
+            elif sub == "migrate":
+                result = await self._migrate(rest.strip())
             elif sub == "dedupe":
                 result = await self._dedupe(rest.strip())
             elif sub == "restore":
@@ -466,6 +501,63 @@ class SkillCommand(SlashCommand):
             extra={"_fields": {"final_name": result.name, "kind": actor_kind}},
         )
         return f"✓ Installed skill '{result.name}' from {actor_kind} → {result.path}"
+
+    async def _migrate(self, args: str) -> str:
+        """Preview or apply authoring-standard migration."""
+        # 1. ENTRY
+        log.skills.debug("[commands] skill.migrate: entry",
+                         extra={"_fields": {"args": args[:60]}})
+        apply = False
+        limit = migration.DEFAULT_LIMIT
+        tokens = args.split()
+        i = 0
+        while i < len(tokens):
+            if tokens[i] == "--apply":
+                apply = True
+            elif tokens[i] == "--limit" and i + 1 < len(tokens):
+                i += 1
+                if not tokens[i].isdigit():
+                    return f"✗ /skill migrate: --limit needs a number, got {tokens[i]!r}"
+                limit = int(tokens[i])
+            else:
+                return (f"✗ /skill migrate: unknown option {tokens[i]!r}. "
+                        f"Use --apply and/or --limit N.")
+            i += 1
+
+        if self._provider_registry is None:
+            # Fails CLOSED and says why. Silently previewing when the caller
+            # asked to apply would read as "there was nothing to migrate".
+            return ("✗ /skill migrate: no provider registry wired — migration "
+                    "rewrites content and needs a model.")
+        registry = cast("ProviderRegistry", self._provider_registry)
+        provider, model = registry.get_with_cascade("fast")
+
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        report = await migration.SkillStandardMigrator(
+            self._store, provider,
+            archive_root=self._root.parent / "pre-migration",
+            model=model, consent_gate=self._consent_gate,
+        ).run(apply=apply, limit=limit, stamp=stamp)
+
+        if not report.outcomes:
+            return (f"✓ /skill migrate: every skill already meets standard "
+                    f"v{std.STANDARD_VERSION}.")
+
+        lines = [f"{'Applied' if report.applied else 'PREVIEW'} — {report.summary()}", ""]
+        lines += [o.describe() for o in report.outcomes]
+        if report.applied and report.archive_path is not None:
+            lines += ["", f"Originals archived: {report.archive_path}"]
+        elif not report.applied:
+            lines += ["", "Nothing changed. Re-run with --apply to carry this out."]
+        if report.remaining:
+            lines.append(f"{report.remaining} skill(s) still to migrate — re-run to continue.")
+
+        # 4. EXIT
+        log.skills.info("[commands] skill.migrate: exit",
+                        extra={"_fields": {"apply": apply, "migrated": report.migrated,
+                                           "failed": report.failed,
+                                           "remaining": report.remaining}})
+        return "\n".join(lines)
 
     async def _dedupe(self, args: str) -> str:
         """Preview or apply ``-N`` family consolidation.
