@@ -311,6 +311,41 @@ class SkillStandardMigrator:
         result = await gated_skill_write(
             request, store=self._store, consent_gate=self._consent_gate,  # type: ignore[arg-type]
         )
+
+        # ONE RETRY, with the refusal fed back. The standard reports every
+        # violation at once precisely so an author can fix them in a single
+        # further attempt (R6Q22) — but the migrator was not taking that
+        # attempt, so a rewrite that missed by ONE CHARACTER ("61 characters
+        # exceeds the 60-character limit", seen live) cost a whole fresh call on
+        # the next run to try the identical prompt again. Retrying here is
+        # strictly cheaper than re-running, and it tells the model what was
+        # wrong instead of hoping for a different sample.
+        if not result.ok:
+            retried = await self._ask(skill, correction=result.reason)
+            if retried is not None:
+                description, when_to_use, body = retried
+                manifest_dict.update({
+                    "description": description, "when_to_use": when_to_use,
+                })
+                try:
+                    manifest = SkillManifest.model_validate(manifest_dict)
+                except Exception as exc:  # B5
+                    log.skills.warning(
+                        "[migrate] migrate_one: corrected frontmatter still invalid",
+                        exc_info=exc, extra={"_fields": {"name": skill.name}},
+                    )
+                else:
+                    result = await gated_skill_write(
+                        SkillWriteRequest(
+                            target_dir=skill_dir, manifest=manifest, body=body,
+                            skill_md_text=_emit(manifest, body),
+                            consent_summary=request.consent_summary,
+                            tool_name="skill_synthesizer",
+                        ),
+                        store=self._store,
+                        consent_gate=self._consent_gate,  # type: ignore[arg-type]
+                    )
+
         if not result.ok:
             log.skills.warning(
                 "[migrate] migrate_one: rewrite rejected — original untouched",
@@ -336,7 +371,9 @@ class SkillStandardMigrator:
             new_description_len=len(description),
         )
 
-    async def _ask(self, skill: Skill) -> tuple[str, str, str] | None:
+    async def _ask(
+        self, skill: Skill, *, correction: str | None = None,
+    ) -> tuple[str, str, str] | None:
         sections = "\n".join(
             f"    {i + 1}. ## {s}" for i, s in enumerate(standard.REQUIRED_SECTIONS)
         )
@@ -347,10 +384,17 @@ class SkillStandardMigrator:
         # (message.documents) to decide whether a turn carries content blocks,
         # so a plain dict raises AttributeError inside the provider — which the
         # first live batch demonstrated on all three skills.
+        # On a retry, lead with what was actually wrong. A bare re-ask is just a
+        # second sample from the same distribution.
+        preamble = (
+            f"Your previous attempt was REJECTED:\n{correction}\n\n"
+            f"Fix exactly that and return the whole object again.\n\n"
+            if correction else ""
+        )
         messages = [
             Message(role="system", content=_SYSTEM + standard.describe_for_prompt()),
             Message(role="user", content=(
-                f"{instruction}\n"
+                f"{preamble}{instruction}\n"
                 f"--- CURRENT SKILL: {skill.name} ---\n"
                 f"description: {skill.description}\n"
                 f"when_to_use: {skill.when_to_use}\n\n"

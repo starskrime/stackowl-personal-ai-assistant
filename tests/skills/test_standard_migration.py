@@ -347,3 +347,71 @@ async def test_the_most_used_skills_are_migrated_first(tmp_db, tmp_path):
     ).run(apply=True, stamp=_STAMP, limit=1)
 
     assert report.outcomes[0].name == "workhorse"
+
+
+# --------------------------------------------------------------------------- #
+# One corrective retry. Added after a live rewrite missed by ONE character.
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_rejected_rewrite_gets_one_retry_with_the_reason(tmp_db, tmp_path):
+    """Seen live: "61 characters exceeds the 60-character limit". Without a
+    retry that costs a whole fresh LLM call on the next run to re-ask the
+    identical prompt and hope for a better sample."""
+    store = SkillIndexStore(tmp_db)
+    await _seed(store, tmp_path, "old_skill")
+    provider = _ScriptedProvider([
+        _good_response(description="x" * (standard.MAX_DESCRIPTION_CHARS + 1)),
+        _good_response(description="Fetch a page."),
+    ])
+
+    report = await _migrator(store, tmp_path, provider).run(
+        apply=True, stamp=_STAMP, limit=1,
+    )
+
+    assert provider.calls == 2
+    assert report.migrated == 1, report.outcomes[0].reason
+    sk = await store.get("learned", "old_skill")
+    assert sk is not None and sk.description == "Fetch a page."
+
+
+async def test_the_retry_is_told_what_was_wrong(tmp_db, tmp_path):
+    """A bare re-ask is just a second sample from the same distribution."""
+    store = SkillIndexStore(tmp_db)
+    await _seed(store, tmp_path, "old_skill")
+    seen: list[str] = []
+
+    class _Capturing(_ScriptedProvider):
+        async def complete(self, messages, **kw):  # noqa: ANN001, ANN003, ANN201
+            seen.append(messages[-1].content)
+            return await super().complete(messages, **kw)
+
+    provider = _Capturing([
+        _good_response(description="x" * 90),
+        _good_response(description="Fetch a page."),
+    ])
+    await _migrator(store, tmp_path, provider).run(apply=True, stamp=_STAMP, limit=1)
+
+    assert "REJECTED" in seen[1]
+    assert "90 characters" in seen[1]
+    assert "REJECTED" not in seen[0], "the first attempt is not a retry"
+
+
+async def test_only_one_retry_is_taken(tmp_db, tmp_path):
+    """Bounded. A model that cannot conform in two attempts will not conform in
+    ten, and the skill is retried on the next run anyway."""
+    store = SkillIndexStore(tmp_db)
+    await _seed(store, tmp_path, "old_skill")
+    provider = _ScriptedProvider([
+        _good_response(description="x" * 90),
+        _good_response(description="y" * 90),
+    ])
+
+    report = await _migrator(store, tmp_path, provider).run(
+        apply=True, stamp=_STAMP, limit=1,
+    )
+
+    assert provider.calls == 2
+    assert report.migrated == 0
+    sk = await store.get("learned", "old_skill")
+    assert sk is not None and sk.standard_version == 0
