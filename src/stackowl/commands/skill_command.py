@@ -159,6 +159,27 @@ _SKILL_META = CommandMeta(
             examples=(Example(invocation="/skill reload"),),
         ),
         SubCommand(
+            name="dedupe",
+            summary="Collapse -N duplicate families into one skill",
+            description=(
+                "You preview, then optionally apply, the merge of numbered duplicate "
+                "families (foo, foo-1, foo-2 ...) into a single skill. The most-used "
+                "member survives under the base name and inherits the family's total "
+                "executions; a pinned member wins outright. Everything removed is "
+                "copied to a timestamped archive outside the catalog first.\n\n"
+                "PREVIEWS BY DEFAULT. This is the only irreversible operation in the "
+                "skill lifecycle, so it does nothing until you pass --apply."
+            ),
+            args=(
+                Arg(name="--apply", required=False,
+                    summary="carry the plan out (default: preview only)"),
+            ),
+            examples=(
+                Example(invocation="/skill dedupe"),
+                Example(invocation="/skill dedupe --apply"),
+            ),
+        ),
+        SubCommand(
             name="restore",
             summary="Roll a skill back to an audited version",
             description=(
@@ -252,6 +273,8 @@ class SkillCommand(SlashCommand):
                 result = await self._set_enabled(rest.strip(), enabled=False)
             elif sub == "reload":
                 result = await self._reload()
+            elif sub == "dedupe":
+                result = await self._dedupe(rest.strip())
             elif sub == "restore":
                 result = await self._restore(rest.strip())
             elif sub == "menu":
@@ -443,6 +466,55 @@ class SkillCommand(SlashCommand):
             extra={"_fields": {"final_name": result.name, "kind": actor_kind}},
         )
         return f"✓ Installed skill '{result.name}' from {actor_kind} → {result.path}"
+
+    async def _dedupe(self, args: str) -> str:
+        """Preview or apply ``-N`` family consolidation.
+
+        The ``--apply`` flag is required to act. That asymmetry is the point:
+        every other retirement path here is reversible, this one deletes.
+        """
+        # 1. ENTRY
+        log.skills.debug("[commands] skill.dedupe: entry",
+                         extra={"_fields": {"args": args[:40]}})
+        apply = args.strip() == "--apply"
+        if args.strip() and not apply:
+            return (f"✗ /skill dedupe: unknown option {args.strip()!r}. "
+                    f"Use /skill dedupe or /skill dedupe --apply.")
+
+        from stackowl.skills.consolidation import SkillConsolidator
+
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        plan = await SkillConsolidator(self._store, self._root).run(
+            apply=apply, stamp=stamp,
+        )
+
+        if not plan.families and not plan.skipped:
+            return "✓ /skill dedupe: no numbered duplicate families found."
+
+        lines = [f"{'Applied' if plan.applied else 'PREVIEW'} — {plan.summary()}", ""]
+        for family in plan.families[:40]:
+            lines.append(f"  {family.describe()}")
+            # Name what goes, capped. "drop 20" without the names is not a
+            # preview anyone can approve.
+            lines.append(f"      dropping: {', '.join(family.removed[:6])}"
+                         + (f" (+{len(family.removed) - 6} more)"
+                            if len(family.removed) > 6 else ""))
+        if len(plan.families) > 40:
+            lines.append(f"  ... and {len(plan.families) - 40} more families")
+        for skip in plan.skipped:
+            lines.append(f"  skipped: {skip}")
+        if plan.applied and plan.archive_path is not None:
+            lines += ["", f"Archive: {plan.archive_path}",
+                      "Run /skill reload to refresh the index from disk."]
+        elif not plan.applied:
+            lines += ["", "Nothing changed. Re-run with --apply to carry this out."]
+
+        # 4. EXIT
+        log.skills.info("[commands] skill.dedupe: exit",
+                        extra={"_fields": {"apply": apply,
+                                           "families": len(plan.families),
+                                           "rows_removed": plan.rows_removed}})
+        return "\n".join(lines)
 
     async def _rm(self, args: str) -> str:
         log.skills.debug("[commands] skill.rm: entry",

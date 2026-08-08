@@ -652,6 +652,53 @@ class SkillIndexStore(OwnedRepository):
         log.skills.info("[skills] store.set_success_rate: stored",
                  extra={"_fields": {"skill_id": skill_id, "rate": rate}})
 
+    async def set_n_executions(self, skill_id: int, n: int) -> None:
+        """Overwrite the execution count outright.
+
+        Exists for ONE caller: consolidation, where the survivor of a ``-N``
+        family inherits the family's summed executions. ``increment_n_executions``
+        cannot express that, and without it consolidating a family would destroy
+        the usage history that justified keeping the survivor — the curator
+        would then archive it for looking unused, days after we merged it.
+
+        Deliberately does NOT touch ``last_used_at`` or ``lifecycle_state``: this
+        is a bookkeeping correction, not a use. Claiming a use here would revive
+        an archived survivor on a merge nobody ran.
+        """
+        # 1. ENTRY
+        log.skills.debug("[skills] store.set_n_executions: entry",
+                  extra={"_fields": {"skill_id": skill_id, "n": n}})
+        await self._db.execute(
+            "UPDATE skills SET n_executions = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (max(0, n), time.time(), skill_id, self._owner_id),
+        )
+        # 4. EXIT
+        log.skills.info("[skills] store.set_n_executions: stored",
+                 extra={"_fields": {"skill_id": skill_id, "n": n}})
+
+    async def rename(self, skill_id: int, name: str, path: str) -> None:
+        """Move a skill onto a new name and path, keeping FTS in step.
+
+        Both fields together, in one call, because they are one fact: the
+        directory IS the name. Updating the row without the path leaves the
+        loader unable to find the body it just renamed.
+        """
+        # 1. ENTRY
+        log.skills.debug("[skills] store.rename: entry",
+                  extra={"_fields": {"skill_id": skill_id, "name": name}})
+        await self._db.execute(
+            "UPDATE skills SET name = ?, path = ?, updated_at = ? "
+            "WHERE skill_id = ? AND owner_id = ?",
+            (name, path, time.time(), skill_id, self._owner_id),
+        )
+        # skills_fts indexes the name, so a rename that skipped this would leave
+        # the skill keyword-reachable only under the name it no longer has.
+        await self._sync_fts(skill_id)
+        # 4. EXIT
+        log.skills.info("[skills] store.rename: renamed",
+                 extra={"_fields": {"skill_id": skill_id, "name": name}})
+
     async def semantic_recall(
         self,
         query_embedding: list[float],

@@ -34,6 +34,7 @@ __all__ = [
     "SOFT_MAX_LINES",
     "STANDARD_VERSION",
     "Violation",
+    "base_name",
     "blocking",
     "describe_for_prompt",
     "validate_body",
@@ -114,6 +115,22 @@ class Violation:
 
     def __str__(self) -> str:
         return f"{self.rule}: {self.detail}"
+
+
+def base_name(name: str) -> str:
+    """Strip a ``-N`` disambiguation suffix, so ``foo-3`` answers "do we already
+    know foo?".
+
+    THE ONE COPY (I8). This regex previously existed three times — here, as
+    ``synthesizer._NAME_SUFFIX_RE``, and inline in the consolidation planner.
+    The rule about what a name may be belongs to the module that defines the
+    rule; three copies is how ``-N`` stops being forbidden in one of them.
+
+    Anchored and digits-only, so a skill legitimately named ``http-2`` collapses
+    onto ``http``. That is the accepted side of the trade: the measured cost of
+    NOT collapsing was 269 duplicate rows across 43 families.
+    """
+    return _NUMBERED_SUFFIX_RE.sub("", name)
 
 
 def validate_name(name: str) -> list[Violation]:

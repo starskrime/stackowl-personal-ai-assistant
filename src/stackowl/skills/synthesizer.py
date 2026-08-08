@@ -82,17 +82,10 @@ _SAMPLE_LIMIT_PER_CLUSTER = 5  # how many trace samples to include in the LLM pr
 #: the retire gate drift apart while both look correct in isolation.
 _MIN_EXECUTIONS_FOR_RATE = MIN_RUNS_FOR_RATE
 
-#: DEBT-42 — strip the ``-N`` disambiguation suffix the synthesizer used to
-#: append, so an existing ``foo-3`` still answers "do we already know foo?".
-#: Anchored and digits-only: a skill legitimately named ``http-2`` would be
-#: collapsed onto ``http``, which is the acceptable side of the trade — the
-#: measured cost of NOT collapsing is 265 duplicate skills.
-_NAME_SUFFIX_RE = re.compile(r"-\d+$")
 
 
-def _base_name(name: str) -> str:
-    """``foo-3`` -> ``foo``; anything else unchanged."""
-    return _NAME_SUFFIX_RE.sub("", name)
+#: One copy of the rule, owned by the module that defines it (D10.2 I8).
+_base_name = standard.base_name
 
 
 
