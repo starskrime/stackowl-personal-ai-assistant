@@ -43,9 +43,14 @@ __all__ = [
     "validate_support_dirs",
 ]
 
-#: Bumped when a RULE changes. Each skill records the version it conformed to, so
-#: a later change re-migrates only what actually moved (R6Q24) rather than
+#: Bumped when a rule gets STRICTER. Each skill records the version it conformed
+#: to, so a later change re-migrates only what actually moved (R6Q24) rather than
 #: re-validating everything or grandfathering old skills into fragmentation.
+#:
+#: NOT bumped when a rule LOOSENS. Everything that passed the stricter version
+#: still passes, so a bump would only spend one LLM call per skill to reach the
+#: same catalog. The shell-verb fix — prose no longer rejected — is exactly this
+#: case and deliberately left at 1.
 STANDARD_VERSION = 1
 
 #: One sentence, at a glance. Adopted from the reference platform AGAINST our own
@@ -96,8 +101,28 @@ _HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
 _BACKTICK_TOKEN_RE = re.compile(r"`([a-z][a-z0-9_]{2,})`")
 
 #: Raw shell verbs a skill should never instruct the agent to reach for when a
-#: real capability exists. Matched as whole words.
-_SHELL_VERBS_RE = re.compile(r"\b(grep|sed|awk|cat|ls|find)\b")
+#: real capability exists.
+#:
+#: MATCHED ONLY INSIDE CODE, never in prose. The first version of this rule
+#: matched bare words anywhere and rejected "Use this to find the failing job"
+#: — a hardcoded English word-list applied to natural language, which is the
+#: standing rule this codebase already has against keyword lists. "find", "cat"
+#: and "ls" are ordinary English; `find . -name x` is a shell instruction. The
+#: difference is structural (is it code?), not lexical, so that is what we test.
+#: Anchored to a COMMAND POSITION: the start of a line, or just after a pipe /
+#: separator. ``re.MULTILINE`` so each line of a fenced block is a candidate.
+_SHELL_VERBS_RE = re.compile(
+    r"(?:^|[|;&(]\s*)(grep|sed|awk|cat|ls|find)\b", re.MULTILINE,
+)
+
+#: A fenced code block, or an inline code span. The CONTENT is captured, not the
+#: delimiters — leaving the backticks in would push the first token off the start
+#: of the line and defeat the command-position anchor above. Everything outside
+#: these is prose and is not subject to the shell-verb rule.
+_CODE_SPAN_RE = re.compile(r"```[a-z]*\n?(.*?)```|`([^`\n]+)`", re.DOTALL)
+
+#: The same verbs as a plain set, for de-duplicating against the tool-name rule.
+_SHELL_VERB_NAMES = frozenset({"grep", "sed", "awk", "cat", "ls", "find"})
 
 
 @dataclass(frozen=True)
@@ -217,7 +242,12 @@ def validate_body(
 
     if known_tools is not None:
         referenced = set(_BACKTICK_TOKEN_RE.findall(body))
-        unknown = sorted(t for t in referenced if t not in known_tools)
+        # A backticked shell verb gets the shell_verbs message below, which says
+        # something useful. Reporting it here too is two errors for one mistake.
+        unknown = sorted(
+            t for t in referenced
+            if t not in known_tools and t not in _SHELL_VERB_NAMES
+        )
         if unknown:
             out.append(Violation(
                 "tool_names",
@@ -225,7 +255,11 @@ def validate_body(
                 f"{', '.join(unknown)}. Reference capabilities by their real names.",
             ))
 
-    shell = sorted(set(_SHELL_VERBS_RE.findall(body)))
+    # Only the CODE in the document, joined. A verb in prose is a verb.
+    code = "\n".join(
+        span for match in _CODE_SPAN_RE.findall(body) for span in match if span
+    )
+    shell = sorted(set(_SHELL_VERBS_RE.findall(code)))
     if shell:
         out.append(Violation(
             "shell_verbs",

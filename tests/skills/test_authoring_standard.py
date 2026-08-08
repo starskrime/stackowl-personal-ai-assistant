@@ -136,9 +136,48 @@ def test_the_tool_rule_is_SKIPPED_when_the_registry_is_unavailable():
     assert "tool_names" not in _rules(std.validate_body(body, known_tools=None))
 
 
-def test_raw_shell_verbs_are_rejected():
-    body = _GOOD_BODY + "\nRun grep over the logs.\n"
+# --------------------------------------------------------------------------- #
+# The shell-verb rule. It is STRUCTURAL, not lexical — found the hard way.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("snippet", [
+    "```bash\ngrep -r foo .\n```",
+    "Run `find . -name x` first.",
+    "`cat a | awk 1`",
+    "```\nls -la\n```",
+])
+def test_shell_verbs_in_code_are_rejected(snippet):
+    body = _GOOD_BODY + "\n" + snippet + "\n"
     assert "shell_verbs" in _rules(std.validate_body(body, known_tools=frozenset()))
+
+
+@pytest.mark.parametrize("prose", [
+    "Use this to find the failing job.",
+    "Read the logs to find out why.",
+    "The cat sat on the mat.",
+    "It also lists the results.",
+])
+def test_shell_verbs_in_PROSE_are_not_rejected(prose):
+    """THE regression, caught in production by a live migration batch.
+
+    The first version matched bare words anywhere and rejected "Use this to find
+    the failing job" — a hardcoded English word-list applied to natural
+    language, which this codebase has a standing rule against. "find", "cat" and
+    "ls" are ordinary English; `find . -name x` is a shell instruction. The
+    difference is structural (is it code, in command position?), not lexical.
+    """
+    body = _GOOD_BODY + "\n" + prose + "\n"
+    assert "shell_verbs" not in _rules(std.validate_body(body, known_tools=frozenset()))
+
+
+def test_a_backticked_shell_verb_reports_once_not_twice():
+    """One mistake, one message. `grep` is not also an 'unregistered tool' — the
+    shell_verbs message is the one that tells the author what to do instead."""
+    body = _GOOD_BODY + "\n`grep -r foo .`\n"
+    rules = _rules(std.validate_body(body, known_tools=frozenset({"web_fetch"})))
+    assert "shell_verbs" in rules
+    assert "tool_names" not in rules
 
 
 def test_prose_in_backticks_is_not_mistaken_for_a_tool():
