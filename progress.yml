@@ -8154,7 +8154,7 @@ items:
     verdict: MISSING
     track: adopt
     priority: P2
-    wave: 8
+    wave: 4        # pulled forward from 8 by D09.3 R1Q1 — it blocks the migration
     order: 61
     map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d102"
     gap: "Without a standard, an agent that writes its own skills writes inconsistent ones."
@@ -8162,7 +8162,7 @@ items:
     blocks: [D09.3]
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done             # 25 questions, 7 rounds, 2026-08-08
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -8171,7 +8171,32 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - "R1Q1 — WRITE OURS, TAKING THEIR STRUCTURE. Keep Hermes' bones (fixed section order, real tool names in backticks, scripts/references/templates layout) but set our own values where evidence differs, and make every rule MACHINE-CHECKABLE. Their rubric is reviewer-enforced and assumes a human author; ours must hold when the agent is the author."
+      - "R1Q2 — *** ADOPT <=60 CHAR DESCRIPTIONS, against measured evidence ***. Shown before choosing: our median is 197 chars, only 15 of 423 skills would pass, and registry.py already warns 'thin tool description — tool_search under-ranks short descriptions'. Bakir chose the Hermes rule anyway. Recorded as an informed override; the retrieval consequence is followed up in R2."
+      - "R1Q3 — THE FILE CARRIES AUTHORED CONTENT ONLY. success_rate, n_executions, parent_traces and embedding_model move out of frontmatter; the database is already authoritative for all four. Two writers to one field is how they drift."
+      - "R1Q4 — ADOPT ALL SEVEN HERMES SECTIONS AS REQUIRED (When to Use -> Prerequisites -> How to Run -> Quick Reference -> Procedure -> Pitfalls -> Verification). NOTE: this supersedes D09.3 R2Q5, which chose a three-section template (Steps / Verification / When not to use) — neither 'Steps' nor 'When not to use' is in the seven. Put back in R2."
+      - "R2Q5 — CONTRADICTION RESOLVED: the seven stand and supersede D09.3 R2Q5. 'Steps' becomes 'Procedure'; 'When not to use' folds into 'When to Use' as its negative case. D09.3's decision list is superseded on this point, not deleted."
+      - "R2Q6 — RETRIEVAL IS PROTECTED BY MOVING THE SIGNAL, not by keeping the long description. when_to_use becomes a REQUIRED rich field (1-3 sentences) while description is the <=60-char label. Measured: _embed_text composes name + description + when_to_use + body, and skills_fts indexes name/description/when_to_use/summary — so both already read when_to_use and the ~137 chars stripped from description are recovered there."
+      - "R2Q7 — the 408 over-length descriptions are rewritten BY LLM during the migration, in the same pass that restructures bodies into the seven sections. One call per skill either way; the old rich description seeds when_to_use where that field is empty, so no retrieval signal is discarded."
+      - "R2Q8 — the rule applies to SKILLS OF EVERY SOURCE (learned, user, builtin — they share one catalog and one retrieval path) and NOT to tools. A tool description feeds the model's tool array, a different surface with a different consumer."
+      - "R3Q9 — ADOPT the backticked-real-tool-name rule, VALIDATED AGAINST THE LIVE ToolRegistry. A backticked token shaped like a tool must be registered, and raw shell verbs are rejected. Measured breach rate is low here (3 of 200 sampled bodies), but the rule is cheap, machine-checkable, and stops a skill teaching the agent to shell out where a real capability exists."
+      - "R3Q10 — REJECT AT WRITE, REPORT ON LOAD. Nothing non-conforming can be created; existing skills are counted at load so conformance is visible and rising as migration proceeds. Deliberately NOT rejecting at load: that would make 408 skills unloadable and effectively empty the catalog on boot."
+      - "R3Q11 — length is a SOFT CAP, warn only, above ~200 lines. A long skill is a smell, not an error, and a hard cap would reject a genuinely detailed procedure."
+      - "R3Q12 — per-skill TESTS are required for builtin/user skills ONLY. Learned skills rely on the required Verification section instead; mandating a test file per learned skill would have the agent generating 400+ test files nobody runs."
+      - "R4Q13 — REQUIRED FRONTMATTER IS name, description, when_to_use. Those three carry meaning and feed retrieval; source/enabled/version are derived and summary/category/tags/author/license are optional. Requiring more would only make the agent invent values to satisfy a validator."
+      - "R4Q14 — NO platforms FIELD. Hermes needs it because their skills ship scripts with OS-specific dependencies; our standing rule is that everything runs on all hardware, so the field would either always say all three or quietly license a skill that does not."
+      - "R4Q15 — author IS THE HUMAN OPERATOR, following Hermes' credit-the-human convention, even for a synthesised skill. (Implementation note: resolve from owner identity, not a hardcoded name.)"
+      - "R4Q16 — version BUMPS ON EVERY CONTENT CHANGE, by whoever writes: patch for an edit, minor for a restructure (the template migration), major for a merge (consolidation). Gives skill_audit a human-readable trail beside its before/after hashes."
+      - "R5Q17 — DROP summary. Measured: all 423 learned skills carry one and none equals its description, because summary was generated to compensate for descriptions being unreadable at a glance. A <=60-char description IS that glance and when_to_use carries retrieval, so summary earns nothing and costs a generation pass per skill."
+      - "R5Q18 — THE AUTHORING PROMPT TEACHES THE STANDARD; THE VALIDATOR ENFORCES IT. Teach-then-check, not check-only: without the prompt carrying the template and rules, every non-conforming synthesis pays at least one wasted LLM call on a reject-retry."
+      - "R5Q19 — ONE MODULE IS THE SOURCE OF TRUTH (rules as constants); the design doc and the authoring prompt cite or derive from it. Three hand-maintained copies of a standard is exactly how a standard rots."
+      - "R5Q20 — support-file layout is ENFORCED to scripts/ | references/ | templates/; any other subdirectory is rejected. Gives consolidation the predictable package shape R3Q11 requires, and only 8 of 423 skills carry subdirectories at all."
+      - "R6Q21 — summary is removed COMPLETELY in one change: the _summarize_missing boot pass, the summary/summary_source/summary_body_hash columns, and the summary column in skills_fts (which must be rebuilt). Chosen over a staged removal despite the larger blast radius."
+      - "R6Q22 — a rejected write returns EVERY violation at once, each naming the rule it broke, so the model fixes all of them in one retry instead of discovering them one call at a time. Deliberately not returning a corrected draft: the platform authoring the fix would make it the author."
+      - "R6Q23 — conformance is reported in the autonomic_health brief section, beside skills active/stale/archived and ever-used. One place to read how the catalog is doing."
+      - "R6Q24 — THE STANDARD IS VERSIONED and each skill records which version it conformed to. When the standard moves, the conformance report shows the gap and the migration re-runs for the changed rules only — rather than re-validating everything or grandfathering old skills into permanent fragmentation."
+      - "R7Q25 — ACCEPTANCE: zero new non-conforming skills, and no new -N duplicate families. The standard exists to stop drift AT THE SOURCE, so it is judged on what gets written from now on — not on how fast the 423-skill backlog migrates, which is D09.3's job. Conformance overall should rise as a consequence."
     changes: []
     notes: null
 
