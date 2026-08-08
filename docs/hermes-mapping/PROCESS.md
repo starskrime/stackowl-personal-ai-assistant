@@ -78,6 +78,47 @@ cleanup pass afterwards.
 
 ---
 
+## How work is chosen — EVIDENCE-FIRST (Bakir, 2026-08-07)
+
+The map says what is worth fixing. It does **not** say what to fix next.
+
+Waves 1–3 were worked straight off the map. Everything after was driven by live
+measurement and by what actually broke in front of the operator — phantom cloud
+pricing on 82,016 rows, critical alerts lost to an unverified `cast`, a Like that
+recorded the vote and left the buttons on screen. That work was right to do, and
+none of it was on the map's critical path.
+
+So the operating model is stated rather than drifted into:
+
+**Priority comes from evidence — a measurement, a live failure, or an operator
+report. The map is the CHECK, not the queue.**
+
+### The one obligation that makes it safe
+
+Evidence-first has exactly one failure mode, and it has already happened:
+building something the map already had an item for. The skill-lifecycle curator
+was designed, built, tested, validated and shipped before anyone noticed it was
+`D09.3`, whose stated gap was almost word for word the problem being solved.
+
+So, **before writing anything**:
+
+```bash
+uv run python scripts/map_check.py <words describing what you are about to build>
+```
+
+It prints every matching item with the three things that change what you do next:
+whether it is already claimed, what it **depends on**, and its `dedup_target`.
+Exit status is 1 when something matched, so it can gate a workflow.
+
+If it matches, you are on a mapped item — run its seven stages and update
+`progress.yml`. If it does not, you are doing evidence-led work; record it as
+debt or an ADR so the record still says what we knew and what we chose.
+
+This replaces "remember to check `dedup_targets`" with a command, because
+remembering is the part that failed.
+
+---
+
 ## The seven stages
 
 Every item runs all seven. `no_change_needed` is a legitimate outcome; silence is not.
