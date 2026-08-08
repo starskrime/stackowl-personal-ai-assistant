@@ -293,3 +293,61 @@ async def test_a_renamed_survivor_is_reachable_by_keyword_under_its_new_name(
     names = {sk.name for sk, _ in hits}
     assert "zzqualifier" in names
     assert "zzqualifier-1" not in names
+
+
+# --------------------------------------------------------------------------- #
+# A name lives in three places. Found in production by the conformance line.
+# --------------------------------------------------------------------------- #
+
+
+async def test_the_survivors_frontmatter_name_is_rewritten(tmp_db, tmp_path):
+    """THE regression. Renaming the row and the directory but NOT the SKILL.md
+    frontmatter let the next boot re-scan, read the stale `-N` name, and upsert
+    a SECOND row pointing at the same directory — consolidation partially
+    undoing itself overnight and resurrecting the numbered names it removed.
+
+    Caught in production by the morning brief's conformance line, one boot after
+    the first live consolidation, on 2 of the 43 families (the two that needed
+    a rename at all).
+    """
+    store = SkillIndexStore(tmp_db)
+    await _add(store, tmp_path, "lesson")
+    await _add(store, tmp_path, "lesson-1", execs=9)
+
+    await _consolidator(store, tmp_path).run(apply=True, stamp=_STAMP)
+
+    text = (tmp_path / "learned" / "lesson" / "SKILL.md").read_text()
+    frontmatter = text.split("---")[1]
+    assert "name: lesson\n" in frontmatter
+    assert "lesson-1" not in frontmatter
+    # SCOPE: the frontmatter only. The BODY still says "body of lesson-1" and
+    # must — renaming a skill is not licence to rewrite what it says, and a
+    # regex loose enough to touch prose is how a cleanup corrupts content.
+    assert "body of lesson-1" in text
+
+
+async def test_a_re_scan_after_consolidation_does_not_resurrect_the_old_name(
+    tmp_db, tmp_path,
+):
+    """The actual production symptom, end to end: re-upsert from disk the way
+    the loader does at boot, and confirm no second row appears."""
+    store = SkillIndexStore(tmp_db)
+    await _add(store, tmp_path, "lesson")
+    await _add(store, tmp_path, "lesson-1", execs=9)
+    await _consolidator(store, tmp_path).run(apply=True, stamp=_STAMP)
+
+    # What the loader does on the next boot: read the directory, parse its
+    # frontmatter, upsert.
+    d = tmp_path / "learned" / "lesson"
+    import yaml
+    front = yaml.safe_load(d.joinpath("SKILL.md").read_text().split("---")[1])
+    await store.upsert(LoadedSkill(
+        manifest=SkillManifest(
+            name=front["name"], description="d", when_to_use="w", source="learned",
+        ),
+        path=d, body="b", tools_registered=0, owls_registered=0,
+    ))
+
+    rows = await store.rows_for_curation()
+    names = sorted(r.name for r in rows)
+    assert names == ["lesson"], f"a numbered row came back: {names}"

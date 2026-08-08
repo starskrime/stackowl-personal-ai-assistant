@@ -44,6 +44,7 @@ content decision and belongs to the LLM migration pass, not here.
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -59,6 +60,11 @@ if TYPE_CHECKING:
     from stackowl.skills.store import SkillIndexStore
 
 __all__ = ["ConsolidationPlan", "FamilyPlan", "SkillConsolidator"]
+
+#: The ``name:`` line inside a SKILL.md frontmatter block. Anchored to the line
+#: start and applied only to the leading ``---`` block, so a body that discusses
+#: a "name:" field is never rewritten.
+_FRONTMATTER_NAME_RE = re.compile(r"^name:\s*\S.*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -349,8 +355,62 @@ class SkillConsolidator:
                 )
                 return
 
+        # A SKILL NAME LIVES IN THREE PLACES: the index row, the directory, and
+        # the frontmatter. Rewriting only the first two is what this method did
+        # until the conformance line in the morning brief caught it — the next
+        # boot re-scanned the directory, read the stale `-N` name out of the
+        # frontmatter, and upserted a SECOND row pointing at the same directory.
+        # Consolidation partially undid itself overnight, resurrecting exactly
+        # the numbered names it had just removed.
+        self._rewrite_frontmatter_name(dst, family.base)
         await self._store.rename(row.skill_id, family.base, str(dst))
         log.skills.info(
             "[consolidate] rename_survivor: exit",
             extra={"_fields": {"from": family.survivor, "to": family.base}},
+        )
+
+    def _rewrite_frontmatter_name(self, skill_dir: Path, name: str) -> None:
+        """Point the SKILL.md's own ``name:`` at the new name.
+
+        Fails SOFT and LOUD. A frontmatter we could not rewrite leaves the file
+        disagreeing with the index, which the next boot will notice by
+        re-creating the old row — so this must be reported, but it must not
+        abort a consolidation that has already deleted the losing members.
+        """
+        md = skill_dir / "SKILL.md"
+        if not md.exists():
+            log.skills.warning(
+                "[consolidate] rewrite_frontmatter_name: no SKILL.md",
+                extra={"_fields": {"dir": str(skill_dir)}},
+            )
+            return
+        try:
+            text = md.read_text(encoding="utf-8")
+            head, sep, rest = text.partition("\n---")
+            if not sep or not text.startswith("---"):
+                log.skills.warning(
+                    "[consolidate] rewrite_frontmatter_name: no frontmatter block "
+                    "— the next re-scan will restore the old name",
+                    extra={"_fields": {"path": str(md)}},
+                )
+                return
+            new_head, n = _FRONTMATTER_NAME_RE.subn(f"name: {name}", head, count=1)
+            if not n:
+                log.skills.warning(
+                    "[consolidate] rewrite_frontmatter_name: no name: line found",
+                    extra={"_fields": {"path": str(md)}},
+                )
+                return
+            md.write_text(new_head + sep + rest, encoding="utf-8")
+        except Exception as exc:  # B5
+            log.skills.error(
+                "[consolidate] rewrite_frontmatter_name: failed — the file and "
+                "the index now disagree, and the next boot will re-create the "
+                "old numbered row",
+                exc_info=exc, extra={"_fields": {"path": str(md), "name": name}},
+            )
+            return
+        log.skills.debug(
+            "[consolidate] rewrite_frontmatter_name: exit",
+            extra={"_fields": {"path": str(md), "name": name}},
         )

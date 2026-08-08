@@ -27,6 +27,7 @@ from stackowl.brief.models import BriefSection
 from stackowl.config.settings import Settings
 from stackowl.infra.observability import log
 from stackowl.sessions.models import MACHINE_LANE_PREFIXES
+from stackowl.skills import standard
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.db.pool import DbPool
@@ -416,6 +417,53 @@ class AutonomicHealthAssembler:
                 f"over_{_ONE_TELEGRAM_MESSAGE}:{int(str(r['over'] or 0))}/{int(str(r['n']))}"
             )
 
+        # 3. STEP — is the authoring standard actually holding? (D10.2 / slice 6.)
+        #
+        # THE FEEDBACK LEG. The validator refuses a non-conforming write, but a
+        # refusal only covers skills authored SINCE it shipped — and D10.2's
+        # acceptance is "zero new non-conforming skills", which is a claim about
+        # a trend, not a state. Without a number here, "the standard is enforced"
+        # is an assumption about code rather than an observation of the catalog.
+        #
+        # Checked against the CHEAP rules only — name shape and description
+        # length. Parsing every body for section structure on each brief would
+        # turn a two-query section into a filesystem walk, and these two catch
+        # the failure that actually happened: 269 numbered duplicates and a
+        # median description three times over the cap.
+        #
+        # The name rule is applied in PYTHON via standard.validate_name, not as
+        # a SQL GLOB. A GLOB would be a second, weaker copy of "-N is forbidden"
+        # — it cannot express "one or more digits" without enumerating widths,
+        # so `foo-123` would quietly pass a check whose whole purpose is to
+        # notice it. One copy of the rule, and the brief asks the module that
+        # owns it. The catalog is a few hundred rows; reading the names is cheap.
+        conf = await self._db.fetch_all(
+            "SELECT name, LENGTH(description) AS desc_len FROM skills "
+            "WHERE lifecycle_state <> 'archived'",
+        )
+        if conf:
+            n_total = len(conf)
+            numbered = sum(
+                1 for r in conf if standard.validate_name(str(r["name"]))
+            )
+            long_desc = sum(
+                1 for r in conf
+                if int(str(r["desc_len"] or 0)) > standard.MAX_DESCRIPTION_CHARS
+            )
+            items.append(
+                f"skill_standard v{standard.STANDARD_VERSION} "
+                f"numbered:{numbered}/{n_total} "
+                f"over_{standard.MAX_DESCRIPTION_CHARS}_chars:{long_desc}/{n_total}"
+            )
+            # A numbered name after D10.2 means the validator was BYPASSED — some
+            # write path reaches the store without going through gated_skill_write.
+            # That is a defect, not a backlog item, so it says so.
+            if numbered:
+                items.append(
+                    f"! {numbered} numbered skill name(s) exist despite the "
+                    f"standard forbidding them — a write path is bypassing the validator"
+                )
+
         # 2. DECISION — nothing measurable is a legitimate outcome, not an error.
         if not items:
             log.scheduler.debug(
@@ -430,6 +478,7 @@ class AutonomicHealthAssembler:
             extra={"_fields": {
                 "skills_active": active, "skills_stale": stale,
                 "skills_archived": archived, "jobs_failed_24h": failed,
+                "standard_version": standard.STANDARD_VERSION,
             }},
         )
         return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
