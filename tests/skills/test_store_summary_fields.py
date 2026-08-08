@@ -16,12 +16,13 @@ def _loaded(name="alpha"):
 
 
 @pytest.mark.asyncio
-async def test_get_exposes_summary_and_tool_names_defaults(tmp_db: DbPool):
+async def test_get_exposes_tool_names_defaults(tmp_db: DbPool):
+    """The summary half of this test went with the field (D09.3 slice 5,
+    migration 0110). The tool_names half is unrelated and still guards that a
+    skill with no declared tools reads back as an empty tuple, not None."""
     store = SkillIndexStore(tmp_db)
     await store.upsert(_loaded())
     sk = await store.get("user", "alpha")
     assert sk is not None
-    assert sk.summary is None
-    assert sk.summary_source is None
-    assert sk.summary_body_hash is None
     assert sk.tool_names == ()
+    assert not hasattr(sk, "summary"), "the field is gone, not merely unset"

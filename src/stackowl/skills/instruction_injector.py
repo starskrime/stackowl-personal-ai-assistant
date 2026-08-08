@@ -42,15 +42,21 @@ class _SkillLike(Protocol):
     @property
     def source(self) -> str: ...
     @property
-    def summary(self) -> str | None: ...
-    @property
     def description(self) -> str: ...
     @property
     def when_to_use(self) -> str: ...
 
 
 def _resolve_text(sk: _SkillLike) -> str:
-    return sk.summary if sk.summary else f"{sk.description} — {sk.when_to_use}"
+    """The one-line operational blurb injected for a skill.
+
+    Composed from ``description`` + ``when_to_use`` rather than read from a
+    cached ``summary`` column (removed in D09.3 slice 5, migration 0110). This
+    was already the fallback path; D10.2 made it the whole story by capping
+    description at 60 chars and requiring when_to_use to carry the retrieval
+    signal, so there is nothing left for a generated summary to add.
+    """
+    return f"{sk.description} — {sk.when_to_use}"
 
 
 def _neutralize(text: str) -> str:
@@ -108,7 +114,7 @@ class SkillInstructionInjector:
         return self._render_untrusted(sk.name, sk.source, f"{text} (use skill_view {sk.name} for the full playbook)")
 
     def _summary_block(self, sk: _SkillLike) -> str:
-        text = sk.summary if sk.summary else f"{sk.description} — {sk.when_to_use}"
+        text = _resolve_text(sk)
         if sk.source in _TRUSTED:
             return f"- {sk.name}: {text} (skill_view {sk.name})"
         return self._render_untrusted(sk.name, sk.source, f"{text} (skill_view {sk.name})")

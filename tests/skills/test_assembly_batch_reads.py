@@ -1,4 +1,4 @@
-"""LAT.1 — SkillsAssembly.build()'s three back-fill passes must read the skill
+"""LAT.1 — SkillsAssembly.build()'s back-fill passes must read the skill
 index once per pass (via SkillIndexStore.index_by_source_name), not once per
 skill via SkillIndexStore.get. Mirrors test_lessons_publish_cache.py /
 test_summarize_backfill.py's fixture style.
@@ -95,7 +95,13 @@ async def _build(tmp_db, root, **kw):
 async def test_each_pass_issues_exactly_one_index_read_regardless_of_skill_count(
     monkeypatch, tmp_db, tmp_path,
 ):
-    """50 skills, all 3 passes active -> 3 index_by_source_name calls total, 0 store.get calls."""
+    """50 skills, both passes active -> 2 index_by_source_name calls total, 0
+    store.get calls.
+
+    Was 3 passes until D09.3 slice 5 removed _summarize_missing along with the
+    summary column. The invariant under test is unchanged and is the reason this
+    test exists: ONE snapshot per pass, never one per skill.
+    """
     for i in range(50):
         _write_skill(tmp_path, f"skill-{i}")
 
@@ -125,9 +131,9 @@ async def test_each_pass_issues_exactly_one_index_read_regardless_of_skill_count
         lessons_index=_StubLessonsIndex(),
     )
 
-    # One snapshot per active pass (_embed_missing, _summarize_missing,
-    # _publish_to_lessons) — not one per skill (would be 150 for 50 skills x 3 passes).
-    assert index_calls == 3
+    # One snapshot per active pass (_embed_missing, _publish_to_lessons) — not
+    # one per skill, which would be 100 for 50 skills x 2 passes.
+    assert index_calls == 2
     # The passes must do dict lookups against the snapshot, not per-skill store.get.
     assert get_calls == 0
 
@@ -170,8 +176,8 @@ async def test_publish_to_lessons_sees_embedding_written_earlier_in_same_build(
 
 @pytest.mark.asyncio
 async def test_full_build_mixed_skill_set_matches_per_skill_read_decisions(tmp_db, tmp_path):
-    """Mixed set: one skill already embedded+summarized+published (unchanged
-    body -> all 3 passes must skip), one brand-new skill (all 3 must write).
+    """Mixed set: one skill already embedded+published (unchanged body -> both
+    passes must skip), one brand-new skill (both must write).
     Verifies the batched-read implementation reaches the same skip/write
     decisions as the per-skill-read implementation it replaces.
     """
@@ -180,14 +186,18 @@ async def test_full_build_mixed_skill_set_matches_per_skill_read_decisions(tmp_d
     provider_registry = _StubProviderRegistry()
     lessons_index = _StubLessonsIndex()
 
-    # Boot 1: "stale" gets embedded, summarized, published.
+    # Boot 1: "stale" gets embedded and published.
     await _build(
         tmp_db, tmp_path,
         embedding_registry=embed_registry,
         provider_registry=provider_registry,
         lessons_index=lessons_index,
     )
-    assert provider_registry.provider.calls == 1
+    # The provider is no longer called at all during enrich: summarization was
+    # the only pass that used it (removed in slice 5). Asserted rather than
+    # dropped — a provider call reappearing here would mean a new per-skill LLM
+    # call at boot, which is exactly what that removal bought back.
+    assert provider_registry.provider.calls == 0
     assert lessons_index.calls == 1
 
     # Add a brand-new skill; "stale" is untouched on disk.
@@ -209,15 +219,13 @@ async def test_full_build_mixed_skill_set_matches_per_skill_read_decisions(tmp_d
         lessons_index=lessons_index,
     )
 
-    # "stale" unchanged -> every pass skipped it (no re-embed/re-summarize/re-publish).
+    # "stale" unchanged -> every pass skipped it (no re-embed / re-publish).
     assert embed_calls == [1]  # only "fresh" embedded
-    assert provider_registry.provider.calls == 2  # +1, only for "fresh"
+    assert provider_registry.provider.calls == 0  # still no LLM call at boot
     assert lessons_index.calls == 2  # +1 publish_many call, only "fresh" in the batch
     assert len(lessons_index.published[-1]) == 1
 
     fresh = await comp.store.get("user", "fresh")
     stale = await comp.store.get("user", "stale")
     assert fresh is not None and fresh.embedding is not None
-    assert fresh.summary == "Do X. Then Y."
     assert stale is not None and stale.embedding is not None
-    assert stale.summary == "Do X. Then Y."

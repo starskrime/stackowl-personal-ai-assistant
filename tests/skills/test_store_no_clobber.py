@@ -8,32 +8,18 @@ from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.store import SkillIndexStore
 
 
-def _loaded(name="alpha", summary=None, tool_names=()):
+def _loaded(name="alpha", tool_names=()):
     return LoadedSkill(
-        manifest=SkillManifest(name=name, description="d", source="user", summary=summary),
+        manifest=SkillManifest(name=name, description="d", source="user"),
         path=Path("/tmp/x"), body="body", tools_registered=len(tool_names),
         owls_registered=0, tool_names=tuple(tool_names),
     )
 
 
-@pytest.mark.asyncio
-async def test_reboot_upsert_does_not_clobber_generated_summary(tmp_db: DbPool):
-    store = SkillIndexStore(tmp_db)
-    sid = await store.upsert(_loaded())                       # no author summary
-    await store.set_summary(sid, "GENERATED PLAYBOOK", "generated", "hash123")
-    await store.upsert(_loaded())                             # reboot re-scan, still no author summary
-    sk = await store.get("user", "alpha")
-    assert sk.summary == "GENERATED PLAYBOOK"                 # survived reboot
-    assert sk.summary_source == "generated"
-
-
-@pytest.mark.asyncio
-async def test_author_summary_persists_and_wins(tmp_db: DbPool):
-    store = SkillIndexStore(tmp_db)
-    await store.upsert(_loaded(summary="AUTHORED"))
-    sk = await store.get("user", "alpha")
-    assert sk.summary == "AUTHORED"
-    assert sk.summary_source == "author"
+# The two summary no-clobber tests that stood here went with the field itself
+# (D09.3 slice 5, migration 0110). They guarded author-vs-generated precedence
+# on a column that no longer exists; there is no behaviour left to protect.
+# The tool_names no-clobber test below is unrelated and stays.
 
 
 @pytest.mark.asyncio

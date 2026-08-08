@@ -1,12 +1,16 @@
-"""LAT.5 — SkillsAssembly.build()'s enrichment passes (embed/summarize/publish)
-must not gate boot-readiness. ``load_only()`` returns as soon as skills are
-scanned off disk (no LLM/embedding I/O); ``enrich()`` runs the three passes and
-is the piece the boot call site (startup/orchestrator.py) now fires as a
-background ``asyncio.create_task`` after the gateway is serving turns instead
-of awaiting inline. ``build()`` itself keeps the old fully-synchronous
-behavior (load_only + enrich awaited back to back) for callers that want it
-(tests, non-boot assembly wiring) — see tests/skills/test_summarize_backfill.py
-and tests/skills/test_assembly_batch_reads.py, unchanged by this story.
+"""LAT.5 — SkillsAssembly's enrichment passes must not gate boot-readiness.
+
+``load_only()`` returns as soon as skills are scanned off disk (no embedding
+I/O); ``enrich()`` runs the back-fill passes and is what the boot call site
+(startup/orchestrator.py) fires as a background ``asyncio.create_task`` after
+the gateway is serving turns, rather than awaiting inline.
+
+The gate moved from the LLM provider to the EMBEDDING provider in D09.3 slice 5.
+It had to: summarization was the only enrich pass that called an LLM, and with
+that pass removed a gated provider gates nothing — the task completed instantly
+and the test asserted a property it was no longer exercising. Embedding is now
+the slow pass, so that is what has to be held open to observe "boot proceeded
+while enrichment is still in flight".
 """
 from __future__ import annotations
 
@@ -22,30 +26,28 @@ from stackowl.tools.registry import ToolRegistry
 
 
 @dataclass
-class _GatedProvider:
-    """A summarize provider whose ``complete()`` blocks until released —
-    stands in for the ~1-2s real LLM round-trip so the test can observe
-    "boot proceeded while enrichment is still in flight" deterministically."""
+class _GatedEmbedder:
+    """An embedding provider whose ``embed()`` blocks until released — stands in
+    for the real round-trip so the test can observe "boot proceeded while
+    enrichment is still in flight" deterministically."""
 
     gate: asyncio.Event
     calls: int = 0
+    #: On the PROVIDER, not the registry — that is where _embed_missing reads it.
+    model_name: str = "stub-embed-v1"
 
-    async def complete(self, messages, **kw):  # noqa: ANN001, ANN003
+    async def embed(self, texts):  # noqa: ANN001
         self.calls += 1
         await self.gate.wait()
-
-        class _R:
-            content = "Do X. Then Y."
-
-        return _R()
+        return [[0.1, 0.2] for _ in texts]
 
 
-class _StubProviderRegistry:
-    def __init__(self, provider: _GatedProvider) -> None:
-        self._p = provider
+class _StubEmbeddingRegistry:
+    def __init__(self, provider: _GatedEmbedder) -> None:
+        self.provider = provider
 
-    def get_with_cascade(self, tier: str) -> tuple[_GatedProvider, str]:  # noqa: ARG002
-        return self._p, ""
+    def get(self) -> _GatedEmbedder:
+        return self.provider
 
 
 def _write_skill(root: Path, name: str, *, body: str = "long body to summarize") -> None:
@@ -71,7 +73,7 @@ async def test_load_only_returns_without_running_enrichment(tmp_db, tmp_path: Pa
     assert len(components.loaded) == 1
     sk = await components.store.get("user", "alpha")
     assert sk is not None
-    assert sk.summary is None  # enrichment never ran
+    assert sk.embedding is None  # enrichment never ran
 
 
 @pytest.mark.asyncio
@@ -80,9 +82,8 @@ async def test_enrich_runs_as_backgroundable_task_without_blocking_caller(
 ) -> None:
     """Boot-readiness proof: fire enrich() via asyncio.create_task (mirroring
     the orchestrator's boot call site) and confirm the caller regains control
-    immediately — the task is still pending (LLM call gated) while other boot
-    work (represented here by a plain assertion) proceeds unblocked. Only
-    after the gate is released does the summary land."""
+    immediately — the task is still pending (embedding gated) while other boot
+    work proceeds unblocked. Only after the gate is released does it land."""
     _write_skill(tmp_path, "alpha")
     components = await SkillsAssembly.load_only(
         db=tmp_db, tool_registry=ToolRegistry(), owl_registry=OwlRegistry(),
@@ -90,21 +91,29 @@ async def test_enrich_runs_as_backgroundable_task_without_blocking_caller(
     )
 
     gate = asyncio.Event()
-    provider = _GatedProvider(gate=gate)
+    embedder = _GatedEmbedder(gate=gate)
     task = asyncio.create_task(
-        SkillsAssembly.enrich(components, provider_registry=_StubProviderRegistry(provider)),
+        SkillsAssembly.enrich(
+            components, embedding_registry=_StubEmbeddingRegistry(embedder),
+        ),
     )
-    # Yield once so the task starts and reaches the gated provider.complete().
-    await asyncio.sleep(0)
+    # Wait until the task actually reaches the gated embed() call. A single
+    # sleep(0) is not enough — enrich has real DB awaits ahead of the gate — and
+    # asserting "not done" before the work has started proves nothing at all.
+    for _ in range(200):
+        if embedder.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert embedder.calls == 1, "enrich never reached the gated embedding pass"
 
     # "Boot proceeds" — the platform can keep doing other things right now;
     # the enrichment task has not completed and holds no lock the caller needs.
     assert not task.done()
     sk_mid_flight = await components.store.get("user", "alpha")
-    assert sk_mid_flight.summary is None  # not written yet — pass still in flight
+    assert sk_mid_flight.embedding is None  # not written yet — pass still in flight
 
     gate.set()
     await task
 
     sk_final = await components.store.get("user", "alpha")
-    assert sk_final.summary == "Do X. Then Y."
+    assert sk_final.embedding is not None

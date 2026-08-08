@@ -55,9 +55,6 @@ class Skill:
     parent_traces: list[str]
     embedding: list[float] | None
     embedding_model: str | None
-    summary: str | None
-    summary_source: str | None
-    summary_body_hash: str | None
     tool_names: tuple[str, ...]
     body_text: str
     manifest_json: dict[str, object]
@@ -129,12 +126,12 @@ _SELECT_FIELDS = """
     skill_id, name, source, path, description, when_to_use, version, enabled,
     success_rate, n_executions, parent_traces, embedding, embedding_model,
     manifest_json, body_text, loaded_at, updated_at,
-    summary, summary_source, summary_body_hash, tool_names, lessons_published_hash,
+    tool_names, lessons_published_hash,
     lifecycle_state
 """
 
 # Same field list, table-prefixed for the hybrid_recall JOIN against skills_fts
-# (skills_fts has its own name/description/when_to_use/summary columns, so an
+# (skills_fts has its own name/description/when_to_use columns, so an
 # unprefixed SELECT would be ambiguous once joined).
 _SELECT_FIELDS_S = ", ".join(
     f"s.{col.strip()}" for col in _SELECT_FIELDS.replace("\n", " ").split(",") if col.strip()
@@ -224,17 +221,7 @@ class SkillIndexStore(OwnedRepository):
             (self._owner_id, m.source, m.name),
         )
         skill_id = int(str(rows[0]["skill_id"])) if rows else -1
-        # 2. DECISION — persist author summary when the manifest carries one
-        if m.summary is not None and skill_id != -1:
-            log.skills.debug(
-                "[skills] store.upsert: author summary present — persisting",
-                extra={"_fields": {"name": m.name, "source": m.source}},
-            )
-            await self.set_summary(skill_id, m.summary, "author", _summary_hash(loaded, m.summary))
-        # Keep skills_fts in sync (name/description/when_to_use may have changed
-        # even when there's no summary write above). set_summary already synced
-        # FTS with the fresh summary in that branch; this call is a cheap no-op
-        # re-sync in that case and the only sync in the no-summary case.
+        # Keep skills_fts in sync — name/description/when_to_use may have changed.
         if skill_id != -1:
             await self._sync_fts(skill_id)
         # 4. EXIT
@@ -438,35 +425,15 @@ class SkillIndexStore(OwnedRepository):
             extra={"_fields": {"total": len(items)}},
         )
 
-    async def set_summary(
-        self,
-        skill_id: int,
-        summary: str | None,
-        source: str,
-        body_hash: str | None,
-    ) -> None:
-        """Store-owned write of the resolved summary (author or generated). Mirrors set_embedding."""
-        # 1. ENTRY
-        log.skills.debug(
-            "[skills] store.set_summary: entry",
-            extra={"_fields": {"skill_id": skill_id, "source": source}},
-        )
-        await self._db.execute(
-            "UPDATE skills SET summary = ?, summary_source = ?, summary_body_hash = ?, updated_at = ? "
-            "WHERE skill_id = ? AND owner_id = ?",
-            (summary, source, body_hash, time.time(), skill_id, self._owner_id),
-        )
-        await self._sync_fts(skill_id)
-        # 4. EXIT
-        log.skills.debug(
-            "[skills] store.set_summary: exit",
-            extra={"_fields": {"skill_id": skill_id}},
-        )
+    # ``set_summary`` REMOVED in D09.3 slice 5 along with the three columns it
+    # wrote. ``description`` (capped at 60 chars) and ``when_to_use`` (required,
+    # rich) now carry what the generated summary approximated, and two writers to
+    # one fact is how fields drift. See migration 0110 for the measurement.
 
     async def set_lessons_hash(self, skill_id: int, content_hash: str) -> None:
         """Record the content hash last published into the LessonsIndex.
 
-        Mirrors ``set_summary``'s ``summary_body_hash`` gate: lets
+        A content-hash gate of the same shape the removed ``set_summary`` used: lets
         ``_publish_to_lessons`` skip the (locally-computed, uncached-by-default)
         re-embed for a skill whose content hasn't changed since the last boot.
         """
@@ -921,7 +888,7 @@ class SkillIndexStore(OwnedRepository):
         application-layer sync (``sqlite_bridge.py``). A no-op if the skill
         row is gone (e.g. deleted concurrently)."""
         rows = await self._db.fetch_all(
-            "SELECT name, description, when_to_use, summary FROM skills "
+            "SELECT name, description, when_to_use FROM skills "
             "WHERE skill_id = ? AND owner_id = ?",
             (skill_id, self._owner_id),
         )
@@ -931,11 +898,11 @@ class SkillIndexStore(OwnedRepository):
         async with self._db.transaction() as tx:
             await tx.execute("DELETE FROM skills_fts WHERE rowid = ?", (skill_id,))
             await tx.execute(
-                "INSERT INTO skills_fts (rowid, name, description, when_to_use, summary) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO skills_fts (rowid, name, description, when_to_use) "
+                "VALUES (?, ?, ?, ?)",
                 (
-                    skill_id, str(r["name"]), str(r["description"]), str(r["when_to_use"]),
-                    str(r.get("summary") or ""),
+                    skill_id, str(r["name"]), str(r["description"]),
+                    str(r["when_to_use"] or ""),
                 ),
             )
 
@@ -1088,9 +1055,6 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
         parent_traces=list(parent_traces),
         embedding=embedding,
         embedding_model=str(row["embedding_model"]) if row.get("embedding_model") else None,
-        summary=str(row["summary"]) if row.get("summary") is not None else None,
-        summary_source=str(row["summary_source"]) if row.get("summary_source") is not None else None,
-        summary_body_hash=str(row["summary_body_hash"]) if row.get("summary_body_hash") is not None else None,
         tool_names=tuple(json.loads(str(row.get("tool_names") or "[]"))),
         body_text=str(row.get("body_text", "")),
         manifest_json=manifest_dict,
