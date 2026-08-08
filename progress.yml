@@ -2650,6 +2650,20 @@ dedup_targets:
                        # quota-aware cooldown), and LLMGateway tier escalation
                        # (FALLBACK_MODEL / ROTATE_CREDENTIAL). No second policy
                        # object was added. D04.6 still to confirm against this.
+  X11:
+    name: "Two skill-retirement mechanisms"
+    detail: >
+      synthesizer deprecate (QUALITY: success_rate < 0.4 with >=5 runs -> moves to
+      learned/_deprecated/) vs curator archive (USAGE: unused 30/60d ->
+      lifecycle_state). DISCOVERED 2026-08-07 during D09.3's retroactive
+      brainstorm, not by the original mapping — which is why D09.3 shipped with
+      dedup_target null. The deprecate path has retired ZERO skills ever while
+      the catalog rotted to 92% dead, so it is not merely duplicated, it is
+      duplicated AND inert. Resolution (R7Q25): the curator becomes the single
+      retirement path and absorbs the quality trigger.
+    items: [D09.3]
+    status: unresolved
+
   X10:
     name: "Two config channels"
     detail: "YAML and STACKOWL_* env both blessed. Pick the split."
@@ -7959,9 +7973,9 @@ items:
     gap: "Skills accumulate and rot with no pressure to consolidate."
     depends_on: [D10.2]
     blocks: []
-    dedup_target: null
+    dedup_target: X11
     stages:
-      brainstorm: not_started      # NEVER RUN — see process_deviation
+      brainstorm: done             # 25 questions, 7 rounds, 2026-08-07 (retroactive)
       architect:  partial          # ADR-19 covers the design; no designs/D09.3.md
       implement:  done             # e45f3d3a — SkillCurator + migration 0107
       cleanup:    done             # ruff/mypy baselines held
@@ -7970,7 +7984,32 @@ items:
       document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
     doc: docs/adr-19-closed-loop-autonomy.md   # ADR, not a per-item design doc
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - "R1Q1 — PULL D10.2 (Authoring standard) FORWARD INTO WAVE 4. The dependency binds: consolidation rewrites skill bodies, and without a standard the agent writes inconsistent ones — plausibly the root cause of the 265 duplicates. Decay shipped without it because decay never reads or writes content; consolidation will not."
+      - "R1Q2 — the existing 265 numbered duplicates are left to DECAY. Unused by construction (only one of 21 can rank first), so stale->archive reaches them with no LLM, no new code, no risk. Cost accepted: they pollute ranking until archival."
+      - "R1Q3 — PRUNE BUILT-INS TOO. Reverses the exclusion that shipped. 9 of 14 builtins have never run and still occupy tool-search ranking and prompt space; archival is recoverable, so being wrong costs one un-archive. This is the explicit consent the never-disable-a-feature-without-asking rule requires."
+      - "R1Q4 — stale stays 30 days; ARCHIVE SHORTENS 90 -> 60. Same reversible warning period, consequential step sooner, given 92% of the catalog is dead weight."
+      - "R2Q5 — the authoring standard (D10.2) constrains NAMING + FRONTMATTER *and* BODY TEMPLATE (Steps / Verification / When not to use). Enforced at write in gated_skill_write, so a non-conforming skill cannot be authored at all rather than being detected afterwards. The template also gives consolidation a predictable shape to merge section-wise."
+      - "R2Q6 — built-ins decay on the SAME 30/60 windows as learned skills, with pinning as the protection. Not a slower clock: 9 of 14 have never run, and archival is recoverable so being wrong costs one un-archive."
+      - "R2Q7 — revival-on-use is sufficient; nothing further to build. Executing or pinning an archived skill returns it to active, and archived skills stay searchable so the agent can still rediscover one."
+      - "R2Q8 — CONSOLIDATION IS BUILT, after D10.2, opt-in and off by default (Hermes' shape). Not run against the existing 265 immediately — decay reaches those anyway, and the first consolidation run should be a deliberate act, not a migration side effect."
+      - "R3Q9 — a write that violates the standard is REJECTED with the violated rule named, and the agent retries. Not auto-fixed: the platform silently editing the agent's work hides the drift instead of correcting it, and the agent already handles a structured tool failure by retrying."
+      - "R3Q10 — VERBATIM: 'Lets remove dublicates and migrate rest'. CONTRADICTS R1Q2 (which chose to let decay handle the 265). Raised back in R4 rather than silently resolved; PROCESS.md requires contradiction-hunting. Also needs 'remove' pinned to archive-vs-delete, since never-delete is a standing invariant."
+      - "R3Q11 — ADOPT PACKAGE-OR-NOTHING. Consolidation keeps a skill standalone, re-homes its support files and rewrites the paths, or archives the package whole. It never merges a SKILL.md away from files it references, which would leave a broken relative link and a silently dead skill."
+      - "R3Q12 — the curator must show the catalog SHRINKING while the ever-used RATIO RISES. Tracked together on purpose: shrinking with a flat ratio means the wrong skills were archived, and would otherwise read as success."
+      - "R4Q13 — CONTRADICTION RESOLVED: R3 supersedes R1. The 265 duplicates are dealt with NOW rather than aged out over 30/60 days. Accepted cost: the observation window that would have shown whether the thresholds are right is skipped for this population."
+      - "R4Q14 — *** OVERRIDES A STANDING INVARIANT ***. Bakir chose DELETED FROM DISK over archived-recoverable, with the option stating plainly that it is not recoverable and breaks the never-delete rule held everywhere else (ADR-19 I3, Hermes' curator, migration 0107's design). This is his informed call and it stands. Mitigation that does NOT reverse it: a full backup is taken before the delete, and the operation is dry-run-first and explicitly invoked — never automatic at startup. skill_audit retains the record that each skill existed, not its content."
+      - "R4Q15 — migration is the FULL TEMPLATE: bodies are restructured into Steps / Verification / When not to use, not just names and frontmatter. ~142 LLM calls. Requires D10.2 to exist first, since the template IS the standard."
+      - "R4Q16 — order is: remove duplicates -> migrate survivors to the standard -> consolidate. Consolidation compares skills, and comparing them after they share a naming and frontmatter convention makes near-duplicates far easier to detect correctly."
+      - "R5Q17 — in a duplicate family the MOST-USED member survives and is RENAMED to the base name. Usage is the evidence of which body actually worked; keeping the base's body by convention can discard the only version that ever ran."
+      - "R5Q18 — no exemption for the 3 numbered duplicates that have been used. The survivor rule already saves them: a used member wins its family and becomes the base, so no special case is needed."
+      - "R5Q19 — the delete removes the directory AND the skills row in one operation. Leaving rows behind would let recall and tool_search surface a skill whose body no longer exists."
+      - "R5Q20 — invoked as a CLI command, DRY-RUN BY DEFAULT, with --apply to perform it and a backup taken automatically first. Never part of the curator's unattended pass: an irreversible bulk delete must be a deliberate act with a human in the loop."
+      - "R6Q21 — ACCEPTED that the -N rule misses the worst cases. Measured: the five most-used learned skills are semantic near-duplicates with DISTINCT names (structure-incident-evidence 45, -brief 43, structure-evidence-brief 23, evidence-brief-structuring 13, dual-memory-evidence-gathering 11 — 135 executions between them) and none is a numbered variant. The -N pass is the cheap deterministic half; semantic families need meaning-comparison, which is the opt-in consolidation scheduled after D10.2."
+      - "R6Q22 — the survivor INHERITS THE SUMMED n_executions of its family. The family is one lesson learned repeatedly; without summing, the merged skill looks less proven than it is and decay may target it next."
+      - "R6Q23 — before deleting, every affected skill is copied to a timestamped archive OUTSIDE the catalog (~/.stackowl/backups/skills-<ts>/). Honours 'deleted from the catalog' while keeping a mistake recoverable by hand."
+      - "R6Q24 — D10.2 FORBIDS the -N suffix outright; a colliding write is rejected and the writer must reinforce the existing skill or choose a genuinely different name. The suffix only ever existed because the synthesizer needed a free directory."
+      - "R7Q25 — ONE RETIREMENT MECHANISM, TWO TRIGGERS. A duplication the map never flagged (D09.3 carries no dedup_target): the synthesizer already retires on QUALITY (success_rate < 0.4 with >=5 runs -> learned/_deprecated/) and has retired ZERO skills in the platform's lifetime, while the catalog rotted to 92% dead. The curator becomes the single retirement path and gains the quality trigger — retire when unused OR when demonstrably failing — so there is one lifecycle_state, one place to look, and one set of safety rules (pinning, never-auto-delete-unattended, revival-on-use)."
     changes: []
     notes: null
 
