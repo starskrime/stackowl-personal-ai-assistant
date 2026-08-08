@@ -67,6 +67,29 @@ class _RecordingConsentGate:
         return self.allow
 
 
+# D10.2 — gated_skill_write now REJECTS a skill that does not meet the authoring
+# standard, and it does so BEFORE the security scan and the consent prompt. These
+# fixtures previously produced pre-standard bodies, so every test that expected a
+# write (or expected consent to be ASKED) failed on the standard instead. The
+# scripted skill now conforms, which is what these tests always meant: they are
+# about scan/consent/audit behaviour, not about malformed input.
+_REFINED_MARKER = "Improved Body"
+
+_CONFORMING_BODY = "\n".join(
+    f"## {section}\n\ncontent for {section.lower()}.\n"
+    for section in (
+        "When to Use", "Prerequisites", "How to Run",
+        "Quick Reference", "Procedure", "Pitfalls", "Verification",
+    )
+)
+
+#: Same shape, but carrying a marker so a refine can be told from a no-op.
+_CONFORMING_REFINED_BODY = _CONFORMING_BODY.replace(
+    "content for procedure.", f"content for procedure. {_REFINED_MARKER}."
+)
+
+
+
 @dataclass
 class _ScriptedProvider:
     """Stub ModelProvider that returns canned strings in order.
@@ -119,7 +142,7 @@ def test_parse_new_skill_response_round_trip() -> None:
 def test_parse_new_skill_response_coerces_name() -> None:
     raw = json.dumps({
         "name": "MY Cool Skill!!", "description": "x",
-        "when_to_use": "y", "body": "z",
+        "when_to_use": "When a page must be fetched.", "body": _CONFORMING_BODY,
     })
     parsed = parse_new_skill_response(raw)
     assert parsed is not None
@@ -133,7 +156,7 @@ def test_parse_new_skill_response_rejects_missing_keys() -> None:
 
 def test_parse_new_skill_response_rejects_empty_required_field() -> None:
     raw = json.dumps({
-        "name": "x", "description": "", "when_to_use": "y", "body": "z",
+        "name": "x", "description": "", "when_to_use": "When a page must be fetched.", "body": _CONFORMING_BODY,
     })
     assert parse_new_skill_response(raw) is None
 
@@ -267,7 +290,7 @@ async def test_discover_writes_skill_md_and_audits(synth_env) -> None:
         "name": "scrape-and-process",
         "description": "Fetch web content and shell-process it",
         "when_to_use": "User wants scraped page run through a script",
-        "body": "# Steps\n1. Fetch the page.\n2. Shell-process the content.",
+        "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
@@ -280,7 +303,7 @@ async def test_discover_writes_skill_md_and_audits(synth_env) -> None:
     assert written.exists()
     text = written.read_text(encoding="utf-8")
     assert "name: scrape-and-process" in text
-    assert "# Steps" in text
+    assert "## Procedure" in text
     # Indexed.
     sk = await store.get("learned", "scrape-and-process")
     assert sk is not None
@@ -298,8 +321,8 @@ async def test_discover_skips_cluster_already_covered(synth_env) -> None:
     db, root, store = synth_env
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
-        "name": "scrape-and-process", "description": "x",
-        "when_to_use": "y", "body": "z",
+        "name": "scrape-and-process", "description": "Fetch and process a page.",
+        "when_to_use": "When a page must be fetched.", "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
@@ -379,7 +402,7 @@ async def test_refine_rewrites_body_for_midtier(synth_env) -> None:
     await out_store.set_quality_score(out.outcome_id, 0.6)
 
     provider = _ScriptedProvider(responses=[json.dumps({
-        "body": "# Improved Body\nDo the thing well now.",
+        "body": _CONFORMING_REFINED_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=out_store, skill_store=store,
@@ -388,7 +411,7 @@ async def test_refine_rewrites_body_for_midtier(synth_env) -> None:
     n = await synth.refine_midtier_skills()
     assert n == 1
     updated_text = (learned_dir / "SKILL.md").read_text(encoding="utf-8")
-    assert "Improved Body" in updated_text
+    assert _REFINED_MARKER in updated_text
     audit = await store.recent_audit_for_skill("midtier-skill")
     ops = [e.op for e in audit]
     assert "update" in ops
@@ -634,8 +657,8 @@ async def test_synth_attaches_skill_to_owning_owl(tmp_db: DbPool, tmp_path: Path
     # _seed_outcomes records owl_name="scout" → scout is the owning owl.
     await _seed_outcomes(tmp_db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
-        "name": "scrape-and-process", "description": "x",
-        "when_to_use": "y", "body": "# Steps\n1. go",
+        "name": "scrape-and-process", "description": "Fetch and process a page.",
+        "when_to_use": "When a page must be fetched.", "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(tmp_db), skill_store=store,
@@ -655,7 +678,7 @@ async def test_run_all_aggregates_counts(synth_env) -> None:
     db, root, store = synth_env
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
-        "name": "combined", "description": "x", "when_to_use": "y", "body": "z",
+        "name": "combined", "description": "x", "when_to_use": "When a page must be fetched.", "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
@@ -682,7 +705,7 @@ async def test_discover_threads_constructor_model_to_provider_complete(synth_env
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "discover-model-threaded", "description": "d", "when_to_use": "w",
-        "body": "# Steps\n1. go",
+        "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
@@ -705,7 +728,7 @@ async def test_discover_default_model_is_empty_string_when_unset(synth_env) -> N
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "discover-default-model", "description": "d", "when_to_use": "w",
-        "body": "# Steps\n1. go",
+        "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=TaskOutcomeStore(db), skill_store=store,
@@ -755,7 +778,7 @@ async def test_refine_threads_constructor_model_to_provider_complete(synth_env) 
     await out_store.set_quality_score(out.outcome_id, 0.6)
 
     provider = _ScriptedProvider(responses=[json.dumps({
-        "body": "# Improved Body\nDo the thing well now.",
+        "body": _CONFORMING_BODY,
     })])
     synth = SkillSynthesizer(
         outcome_store=out_store, skill_store=store,
@@ -819,7 +842,7 @@ async def test_scheduled_write_auto_trusted_via_real_consent_assembly(synth_env)
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "auto-trusted-skill", "description": "d", "when_to_use": "w",
-        "body": "# Steps\n1. go",
+        "body": _CONFORMING_BODY,
     })])
 
     components = ConsentAssembly.build(MagicMock())
@@ -845,7 +868,7 @@ async def test_synthesize_one_calls_scan_and_consent_before_write(synth_env) -> 
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "gate-order-skill", "description": "d", "when_to_use": "w",
-        "body": "# Steps\n1. go",
+        "body": _CONFORMING_BODY,
     })])
     target = root / "learned" / "gate-order-skill"
 
@@ -893,7 +916,7 @@ async def test_synthesize_one_denied_consent_writes_nothing(synth_env) -> None:
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "denied-skill", "description": "d", "when_to_use": "w",
-        "body": "# Steps\n1. go",
+        "body": _CONFORMING_BODY,
     })])
     gate = _RecordingConsentGate(allow=False)
     synth = SkillSynthesizer(
@@ -935,7 +958,7 @@ async def test_synthesize_one_security_scan_blocks_before_consent(synth_env) -> 
     await _seed_outcomes(db, sequence=("web_fetch", "shell"), n=3)
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "scan-blocked-skill", "description": "d", "when_to_use": "w",
-        "body": "# Steps\n1. go",
+        "body": _CONFORMING_BODY,
     })])
 
     import stackowl.skills.authoring as authoring_mod
@@ -991,7 +1014,7 @@ async def test_refine_one_denied_consent_leaves_existing_skill_untouched(synth_e
     )
 
     provider = _ScriptedProvider(responses=[json.dumps({
-        "body": "# Improved Body\nDo the thing well now.",
+        "body": _CONFORMING_BODY,
     })])
     gate = _RecordingConsentGate(allow=False)
     synth = SkillSynthesizer(

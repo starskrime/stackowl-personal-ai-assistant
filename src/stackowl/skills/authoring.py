@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.skills import standard
 from stackowl.skills.loader import LoadedSkill
 from stackowl.tools.knowledge.skill_validation import security_scan_gate
 
@@ -142,6 +143,49 @@ class SkillWriteResult:
     loaded: LoadedSkill | None = None
 
 
+
+def _known_tool_names() -> frozenset[str] | None:
+    """Live registry tool names, or None when it cannot be consulted.
+
+    None means the tool-name rule is SKIPPED rather than failed — a registry
+    that is unavailable must never block the agent from learning.
+    """
+    try:
+        from stackowl.pipeline.services import get_services
+
+        registry = getattr(get_services(), "tool_registry", None)
+        if registry is None:
+            return None
+        names = getattr(registry, "names", None)
+        return frozenset(names() if callable(names) else names or ())
+    except Exception as exc:  # noqa: BLE001 — never block authoring on this
+        log.skills.debug(
+            "[skills] standard: tool registry unavailable — skipping the "
+            "tool-name rule for this write",
+            exc_info=exc,
+        )
+        return None
+
+
+def _standard_violations(request: SkillWriteRequest) -> list[standard.Violation]:
+    """Blocking violations of the D10.2 standard for this write."""
+    m = request.manifest
+    subdirs = []
+    if request.target_dir.exists():
+        subdirs = [p.name for p in request.target_dir.iterdir() if p.is_dir()]
+    found = (
+        standard.validate_name(m.name)
+        + standard.validate_frontmatter({
+            "name": m.name,
+            "description": m.description,
+            "when_to_use": m.when_to_use,
+        })
+        + standard.validate_body(request.body, known_tools=_known_tool_names())
+        + standard.validate_support_dirs(subdirs)
+    )
+    return standard.blocking(found)
+
+
 async def gated_skill_write(
     request: SkillWriteRequest,
     *,
@@ -163,7 +207,32 @@ async def gated_skill_write(
         }},
     )
     try:
-        # 2. DECISION — HARD security gate first; a dangerous body never
+        # 2. DECISION — D10.2 standard FIRST, before the security scan and the
+        # consent prompt. A malformed skill should never reach a human for
+        # approval: asking someone to consent to something we already know we
+        # will not keep wastes their attention and teaches them to click through.
+        violations = _standard_violations(request)
+        if violations:
+            log.skills.warning(
+                "[skills] standard: write rejected",
+                extra={"_fields": {
+                    "name": name,
+                    "violations": [str(v) for v in violations],
+                    "standard_version": standard.STANDARD_VERSION,
+                }},
+            )
+            # EVERY violation at once (R6Q22) so the author fixes them in one
+            # retry instead of discovering them one call at a time.
+            detail = "; ".join(str(v) for v in violations)
+            return SkillWriteResult(
+                ok=False,
+                reason=(
+                    f"skill '{name}' does not meet the authoring standard "
+                    f"(v{standard.STANDARD_VERSION}): {detail}"
+                ),
+            )
+
+        # 2. DECISION — HARD security gate; a dangerous body never
         # reaches the consent prompt (and never touches the real tree).
         blocked = _scan_or_block(request.skill_md_text, name)
         if blocked is not None:

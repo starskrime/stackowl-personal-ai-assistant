@@ -40,6 +40,7 @@ from stackowl.infra.observability import log
 from stackowl.memory.json_parser import parse_json_response
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
 from stackowl.providers.base import Message, ModelProvider
+from stackowl.skills import standard
 from stackowl.skills.authoring import (
     SkillWriteRequest,
     gated_skill_write,
@@ -199,19 +200,16 @@ class SkillSynthesizerPromptBuilder:
         "of tools and produced good outcomes, write a reusable Skill that "
         "captures the playbook so the agent can apply it next time it sees "
         "the same shape of task.\n\n"
-        "Structure the body with these sections in order:\n"
-        "  ## Steps — numbered, concrete actions the agent takes\n"
-        "  ## Verification — how to confirm success with evidence BEFORE claiming done\n"
-        "  ## Pitfalls — common failure modes and how to avoid them\n\n"
-        "The ## Verification section is MANDATORY. It must tell the agent how to "
-        "confirm the task succeeded with concrete evidence (command output, file "
-        "contents, API response, etc.) and what to say if it failed.\n\n"
+        # D10.2 — the standard is TAUGHT here and ENFORCED at the write. Derived
+        # from skills/standard.py rather than restated, so a rule change cannot
+        # leave this prompt teaching something the validator rejects (I8).
+        + standard.describe_for_prompt() + "\n\n"
         "Respond ONLY with a JSON object of this exact shape:\n"
         "{\n"
-        '  "name": "kebab-case-name (max 40 chars, lowercase, [a-z0-9_-])",\n'
-        '  "description": "one sentence — when this skill applies",\n'
-        '  "when_to_use": "trigger conditions — what the user query looks like",\n'
-        '  "body": "markdown playbook with ## Steps, ## Verification, ## Pitfalls"\n'
+        '  "name": "lowercase [a-z0-9_-], NO trailing -number",\n'
+        '  "description": "one sentence, at most 60 characters",\n'
+        '  "when_to_use": "1-3 sentences — when to reach for this, and when not",\n'
+        '  "body": "markdown with the required sections, in order"\n'
         "}\n"
         "The body must be useful as raw markdown — NO frontmatter, NO triple-backtick fences.\n"
         "Keep body under 800 words. Be concrete and operational, not abstract."
@@ -247,13 +245,10 @@ class SkillSynthesizerPromptBuilder:
             "You are refining an existing agent Skill that's been performing "
             "in the mid tier (50-70% success). The frontmatter MUST stay the "
             "same. ONLY the body markdown changes.\n\n"
-            "Preserve (or improve) the three-section structure:\n"
-            "  ## Steps — numbered, concrete actions the agent takes\n"
-            "  ## Verification — how to confirm success with evidence BEFORE claiming done\n"
-            "  ## Pitfalls — common failure modes and how to avoid them\n\n"
-            "The ## Verification section is MANDATORY. It must tell the agent how to "
-            "confirm the task succeeded with concrete evidence (command output, file "
-            "contents, API response, etc.) and what to say if it failed.\n\n"
+            # Same single source as build_for_new. This previously taught a
+            # three-section shape that the standard now rejects, so a refine
+            # would have produced a body its own write could not accept.
+            + standard.describe_for_prompt() + "\n\n"
             "Respond ONLY with JSON of this shape:\n"
             '{ "body": "new markdown body — keep useful parts, fix what fails" }\n'
             "Keep body under 800 words."
