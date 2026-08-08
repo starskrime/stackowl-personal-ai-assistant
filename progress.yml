@@ -7961,14 +7961,14 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
+      brainstorm: not_started      # NEVER RUN — see process_deviation
+      architect:  partial          # ADR-19 covers the design; no designs/D09.3.md
+      implement:  done             # e45f3d3a — SkillCurator + migration 0107
+      cleanup:    done             # ruff/mypy baselines held
+      test:       done             # 14 tests in tests/skills/test_lifecycle_curator.py
+      validate:   done             # dry-run on the live catalog + restart + logs
+      document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
+    doc: docs/adr-19-closed-loop-autonomy.md   # ADR, not a per-item design doc
     doc_last_verified: null
     decisions: []
     changes: []
