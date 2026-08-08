@@ -5643,7 +5643,6 @@ items:
         the_maps_trade_off_is_corrected: "Its claim that a class is 'far easier to fork for subagents' is measurably false — a2a_delegation.py:215 forks in ONE line. StackOwl is both more inspectable AND easier to fork. The verdict DIVERGENT stands; the stated cost of our design does not exist."
         recorded_so_it_is_not_permanent: "Drop the langgraph backend, or decompose execute.py (3,045 lines of the 5,597), or add a third caller assembling PipelineState by hand, and the arithmetic shifts. See the doc's 'what would change this conclusion'."
     changes: []
-    changes: []
     notes: null
 
   - id: D02.2
@@ -5766,7 +5765,6 @@ items:
           directory-wide green was NOT demonstrated.
         live_validation: "NOT restarted for this item. The change is inside the provider tool loop, which needs a real turn to exercise, and no interactive traffic has arrived. Same blocker as D05.2/D05.3/D05.8."
     changes: []
-    changes: []
     notes: null
 
   - id: D02.3
@@ -5829,7 +5827,6 @@ items:
           Recorded because if steer usage is ever wanted, surfacing /steer and
           /stop where a running turn is visible is the cheaper first move, not a
           new verb.
-    changes: []
     changes: []
     notes: null
 
@@ -6401,7 +6398,6 @@ items:
           "skills loaded {count:0}" and that is NOT a failure — it is a role-side
           counter. The authoritative line is loader.load_all: exit.
         declined_dynamic_schema_overrides: "The map's headline ask. Declined on the grounds of D05.2's shipped work, not taste: it makes a description a function of live config, which is the instability D05.2 removed. Measured — delegate_task, the tool the reference platform rewrites dynamically, has a generic description here with no limits in it."
-    changes: []
     changes: []
     notes: null
 
@@ -7301,7 +7297,6 @@ items:
           names — edit/process/wait/memory/git are already both — but the risk
           grows with the catalog. Recorded as a failure-mode row, not solved.
     changes: []
-    changes: []
     notes: null
 
   - id: D05.7
@@ -7423,7 +7418,6 @@ items:
           task difficulty vs loop pathology) and is deliberately NOT what this
           item guards on. Stated as correlation, not causation.
     changes: []
-    changes: []
     notes: null
 
   - id: D05.8
@@ -7498,7 +7492,6 @@ items:
             ~/.stackowl/logs/stackowl.jsonl | grep -v $'\tgoal-' | grep -v $'\tincident-'
           Non-empty output = interactive turns measured. Compare the distribution
           against Hermes' 54-tool default and against our 40 cap.
-    changes: []
     changes: []
     notes: null
 
@@ -7982,10 +7975,12 @@ items:
       # SECOND pass over the same item, delivered in seven slices. Slices 1-3 are
       # green and live. Leaving these at done would make progress.yml claim
       # coverage the catalog does not have.
-      implement:  partial          # slices 1-3 of 7 shipped; 4-7 remain
+      implement:  done             # all 7 slices shipped
       cleanup:    done             # ruff 39 / mypy 78 baselines held exactly
-      test:       partial          # +13 test_curator_quality_trigger.py, +1 FTS guard
-      validate:   partial          # slice 3 restart clean; catalog effect not yet remeasured
+      test:       done             # +13 curator, +17 consolidation, +13 migration,
+                                   # +6 brief, +4 manifest, +8 standard regressions
+      validate:   partial          # every mechanism proven on the live catalog;
+                                   # the standard MIGRATION is still running
       document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
     doc: docs/hermes-mapping/designs/D09.3.md
     doc_last_verified: null
@@ -8029,6 +8024,7 @@ items:
       - "slice 7 (2026-08-08) — SkillStandardMigrator + /skill migrate + migration 0111 (standard_version). LLM rewrite per skill, dry-run by default, bounded batches, most-used first, original archived before the rewrite, and the rewrite VALIDATED through gated_skill_write so a non-conforming result is refused and the original survives untouched. standard_version is written only on success, so a re-run retries failures instead of skipping them."
       - "slice 7 first live batch found TWO defects, both mine: (a) the dry-run report printed \"failed 5\" for skills nothing had been attempted on — MigrationOutcome is now tri-state via planned; (b) the migrator passed plain dicts where the provider expects Message objects (it reads message.documents), so all three skills failed inside the provider. Every test had passed because _ScriptedProvider accepted anything — test-double drift, SEVENTH instance in this codebase. The double now asserts the contract."
       - "slice 7 verified live: descriptions 94->56, 113->50, 116->55 chars, seven sections present, version bumped 0.1.0->0.1.1, index-owned fields stripped from files, usage history preserved exactly (45/43/23 executions)."
+      - "progress.yml itself had 7 items carrying a DUPLICATE empty `changes:` key. YAML keeps the LAST occurrence, so a write to the earlier copy is discarded with no error, no warning and no sign anything was dropped — which is exactly what happened to D10.2's slice records before it was noticed. All 14 were empty so nothing had been lost yet. Collapsed, and scripts/progress_lint.py now fails on duplicate keys and on unknown stage values so it cannot recur silently. Same shape as every other defect this programme keeps finding: the write happens, the effect does not, nothing says so."
       - "NOTE on ProviderRegistry: construct with ProviderRegistry.from_settings(settings). The bare constructor takes no settings and a standalone script that gets this wrong hangs rather than erroring — cost two 10-minute timeouts."
       - "UNRELATED finding, investigated and NOT acted on: the brief reported jobs_24h ran:147 failed:93. All 93 were AllProvidersUnavailableError inside a ~25-minute window (15:38-16:01 UTC 2026-08-08) that has since resolved — the most recent run completed. Worth a separate look: jobs retried every 30s throughout the outage rather than backing off behind the breaker."
     notes: null
@@ -8184,13 +8180,24 @@ items:
     stages:
       brainstorm: done             # 25 questions, 7 rounds, 2026-08-08
       architect:  done             # designs/D09.3.md — shared with D09.3
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      implement:  done             # slices 1,2,6,7 — standard.py, the gate, the
+                                   # brief line, and the migrator
+      cleanup:    done             # ruff 39 / mypy 78 baselines held exactly
+      test:       done             # 41 in test_authoring_standard*.py, 13 in
+                                   # test_standard_migration.py, 6 in the brief
+      validate:   partial          # mechanism proven live; the CATALOG migration
+                                   # is still running (19 of 168 at last check)
+      document:   partial          # designs/D09.3.md covers both; item doc pending
     doc: docs/hermes-mapping/designs/D09.3.md
     doc_last_verified: null
+    changes:
+      - "slice 1 (2026-08-08) — skills/standard.py: ONE machine-readable source. The rules are constants, describe_for_prompt() generates the prompt text from them, and the validator reads the same constants. Three hand-maintained copies of a standard is how a standard rots."
+      - "slice 2 (2026-08-08) — enforced in gated_skill_write BEFORE the security scan and consent, so a malformed skill never reaches a human for approval. Every violation is reported at once (one retry, not three)."
+      - "slice 6 (2026-08-08) — conformance reported in the autonomic_health brief. THE FEEDBACK LEG: the validator only covers writes made since it shipped, and the acceptance criterion is a claim about a trend, so without a number 'the standard is enforced' is an assumption about code rather than an observation of the catalog."
+      - "slice 7 (2026-08-08) — SkillStandardMigrator + /skill migrate + migration 0111 (standard_version). The rewrite is validated THROUGH gated_skill_write, so a bad rewrite is refused and the original survives. Order turned out to be load-bearing: validator first is what makes an unattended LLM rewrite safe."
+      - "FALSE POSITIVE FIXED (2026-08-08), found by the first live batch: the shell-verb rule matched bare \\b(grep|sed|awk|cat|ls|find)\\b anywhere, so 'Use this to find the failing job' was a shell instruction. A hardcoded English word-list applied to prose — the standing rule against exactly that. Now structural: matched only inside fenced/inline code, anchored to a line start or after a pipe, delimiters stripped from the span. The FIRST attempt at the fix over-corrected and passed everything, because leaving the backticks in pushes the first token off the line start and defeats the anchor. Tested in both directions."
+      - "STANDARD_VERSION deliberately NOT bumped for that fix: the version triggers re-migration and the change LOOSENS the rule, so a bump would spend one LLM call per skill to reach the same catalog. Comment now reads 'bump on stricter, not on any change'."
+      - "acceptance is 'zero NEW non-conforming skills', judged on writes from here on — not on the pre-standard backlog, which slice 7 is working through."
     decisions:
       - "R1Q1 — WRITE OURS, TAKING THEIR STRUCTURE. Keep Hermes' bones (fixed section order, real tool names in backticks, scripts/references/templates layout) but set our own values where evidence differs, and make every rule MACHINE-CHECKABLE. Their rubric is reviewer-enforced and assumes a human author; ours must hold when the agent is the author."
       - "R1Q2 — *** ADOPT <=60 CHAR DESCRIPTIONS, against measured evidence ***. Shown before choosing: our median is 197 chars, only 15 of 423 skills would pass, and registry.py already warns 'thin tool description — tool_search under-ranks short descriptions'. Bakir chose the Hermes rule anyway. Recorded as an informed override; the retrieval consequence is followed up in R2."
@@ -8217,7 +8224,6 @@ items:
       - "R6Q23 — conformance is reported in the autonomic_health brief section, beside skills active/stale/archived and ever-used. One place to read how the catalog is doing."
       - "R6Q24 — THE STANDARD IS VERSIONED and each skill records which version it conformed to. When the standard moves, the conformance report shows the gap and the migration re-runs for the changed rules only — rather than re-validating everything or grandfathering old skills into permanent fragmentation."
       - "R7Q25 — ACCEPTANCE: zero new non-conforming skills, and no new -N duplicate families. The standard exists to stop drift AT THE SOURCE, so it is judged on what gets written from now on — not on how fast the 423-skill backlog migrates, which is D09.3's job. Conformance overall should rise as a consequence."
-    changes: []
     notes: null
 
   - id: D10.3

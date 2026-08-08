@@ -213,11 +213,22 @@ Not negotiable, from Bakir's long-standing preferences. The full list is `rules`
   Bakir runs a single LiteLLM gateway; his users run a hundred different backends. Code that
   branches on who the provider is will be wrong for one of them.
 - No hardcoded English keyword lists. Cross-platform. Runs on all hardware.
+  *Bitten on 2026-08-08:* the skill standard's "don't instruct raw shell" rule matched bare
+  `\b(grep|sed|awk|cat|ls|find)\b` anywhere in a document, so **"Use this to find the failing
+  job"** was a shell instruction. It rejected a valid rewrite in the first live migration batch.
+  The rule was right; the *test* for it was lexical when the thing it cares about is structural —
+  code in command position, not an English verb. When a rule needs a word list, check whether the
+  real signal is a shape instead.
 - Finished features ship ON by default, not dormant behind a flag.
 - Restart the platform after every fix and verify via the JSONL log, not a PID.
 - Targeted test paths with timeouts. Never a full `pytest` run — it hangs on this box.
 - Commit at sub-story granularity when green. Bisectable.
 - Never push `do_not_push_to_git_research_only/`.
+- Run `uv run python scripts/progress_lint.py` after editing `progress.yml`. It is the state of
+  record, and on 2026-08-08 seven items carried a **duplicate `changes:` key** — YAML keeps the
+  last, so a write to the earlier copy is discarded with no error. A full slice of D10.2's records
+  vanished that way before it was noticed. A state of record that silently drops writes is worse
+  than one that is merely stale, because it looks current.
 
 ---
 
@@ -225,8 +236,9 @@ Not negotiable, from Bakir's long-standing preferences. The full list is `rules`
 
 Pre-existing red is not out of scope by default. When we choose not to fix something now, it goes
 in `known_debt` in `progress.yml` with what it is, the evidence, the decision, and why. Currently:
-`DEBT-1` — 46 pre-existing `ruff` errors in `src/`, in files unrelated to any current item, not
-fixed mid-item because that would violate minimal-diffs.
+`DEBT-1` — pre-existing `ruff` errors in `src/`, in files unrelated to any current item, not
+fixed mid-item because that would violate minimal-diffs. The baseline is now **39** (was 46) and
+`mypy` is **78**; both are checked before and after every change, and neither may rise.
 
 The test is simple: could someone reading `progress.yml` in six months tell what we knew and what
 we chose? If yes, it is tracked. If it only exists in a chat log, it is lost.
