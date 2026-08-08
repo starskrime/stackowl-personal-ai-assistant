@@ -215,9 +215,20 @@ class SchedulerAssembly:
         # rather than left optional: an unwired curator would pass every one of
         # its own tests and never run, which is exactly the D05.2 failure this
         # programme has already paid for once.
+        # AD-7 rides along: the owning owl's CURRENT completion_drive nudges the
+        # failure floor per skill. Resolved per pass, not captured here, because
+        # the evolution jobs mutate that trait while this object lives on.
+        async def _owl_drive_thresholds() -> dict[str, float]:
+            from stackowl.owls.skill_ownership import owl_drive_thresholds
+            from stackowl.skills.lifecycle import FAILING_BELOW
+
+            return await owl_drive_thresholds(db, owl_registry, FAILING_BELOW)
+
         knowledge_prune_handler = KnowledgePruneHandler(
             pruner=memory_components.pruner,
-            curator=SkillCurator(skills_components.store),
+            curator=SkillCurator(
+                skills_components.store, thresholds=_owl_drive_thresholds,
+            ),
         )
         HandlerRegistry.instance().register(knowledge_prune_handler)
 
@@ -360,8 +371,9 @@ class SchedulerAssembly:
         # Learning Commit 3 sub-phase 3c — SkillSynthesizerHandler runs daily
         # against accumulated task_outcomes + reflections + existing learned
         # skills. Discovers new tactic clusters → writes learned/<name>/SKILL.md.
-        # Refines mid-tier learned skills. Deprecates low-performers into
-        # learned/_deprecated/. All writes audited with actor='agent:synthesizer'.
+        # Refines mid-tier learned skills. It no longer retires anything —
+        # SkillCurator owns retirement on both triggers (D09.3 X11). All writes
+        # audited with actor='agent:synthesizer'.
         from stackowl.paths import StackowlHome
         from stackowl.skills.synthesizer_handler import SkillSynthesizerHandler
 

@@ -7977,10 +7977,15 @@ items:
     stages:
       brainstorm: done             # 25 questions, 7 rounds, 2026-08-07 (retroactive)
       architect:  done             # designs/D09.3.md — covers D09.3 + D10.2
-      implement:  done             # e45f3d3a — SkillCurator + migration 0107
-      cleanup:    done             # ruff/mypy baselines held
-      test:       done             # 14 tests in tests/skills/test_lifecycle_curator.py
-      validate:   done             # dry-run on the live catalog + restart + logs
+      # DOWNGRADED from done, deliberately. The curator itself shipped and was
+      # validated; the X11 resolution plus the D10.2 standard it depends on is a
+      # SECOND pass over the same item, delivered in seven slices. Slices 1-3 are
+      # green and live. Leaving these at done would make progress.yml claim
+      # coverage the catalog does not have.
+      implement:  partial          # slices 1-3 of 7 shipped; 4-7 remain
+      cleanup:    done             # ruff 39 / mypy 78 baselines held exactly
+      test:       partial          # +13 test_curator_quality_trigger.py, +1 FTS guard
+      validate:   partial          # slice 3 restart clean; catalog effect not yet remeasured
       document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
     doc: docs/hermes-mapping/designs/D09.3.md
     doc_last_verified: null
@@ -8010,7 +8015,12 @@ items:
       - "R6Q23 — before deleting, every affected skill is copied to a timestamped archive OUTSIDE the catalog (~/.stackowl/backups/skills-<ts>/). Honours 'deleted from the catalog' while keeping a mistake recoverable by hand."
       - "R6Q24 — D10.2 FORBIDS the -N suffix outright; a colliding write is rejected and the writer must reinforce the existing skill or choose a genuinely different name. The suffix only ever existed because the synthesizer needed a free directory."
       - "R7Q25 — ONE RETIREMENT MECHANISM, TWO TRIGGERS. A duplication the map never flagged (D09.3 carries no dedup_target): the synthesizer already retires on QUALITY (success_rate < 0.4 with >=5 runs -> learned/_deprecated/) and has retired ZERO skills in the platform's lifetime, while the catalog rotted to 92% dead. The curator becomes the single retirement path and gains the quality trigger — retire when unused OR when demonstrably failing — so there is one lifecycle_state, one place to look, and one set of safety rules (pinning, never-auto-delete-unattended, revival-on-use)."
-    changes: []
+    changes:
+      - "slice 1 (2026-08-08) — skills/standard.py: the standard as ONE machine-readable source, prompt text generated from the constants."
+      - "slice 2 (2026-08-08) — taught in the authoring prompt, then enforced in gated_skill_write BEFORE the security scan and consent, so a malformed skill never reaches a human for approval."
+      - "slice 3 (2026-08-08) — X11 RESOLVED. SkillCurator is the single retirement path and carries both triggers (unused OR failing). synthesizer.deprecate_low_performers + _deprecate_one + the run_all phase removed. The AD-7 owl-drive advisory relocated intact to owls.skill_ownership.owl_drive_thresholds and is injected as a per-pass PROVIDER, not a captured map — evolution mutates completion_drive while the curator lives on. ARCHIVE_AFTER_DAYS 90->60. Built-ins now decay (R1Q3/R2Q6); pinning replaces the blanket exemption. 7 tests migrated to tests/skills/test_curator_quality_trigger.py."
+      - "slice 3 found TWO defects the brainstorm did not predict. (a) The removed path called store.delete(), so a skill retired for FAILING was unrecoverable while one retired for DISUSE was fully reversible — ADR-19 I3 violated outright, and the strongest argument for one mechanism that the brainstorm never reached. (b) _fts_search, the BM25 leg of hybrid recall, carried no not-archived predicate, so archival applied to two of three read paths and archived skills went on competing for ranking; with 297 already marked stale on the live catalog this was costing real prompt space silently. Both fixed; (b) pinned by a test proven to fail without the fix."
+      - "remaining: slice 4 dedupe CLI (dry-run default), slice 5 drop the summary column, slice 6 conformance in the autonomic_health brief, slice 7 LLM migration of surviving skills to the seven-section template."
     notes: null
 
   - id: D09.4

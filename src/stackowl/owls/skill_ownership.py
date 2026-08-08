@@ -192,6 +192,69 @@ async def read_all_skill_ownership(
     return out
 
 
+async def owl_drive_thresholds(
+    db: DbPool,
+    registry: OwlRegistry,
+    base: float,
+    owner_id: str = DEFAULT_PRINCIPAL_ID,
+) -> dict[str, float]:
+    """Per-skill retirement threshold, nudged by the owning owl(s)' current
+    ``completion_drive`` trait (AD-7, Story 3.5 — the DNA -> skill mirror of
+    3.4's skill -> DNA direction).
+
+    ``effective = base * (1.0 - 0.2 * (avg_completion_drive - 0.5))`` — a
+    highly-persistent owl (drive -> 1.0) gets a more LENIENT (lower) threshold, so
+    its skill must be worse before it is retired; a low-persistence owl gets a
+    stricter one. At the neutral default (0.5) this returns ``base`` unchanged,
+    which is why the map only carries skills that actually differ.
+
+    MOVED HERE from ``SkillSynthesizer._effective_deprecate_threshold`` in D09.3
+    slice 3, when retirement became the curator's single job (X11). It lives in
+    the ownership module rather than in ``skills.lifecycle`` deliberately: the
+    curator must stay owl-agnostic and take a plain mapping, or the decay pass
+    acquires a dependency on the owl registry it does not otherwise need.
+
+    Never raises. No ownership rows, an unwired registry, or an orphaned row
+    (owl name no longer live) all degrade to "no opinion" for that skill —
+    one bad row must never cost the whole pass its thresholds.
+    """
+    # 1. ENTRY
+    log.owls.debug("[ownership] owl_drive_thresholds: entry",
+                   extra={"_fields": {"base": base}})
+    try:
+        owl_to_skills = await read_all_skill_ownership(db, owner_id)
+    except Exception as exc:  # B5 — degrade to the flat threshold, do not abort
+        log.owls.warning(
+            "[ownership] owl_drive_thresholds: ownership read failed — every "
+            "skill falls back to the flat threshold",
+            exc_info=exc,
+        )
+        return {}
+
+    skill_to_drives: dict[str, list[float]] = {}
+    for owl_name, skill_names in owl_to_skills.items():
+        try:
+            drive = registry.get(owl_name).dna.completion_drive
+        except Exception as exc:  # OwlNotFoundError and anything else
+            log.owls.debug(
+                "[ownership] owl_drive_thresholds: orphaned ownership row — skipped",
+                exc_info=exc, extra={"_fields": {"owl": owl_name}},
+            )
+            continue
+        for skill_name in skill_names:
+            skill_to_drives.setdefault(skill_name, []).append(drive)
+
+    out = {
+        name: base * (1.0 - 0.2 * (sum(drives) / len(drives) - 0.5))
+        for name, drives in skill_to_drives.items()
+        if drives
+    }
+    # 4. EXIT
+    log.owls.debug("[ownership] owl_drive_thresholds: exit",
+                   extra={"_fields": {"skills": len(out)}})
+    return out
+
+
 async def hydrate_skill_ownership(
     registry: OwlRegistry,
     db: DbPool,

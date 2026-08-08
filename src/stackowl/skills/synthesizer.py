@@ -12,10 +12,10 @@ Per Learning Commit 3, sub-phase 3c. Three responsibilities, all driven by
    in [0.5, 0.7] and n_executions ≥5), ask the LLM to refine the recipe
    body in-place. Rewrites only the body; frontmatter preserved.
 
-3. **Deprecate** — for learned skills with success_rate <0.4 and
-   n_executions ≥5, move the directory to ``learned/_deprecated/<name>/``.
-   Loader skips ``_``-prefixed dirs so they vanish from /skill list and
-   the system prompt while staying on disk for forensics.
+3. **Deprecate** — REMOVED in D09.3 (X11). Retirement is
+   :class:`stackowl.skills.lifecycle.SkillCurator`'s single job now, on both
+   triggers — unused OR demonstrably failing — so there is one lifecycle state
+   and one set of safety rules. This module only creates and refines.
 
 LLM-as-author calls use :func:`parse_json_response` (shared with Commit 2's
 critic / reflection) for response validation.
@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
@@ -35,7 +34,6 @@ from typing import TYPE_CHECKING
 import yaml
 
 from stackowl.commands.skill_helpers import hash_dir, snapshot_dir
-from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra.observability import log
 from stackowl.memory.json_parser import parse_json_response
 from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
@@ -46,6 +44,7 @@ from stackowl.skills.authoring import (
     gated_skill_write,
     resolve_consent_identity,
 )
+from stackowl.skills.lifecycle import MIN_RUNS_FOR_RATE
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.store import Skill, SkillIndexStore
 from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
@@ -75,11 +74,13 @@ _MIN_CLUSTER_SIZE_DEFAULT = 3
 _MIN_MEAN_QUALITY_DEFAULT = 0.75
 _LOOKBACK_DAYS_DEFAULT = 14
 _REFINE_RANGE: tuple[float, float] = (0.5, 0.7)
-_DEPRECATE_BELOW = 0.4
-_MIN_EXECUTIONS_FOR_RATE = 5
 _SECONDS_PER_DAY = 86_400
 _SAMPLE_LIMIT_PER_CLUSTER = 5  # how many trace samples to include in the LLM prompt
-_DEPRECATED_DIR_NAME = "_deprecated"
+
+#: Re-exported, not redefined. "Enough runs to have a verdict" is one fact, and
+#: the curator owns it — a second copy here is precisely how the refine gate and
+#: the retire gate drift apart while both look correct in isolation.
+_MIN_EXECUTIONS_FOR_RATE = MIN_RUNS_FOR_RATE
 
 #: DEBT-42 — strip the ``-N`` disambiguation suffix the synthesizer used to
 #: append, so an existing ``foo-3`` still answers "do we already know foo?".
@@ -401,6 +402,9 @@ class SkillSynthesizer:
         log.skills.info("[synth] run_all: entry")
         created = 0
         refined = 0
+        # Always 0 now: retirement belongs to SkillCurator (X11). The field
+        # stays on the report so existing callers and the scheduler's summary
+        # keep their shape; the curator reports its own retirements.
         deprecated = 0
         try:
             created = await self.discover_new_skills()
@@ -410,10 +414,6 @@ class SkillSynthesizer:
             refined = await self.refine_midtier_skills()
         except Exception as exc:  # B5
             log.skills.error("[synth] run_all: refine phase failed", exc_info=exc)
-        try:
-            deprecated = await self.deprecate_low_performers()
-        except Exception as exc:  # B5
-            log.skills.error("[synth] run_all: deprecate phase failed", exc_info=exc)
         # 4. EXIT
         log.skills.info(
             "[synth] run_all: exit",
@@ -842,151 +842,23 @@ class SkillSynthesizer:
         return True
 
     # ----- phase 3 — deprecate ----------------------------------------------
-
-    async def _effective_deprecate_threshold(
-        self, skill_name: str, skill_to_owls: dict[str, list[str]],
-    ) -> float:
-        """Bounded advisory nudge on ``_DEPRECATE_BELOW`` from the owning owl(s)'
-        CURRENT ``completion_drive`` trait (AD-7 — additive weight on an existing
-        threshold, never a new veto; Story 3.5, the DNA→skill mirror of 3.4's
-        skill→DNA direction).
-
-        ``effective = _DEPRECATE_BELOW * (1.0 - 0.2 * (avg_completion_drive - 0.5))``
-        — a highly-persistent owl (drive→1.0) gets a more LENIENT (lower)
-        threshold so a skill must be worse before it's deprecated; a
-        low-persistence owl (drive→0.0) gets a stricter (higher) one. At the
-        neutral default (0.5) this returns ``_DEPRECATE_BELOW`` unchanged.
-
-        No owning owl, or ``owl_registry``/``db`` not wired → unmodified
-        ``_DEPRECATE_BELOW`` (no signal, no adjustment — the same
-        None-means-no-opinion convention Story 3.4 established). An orphaned
-        ownership row (owl name no longer in the live registry) is skipped,
-        not fatal — one bad row degrades to no-adjustment for this skill, it
-        never aborts the run for other skills.
-        """
-        owners = skill_to_owls.get(skill_name, [])
-        if not owners or self._owl_registry is None or self._db is None:
-            return _DEPRECATE_BELOW
-        drives: list[float] = []
-        for owl_name in owners:
-            try:
-                drives.append(self._owl_registry.get(owl_name).dna.completion_drive)
-            except OwlNotFoundError:
-                log.skills.debug(
-                    "[synth] effective_deprecate_threshold: orphaned ownership row — skipped",
-                    extra={"_fields": {"skill": skill_name, "owl": owl_name}},
-                )
-        if not drives:
-            return _DEPRECATE_BELOW
-        avg_drive = sum(drives) / len(drives)
-        return _DEPRECATE_BELOW * (1.0 - 0.2 * (avg_drive - 0.5))
-
-    async def deprecate_low_performers(self) -> int:
-        """Move chronically-failing learned skills under ``learned/_deprecated/``."""
-        # 1. ENTRY
-        log.skills.debug("[synth] deprecate: entry")
-        skill_to_owls: dict[str, list[str]] = {}
-        if self._db is not None:
-            from stackowl.owls.skill_ownership import read_all_skill_ownership
-
-            try:
-                owl_to_skills = await read_all_skill_ownership(self._db)
-            except Exception as exc:  # B5 — a DB hiccup degrades to flat-threshold
-                # deprecation, matching hydrate_skill_ownership's own convention,
-                # rather than propagating and skipping this entire phase.
-                log.skills.warning(
-                    "[synth] deprecate: ownership read failed — falling back "
-                    "to flat threshold for all candidates",
-                    exc_info=exc,
-                )
-                owl_to_skills = {}
-            for owl_name, skill_names in owl_to_skills.items():
-                for skill_name in skill_names:
-                    skill_to_owls.setdefault(skill_name, []).append(owl_name)
-        # 2. DECISION — the enabled/n_executions legs of the candidate filter are
-        # unchanged; only the success_rate comparison now uses a per-skill
-        # advisory threshold instead of the flat _DEPRECATE_BELOW constant.
-        learned = await self._skills.list_for_source("learned")
-        candidates: list[Skill] = []
-        for s in learned:
-            if not (
-                s.enabled
-                and s.success_rate is not None
-                and s.n_executions >= _MIN_EXECUTIONS_FOR_RATE
-            ):
-                continue
-            threshold = await self._effective_deprecate_threshold(s.name, skill_to_owls)
-            if s.success_rate < threshold:
-                candidates.append(s)
-        moved = 0
-        deprecated_root = self._root / "learned" / _DEPRECATED_DIR_NAME
-        deprecated_root.mkdir(parents=True, exist_ok=True)
-        for sk in candidates:
-            ok = await self._deprecate_one(sk, deprecated_root)
-            if ok:
-                moved += 1
-        # 4. EXIT
-        log.skills.info(
-            "[synth] deprecate: exit",
-            extra={"_fields": {
-                "candidates": len(candidates), "moved": moved,
-                "owned_skills": len(skill_to_owls),
-            }},
-        )
-        return moved
-
-    async def _deprecate_one(self, skill: Skill, deprecated_root: Path) -> bool:
-        log.skills.debug(
-            "[synth] deprecate_one: entry",
-            extra={"_fields": {"name": skill.name, "rate": skill.success_rate}},
-        )
-        src = Path(skill.path)
-        if not src.exists():
-            log.skills.warning(
-                "[synth] deprecate_one: dir missing — pruning index only",
-                extra={"_fields": {"name": skill.name, "path": str(src)}},
-            )
-            await self._skills.delete(skill.skill_id)
-            await self._purge_ownership(skill.name)
-            return False
-        before = hash_dir(src)
-        # Capture snapshot BEFORE the move so /skill restore can resurrect it.
-        snapshot_before = snapshot_dir(src)
-        target = deprecated_root / skill.name
-        i = 1
-        while target.exists():
-            target = deprecated_root / f"{skill.name}-{i}"
-            i += 1
-        try:
-            shutil.move(str(src), str(target))
-        except Exception as exc:  # B5
-            log.skills.warning(
-                "[synth] deprecate_one: move failed",
-                exc_info=exc, extra={"_fields": {"name": skill.name}},
-            )
-            return False
-        # Drop the index row — the loader's _-prefix skip rule means the moved
-        # dir won't be re-discovered next boot.
-        await self._skills.delete(skill.skill_id)
-        # PA4b — also drop ownership: detach live + delete the durable row, else the
-        # boot hydrator re-attaches this now-dead skill to its owl forever.
-        await self._purge_ownership(skill.name)
-        await self._skills.audit_write(
-            skill_name=skill.name, source="learned", op="deprecate",
-            actor="agent:synthesizer", before_hash=before,
-            details={
-                "moved_to": str(target),
-                "success_rate_at_deprecate": skill.success_rate,
-                "n_executions_at_deprecate": skill.n_executions,
-            },
-            snapshot=snapshot_before,
-        )
-        log.skills.info(
-            "[synth] deprecate_one: exit",
-            extra={"_fields": {"name": skill.name, "moved_to": str(target)}},
-        )
-        return True
-
+    #
+    # GONE, and deliberately not replaced here (D09.3 X11). Retirement used to
+    # exist twice: this class moved chronically-failing skills into
+    # ``learned/_deprecated/`` and DELETED their index rows, while SkillCurator
+    # marked unused skills ``stale``/``archived`` and never deleted anything.
+    # Two mechanisms, two terminal states, two sets of safety rules — and the
+    # file-moving one violated ADR-19 I3 (never delete) outright, so a skill
+    # retired for FAILING was unrecoverable while one retired for DISUSE was
+    # fully reversible. Nothing justified that asymmetry.
+    #
+    # ``SkillCurator`` is now the single retirement path and carries BOTH
+    # triggers: retire when unused, or when demonstrably failing. The owl-drive
+    # advisory threshold this phase introduced (AD-7 / Story 3.5) moved intact
+    # to ``owls.skill_ownership.owl_drive_thresholds`` and is injected into the
+    # curator, so no behaviour was dropped — only relocated behind one
+    # lifecycle_state, one place to look, and one set of rules (pinning,
+    # never-delete, revival-on-use).
 
     async def _embed_one_if_wired(self, loaded: LoadedSkill) -> None:
         """Best-effort: embed a single just-written skill so it's immediately

@@ -89,15 +89,40 @@ async def test_a_pinned_skill_is_never_touched(tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_builtin_skills_never_decay(tmp_db):
-    """A shipped built-in is a product decision. Archiving one automatically
-    would be disabling a feature nobody asked to disable."""
+async def test_builtin_skills_decay_on_the_same_windows(tmp_db):
+    """REVERSED in D09.3 (R2Q6), and the inversion is the point of the test.
+
+    This suite previously asserted that a built-in NEVER decays, on the grounds
+    that archiving one would be disabling a feature nobody asked to disable. The
+    operator asked: 9 of 14 shipped built-ins had never once run, so the
+    exclusion meant the shipped shelf could only ever grow, and the
+    never-disable rule was protecting dead weight rather than a capability.
+
+    The rule is satisfied by consent plus reversibility, not by exemption —
+    which is what the next test pins down.
+    """
     store = SkillIndexStore(tmp_db)
     await _add(store, "shipped", age_days=500, source="builtin")
 
-    await _curated(store)
+    report = await _curated(store)
 
-    assert await _state(store, "shipped") == ACTIVE
+    assert await _state(store, "shipped") == ARCHIVED
+    assert "shipped" in report.to_archived
+
+
+@pytest.mark.asyncio
+async def test_pinning_is_what_protects_a_builtin_now(tmp_db):
+    """The replacement for the blanket exemption. A built-in that genuinely must
+    never be retired is pinned, which is a decision someone made and can see —
+    unlike a source check buried in a WHERE clause."""
+    store = SkillIndexStore(tmp_db)
+    sid = await _add(store, "load-bearing", age_days=500, source="builtin")
+    await store.set_pinned(sid, True)
+
+    report = await _curated(store)
+
+    assert await _state(store, "load-bearing") == ACTIVE
+    assert report.skipped_pinned == 1
 
 
 @pytest.mark.asyncio

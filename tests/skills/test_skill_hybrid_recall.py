@@ -82,3 +82,30 @@ async def test_hybrid_recall_respects_limit(tmp_db: DbPool):
 
     hits = await store.hybrid_recall("widgets", [1.0, 1.0], limit=2)
     assert len(hits) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_archived_skill_is_unreachable_through_the_keyword_pass(tmp_db: DbPool):
+    """D09.3 slice 3 — a defect found while widening the curator, not a new rule.
+
+    ``list_enabled`` and ``semantic_recall`` both carried the not-archived
+    predicate. ``_fts_search`` did not, so retiring a skill removed it from two
+    of three read paths and it went on competing for ranking on the third. The
+    curator had marked 297 skills stale on the live catalog at the time, so this
+    was costing real prompt space in production, silently — the exact shape of a
+    half-wired actuator: the write happens, the effect does not.
+    """
+    store = SkillIndexStore(tmp_db)
+    skill_id = await store.upsert(_loaded(
+        "zzblorp-handler", "Handles the zzblorp protocol end to end.",
+    ))
+    query_embedding = [1.0, 0.0]
+
+    # Reachable while active — otherwise the assertion below proves nothing.
+    hits = await store.hybrid_recall("zzblorp", query_embedding, limit=10)
+    assert "zzblorp-handler" in {sk.name for sk, _ in hits}
+
+    await store.set_lifecycle_state(skill_id, "archived", 0.0)
+
+    hits = await store.hybrid_recall("zzblorp", query_embedding, limit=10)
+    assert "zzblorp-handler" not in {sk.name for sk, _ in hits}

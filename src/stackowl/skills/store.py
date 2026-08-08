@@ -519,16 +519,23 @@ class SkillIndexStore(OwnedRepository):
     # ------------------------------------------------------------------ ADR-19 lifecycle
 
     async def rows_for_curation(self) -> list[_CurationRow]:
-        """The learned catalog, projected to what a decay decision needs.
+        """The whole catalog, projected to what a decay decision needs.
 
-        LEARNED ONLY. A shipped built-in is a product decision; archiving one
-        automatically would be disabling a feature nobody asked to disable.
+        EVERY SOURCE, not just learned (D09.3 R2Q6). Built-ins decay on the same
+        windows with pinning as the protection — the operator's explicit
+        decision, reversing the original learned-only scope. 9 of 14 built-ins
+        have never run; excluding them meant the shipped shelf could only ever
+        grow.
+
+        ``success_rate`` comes along because the quality trigger absorbed from
+        the synthesizer (X11) needs the measured rate, and a second query per
+        pass to fetch it would let the two reads disagree.
         """
         log.skills.debug("[skills] store.rows_for_curation: entry")
         rows = await self._db.fetch_all(
             "SELECT skill_id, name, lifecycle_state, pinned, n_executions, "
-            "       last_used_at, loaded_at "
-            "FROM skills WHERE owner_id = ? AND source = 'learned'",
+            "       last_used_at, loaded_at, success_rate, source "
+            "FROM skills WHERE owner_id = ?",
             (self._owner_id,),
         )
         out = [
@@ -540,6 +547,11 @@ class SkillIndexStore(OwnedRepository):
                 n_executions=int(str(r["n_executions"] or 0)),
                 last_used_at=float(str(r["last_used_at"])) if r["last_used_at"] else None,
                 loaded_at=float(str(r["loaded_at"])) if r["loaded_at"] else None,
+                # None means "no verdict yet" and must never read as failing.
+                success_rate=(
+                    float(str(r["success_rate"])) if r["success_rate"] is not None else None
+                ),
+                source=str(r["source"] or "learned"),
             )
             for r in rows
         ]
@@ -757,9 +769,16 @@ class SkillIndexStore(OwnedRepository):
 
     async def _fts_search(self, query_text: str, *, limit: int) -> list[Skill]:
         """FTS5 BM25 keyword pass over ``skills_fts``, owner-scoped +
-        enabled-only, ordered by ``bm25(skills_fts)`` — mirrors
+        enabled-only + not-archived, ordered by ``bm25(skills_fts)`` — mirrors
         ``memory/sqlite_helpers.fts_recall``'s JOIN + ``ORDER BY bm25(...)``
-        shape. Fails soft (``[]``) on a parse error the sanitizer missed."""
+        shape. Fails soft (``[]``) on a parse error the sanitizer missed.
+
+        THE ARCHIVED GUARD IS LOAD-BEARING and was missing until D09.3 slice 3.
+        ``list_enabled`` and :meth:`semantic_recall` both carried it; this leg
+        did not, so an archived skill vanished from two of the three read paths
+        and kept competing on the third. A retirement that only half applies is
+        worse than none — it costs the write and delivers no ranking relief.
+        """
         fts_query = _sanitize_fts_query(query_text)
         if not fts_query:
             log.skills.debug("[skills] store._fts_search: exit — empty query after sanitize")
@@ -769,6 +788,7 @@ class SkillIndexStore(OwnedRepository):
                 f"""SELECT {_SELECT_FIELDS_S} FROM skills_fts fts
                     JOIN skills s ON s.skill_id = fts.rowid
                     WHERE skills_fts MATCH ? AND s.owner_id = ? AND s.enabled = 1
+                      AND s.lifecycle_state <> 'archived'
                     ORDER BY bm25(skills_fts)
                     LIMIT ?""",
                 (fts_query, self._owner_id, limit),

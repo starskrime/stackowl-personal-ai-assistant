@@ -21,11 +21,11 @@ import pytest
 from stackowl.pipeline.backends.shared import _update_skill_success_rates
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState, ToolCall
+from stackowl.skills.lifecycle import SkillCurator
 from stackowl.skills.loader import LoadedSkill
 from stackowl.skills.manifest import SkillManifest, SkillSource
 from stackowl.skills.store import SkillIndexStore
 from stackowl.skills.synthesizer import (
-    _DEPRECATE_BELOW,
     _MIN_EXECUTIONS_FOR_RATE,
     _REFINE_RANGE,
 )
@@ -173,18 +173,17 @@ async def test_data_now_satisfies_deprecate_gate(tmp_db) -> None:
     finally:
         reset_services(token)
 
+    # Drive the REAL retirement predicate rather than replicating it. This
+    # assertion used to re-implement SkillSynthesizer.deprecate_low_performers'
+    # candidate filter inline, which meant the test kept passing no matter what
+    # the shipped predicate did — the test-double drift this repo has now been
+    # bitten by six times. SkillCurator owns the predicate since D09.3 X11.
+    curator = SkillCurator(store)
+    await curator.run()              # first observation seeds the clock
+    report = await curator.run()
+    assert report.archived_failing == ["loser"]
+
     learned = await store.list_for_source("learned")
-    # The synthesizer.deprecate_low_performers predicate, replicated:
-    candidates = [
-        s for s in learned
-        if (
-            s.enabled
-            and s.success_rate is not None
-            and s.success_rate < _DEPRECATE_BELOW
-            and s.n_executions >= _MIN_EXECUTIONS_FOR_RATE
-        )
-    ]
-    assert [s.name for s in candidates] == ["loser"]
     # And it is NOT mistakenly in the refine band.
     refine = [
         s for s in learned
