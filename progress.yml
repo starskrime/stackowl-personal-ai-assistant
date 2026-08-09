@@ -7785,7 +7785,8 @@ items:
                                    # removal) inventoried, attempted, reverted
       cleanup:    not_started
       test:       partial          # 74 tests across curated/tool/prompt
-      validate:   not_started
+      validate:   partial          # slices 1-4 proven on the live platform;
+                                   # a real turn still needed for the prompt check
       document:   not_started
     doc: docs/reference-mapping/designs/D08.1.md
     doc_last_verified: null
@@ -7838,6 +7839,9 @@ items:
     - 'REWIRE, 16 files: memory/assembly.py (the wiring hub), startup/orchestrator.py, scheduler/{assembly,base,scheduler}.py, scheduler/handlers/memory_consolidation.py, commands/{assembly,memory_helpers,memory_command}.py, pipeline/{services.py,backends/shared.py,steps/classify.py}, parliament/pellet_generator.py, brief/assemblers.py, tools/agents/sessions_send.py, cli/app.py, audit/retention.py, startup/identity_reload.py, config/settings.py.'
     - 'TABLES: purge committed_facts (89,031 rows at last count) and drop staged_facts, memory_facts, pellets, fact_rejections plus the always-NULL scope_key column. Drop committed_facts.lance and committed_facts_meta.lance (9MB) but NOT lessons.lance (221MB).'
     - 'SEQUENCE THAT WORKS, learned from the failed attempt: the modules are deletable in dependency order (fact_reinforcer has 0 importers, recall_ranker 1, entity_extractor 2, fact_extractor 2, contradiction_detector 4, conversation_miner 4, trust 8, fact_promoter 9), but MemoryBridge is the hard part - it reaches 10+ files outside memory/. Do MemoryBridge''s callers FIRST, then the modules, then the tables. Take a DB backup before the data step; one was already taken at ~/.stackowl/backups/pre-memory-removal-20260809-025304.db.'
+    - 'SLICES 1-4 VERIFIED LIVE 2026-08-09 03:17 UTC, on the running platform rather than in tests: ~/.stackowl/memory/{USER.md,secretary.md} created; a permanent write accepted and reported 4% - 56/1,375 chars; an owl write accepted at 2% - 61/2,200; a TRANSIENT write REFUSED with the explanatory message (the stale-date failure, refused at the boundary); both snapshots returned their content. Restart clean, 0 errors. Two real entries were written in the process and left in place because they are true and useful (''prefers root-cause fixes over patches'', ''Telegram replies must stay under 2048 tokens'') - they are plain text and the operator can edit or delete them, which is the point of it being a file.'
+    - 'ACCEPTANCE STATUS: 3 of 4 met. Both files exist with written content (yes); the write rate is bounded by the BUDGET rather than a number (yes); the old 14,400/day path is gone (yes, extraction is retired in design and the writer no longer targets the store). Outstanding: the assembled prompt DEMONSTRABLY carrying them, which needs a real turn through the pipeline - deliberately not asserted from the code path, since asserting the code path is exactly how D01.1 shipped a reader with no writer.'
+    - 'OBSERVABILITY added 2026-08-09 to unblock the Kuzu/LanceDB question without waiting on the operator: LessonsIndex.search''s exit log promoted from debug to info with n_hits. lessons.lance is 221MB whose write side was visible and read side was not. Cost measured first - ONE caller (pipeline/steps/classify.py:489), once per turn, ~910 turns/24h against 21,632 memory lines already written daily. Takes effect at the next restart.'
     changes: []
     notes: null
 
