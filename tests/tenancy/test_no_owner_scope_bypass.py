@@ -228,8 +228,6 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # TODO(Epic 9 multi-user): owner-scope committed_facts/staged_facts access
         ("memory/budget_enforcer.py", "committed_facts"),
         ("memory/budget_enforcer.py", "staged_facts"),
-        ("memory/conversation_miner.py", "committed_facts"),
-        ("memory/conversation_miner.py", "staged_facts"),
         ("memory/dream_worker_helpers.py", "committed_facts"),
         ("memory/dream_worker_helpers.py", "staged_facts"),
         # memory/extraction_handler.py entries removed 2026-07-26: the file was

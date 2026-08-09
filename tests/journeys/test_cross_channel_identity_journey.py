@@ -11,12 +11,10 @@ Four scenarios:
       so the Slack turn (session_key="slack:abc") would have missed the preference
       stored under "owner-primary".
 
-  (b) Fact store unity (real-seam assertion) — FactExtractor.extract() is called
-      for BOTH "telegram:123" and "slack:abc" sessions via a resolver that maps
-      both to "owner-primary".  The resulting StagedFacts carry source_ref=
-      "owner-primary" (not the per-channel handles), and the DB contains zero rows
-      under either per-channel handle after staging.  This WOULD have been RED
-      before Task 4 when source_ref=session_key.
+  (b) REMOVED with the extraction pipeline (D08.1). It drove FactExtractor to
+      prove staged facts were keyed on identity rather than session_key. There
+      are no staged facts any more. Identity unity itself is still covered by
+      (a), (c) and (d) here, and by tests/tenancy/test_identity.py.
 
   (c) Conversation does NOT cross — MemoryBridge.store() writes a conversation
       turn under "telegram:123".  The POSITIVE control confirms it is visible to
@@ -31,7 +29,6 @@ Four scenarios:
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -39,8 +36,6 @@ import pytest
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
-from stackowl.exceptions import DuplicateFactError
-from stackowl.memory.fact_extractor import FactExtractor
 from stackowl.memory.preferences import PreferenceStore
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.owls.registry import OwlRegistry
@@ -279,88 +274,6 @@ async def test_journey_a_preference_crosses_channels(tmp_db: DbPool) -> None:
 
 
 # ===========================================================================
-# (b) Fact store unity — real FactExtractor seam (not a synthetic INSERT)
-# ===========================================================================
-
-
-async def test_journey_b_fact_stored_under_identity_key(tmp_db: DbPool) -> None:
-    """Facts staged by FactExtractor are keyed on identity, not session_key.
-
-    This drives the REAL extraction path via FactExtractor.extract() for both
-    'telegram:123' and 'slack:abc' using an IdentityResolver that maps both to
-    'owner-primary'.  Asserts:
-
-      1. Both returned StagedFacts carry source_ref='owner-primary'.
-      2. After staging via SqliteMemoryBridge, zero DB rows exist under either
-         per-channel handle.
-
-    This test WOULD HAVE BEEN RED before Task 4: without a resolver, extract()
-    stamps source_ref=session_key, producing separate rows under the per-channel
-    handles.  A hardcoded INSERT bypasses the feature entirely — this test does not.
-    """
-    resolver = IdentityResolver({"owner-primary": ["telegram:123", "slack:abc"]})
-    extractor = FactExtractor(provider=_StubExtractorProvider(), identity_resolver=resolver)
-    bridge = SqliteMemoryBridge(tmp_db)
-
-    convo = [Message(role="user", content="I prefer dark mode.")]
-
-    # Drive real extraction for the telegram session
-    telegram_facts = await extractor.extract(convo, session_key="telegram:123")
-    assert telegram_facts, "extractor must return at least one fact from telegram session"
-
-    # Drive real extraction for the slack session (same user, same identity)
-    slack_facts = await extractor.extract(convo, session_key="slack:abc")
-    assert slack_facts, "extractor must return at least one fact from slack session"
-
-    # Both sets of StagedFacts must carry source_ref=identity, not per-channel handles.
-    # This is the key invariant: the resolver re-keyed the source_ref at extraction time.
-    for f in telegram_facts:
-        assert f.source_ref == "owner-primary", (
-            f"telegram fact must be keyed on identity 'owner-primary', got: {f.source_ref!r}"
-        )
-    for f in slack_facts:
-        assert f.source_ref == "owner-primary", (
-            f"slack fact must be keyed on identity 'owner-primary', got: {f.source_ref!r}"
-        )
-
-    # Stage all facts into the DB via the real bridge.
-    # Slack produces same content+source_ref → same fact_id → DuplicateFactError
-    # (reinforcement path).  Either way: no new per-channel row is written.
-    for f in telegram_facts:
-        await bridge.stage(f)
-    for f in slack_facts:
-        with contextlib.suppress(DuplicateFactError):  # reinforcement path — not a new per-channel row
-            await bridge.stage(f)
-
-    # DB assertions: identity rows exist, per-channel rows are zero.
-    rows_identity = await tmp_db.fetch_all(
-        "SELECT source_ref FROM staged_facts WHERE source_ref = 'owner-primary'"
-    )
-    rows_telegram = await tmp_db.fetch_all(
-        "SELECT source_ref FROM staged_facts WHERE source_ref = 'telegram:123'"
-    )
-    rows_slack = await tmp_db.fetch_all(
-        "SELECT source_ref FROM staged_facts WHERE source_ref = 'slack:abc'"
-    )
-
-    assert len(rows_identity) >= 1, (
-        f"expected at least 1 fact under identity key 'owner-primary', got {len(rows_identity)}"
-    )
-    assert len(rows_telegram) == 0, (
-        f"expected 0 facts under 'telegram:123' (all unified under identity), "
-        f"got {len(rows_telegram)}"
-    )
-    assert len(rows_slack) == 0, (
-        f"expected 0 facts under 'slack:abc' (all unified under identity), "
-        f"got {len(rows_slack)}"
-    )
-
-
-# ===========================================================================
-# (c) Conversation does NOT cross channels — real MemoryBridge seam
-# ===========================================================================
-
-
 async def test_journey_c_conversation_does_not_cross_channels(tmp_db: DbPool) -> None:
     """Conversation history stays per-session even when two sessions share an identity.
 

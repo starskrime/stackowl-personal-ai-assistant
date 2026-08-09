@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.infra.net.host_locality import is_local_url
 from stackowl.infra.observability import log
+from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:
     from stackowl.config.settings import Settings
@@ -77,10 +78,16 @@ async def reprice_local_history(db: DbPool, settings: Settings) -> int:
         placeholders = ",".join("?" for _ in local_names)
         # `priced IS NOT 1` covers both 0 and NULL, and guarantees a row that
         # carries a REAL table price is never overwritten.
+        # owner_id is scoped even though this is a one-shot repair: the CI guard
+        # in tests/tenancy/test_no_owner_scope_bypass.py is right that an
+        # unscoped UPDATE on an owner-governed table would rewrite every
+        # principal's history on a multi-tenant install, and "it only runs once"
+        # is not a property of the SQL.
         affected = await db.execute_returning_rowcount(
             f"UPDATE cost_records SET cost_usd = 0.0, priced = 1 "  # noqa: S608 — placeholders are generated, values are bound
-            f"WHERE provider_name IN ({placeholders}) AND priced IS NOT 1",
-            tuple(local_names),
+            f"WHERE owner_id = ? AND provider_name IN ({placeholders}) "
+            f"AND priced IS NOT 1",
+            (DEFAULT_PRINCIPAL_ID, *local_names),
         )
         await _mark_done(db)
         if affected:

@@ -28,6 +28,7 @@ from stackowl.config.settings import Settings
 from stackowl.infra.observability import log
 from stackowl.sessions.models import MACHINE_LANE_PREFIXES
 from stackowl.skills import standard
+from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.db.pool import DbPool
@@ -331,7 +332,8 @@ class AutonomicHealthAssembler:
             # The number that says whether the catalog is EARNING its size.
             used = await self._db.fetch_all(
                 "SELECT COUNT(*) AS n FROM skills "
-                "WHERE source = 'learned' AND n_executions > 0",
+                "WHERE owner_id = ? AND source = 'learned' AND n_executions > 0",
+                (DEFAULT_PRINCIPAL_ID,),
             )
             n_used = int(str(used[0]["n"])) if used else 0
             items.append(f"skills_ever_used:{n_used}/{total}")
@@ -375,8 +377,10 @@ class AutonomicHealthAssembler:
             f"CASE WHEN {lane_case} THEN 'machine' ELSE 'interactive' END AS lane, "
             f"COUNT(*) AS n, AVG(quality_score) AS q "
             f"FROM task_outcomes "
-            f"WHERE quality_score IS NOT NULL AND lessons_arm IS NOT NULL "
+            f"WHERE owner_id = ? AND quality_score IS NOT NULL "
+            f"AND lessons_arm IS NOT NULL "
             f"GROUP BY lessons_arm, lane",
+            (DEFAULT_PRINCIPAL_ID,),
         )
         by_lane: dict[str, dict[str, tuple[int, float]]] = {}
         for r in arms:
@@ -406,9 +410,11 @@ class AutonomicHealthAssembler:
         reply = await self._db.fetch_all(
             "SELECT COUNT(*) AS n, AVG(response_chars) AS avg_len, "
             "SUM(response_chars > ?) AS over "
-            "FROM task_outcomes WHERE response_chars IS NOT NULL AND success = 1 "
-            "AND captured_at > ?",
-            (_ONE_TELEGRAM_MESSAGE, time.time() - _REPLY_WINDOW_S),
+            "FROM task_outcomes WHERE owner_id = ? AND response_chars IS NOT NULL "
+            "AND success = 1 AND captured_at > ?",
+            # ORDER MATTERS: the `?` inside SUM(response_chars > ?) is bound
+            # before the WHERE clause's, so the threshold comes first.
+            (_ONE_TELEGRAM_MESSAGE, DEFAULT_PRINCIPAL_ID, time.time() - _REPLY_WINDOW_S),
         )
         if reply and reply[0]["n"]:
             r = reply[0]
@@ -439,7 +445,8 @@ class AutonomicHealthAssembler:
         # owns it. The catalog is a few hundred rows; reading the names is cheap.
         conf = await self._db.fetch_all(
             "SELECT name, LENGTH(description) AS desc_len FROM skills "
-            "WHERE lifecycle_state <> 'archived'",
+            "WHERE owner_id = ? AND lifecycle_state <> 'archived'",
+            (DEFAULT_PRINCIPAL_ID,),
         )
         if conf:
             n_total = len(conf)

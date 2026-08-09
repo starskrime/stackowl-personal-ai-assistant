@@ -42,27 +42,12 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
         ContradictionDetector,
         ContradictionReport,
     )
-    from stackowl.memory.conversation_miner import ConversationMiner
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.memory.pruner import MemoryPruner
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 
 
-# DEBT-32 — the share of the scheduler's handler deadline that mining may spend.
-#
-# DERIVED, not invented. The number that matters is the scheduler's own
-# _HANDLER_TIMEOUT_SEC: exceed it and the run is killed, the phases never run,
-# and the pruning that drains staged_facts never happens. Reading it from the
-# scheduler means that if the timeout is ever retuned, this follows automatically
-# instead of silently becoming wrong — which is how the previous assumption
-# ("20 minutes comfortably clears the slowest observed run: ~16 min", scheduler
-# .py) rotted once the backlog grew past it.
-#
-# Half, because the remaining phases (contradiction, promotion, pruning) need the
-# other half — and pruning is the phase that actually shrinks the backlog, so
-# starving it would preserve the very ratchet this fixes.
-_MINING_DEADLINE_SHARE = 0.5
 
 #: Seconds reserved so the handler can checkpoint and RETURN rather than being
 #: killed one fact short — the whole point of DEBT-19.
@@ -72,26 +57,6 @@ _RETURN_MARGIN_S = 60.0
 _KUZU_MIN_BUDGET_S = 60.0
 #: Used when kuzu_sync is invoked outside a dream-worker run (no start clock).
 _KUZU_FALLBACK_BUDGET_S = 396.0
-
-
-def _mining_budget_s() -> float:
-    """Seconds mining may spend before deferring the rest to the next run.
-
-    Never raises: if the scheduler constant cannot be read for any reason, mining
-    falls back to a conservative fraction of a 20-minute run rather than becoming
-    unbounded again — an unbounded default here is the defect, not the safe case.
-    """
-    try:
-        from stackowl.scheduler.scheduler import _HANDLER_TIMEOUT_SEC
-
-        return float(_HANDLER_TIMEOUT_SEC) * _MINING_DEADLINE_SHARE
-    except Exception as exc:  # never silent
-        log.memory.error(
-            "[memory] dream_worker: could not read the handler timeout — using a "
-            "conservative mining budget",
-            exc_info=exc,
-        )
-        return 1200.0 * _MINING_DEADLINE_SHARE
 
 
 class DreamWorkerJobHandler(JobHandler):
@@ -114,7 +79,6 @@ class DreamWorkerJobHandler(JobHandler):
         pruner: MemoryPruner,
         kuzu_handler: KuzuSyncJobHandler,
         detector: ContradictionDetector,
-        miner: ConversationMiner | None = None,
         ann_k: int = 32,
         ann_threshold: int = 200,
     ) -> None:
@@ -125,7 +89,6 @@ class DreamWorkerJobHandler(JobHandler):
         self._pruner = pruner
         self._kuzu = kuzu_handler
         self._detector = detector
-        self._miner = miner
         # F063 — incremental/ANN contradiction-scan tuning (>=32 keeps the >=0.85
         # cross-source band un-truncated; below threshold N the brute-force scan
         # stays behaviour-identical).
@@ -150,11 +113,17 @@ class DreamWorkerJobHandler(JobHandler):
             extra={"_fields": {"job_id": job.job_id}},
         )
         TestModeGuard.assert_not_test_mode("dream_worker.execute")
-        # Clock the WHOLE handler, not just the phases: mining runs first and can
-        # consume up to half the window, and the last phase needs to know what is
-        # actually left rather than assuming a fixed fraction.
+        # Clock the WHOLE handler, not just the phases, so the last phase knows
+        # what is actually left rather than assuming a fixed fraction.
+        #
+        # MINING USED TO RUN FIRST HERE and could consume up to half the window.
+        # It is gone with the extraction pipeline (D08.1) — and removing it does
+        # more than stop the writes. DEBT-32 recorded that mining every staged
+        # session was 5-9 HOURS of LLM calls against a 1200s handler timeout, so
+        # the run was killed every time; because it was killed, the pruning phase
+        # that DRAINS the backlog never ran, so the backlog could never shrink.
+        # The phases below have been starved by a phase that no longer exists.
         handler_started = time.monotonic()
-        await self._mine()
         t0 = time.monotonic()
         self._handler_started = handler_started
         db: DbPool = self._bridge._db  # JobHandler reuses the bridge's pool
@@ -240,32 +209,6 @@ class DreamWorkerJobHandler(JobHandler):
         )
 
     # ------------------------------------------------------------------ helpers
-
-    async def _mine(self) -> int:
-        """Mine staged conversation turns into staged facts, WITHIN A BUDGET.
-
-        See :func:`_mining_budget_s` for why the budget exists. The short version
-        (DEBT-32): mining every staged session was 5-9 hours of LLM calls against
-        a 1200s handler timeout, so the run was killed every time — and because
-        it was killed, the pruning phase that DRAINS the backlog never ran, so
-        the backlog could never shrink. Bounding mining is what lets the rest of
-        the pass execute at all.
-
-        None-safe.
-
-        Failure here must NOT abort the consolidation pass (self-heal) but must be
-        LOUD (no hidden errors): logged at ERROR with context.
-        """
-        if self._miner is None:
-            return 0
-        try:
-            return await self._miner.mine_all(budget_s=_mining_budget_s())
-        except Exception as exc:
-            log.memory.error(
-                "[memory] dream_worker: conversation mining FAILED — consolidation continues",
-                exc_info=exc,
-            )
-            return 0
 
     async def _begin_new_run(self, db: DbPool) -> DreamWorkerCheckpoint:
         run_id = str(uuid.uuid4())

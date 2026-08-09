@@ -44,39 +44,18 @@ def test_the_prefixes_match_where_they_are_minted():
     assert set(MACHINE_LANE_PREFIXES) == {"goal-", "incident-"}
 
 
-@pytest.mark.asyncio
-async def test_mine_all_SKIPS_and_MARKS_machine_lanes():
-    """Skipped is not enough — an unmarked lane is re-queued every 30 minutes
-    forever, which is the DEBT-32 ratchet all over again."""
-    from stackowl.memory.conversation_miner import ConversationMiner
-
-    marked: list[str] = []
-
-    class _Db:
-        async def fetch_all(self, sql, params=None):
-            return [
-                {"source_ref": "incident-aaa"},
-                {"source_ref": "goal-bbb"},
-                {"source_ref": "owl:scout:telegram:dm:1"},
-            ]
-
-        async def execute(self, sql, params=None):
-            if params and len(params) >= 2:
-                marked.append(params[1])
-
-    m = object.__new__(ConversationMiner)
-    m._db = _Db()
-    mined: list[str] = []
-
-    async def _mine_session(key):
-        mined.append(key)
-        return 0
-
-    m.mine_session = _mine_session  # type: ignore[method-assign]
-
-    await m.mine_all()
-
-    assert mined == ["owl:scout:telegram:dm:1"], f"machine lanes were mined: {mined}"
-    assert "incident-aaa" in marked and "goal-bbb" in marked, (
-        "a skipped lane must be MARKED, or it returns to the queue forever"
-    )
+# test_mine_all_SKIPS_and_MARKS_machine_lanes REMOVED with ConversationMiner
+# (D08.1) — but what it recorded is worth keeping, because it CORRECTS the root
+# cause first written for that removal.
+#
+# The filter was real and landed 2026-08-04. It guarded `mine_all`. It did NOT
+# guard `mine_session`, which the conversation-boundary handler called on every
+# rolled lane — so machine lanes kept being mined through the other door, and
+# incident-prefixed facts were still being staged on 2026-08-09, five days after
+# the filter shipped. A guard on one path and not its sibling: the same
+# half-wired shape as the archived-skill FTS leg.
+#
+# is_machine_lane and MACHINE_LANE_PREFIXES themselves SURVIVE and are still
+# asserted above: the brief's interactive-vs-machine lane split reads them, and
+# they are complete — `retry-` appears only as a staged_facts source_ref, never
+# as a session_key (measured: 0 of 11,734 outcomes).

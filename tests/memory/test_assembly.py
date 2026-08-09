@@ -11,7 +11,7 @@ from stackowl.config.settings import MemorySettings, Settings
 from stackowl.db.pool import DbPool
 from stackowl.memory.assembly import MemoryAssembly, MemoryComponents
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.providers.registry import ModelRoute, ProviderRegistry
+from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.base import HandlerRegistry
 
 pytestmark = pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_build_returns_frozen_components(tmp_db: DbPool) -> None:
         components.bridge = None  # type: ignore[misc]
 
 
-async def test_build_wires_all_eleven_components(tmp_db: DbPool) -> None:
+async def test_build_wires_all_ten_components(tmp_db: DbPool) -> None:
     settings = Settings(memory=MemorySettings())
     components = await MemoryAssembly.build(
         db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
@@ -119,7 +119,8 @@ async def test_build_wires_all_eleven_components(tmp_db: DbPool) -> None:
     assert components.entity_extractor is not None
     assert components.kuzu_sync_handler is not None
     assert components.dream_worker is not None
-    assert components.fact_extractor is not None
+    # fact_extractor was the eleventh. It went with the extraction pipeline
+    # (D08.1) — 88,631 facts, 37.1% of them the platform's own telemetry.
     assert components.rollover_summary_handler is not None
 
 
@@ -222,10 +223,12 @@ async def test_build_kuzu_degrades_to_none_if_unavailable(
 
 
 async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
-    """Fact extractor and entity extractor must resolve 'standard', not 'powerful'.
+    """The entity extractor must resolve 'standard', not 'powerful'.
 
-    This is a hybrid-routing cost guard: running these helpers on the 122b (powerful)
-    model is expensive; standard is capable enough for extraction tasks.
+    A hybrid-routing COST guard: running these helpers on the 122b (powerful)
+    model is expensive and standard is capable enough. The fact-extractor half of
+    this guard went with the extractor itself (D08.1); the guard still matters
+    for what remains, so it is narrowed rather than deleted.
     """
     spy = _SpyProviderRegistry()
     settings = Settings(memory=MemorySettings())
@@ -233,10 +236,6 @@ async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
         db=tmp_db, settings=settings, provider_registry=spy,
     )
 
-    # Fact extractor: get_with_cascade must have been called with "standard".
-    assert "standard" in spy.cascade_tiers, (
-        f"Expected 'standard' in cascade tier calls; got {spy.cascade_tiers!r}"
-    )
     assert "powerful" not in spy.cascade_tiers, (
         f"No extractor should request 'powerful'; got {spy.cascade_tiers!r}"
     )
@@ -245,28 +244,7 @@ async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
     assert components.entity_extractor._preferred_tier == "standard", (  # type: ignore[union-attr]
         f"EntityExtractor._preferred_tier is {components.entity_extractor._preferred_tier!r}, expected 'standard'"  # type: ignore[union-attr]
     )
-
-
-async def test_fact_extractor_receives_the_cascade_resolved_model(tmp_db: DbPool) -> None:
-    """Task 16 — assembly.py must resolve (provider, model) via
-    get_with_cascade("standard") and thread the model into
-    FactExtractor(model=...), not just the provider.
-
-    Genuinely discriminating: if assembly.py kept calling get_with_cascade()
-    (provider only, dropping the model), fact_extractor._model would stay ""
-    even though the registry's standard-tier route carries a distinct model.
-    """
-    registry = ProviderRegistry()
-    registry.register_mock("stub", _StubProvider(), tier="powerful")
-    registry.register_mock(
-        "stub-std", _StubProvider(),
-        models=(ModelRoute(model="assembly-fact-extractor-model", tiers=("standard",)),),
-    )
-    settings = Settings(memory=MemorySettings())
-    components = await MemoryAssembly.build(
-        db=tmp_db, settings=settings, provider_registry=registry,
-    )
-    assert components.fact_extractor._model == "assembly-fact-extractor-model", (  # type: ignore[union-attr]
-        f"fact_extractor._model is {components.fact_extractor._model!r}, "  # type: ignore[union-attr]
-        f"expected 'assembly-fact-extractor-model'"
-    )
+# test_fact_extractor_receives_the_cascade_resolved_model REMOVED with the
+# extractor (D08.1). It guarded that assembly threaded the cascade-resolved MODEL
+# into FactExtractor rather than only the provider — a real bug once, and now a
+# guard on a constructor that no longer exists.

@@ -36,7 +36,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.contradiction_detector import ContradictionDetector
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
     from stackowl.memory.entity_extractor import EntityExtractor
-    from stackowl.memory.fact_extractor import FactExtractor
     from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
@@ -71,7 +70,6 @@ class MemoryComponents:
     entity_extractor: EntityExtractor
     kuzu_sync_handler: KuzuSyncJobHandler
     dream_worker: DreamWorkerJobHandler
-    fact_extractor: FactExtractor
     rollover_summary_handler: RolloverSummaryHandler
     lessons_index: LessonsIndex
     # Health surface for the knowledge-graph layer (ok / down).
@@ -107,7 +105,6 @@ class MemoryAssembly:
         from stackowl.embeddings.registry import EmbeddingRegistry
         from stackowl.memory.contradiction_detector import ContradictionDetector
         from stackowl.memory.entity_extractor import EntityExtractor
-        from stackowl.memory.fact_extractor import FactExtractor
         from stackowl.memory.fact_promoter import FactPromoter
         from stackowl.memory.kuzu_adapter import KuzuAdapter
         from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
@@ -235,48 +232,22 @@ class MemoryAssembly:
             db=db,
         )
 
-        # 7) FactExtractor — uses standard-tier provider — capable extraction without the 122b cost.
-        # Provider cascade ensures graceful fallback if standard is unavailable.
-        # Embedding registry is passed so extracted facts can be embedded for
-        # downstream semantic recall.
-        from stackowl.providers.base import ModelProvider
-        from stackowl.tenancy.identity import load_identity_resolver
-
-        # Share the orchestrator's single IdentityResolver instance when provided
-        # so a live `settings_reloaded` alias edit (mutated in place) is seen here
-        # too; fall back to a fresh load for standalone/test callers.
-        resolver = identity_resolver if identity_resolver is not None else load_identity_resolver()
-        extraction_provider: ModelProvider
-        extraction_model: str
-        extraction_provider, extraction_model = provider_registry.get_with_cascade("standard")
-        fact_extractor = FactExtractor(
-            provider=extraction_provider,
-            model=extraction_model,
-            embedding_registry=embedding_registry,
-            sensitive_categories=mem.sensitive_categories,
-            identity_resolver=resolver,
-        )
-
-        # 7a) ConversationMiner — wired here so DreamWorker can run it each pass.
-        from stackowl.memory.conversation_miner import ConversationMiner
-
-        conversation_miner = ConversationMiner(
-            db=db, extractor=fact_extractor, bridge=bridge,
-            message_limit=mem.extraction_after_n_messages * 4,
-            dedup_similarity=mem.conversation_fact_dedup_similarity,
-            clock=clock,
-            settle_minutes=mem.dream_worker_settle_minutes,
-        )
+        # 7) FactExtractor + 7a) ConversationMiner — REMOVED (D08.1).
+        #
+        # These built the write path that produced 88,631 facts, 37.1% of which
+        # mentioned a trace id or failure_class: the extractor took session_key
+        # and never consulted it, so every incident-recovery and retry
+        # conversation was mined as though a human had said it. Curated memory
+        # (memory/curated.py) is the replacement — two files, a hard budget, and
+        # the agent doing its own forgetting.
 
         # 6) DreamWorker — register via existing factory (respects B9 boundary).
-        # Placed after fact_extractor so conversation_miner can be passed in.
         dream_worker = register_dream_worker_handler(
             bridge=bridge,
             promoter=promoter,
             pruner=pruner,
             kuzu_handler=kuzu_sync_handler,
             detector=detector,
-            miner=conversation_miner,
             ann_k=mem.contradiction_ann_k,
             ann_threshold=mem.contradiction_ann_threshold,
         )
@@ -330,7 +301,6 @@ class MemoryAssembly:
             lessons_index=lessons_index,
             kuzu_sync_handler=kuzu_sync_handler,
             dream_worker=dream_worker,
-            fact_extractor=fact_extractor,
             rollover_summary_handler=rollover_summary_handler,
             graph_health=graph_health,
         )
