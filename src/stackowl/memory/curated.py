@@ -54,12 +54,17 @@ from stackowl.paths import StackowlHome
 
 __all__ = [
     "DURABILITIES",
-    "MemoryResult",
     "OWL_BUDGET_CHARS",
     "USER_BUDGET_CHARS",
     "USER_TARGET",
     "CuratedMemory",
+    "MemoryResult",
+    "NUDGE_INTERVAL_TURNS",
     "memory_dir",
+    "note_turn",
+    "note_write",
+    "reset_nudges",
+    "shared_memory",
 ]
 
 #: Separates entries within a file. Adopted from the reference platform: a bare
@@ -99,6 +104,25 @@ _SAFE_TARGET_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 def memory_dir() -> Path:
     """Where both files live. Voted in D08.1 R7Q26."""
     return StackowlHome.home() / "memory"
+
+
+#: One instance per process, because the frozen snapshot is per-process state
+#: and a fresh instance per turn would defeat it. Mirrors how the prompt store
+#: is held in the assemble step.
+_SHARED: CuratedMemory | None = None
+
+
+def shared_memory() -> CuratedMemory:
+    """The process-wide curated memory.
+
+    Writes are stateless so a caller may construct its own; the SNAPSHOT is not,
+    so anything building a system prompt must come through here or it will
+    re-read the file mid-session and move the prompt underneath itself.
+    """
+    global _SHARED  # noqa: PLW0603 — one process-wide snapshot, deliberately
+    if _SHARED is None:
+        _SHARED = CuratedMemory()
+    return _SHARED
 
 
 @dataclass(frozen=True)
@@ -440,3 +464,65 @@ class CuratedMemory:
             (e.text[:width] + "…") if len(e.text) > width else e.text
             for e in entries
         ]
+
+
+# --------------------------------------------------------------------------- #
+# The nudge (D08.3, pulled into D08.1 by R6Q24).
+# --------------------------------------------------------------------------- #
+
+#: Turns without a memory write before the agent is reminded it can make one.
+#: The reference platform's default, adopted for the same reason as the budgets:
+#: it is a tuned number and we have no measurement of our own yet.
+NUDGE_INTERVAL_TURNS = 10
+
+#: Turns since the last curated write, per lane. IN-PROCESS, and deliberately
+#: not persisted.
+#:
+#: A restart resets every lane to zero, which means the agent goes another full
+#: interval before being nudged again. That is the SAFE direction to be wrong
+#: in: under-nudging costs a memory that could have been written, over-nudging
+#: costs the user a turn cluttered with the agent talking about its own
+#: bookkeeping. Persisting it would buy accuracy in a counter whose only job is
+#: to fire "occasionally".
+_TURNS_SINCE_WRITE: dict[str, int] = {}
+
+_NUDGE_TEXT = (
+    "You have not recorded anything in memory for a while. If something durable "
+    "about the user or about how to do this work has come up — a preference, a "
+    "constraint, a correction — record it with the memory tool now. If nothing "
+    "has, say nothing and carry on; an empty note is worse than none."
+)
+
+
+def note_turn(session_key: str) -> str | None:
+    """Count a turn on ``session_key``; return the nudge text when one is due.
+
+    Returns ``None`` almost always. This exists because with fact extraction
+    retired (D08.1 R5Q18) nothing else will ever prompt a write — the agent
+    writes when it decides to, and without a periodic reminder "when it decides
+    to" measured across a real week is zero.
+
+    The nudge rides the VOLATILE per-turn context, never the system prompt: the
+    prompt is frozen per incarnation, so a nudge placed there would either be
+    present for the entire conversation or absent from all of it.
+    """
+    count = _TURNS_SINCE_WRITE.get(session_key, 0) + 1
+    if count < NUDGE_INTERVAL_TURNS:
+        _TURNS_SINCE_WRITE[session_key] = count
+        return None
+    _TURNS_SINCE_WRITE[session_key] = 0
+    log.memory.info(
+        "[curated] nudge: due",
+        extra={"_fields": {"session_key": session_key, "turns": count}},
+    )
+    return _NUDGE_TEXT
+
+
+def note_write(session_key: str) -> None:
+    """Reset the counter — the agent just wrote something, so it needs no hint."""
+    _TURNS_SINCE_WRITE[session_key] = 0
+
+
+def reset_nudges() -> None:
+    """Clear every lane's counter. For tests, and for a deliberate restart."""
+    _TURNS_SINCE_WRITE.clear()

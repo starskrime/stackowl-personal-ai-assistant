@@ -1026,6 +1026,24 @@ def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = N
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
         return state.input_text
+
+    # D08.1/D08.3 — the memory nudge rides HERE, on the volatile per-turn
+    # context, never the system prompt. The prompt is frozen per incarnation, so
+    # a nudge placed there would be present for an entire conversation or absent
+    # from all of it. With fact extraction retired, this is the only thing that
+    # will ever prompt a write.
+    try:
+        from stackowl.memory.curated import note_turn
+
+        nudge = note_turn(state.session_key)
+    except Exception as exc:  # no-hidden-errors: never cost the turn its text
+        log.engine.error(
+            "[pipeline] execute: memory nudge FAILED — continuing without it",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        nudge = None
+    if nudge:
+        context = f"{context}\n\n{nudge}"
     return f"{context}\n\n{state.input_text}"
 
 

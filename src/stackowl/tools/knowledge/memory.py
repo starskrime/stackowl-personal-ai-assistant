@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
-from stackowl.memory.curated import DURABILITIES, CuratedMemory
+from stackowl.memory.curated import DURABILITIES, CuratedMemory, note_write
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.knowledge.guards import AGENT_SELF_SOURCE_TYPE
@@ -342,6 +342,12 @@ class MemoryTool(Tool):
         """
         payload = result.as_dict()  # type: ignore[attr-defined]
         if result.ok:  # type: ignore[attr-defined]
+            # The agent just wrote something, so it does not need reminding.
+            # Reset here rather than in CuratedMemory: the counter is per LANE
+            # and only the tool call knows which lane it is on.
+            session_key = getattr(get_services(), "session_key", None)
+            if session_key:
+                note_write(str(session_key))
             return self._ok(
                 f"{result.message} ({result.usage})",  # type: ignore[attr-defined]
                 t0, extra=payload,

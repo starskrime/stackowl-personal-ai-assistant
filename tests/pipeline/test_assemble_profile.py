@@ -44,15 +44,49 @@ def _state(**kw: object) -> PipelineState:
 async def test_the_profile_reaches_the_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The check D01.1 SHOULD have had, now against the real writer.
+
+    D01.1 shipped a reader for a file nothing wrote, and this test passed
+    throughout by writing that file itself — so it proved the reader worked while
+    the live prompt carried nothing at all. It now goes through CuratedMemory,
+    which is what actually creates the file in production.
+    """
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory, shared_memory
+
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
-    (tmp_path / "USER.md").write_text(
-        "PROFILE_MARKER: Bakir builds StackOwl.", encoding="utf-8"
+    monkeypatch.setattr(
+        "stackowl.memory.curated._SHARED", CuratedMemory(root=tmp_path / "memory"),
+    )
+    shared_memory().add(
+        USER_TARGET, "PROFILE_MARKER: Bakir builds StackOwl.", "permanent",
     )
     set_services(StepServices())
 
     out = await assemble.run(_state())
 
     assert "PROFILE_MARKER" in (out.system_prompt or "")
+
+
+async def test_owl_notes_reach_the_prompt_alongside_the_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D08.1 — the per-owl half. Two blocks, labelled, because "who my user is"
+    and "what I learned doing my job" are different claims."""
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory, shared_memory
+
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "stackowl.memory.curated._SHARED", CuratedMemory(root=tmp_path / "memory"),
+    )
+    shared_memory().add(USER_TARGET, "PROFILE_MARKER: the user.", "permanent")
+    shared_memory().add("secretary", "NOTES_MARKER: how I work.", "permanent")
+    set_services(StepServices())
+
+    out = await assemble.run(_state())
+
+    prompt = out.system_prompt or ""
+    assert "PROFILE_MARKER" in prompt
+    assert "NOTES_MARKER" in prompt
 
 
 async def test_per_turn_recall_no_longer_reaches_the_prompt(

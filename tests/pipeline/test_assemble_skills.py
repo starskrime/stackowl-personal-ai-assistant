@@ -50,9 +50,13 @@ def _settings(global_catalog: bool):
 
 
 class _Sk:
-    def __init__(self, name, source="builtin", summary="Do the thing.",
-                 description="d", when_to_use="w"):
-        self.name, self.source, self.summary = name, source, summary
+    # `summary` went with D09.3 slice 5 (migration 0110). The injector composes
+    # description + when_to_use now, which is what D10.2's <=60-char description
+    # and required rich when_to_use were sized for — so the double stands in for
+    # a real skill by carrying those two, not a third cached field.
+    def __init__(self, name, source="builtin",
+                 description="Fetch a page.", when_to_use="When a page is needed."):
+        self.name, self.source = name, source
         self.description, self.when_to_use = description, when_to_use
         self.embedding = None
 
@@ -76,7 +80,7 @@ async def test_owned_skill_summary_injected():
     # test's subject. What changed is the TIER: Q9 is "names + descriptions
     # always loaded; full body fetched on demand", so an owned skill now lands
     # under AVAILABLE with a skill_view pointer instead of ACTIVE with its body.
-    assert "Do the thing." in out.system_prompt
+    assert "Fetch a page." in out.system_prompt
     assert "research_skill" in out.system_prompt
     assert "AVAILABLE" in out.system_prompt
     assert "skill_view research_skill" in out.system_prompt
@@ -95,9 +99,9 @@ async def test_no_owned_skills_no_skill_block():
 @pytest.mark.asyncio
 async def test_assemble_tiers_by_query_embedding():
     FOCUS_TRACKER.clear_all()
-    rel = _Sk("rel", "builtin", "rel summary", "d", "w")
+    rel = _Sk("rel", "builtin", "d", "w")
     rel.embedding = [1.0, 0.0]
-    irrel = _Sk("irrel", "builtin", "irrel summary", "d", "w")
+    irrel = _Sk("irrel", "builtin", "d", "w")
     irrel.embedding = [0.0, 1.0]
     reg = OwlRegistry.with_default_secretary()
     reg.register(OwlAgentManifest(name="o", role="r", system_prompt="P",
@@ -120,7 +124,7 @@ async def test_assemble_tiers_by_query_embedding():
 @pytest.mark.asyncio
 async def test_assemble_fallback_when_no_query_embedding():
     FOCUS_TRACKER.clear_all()
-    a = _Sk("a", "builtin", "sa", "d", "w")
+    a = _Sk("a", "builtin", "d", "w")
     a.embedding = [1.0]
     reg = OwlRegistry.with_default_secretary()
     reg.register(OwlAgentManifest(name="o", role="r", system_prompt="P",

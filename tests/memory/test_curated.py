@@ -343,3 +343,82 @@ def test_entry_rendering_round_trips_through_parse():
     entry = Entry(text="Something [with] brackets.", durability="until_changed")
 
     assert Entry.parse(entry.rendered()) == entry
+
+
+# --------------------------------------------------------------------------- #
+# The nudge (D08.3, pulled into this item).
+# --------------------------------------------------------------------------- #
+
+
+def test_the_nudge_is_silent_until_the_interval():
+    """It must be rare. A reminder on every turn is noise the model learns to
+    ignore, and the user pays for it in every reply."""
+    from stackowl.memory.curated import NUDGE_INTERVAL_TURNS, note_turn, reset_nudges
+
+    reset_nudges()
+    early = [note_turn("lane-a") for _ in range(NUDGE_INTERVAL_TURNS - 1)]
+
+    assert early == [None] * (NUDGE_INTERVAL_TURNS - 1)
+
+
+def test_the_nudge_fires_at_the_interval():
+    """Without it nothing prompts a write at all, now that extraction is gone —
+    'when the agent decides to', measured across a real week, is zero."""
+    from stackowl.memory.curated import NUDGE_INTERVAL_TURNS, note_turn, reset_nudges
+
+    reset_nudges()
+    for _ in range(NUDGE_INTERVAL_TURNS - 1):
+        note_turn("lane-a")
+
+    assert note_turn("lane-a") is not None
+
+
+def test_the_nudge_tells_the_agent_not_to_write_nothing():
+    """An empty note is worse than none — it costs budget and says nothing."""
+    from stackowl.memory.curated import NUDGE_INTERVAL_TURNS, note_turn, reset_nudges
+
+    reset_nudges()
+    for _ in range(NUDGE_INTERVAL_TURNS - 1):
+        note_turn("lane-a")
+    text = note_turn("lane-a")
+
+    assert text is not None
+    assert "say nothing" in text
+
+
+def test_the_counter_resets_after_firing():
+    from stackowl.memory.curated import NUDGE_INTERVAL_TURNS, note_turn, reset_nudges
+
+    reset_nudges()
+    for _ in range(NUDGE_INTERVAL_TURNS):
+        note_turn("lane-a")
+
+    assert note_turn("lane-a") is None, "it should not fire twice in a row"
+
+
+def test_a_write_resets_the_counter():
+    from stackowl.memory.curated import (
+        NUDGE_INTERVAL_TURNS,
+        note_turn,
+        note_write,
+        reset_nudges,
+    )
+
+    reset_nudges()
+    for _ in range(NUDGE_INTERVAL_TURNS - 1):
+        note_turn("lane-a")
+
+    note_write("lane-a")
+
+    assert note_turn("lane-a") is None, "it just wrote; it needs no reminder"
+
+
+def test_lanes_are_counted_independently():
+    """One busy conversation must not nudge a different, quiet one."""
+    from stackowl.memory.curated import NUDGE_INTERVAL_TURNS, note_turn, reset_nudges
+
+    reset_nudges()
+    for _ in range(NUDGE_INTERVAL_TURNS):
+        note_turn("lane-a")
+
+    assert note_turn("lane-b") is None

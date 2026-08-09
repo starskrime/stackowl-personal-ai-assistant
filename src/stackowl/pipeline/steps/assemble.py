@@ -359,14 +359,30 @@ async def run(state: PipelineState) -> PipelineState:
     # Depth is not lost — the registered `memory` tool is how the model reaches
     # for it when a conversation needs more than the profile (Bakir's Q5+Q12,
     # with recall_risk explicitly ACCEPTED).
+    # D08.1 — the two curated files. USER.md is global; <owl>.md is this owl's
+    # own working notes. Both are read from a snapshot frozen for the life of
+    # this incarnation, so a write made mid-session lands on disk immediately but
+    # does not move the prompt until the next /new.
     profile = ""
     try:
-        from stackowl.memory.user_profile import load_user_profile
+        from stackowl.memory.curated import USER_TARGET, shared_memory
 
-        profile = load_user_profile()
-    except Exception as exc:  # no-hidden-errors: a profile must never cost a reply
+        curated = shared_memory()
+        session_id = state.session_id or state.session_key
+        blocks = []
+        user_block = curated.snapshot_for_prompt(USER_TARGET, session_id=session_id)
+        if user_block:
+            blocks.append("What I know about the user:\n" + user_block)
+        if state.owl_name:
+            owl_block = curated.snapshot_for_prompt(
+                state.owl_name, session_id=session_id,
+            )
+            if owl_block:
+                blocks.append("My own working notes:\n" + owl_block)
+        profile = "\n\n".join(blocks)
+    except Exception as exc:  # no-hidden-errors: memory must never cost a reply
         log.engine.error(
-            "[pipeline] assemble: user profile FAILED — continuing without it",
+            "[pipeline] assemble: curated memory FAILED — continuing without it",
             exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
         )
         profile = ""
