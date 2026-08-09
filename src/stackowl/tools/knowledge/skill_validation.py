@@ -555,9 +555,23 @@ def scan_file(file_path: Path, rel_path: str = "") -> list[Finding]:
         content = file_path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError):
         return []
+    return scan_text(content, rel_path)
 
+
+def scan_text(content: str, label: str = "<text>") -> list[Finding]:
+    """The same threat-pattern and invisible-unicode scan, over TEXT.
+
+    Extracted from :func:`scan_file` so content that never becomes a file can be
+    scanned by the identical rules. Curated memory (D08.1) is the first such
+    caller: its entries go straight into the system prompt, which makes them a
+    prompt-injection surface every bit as real as a skill body — and the
+    alternative was a second pattern list that would drift from this one.
+
+    ``label`` only names the source in the resulting findings.
+    """
     findings: list[Finding] = []
     lines = content.split("\n")
+    rel_path = label
     seen: set[tuple[str, int]] = set()
     for pattern, pid, severity, category, description in _COMPILED_PATTERNS:
         for i, line in enumerate(lines, start=1):

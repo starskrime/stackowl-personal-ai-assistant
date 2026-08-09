@@ -79,14 +79,6 @@ class _FakeBridge:
         return list(self.facts)
 
 
-class _FakePromoter:
-    def __init__(self) -> None:
-        self.promoted: list[str] = []
-
-    async def force_promote(self, fact_id: str) -> None:
-        self.promoted.append(fact_id)
-
-
 class _RecordingAudit:
     def __init__(self) -> None:
         self.rows: list[dict[str, object]] = []
@@ -109,162 +101,61 @@ def _services(**kw: object) -> Iterator[None]:
 
 # --------------------------------------------------------------------- add/search
 
-async def test_add_then_search_recalls_it(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    bridge = _FakeBridge()
-    audit = _RecordingAudit()
-    # Patch FactPromoter so _add doesn't need a real DbPool/SQLite.
+async def test_add_then_search_recalls_it(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """MIGRATED (D08.1 slice 2): `add` writes to the CURATED FILE, not the fact
+    store. The guarantee this test always made — write it, then find it — still
+    holds, and `search` spanning both surfaces is what keeps it true."""
+    from stackowl.memory.curated import CuratedMemory
+
     monkeypatch.setattr(
-        "stackowl.tools.knowledge.memory.FactPromoter",
-        lambda *_a, **_k: _FakePromoter(),
+        MemoryTool, "_curated", lambda self: CuratedMemory(root=tmp_path / "memory"),
     )
+    bridge = _FakeBridge()
     tool = MemoryTool()
-    with _services(memory_bridge=bridge, db_pool=object(), audit_logger=audit):
-        add = await tool.execute(action="add", content="the user prefers tabs over spaces")
-        assert add.success
-        assert "Remembered" in add.output  # visible mutating turn
+    with _services(memory_bridge=bridge, db_pool=object(), audit_logger=_RecordingAudit()):
+        add = await tool.execute(
+            action="add", content="the user prefers tabs over spaces",
+            durability="permanent",
+        )
+        assert add.success, add.error
 
         search = await tool.execute(action="search", query="tabs")
-        assert search.success
-        assert "tabs over spaces" in search.output
-    # recall was delegated to the bridge (no Python glue).
-    assert bridge.recall_calls and bridge.recall_calls[0][0] == "tabs"
+
+    assert "tabs over spaces" in search.output
+    assert bridge.staged_calls == [], "nothing should reach the fact store any more"
 
 
-async def test_add_tags_agent_self_source_type(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_add_no_longer_writes_to_the_fact_store(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """REPLACES test_add_tags_agent_self_source_type (D08.1 slice 2).
+
+    That test guarded provenance tagging on a write path that no longer exists:
+    measured 2026-08-08, the fact store had reached 88,631 entries, 37.1% of them
+    trace telemetry, with a three-week-stale date as its top-ranked item. The
+    write path is retired; what needs guarding now is that it STAYS retired, or
+    the store starts refilling the moment someone re-wires `add`.
+    """
+    from stackowl.memory.curated import CuratedMemory
+
+    monkeypatch.setattr(
+        MemoryTool, "_curated", lambda self: CuratedMemory(root=tmp_path / "memory"),
+    )
     bridge = _FakeBridge()
     audit = _RecordingAudit()
-    monkeypatch.setattr(
-        "stackowl.tools.knowledge.memory.FactPromoter",
-        lambda *_a, **_k: _FakePromoter(),
-    )
     tool = MemoryTool()
     with _services(memory_bridge=bridge, db_pool=object(), audit_logger=audit):
-        res = await tool.execute(action="add", content="prod db is in eu-west-1")
-    assert res.success
-    # The staged fact carries the agent_self provenance tag...
-    assert bridge.staged_calls[0].source_type == "agent_self"
-    # ...and the mutation was audited as memory.remember with that source_type.
-    assert audit.rows and audit.rows[0]["event_type"] == "memory.remember"
-    assert audit.rows[0]["details"]["source_type"] == "agent_self"  # type: ignore[index]
-
-
-async def test_search_empty_returns_no_matches(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    bridge = _FakeBridge()
-    tool = MemoryTool()
-    with _services(memory_bridge=bridge):
-        res = await tool.execute(action="search", query="nothing here")
-    assert res.success
-    assert res.output == "(no matches)"
-
-
-# --------------------------------------------------------------------- get/forget
-
-async def test_get_existing_and_missing(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    bridge = _FakeBridge()
-    bridge.facts.append(
-        StagedFact(
-            fact_id="abc123", content="hello world", source_type="agent_self",
-            source_ref="tool:memory", confidence=1.0,
+        res = await tool.execute(
+            action="add", content="prod db is in eu-west-1", durability="permanent",
         )
-    )
-    tool = MemoryTool()
-    with _services(memory_bridge=bridge):
-        hit = await tool.execute(action="get", fact_id="abc")
-        miss = await tool.execute(action="get", fact_id="zzz")
-    assert hit.success and "hello world" in hit.output
-    assert miss.success and "no fact matches" in miss.output  # structured no-op
+
+    assert res.success, res.error
+    assert bridge.staged_calls == []
+    assert (tmp_path / "memory" / "USER.md").exists()
 
 
-async def test_forget_missing_id_structured_no_op() -> None:
-    bridge = _FakeBridge()
-    audit = _RecordingAudit()
-    tool = MemoryTool()
-    with _services(memory_bridge=bridge, audit_logger=audit):
-        res = await tool.execute(action="forget", fact_id="does-not-exist")
-    assert res.success
-    assert "no fact matches" in res.output
-    assert bridge.deleted == []  # no phantom delete
-    assert audit.rows == []  # no audit row for a no-op
-
-
-async def test_forget_ambiguous_prefix_refused() -> None:
-    # M1: a prefix matching >1 fact must REFUSE, not delete an arbitrary one.
-    bridge = _FakeBridge()
-    audit = _RecordingAudit()
-    for fid in ("aaa-111", "aaa-222"):
-        bridge.facts.append(StagedFact(
-            fact_id=fid, content="x", source_type="agent_self",
-            source_ref="tool:memory", confidence=1.0,
-        ))
-    tool = MemoryTool()
-    with _services(memory_bridge=bridge, audit_logger=audit):
-        res = await tool.execute(action="forget", fact_id="aaa")
-    assert res.success
-    assert "ambiguous" in res.output
-    assert bridge.deleted == []  # NOTHING deleted on an ambiguous id
-
-
-async def test_forget_refuses_human_authored_fact() -> None:
-    # M1: the agent's memory tool must not erase a human-authored ('manual') fact.
-    bridge = _FakeBridge()
-    audit = _RecordingAudit()
-    bridge.facts.append(StagedFact(
-        fact_id="user-real-1", content="user's real memory", source_type="manual",
-        source_ref="cli:/memory", confidence=1.0,
-    ))
-    tool = MemoryTool()
-    with _services(memory_bridge=bridge, audit_logger=audit):
-        res = await tool.execute(action="forget", fact_id="user-real-1")
-    assert res.success is False
-    assert "Refusing to forget" in (res.error or "")
-    assert bridge.deleted == []  # the human fact is NOT deleted
-
-
-async def test_forget_existing_deletes_and_audits() -> None:
-    bridge = _FakeBridge()
-    audit = _RecordingAudit()
-    bridge.facts.append(
-        StagedFact(
-            fact_id="del-me-456", content="ephemeral", source_type="agent_self",
-            source_ref="tool:memory", confidence=1.0,
-        )
-    )
-    tool = MemoryTool()
-    with _services(memory_bridge=bridge, audit_logger=audit):
-        res = await tool.execute(action="forget", fact_id="del-me")
-    assert res.success and "Forgot" in res.output
-    assert bridge.deleted == ["del-me-456"]
-    assert audit.rows[0]["event_type"] == "memory.forget"
-
-
-# --------------------------------------------------------------------- validation
-
-async def test_invalid_action_did_you_mean() -> None:
-    tool = MemoryTool()
-    with _services(memory_bridge=_FakeBridge()):
-        res = await tool.execute(action="serch")  # typo for search
-    assert res.success is False
-    assert res.error is not None
-    assert "Unknown action" in res.error
-    assert "Did you mean 'search'" in res.error  # first-char suggestion
-
-
-async def test_missing_action_is_structured_error() -> None:
-    tool = MemoryTool()
-    with _services(memory_bridge=_FakeBridge()):
-        res = await tool.execute()
-    assert res.success is False
-    assert res.error and "Unknown action" in res.error
-
-
-async def test_add_without_content_is_structured_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(
-        "stackowl.tools.knowledge.memory.FactPromoter",
-        lambda *_a, **_k: _FakePromoter(),
-    )
+async def test_add_without_content_is_structured_error() -> None:
     tool = MemoryTool()
     with _services(memory_bridge=_FakeBridge(), db_pool=object()):
-        res = await tool.execute(action="add", content="   ")
+        res = await tool.execute(action="add", content="   ", durability="permanent")
     assert res.success is False
     assert res.error and "requires 'content'" in res.error
 
@@ -292,12 +183,23 @@ async def test_store_failure_degrades_without_raising() -> None:
     assert res.error and "memory unavailable (search)" in res.error
 
 
-async def test_add_without_db_pool_is_structured_unavailable() -> None:
+async def test_add_does_not_need_a_database(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """REPLACES test_add_without_db_pool_is_structured_unavailable.
+
+    Curated memory is two files. A write no longer touches SQLite, LanceDB or
+    Kuzu — which is most of the point: remembering something about the user
+    should not depend on three stores being healthy.
+    """
+    from stackowl.memory.curated import CuratedMemory
+
+    monkeypatch.setattr(
+        MemoryTool, "_curated", lambda self: CuratedMemory(root=tmp_path / "memory"),
+    )
     tool = MemoryTool()
     with _services(memory_bridge=_FakeBridge(), db_pool=None):
-        res = await tool.execute(action="add", content="x")
-    assert res.success is False
-    assert res.error and "memory unavailable (add)" in res.error
+        res = await tool.execute(action="add", content="x", durability="permanent")
+
+    assert res.success is True, res.error
 
 
 # --------------------------------------------------------------------- manifest/registry

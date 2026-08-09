@@ -1,6 +1,21 @@
-"""memory — durable semantic FACTS across sessions (add/search/get/forget).
+"""memory — the agent's curated memory, plus search over the archive (D08.1).
 
-A single action-dispatching tool over the existing tri-store memory substrate
+WRITES GO TO CURATED FILES, not to the fact store. ``add``/``replace``/``remove``
+operate on ``~/.stackowl/memory/USER.md`` (the user profile) and
+``<owl>.md`` (that owl's own notes), against a hard character budget the agent
+must consolidate within. ``search``/``get`` still read the archive.
+
+Why the write path moved: measured 2026-08-08, the fact store had grown to
+88,631 entries of which 37.1% mentioned a trace id or ``failure_class`` — the
+platform's own diagnostics stored as durable memory about the user — and its
+most-reinforced entry was a three-week-stale date. An unbounded write path with
+no notion of what deserves keeping produces exactly that. The budget is the fix,
+and it only works if the agent feels it, which means writing through this tool.
+
+ONE TOOL, not two (D08.1 R2Q5). A second memory tool is the fork dedup target
+X4 forbids, and the model already knows this one.
+
+Search remains a single action-dispatching read over the tri-store substrate
 (``MemoryBridge``: LanceDB vectors + Kuzu graph + SQLite FTS5). It is a thin
 wrapper: every write routes through the shared provenance chokepoints in
 :mod:`stackowl.commands.memory_helpers` (``remember_fact`` / ``forget_fact``) so
@@ -33,21 +48,26 @@ incompatible with our tri-store; porting would create a second store). See
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from stackowl.commands.memory_helpers import forget_fact, remember_fact
+from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
-from stackowl.memory.fact_promoter import FactPromoter
+from stackowl.memory.curated import DURABILITIES, CuratedMemory
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.knowledge.guards import AGENT_SELF_SOURCE_TYPE
+from stackowl.tools.knowledge.skill_validation import scan_text
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
-    from stackowl.commands.memory_helpers import RememberSourceType
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.models import MemoryRecord, StagedFact
 
-_VALID_ACTIONS: tuple[str, ...] = ("add", "search", "get", "forget")
+_VALID_ACTIONS: tuple[str, ...] = (
+    "add", "replace", "remove", "search", "get", "forget",
+)
+#: Writes default to the user profile. An owl writing its own notes must say so,
+#: because "what I learned about my job" is the rarer, more deliberate case.
+_DEFAULT_TARGET = "user"
 _DEFAULT_LIMIT = 5
 _MAX_LIMIT = 50
 _ACTOR = "agent_self:memory"
@@ -93,15 +113,44 @@ class MemoryTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": list(_VALID_ACTIONS),
-                    "description": "add | search | get | forget",
+                    "description": (
+                        "add | replace | remove (curated memory) · "
+                        "search | get | forget (the archive)"
+                    ),
+                },
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "Which curated file to write: 'user' for the user's "
+                        "profile (the default), or an owl's name for that owl's "
+                        "own working notes."
+                    ),
+                    "default": _DEFAULT_TARGET,
+                },
+                "durability": {
+                    "type": "string",
+                    "enum": list(DURABILITIES),
+                    "description": (
+                        "Required for add/replace. 'permanent' = true "
+                        "indefinitely. 'until_changed' = true until the user "
+                        "changes it. There is NO 'transient': if it will stop "
+                        "being true — a date, a price, today's news — do not "
+                        "remember it."
+                    ),
                 },
                 "content": {
                     "type": "string",
-                    "description": "The fact text to remember (action='add').",
+                    "description": (
+                        "The text to remember (add), its replacement (replace), "
+                        "or the text of the entry to drop (remove)."
+                    ),
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query for recall (action='search').",
+                    "description": (
+                        "Search query (search), or the text of the entry being "
+                        "replaced (replace)."
+                    ),
                 },
                 "fact_id": {
                     "type": "string",
@@ -154,6 +203,10 @@ class MemoryTool(Tool):
             # 2. DECISION — dispatch by validated action.
             if action == "add":
                 return await self._add(bridge, kwargs, t0)
+            if action == "replace":
+                return await self._replace(bridge, kwargs, t0)
+            if action == "remove":
+                return await self._remove(bridge, kwargs, t0)
             if action == "search":
                 return await self._search(bridge, kwargs, t0)
             if action == "get":
@@ -171,40 +224,129 @@ class MemoryTool(Tool):
 
     # ------------------------------------------------------------------ actions
 
+    # ---- curated writes (D08.1) ------------------------------------------
+    #
+    # These three do NOT touch the fact store. They edit the two curated files,
+    # which is what the system prompt actually carries.
+
+    def _curated(self) -> CuratedMemory:
+        return CuratedMemory()
+
+    def _scanned(self, content: str, t0: float) -> ToolResult | None:
+        """Refuse content a static scan calls dangerous. ``None`` means allowed.
+
+        Memory entries land in the SYSTEM PROMPT, which makes them a
+        prompt-injection surface every bit as real as a skill body — so they go
+        through the same scanner, not a second one that could drift from it
+        (D08.1 R3Q11). Built here rather than deferred to D08.4: this tool is
+        what CREATES the writable surface.
+
+        Fails CLOSED, matching the skill gate: a scanner that itself errors
+        blocks the write, because a broken scanner must never become a bypass.
+        """
+        try:
+            findings = scan_text(content, label="memory")
+        except Exception as exc:  # B5 — fail closed
+            log.tool.error(
+                "memory: content scan crashed — refusing the write",
+                exc_info=exc,
+            )
+            return self._err(
+                "Security scan failed to run; refusing the write to fail closed.", t0,
+            )
+        blocking = [f for f in findings if f.severity in ("critical", "high")]
+        if blocking:
+            log.security.warning(
+                "memory: refusing content flagged by the scanner",
+                extra={"_fields": {
+                    "patterns": sorted({f.pattern_id for f in blocking})[:5],
+                }},
+            )
+            return self._err(
+                "Refusing to remember this: the content matched "
+                f"{', '.join(sorted({f.pattern_id for f in blocking})[:3])}. "
+                "Memory is injected into the system prompt, so it is held to the "
+                "same standard as skill content.",
+                t0,
+            )
+        return None
+
+    @staticmethod
+    def _target(kwargs: dict[str, object]) -> str:
+        return str(kwargs.get("target") or _DEFAULT_TARGET).strip()
+
     async def _add(
         self, bridge: MemoryBridge, kwargs: dict[str, object], t0: float,
     ) -> ToolResult:
         content = str(kwargs.get("content", "")).strip()
         if not content:
             return self._err("action='add' requires 'content'.", t0)
+        durability = str(kwargs.get("durability", "")).strip()
+        if durability not in DURABILITIES:
+            return self._err(
+                f"action='add' requires durability={'|'.join(DURABILITIES)}. "
+                f"There is deliberately no 'transient' — if this will stop being "
+                f"true (a date, a price, today's news), it does not belong in "
+                f"memory at all.",
+                t0,
+            )
+        refusal = self._scanned(content, t0)
+        if refusal is not None:
+            return refusal
 
-        # The FactPromoter needs a DbPool; both ride the ambient services.
-        services = get_services()
-        db = services.db_pool
-        if db is None:
-            return self._unavailable("add", "no database pool is configured", t0)
+        result = self._curated().add(self._target(kwargs), content, durability)
+        return self._from_curated(result, t0)
 
-        # Wire the LanceDB adapter (owned by the bridge) into the promoter so the
-        # committed fact's vector is upserted for SEMANTIC recall; falls back to
-        # None for bridges that don't expose one (FTS recall still works).
-        lancedb = getattr(bridge, "lancedb", None)
-        promoter = FactPromoter(db, lancedb=lancedb, embedding_registry=get_services().embedding_registry)
-        # Route through the shared chokepoint — agent_self provenance + audit.
-        # Pass the embedding registry so the fact is embedded at remember time.
-        fact_id = await remember_fact(
-            bridge,
-            promoter,
-            content,
-            source_type=cast("RememberSourceType", AGENT_SELF_SOURCE_TYPE),
-            source_ref=_SOURCE_REF,
-            audit=services.audit_logger,
-            actor=_ACTOR,
-            embedding_registry=services.embedding_registry,
-        )
-        # 4. EXIT — mutating turns must be VISIBLE (party #7): state plainly what
-        # was remembered, with the id so it can be forgotten later.
-        msg = f"Remembered [{fact_id}]: {content}"
-        return self._ok(msg, t0, extra={"fact_id": fact_id})
+    async def _replace(
+        self, bridge: MemoryBridge, kwargs: dict[str, object], t0: float,
+    ) -> ToolResult:
+        """Merge two entries into one. The verb consolidation-under-budget needs."""
+        old = str(kwargs.get("query") or kwargs.get("fact_id") or "").strip()
+        content = str(kwargs.get("content", "")).strip()
+        if not old or not content:
+            return self._err(
+                "action='replace' requires 'query' (text of the entry to replace) "
+                "and 'content' (its replacement).",
+                t0,
+            )
+        durability = str(kwargs.get("durability", "")).strip()
+        if durability not in DURABILITIES:
+            return self._err(
+                f"action='replace' requires durability={'|'.join(DURABILITIES)}.", t0,
+            )
+        refusal = self._scanned(content, t0)
+        if refusal is not None:
+            return refusal
+        result = self._curated().replace(self._target(kwargs), old, content, durability)
+        return self._from_curated(result, t0)
+
+    async def _remove(
+        self, bridge: MemoryBridge, kwargs: dict[str, object], t0: float,
+    ) -> ToolResult:
+        text = str(kwargs.get("content") or kwargs.get("query") or "").strip()
+        if not text:
+            return self._err(
+                "action='remove' requires 'content' — the text of the entry to drop.",
+                t0,
+            )
+        result = self._curated().remove(self._target(kwargs), text)
+        return self._from_curated(result, t0)
+
+    def _from_curated(self, result: object, t0: float) -> ToolResult:
+        """Render a CuratedMemory result as a ToolResult, keeping its structure.
+
+        The over-capacity refusal is NOT an error in the tool-failure sense — it
+        is an instruction the model is expected to act on this turn — so it
+        carries the entry list and the usage figure through rather than being
+        flattened to a message.
+        """
+        payload = result.as_dict()  # type: ignore[attr-defined]
+        if result.ok:  # type: ignore[attr-defined]
+            return self._ok(
+                f"{result.message} ({result.usage})",  # type: ignore[attr-defined]
+                t0, extra=payload,
+            )
+        return self._err(result.message, t0, extra=payload)  # type: ignore[attr-defined]
 
     async def _search(
         self, bridge: MemoryBridge, kwargs: dict[str, object], t0: float,
@@ -213,9 +355,55 @@ class MemoryTool(Tool):
         if not query:
             return self._err("action='search' requires 'query'.", t0)
         limit = self._coerce_limit(kwargs.get("limit"))
-        # Hybrid vector+FTS recall is the bridge's job — no glue here.
+        # Hybrid vector+FTS recall over the archive is the bridge's job.
         hits = await bridge.recall(query, limit=limit)
-        return self._ok(self._format_hits(hits), t0, extra={"hits": len(hits)})
+
+        # SEARCH SPANS BOTH SURFACES (D08.1 R3Q10). "What do I know about X?" is
+        # one question, and answering it from only half the memory would make the
+        # curated entries — the ones actually in the prompt — the hardest to find.
+        # Substring, not ranked: the curated files are a few dozen short lines,
+        # so scoring them against BM25+cosine hits would be precision theatre.
+        curated = self._curated_matches(query)
+
+        body = self._format_hits(hits)
+        if curated:
+            body = (
+                "From curated memory (in the system prompt):\n"
+                + "\n".join(f"  [{t}] {text}" for t, text in curated)
+                + ("\n\nFrom the archive:\n" + body if hits else "")
+            )
+        return self._ok(
+            body, t0, extra={"hits": len(hits), "curated_hits": len(curated)},
+        )
+
+    def _curated_matches(self, query: str) -> list[tuple[str, str]]:
+        """Curated entries containing ``query``, as ``(target, text)``.
+
+        Never raises: a memory directory that cannot be listed costs the curated
+        half of a search, never the archive half.
+        """
+        needle = query.casefold()
+        out: list[tuple[str, str]] = []
+        curated = self._curated()
+        try:
+            targets = ["user"] + sorted(
+                p.stem for p in curated.path_for("user").parent.glob("*.md")
+                if p.name != "USER.md"
+            )
+        except Exception as exc:  # B5
+            log.tool.warning("memory: could not list curated targets", exc_info=exc)
+            return out
+        for target in targets:
+            try:
+                for entry in curated.entries(target):
+                    if needle in entry.text.casefold():
+                        out.append((target, entry.text))
+            except Exception as exc:  # B5 — one unreadable file is not a failure
+                log.tool.warning(
+                    "memory: curated target unreadable during search",
+                    exc_info=exc, extra={"_fields": {"target": target}},
+                )
+        return out
 
     async def _all_prefix_matches(self, bridge: MemoryBridge, prefix: str) -> list[StagedFact]:
         """All facts whose id starts with ``prefix``, de-duplicated by fact_id.
@@ -340,11 +528,16 @@ class MemoryTool(Tool):
         return ToolResult(success=True, output=output, duration_ms=duration_ms)
 
     @staticmethod
-    def _err(msg: str, t0: float) -> ToolResult:
+    def _err(
+        msg: str, t0: float, extra: dict[str, object] | None = None,
+    ) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000
         log.tool.info(
             "memory.execute: exit",
-            extra={"_fields": {"success": False, "error": msg, "duration_ms": duration_ms}},
+            extra={"_fields": {
+                "success": False, "error": msg, "duration_ms": duration_ms,
+                **(extra or {}),
+            }},
         )
         # Pre-execution refusal (bad/missing args) — nothing was written. Mark it as
         # no side effect so a malformed call does not trip the honest give-up floor.

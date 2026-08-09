@@ -55,7 +55,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterator
 
     from stackowl.db.pool import DbPool
-
+from stackowl.skills import standard as std
 
 # --------------------------------------------------------------------------- #
 # A scripted provider that satisfies the ModelProvider surface the handlers use
@@ -162,6 +162,17 @@ async def _seed_success_cluster(
 # ===========================================================================
 
 
+# D10.2 — the authoring standard is enforced at the write, so a scripted skill
+# body has to meet it or `gated_skill_write` refuses and the handler correctly
+# reports created:0. Generated from the standard's own constants rather than
+# hand-written, so a future rule change updates this fixture automatically
+# instead of silently reddening this file.
+_CONFORMING_BODY = "\n".join(
+    f"## {section}\n\nSomething the section can honestly say.\n"
+    for section in std.REQUIRED_SECTIONS
+)
+
+
 async def test_reflect_now_runs_real_handler_and_writes_reflection(
     tmp_db: DbPool,
 ) -> None:
@@ -240,9 +251,9 @@ async def synth_services(
     )
     provider = _ScriptedProvider(responses=[json.dumps({
         "name": "scrape-and-process",
-        "description": "Fetch web content and shell-process it",
-        "when_to_use": "User wants a scraped page run through a script",
-        "body": "# Steps\n1. Fetch the page.\n2. Shell-process the content.",
+        "description": "Fetch a page and process it.",
+        "when_to_use": "When a scraped page must be run through a script.",
+        "body": _CONFORMING_BODY,
     })])
     # Task 4 — synthesize_skills' handler now routes every skill write through
     # the shared gated helper (stackowl.skills.authoring); without a consent
