@@ -1,4 +1,7 @@
-"""Story 6.7 (part A) — /staged + /memory remember/forget/export tests."""
+"""Story 6.7 (part A) — /memory remember/forget/export tests.
+
+The /staged half went with the command in D08.1.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +13,6 @@ import pytest
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.response import Action, CommandResponse
-from stackowl.commands.staged_command import StagedCommand
 from stackowl.config.test_mode import TestModeGuard, TestModeViolation
 from tests._story_6_7_helpers import (  # noqa: F401 — fixture re-exports
     EventBus,
@@ -38,86 +40,10 @@ def _text(out: object) -> str:
 # StagedCommand — list / review / reject / promote
 # ---------------------------------------------------------------------------
 
+# The seven /staged tests that stood here went with the command (D08.1). It
+# listed, reviewed, approved and rejected STAGED facts; extraction is retired,
+# so the queue it reviewed is permanently empty.
 
-async def test_staged_list_calls_list_staged_with_default_status() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    bridge.seed("staged", make_staged())
-    cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = _text(await cmd.handle("list", make_state()))
-    assert bridge.list_calls == ["staged"]
-    assert "alpha bravo" in out
-
-
-async def test_staged_list_with_status_committed() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    bridge.seed("committed", make_staged(content="long-term", status="committed"))
-    cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = _text(await cmd.handle("list --status committed", make_state()))
-    assert bridge.list_calls == ["committed"]
-    assert "long-term" in out
-
-
-async def test_staged_review_shows_full_content() -> None:
-    _reset_registry()
-    fid = "deadbeef-0000-0000-0000-000000000001"
-    bridge = FakeBridge()
-    bridge.seed("staged", make_staged(fact_id=fid, content="full review body"))
-    cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = await cmd.handle(f"review {fid[:8]}", make_state())
-    assert "full review body" in out
-    assert fid in out
-    assert "confidence" in out
-    assert "reinforcement" in out
-
-
-async def test_staged_reject_calls_delete_after_confirmation() -> None:
-    _reset_registry()
-    fid = "abc123def-0000-0000-0000-deadbeef0001"
-    bridge = FakeBridge()
-    bridge.seed("staged", make_staged(fact_id=fid))
-    cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = await cmd.handle(f"reject {fid} YES", make_state())
-    assert bridge.delete_calls == [fid]
-    assert "Rejected" in out
-
-
-async def test_staged_reject_aborted_without_yes() -> None:
-    _reset_registry()
-    fid = "ff" + "0" * 30
-    bridge = FakeBridge()
-    bridge.seed("staged", make_staged(fact_id=fid))
-    cmd = StagedCommand(bridge=bridge, promoter=FakePromoter())
-    out = await cmd.handle(f"reject {fid}", make_state())
-    assert bridge.delete_calls == []
-    assert "Reject" in out and "YES" in out
-
-
-async def test_staged_promote_calls_force_promote() -> None:
-    _reset_registry()
-    fid = "promote-id-aaaa"
-    promoter = FakePromoter(success=True)
-    cmd = StagedCommand(bridge=FakeBridge(), promoter=promoter)
-    out = await cmd.handle(f"promote {fid}", make_state())
-    assert promoter.force_calls == [fid]
-    assert "Promoted" in out
-
-
-async def test_staged_create_and_register_registers_command() -> None:
-    _reset_registry()
-    cmd = StagedCommand.create_and_register(
-        bridge=FakeBridge(),
-        promoter=FakePromoter(),
-        event_bus=EventBus(),
-    )
-    assert cmd.command == "staged"
-    assert any(c.command == "staged" for c in CommandRegistry.instance().list())
-
-
-# ---------------------------------------------------------------------------
-# MemoryCommand — remember / forget / export
-# ---------------------------------------------------------------------------
 
 
 async def test_memory_remember_stages_and_promotes() -> None:

@@ -350,13 +350,11 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.plugins_command import PluginsCommand
     _safe_register(registry, "plugins", lambda: PluginsCommand(plugin_registry=deps.plugin_registry))
 
-    # /staged
-    from stackowl.commands.staged_command import StagedCommand
-    _safe_register(registry, "staged", lambda: StagedCommand(
-        bridge=deps.bridge,
-        promoter=deps.promoter,
-        event_bus=deps.event_bus,
-    ))
+    # /staged REMOVED (D08.1). It listed, reviewed, approved and rejected STAGED
+    # facts. Fact extraction is retired, so nothing stages and the queue it
+    # reviewed is permanently empty — a command that can only ever report
+    # "nothing here" is worse than no command, because it implies the pipeline
+    # behind it still works.
 
     # /config — moved from Pattern-A to DI so the live event_bus is wired (C1)
     from stackowl.commands.config_command import ConfigCommand

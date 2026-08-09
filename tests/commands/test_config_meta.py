@@ -11,7 +11,11 @@ import pytest
 from stackowl.commands.config_command import ConfigCommand
 from stackowl.commands.metadata import render_usage
 
-_EXPECTED = {"list", "get", "set", "reset", "export"}
+# `detect-timezone` was added to ConfigCommand without updating this set, so
+# this guard has been red since. Same class as the /skill meta test: a
+# subcommand list that lives in two places drifts, and the test is the half that
+# notices — as long as someone runs it.
+_EXPECTED = {"list", "get", "set", "reset", "export", "detect-timezone"}
 
 
 def _state():  # type: ignore[no-untyped-def]
