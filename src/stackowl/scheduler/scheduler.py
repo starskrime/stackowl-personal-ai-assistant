@@ -151,13 +151,29 @@ class JobScheduler(SupervisedTask):
     async def _poll(self) -> None:
         TestModeGuard.assert_not_test_mode("scheduler.execute")
         now_iso = datetime.now(UTC).isoformat()
-        # STEER-5/F113 — a job is due when EITHER its canonical recurring slot
-        # (next_run_at) OR its separate retry slot (retry_at, when set) is reached.
-        # retry_at is NULL for a healthy job, so this is byte-equivalent to the old
-        # next_run_at-only select in the steady state.
+        # STEER-5/F113 — a job is due on its canonical recurring slot
+        # (next_run_at) UNLESS a retry is pending, in which case retry_at alone
+        # governs. retry_at is NULL for a healthy job, so the steady state is the
+        # plain next_run_at select.
+        #
+        # WHY THIS IS NOT AN `OR`, which is how it was written until 2026-08-09.
+        # `next_run_at` is advanced on COMPLETION (_mark_completed) or on
+        # terminal re-arm (_mark_failed) — never when a retry is scheduled. So a
+        # job that fails still has next_run_at IN THE PAST, the first arm of the
+        # OR matched on the very next poll, and the 5-minute retry delay was
+        # dead: measured on the live platform, owl_lifecycle-Brain (a job that
+        # runs every TWO HOURS) failed three times 30 seconds apart — one per
+        # scheduler tick — and burned its entire retry budget in 90 seconds.
+        #
+        # That is the difference between a retry budget that rides out a
+        # transient outage and one that is guaranteed to be spent while the
+        # outage is still happening. The DNS failure on 2026-08-08 lasted 25
+        # minutes; three retries at their intended 5-minute spacing cover 15 of
+        # them, three at 30 seconds cover none.
         rows = await self._db.fetch_all(
             "SELECT * FROM jobs WHERE status = 'pending' AND enabled = 1 "
-            "AND (next_run_at <= ? OR (retry_at IS NOT NULL AND retry_at <= ?))",
+            "AND (CASE WHEN retry_at IS NOT NULL THEN retry_at <= ? "
+            "          ELSE next_run_at <= ? END)",
             (now_iso, now_iso),
         )
         if not rows:
