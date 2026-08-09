@@ -1,6 +1,6 @@
 -- D01.5 — enforce at the boundary what the code already guarantees by interface.
 --
--- WHY. Hermes incident #48879: an interrupted turn persists a `tool -> user`
+-- WHY. the reference platform incident #48879: an interrupted turn persists a `tool -> user`
 -- tail that strict providers (Gemini, Claude) reject, continuing the user's
 -- message instead of answering it. StackOwl cannot produce that shape in
 -- PERSISTED history — TranscriptStore.record_turn has no `role` parameter at

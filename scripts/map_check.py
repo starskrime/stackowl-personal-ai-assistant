@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Does the Hermes map already have an item for what I am about to build?
+"""Does the reference map already have an item for what I am about to build?
 
 WHY THIS EXISTS. On 2026-08-07 the skill-lifecycle curator was designed,
 implemented, tested, validated and shipped — and only afterwards found to be

@@ -5,14 +5,14 @@ One rule, no special cases." It was never implemented: `resolve_for` had exactly
 ONE caller, the chat ingress, so background work had no lane, no incarnation, no
 frozen prompt and no boundary.
 
-TWO DELIBERATE DIVERGENCES FROM HERMES, both recorded in the design doc:
+TWO DELIBERATE DIVERGENCES FROM THE REFERENCE PLATFORM, both recorded in the design doc:
 
-* Hermes gives non-chat work NO lane — delegated runs inherit the ambient key and
+* the reference platform gives non-chat work NO lane — delegated runs inherit the ambient key and
   cron is an external service delivering into a chat. We give autonomous work its
   OWN lane so it earns its own frozen prompt (the D01.1 win their model forfeits),
   and link it to the conversation that asked via `parent_session_key` so the story
   stays whole.
-* Cron follows Hermes: it runs on the lane of the chat it delivers to, and only
+* Cron follows the reference platform: it runs on the lane of the chat it delivers to, and only
   falls back to a synthetic job lane when there is no single target. That is
   deliberately TWO rules where Q9 said one — cron is a delivery, an objective is
   work — and it is written down so nobody "fixes" it into one.

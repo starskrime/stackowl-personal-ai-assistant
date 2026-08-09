@@ -1,7 +1,7 @@
 -- D01.6 — turn metrics. Five columns on cost_records, all defaulted so the
 -- migration is idempotent and every pre-existing row stays valid.
 --
--- These five answer the four questions in docs/hermes-mapping/designs/D01.6.md:
+-- These five answer the four questions in docs/reference-mapping/designs/D01.6.md:
 --   1. is the prefix cache working?  cached_input_tokens / input_tokens
 --   2. does it feel fast?            ttft_ms
 --   3. what does a conversation cost? SUM(cost_usd) GROUP BY session_id

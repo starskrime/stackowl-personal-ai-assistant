@@ -12,7 +12,7 @@ def test_parliament_synthesis_has_header() -> None:
     formatter = SlackBlockKitFormatter()
     blocks = formatter.format_parliament_synthesis(
         synthesis="Para one.\n\nPara two.",
-        owls=["athena", "hermes"],
+        owls=["athena", "the reference platform"],
     )
     assert blocks[0]["type"] == "header"
 

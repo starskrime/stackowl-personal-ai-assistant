@@ -2,7 +2,7 @@
 
 One row per ``(provider_name, model)``, written ONLY when the endpoint has been
 observed to cache something. See ``db/migrations/0104_cache_breakpoint_probes.sql``
-for why the learning is asymmetric and ``docs/hermes-mapping/designs/D01.2.md``
+for why the learning is asymmetric and ``docs/reference-mapping/designs/D01.2.md``
 for the design.
 
 The short version: a zero cache reading is ambiguous — below-minimum marker, cold

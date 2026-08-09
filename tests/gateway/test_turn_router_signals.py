@@ -116,7 +116,7 @@ def test_reply_to_inflight_with_empty_text_still_steer() -> None:
 # D01.7 — /new is no longer an in-flight routing signal.
 #
 # The "queue this as a SEPARATE turn instead of steering" capability moved to
-# /queue; /new now means "start a fresh conversation" (Bakir's Q8, and Hermes'
+# /queue; /new now means "start a fresh conversation" (Bakir's Q8, and the reference platform'
 # documented meaning). Without this test the token swap is only half-specified:
 # the four tests above prove /queue works, and nothing proved /new stopped.
 # --------------------------------------------------------------------------

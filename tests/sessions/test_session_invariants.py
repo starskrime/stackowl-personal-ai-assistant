@@ -1,6 +1,6 @@
 """D01.7 — one test per stated invariant, plus the priority order.
 
-Invariants are those written in ``docs/hermes-mapping/designs/D01.7.md``. Each
+Invariants are those written in ``docs/reference-mapping/designs/D01.7.md``. Each
 test names the one it guards, so a failure says which contract broke rather than
 which line moved.
 
@@ -52,7 +52,7 @@ def test_i1_key_is_deterministic() -> None:
 
 def test_i1_key_carries_the_owl_so_a_different_owl_is_a_different_lane() -> None:
     """Bakir's Q1: a different owl is a different conversation. This is the
-    divergence from Hermes, who have one agent and so never needed it."""
+    divergence from the reference platform, who have one agent and so never needed it."""
     assert build_session_key(dm(owl="Brain")) != build_session_key(dm(owl="Scout"))
 
 
@@ -176,7 +176,7 @@ def test_mode_none_never_expires() -> None:
 
 
 # ---------------------------------------------------------------------------
-# I4 — a lane with active work is NEVER expired. Bakir's Q12 EXTENDS Hermes:
+# I4 — a lane with active work is NEVER expired. Bakir's Q12 EXTENDS the reference platform:
 # theirs covers a background process, ours also covers durable tasks, active
 # objectives and a pending clarify question.
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """D01.1 slice 2 — persistence for the per-session system prompt.
 
-The prompt is PERSISTED rather than held in memory. Hermes keeps an in-memory LRU
+The prompt is PERSISTED rather than held in memory. the reference platform keeps an in-memory LRU
 of live agent objects because their gateway restarts rarely; StackOwl's core
 ``os.execv``s itself on every code change, so an in-memory cache would be
 discarded continuously — during exactly the development in which stable

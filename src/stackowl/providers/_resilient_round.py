@@ -96,7 +96,7 @@ class RecoveryAction(enum.Enum):
     against standing rules, and every reason they encode is reachable from a status
     code or a ``ProviderConfig.quirks`` entry instead: same coverage, and a
     provider-specific fact stays configuration rather than a branch in ``src/``.
-    See ``docs/hermes-mapping/designs/D02.6.md`` for the member-by-member mapping.
+    See ``docs/reference-mapping/designs/D02.6.md`` for the member-by-member mapping.
     """
 
     NONE = "none"                  # not a fault — do nothing

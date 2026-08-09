@@ -1,6 +1,6 @@
 """Session lifecycle — lanes, incarnations, and the boundaries between them.
 
-Map item D01.7. Design: ``docs/hermes-mapping/designs/D01.7.md``.
+Map item D01.7. Design: ``docs/reference-mapping/designs/D01.7.md``.
 """
 
 from stackowl.sessions.models import (

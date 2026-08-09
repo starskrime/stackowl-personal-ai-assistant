@@ -115,7 +115,7 @@ and get a yes/no, it is not finished.
 
 ## Rules
 
-1. **One document per map item** at `docs/hermes-mapping/designs/<ID>.md`. When several items
+1. **One document per map item** at `docs/reference-mapping/designs/<ID>.md`. When several items
    land on one subsystem, the later ones extend the existing document rather than adding a
    second — write the ID into the front matter's `Map item` line and cross-link.
 2. **Written during `architect`, updated during `implement`, closed during `document`.** It is

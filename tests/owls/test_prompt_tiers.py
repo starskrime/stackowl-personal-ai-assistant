@@ -1,6 +1,6 @@
 """D01.1 — the system prompt has a STABLE tier and a VOLATILE tier.
 
-WHY THIS EXISTS. D01.1's design says it adopted Hermes' split and then "froze
+WHY THIS EXISTS. D01.1's design says it adopted the reference platform' split and then "froze
 even the volatile tier". That adoption is the error, and three findings this
 session are the same mistake surfacing in different fields:
 

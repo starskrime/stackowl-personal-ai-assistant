@@ -166,7 +166,7 @@ class CostTracker(OwnedRepository):
 
         The five D01.6 turn-metric arguments all default, so a caller that does
         not thread them records exactly the row it recorded before. See
-        ``docs/hermes-mapping/designs/D01.6.md``.
+        ``docs/reference-mapping/designs/D01.6.md``.
         """
         log.engine.debug(
             "[cost_tracker] record: entry",

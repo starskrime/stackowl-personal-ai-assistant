@@ -149,7 +149,7 @@ def behavioral_charter_lean() -> str:
 # ---------------------------------------------------------------------------
 # D01.1 — the two TIERS, named.
 #
-# The design said it adopted Hermes' split and then "froze even the volatile
+# The design said it adopted the reference platform' split and then "froze even the volatile
 # tier". That adoption is the error, and FOUR findings are the same mistake in
 # different fields: the undelivered banner (slice 1), per-turn recall (slice 3),
 # the wall-clock (DEBT-23), and the capability banner (DEBT-24, found in cleanup

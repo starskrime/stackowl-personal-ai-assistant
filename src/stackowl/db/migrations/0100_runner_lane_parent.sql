@@ -5,7 +5,7 @@
 -- ingress, so background work had no lane, no incarnation, no frozen prompt and no
 -- boundary.
 --
--- WHY WE DIVERGE FROM HERMES HERE. Hermes gives non-chat work no lane at all:
+-- WHY WE DIVERGE HERE. the reference platform gives non-chat work no lane at all:
 -- delegated runs inherit the ambient session key and cron is an external service
 -- that delivers into a chat. We give autonomous work its OWN lane so it earns its
 -- own stable prompt — the D01.1 win their model forfeits — and this column keeps

@@ -10,8 +10,8 @@ We are rebuilding StackOwl against a reference architecture. Read these three fi
 first, in this order, before doing anything else:
 
   1. progress.yml                              — state of record. `current` says where we are.
-  2. docs/hermes-mapping/PROCESS.md            — how the work is done. This is the method.
-  3. docs/hermes-mapping/DOC_STANDARD.md       — what every document must contain.
+  2. docs/reference-mapping/PROCESS.md            — how the work is done. This is the method.
+  3. docs/reference-mapping/DOC_STANDARD.md       — what every document must contain.
 
 The teacher platform is Hermes Agent, cloned READ-ONLY at
 do_not_push_to_git_research_only/hermes-agent (gitignored, never push it). Where Hermes

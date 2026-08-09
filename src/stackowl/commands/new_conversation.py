@@ -7,7 +7,7 @@
   summary and background review get their chance at it.
 * ``/reset`` is the DESTRUCTIVE one: it deletes the conversation history.
 
-Bakir's Q8 answer, and Hermes' meaning too — their READMEs document ``/new`` as
+Bakir's Q8 answer, and the reference platform' meaning too — their READMEs document ``/new`` as
 "start a fresh conversation". The mid-turn "queue this separately instead of
 steering" signal that previously owned this token moved to ``/queue``; the
 capability was renamed, never removed.

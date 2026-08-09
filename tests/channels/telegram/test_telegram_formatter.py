@@ -189,7 +189,7 @@ def test_evolution_formatter_shows_positive_deltas() -> None:
 
 def test_evolution_formatter_shows_negative_deltas() -> None:
     formatter = TelegramEvolutionFormatter()
-    result = formatter.format_evolution_event("Hermes", {"risk_tolerance": -0.2})
+    result = formatter.format_evolution_event("the reference platform", {"risk_tolerance": -0.2})
     assert "risk" in result  # "risk_tolerance" may have underscore escaped
     assert "\\-0\\.200" in result or "-0.200" in result or "0.200" in result
 

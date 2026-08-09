@@ -318,7 +318,7 @@ def test_repeated_application_still_yields_four_markers() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Budget reallocation — learned by reading Hermes' agent/prompt_caching.py
+# Budget reallocation — learned by reading the reference platform' agent/prompt_caching.py
 #
 # Their apply_anthropic_cache_control computes `remaining = 4 - breakpoints_used`
 # and hands the leftovers to messages, so a layout that cannot use a prefix
@@ -353,7 +353,7 @@ def test_no_tools_and_no_system_spends_all_four_on_messages() -> None:
 
 
 def test_a_message_that_cannot_carry_a_marker_does_not_cost_a_breakpoint() -> None:
-    """Hermes' _can_carry_marker insight, applied to our layout.
+    """the reference platform' _can_carry_marker insight, applied to our layout.
 
     An empty content list has no block to hold a marker. Skipping it is right;
     skipping it AND losing the breakpoint is not — the marker moves to an earlier

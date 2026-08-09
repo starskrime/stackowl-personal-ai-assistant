@@ -1,8 +1,8 @@
 -- D01.7 slice 3b part 6 — work records which conversation it belongs to.
 --
 -- WHY. Invariant I4 says a lane with work in flight is never expired. Bakir's Q12
--- extends Hermes' single condition to FOUR, because StackOwl has autonomy
--- machinery Hermes lacks. Two were enforceable and are enforced (a running
+-- extends the reference platform' single condition to FOUR, because StackOwl has autonomy
+-- machinery the reference platform lacks. Two were enforceable and are enforced (a running
 -- background process, a pending clarify). The other two — an in-flight DURABLE
 -- TASK and an ACTIVE OBJECTIVE — could not even be ASKED, because neither table
 -- recorded which conversation the work belonged to. The question "is this lane

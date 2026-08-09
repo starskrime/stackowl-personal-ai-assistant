@@ -224,7 +224,7 @@ def validate_resume_transcript(
     # lands on the unclosed tool sequence. Strict providers reject that pairing;
     # the reference platform recorded it causing the model to hallucinate a
     # continuation of the user's message instead
-    # (hermes agent/turn_finalizer.py:278, incident #48879).
+    # (the reference platform agent/turn_finalizer.py:278, incident #48879).
     #
     # An Anthropic tool_result rides IN a user turn, so the check compares
     # SHAPES, not roles: a tool-result turn followed by a user turn that is NOT

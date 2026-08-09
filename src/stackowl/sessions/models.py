@@ -1,6 +1,6 @@
 """Session identity — the lane, its incarnation, and how a lane is named.
 
-The central idea, ported from Hermes (`gateway/session.py`) and adapted: session
+The central idea, ported from the reference platform (`gateway/session.py`) and adapted: session
 identity is split in TWO.
 
 * ``session_key``  — the conversation LANE. Deterministic, derived from where the
@@ -10,9 +10,9 @@ identity is split in TWO.
 
 StackOwl has only ever had the second one, and it never changed — which is exactly
 why it could not start or end a conversation. See
-``docs/hermes-mapping/designs/D01.7.md``.
+``docs/reference-mapping/designs/D01.7.md``.
 
-DIVERGENCE FROM HERMES: our key is prefixed with the OWL. They have one agent; we
+DIVERGENCE FROM THE REFERENCE PLATFORM: our key is prefixed with the OWL. They have one agent; we
 have owls, and a different owl means a different persona and therefore a different
 prompt (D01.1). Talking to Brain and talking to Scout are two conversations.
 """
@@ -155,7 +155,7 @@ class SessionEntry:
     suspended: bool = False
     # Soft recovery. Set when the core exec-replaced or drained mid-turn. PRESERVES
     # the id so the transcript continues; cleared after the next successful turn.
-    # Load-bearing for us in a way it is not for Hermes: our core replaces itself
+    # Load-bearing for us in a way it is not for the reference platform: our core replaces itself
     # on every code change, so this is the common case, not the edge case (Q6).
     resume_pending: bool = False
     resume_reason: str | None = None
@@ -222,7 +222,7 @@ def build_session_key(source: SessionSource, *, group_per_user: bool = True,
 
         owl:{owl}:{channel}:{chat_type}[:{chat_id}][:{thread_id}][:{participant}]
 
-    Isolation follows Bakir's Q5 answer, which matches Hermes' defaults:
+    Isolation follows Bakir's Q5 answer, which matches the reference platform' defaults:
 
     * DMs are always private — the chat id already identifies one person.
     * Groups/channels are isolated PER USER by default (``group_per_user``), so

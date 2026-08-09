@@ -2,7 +2,7 @@
 # progress.yml — StackOwl re-architecture against the Hermes Agent reference
 # ============================================================================
 # THIS FILE IS THE SOURCE OF TRUTH FOR *STATE*.
-# docs/hermes-mapping/HERMES_STACKOWL_MAP.md is the source of truth for *CONTENT*.
+# docs/reference-mapping/REFERENCE_MAP.md is the source of truth for *CONTENT*.
 # Never duplicate map prose into this file — reference it by `map_ref`.
 #
 # EVERY agent working this program MUST:
@@ -89,9 +89,9 @@ teacher:
     5: "MCP server in the catalog"
     6: "New core tool — last resort"
 
-map_document: docs/hermes-mapping/HERMES_STACKOWL_MAP.md
-process_document: docs/hermes-mapping/PROCESS.md   # READ THIS FIRST — how the work is done
-doc_standard: docs/hermes-mapping/DOC_STANDARD.md
+map_document: docs/reference-mapping/REFERENCE_MAP.md
+process_document: docs/reference-mapping/PROCESS.md   # READ THIS FIRST — how the work is done
+doc_standard: docs/reference-mapping/DOC_STANDARD.md
 artifacts:
   map: "https://claude.ai/code/artifact/b2d8c038-9200-4d25-93a9-dca286ed575a"
   stackowl_components: "https://claude.ai/code/artifact/7c501b7c-a949-49e6-9783-d7f221257755"
@@ -101,8 +101,8 @@ artifacts:
 # WORKFLOW — six stages, per item, in order. No stage may be skipped.
 # ---------------------------------------------------------------------------
 workflow:
-  doc_standard: docs/hermes-mapping/DOC_STANDARD.md
-  doc_location: "docs/hermes-mapping/designs/<ID>.md"
+  doc_standard: docs/reference-mapping/DOC_STANDARD.md
+  doc_location: "docs/reference-mapping/designs/<ID>.md"
   doc_rule: >
     EVERY item ships a document. Hermes' docs/session-lifecycle.md is why we adopted their
     session model in an afternoon instead of reverse-engineering it for a week. Our template
@@ -133,7 +133,7 @@ workflow:
         Turn the decision into a design: seams, interfaces, migration path, flag strategy,
         and an explicit statement of which Footprint Ladder rung this lands on.
       gate: >
-        A written design exists at docs/hermes-mapping/designs/<ID>.md, names the ladder
+        A written design exists at docs/reference-mapping/designs/<ID>.md, names the ladder
         rung, names every file it will touch, and states how Law 1 and Law 2 are preserved.
       output: "design_doc path recorded in the item."
 
@@ -160,14 +160,14 @@ workflow:
       output: "Test paths recorded in `changes`."
 
     document:
-      skill: "none — follow docs/hermes-mapping/DOC_STANDARD.md"
+      skill: "none — follow docs/reference-mapping/DOC_STANDARD.md"
       purpose: >
         Close the document opened during `architect`: bring every section to final, re-verify
         every source path / config key / default against the tree, stamp `Last verified` with
         today's date and the commit sha, and write the paragraph explaining where we diverged
         from Hermes and why.
       gate: >
-        Document exists at docs/hermes-mapping/designs/<ID>.md, has all mandatory sections,
+        Document exists at docs/reference-mapping/designs/<ID>.md, has all mandatory sections,
         its Verification section is copy-pasteable and passes, and every Invariant maps to a
         real test. Status line reads `live`.
       output: "doc path + last_verified recorded on the item."
@@ -187,7 +187,7 @@ workflow:
 # ---------------------------------------------------------------------------
 rules:
   process:
-    - "READ docs/hermes-mapping/PROCESS.md before picking up any item. It is the method."
+    - "READ docs/reference-mapping/PROCESS.md before picking up any item. It is the method."
     - "Port the DESIGN, never the code. Read Hermes until you can explain it, then write our own in our idiom, then state the divergence in the doc."
     - >
       READ HERMES BEFORE ASKING (Bakir, 2026-07-27, standing). Hermes is the
@@ -212,7 +212,7 @@ rules:
     - "Update this file after EVERY stage transition, not at the end of the item."
     - "Append to decisions/changes. Never delete or rewrite an existing entry."
     - "If an item turns out bigger than one iteration, split it into <ID>a / <ID>b here."
-    - "EVERY item ships a document per docs/hermes-mapping/DOC_STANDARD.md. No item reaches done without one."
+    - "EVERY item ships a document per docs/reference-mapping/DOC_STANDARD.md. No item reaches done without one."
     - "The document is opened in `architect`, kept current through `implement`, and closed in `document`. It is never written after the fact."
   engineering:
     - "Check existing code before writing new — wire/extend, never recreate."
@@ -410,8 +410,8 @@ waves:
 # ---------------------------------------------------------------------------
 documentation:
   rule: >
-    Every one of the 111 items ships a document at docs/hermes-mapping/designs/<ID>.md
-    meeting docs/hermes-mapping/DOC_STANDARD.md. No item reaches `done` without one.
+    Every one of the 111 items ships a document at docs/reference-mapping/designs/<ID>.md
+    meeting docs/reference-mapping/DOC_STANDARD.md. No item reaches `done` without one.
     The document is OPENED in `architect`, kept current through `implement`, and CLOSED
     in `document`. It is never written after the fact.
   why: >
@@ -2721,7 +2721,7 @@ items:
     order: 3
     started: 2026-07-25
     implement_blocked_by: [D01.6, D01.7]
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d011"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d011"
     gap: "Zero prefix reuse. Every turn pays full input price on a prompt that is mostly identical."
     depends_on: [D01.6]
     blocks: [D01.2, D01.4, D03.2, D09.1, D10.5, D10.6]
@@ -2734,7 +2734,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D01.1.md"
+    doc: "docs/reference-mapping/designs/D01.1.md"
     doc_last_verified: 2026-07-27
     decisions:
       - date: 2026-07-25
@@ -2904,7 +2904,7 @@ items:
     priority: P0
     wave: 1
     order: 4
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d012"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d012"
     gap: "Even after D01.1, no markers means no cache."
     depends_on: [D01.1]
     blocks: []
@@ -3125,7 +3125,7 @@ items:
         traffic. (b) Whether Anthropic honours the markers — no Anthropic backend
         exists here and D01.6 established the enabled gateway reports no cache
         fields, so even pointing StackOwl at it would not settle it.
-    doc: "docs/hermes-mapping/designs/D01.2.md"
+    doc: "docs/reference-mapping/designs/D01.2.md"
     doc_last_verified: 2026-07-28  # against commit 2f3a43f7, Verification section RUN not trusted
     architect_result:
       date: 2026-07-27
@@ -3518,7 +3518,7 @@ items:
     priority: P0
     wave: 1
     order: 7
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d013"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d013"
     gap: "A varying tools array invalidates the cached prefix on every turn, independently of D01.1."
     depends_on: [D05.2, D05.4]
     blocks: []
@@ -3531,7 +3531,7 @@ items:
       test:       no_change_needed
       validate:   no_change_needed
       document:   done
-    doc: "docs/hermes-mapping/designs/D01.3.md"
+    doc: "docs/reference-mapping/designs/D01.3.md"
     doc_last_verified: 2026-07-29  # against 2c117fce; every Verification command RUN, including the negative one
     decisions:
       - date: 2026-07-29
@@ -3619,7 +3619,7 @@ items:
     priority: P2
     wave: 1
     order: 5
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d014"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d014"
     gap: "No vocabulary for 'this would cost you money right now'."
     depends_on: [D01.1]
     blocks: []
@@ -3632,7 +3632,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D01.4.md"
+    doc: "docs/reference-mapping/designs/D01.4.md"
     doc_last_verified: 2026-07-28  # against commit 7fd1ee84; 13 paths + 5 behavioural claims re-checked at close
     the_premise_was_INVERTED_before_the_first_question: >
       The map asks "Is deferred-by-default acceptable UX, or does StackOwl's
@@ -3954,7 +3954,7 @@ items:
     priority: P2
     wave: 1
     order: 6
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d015"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d015"
     gap: "Latent provider-compat bug class, and a blocker for anything that injects mid-loop."
     depends_on: []
     blocks: []
@@ -3967,7 +3967,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D01.5.md"
+    doc: "docs/reference-mapping/designs/D01.5.md"
     doc_last_verified: 2026-07-29  # against 4e40a4a8; 4 paths + 5 behavioural claims re-checked
     decisions:
       - date: 2026-07-29
@@ -4178,7 +4178,7 @@ items:
     priority: P0
     wave: 1
     order: 1
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d016"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d016"
     gap: "Cannot measure whether D01.1–D01.3 actually worked."
     depends_on: []
     blocks: [D01.1]
@@ -4192,7 +4192,7 @@ items:
       validate:   done
       document:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D01.6.md"
+    doc: "docs/reference-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25  # against commit a717c4e9
     process_deviation:
       found: 2026-07-29
@@ -4223,7 +4223,7 @@ items:
           - "src/stackowl/providers/openai_provider.py — _ttft_ms on first CONTENT delta"
           - "src/stackowl/commands/cost_command.py — /cost turns + SubCommand declaration"
           - "tests/commands/test_cost_meta.py — change-detector converted to an invariant"
-          - "docs/hermes-mapping/designs/D01.6.md — config gate dropped WITH reasoning"
+          - "docs/reference-mapping/designs/D01.6.md — config gate dropped WITH reasoning"
         scope_change: >
           The system.metrics config gate was specified in the design and deliberately dropped.
           The feature is append-only instrumentation that already fails open by I1, so a
@@ -4295,7 +4295,7 @@ items:
     remaining_overall: []
     baseline:
       captured: 2026-07-25
-      doc: docs/hermes-mapping/designs/D01.6-baseline.md
+      doc: docs/reference-mapping/designs/D01.6-baseline.md
       session: "72055773 — 5 real Telegram messages, one requesting web research"
       measured:
         llm_calls: 40
@@ -4331,7 +4331,7 @@ items:
     wave: 1
     order: 2
     discovered: "2026-07-25 during D01.1 brainstorm — NOT in the original 110-item map."
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d017"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d017"
     gap: >
       StackOwl has exactly one session identifier and it never changes, so a session can
       never start or end. "Build the prompt once per session" is meaningless without this.
@@ -4550,7 +4550,7 @@ items:
         tests: "tests/sessions/ — 135 passed, up from 129."
         gates: "ruff src/ 46 = DEBT-1 baseline; mypy src/ 78 = DEBT-8 baseline. Zero added."
         live: "Restarted — both processes boot clean, 0 dangling, 0 session-resolution failures. The single ERROR is DEBT-18, pre-existing and unrelated."
-    doc: "docs/hermes-mapping/designs/D01.7.md"
+    doc: "docs/reference-mapping/designs/D01.7.md"
     doc_last_verified: 2026-07-27
     decisions:
       - date: 2026-07-25
@@ -5462,7 +5462,7 @@ items:
           - "src/stackowl/parliament/round_runner.py, staged_rca.py — PipelineState(session_key=...)"
           - "src/stackowl/commands/parliament_helpers.py — ParliamentSession keeps session_id"
           - "CLAUDE.md — the JSONL top-level key is now session_key"
-          - "docs/hermes-mapping/designs/D01.6.md, D01.6-baseline.md — amended, see below"
+          - "docs/reference-mapping/designs/D01.6.md, D01.6-baseline.md — amended, see below"
         why_code_and_schema_are_ONE_commit: >
           The approved plan had the code rename as commit 1 and the migration as commit 2. That
           ordering does not survive contact: renaming the column first breaks the running code,
@@ -5573,7 +5573,7 @@ items:
     priority: P1
     wave: 3
     order: 16
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d021"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d021"
     gap: "Not a gap — a genuine fork in the road. StackOwl's pipeline is more inspectable; Hermes'"
     depends_on: []
     blocks: []
@@ -5587,7 +5587,7 @@ items:
       validate:   no_change_needed
       document:   done
     decided_2026_08_05: "KEEP THE REGISTRY. Bakir asked for the merge to be investigated rather than dismissed; it was costed in designs/D02.1.md and he then chose to keep the pipeline. implement..validate are no_change_needed — a legitimate outcome under PROCESS.md and the honest one here."
-    doc: "docs/hermes-mapping/designs/D02.1.md"
+    doc: "docs/reference-mapping/designs/D02.1.md"
     doc_last_verified: "2026-08-05"
     decisions:
       - date: 2026-08-05
@@ -5653,7 +5653,7 @@ items:
     priority: P1
     wave: 3
     order: 17
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d022"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d022"
     gap: "No bound on a runaway loop other than the tool-call breaker."
     depends_on: []
     blocks: []
@@ -5775,7 +5775,7 @@ items:
     priority: P2
     wave: 3
     order: 18
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d023"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d023"
     gap: "Mid-turn course-correction is coarse."
     depends_on: []
     blocks: []
@@ -5838,7 +5838,7 @@ items:
     priority: P3
     wave: 3
     order: 19
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d024"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d024"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -5871,7 +5871,7 @@ items:
     priority: P3
     wave: 3
     order: 20
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d025"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d025"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -5917,7 +5917,7 @@ items:
     priority: P3
     wave: 3
     order: 21
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d026"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d026"
     gap: "Hermes is ahead on provider-error taxonomy; StackOwl is ahead on task recovery."
     depends_on: []
     blocks: []
@@ -5930,7 +5930,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: docs/hermes-mapping/designs/D02.6.md
+    doc: docs/reference-mapping/designs/D02.6.md
     doc_last_verified: 2026-08-05
     decisions:
       - "Port the WHOLE classifier, not a subset — operator, after I proposed taking only the causes we had evidence for."
@@ -5965,7 +5965,7 @@ items:
     priority: P2
     wave: 5
     order: 34
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d031"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d031"
     gap: "Long conversations have no strategy other than truncation."
     depends_on: [D03.2]
     blocks: []
@@ -5992,7 +5992,7 @@ items:
     priority: P1
     wave: 5
     order: 35
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d032"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d032"
     gap: "The single largest functional hole for long-running sessions."
     depends_on: [D01.1]
     blocks: [D03.1, D03.3]
@@ -6019,7 +6019,7 @@ items:
     priority: P2
     wave: 5
     order: 36
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d033"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d033"
     gap: "(no gap line — see Ask)"
     depends_on: [D03.2]
     blocks: []
@@ -6046,7 +6046,7 @@ items:
     priority: P1
     wave: 5
     order: 37
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d034"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d034"
     gap: "Level 2 and 3 missing. Truncation currently destroys information."
     depends_on: []
     blocks: []
@@ -6073,7 +6073,7 @@ items:
     priority: P3
     wave: 5
     order: 38
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d035"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d035"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -6100,7 +6100,7 @@ items:
     priority: P2
     wave: 10
     order: 93
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d041"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d041"
     gap: "Provider breadth is a core-edit operation. This is Law 2 applied to inference backends."
     depends_on: [D16.3]
     blocks: []
@@ -6127,7 +6127,7 @@ items:
     priority: P2
     wave: 10
     order: 94
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d042"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d042"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -6154,7 +6154,7 @@ items:
     priority: P2
     wave: 10
     order: 95
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d043"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d043"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -6181,7 +6181,7 @@ items:
     priority: P1
     wave: 10
     order: 96
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d044"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d044"
     gap: "No single seam for 'cheap model work', so cost/latency of side tasks is unmanaged."
     depends_on: []
     blocks: []
@@ -6208,7 +6208,7 @@ items:
     priority: P3
     wave: 10
     order: 97
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d045"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d045"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -6235,7 +6235,7 @@ items:
     priority: P3
     wave: 10
     order: 98
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d046"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d046"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -6268,7 +6268,7 @@ items:
     priority: P3
     wave: 2
     order: 8
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d051"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d051"
     gap: "Small: no dynamic_schema_overrides, no AST prefilter."
     depends_on: []
     blocks: []
@@ -6281,7 +6281,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D05.1.md"
+    doc: "docs/reference-mapping/designs/D05.1.md"
     doc_last_verified: "2026-08-03"
     decisions:
       - date: 2026-08-02
@@ -6409,7 +6409,7 @@ items:
     priority: P0
     wave: 2
     order: 9
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d052"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d052"
     gap: "This is the mechanism that makes Law 2 enforceable. Without it there is no 'core' to keep narrow."
     depends_on: []
     blocks: [D01.3, D05.3, D05.4]
@@ -6422,7 +6422,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D05.2.md"
+    doc: "docs/reference-mapping/designs/D05.2.md"
     doc_last_verified: "2026-08-01"
     decisions:
       - date: 2026-07-29
@@ -6526,7 +6526,7 @@ items:
       - date: 2026-08-01
         stage: architect
         by: Claude
-        doc_written: "docs/hermes-mapping/designs/D05.2.md"
+        doc_written: "docs/reference-mapping/designs/D05.2.md"
         CORRECTION_2026_08_01_NO_MIGRATION_IS_NEEDED: >
           THE THIRD CORRECTION ON THIS ITEM, and it removes the last piece of new
           machinery. The brainstorm concluded the learning half needed a durable
@@ -6829,7 +6829,7 @@ items:
     priority: P0
     wave: 2
     order: 10
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d053"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d053"
     gap: "Unconfigured capability still costs tokens on every call and invites hallucinated use."
     depends_on: [D05.2]
     blocks: []
@@ -6842,7 +6842,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D05.3.md"
+    doc: "docs/reference-mapping/designs/D05.3.md"
     doc_last_verified: "2026-08-02"
     decisions:
       - date: 2026-08-02
@@ -7028,7 +7028,7 @@ items:
     priority: P0
     wave: 2
     order: 11
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d054"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d054"
     gap: "This is the *cache-safe* answer to the problem the budgeter solves expensively."
     depends_on: [D05.2]
     blocks: [D01.3]
@@ -7080,7 +7080,7 @@ items:
     priority: P2
     wave: 2
     order: 12
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d055"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d055"
     gap: "Likely narrower (a privileged escape hatch rather than a general RPC surface)."
     depends_on: []
     blocks: []
@@ -7093,7 +7093,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D05.5.md"
+    doc: "docs/reference-mapping/designs/D05.5.md"
     doc_last_verified: "2026-08-02"
     decisions:
       - date: 2026-08-02
@@ -7180,7 +7180,7 @@ items:
     priority: P2
     wave: 2
     order: 13
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d056"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d056"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7193,7 +7193,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D05.6.md"
+    doc: "docs/reference-mapping/designs/D05.6.md"
     doc_last_verified: "2026-08-04"
     decisions:
       - date: 2026-08-04
@@ -7307,7 +7307,7 @@ items:
     priority: P2
     wave: 2
     order: 14
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d057"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d057"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7320,7 +7320,7 @@ items:
       test:       done
       validate:   done
       document:   done
-    doc: "docs/hermes-mapping/designs/D05.7.md"
+    doc: "docs/reference-mapping/designs/D05.7.md"
     doc_last_verified: "2026-08-04"
     decisions:
       - date: 2026-08-04
@@ -7428,7 +7428,7 @@ items:
     priority: P3
     wave: 2
     order: 15
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d058"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d058"
     gap: "(none — parity or ahead)"
     depends_on: []
     blocks: []
@@ -7503,7 +7503,7 @@ items:
     priority: P2
     wave: 10
     order: 99
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d061"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d061"
     gap: "No remote/cloud execution. The ABC exists — the implementations do not."
     depends_on: []
     blocks: [D06.2]
@@ -7530,7 +7530,7 @@ items:
     priority: P2
     wave: 10
     order: 100
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d062"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d062"
     gap: "(no gap line — see Ask)"
     depends_on: [D06.1]
     blocks: []
@@ -7557,7 +7557,7 @@ items:
     priority: P3
     wave: 10
     order: 101
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d063"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d063"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7584,7 +7584,7 @@ items:
     priority: P1
     wave: 10
     order: 102
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d064"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d064"
     gap: "No 'undo the whole turn'."
     depends_on: []
     blocks: []
@@ -7611,7 +7611,7 @@ items:
     priority: P3
     wave: 7
     order: 47
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d071"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d071"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7638,7 +7638,7 @@ items:
     priority: P2
     wave: 7
     order: 48
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d072"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d072"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7665,7 +7665,7 @@ items:
     priority: P2
     wave: 7
     order: 49
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d073"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d073"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7692,7 +7692,7 @@ items:
     priority: P3
     wave: 7
     order: 50
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d074"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d074"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7719,7 +7719,7 @@ items:
     priority: P3
     wave: 7
     order: 51
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d075"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d075"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7746,7 +7746,7 @@ items:
     priority: P1
     wave: 7
     order: 52
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d076"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d076"
     gap: "No shared work queue, no claim/reclaim, no cross-profile collaboration."
     depends_on: [D18.3]
     blocks: []
@@ -7773,7 +7773,7 @@ items:
     priority: P1
     wave: 4
     order: 22
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d081"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d081"
     gap: "Inverted. Ours is far more sophisticated and far more expensive; theirs is legible, editable"
     depends_on: []
     blocks: [D08.2, D08.3]
@@ -7786,7 +7786,7 @@ items:
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: docs/hermes-mapping/designs/D08.1.md
+    doc: docs/reference-mapping/designs/D08.1.md
     doc_last_verified: null
     decisions:
     - 'R1Q1 - THE AGENT WRITES USER.md, in-turn, via a tool. D01.1 shipped the READER without a writer: load_user_profile() runs on every prompt build, ~/.stackowl/USER.md does not exist, and nothing in src/ writes it. The prompt has carried zero curated memory since D01.1 landed.'
@@ -7837,7 +7837,7 @@ items:
     priority: P2
     wave: 4
     order: 23
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d082"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d082"
     gap: "(no gap line — see Ask)"
     depends_on: [D08.1]
     blocks: []
@@ -7864,7 +7864,7 @@ items:
     priority: P2
     wave: 4
     order: 24
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d083"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d083"
     gap: "(no gap line — see Ask)"
     depends_on: [D08.1]
     blocks: []
@@ -7891,7 +7891,7 @@ items:
     priority: P3
     wave: 4
     order: 25
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d084"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d084"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7918,7 +7918,7 @@ items:
     priority: P3
     wave: 4
     order: 26
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d085"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d085"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -7945,7 +7945,7 @@ items:
     priority: P1
     wave: 4
     order: 27
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d091"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d091"
     gap: "Learning is not tied to the moment the lesson exists, and does not see the live conversation."
     depends_on: [D01.1]
     blocks: [D09.2, D09.4]
@@ -7972,7 +7972,7 @@ items:
     priority: P1
     wave: 4
     order: 28
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d092"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d092"
     gap: "We treat correction as a setting; they treat it as procedural knowledge."
     depends_on: [D09.1]
     blocks: []
@@ -7999,7 +7999,7 @@ items:
     priority: P1
     wave: 4
     order: 29
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d093"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d093"
     gap: "Skills accumulate and rot with no pressure to consolidate."
     depends_on: [D10.2]
     blocks: []
@@ -8019,7 +8019,7 @@ items:
       validate:   partial          # every mechanism proven on the live catalog;
                                    # the standard MIGRATION is still running
       document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
-    doc: docs/hermes-mapping/designs/D09.3.md
+    doc: docs/reference-mapping/designs/D09.3.md
     doc_last_verified: null
     decisions:
       - "R1Q1 — PULL D10.2 (Authoring standard) FORWARD INTO WAVE 4. The dependency binds: consolidation rewrites skill bodies, and without a standard the agent writes inconsistent ones — plausibly the root cause of the 265 duplicates. Decay shipped without it because decay never reads or writes content; consolidation will not."
@@ -8074,7 +8074,7 @@ items:
     priority: P2
     wave: 4
     order: 30
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d094"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d094"
     gap: "(no gap line — see Ask)"
     depends_on: [D09.1]
     blocks: []
@@ -8101,7 +8101,7 @@ items:
     priority: P2
     wave: 4
     order: 31
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d095"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d095"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8128,7 +8128,7 @@ items:
     priority: P2
     wave: 4
     order: 32
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d096"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d096"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8155,7 +8155,7 @@ items:
     priority: P3
     wave: 4
     order: 33
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d097"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d097"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8182,7 +8182,7 @@ items:
     priority: P3
     wave: 8
     order: 60
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d101"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d101"
     gap: "(none — parity or ahead)"
     depends_on: []
     blocks: []
@@ -8209,7 +8209,7 @@ items:
     priority: P2
     wave: 4        # pulled forward from 8 by D09.3 R1Q1 — it blocks the migration
     order: 61
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d102"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d102"
     gap: "Without a standard, an agent that writes its own skills writes inconsistent ones."
     depends_on: []
     blocks: [D09.3]
@@ -8225,7 +8225,7 @@ items:
       validate:   partial          # mechanism proven live; the CATALOG migration
                                    # is still running (19 of 168 at last check)
       document:   partial          # designs/D09.3.md covers both; item doc pending
-    doc: docs/hermes-mapping/designs/D09.3.md
+    doc: docs/reference-mapping/designs/D09.3.md
     doc_last_verified: null
     changes:
       - "slice 1 (2026-08-08) — skills/standard.py: ONE machine-readable source. The rules are constants, describe_for_prompt() generates the prompt text from them, and the validator reads the same constants. Three hand-maintained copies of a standard is how a standard rots."
@@ -8273,7 +8273,7 @@ items:
     priority: P2
     wave: 8
     order: 62
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d103"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d103"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8300,7 +8300,7 @@ items:
     priority: P2
     wave: 8
     order: 63
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d104"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d104"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8327,7 +8327,7 @@ items:
     priority: P1
     wave: 8
     order: 64
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d105"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d105"
     gap: "Direct Law 1 violation, and it also means the model cannot be pointed at a skill on demand."
     depends_on: [D01.1]
     blocks: []
@@ -8354,7 +8354,7 @@ items:
     priority: P3
     wave: 8
     order: 65
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d106"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d106"
     gap: "Ours is smarter but is a per-turn prompt mutation (feeds D01.1)."
     depends_on: [D01.1]
     blocks: []
@@ -8381,7 +8381,7 @@ items:
     priority: P3
     wave: 8
     order: 66
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d107"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d107"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8408,7 +8408,7 @@ items:
     priority: P3
     wave: 8
     order: 67
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d111"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d111"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8435,7 +8435,7 @@ items:
     priority: P1
     wave: 8
     order: 68
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d112"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d112"
     gap: "Substring ≠ relevance. Cross-session recall is weak in exactly the way Hermes advertises as"
     depends_on: []
     blocks: [D11.3]
@@ -8462,7 +8462,7 @@ items:
     priority: P3
     wave: 8
     order: 69
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d113"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d113"
     gap: "(no gap line — see Ask)"
     depends_on: [D11.2]
     blocks: []
@@ -8489,7 +8489,7 @@ items:
     priority: P2
     wave: 8
     order: 70
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d114"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d114"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8516,7 +8516,7 @@ items:
     priority: P2
     wave: 8
     order: 71
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d115"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d115"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8543,7 +8543,7 @@ items:
     priority: P2
     wave: 6
     order: 39
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d121"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d121"
     gap: "Ours branches on channel identity in places; theirs reads a descriptor."
     depends_on: []
     blocks: [D12.2, D12.3]
@@ -8570,7 +8570,7 @@ items:
     priority: P2
     wave: 6
     order: 40
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d122"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d122"
     gap: "(no gap line — see Ask)"
     depends_on: [D12.1, D12.3]
     blocks: []
@@ -8597,7 +8597,7 @@ items:
     priority: P1
     wave: 6
     order: 41
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d123"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d123"
     gap: "~24 near-duplicate modules that must each be fixed separately. This is the *dedup* target"
     depends_on: [D12.1]
     blocks: [D12.2]
@@ -8624,7 +8624,7 @@ items:
     priority: P2
     wave: 6
     order: 42
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d124"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d124"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8651,7 +8651,7 @@ items:
     priority: P3
     wave: 6
     order: 43
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d125"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d125"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8678,7 +8678,7 @@ items:
     priority: P3
     wave: 6
     order: 44
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d126"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d126"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8705,7 +8705,7 @@ items:
     priority: P2
     wave: 6
     order: 45
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d127"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d127"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8732,7 +8732,7 @@ items:
     priority: P1
     wave: 6
     order: 46
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d128"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d128"
     gap: "A public webhook can currently reach shell."
     depends_on: []
     blocks: []
@@ -8759,7 +8759,7 @@ items:
     priority: P2
     wave: 10
     order: 103
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d131"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d131"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8786,7 +8786,7 @@ items:
     priority: P2
     wave: 10
     order: 104
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d132"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d132"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8813,7 +8813,7 @@ items:
     priority: P2
     wave: 10
     order: 105
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d133"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d133"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8840,7 +8840,7 @@ items:
     priority: P2
     wave: 10
     order: 106
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d134"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d134"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8867,7 +8867,7 @@ items:
     priority: P2
     wave: 10
     order: 107
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d141"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d141"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8894,7 +8894,7 @@ items:
     priority: P2
     wave: 10
     order: 108
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d142"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d142"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8921,7 +8921,7 @@ items:
     priority: P2
     wave: 10
     order: 109
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d143"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d143"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8948,7 +8948,7 @@ items:
     priority: P2
     wave: 10
     order: 110
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d144"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d144"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -8975,7 +8975,7 @@ items:
     priority: P2
     wave: 10
     order: 111
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d145"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d145"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9002,7 +9002,7 @@ items:
     priority: P3
     wave: 7
     order: 53
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d151"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d151"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9029,7 +9029,7 @@ items:
     priority: P2
     wave: 7
     order: 54
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d152"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d152"
     gap: "Their jobs are user-authorable in natural language; ours are developer-authored handlers."
     depends_on: []
     blocks: []
@@ -9056,7 +9056,7 @@ items:
     priority: P2
     wave: 7
     order: 55
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d153"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d153"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9083,7 +9083,7 @@ items:
     priority: P3
     wave: 7
     order: 56
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d154"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d154"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9110,7 +9110,7 @@ items:
     priority: P2
     wave: 7
     order: 57
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d155"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d155"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9137,7 +9137,7 @@ items:
     priority: P3
     wave: 7
     order: 58
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d156"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d156"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9164,7 +9164,7 @@ items:
     priority: P3
     wave: 7
     order: 59
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d157"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d157"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9191,7 +9191,7 @@ items:
     priority: P2
     wave: 9
     order: 72
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d161"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d161"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: [D16.3]
@@ -9218,7 +9218,7 @@ items:
     priority: P2
     wave: 9
     order: 73
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d162"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d162"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9245,7 +9245,7 @@ items:
     priority: P2
     wave: 9
     order: 74
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d163"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d163"
     gap: "(no gap line — see Ask)"
     depends_on: [D16.1]
     blocks: [D04.1]
@@ -9272,7 +9272,7 @@ items:
     priority: P2
     wave: 9
     order: 75
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d164"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d164"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9299,7 +9299,7 @@ items:
     priority: P3
     wave: 9
     order: 76
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d165"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d165"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9326,7 +9326,7 @@ items:
     priority: P2
     wave: 9
     order: 77
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d166"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d166"
     gap: "Ours is rung 6 for something they solve at rung 2."
     depends_on: []
     blocks: []
@@ -9353,7 +9353,7 @@ items:
     priority: P2
     wave: 9
     order: 78
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d171"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d171"
     gap: "No LLM-assisted smart approval; no persisted user allowlist."
     depends_on: []
     blocks: []
@@ -9380,7 +9380,7 @@ items:
     priority: P2
     wave: 9
     order: 79
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d172"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d172"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9407,7 +9407,7 @@ items:
     priority: P2
     wave: 9
     order: 80
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d173"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d173"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9434,7 +9434,7 @@ items:
     priority: P3
     wave: 9
     order: 81
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d174"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d174"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9461,7 +9461,7 @@ items:
     priority: P2
     wave: 9
     order: 82
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d175"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d175"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9488,7 +9488,7 @@ items:
     priority: P3
     wave: 9
     order: 83
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d176"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d176"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9515,7 +9515,7 @@ items:
     priority: P2
     wave: 9
     order: 84
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d181"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d181"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9542,7 +9542,7 @@ items:
     priority: P2
     wave: 9
     order: 85
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d182"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d182"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9569,7 +9569,7 @@ items:
     priority: P2
     wave: 9
     order: 86
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d183"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d183"
     gap: "No way to run a work assistant and a personal assistant side by side, and no clean test isolation."
     depends_on: []
     blocks: [D07.6]
@@ -9596,7 +9596,7 @@ items:
     priority: P3
     wave: 9
     order: 87
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d184"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d184"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9623,7 +9623,7 @@ items:
     priority: P2
     wave: 9
     order: 88
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d185"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d185"
     gap: "Our full suite is not runnable — Hermes' subprocess isolation is plausibly *why* theirs is."
     depends_on: []
     blocks: []
@@ -9650,7 +9650,7 @@ items:
     priority: P2
     wave: 9
     order: 89
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d186"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d186"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9677,7 +9677,7 @@ items:
     priority: P2
     wave: 9
     order: 90
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d187"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d187"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9704,7 +9704,7 @@ items:
     priority: P3
     wave: 9
     order: 91
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d188"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d188"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -9731,7 +9731,7 @@ items:
     priority: P3
     wave: 9
     order: 92
-    map_ref: "docs/hermes-mapping/HERMES_STACKOWL_MAP.md#d189"
+    map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d189"
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []

@@ -1,7 +1,7 @@
 """Persistence for the per-session system prompt (D01.1).
 
 Built once when a conversation starts, reused verbatim for every turn of it, and
-discarded when the session rolls over. See ``docs/hermes-mapping/designs/D01.1.md``
+discarded when the session rolls over. See ``docs/reference-mapping/designs/D01.1.md``
 for the design and the divergences from the reference platform.
 
 The row is keyed ``(session_key, owl_name)`` and STAMPED with the incarnation it

@@ -293,7 +293,7 @@ async def resolve_runner_lane(
     Returns ``(session_key, session_id, identity_key)`` for a cron job, objective,
     delegated subagent or recovery drive — the same lane machinery a chat turn
     gets, so background work earns its own incarnation, its own boundary and (with
-    `D01.1`) its own stable prompt. That is a deliberate divergence from Hermes,
+    `D01.1`) its own stable prompt. That is a deliberate divergence from the reference platform,
     which gives non-chat work no lane at all.
 
     ``parent_session_key`` is the conversation that ASKED for the work, when there

@@ -11,7 +11,7 @@ The priority order IS the behaviour, and it is the thing most likely to regress:
     4. otherwise       -> carry on
 
 A hard wipe must never be overridden by a soft recovery. See
-``docs/hermes-mapping/designs/D01.7.md``.
+``docs/reference-mapping/designs/D01.7.md``.
 """
 
 from __future__ import annotations
@@ -141,10 +141,10 @@ def resolve(entry: SessionEntry | None, now: datetime.datetime, policy: ResetPol
             *, has_active_work: bool = False) -> Resolution:
     """Decide what happens to this lane on this message. Exactly one branch (I3).
 
-    ``has_active_work`` carries Bakir's Q12 answer, which EXTENDS Hermes' rule
+    ``has_active_work`` carries Bakir's Q12 answer, which EXTENDS the reference platform' rule
     rather than adopting it. Theirs protects a running background process; ours
     additionally protects an in-flight durable task, an active objective, and a
-    pending clarify question — because StackOwl has autonomy machinery Hermes does
+    pending clarify question — because StackOwl has autonomy machinery the reference platform does
     not, and an agent working overnight must not have its conversation cut from
     under it (invariant I4). The caller composes those four into one boolean; this
     module deliberately does not know what "work" means.

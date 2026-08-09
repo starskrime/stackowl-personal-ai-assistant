@@ -424,7 +424,7 @@ async def test_the_sweeper_leaves_a_live_lane_alone(bus_store) -> None:
 
 @pytest.mark.asyncio
 async def test_i4_a_busy_lane_is_never_expired(bus_store) -> None:
-    """Bakir's Q12, extended beyond Hermes: an agent working overnight must not
+    """Bakir's Q12, extended beyond the reference platform: an agent working overnight must not
     have its conversation cut from under it."""
     store, bus = bus_store
     await store.resolve_for(src(), at(20, 12))

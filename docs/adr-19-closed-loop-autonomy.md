@@ -394,7 +394,7 @@ sqlite> select count(*), sum(n_executions>0), sum(n_executions) from skills;
 ## Related
 
 - ADR-6 (`HealableResource`) — this ADR keeps the protocol and fixes its signal.
-- [`D02.6`](hermes-mapping/designs/D02.6.md) — the recovery ladder; where the
+- [`D02.6`](reference-mapping/designs/D02.6.md) — the recovery ladder; where the
   actuator obligation (②) was learned the expensive way.
 - `progress.yml` `DEBT-39` — resolved by building the actuator rather than
   deferring it, which is obligation ② applied retroactively.

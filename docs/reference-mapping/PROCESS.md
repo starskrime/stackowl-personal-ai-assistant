@@ -1,6 +1,6 @@
 # How We Learn From Hermes And Fix A Component
 
-This is the method. `HERMES_STACKOWL_MAP.md` says *what* to fix, `progress.yml` tracks *where we
+This is the method. `REFERENCE_MAP.md` says *what* to fix, `progress.yml` tracks *where we
 are*, `DOC_STANDARD.md` says what each component's document looks like — **this file says how the
 work is done.**
 
@@ -183,7 +183,7 @@ allowed is the design and the code quietly diverging until nobody knows which is
 ## Documentation is tracked for every finding
 
 All 111 items carry a `document` stage and a `doc` field in `progress.yml`. No item reaches `done`
-without a document at `docs/hermes-mapping/designs/<ID>.md` meeting `DOC_STANDARD.md`.
+without a document at `docs/reference-mapping/designs/<ID>.md` meeting `DOC_STANDARD.md`.
 
 Our template takes Hermes' structure — audience, source files, field tables, flow diagrams, config
 appendix — and **adds four sections they had no need for**: Invariants, Observability, Failure

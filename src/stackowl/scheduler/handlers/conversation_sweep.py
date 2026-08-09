@@ -18,8 +18,8 @@ a register factory. The recurring JOB row is seeded separately in
 ``scheduler/assembly.py``, alongside the other recurring handlers.
 
 INVARIANT I4 LIVES HERE. A lane with work in flight is skipped, never forced.
-Bakir's Q12 extends Hermes' rule from one condition to four because StackOwl has
-autonomy machinery Hermes lacks; the store owns WHICH lanes expired, this handler
+Bakir's Q12 extends the reference platform' rule from one condition to four because StackOwl has
+autonomy machinery the reference platform lacks; the store owns WHICH lanes expired, this handler
 owns what "busy" MEANS, because that is the part that depends on the rest of the
 platform.
 """

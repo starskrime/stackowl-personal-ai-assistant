@@ -25,7 +25,7 @@ spent on nothing. That silence is the reason this guard exists at all.
 Pure by contract: no I/O, no provider dependency, no mutation of the caller's
 objects. The tool loop reuses one ``messages`` list across rounds, so marking in
 place would accumulate a marker per round and blow invariant I1 open on the second
-iteration. See ``docs/hermes-mapping/designs/D01.2.md``.
+iteration. See ``docs/reference-mapping/designs/D01.2.md``.
 """
 
 from __future__ import annotations

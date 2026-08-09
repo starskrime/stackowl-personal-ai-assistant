@@ -70,7 +70,7 @@ _DEFAULT_STOP_TOKENS: frozenset[str] = frozenset({"stop", "halt", "abort"})
 _SLASH_STOP = "stop"
 _SLASH_STEER = "steer"
 # D01.7 — the TOKEN moved to /queue; `/new` now means "start a fresh
-# conversation" (Bakir's Q8, and Hermes' meaning). The capability here is
+# conversation" (Bakir's Q8, and the reference platform' meaning). The capability here is
 # unchanged, only its name: this signal forces a SEPARATE queued turn instead of
 # steering into the running one. ExplicitSignal.NEW keeps its name because it
 # describes the OUTCOME (a new queued turn), not the word the user types.

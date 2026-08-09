@@ -1,7 +1,7 @@
 -- D01.7 — rename the conversation-domain `session_id` column to `session_key`.
 --
 -- WHY: StackOwl's `session_id` has always held the LANE (a chat id that never
--- changes), which is Hermes' `session_key`. Migration 0092 introduced the real
+-- changes), which is the reference platform' `session_key`. Migration 0092 introduced the real
 -- lane/incarnation split, where `session_id` means THIS INCARNATION of a lane and
 -- changes on every reset. Leaving seven tables using the old name for the new
 -- concept's identifier would have guaranteed the exact confusion DOC_STANDARD

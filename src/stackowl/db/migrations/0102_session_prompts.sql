@@ -13,14 +13,14 @@
 -- and the parts that move are the ones that vary with the query — per-turn memory
 -- recall and the relevance-scored skills block.
 --
--- WHY PERSISTED AND NOT AN IN-MEMORY CACHE. Hermes keeps an LRU of live agent
+-- WHY PERSISTED AND NOT AN IN-MEMORY CACHE. the reference platform keeps an LRU of live agent
 -- objects because their gateway restarts rarely. StackOwl's core os.execv's itself
 -- on every code change, so an in-memory cache would be discarded continuously —
 -- during exactly the development in which stable measurements matter most. This is
 -- a deliberate divergence from the reference platform, recorded in designs/D01.1.md.
 --
 -- WHY THE KEY IS (session_key, owl_name). Switching owl means a different persona
--- and therefore a different prompt, a distinction Hermes never has to make because
+-- and therefore a different prompt, a distinction the reference platform never has to make because
 -- they run one agent. Not hypothetical: the staged RCA drives three owls
 -- (rca_gatherer, hypothesis, verifier) against ONE incident session_key, which the
 -- live logs show as three different persona_len values on the same lane.

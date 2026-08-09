@@ -5,7 +5,7 @@ Covers the two units added by D01.6: the prompt-identity carrier
 (``providers/openai_provider._cached_input_tokens``).
 
 Invariants under test are the ones written in
-``docs/hermes-mapping/designs/D01.6.md``. Each test names the invariant it
+``docs/reference-mapping/designs/D01.6.md``. Each test names the invariant it
 guards so a failure says which contract broke, not merely which line.
 """
 

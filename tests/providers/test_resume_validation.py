@@ -350,7 +350,7 @@ async def test_no_resume_tool_calls_starts_empty(
 # appending the user's next message yields a `tool -> user` alternation which
 # "strict providers (Gemini, Claude) reject, causing them to hallucinate a
 # continuation of the user's message on the next turn"
-# (hermes agent/turn_finalizer.py:278).
+# (the reference platform agent/turn_finalizer.py:278).
 #
 # StackOwl's PERSISTED history cannot produce this — record_turn has no role
 # parameter and only ever writes user/assistant — so the exposure is the

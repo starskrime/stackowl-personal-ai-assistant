@@ -1,0 +1,442 @@
+"""Curated memory — the two files that are always in the prompt (D08.1).
+
+WHAT THIS REPLACES, and why it is smaller than what it replaces.
+
+Measured on the live database 2026-08-08: 88,631 committed facts, 9.75M chars.
+37.1% mentioned a trace id or ``failure_class`` — the platform's own diagnostics
+stored as durable memory about the user. 49.1% had never been reinforced. The
+single most-reinforced entry in the whole store was ``"Today's date is
+2026-07-15"``, three weeks stale, reinforced 157 times, because
+``reinforcement_count`` measured how often a topic came up rather than whether it
+mattered.
+
+Meanwhile ``load_user_profile()`` ran on every prompt build against a file that
+did not exist and that nothing wrote. D01.1 removed per-turn recall from the
+prompt for a good reason (Law 1) and replaced it with a reader with no writer, so
+the system prompt carried NO curated memory at all.
+
+This module is the writer. Two files, a hard budget, and the agent doing its own
+forgetting.
+
+THE FOUR RULES, each earned:
+
+  * **A hard budget, and the agent consolidates.** At capacity ``add`` REFUSES
+    and tells the model to merge or remove and retry in this turn. Forgetting
+    becomes a visible in-turn problem rather than a background process nobody
+    watches — which is exactly what the 88k store lacked.
+  * **Durability is stated and stored.** Every entry is ``permanent`` or
+    ``until_changed``; ``transient`` is not accepted, so a stale date has nowhere
+    to go. Storing it (not just checking it) lets eviction prefer
+    ``until_changed`` over ``permanent`` instead of evicting by age — age is what
+    let 43,503 unreinforced facts survive.
+  * **The prompt reads a FROZEN SNAPSHOT.** Live state is what the tool reports;
+    the snapshot is what the prompt carries, and it does not move mid-session.
+    An unstable prompt forfeits the provider's prefix cache with no marker to
+    blame (measured in D01.1).
+  * **A failed memory write must never cost the user their reply.** Consolidation
+    failures are bounded per turn; past the cap the response goes terminal so the
+    model stops trying and answers the question.
+
+DIVERGENCE FROM THE REFERENCE PLATFORM, stated: agent notes are PER-OWL
+(``<owl>.md``) because our lanes already are (``owl:secretary:telegram:dm:…``)
+and owls have their own DNA. Theirs has one agent and one notes file. The user
+profile stays global — the user is the same person to every owl.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from stackowl.infra.observability import log
+from stackowl.paths import StackowlHome
+
+__all__ = [
+    "DURABILITIES",
+    "MemoryResult",
+    "OWL_BUDGET_CHARS",
+    "USER_BUDGET_CHARS",
+    "USER_TARGET",
+    "CuratedMemory",
+    "memory_dir",
+]
+
+#: Separates entries within a file. Adopted from the reference platform: a bare
+#: sentinel on its own line survives a user hand-editing the file in a way that
+#: markdown headings or YAML would not.
+ENTRY_DELIMITER = "\n§\n"
+
+#: Adopted as-is from the reference platform (D08.1 R2Q7), the same call as
+#: D10.2's 60-character description cap. Small enough that adding forces
+#: dropping, which is the entire mechanism.
+USER_BUDGET_CHARS = 1375
+OWL_BUDGET_CHARS = 2200
+
+#: The global profile's target name. Anything else is an owl.
+USER_TARGET = "user"
+
+#: ``transient`` is deliberately ABSENT. It is not a durability we store, it is a
+#: reason to refuse — the most-reinforced entry in the old store was a stale
+#: date, and a system that can express "this expires" will accumulate expired
+#: things. The writer must commit to one of these two or not write.
+DURABILITIES: tuple[str, ...] = ("permanent", "until_changed")
+
+#: How many consecutive at-capacity failures one turn may take before the
+#: response goes terminal. Without a cap a fragile consolidation can loop the
+#: turn to budget exhaustion and suppress the user's reply entirely.
+MAX_CONSOLIDATION_FAILURES_PER_TURN = 3
+
+#: ``[permanent] the text`` — the durability rides in the entry so eviction can
+#: sort on it. Tolerant of a hand-edited file that has lost the marker.
+_DURABILITY_RE = re.compile(r"^\[(permanent|until_changed)\]\s*(.*)$", re.DOTALL)
+
+#: A file name we are willing to create. Owl names reach this from a registry,
+#: but the path is built from them, so it is validated rather than trusted.
+_SAFE_TARGET_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+
+
+def memory_dir() -> Path:
+    """Where both files live. Voted in D08.1 R7Q26."""
+    return StackowlHome.home() / "memory"
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One remembered thing."""
+
+    text: str
+    durability: str = "permanent"
+
+    def rendered(self) -> str:
+        return f"[{self.durability}] {self.text}"
+
+    @classmethod
+    def parse(cls, raw: str) -> Entry:
+        """Read an entry back, tolerating a hand-edited file.
+
+        A user who deletes the ``[permanent]`` marker while editing has written
+        a perfectly reasonable line; treating that as corruption would punish
+        exactly the editing this design exists to allow. Unmarked reads as
+        ``permanent`` — the conservative default, since permanence only makes
+        eviction less eager.
+        """
+        match = _DURABILITY_RE.match(raw.strip())
+        if match is None:
+            return cls(text=raw.strip())
+        return cls(text=match.group(2).strip(), durability=match.group(1))
+
+
+@dataclass
+class MemoryResult:
+    """What a write did — returned to the model, so it has to be actionable.
+
+    ``done`` is the terminal flag. A successful write sets it and the response
+    deliberately does NOT echo the entry list: the reference platform observed
+    the model treating an echoed list as an invitation to "find more to fix" and
+    re-issuing the same operations five times. Entries are echoed only on the
+    over-capacity path, where the model genuinely needs them to choose what to
+    consolidate.
+    """
+
+    ok: bool
+    message: str
+    done: bool = True
+    target: str = ""
+    usage: str = ""
+    entry_count: int = 0
+    entries: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, object]:
+        out: dict[str, object] = {
+            "success": self.ok,
+            "done": self.done,
+            "target": self.target,
+            "usage": self.usage,
+            "entry_count": self.entry_count,
+            "message": self.message,
+        }
+        if self.entries:
+            out["current_entries"] = self.entries
+        return out
+
+
+class CuratedMemory:
+    """The two curated files, their budgets, and the consolidation protocol.
+
+    One instance per process. Stateless apart from the frozen snapshot and the
+    per-turn failure counter, so it can be constructed freely in tests.
+    """
+
+    def __init__(self, root: Path | None = None) -> None:
+        self._root = root or memory_dir()
+        #: Frozen at :meth:`snapshot_for_prompt`'s first call per session, never
+        #: mid-session. See the module docstring's third rule.
+        self._snapshot: dict[str, str] = {}
+        self._snapshot_key: str | None = None
+        self._consolidation_failures = 0
+
+    # ------------------------------------------------------------------ paths
+
+    def path_for(self, target: str) -> Path:
+        """The file backing ``target``. Raises on a target we will not create."""
+        if target == USER_TARGET:
+            return self._root / "USER.md"
+        if not _SAFE_TARGET_RE.match(target):
+            # Not paranoia: owl names are user-chosen and this builds a path
+            # from one. A name with a separator in it would write outside the
+            # memory directory.
+            raise ValueError(
+                f"invalid memory target {target!r} — expected 'user' or an owl name"
+            )
+        return self._root / f"{target}.md"
+
+    def budget_for(self, target: str) -> int:
+        return USER_BUDGET_CHARS if target == USER_TARGET else OWL_BUDGET_CHARS
+
+    # ------------------------------------------------------------------- read
+
+    def entries(self, target: str) -> list[Entry]:
+        """Live entries for ``target``. Absent file is an empty list, not an error."""
+        path = self.path_for(target)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except Exception as exc:  # B5 — a bad read must cost context, not a reply
+            log.memory.error(
+                "[curated] entries: unreadable — treating as empty",
+                exc_info=exc, extra={"_fields": {"path": str(path)}},
+            )
+            return []
+        return [Entry.parse(chunk) for chunk in raw.split(ENTRY_DELIMITER) if chunk.strip()]
+
+    def used_chars(self, target: str) -> int:
+        return len(self._render(self.entries(target)))
+
+    def snapshot_for_prompt(self, target: str, *, session_id: str) -> str:
+        """The text the prompt carries — FROZEN for the life of ``session_id``.
+
+        Re-reads only when the incarnation changes (D08.1 R2Q6), so a write made
+        this turn reaches the prompt on the next ``/new``. Mid-session stability
+        is the whole point: per-turn variation was measured as the single largest
+        source of prompt instability, and it forfeits the prefix cache silently.
+        """
+        if self._snapshot_key != session_id:
+            self._snapshot = {}
+            self._snapshot_key = session_id
+        if target not in self._snapshot:
+            self._snapshot[target] = self._render(self.entries(target))
+            log.memory.debug(
+                "[curated] snapshot: frozen",
+                extra={"_fields": {
+                    "target": target, "session_id": session_id,
+                    "chars": len(self._snapshot[target]),
+                }},
+            )
+        return self._snapshot[target]
+
+    # ------------------------------------------------------------------ write
+
+    def reset_turn(self) -> None:
+        """Clear the per-turn consolidation-failure budget. Call at turn start."""
+        self._consolidation_failures = 0
+
+    def add(self, target: str, text: str, durability: str) -> MemoryResult:
+        """Append an entry, or REFUSE and ask for consolidation.
+
+        Refusing is the mechanism, not a failure mode: it is what makes the
+        budget bind and forgetting the agent's problem.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[curated] add: entry",
+            extra={"_fields": {
+                "target": target, "durability": durability, "chars": len(text),
+            }},
+        )
+        text = text.strip()
+        if not text:
+            return self._failure(target, "Content cannot be empty.")
+        if durability not in DURABILITIES:
+            return self._failure(
+                target,
+                f"durability must be one of {', '.join(DURABILITIES)}. "
+                f"There is deliberately no 'transient' — if this will stop being "
+                f"true, it does not belong in memory.",
+            )
+
+        existing = self.entries(target)
+        if any(e.text == text for e in existing):
+            return self._success(target, "Entry already present — nothing to do.")
+
+        candidate = [*existing, Entry(text=text, durability=durability)]
+        budget = self.budget_for(target)
+        projected = len(self._render(candidate))
+        if projected > budget:
+            # 2. DECISION — at capacity. This is the consolidation protocol.
+            return self._at_capacity(target, text, budget)
+
+        self._write(target, candidate)
+        # 4. EXIT
+        log.memory.info(
+            "[curated] add: stored",
+            extra={"_fields": {
+                "target": target, "durability": durability,
+                "used": projected, "budget": budget,
+            }},
+        )
+        return self._success(
+            target,
+            "Saved. It reaches the system prompt on the next /new — this "
+            "conversation keeps the prompt it started with.",
+        )
+
+    def replace(self, target: str, old_text: str, new_text: str,
+                durability: str) -> MemoryResult:
+        """Swap one entry for another. The verb consolidation actually needs."""
+        log.memory.debug(
+            "[curated] replace: entry",
+            extra={"_fields": {"target": target, "chars": len(new_text)}},
+        )
+        new_text = new_text.strip()
+        if not new_text:
+            return self._failure(target, "Replacement content cannot be empty.")
+        if durability not in DURABILITIES:
+            return self._failure(
+                target, f"durability must be one of {', '.join(DURABILITIES)}.",
+            )
+        existing = self.entries(target)
+        matched = [e for e in existing if old_text.strip() in e.text]
+        if not matched:
+            return self._failure(
+                target,
+                f"No entry matching {old_text[:60]!r}. Use the list below to "
+                f"pick an exact one.",
+                echo=True,
+            )
+        replacement = Entry(text=new_text, durability=durability)
+        updated = [replacement if e is matched[0] else e for e in existing]
+        projected = len(self._render(updated))
+        budget = self.budget_for(target)
+        if projected > budget:
+            return self._at_capacity(target, new_text, budget)
+        self._write(target, updated)
+        log.memory.info(
+            "[curated] replace: stored",
+            extra={"_fields": {"target": target, "used": projected}},
+        )
+        return self._success(target, "Replaced.")
+
+    def remove(self, target: str, text: str) -> MemoryResult:
+        """Drop an entry. Destructive, so it matches on substring and reports."""
+        log.memory.debug("[curated] remove: entry",
+                         extra={"_fields": {"target": target}})
+        existing = self.entries(target)
+        keep = [e for e in existing if text.strip() not in e.text]
+        if len(keep) == len(existing):
+            return self._failure(
+                target, f"No entry matching {text[:60]!r}.", echo=True,
+            )
+        self._write(target, keep)
+        log.memory.info(
+            "[curated] remove: dropped",
+            extra={"_fields": {"target": target, "removed": len(existing) - len(keep)}},
+        )
+        return self._success(target, f"Removed {len(existing) - len(keep)} entry/entries.")
+
+    # -------------------------------------------------------------- internals
+
+    def _render(self, entries: list[Entry]) -> str:
+        return ENTRY_DELIMITER.join(e.rendered() for e in entries)
+
+    def _write(self, target: str, entries: list[Entry]) -> None:
+        path = self.path_for(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write via a temp file in the same directory then replace, so a crash
+        # mid-write cannot leave a truncated profile that the next boot reads as
+        # the user's whole identity.
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(self._render(entries) + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+    def _at_capacity(self, target: str, attempted: str, budget: int) -> MemoryResult:
+        """The refusal that makes the budget mean something.
+
+        Bounded: past ``MAX_CONSOLIDATION_FAILURES_PER_TURN`` consecutive
+        failures the result goes TERMINAL, dropping the retry instruction, so a
+        model that cannot consolidate stops trying and answers the user. A failed
+        memory side effect must never suppress the reply.
+        """
+        self._consolidation_failures += 1
+        used = self.used_chars(target)
+        entries = self.entries(target)
+        if self._consolidation_failures > MAX_CONSOLIDATION_FAILURES_PER_TURN:
+            log.memory.warning(
+                "[curated] at_capacity: giving up for this turn",
+                extra={"_fields": {
+                    "target": target, "used": used, "budget": budget,
+                    "failures": self._consolidation_failures,
+                }},
+            )
+            return MemoryResult(
+                ok=False, done=True, target=target,
+                usage=self._usage(used, budget), entry_count=len(entries),
+                message=(
+                    "Memory is full and consolidation did not succeed this turn. "
+                    "Save skipped — continue with the user's request."
+                ),
+            )
+        log.memory.info(
+            "[curated] at_capacity: asking for consolidation",
+            extra={"_fields": {
+                "target": target, "used": used, "budget": budget,
+                "attempted_chars": len(attempted),
+                "attempt": self._consolidation_failures,
+            }},
+        )
+        return MemoryResult(
+            ok=False, done=False, target=target,
+            usage=self._usage(used, budget), entry_count=len(entries),
+            entries=self._previews(entries),
+            message=(
+                f"Memory is at {used:,}/{budget:,} chars. Adding this "
+                f"({len(attempted)} chars) would exceed the limit. Consolidate "
+                f"now: 'replace' to merge overlapping entries into shorter ones, "
+                f"or 'remove' what is stale or least important (see "
+                f"current_entries), then retry — all in this turn."
+            ),
+        )
+
+    def _success(self, target: str, message: str) -> MemoryResult:
+        # A successful write means consolidation made progress, so the budget
+        # resets — the cap counts CONSECUTIVE failures, not lifetime ones.
+        self._consolidation_failures = 0
+        entries = self.entries(target)
+        used = self.used_chars(target)
+        return MemoryResult(
+            ok=True, done=True, target=target,
+            usage=self._usage(used, self.budget_for(target)),
+            entry_count=len(entries), message=message,
+        )
+
+    def _failure(self, target: str, message: str, *, echo: bool = False) -> MemoryResult:
+        entries = self.entries(target)
+        return MemoryResult(
+            ok=False, done=True, target=target,
+            usage=self._usage(self.used_chars(target), self.budget_for(target)),
+            entry_count=len(entries), message=message,
+            entries=self._previews(entries) if echo else [],
+        )
+
+    @staticmethod
+    def _usage(used: int, budget: int) -> str:
+        pct = min(100, int(used / budget * 100)) if budget else 0
+        return f"{pct}% — {used:,}/{budget:,} chars"
+
+    @staticmethod
+    def _previews(entries: list[Entry], width: int = 90) -> list[str]:
+        return [
+            (e.text[:width] + "…") if len(e.text) > width else e.text
+            for e in entries
+        ]
