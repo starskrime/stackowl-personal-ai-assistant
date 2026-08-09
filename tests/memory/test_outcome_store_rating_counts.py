@@ -7,37 +7,24 @@ from __future__ import annotations
 
 import pytest
 
-from stackowl.db.pool import DbPool
 from stackowl.memory.outcome_store import TaskOutcomeStore
 
-_SCHEMA = """
-    CREATE TABLE task_outcomes (
-        outcome_id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL,
-        session_key TEXT NOT NULL, owl_name TEXT NOT NULL, channel TEXT NOT NULL,
-        success INTEGER NOT NULL, latency_ms REAL NOT NULL,
-        tool_call_count INTEGER NOT NULL DEFAULT 0, failure_class TEXT,
-        quality_score REAL, step_durations TEXT NOT NULL DEFAULT '{}',
-        input_text TEXT NOT NULL DEFAULT '', response_text TEXT NOT NULL DEFAULT '',
-        captured_at REAL NOT NULL, scored_at REAL, owner_id TEXT NOT NULL DEFAULT 'principal-default',
-        tool_sequence TEXT NOT NULL DEFAULT '[]', dna_snapshot TEXT NOT NULL DEFAULT '{}',
-        overclaim_blocked INTEGER NOT NULL DEFAULT 0, recovered_via_tool TEXT,
-        failed_capability TEXT, approach_rating TEXT,
-        retry_lineage_id TEXT, retry_event_count INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(trace_id)
-    )
-"""
-
-
-async def _make_store(tmp_path) -> tuple[DbPool, TaskOutcomeStore]:
-    db = DbPool(tmp_path / "test.db")
-    await db.open()
-    await db.execute(_SCHEMA)
-    return db, TaskOutcomeStore(db)
+# The hand-rolled task_outcomes DDL and the DbPool factory that stood here are
+# gone. Two reasons, and the second is why these tests were RED:
+#
+#   * The copied schema was a second definition of a real table, free to drift
+#     from the migrations that actually build it.
+#   * ``_make_store`` called ``db.open()`` and never closed the pool, so when the
+#     test's event loop went away aiosqlite's worker thread raised "Event loop is
+#     closed" and pytest surfaced it as an unhandled thread exception.
+#
+# ``tmp_db`` (tests/conftest.py) runs the real migrations and closes the pool in
+# a finally, which fixes both at once.
 
 
 @pytest.mark.asyncio
-async def test_counts_only_rated_outcomes_for_the_named_owl(tmp_path) -> None:
-    db, store = await _make_store(tmp_path)
+async def test_counts_only_rated_outcomes_for_the_named_owl(tmp_db) -> None:
+    store = TaskOutcomeStore(tmp_db)
     await store.record(
         trace_id="t1", session_key="s", owl_name="scout", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
@@ -70,10 +57,10 @@ async def test_counts_only_rated_outcomes_for_the_named_owl(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_uncritic_scored_votes_still_count(tmp_path) -> None:
+async def test_uncritic_scored_votes_still_count(tmp_db) -> None:
     """quality_score stays NULL (critic never ran) — the vote must still count,
     unlike list_scored_for_owl which requires quality_score IS NOT NULL."""
-    db, store = await _make_store(tmp_path)
+    store = TaskOutcomeStore(tmp_db)
     await store.record(
         trace_id="t1", session_key="s", owl_name="scout", channel="telegram",
         success=True, latency_ms=1.0, tool_call_count=0, failure_class=None,
@@ -81,7 +68,7 @@ async def test_uncritic_scored_votes_still_count(tmp_path) -> None:
     )
     await store.set_approach_rating(trace_id="t1", rating="negative")
 
-    rows = await db.fetch_all("SELECT quality_score FROM task_outcomes WHERE trace_id = ?", ("t1",))
+    rows = await tmp_db.fetch_all("SELECT quality_score FROM task_outcomes WHERE trace_id = ?", ("t1",))
     assert rows[0]["quality_score"] is None
 
     positive, negative = await store.count_approach_ratings_for_owl("scout")
@@ -89,6 +76,6 @@ async def test_uncritic_scored_votes_still_count(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_rated_outcomes_returns_zero_zero(tmp_path) -> None:
-    _, store = await _make_store(tmp_path)
+async def test_no_rated_outcomes_returns_zero_zero(tmp_db) -> None:
+    store = TaskOutcomeStore(tmp_db)
     assert await store.count_approach_ratings_for_owl("ghost") == (0, 0)
