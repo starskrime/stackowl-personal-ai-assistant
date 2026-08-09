@@ -289,13 +289,11 @@ class MemoryAssembly:
         # the orchestrator subscribes because that is where the EventBus lives.
         #
         # This REPLACES FactExtractionJobHandler, which was registered here and
-        # never enqueued by anything, and which duplicated conversation_miner
-        # (same extractor, same job, over a different source table). The miner is
-        # passed in rather than re-created so the boundary NUDGES the existing
-        # pipeline instead of becoming a second one.
+        # never enqueued by anything. It no longer takes a miner: the
+        # extraction pipeline it used to nudge is retired (D08.1), and what
+        # survives here is the narrative artifact, which was never duplicated.
         rollover_summary_handler = RolloverSummaryHandler(
             db=db,
-            miner=conversation_miner,
             bridge=bridge,
             provider_registry=provider_registry,
         )

@@ -122,8 +122,12 @@ async def _write_transcript(db: DbPool, *, session_id: str = ENDED,
 
 
 def _handler(db: DbPool, miner: object, registry: object) -> RolloverSummaryHandler:
+    # `miner` is accepted and ignored so the many call sites below need no edit.
+    # The handler stopped taking one in D08.1 when the extraction pipeline it
+    # nudged was retired; the narrative artifact it writes is what survives.
+    del miner
     return RolloverSummaryHandler(
-        db=db, miner=miner, bridge=SqliteMemoryBridge(db), provider_registry=registry,
+        db=db, bridge=SqliteMemoryBridge(db), provider_registry=registry,
     )
 
 
@@ -150,33 +154,37 @@ async def test_a_lane_that_said_nothing_costs_nothing(tmp_db: DbPool) -> None:
 # ------------------------------------------------------- the scoping invariant
 
 
-async def test_the_miner_is_scoped_to_the_person_not_the_lane(tmp_db: DbPool) -> None:
-    """mine_session's argument is a source_ref (the OWNER), not a session key.
+async def test_the_work_is_scoped_to_the_person_not_the_lane(tmp_db: DbPool) -> None:
+    """The scoping invariant SURVIVED the miner (D08.1) — only where you observe
+    it moved.
 
-    turn_persist files conversation records under owner_scope_key. Passing the
-    owl-prefixed lane here would mine a source_ref with no rows — succeeding,
-    reporting 0, and never learning anything.
+    It used to be asserted through mine_session's argument, which is a source_ref
+    (the OWNER) rather than a session key: turn_persist files conversation
+    records under owner_scope_key, so passing the owl-prefixed lane would have
+    hit a source_ref with no rows. The extraction pipeline is gone, but the same
+    resolution still decides the task record's owner, so that is where it is
+    checked now. Deleting this with the miner would have dropped live coverage.
     """
     await _write_transcript(tmp_db)
-    miner = FakeMiner()
 
-    await _handler(tmp_db, miner, FakeRegistry(FakeProvider(_notable()))).execute(_job())
+    await _handler(tmp_db, FakeMiner(), FakeRegistry(FakeProvider(_notable()))).execute(_job())
 
-    assert miner.calls == [IDENTITY], (
-        f"must mine the identity, not the lane; mined {miner.calls}"
+    rows = await tmp_db.fetch_all("SELECT owner_id FROM tasks")
+    assert [r["owner_id"] for r in rows] == [IDENTITY], (
+        "must scope to the identity, not the lane"
     )
 
 
 async def test_a_lane_with_no_identity_falls_back_to_the_lane(tmp_db: DbPool) -> None:
-    """A runner lane has no person behind it, and must still be minable."""
+    """A runner lane has no person behind it, and must still be handled."""
     await _write_transcript(tmp_db)
-    miner = FakeMiner()
 
-    await _handler(tmp_db, miner, FakeRegistry(FakeProvider(_notable()))).execute(
+    await _handler(tmp_db, FakeMiner(), FakeRegistry(FakeProvider(_notable()))).execute(
         _job(identity_key=None)
     )
 
-    assert miner.calls == [LANE]
+    rows = await tmp_db.fetch_all("SELECT owner_id FROM tasks")
+    assert [r["owner_id"] for r in rows] == [LANE]
 
 
 # ----------------------------------------------------------------- the artifact
@@ -304,19 +312,15 @@ async def test_the_boundary_leaves_a_durable_task_record(tmp_db: DbPool) -> None
 
 
 async def test_a_provider_failure_fails_the_job_honestly(tmp_db: DbPool) -> None:
-    """It must not report success having written nothing — and the mining that DID
-    happen must still be reported, not thrown away."""
+    """It must not report success having written nothing."""
     await _write_transcript(tmp_db)
-    miner = FakeMiner()
 
     result = await _handler(
-        tmp_db, miner, FakeRegistry(FakeProvider(""), raises=True),
+        tmp_db, FakeMiner(), FakeRegistry(FakeProvider(""), raises=True),
     ).execute(_job())
 
     assert result.success is False
     assert result.error
-    assert miner.calls == [IDENTITY], "the miner ran before the summary and counts"
-    assert result.metadata.get("mined") == 3
 
 
 async def test_a_provider_failure_leaves_the_task_failed_not_running(

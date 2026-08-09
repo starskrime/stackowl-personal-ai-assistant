@@ -1,29 +1,22 @@
 """RolloverSummaryHandler — what a conversation boundary does with memory (D01.7).
 
-WHAT THIS IS NOT. The obvious build here was "extract facts from the ended
-conversation", and StackOwl already had a dormant handler that did exactly that
-(``extraction_handler.py``, registered at boot, never enqueued by anything). Wiring
-it up looked like the cheapest possible answer. It was a DUPLICATE:
-:class:`~stackowl.memory.conversation_miner.ConversationMiner` already extracts
-facts from conversations with the same extractor and semantic dedup, run by the
-DreamWorker, and has produced ~98k facts. Two extractors over one conversation is
-not a feature.
+WHAT IT DOES: writes ONE narrative artifact per ended conversation — what was
+decided, what went wrong.
 
-So the boundary does the two things that were genuinely missing:
+WHAT IT USED TO ALSO DO, and no longer does (D08.1). It nudged
+``ConversationMiner`` at the conversation boundary, so fact extraction got the
+right moment rather than a fixed interval. That leg is GONE with the extraction
+pipeline itself: measured 2026-08-08, that pipeline had produced 88,631 facts of
+which 37.1% mentioned a trace id or ``failure_class`` — the platform's own
+diagnostics stored as durable memory about the user — because the extractor took
+``session_key`` and never consulted it, so every incident-recovery and retry
+conversation was mined as if a human had said it.
 
-1. **Triggers the miner** at the moment a conversation ends, instead of leaving it
-   to a fixed interval that knows nothing about conversations. It is idempotent, so
-   this is a nudge, not a second pipeline.
-2. **Writes ONE narrative artifact** — what was decided, what went wrong. The miner
-   produces atomic facts ABOUT the user and no account of a conversation's
-   decisions or failures. That is the gap.
-
-SCOPING — READ THIS BEFORE CHANGING IT. ``ConversationMiner.mine_session`` does not
-take a session key despite its parameter name: the value is matched against
-``staged_facts.source_ref``, which ``turn_persist`` fills with the OWNER scope
-(``identity_key`` or the lane). Passing the owl-prefixed lane would mine a
-source_ref that has no rows — succeeding, reporting zero, and never learning
-anything. That is why the lane carries ``identity_key`` at all (migration 0096).
+THE NARRATIVE SURVIVES, and that is the point of reading this before deleting
+anything here. The old docstring called it "the part the miner does not produce":
+the miner made atomic facts ABOUT the user and no account of a conversation's
+decisions or failures. Removing the extraction pipeline must not remove the one
+thing that was never duplicated.
 
 COST. Every rolled lane that has a transcript gets one standard-tier call, and the
 model itself decides whether anything was worth keeping (Bakir superseded the
@@ -111,14 +104,12 @@ class RolloverSummaryHandler(JobHandler):
         self,
         *,
         db: DbPool,
-        miner: object,
         bridge: object,
         provider_registry: object,
         summary_tier: str = "standard",
         max_messages: int = _MAX_MESSAGES,
     ) -> None:
         self._db = db
-        self._miner = miner
         self._bridge = bridge
         self._providers = provider_registry
         self._tier = summary_tier
@@ -182,13 +173,8 @@ class RolloverSummaryHandler(JobHandler):
 
         task_id = await self._open_task(job, lane=lane, ended=ended, owner=scope)
 
-        # 3. STEP — nudge the existing miner. It is idempotent; this gives it the
-        # right moment rather than a second pipeline.
-        mined = await self._mine(scope)
-        await self._checkpoint(task_id, owner=scope,
-                               blob=json.dumps({"phase": "mined", "mined": mined}))
-
-        # 3. STEP — the narrative, which is the part the miner does not produce.
+        # 3. STEP — the narrative. Once one of two legs here; now the whole job.
+        mined = 0
         try:
             raw = await self._complete(transcript)
         except Exception as exc:
@@ -266,17 +252,6 @@ class RolloverSummaryHandler(JobHandler):
                                >= self._max_messages}},
         )
         return out
-
-    async def _mine(self, scope: str) -> int:
-        """Nudge the miner. A miner failure must not lose the narrative."""
-        try:
-            return int(await self._miner.mine_session(scope))  # type: ignore[attr-defined]
-        except Exception as exc:
-            log.memory.error(
-                "[memory] rollover_summary._mine: mining failed — continuing to the summary",
-                exc_info=exc, extra={"_fields": {"scope": scope}},
-            )
-            return 0
 
     async def _complete(self, transcript: list[Message]) -> str:
         provider, model = self._providers.get_with_cascade(self._tier)  # type: ignore[attr-defined]
