@@ -7781,9 +7781,10 @@ items:
     stages:
       brainstorm: done             # 26 questions, 7 rounds, 2026-08-08
       architect:  done             # designs/D08.1.md
-      implement:  not_started
+      implement:  partial          # slices 1-4 shipped and live; slice 5 (the
+                                   # removal) inventoried, attempted, reverted
       cleanup:    not_started
-      test:       not_started
+      test:       partial          # 74 tests across curated/tool/prompt
       validate:   not_started
       document:   not_started
     doc: docs/reference-mapping/designs/D08.1.md
@@ -7816,6 +7817,9 @@ items:
     - 'R7Q25 - ACCEPTANCE, corrected by Bakir: ''my numbers was n ot a rule it was a guess. agent may write more or less but definelt not a 1400k perday''. Acceptance must NOT hardcode a rate. It is: both files exist with agent-written content, the assembled prompt demonstrably carries them, and the write rate is bounded by the BUDGET rather than by a number - with the order-of-magnitude collapse from 14,400/day as the evidence the old path is gone.'
     - 'R7Q27 - RE-EXAMINED MID-BRAINSTORM at Bakir''s challenge (''why are we not using semantic store for memories in sqlite?'' / ''but now we are talking about user.md and owl.md''). A fourth design was surfaced that rounds 1-7 had not offered: keep ONE storage engine by marking ~30 facts curated in SQLite, giving that subset the budget, and injecting it - which would preserve semantic search over the curated set too. REJECTED in favour of flat files. The deciding argument is this item''s own gap statement: legible and EDITABLE BY THE USER IN A TEXT EDITOR. Recorded so it is not re-litigated: the store is look-up (model must know to ask, costs a tool call, results vary per query and so cannot live in a cache-stable prompt); the file is always-known.'
     - 'R7Q26 - PLACEMENT (voted, per the standing rule): ~/.stackowl/memory/USER.md and ~/.stackowl/memory/<owl>.md. One directory to look in and to back up; costs changing user_profile.py''s default path, which nothing currently satisfies anyway.'
+    - 'R8Q28 - USER-FACING SURFACES GO TOO. Retiring the write path removes /staged entirely (list/review/approve/reject) and the channel approve-reject buttons (telegram 185 lines, slack 145, discord 114). Asked explicitly because the never-disable-a-feature rule applies: ''delete it'' had been about the 88k facts, not about commands Bakir uses. Answer: all of it - nothing stages any more, so nothing reviews.'
+    - R8Q29 - /memory remember RETARGETS TO USER.md, under the SAME budget as the agent, so it can refuse the user too. One curated surface, one budget, one thing to read.
+    - 'R9Q30 - *** SEARCH MEANS THE CURATED FILES ONLY; THE TRI-STORE GOES. *** Surfaced as a contradiction before executing: with extraction retired (R5Q18), the facts purged (R5Q19) and /memory remember writing to USER.md (R8Q29), NOTHING would ever write committed_facts again - so ''keep search'' (R6Q23) meant keeping MemoryBridge, a LanceDB mirror, FTS5, recall_ranker and the re-embed phase reading a permanently empty table. That is the dead code this work exists to remove. memory(action=''search'') stays and searches USER.md + <owl>.md, which slice 2 already implemented. Cost accepted: no semantic search over memory - a few dozen short lines match fine on substring.'
     findings:
     - MEASURED 2026-08-08 on the live database. This reframed the item from 'add a curated layer' to 'the write path is broken'.
     - 88,631 committed facts, 9.75M chars. Hermes' entire memory budget is 3,575 chars - we are 2,700x larger.
@@ -7826,6 +7830,14 @@ items:
     - 'memory_facts, pellets and fact_rejections tables are all EMPTY: the contradiction detector has never rejected anything, and trust has one real value (86,329 ''self'' vs 102 ''untrusted'').'
     - entity_extractor logged 1,398 'no provider available' failures in a single day, degrading silently.
     - 1,319 facts were embedded with hash-v1-384d, the degraded hash FALLBACK rather than a real model - they are not semantically searchable in any meaningful sense.
+    - 'SLICE 5 INVENTORY, measured 2026-08-09, NOT YET EXECUTED. Attempted and reverted to green in the same session once the true scope was known: deleting the fact subsystem produced 140 mypy errors across 45 files against a baseline of 78 across 15 - it reaches the TUI, parliament, channels, orchestrator, scheduler and CLI. That is a focused refactor, not a tail-end-of-session job, and leaving 45 files broken would have been worse than not starting. The inventory below is the value that came out of the attempt.'
+    - 'DELETE, memory/ (4,430 lines): fact_extractor 306, fact_promoter 366, fact_reinforcer 169, contradiction_detector 256, conversation_miner 413, entity_extractor 201, recall_ranker 119, trust 25, pruner 129, sqlite_bridge 556, bridge 177, dream_worker 611, dream_worker_helpers 722, kuzu_sync_handler 380, lancedb_helpers 334, models 76. Plus scheduler/handlers/dream_worker.py (162).'
+    - 'DELETE, user-facing: commands/staged_command.py + staged_helpers.py, channels/{telegram,slack,discord}/memory_callbacks.py (444 lines total), tui/widgets/memory_review_panel.py.'
+    - 'KEEP - these are NOT fact modules and share the package only by directory: curated, critic_prompt, critic_scorer_handler, json_parser, message_ledger_store, outcome_store, preferences, reflection_prompt, reflection_store, reflection_writer_handler, retry_queue_store, rollover_summary_handler, transcript_store, sqlite_helpers, budget_enforcer.'
+    - 'KEEP - shared infrastructure that the fact subsystem only borrowed: lancedb_adapter (learning/lessons_lance.py holds a 221MB lessons.lance) and kuzu_adapter/kuzu_helpers (owls/evolution.py and pipeline/steps/classify.py query the graph). Deleting either would take the lessons index or entity traversal down with the facts.'
+    - 'REWIRE, 16 files: memory/assembly.py (the wiring hub), startup/orchestrator.py, scheduler/{assembly,base,scheduler}.py, scheduler/handlers/memory_consolidation.py, commands/{assembly,memory_helpers,memory_command}.py, pipeline/{services.py,backends/shared.py,steps/classify.py}, parliament/pellet_generator.py, brief/assemblers.py, tools/agents/sessions_send.py, cli/app.py, audit/retention.py, startup/identity_reload.py, config/settings.py.'
+    - 'TABLES: purge committed_facts (89,031 rows at last count) and drop staged_facts, memory_facts, pellets, fact_rejections plus the always-NULL scope_key column. Drop committed_facts.lance and committed_facts_meta.lance (9MB) but NOT lessons.lance (221MB).'
+    - 'SEQUENCE THAT WORKS, learned from the failed attempt: the modules are deletable in dependency order (fact_reinforcer has 0 importers, recall_ranker 1, entity_extractor 2, fact_extractor 2, contradiction_detector 4, conversation_miner 4, trust 8, fact_promoter 9), but MemoryBridge is the hard part - it reaches 10+ files outside memory/. Do MemoryBridge''s callers FIRST, then the modules, then the tables. Take a DB backup before the data step; one was already taken at ~/.stackowl/backups/pre-memory-removal-20260809-025304.db.'
     changes: []
     notes: null
 
