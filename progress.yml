@@ -7783,11 +7783,11 @@ items:
       architect:  done             # designs/D08.1.md
       implement:  partial          # slices 1-4 shipped and live; slice 5 (the
                                    # removal) inventoried, attempted, reverted
-      cleanup:    not_started
+      cleanup:    done             # ruff 39 / mypy 78 held on every slice
       test:       partial          # 74 tests across curated/tool/prompt
       validate:   partial          # slices 1-4 proven on the live platform;
                                    # a real turn still needed for the prompt check
-      document:   not_started
+      document:   partial          # designs/D08.1.md written; item doc pending
     doc: docs/reference-mapping/designs/D08.1.md
     doc_last_verified: null
     decisions:
@@ -7842,7 +7842,14 @@ items:
     - 'SLICES 1-4 VERIFIED LIVE 2026-08-09 03:17 UTC, on the running platform rather than in tests: ~/.stackowl/memory/{USER.md,secretary.md} created; a permanent write accepted and reported 4% - 56/1,375 chars; an owl write accepted at 2% - 61/2,200; a TRANSIENT write REFUSED with the explanatory message (the stale-date failure, refused at the boundary); both snapshots returned their content. Restart clean, 0 errors. Two real entries were written in the process and left in place because they are true and useful (''prefers root-cause fixes over patches'', ''Telegram replies must stay under 2048 tokens'') - they are plain text and the operator can edit or delete them, which is the point of it being a file.'
     - 'ACCEPTANCE STATUS: 3 of 4 met. Both files exist with written content (yes); the write rate is bounded by the BUDGET rather than a number (yes); the old 14,400/day path is gone (yes, extraction is retired in design and the writer no longer targets the store). Outstanding: the assembled prompt DEMONSTRABLY carrying them, which needs a real turn through the pipeline - deliberately not asserted from the code path, since asserting the code path is exactly how D01.1 shipped a reader with no writer.'
     - 'OBSERVABILITY added 2026-08-09 to unblock the Kuzu/LanceDB question without waiting on the operator: LessonsIndex.search''s exit log promoted from debug to info with n_hits. lessons.lance is 221MB whose write side was visible and read side was not. Cost measured first - ONE caller (pipeline/steps/classify.py:489), once per turn, ~910 turns/24h against 21,632 memory lines already written daily. Takes effect at the next restart.'
-    changes: []
+    changes:
+    - 'slice 1 (2026-08-08) - memory/curated.py: two files, hard budgets (1,375 user / 2,200 owl), durability required and stored, refuse-and-consolidate at capacity bounded per turn, frozen snapshot per incarnation. 34 tests.'
+    - 'slice 2 (2026-08-08) - the EXISTING `memory` tool retargeted: add/replace/remove write the curated files, search/get/forget still read the archive. durability required with no ''transient'' offered. Every write scanned by the skill scanner via a new scan_text() extracted from scan_file() rather than a second pattern list. 16 tests. Fixed 6 reds, two of which were my own unnoticed D10.2 regression.'
+    - slice 3 (2026-08-08) - assemble injects two labelled blocks from a frozen snapshot; user_profile.py DELETED rather than left as a shim. Its test was replaced by one that goes through the real writer - the old one wrote USER.md itself and then asserted the reader found it, which is how D01.1's reader-with-no-writer passed continuously.
+    - slice 4 (2026-08-08) - the nudge (D08.3, absorbed). Rides volatile_turn_context, whose own docstring names it the seam for per-turn facts; it cannot live in the system prompt because D01.1 froze the whole prompt per incarnation. Per-lane, in-process, resets on write; a restart under-nudges, which is the safe direction.
+    - 'slices 1-4 VERIFIED LIVE 2026-08-09: both files created, budgets reported, a transient write REFUSED, snapshots correct, restart clean with 0 errors.'
+    - 'stage A of slice 5 (2026-08-09) - the conversation boundary stops nudging the extractor. RolloverSummaryHandler''s ''READ THIS BEFORE CHANGING IT'' docstring is what stopped this destroying a capability: it did TWO things, and the narrative artifact (''the part the miner does not produce'') was never duplicated and survives. Three tests survived too - they asserted the identity-vs-lane scoping through mine_session''s argument, but that resolution still decides the task record''s owner, so they now assert it against tasks.owner_id rather than being deleted with the miner.'
+    - 'REMAINING on slice 5: the miner and extractor modules, the dream-worker phases, the data purge, then the tri-store and its 10+ callers. Being cut SEAM BY SEAM after a module-list deletion produced 140 errors across 45 files; stage A touched five.'
     notes: null
 
   - id: D08.2
@@ -7886,17 +7893,19 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   partial
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+    - ABSORBED INTO D08.1 by its R6Q24 and delivered there as slice 4 (2026-08-09). With fact extraction retired, the turn-counter nudge is the ONLY thing that will ever prompt a memory write - shipping the files and the tool without it would mean zero writes a day rather than a handful. Same call as pulling D10.2 forward to unblock D09.3.
+    - 'Implemented in memory/curated.py: note_turn/note_write/reset_nudges, NUDGE_INTERVAL_TURNS=10 adopted from the reference platform. Delivered on volatile_turn_context, not the system prompt, because D01.1 froze the whole prompt per incarnation. 6 tests.'
     notes: null
 
   - id: D08.4
@@ -8032,8 +8041,8 @@ items:
       cleanup:    done             # ruff 39 / mypy 78 baselines held exactly
       test:       done             # +13 curator, +17 consolidation, +13 migration,
                                    # +6 brief, +4 manifest, +8 standard regressions
-      validate:   partial          # every mechanism proven on the live catalog;
-                                   # the standard MIGRATION is still running
+      validate:   done             # catalog 437->168 live; migration complete
+                                   # 154/154; conformance numbered:0/166
       document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
     doc: docs/reference-mapping/designs/D09.3.md
     doc_last_verified: null
