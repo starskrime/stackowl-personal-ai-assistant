@@ -7779,16 +7779,53 @@ items:
     blocks: [D08.2, D08.3]
     dedup_target: X4
     stages:
-      brainstorm: not_started
-      architect:  not_started
+      brainstorm: done             # 26 questions, 7 rounds, 2026-08-08
+      architect:  done             # designs/D08.1.md
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: docs/hermes-mapping/designs/D08.1.md
     doc_last_verified: null
-    decisions: []
+    decisions:
+    - 'R1Q1 - THE AGENT WRITES USER.md, in-turn, via a tool. D01.1 shipped the READER without a writer: load_user_profile() runs on every prompt build, ~/.stackowl/USER.md does not exist, and nothing in src/ writes it. The prompt has carried zero curated memory since D01.1 landed.'
+    - 'R1Q2 - ADOPT BOTH FILES, separately gated: USER.md (who the user is) and MEMORY.md (the agent''s own notes). They rot at different rates and must not evict each other.'
+    - 'R1Q3 - HARD CHAR BUDGET, and the AGENT consolidates. Hermes'' model: when full, add REFUSES and tells the model to merge or remove and retry in the same turn, bounded so it cannot loop. Forgetting becomes the agent''s in-turn problem against a visible limit.'
+    - R1Q4 - keep the pipeline, measure recall first. SUPERSEDED by R5Q18 once the content was actually measured.
+    - R2Q5 - SAME TOOL, add a target argument. We already ship `memory` with add/search/get/forget; a second memory tool is the fork X4 forbids.
+    - R2Q6 - the prompt snapshot is bound to session_id (the conversation incarnation), refreshed by /new.
+    - 'R2Q7 - ADOPT HERMES'' NUMBERS AS-IS: 2200 chars for MEMORY.md, 1375 for USER.md. Same precedent as D10.2''s 60-char description cap.'
+    - R2Q8 - USER.md is GLOBAL, MEMORY.md is PER-OWL. The user is the same person to every owl; what an owl learned doing its job is its own. Session lanes are already per-owl (owl:secretary:telegram:dm:...), so this matches the existing shape.
+    - 'R3Q9 - ACCEPT THE STALENESS. Measured and put back to Bakir: the main Telegram lane has had 2 incarnations in its entire life, so a fact written today may not reach the prompt for weeks. Accepted anyway; /new is the refresh and the write confirmation must say so.'
+    - R3Q10 - search spans both files and store; forget requires an explicit target. Retrieval is one question; deletion must say where.
+    - 'R3Q11 - SCAN ON WRITE, reusing the skill security scanner. Built in this item, not deferred to D08.4: this item CREATES the agent-writable prompt-injection surface, so shipping it unscanned would be filing a ticket about a hole we just made.'
+    - 'R3Q12 - Bakir rejected the premise that the 88k facts are a good bootstrap source: ''i do not think 86431 facts is good. i think it is also duplicate and trash there''. MEASURED AND CONFIRMED - see findings.'
+    - 'R4Q13 - the extractor is badly designed. Bakir''s sense of the right rate: ''maybe 2-3 fact per day'', against a measured 14,400/day.'
+    - R4Q14 - STRUCTURAL DURABILITY, not a prose rule. Every entry states permanent / until_changed / transient, and transient is not an accepted value, so a stale date has nowhere to go.
+    - R4Q15 - USER.md STARTS EMPTY. Distilling from the existing store would import the noise this item exists to escape.
+    - R4Q16 - WIDEN D08.1. The curated layer only earns its place if what it replaces stops growing, so the extractor is part of this item, not a follow-up.
+    - 'R5Q17 - ROOT CAUSE: fact_extractor.extract() takes session_key and never consults it. MACHINE_LANE_PREFIXES (''goal-'', ''incident-'') exists and is used in the brief but not here, so every incident-recovery and retry conversation is mined into durable user memory. Confirmed by staged_facts.source_ref values: incident-bf64c33824f9, retry-0b2d9b2d.'
+    - 'R5Q18 - *** RETIRE THE EXTRACTOR ENTIRELY. *** There is no extraction pipeline in Hermes: the agent notices something worth keeping and writes it. Supersedes R1Q4.'
+    - 'R5Q19 - PURGE ALL 88,631+ FACTS. Bakir: ''delete it''. A routine pre-change DB backup is taken, as before every migration; no separate JSONL archive was wanted.'
+    - R5Q20 - durability is REQUIRED and RECORDED IN THE ENTRY, so consolidation can evict until_changed before permanent rather than evicting by age.
+    - R6Q21 - RETIRE OUTRIGHT, SKIP THE INTERIM LANE FILTER. A filter on code being deleted is wasted work. Asked because R5Q17 and R5Q18 contradicted each other.
+    - R6Q22 - 'delete it'. No soft-delete, no cooling-off period.
+    - 'R6Q23 - REMOVE THE WRITE PATH, KEEP SEARCH. Extraction, promotion, reinforcement, contradiction detection and trust scoring go; the store and its hybrid recall stay so `memory` can still look things up. NOTE: retrieval was never the weak link - all 89,031 facts carry real embeddings in SQLite AND a 229MB LanceDB mirror, plus FTS5. Semantic search over a corpus that is 37% telemetry returns telemetry; better vectors cannot fix a bad corpus.'
+    - R6Q24 - PULL D08.3 (memory-write nudges) INTO THIS ITEM. With extraction retired the nudge is the ONLY thing prompting a write, so shipping without it means 0/day rather than a handful. Same call as pulling D10.2 forward for D09.3.
+    - 'R7Q25 - ACCEPTANCE, corrected by Bakir: ''my numbers was n ot a rule it was a guess. agent may write more or less but definelt not a 1400k perday''. Acceptance must NOT hardcode a rate. It is: both files exist with agent-written content, the assembled prompt demonstrably carries them, and the write rate is bounded by the BUDGET rather than by a number - with the order-of-magnitude collapse from 14,400/day as the evidence the old path is gone.'
+    - 'R7Q27 - RE-EXAMINED MID-BRAINSTORM at Bakir''s challenge (''why are we not using semantic store for memories in sqlite?'' / ''but now we are talking about user.md and owl.md''). A fourth design was surfaced that rounds 1-7 had not offered: keep ONE storage engine by marking ~30 facts curated in SQLite, giving that subset the budget, and injecting it - which would preserve semantic search over the curated set too. REJECTED in favour of flat files. The deciding argument is this item''s own gap statement: legible and EDITABLE BY THE USER IN A TEXT EDITOR. Recorded so it is not re-litigated: the store is look-up (model must know to ask, costs a tool call, results vary per query and so cannot live in a cache-stable prompt); the file is always-known.'
+    - 'R7Q26 - PLACEMENT (voted, per the standing rule): ~/.stackowl/memory/USER.md and ~/.stackowl/memory/<owl>.md. One directory to look in and to back up; costs changing user_profile.py''s default path, which nothing currently satisfies anyway.'
+    findings:
+    - MEASURED 2026-08-08 on the live database. This reframed the item from 'add a curated layer' to 'the write path is broken'.
+    - 88,631 committed facts, 9.75M chars. Hermes' entire memory budget is 3,575 chars - we are 2,700x larger.
+    - '37.1% (32,880) mention a trace id or failure_class: internal telemetry stored as durable user memory. 21.0% are about the platform''s own subsystems. 49.1% never reinforced.'
+    - 'The MOST-REINFORCED fact in the whole store is "Today''s date is 2026-07-15" at x157 - three weeks stale, with at least six variants. reinforcement_count measures how often a topic came up, not importance: the rest of the top 12 is news headlines at 115-130 each, including the same story stored twice under two phrasings.'
+    - 'Rate exploded on 2026-08-05 from ~300-600/day to 9,000-14,400/day, exactly tracking ADR-19''s autonomous loops shipping. Cause: no lane filter in the extractor.'
+    - scope_key is NULL on all rows - a column nothing populates.
+    - 'memory_facts, pellets and fact_rejections tables are all EMPTY: the contradiction detector has never rejected anything, and trust has one real value (86,329 ''self'' vs 102 ''untrusted'').'
+    - entity_extractor logged 1,398 'no provider available' failures in a single day, degrading silently.
+    - 1,319 facts were embedded with hash-v1-384d, the degraded hash FALLBACK rather than a real model - they are not semantically searchable in any meaningful sense.
     changes: []
     notes: null
 
