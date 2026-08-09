@@ -193,9 +193,19 @@ class LessonsIndex:
         hits = await self._adapter.search(
             list(vectors[0]), limit=limit, source_filter=source_filter,
         )
-        log.memory.debug(
+        # INFO, not debug, and deliberately so. `lessons.lance` is 221MB and its
+        # WRITE side is visible in the log while its READ side was not — so
+        # whether that index earns its size has been unanswerable, and I have
+        # already once mistaken "logged below the level" for "never retrieved".
+        #
+        # This is the same intervention as ADR-19's autonomic_health section: a
+        # loop nobody can see is a loop nobody maintains. It costs one line per
+        # turn (~910/day measured) against 21,632 memory lines already written
+        # daily, and it is the single number that decides whether the index
+        # stays, shrinks, or is replaced by something simpler.
+        log.memory.info(
             "[learning] index.search: exit",
-            extra={"_fields": {"n_hits": len(hits)}},
+            extra={"_fields": {"n_hits": len(hits), "query_len": len(query)}},
         )
         return hits
 
