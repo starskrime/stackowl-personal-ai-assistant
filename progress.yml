@@ -257,132 +257,73 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  wave: 2
-  item: D02.3
-  stage: brainstorm
-  stage_status: not_started
-  one_line: >
-    WAVE 2 IS 7 OF 8 COMPLETE. D05.1, D05.2, D05.3, D05.5, D05.6 and D05.7 are
-    all 7/7; D05.4 closed as subsumed into D05.2. D05.8 (Tool count) is
-    brainstormed and BLOCKED — not on a decision, on TRAFFIC.
-    ITS PREMISE DID NOT SURVIVE MEASUREMENT: the map says "Hermes ships ~40 by
-    default; StackOwl presents up to 150". Measured — their default set is 54,
-    our configured cap is 40 (the 150 is a pathological backstop), and live goal
-    lanes average 4.0 tools per turn. WE PRESENT FEWER THAN THEY DO. Bakir chose
-    to measure the INTERACTIVE path before deciding rather than close on
-    background-lane data, which is the blind spot D01.3 recorded about itself.
-    Wave 1 stands at 6 of 7 (D01.6 is 6/7 — its BRAINSTORM was never run, recorded
-    as a process_deviation and still needing Bakir's call). Dedup target X2 is
-    RESOLVED, though not the way it was written — read its
-    resolved_2026_08_02_BUT_NOT_AS_WRITTEN before repeating "the budgeter should
-    go", because it did not go. Wave 2 has 4 D05 items left (D05.1, D05.6,
-    D05.7, D05.8).
-    D05.5 CHANGED A SECURITY BOUNDARY by operator decision: PTC went default-DENY
-    (5 tools) to default-ALLOW minus 7 sandbox-escape vectors, and sandboxed code
-    can now call consequential tools UNPROMPTED. Read designs/D05.5.md before
-    touching anything under sandbox/ptc/.
-  read_first: >
-    (1) This block. (2) designs/D05.2.md — three corrections and a fourth finding,
-    all recorded in sequence because the sequence is the lesson. (3) PROCESS.md
-    and DOC_STANDARD.md. (4) The standing rule READ HERMES BEFORE ASKING.
-  THE_LESSON_FROM_D05_2_READ_THIS_BEFORE_D05_3: >
-    FOUR TIMES ON ONE ITEM I DESCRIBED THE TREE FROM THE MAP INSTEAD OF READING
-    IT, and every correction changed the work:
-      1. "Build a toolset system" -> Tool.toolset_group already exists (77
-         declarations across 54 files).
-      2. "Our budgeter drops tools, they become unreachable" -> FALSE. It defers
-         behind tool_search, exactly as Hermes does. That false claim had already
-         driven a decision ("port the bridge") before it was caught.
-      3. "The learning half needs a new store and a migration" -> FALSE.
-         task_outcomes has carried owl_name + tool_sequence on every turn since
-         2026-05-28, with a write gap of ZERO.
-      4. The one that went the other way: reading the CALL SITE found a second,
-         independent defect nobody had named (the budget shrinks as history
-         grows), which no amount of fixing the ordering would have addressed.
-    The item ended at roughly a quarter of its mapped size, plus one defect the
-    map never mentioned. THE MAP IS A HYPOTHESIS. Measure the tree first — and
-    measure the LIVE DB, not the columns you remember (the row counts came from
-    ~/.stackowl/workspace/stackowl.db; ~/.stackowl/stackowl.db is a 0-byte decoy).
-  AND_THE_D02_2_LESSON_UNIT_TESTS_CANNOT_CATCH_AN_UNBOUNDED_LOOP: >
-    I added iteration refunds, ran the budget unit tests and three loop-guard
-    suites, all green, and committed an INFINITE LOOP. The unit tests could not
-    have caught it — they never loop. Only test_enforce_exit_safety, which drives
-    the real provider loop, exposed it, and it exposed it by HANGING rather than
-    failing.
-    Two habits from this: (1) when a change alters a loop's TERMINATION
-    condition, the test that matters is one that actually spins the loop, not one
-    that checks the arithmetic; (2) a hanging test is a failing test — the box's
-    "full pytest hangs" folklore made a real hang look like ordinary slowness.
-  AND_THE_D05_1_LESSON_I_DESTROYED_LIVE_DATA: >
-    My skills migration deleted 419 of 420 skills. Recovered in full, but only
-    because the SQLite cache happened to hold body_text — luck, not design. Two
-    habits to keep: (1) SNAPSHOT before running a destructive migration against
-    live data, every time; (2) a verify that cannot distinguish success from
-    no-op is not a verify — mine asked "does a path with this name exist", which
-    an empty directory satisfies. This item's own design doc had already said
-    "copy, verify, then remove". Writing the principle down did not stop me
-    implementing a check too weak to enforce it.
-  AND_THE_D05_3_LESSON_GREEN_TESTS_CAN_SHIP_AN_INERT_FEATURE: >
-    D05.3 passed 20 tests, held both gates, and was COMPLETELY INERT on this box.
-    The gate fails OPEN on an unregistered capability (correct — a typo must not
-    delete a toolset), and the orchestrator registered the browser capability only
-    inside the branch that CONSTRUCTS the runtime, which the gateway role skips.
-    So the gateway registered nothing and gated nothing. Only restarting and
-    reading the live log showed it. RESTART AND READ THE LOG IS NOT A FORMALITY —
-    it is the only stage that catches "correct, wired, and does nothing here".
-  AND_THE_TESTING_LESSON: >
-    Mutation M1 (disable the memo in execute.py, leave the module alone) SURVIVED
-    the first test suite — 19 green while the platform rebuilt the array every
-    turn. New modules invite module tests, and a module test proves CORRECT, not
-    WIRED. Same gap D01.5 caught. Every item from here gets a test that drives
-    the real call path, and a mutation that proves it discriminates.
-  what_D05_2_shipped:
-    defect_A: "rank_candidates ordered by lexical relevance to request_text -> now by measured per-owl usage from task_outcomes. No migration."
-    defect_B: "the fitted set was recomputed every turn against a fixed_cost that includes the growing history -> now memoized per (session_key, owl, protocol, window, hydrated) in infra/presented_tools.py."
-    kept_deliberately: "fit_items, the window measurement, the tool_search bridge, the guaranteed base set, max_tools. All unchanged."
-    invalidation: "clear_owl wired into owl_build + /owls edit; clear() into the skill toggle — all three beside D01.4's existing prompt invalidation."
-    live_status: "Boots clean (0 ERROR). The acceptance test (cache_audit 'tools array CHANGED') has had NO OPPORTUNITY yet — zero turns since restart. Silence today is no traffic, not success."
-  next_task_in_order:
-    1: "D02.3 (Interrupt / steer / redirect) brainstorm. NOTE: D02.2's refunds touch the steer path (steer_folded), so read that record first — the give-up boundary is shared ground.
-       STILL BLOCKED ON TRAFFIC, unchanged: three items wait on the SAME thing — ordinary interactive use of the platform — and none needs new instrumentation:
-         * D05.2 acceptance: cache_audit should stay silent for a (lane, owl) pair with 2+ turns
-         * D05.3 acceptance: 'capability UNAVAILABLE' should fire once for the browser
-         * D05.8 architect: interactive tools_count distribution vs Hermes' 54 and our 40 cap
-       A handful of normal Telegram messages to one owl settles all three."
-    2: "BEFORE ASKING ANY QUESTION: grep the tree for what already exists. D05.2's four corrections and D05.3's headline finding were all avoidable that way."
-    3: "Wave 2 is D05 entire: 8 items. D05.2/3/4/5 closed; 4 remain (D05.1, D05.6, D05.7, D05.8)."
-    4: "D05.6 note: the items now COMPOUND. D05.3's gating is what made D05.6's dangling references real, and browser_vision is safe only because a D05.3 test caught it. Check what the last item changed before assuming an issue is theoretical."
-    5: "DEBT-37 IS HALF-RESOLVED by D05.7 (fan-out, not thrash). Its residual — median quality falls 0.85 -> 0.10 as tool-call count rises while success stays ~96% — is a DIFFERENT question and still open. DEBT-37 — 46 web_search calls in ONE turn, 91% of long chains are one repeated tool. Loops, not plans. Deliberately kept OUT of D05.5."
-  verify_the_platform_before_you_start:
-    - "./start.sh   # then expect 0 ERROR/CRITICAL in ~/.stackowl/logs/stackowl.jsonl"
-    - "uv run python -m stackowl db migrate   # expect: up to date (version 0106)"
-    - "timeout 600 uv run pytest tests/providers/ -q -p no:randomly  # expect 533 passed"
-    - "timeout 850 uv run pytest tests/pipeline/ -q -p no:randomly   # expect 1089 passed"
-    - "uv run ruff check src/   # expect 46 (DEBT-1). uv run mypy src/ expect 78 (DEBT-8). DIFF; never chase to zero."
-    - "NEVER run two pytest invocations in parallel, and NEVER run tests/tools/ whole — it exceeded 600s and was killed."
-    - "sqlite3 is NOT installed. Query via `uv run python -c 'import sqlite3...'`."
-  git_state:
-    branch: main
-    unpushed: "NONE. Tree clean."
-  what_needs_bakir:
-    - "D01.6's missing brainstorm — retro-record the decisions actually made, or accept it as a documented pre-process exception. It is the ONLY thing between the programme and a clean wave 1."
-    - "DEBT-35 — 92% of the conversation-mining queue is machine incident lanes that can never yield a user fact, and arrivals (25/hr) outpace drain (13.6/hr). Filter, mine differently, or accept ~$15-22/day producing nothing."
-    - "DEBT-36 — the transcripts tool advertises include_tool_calls, a parameter the MODEL can pass that has never been able to do anything."
-    - "The INTERACTIVE half of the D01.3 measurement — a couple of real messages to one owl."
-  the_lessons_this_programme_has_paid_for:
-    - "SILENCE IS NOT SUCCESS. Four times a quiet result was NO OPPORTUNITY rather than health: the D01.3 measurement, the DEBT-32 queue, D01.5's Rule 5, and D01.3's interactive half. Check the denominator before reporting a rate."
-    - "REGISTERED != REACHABLE, four times in three items. A rule that is correct but unreached passes every unit test and does nothing — which is why D01.5 has a test that dies when the validator is unwired but the rule is untouched."
-    - "THE LIVE ANSWER PATH STREAMS, in BOTH providers. Any provider-level test driving create() proves a path production does not take."
-    - "READING THE DDL PROVES A CONSTRAINT EXISTS; ATTEMPTING THE WRITE PROVES IT FIRES. Both D01.5's migration and DEBT-32's Literal turned on that difference."
-    - "WIDENING A DB CONSTRAINT WITHOUT WIDENING ITS READER is a trap only a read-side test catches."
-    - "A TEST THAT MODELS ONLY THE HAPPY PATH makes a broken fix look fixed (DEBT-32's barren sessions)."
-    - "THE EXISTING SUITE IS THE BEST REVIEWER. Three times it rejected a plausible fix whose own new test passed — D01.5's first Rule 5 would have broken every legitimate resume."
-    - "COMMIT BEFORE MUTATING, and verify the restore. Twice a mutation harness left the tree dirty or deleted uncommitted work."
-    - "SCRIPTED TEXT EDITS ARE FOR MECHANICAL SUBSTITUTION, NOT STRUCTURAL INSERTION."
+  wave: 4
+  item: D08.1
+  stage: implement
+  stage_status: "all four closers landed; one acceptance check needs live traffic"
+  one_line: >-
+    Curated two-file memory is LIVE and the 107k-fact extraction pipeline is gone.
+    What remains of the removal moved to D08.2 for one careful orchestrator pass.
+  read_first:
+    - progress.yml                                   # this file — D08.1 changes/decisions
+    - docs/reference-mapping/PROCESS.md              # the method
+    - docs/reference-mapping/designs/D08.1.md        # the design, incl. divergences
 
-# ---------------------------------------------------------------------------
-# WALK ORDER — waves, in sequence
-# ---------------------------------------------------------------------------
+  WHAT_IS_LIVE_NOW: >-
+    ~/.stackowl/memory/USER.md and <owl>.md, hard budgets 1,375 / 2,200 chars, the
+    agent consolidating in-turn when full, durability required with NO 'transient',
+    every write scanned, a frozen prompt snapshot per incarnation, and a turn-counter
+    nudge (D08.3, absorbed). committed_facts and staged_facts are EMPTY; staged_facts
+    is now purely the short-term conversation buffer and is bounded on write.
+
+  THE_ONE_OPEN_ACCEPTANCE_CHECK: >-
+    That the assembled system prompt DEMONSTRABLY carries the two files. Deliberately
+    NOT asserted from the code path: D01.1 shipped load_user_profile() into every
+    prompt build against a file nothing wrote, and its test passed continuously
+    because the test wrote the file itself. Needs a real turn from Bakir.
+
+  THE_LESSON_THAT_COST_THE_MOST_THIS_ARC: >-
+    A DELETION IS NOT LIVE UNTIL THE PROCESS HOLDING THE OLD CODE IS GONE. The
+    extractor modules were deleted from disk and the platform kept mining for
+    another ~18,500 facts (89,031 -> 107,576) because it had been up since the
+    previous day. Restart and verify via the JSONL log, every time.
+
+  AND_THE_LESSON_ABOUT_REMOVING_A_LAYER: >-
+    staged_facts served TWO masters — the dead fact queue AND the live conversation
+    buffer classify reads every turn. Purging it deleted live short-term memory
+    (bounded, self-healing). Before removing a store, ask what ELSE reads it, and ask
+    what BOUNDED it: removing the writers also removed the only thing pruning it,
+    which recreated the unbounded-growth disease one layer down.
+
+  AND_THE_LESSON_ABOUT_TEST_DOUBLES: >-
+    SEVEN instances this arc of a double that had stopped resembling the real thing:
+    a scripted provider that accepted plain dicts where the real one reads
+    message.documents; fixtures carrying a `summary` field removed months earlier;
+    two hand-rolled copies of one table's DDL that had already drifted from each
+    other. Where possible, GENERATE fixtures from the same constants the code uses.
+
+  AND_THE_PATTERN_UNDERNEATH_NEARLY_EVERY_DEFECT: >-
+    A write that happens and an effect that does not. A reader with no writer; an FTS
+    leg that was never wired so archived skills still ranked; 12,200 promotions a day
+    into a store nothing retrieved; a retry_at that added a trigger instead of a
+    delay; a budget enforcer measuring a table that is always zero. Measure the
+    EFFECT, never trust the call.
+
+  NEXT: >-
+    D08.2 (raised P2 -> P1) now carries the MemoryBridge split — a live conversation
+    half vs a dead fact half, 32 files outside memory/ — plus the three channel
+    approve/reject callbacks and, with them, fact_promoter, contradiction_detector,
+    pruner and the DreamWorker's five phases. They travel together because the
+    promoter's last consumers ARE those callbacks, and the callbacks sit in the same
+    orchestrator try-blocks as consent and clarify. Open that block ONCE, carefully,
+    with a consent smoke test after.
+
+  ALSO_WAITING: >-
+    N01 Dreaming (new native `N` namespace, no wave) — Bakir's own idea, not in the
+    reference map. The DreamWorker handler is registered and UNSCHEDULED as its seat.
+    And one measurement: LessonsIndex.search now logs n_hits at INFO, so a day of
+    traffic settles whether the 221MB lessons.lance earns its place.
+
 waves:
   1:
     domains: [D01]

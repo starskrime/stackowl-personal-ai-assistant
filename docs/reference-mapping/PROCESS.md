@@ -232,6 +232,37 @@ Not negotiable, from Bakir's long-standing preferences. The full list is `rules`
 
 ---
 
+## The four failure modes this programme keeps finding
+
+Not a checklist for one item — the shapes that have accounted for nearly every real
+defect found so far. Check for them by default, in code nobody asked you to look at.
+
+**1. A write with no reader, or an actuator wired on only some paths.** `load_user_profile()`
+ran on every prompt build against a file nothing wrote. `_fts_search` lacked the
+not-archived predicate its two sibling read paths had, so archived skills went on
+competing for ranking. `retry_at` was set on every failure and never deferred anything,
+because the due-select `OR`'d it against a `next_run_at` already in the past. In each
+case the write happened and the effect did not. **Measure the effect, never trust the call.**
+
+**2. Test doubles that stopped resembling the real thing.** Seven instances in one arc: a
+scripted provider accepting plain dicts where the real one reads `message.documents`;
+fixtures still carrying a field removed months earlier; two hand-rolled copies of one
+table's DDL that had already drifted from each other. Where you can, **generate fixtures
+from the same constants the code uses**, so a rule change updates them instead of
+silently reddening a file nobody runs.
+
+**3. Two copies of one rule.** The `-N` regex existed in three files. A subcommand list
+lived in a command and its meta test, and drifted four separate times. **One source, and
+have the other ask it.**
+
+**4. No decay.** Anything that only ever appends will reach 100k rows and poison whatever
+reads it — 88,631 facts of which 37% were the platform's own telemetry; 437 skills of
+which 92% were dead weight. And when you remove a writer, **ask what was bounding the
+thing it wrote to**: retiring fact extraction also removed the only thing pruning the
+conversation buffer, recreating the same disease one layer down.
+
+---
+
 ## Known debt is tracked, not ignored
 
 Pre-existing red is not out of scope by default. When we choose not to fix something now, it goes
