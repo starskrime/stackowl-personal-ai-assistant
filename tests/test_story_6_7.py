@@ -1,294 +1,203 @@
-"""Story 6.7 (part A) — /memory remember/forget/export tests.
+"""`/memory` over CURATED memory (was Story 6.7, part A).
 
-The /staged half went with the command in D08.1.
+REWRITTEN, not patched. This file used to test `/memory` against the fact store:
+`remember` staged and promoted a fact, `forget` deleted one by id prefix,
+`search` returned semantic hits, `export` dumped rows to JSON/CSV, and `menu`
+browsed them. That store is gone (D08.1) and the command now operates on the two
+curated files, so every one of those tests was asserting a contract that no
+longer exists.
+
+The `/staged` half of the original file went with that command entirely.
+
+What the command means now: `stats` and `budget` describe how full your profile
+and each owl's notes are, `search` finds entries by substring, `remember` and
+`forget` edit YOUR profile under the same budget the agent lives with, and
+`export` prints the files verbatim.
 """
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import pytest
 
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.registry import CommandRegistry
-from stackowl.commands.response import Action, CommandResponse
-from stackowl.config.test_mode import TestModeGuard, TestModeViolation
-from tests._story_6_7_helpers import (  # noqa: F401 — fixture re-exports
-    EventBus,
-    FakeBridge,
-    FakePromoter,
-    db,
-    make_record,
-    make_settings,
-    make_staged,
-    make_state,
-    no_test_mode_guard,
-)
+from stackowl.memory.curated import USER_TARGET, CuratedMemory
+from tests._story_6_7_helpers import make_state
+
+pytestmark = pytest.mark.asyncio
 
 
-def _reset_registry() -> None:
+@pytest.fixture(autouse=True)
+def _isolated_memory(tmp_path, monkeypatch):
+    """Point every CuratedMemory the command builds at a temp directory."""
+    monkeypatch.setattr(
+        MemoryCommand, "_curated",
+        lambda self: CuratedMemory(root=tmp_path / "memory"),
+    )
     CommandRegistry.reset()
+    return CuratedMemory(root=tmp_path / "memory")
+
+
+def _cmd() -> MemoryCommand:
+    return MemoryCommand()
 
 
 def _text(out: object) -> str:
-    """Unwrap a CommandResponse to its text, or pass through a plain str."""
     return out.text if hasattr(out, "text") else out  # type: ignore[return-value]
 
 
-# ---------------------------------------------------------------------------
-# StagedCommand — list / review / reject / promote
-# ---------------------------------------------------------------------------
-
-# The seven /staged tests that stood here went with the command (D08.1). It
-# listed, reviewed, approved and rejected STAGED facts; extraction is retired,
-# so the queue it reviewed is permanently empty.
+# --------------------------------------------------------------------------- #
+# remember — writes YOUR profile, under the agent's budget
+# --------------------------------------------------------------------------- #
 
 
+async def test_remember_writes_to_the_user_profile(_isolated_memory):
+    out = _text(await _cmd().handle("remember I prefer terse replies", make_state()))
 
-async def test_memory_remember_stages_and_promotes() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    promoter = FakePromoter(success=True)
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=promoter,  # type: ignore[arg-type]
-    )
-    out = await cmd.handle("remember the moon orbits earth", make_state())
-    assert len(bridge.staged) == 1
-    staged = bridge.staged[0]
-    assert staged.content == "the moon orbits earth"
-    assert staged.source_type == "manual"
-    assert staged.confidence == 1.0
-    assert staged.reinforcement_count == 3
-    assert promoter.force_calls == [staged.fact_id]
-    assert "Remembered" in out
+    assert "✓" in out
+    assert [e.text for e in _isolated_memory.entries(USER_TARGET)] == [
+        "I prefer terse replies",
+    ]
 
 
-async def test_memory_forget_calls_delete() -> None:
-    _reset_registry()
-    fid = "forget-id-bbbb-0000-0000-0000-000000000001"
-    bridge = FakeBridge()
-    bridge.seed("staged", make_staged(fact_id=fid))
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=FakePromoter(),  # type: ignore[arg-type]
-    )
-    out = await cmd.handle(f"forget {fid} YES", make_state())
-    assert bridge.delete_calls == [fid]
-    assert "Forgotten" in out
+async def test_remember_defaults_to_permanent(_isolated_memory):
+    """A person writing about themselves is stating something they expect to
+    stay true."""
+    await _cmd().handle("remember I run everything on a Jetson", make_state())
+
+    assert _isolated_memory.entries(USER_TARGET)[0].durability == "permanent"
 
 
-async def test_memory_forget_unknown_prefix_returns_error() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=FakePromoter(),  # type: ignore[arg-type]
-    )
-    out = await cmd.handle("forget nonexistent-prefix YES", make_state())
-    assert "no fact matches" in out.lower()
-    assert bridge.delete_calls == []
+async def test_remember_accepts_until_changed(_isolated_memory):
+    await _cmd().handle("remember --until-changed I use uv, not npm", make_state())
+
+    entry = _isolated_memory.entries(USER_TARGET)[0]
+    assert entry.durability == "until_changed"
+    assert entry.text == "I use uv, not npm"
 
 
-async def test_memory_search_hits_return_actions() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    bridge.recall_results = [make_record(fact_id="rec-1", content="the sky is blue")]
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=FakePromoter(),  # type: ignore[arg-type]
-    )
-    out = await cmd.handle("search sky", make_state())
-    assert isinstance(out, CommandResponse)
-    assert "the sky is blue" in out.text
-    assert out.actions == (
-        Action(label="the sky is blue", command="/memory menu rec-1", destructive=False),
-    )
+async def test_remember_reports_the_budget(_isolated_memory):
+    """The number that actually binds, shown at the moment you spend against it."""
+    out = _text(await _cmd().handle("remember something worth keeping", make_state()))
+
+    assert "chars" in out
 
 
-async def test_memory_menu_shows_fact_and_forget_action() -> None:
-    _reset_registry()
-    fid = "menu-id-cccc-0000-0000-0000-000000000001"
-    bridge = FakeBridge()
-    bridge.seed("staged", make_staged(fact_id=fid, content="menu target fact"))
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=FakePromoter(),  # type: ignore[arg-type]
-    )
-    out = await cmd.handle(f"menu {fid}", make_state())
-    assert isinstance(out, CommandResponse)
-    assert "menu target fact" in out.text
-    assert out.actions == (
-        Action(
-            label=f"Forget {fid[:8]}",
-            command=f"/memory forget {fid} YES",
-            destructive=True,
-        ),
-    )
+async def test_remember_can_refuse_the_user_too(_isolated_memory):
+    """One curated surface, one budget (R8Q29). It refuses you exactly as it
+    refuses the agent — an exemption would mean the agent gets evicted to make
+    room for you, silently."""
+    mem = _isolated_memory
+    i = 0
+    while mem.used_chars(USER_TARGET) < mem.budget_for(USER_TARGET) - 80:
+        mem.add(USER_TARGET, f"Existing entry number {i} about how I work.", "permanent")
+        i += 1
+
+    out = _text(await _cmd().handle("remember " + "x" * 300, make_state()))
+
+    assert "✗" in out
 
 
-async def test_memory_menu_unknown_id_returns_error() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=FakePromoter(),  # type: ignore[arg-type]
-    )
-    out = await cmd.handle("menu nonexistent", make_state())
-    assert "no fact matches" in out.lower()  # type: ignore[union-attr]
+async def test_remember_without_text_shows_usage(_isolated_memory):
+    assert "Usage" in _text(await _cmd().handle("remember   ", make_state()))
 
 
-async def test_memory_export_json_format() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    bridge.seed(
-        "committed",
-        make_staged(content="committed alpha", status="committed"),
-    )
-    bridge.seed(
-        "committed",
-        make_staged(
-            fact_id="fff00000-0000-0000-0000-000000000002",
-            content="committed beta",
-            status="committed",
-        ),
-    )
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-    )
-    out = await cmd.handle("export", make_state())
-    parsed = json.loads(out)
-    assert len(parsed) == 2
-    contents = {r["content"] for r in parsed}
-    assert {"committed alpha", "committed beta"} <= contents
+# --------------------------------------------------------------------------- #
+# forget
+# --------------------------------------------------------------------------- #
 
 
-async def test_memory_export_csv_format() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    bridge.seed(
-        "committed",
-        make_staged(content="csv content", status="committed"),
-    )
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-    )
-    out = await cmd.handle("export --format csv", make_state())
-    lines = out.strip().splitlines()
-    assert lines[0] == "fact_id,content,confidence,committed_at,source_type"
-    assert any("csv content" in line for line in lines[1:])
+async def test_forget_removes_a_matching_entry(_isolated_memory):
+    _isolated_memory.add(USER_TARGET, "Temporary interest in X.", "until_changed")
+
+    out = _text(await _cmd().handle("forget Temporary interest", make_state()))
+
+    assert "✓" in out
+    assert _isolated_memory.entries(USER_TARGET) == []
 
 
-async def test_memory_export_writes_output_file(tmp_path: Path) -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    bridge.seed(
-        "committed",
-        make_staged(content="file payload", status="committed"),
-    )
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-    )
-    out_path = tmp_path / "export.json"
-    out = await cmd.handle(
-        f"export --format json --output {out_path}", make_state()
-    )
-    assert out_path.exists()
-    parsed = json.loads(out_path.read_text(encoding="utf-8"))
-    assert any(r["content"] == "file payload" for r in parsed)
-    assert "Exported 1 facts" in out
+async def test_forget_reports_a_miss(_isolated_memory):
+    _isolated_memory.add(USER_TARGET, "Something.", "permanent")
+
+    out = _text(await _cmd().handle("forget nothing like this", make_state()))
+
+    assert "✗" in out
+    assert len(_isolated_memory.entries(USER_TARGET)) == 1
 
 
-async def test_memory_export_calls_test_mode_guard_for_file_io(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _reset_registry()
-
-    # Re-install the real guard for this single test (overrides autouse fixture).
-    def _real_guard(operation: str) -> None:
-        if TestModeGuard._active:  # type: ignore[attr-defined]
-            raise TestModeViolation(operation)
-
-    monkeypatch.setattr(
-        "stackowl.config.test_mode.TestModeGuard.assert_not_test_mode",
-        classmethod(lambda cls, op: _real_guard(op)),
-    )
-    TestModeGuard.activate()
-    try:
-        bridge = FakeBridge()
-        bridge.seed(
-            "committed",
-            make_staged(content="guarded", status="committed"),
-        )
-        cmd = MemoryCommand(
-            bridge=bridge,
-            settings=make_settings(),
-            db=object(),  # type: ignore[arg-type]
-            event_bus=EventBus(),
-        )
-        out_path = tmp_path / "blocked.json"
-        out = await cmd.handle(
-            f"export --format json --output {out_path}", make_state()
-        )
-        assert "test mode" in out.lower() or "blocked" in out.lower()
-        assert not out_path.exists()
-    finally:
-        TestModeGuard.deactivate()
-    assert TestModeViolation.__name__ == "TestModeViolation"
+async def test_forget_without_text_shows_usage(_isolated_memory):
+    assert "Usage" in _text(await _cmd().handle("forget", make_state()))
 
 
-async def test_memory_remember_empty_text_returns_usage() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-        promoter=FakePromoter(),  # type: ignore[arg-type]
-    )
-    out = await cmd.handle("remember", make_state())
-    assert bridge.staged == []
-    assert "usage" in out.lower() or "remember <text>" in out.lower()
+# --------------------------------------------------------------------------- #
+# stats / budget / search / export
+# --------------------------------------------------------------------------- #
 
 
-async def test_memory_export_invalid_format_returns_error() -> None:
-    _reset_registry()
-    bridge = FakeBridge()
-    cmd = MemoryCommand(
-        bridge=bridge,
-        settings=make_settings(),
-        db=object(),  # type: ignore[arg-type]
-        event_bus=EventBus(),
-    )
-    out = await cmd.handle("export --format xml", make_state())
-    assert "invalid" in out.lower() or "expected json or csv" in out.lower()
+async def test_stats_counts_entries_per_file(_isolated_memory):
+    _isolated_memory.add(USER_TARGET, "About me.", "permanent")
+    _isolated_memory.add("scout", "About my job.", "permanent")
+
+    out = _text(await _cmd().handle("stats", make_state()))
+
+    assert "USER.md" in out
+    assert "scout.md" in out
+
+
+async def test_stats_says_so_when_empty(_isolated_memory):
+    """Better than a confident '0 facts', which implies a pipeline behind it."""
+    assert "empty" in _text(await _cmd().handle("stats", make_state())).lower()
+
+
+async def test_budget_shows_the_limit_that_binds(_isolated_memory):
+    _isolated_memory.add(USER_TARGET, "A thing.", "permanent")
+
+    out = _text(await _cmd().handle("budget", make_state()))
+
+    assert "1,375" in out, "the user profile's hard character budget"
+
+
+async def test_search_finds_an_entry_by_substring(_isolated_memory):
+    _isolated_memory.add(USER_TARGET, "Runs everything on a Jetson.", "permanent")
+
+    out = _text(await _cmd().handle("search jetson", make_state()))
+
+    assert "Jetson" in out
+
+
+async def test_search_reports_a_miss_plainly(_isolated_memory):
+    assert "No curated entries" in _text(await _cmd().handle("search nothing", make_state()))
+
+
+async def test_search_without_a_query_shows_usage(_isolated_memory):
+    assert "Usage" in _text(await _cmd().handle("search", make_state()))
+
+
+async def test_export_prints_the_file_verbatim(_isolated_memory):
+    """Verbatim is the contract: what you read is what the model reads."""
+    _isolated_memory.add(USER_TARGET, "Exact text, unreformatted.", "permanent")
+
+    out = _text(await _cmd().handle("export", make_state()))
+
+    assert "Exact text, unreformatted." in out
+    assert "USER.md" in out
+
+
+async def test_export_says_so_when_empty(_isolated_memory):
+    assert "empty" in _text(await _cmd().handle("export", make_state())).lower()
+
+
+# --------------------------------------------------------------------------- #
+# The surface itself
+# --------------------------------------------------------------------------- #
+
+
+async def test_reindex_and_menu_are_gone(_isolated_memory):
+    """Both operated on the vector index and the fact browser. Neither has
+    anything to work on, and a command that reports on nothing implies a
+    pipeline that still works."""
+    names = {s.name for s in _cmd().meta.subcommands}
+
+    assert "reindex" not in names
+    assert "menu" not in names
+    assert {"stats", "search", "budget", "remember", "forget", "export"} <= names

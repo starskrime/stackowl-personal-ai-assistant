@@ -11,11 +11,12 @@ import pytest
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.metadata import render_usage
 
+# `reindex` went with the vector index over the fact store (D08.1); `menu`
+# browsed facts. Both were removed rather than left reporting on nothing.
 _EXPECTED = {
     "stats",
     "search",
     "budget",
-    "reindex",
     "remember",
     "forget",
     "export",

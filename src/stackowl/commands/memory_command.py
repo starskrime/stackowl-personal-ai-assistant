@@ -16,22 +16,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.commands.base import SlashCommand
-from stackowl.commands.memory_helpers import (
-    collect_stats,
-    do_export,
-    fetch_all_committed_for_reindex,
-    forget_fact,
-    format_budget,
-    format_search_hits,
-    format_stats,
-    parse_export_args,
-    remember_fact,
-)
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
-from stackowl.commands.response import Action, CommandResponse
-from stackowl.commands.staged_helpers import find_staged_by_id, format_review
+from stackowl.commands.response import CommandResponse
 from stackowl.infra.observability import log
+from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.config.settings import Settings
@@ -52,86 +41,68 @@ _MEMORY_META = CommandMeta(
     subcommands=(
         SubCommand(
             name="stats",
-            summary="Show fact counts and storage bytes",
+            summary="Show what is in curated memory, per file",
             description=(
-                "You see how many facts are committed and how much storage they "
-                "occupy. Use it to gauge memory size before pruning or reindexing."
+                "You see how many entries each curated file holds and how full it "
+                "is — your profile and each owl's own working notes."
             ),
             examples=(Example(invocation="/memory stats"),),
         ),
         SubCommand(
             name="search",
-            summary="Find facts by meaning",
+            summary="Find curated entries containing text",
             description=(
-                "You recall committed facts by semantic similarity to your query "
-                "rather than exact text match. Returns the top hits."
+                "You search your profile and the owls' notes for entries containing "
+                "the text. Substring, not semantic: a few dozen short lines do not "
+                "need a vector index."
             ),
-            args=(Arg(name="query", summary="natural-language query"),),
-            examples=(Example(invocation="/memory search where do I live"),),
+            args=(Arg(name="query", summary="text to look for"),),
+            examples=(Example(invocation="/memory search jetson"),),
         ),
         SubCommand(
             name="budget",
-            summary="Show storage used versus the ceiling",
+            summary="Show how full each curated file is",
             description=(
-                "You compare current per-user fact storage against the configured "
-                "ceiling so you know how much room is left."
+                "You see each file's fill against its hard character budget. This is "
+                "the limit that actually binds — when a file is full the agent must "
+                "consolidate before it can add anything."
             ),
             examples=(Example(invocation="/memory budget"),),
         ),
         SubCommand(
-            name="reindex",
-            summary="Push every committed fact to LanceDB",
-            description=(
-                "You rebuild the vector index from all committed facts. Use it after "
-                "an embedding-model change or if semantic search looks stale."
-            ),
-            examples=(Example(invocation="/memory reindex"),),
-        ),
-        SubCommand(
             name="remember",
-            summary="Stage and promote a fact",
+            summary="Write an entry into your profile",
             description=(
-                "You explicitly capture a piece of text as a durable fact, bypassing "
-                "the usual extraction flow."
+                "You add a durable line to USER.md, under the same character budget "
+                "as the agent — so it can refuse you too. Prefix the text with "
+                "--until-changed for something you expect to change."
             ),
-            args=(Arg(name="text", summary="the fact text to store"),),
-            examples=(Example(invocation="/memory remember I prefer terse replies"),),
+            args=(Arg(name="text", summary="what to remember"),),
+            examples=(
+                Example(invocation="/memory remember I prefer terse replies"),
+                Example(invocation="/memory remember --until-changed I use uv, not npm"),
+            ),
         ),
         SubCommand(
             name="forget",
-            summary="Delete a fact by id prefix",
+            summary="Remove an entry from your profile",
             description=(
-                "You remove a committed fact matched by an id prefix. Append YES to "
-                "confirm — without it you only see a confirmation prompt."
+                "You drop the entry containing the given text. The file is plain "
+                "text, so editing it directly does the same job."
             ),
-            args=(
-                Arg(name="fact_id_prefix", summary="leading chars of the fact id"),
-                Arg(name="YES", required=False, summary="confirm the removal"),
-            ),
-            examples=(Example(invocation="/memory forget a1b2 YES"),),
+            args=(Arg(name="text", summary="text from the entry to remove"),),
+            examples=(Example(invocation="/memory forget terse replies"),),
         ),
         SubCommand(
             name="export",
-            summary="Dump committed facts to a file",
+            summary="Print the curated files verbatim",
             description=(
-                "You write all committed facts to disk in JSON or CSV for backup or "
-                "inspection outside the assistant."
-            ),
-            args=(
-                Arg(
-                    name="--format",
-                    required=False,
-                    summary="output format",
-                    choices=("json", "csv"),
-                ),
-                Arg(name="--output", required=False, summary="destination path"),
+                "You see exactly what the model is told about you, byte for byte. "
+                "Verbatim on purpose — reformatting would break the contract that "
+                "what you read is what it reads."
             ),
             examples=(
                 Example(invocation="/memory export"),
-                Example(
-                    invocation="/memory export --format csv --output /tmp/facts.csv",
-                    note="Choose format and path",
-                ),
             ),
         ),
     ),
@@ -190,8 +161,11 @@ class MemoryCommand(SlashCommand):
             "[commands] memory.handle: entry",
             extra={"_fields": {"args_len": len(args), "session": state.session_key}},
         )
-        if self._bridge is None or self._settings is None or self._db is None or self._bus is None:
-            return "✗ /memory: not configured"
+        # NO DEPENDENCY GUARD ANY MORE, and that is the point (D08.1). Every
+        # subcommand now reads or writes two text files; none of them touches
+        # SQLite, LanceDB, Kuzu or the event bus. Refusing to show you your own
+        # profile because a database is unavailable would be exactly the
+        # coupling this item removed.
         stripped = args.strip()
         if not stripped:
             return render_usage("memory", _MEMORY_META)
@@ -207,16 +181,12 @@ class MemoryCommand(SlashCommand):
                 result = await self._search(rest.strip())
             elif sub == "budget":
                 result = await self._budget()
-            elif sub == "reindex":
-                result = await self._reindex()
             elif sub == "remember":
                 result = await self._remember(rest)
             elif sub == "forget":
                 result = await self._forget(rest.strip())
             elif sub == "export":
                 result = await self._export(rest)
-            elif sub == "menu":
-                result = await self._menu(rest.strip())
             else:
                 log.memory.debug(
                     "[commands] memory.handle: decision — unknown subcommand",
@@ -241,136 +211,139 @@ class MemoryCommand(SlashCommand):
 
     # ----- subcommands ---------------------------------------------------------
 
-    async def _stats(self) -> str:
-        log.memory.debug("[commands] memory.stats: entry")
-        stats = await collect_stats(self._db)
-        out = format_stats(stats)
-        log.memory.debug(
-            "[commands] memory.stats: exit",
-            extra={"_fields": dict(stats)},
-        )
+    def _curated(self) -> CuratedMemory:
+        return CuratedMemory()
+
+    def _targets(self) -> list[str]:
+        """`user` plus every owl that has notes. Never raises."""
+        out = [USER_TARGET]
+        try:
+            base = self._curated().path_for(USER_TARGET).parent
+            out += sorted(p.stem for p in base.glob("*.md") if p.name != "USER.md")
+        except Exception as exc:  # B5 — a listing failure costs the owl half only
+            log.memory.warning("[commands] memory: could not list owl notes", exc_info=exc)
         return out
 
-    async def _search(self, query: str) -> str | CommandResponse:
-        log.memory.debug(
-            "[commands] memory.search: entry",
-            extra={"_fields": {"query_len": len(query)}},
-        )
+    async def _stats(self) -> str:
+        """What is actually in curated memory, per file.
+
+        Retargeted in D08.1: this used to count rows in a fact store that no
+        longer has any. Curated memory is what the prompt carries, so it is what
+        a `stats` command should describe.
+        """
+        log.memory.debug("[commands] memory.stats: entry")
+        mem = self._curated()
+        lines = ["Curated memory:"]
+        total = 0
+        for target in self._targets():
+            entries = mem.entries(target)
+            total += len(entries)
+            used, budget = mem.used_chars(target), mem.budget_for(target)
+            pct = int(used / budget * 100) if budget else 0
+            label = "USER.md" if target == USER_TARGET else f"{target}.md"
+            lines.append(f"  {label:<22} {len(entries):>3} entries   {pct:>3}% ({used:,}/{budget:,} chars)")
+        if total == 0:
+            lines.append("  (empty — nothing has been remembered yet)")
+        log.memory.debug("[commands] memory.stats: exit", extra={"_fields": {"entries": total}})
+        return "\n".join(lines)
+
+    async def _search(self, query: str) -> str:
+        """Search curated memory. Substring, not semantic.
+
+        A few dozen short lines do not need BM25 and cosine; scoring them would
+        be precision theatre. The fact store this used to search is empty.
+        """
+        log.memory.debug("[commands] memory.search: entry",
+                         extra={"_fields": {"query_len": len(query)}})
         if not query:
             return "Usage: /memory search <query>"
-        hits = await self._bridge.recall(query, limit=5)
-        out = format_search_hits(hits)
-        log.memory.debug(
-            "[commands] memory.search: exit",
-            extra={"_fields": {"n_hits": len(hits)}},
-        )
+        needle = query.casefold()
+        mem = self._curated()
+        hits = [
+            (target, e.text)
+            for target in self._targets()
+            for e in mem.entries(target)
+            if needle in e.text.casefold()
+        ]
+        log.memory.debug("[commands] memory.search: exit",
+                         extra={"_fields": {"hits": len(hits)}})
         if not hits:
-            return out
-        actions = tuple(
-            Action(
-                label=h.content if len(h.content) <= 40 else h.content[:37] + "...",
-                command=f"/memory menu {h.fact_id}",
-                destructive=False,
-            )
-            for h in hits
+            return f"No curated entries matching {query!r}."
+        return "\n".join(
+            [f"{len(hits)} match(es):"]
+            + [f"  [{t}] {text}" for t, text in hits]
         )
-        return CommandResponse(text=out, actions=actions)
-
-    async def _menu(self, args: str) -> str | CommandResponse:
-        log.memory.debug("[commands] memory.menu: entry", extra={"_fields": {"args_len": len(args)}})
-        prefix = args.split(maxsplit=1)[0] if args else ""
-        if not prefix:
-            return "Usage: /memory menu <fact_id_prefix>"
-        fact = await find_staged_by_id(self._bridge, prefix)
-        if fact is None:
-            log.memory.debug("[commands] memory.menu: no match", extra={"_fields": {"prefix": prefix[:16]}})
-            return f"✗ /memory menu: no fact matches prefix '{prefix}'"
-        text = format_review(fact)
-        actions = (
-            Action(
-                label=f"Forget {fact.fact_id[:8]}",
-                command=f"/memory forget {fact.fact_id} {_CONFIRMATION}",
-                destructive=True,
-            ),
-        )
-        log.memory.debug("[commands] memory.menu: exit", extra={"_fields": {"fact_id": fact.fact_id}})
-        return CommandResponse(text=text, actions=actions)
-
     async def _budget(self) -> str:
+        """How full the two curated files are.
+
+        Retargeted in D08.1, and useful for the first time: it used to report
+        bytes against per_user_ceiling_bytes for a store nothing read. These are
+        the numbers that actually bind — when a file is full the agent must
+        consolidate before it can add anything.
+        """
         log.memory.debug("[commands] memory.budget: entry")
-        ceiling = self._settings.memory.per_user_ceiling_bytes
-        rows = await self._db.fetch_all(
-            "SELECT COALESCE(SUM(length(content)), 0) AS s FROM committed_facts"
-        )
-        usage = int(rows[0]["s"]) if rows else 0
-        out = format_budget(usage, ceiling)
-        log.memory.debug(
-            "[commands] memory.budget: exit",
-            extra={"_fields": {"usage_bytes": usage, "ceiling_bytes": ceiling}},
-        )
-        return out
-
-    async def _reindex(self) -> str:
-        log.memory.info("[commands] memory.reindex: entry")
-        if self._lancedb is None:
-            log.memory.warning(
-                "[commands] memory.reindex: no lancedb adapter configured"
-            )
-            return "✗ /memory reindex: LanceDB adapter not configured"
-        records = await fetch_all_committed_for_reindex(self._db, self._embeddings)
-        if not records:
-            log.memory.info("[commands] memory.reindex: exit — no records")
-            return "No committed facts to reindex (0 written)"
-        written = await self._lancedb.reindex(records)
-        log.memory.info(
-            "[commands] memory.reindex: exit",
-            extra={"_fields": {"written": written}},
-        )
-        return f"✓ Reindexed {written} fact(s) into LanceDB"
-
+        mem = self._curated()
+        lines = []
+        for target in self._targets():
+            used, budget = mem.used_chars(target), mem.budget_for(target)
+            pct = int(used / budget * 100) if budget else 0
+            bar = "#" * (pct // 10) + "." * (10 - pct // 10)
+            label = "USER.md" if target == USER_TARGET else f"{target}.md"
+            lines.append(f"  {label:<22} [{bar}] {pct:>3}%  {used:,}/{budget:,} chars")
+        log.memory.debug("[commands] memory.budget: exit")
+        return "Curated memory budget:\n" + "\n".join(lines)
     async def _remember(self, text: str) -> str:
-        log.memory.debug("[commands] memory.remember: entry", extra={"_fields": {"text_len": len(text)}})
+        """Write an entry to YOUR profile, under the same budget as the agent.
+
+        D08.1 R8Q29: one curated surface, one budget, one thing to read — so this
+        can refuse you exactly as it refuses the agent. Durability defaults to
+        `permanent`: a person writing about themselves is stating something they
+        expect to stay true, and the entry is a line of text they can edit.
+        """
+        log.memory.debug("[commands] memory.remember: entry",
+                         extra={"_fields": {"text_len": len(text)}})
         stripped = text.strip()
         if not stripped:
             return "Usage: /memory remember <text>"
-        if self._promoter is None:
-            log.memory.warning("[commands] memory.remember: no promoter wired")
-            return "✗ /memory remember: promoter not configured"
-        fact_id = await remember_fact(self._bridge, self._promoter, stripped)
-        log.memory.info("[commands] memory.remember: exit", extra={"_fields": {"fact_id": fact_id}})
-        return f"✓ Remembered: {fact_id[:8]}"
-
+        durability = "permanent"
+        if stripped.startswith("--until-changed "):
+            durability, stripped = "until_changed", stripped[len("--until-changed "):].strip()
+        result = self._curated().add(USER_TARGET, stripped, durability)
+        log.memory.info("[commands] memory.remember: exit",
+                        extra={"_fields": {"ok": result.ok, "usage": result.usage}})
+        mark = "✓" if result.ok else "✗"
+        return f"{mark} {result.message} ({result.usage})"
     async def _forget(self, args: str) -> str:
-        log.memory.debug("[commands] memory.forget: entry", extra={"_fields": {"args_len": len(args)}})
-        if not args:
-            return "Usage: /memory forget <fact_id_prefix> [YES]"
-        parts = args.split(maxsplit=1)
-        prefix = parts[0]
-        confirmation = parts[1].strip() if len(parts) > 1 else ""
-        fact = await find_staged_by_id(self._bridge, prefix)
-        if fact is None:
-            log.memory.debug("[commands] memory.forget: no match", extra={"_fields": {"prefix": prefix[:16]}})
-            return f"✗ /memory forget: no fact matches prefix '{prefix}'"
-        if confirmation != _CONFIRMATION:
-            return (
-                f"Forget fact {fact.fact_id[:8]} ('{fact.content[:40]}...')?\n"
-                f"   Type: /memory forget {fact.fact_id} YES to confirm."
-            )
-        await forget_fact(self._bridge, fact.fact_id, actor="user:forget")
-        log.memory.info("[commands] memory.forget: exit", extra={"_fields": {"fact_id": fact.fact_id}})
-        return f"✓ Forgotten: {fact.fact_id}"
-
+        """Remove a curated entry by substring."""
+        log.memory.debug("[commands] memory.forget: entry",
+                         extra={"_fields": {"args_len": len(args)}})
+        text = args.strip()
+        if not text:
+            return "Usage: /memory forget <text from the entry>"
+        result = self._curated().remove(USER_TARGET, text)
+        log.memory.info("[commands] memory.forget: exit",
+                        extra={"_fields": {"ok": result.ok}})
+        mark = "✓" if result.ok else "✗"
+        return f"{mark} {result.message}"
     async def _export(self, args: str) -> str:
-        log.memory.debug("[commands] memory.export: entry", extra={"_fields": {"args_len": len(args)}})
-        fmt, output_path = parse_export_args(args)
-        facts = await self._bridge.list_staged(status="committed")
-        result = await do_export(facts, fmt, output_path)
-        log.memory.info(
-            "[commands] memory.export: exit",
-            extra={"_fields": {"count": len(facts), "format": fmt, "wrote_file": output_path is not None}},
-        )
-        return result
+        """Print the curated files verbatim.
 
+        Verbatim on purpose: the whole point of a file is that what you read is
+        what the model is told. Reformatting would quietly break that.
+        """
+        log.memory.debug("[commands] memory.export: entry",
+                         extra={"_fields": {"args": args[:40]}})
+        mem = self._curated()
+        out = []
+        for target in self._targets():
+            path = mem.path_for(target)
+            if not path.exists():
+                continue
+            out.append(f"--- {path} ---")
+            out.append(path.read_text(encoding="utf-8").rstrip())
+        log.memory.debug("[commands] memory.export: exit",
+                         extra={"_fields": {"files": len(out) // 2}})
+        return "\n".join(out) if out else "Curated memory is empty."
     # ----- factory -------------------------------------------------------------
 
     @classmethod
