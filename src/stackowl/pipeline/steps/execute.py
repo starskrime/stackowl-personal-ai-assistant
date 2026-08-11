@@ -3010,6 +3010,78 @@ async def run(state: PipelineState) -> PipelineState:
             # happened. Recording this as a timeout mislabelled the failure and
             # sent it for an RCA that could never find one.
             raise ToolCallLeakError(state.owl_name)
+    except ToolCallLeakError as exc:
+        # ESCALATE — do not floor. See tests/pipeline/test_conversational_leak_escalates.py.
+        #
+        # Live 2026-08-10: "What is happening in world ?" died three times from
+        # Telegram while "Hey" answered fine. The router had called it
+        # `conversational`, the `_use_tools` gate above therefore gave the turn
+        # zero tools, the model tried to search anyway, and this guard — rightly —
+        # refused to show the raw ACTION: text. Then the turn simply ended.
+        #
+        # The leak is the most precise signal we ever get that the ROUTER was
+        # wrong: the model has just told us this turn needs a tool. Throwing that
+        # away and apologising is the give-up antipattern, not a safety property.
+        #
+        # The anti-spiral protection at `_use_tools` is UNTOUCHED. This is one
+        # evidence-driven re-run, not a standing grant of tools to conversational
+        # turns, and `_run_with_tools` cannot re-enter this plain-stream path, so
+        # it cannot loop. intent_class must move to "standard" with it: while it
+        # reads "conversational", `_turn_context_prefix` tells the model it has NO
+        # capabilities (TOOL_FREE_CLASSES), so escalating without it would hand
+        # the model tools and a prompt denying they exist. The provider `choice`
+        # is deliberately reused rather than re-resolved — re-running the turn is
+        # the fix; changing which model answers it is a separate decision.
+        if tool_registry is not None and tool_registry.all():
+            log.engine.warning(
+                "[pipeline] execute: tool-call leak — escalating to the tool path",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "owl": state.owl_name,
+                    "intent_class": state.intent_class,
+                    "escalated_to": "standard",
+                }},
+            )
+            # Evict the sticky route HERE, because escalating means this turn no
+            # longer floors — and turn_persist.py's evict-on-floor (the actuator
+            # that already handles this) is reached only BY flooring. Without
+            # this, a successful escalation would leave the stale
+            # "conversational" entry alive for its full TTL, so every short
+            # follow-up would leak and escalate again: correct answers, paid for
+            # with a wasted stream every turn. Removing the floor removed what
+            # was triggering the eviction.
+            try:
+                _sticky = getattr(get_services(), "sticky_route_cache", None)
+                if _sticky is not None:
+                    _sticky.evict(state.session_key)
+            except Exception as sticky_exc:  # no-hidden-errors: soft cache, never fatal
+                log.engine.error(
+                    "[pipeline] execute: sticky evict on escalation FAILED",
+                    exc_info=sticky_exc,
+                    extra={"_fields": {"trace_id": state.trace_id}},
+                )
+            try:
+                return await _run_with_tools(
+                    state.evolve(intent_class="standard"), choice, tool_registry,
+                )
+            except Exception as esc_exc:  # no-hidden-errors: fall back to flooring
+                log.engine.error(
+                    "[pipeline] execute: leak escalation FAILED — flooring instead",
+                    exc_info=esc_exc,
+                    extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+                )
+        else:
+            log.engine.warning(
+                "[pipeline] execute: tool-call leak with no tools to escalate to — flooring",
+                extra={"_fields": {"trace_id": state.trace_id, "owl": state.owl_name}},
+            )
+        # chunks was cleared at the raise site: nothing from the leaked stream
+        # may reach the user, only the floored error.
+        return state.evolve(
+            errors=(*state.errors, format_step_error("execute", exc)),
+            step_errors=(*state.step_errors,
+                         StepError(step="execute", exc_type=type(exc).__name__, message=str(exc))),
+        )
     except OwlTimeoutError as exc:
         log.engine.warning(
             "[pipeline] execute: owl timeout",
