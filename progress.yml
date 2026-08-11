@@ -403,6 +403,54 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: INCIDENT-2026-08-10-conversational-turns-died
+    found: 2026-08-10
+    fixed: 2026-08-10
+    commit: f17b7c66
+    map_check: "no mapped item matches — evidence-led, recorded here per PROCESS.md"
+    what: >
+      SIMPLE QUESTIONS FROM TELEGRAM RETURNED NOTHING. "Hey" answered fine;
+      "What is happening in world ?" died twice and "Why?" died once, inside
+      twenty minutes. Reported by the operator mid-session, not by any alarm.
+    what_happened: >
+      The router classified the question as `conversational`. execute.run()'s
+      `_use_tools` gate excludes conversational turns from tools BY DESIGN — the
+      comment there is load-bearing, it exists so a small/weak model cannot spiral
+      in a tool loop. The model tried to search anyway and emitted the call as
+      plain text; the leak guard correctly refused to show the user raw ACTION:
+      text; and then the turn simply ended. persist_turn logged "floored turn —
+      persisting user utterance only (no draft)" and the user got an apology.
+      Four turns, three of them the same question.
+    root_cause: >
+      Not the guard, which is right, and not the router alone. The defect is that
+      a tool-call leak — the single most precise signal available that the router
+      misjudged the turn, since the model has just said it needs a tool — was
+      discarded rather than acted on. A turn we knew how to answer was killed.
+    fix: >
+      The leak now escalates ONCE onto the tool path instead of flooring, with
+      intent_class moved to "standard" (otherwise _turn_context_prefix tells the
+      model it has no capabilities while tools are passed). The anti-spiral gate
+      is untouched — one evidence-driven re-run, not a standing grant. A failed
+      escalation falls back to flooring. 77 tests green; ruff 39 and mypy baselines
+      held.
+    the_thing_worth_remembering: >
+      STICKY ROUTING NEEDED NO CHANGE, and believing otherwise nearly produced a
+      second fix for a working actuator. turn_persist.py ALREADY evicts the sticky
+      route on a floored turn, and the log proved it fires — "Why?" called the
+      router immediately after the floor. But the fix REMOVED the floor, and the
+      eviction was reached only BY flooring, so a successful escalation would have
+      left the stale conversational entry alive for its full 5-minute TTL and every
+      short follow-up would have leaked and escalated again. Right answers, a
+      wasted stream every turn. This is failure mode 4 one layer along: when you
+      remove a writer, ask what was BOUNDING the thing it wrote to — here, what was
+      TRIGGERING the actuator. The escalation path now evicts too.
+    still_open: >
+      The router calling a world-news question "conversational" is untouched. The
+      escalation makes it non-fatal, not rare. Worth a measurement pass once a day
+      of traffic has accumulated: count "escalating to the tool path" against total
+      turns and decide whether the classifier needs work or the gate is simply too
+      blunt.
+
   - id: INCIDENT-2026-08-03-skills-migration
     found: 2026-08-03
     what: "MY OWN D05.1 MIGRATION DELETED 419 OF 420 SKILLS. Fully recovered from the DB; nothing lost."
