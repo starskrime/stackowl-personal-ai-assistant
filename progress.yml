@@ -9788,3 +9788,41 @@ items:
     decisions: []
     changes: []
     notes: null
+  - id: N01
+    title: "Dreaming — the agent reflects on its own life and growth"
+    domain: N
+    verdict: NATIVE
+    track: build
+    priority: P1
+    wave: null        # NATIVE. Waves sequence the PORT; this is not part of it.
+    order: null
+    map_ref: null     # deliberately null — nothing in the reference map covers this
+    gap: >-
+      Bakir, 2026-08-10, verbatim: "DreamWorker should be in platform. because i am
+      not going to create a next chatbot which does no interaction. thats why i am
+      thinking to build jarvis which will dream and rethink about his life, his
+      abilities, his growing, learning, improving and etc things."
+    depends_on: []
+    blocks: []
+    dedup_target: null
+    stages:
+      brainstorm: not_started
+      architect:  not_started
+      implement:  not_started
+      cleanup:    not_started
+      test:       not_started
+      validate:   not_started
+      document:   not_started
+    doc: null
+    doc_last_verified: null
+    decisions:
+    - "THE FIRST ITEM IN THE `N` NAMESPACE. progress.yml held exactly one namespace (D, 111 items, every one a reference-map domain). A native item gets N so it can never be mistaken for a gap against someone else's architecture, and NO WAVE, because waves sequence the port and this is not part of it — it is scheduled on its own merits."
+    - "NOT D09.1. The closest mapped item is 'Background review fork', whose gap is 'learning is not tied to the moment the lesson exists, and does not see the live conversation' — per-turn review with a live conversation in front of it. Dreaming is periodic and reflexive: the agent thinking about ITSELF when nobody is talking to it. Different trigger, different subject."
+    - "IT INHERITS THE DreamWorker SLOT. All five of that handler's phases were fact work and were deleted with the extraction pipeline (D08.1), but the handler, its 30-minute schedule and its checkpoint/resume machinery were built for exactly this shape of work. It is UNSCHEDULED until there is real work, because a job waking every 30 minutes to do nothing produces run records that read as a healthy loop — the failure ADR-19 exists to kill."
+    findings:
+    - "Likely a ROOT-CONCEPT-sized idea rather than one feature: it spans memory (what is worth remembering about itself), skills (what it can do and what it should learn), owl DNA (how it changes), and the scheduler (when it thinks). ADR-19 had that shape and turned one framing into six interventions, so an ADR before items is worth considering at brainstorm time."
+    changes: []
+    notes: >-
+      Recorded 2026-08-10 during D08.1's grilling session. No design work done
+      deliberately: the brainstorm should start from Bakir's own framing above,
+      not from a paraphrase written while another item was still open.

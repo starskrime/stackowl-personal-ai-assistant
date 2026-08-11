@@ -117,7 +117,6 @@ class MemoryAssembly:
         from stackowl.scheduler.base import HandlerRegistry
         from stackowl.scheduler.handlers.dream_worker import (
             register_dream_worker_handler,
-            seed_dream_worker_schedule,
         )
 
         mem = settings.memory
@@ -251,9 +250,16 @@ class MemoryAssembly:
             ann_k=mem.contradiction_ann_k,
             ann_threshold=mem.contradiction_ann_threshold,
         )
-        await seed_dream_worker_schedule(
-            db, interval_minutes=mem.dream_worker_interval_minutes
-        )
+        # NOT SCHEDULED (D08.1 / N01). The handler stays REGISTERED — it is the
+        # seat for N01 "Dreaming", and its checkpoint/resume machinery was built
+        # for exactly that shape of work — but nothing wakes it, because all five
+        # of its phases were fact work and went with the extraction pipeline.
+        #
+        # A job waking every 30 minutes to do nothing is worse than no job: it
+        # writes successful run records that read as a healthy loop, which is the
+        # precise failure ADR-19 exists to kill. Migration 0113 disables the row
+        # that this call used to seed. Re-scheduling is one INSERT when N01 has
+        # its first real phase.
 
         # 7b) RolloverSummaryHandler — the conversation BOUNDARY's memory work
         # (D01.7). Enqueued per boundary by the session.rollover consumer, which
