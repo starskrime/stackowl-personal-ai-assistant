@@ -180,9 +180,6 @@ class WebFetchTool(Tool):
                 success=False, output=output, error=error, duration_ms=duration_ms,
             )
 
-        # Auto-stage as a low-confidence StagedFact for the memory promoter.
-        await self._stage_in_memory(services, url, output, mode)
-
         log.tool.info(
             "web_fetch.execute: exit",
             extra={"_fields": {
@@ -192,29 +189,11 @@ class WebFetchTool(Tool):
         )
         return ToolResult(success=True, output=output, duration_ms=duration_ms)
 
-    async def _stage_in_memory(self, services: Any, url: str, content: str, mode: str) -> None:
-        """Stage the fetched content as a low-confidence webpage fact. Best-effort, never raises."""
-        bridge = services.memory_bridge
-        runtime = services.browser_runtime
-        if bridge is None or runtime is None or not runtime.settings.enable_memory_caching:
-            return
-        if not content.strip():
-            return
-        try:
-            from stackowl.memory.models import StagedFact
-
-            fact = StagedFact(
-                content=content[:8000],
-                source_type="webpage",
-                source_ref=url_path_only(url),
-                confidence=0.4,
-                trust="untrusted",
-            )
-            await bridge.stage(fact)
-        except Exception as exc:
-            # Memory caching is opportunistic; never let it break a fetch.
-            log.tool.debug(
-                "web_fetch.execute: memory stage skipped",
-                exc_info=exc,
-                extra={"_fields": {"url": url_path_only(url), "mode": mode}},
-            )
+    # `_stage_in_memory` REMOVED (D08.1). It staged every fetched page as a
+    # "low-confidence webpage fact" into a store that no longer has a reader
+    # for them — a write with no reader, which is the defect pattern this whole
+    # item has been removing.
+    #
+    # Deliberately NOT retargeted at curated memory: a fetched web page is
+    # exactly the "will stop being true" content the durability rule exists to
+    # keep out, and it would fill a 1,375-character budget in a day.

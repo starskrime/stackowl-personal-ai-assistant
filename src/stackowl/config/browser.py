@@ -58,8 +58,8 @@ class BrowserSettings(BaseModel):
     # --- Proxy ---
     default_proxy: ProxyConfig | None = None
 
-    # --- Memory integration ---
-    enable_memory_caching: bool = True
+    # `enable_memory_caching` REMOVED (D08.1). It gated web_fetch staging fetched
+    # pages as low-confidence facts; that store has no reader for them any more.
     enable_screenshot_captions: bool = False
 
     # --- Inner-LLM browse meta-tool ---

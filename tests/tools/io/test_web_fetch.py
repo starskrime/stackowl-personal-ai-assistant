@@ -36,7 +36,7 @@ def _wire(
     """Wire a stub browser runtime + recording memory bridge, and short-circuit the
     real navigation to return ``(status, html)``. Services are reset on teardown."""
     bridge = _RecordingBridge()
-    runtime = SimpleNamespace(settings=SimpleNamespace(enable_memory_caching=True))
+    runtime = SimpleNamespace(settings=SimpleNamespace())
     services = StepServices(browser_runtime=runtime, memory_bridge=bridge)  # type: ignore[arg-type]
     token = set_services(services)
 
@@ -78,13 +78,20 @@ async def test_non_2xx_is_failure_and_not_staged(
 
 
 @pytest.mark.asyncio
-async def test_2xx_is_success_and_staged(
+async def test_2xx_is_success_and_stages_nothing(
     monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
+    """A successful fetch must NOT write to memory (D08.1).
+
+    web_fetch used to stage every page as a "low-confidence webpage fact". The
+    store has no reader for those any more, so this test was inverted rather
+    than deleted — it now guards that the write stays gone, which is the thing
+    that can regress.
+    """
     bridge = _wire(monkeypatch, request, status=200, html="<html></html>")
 
     result = await WebFetchTool().execute(url="https://example.com/page")
 
     assert result.success is True, result.error
     assert result.output
-    assert len(bridge.staged) == 1
+    assert bridge.staged == []
