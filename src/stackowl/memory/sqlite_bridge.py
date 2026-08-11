@@ -28,6 +28,42 @@ if TYPE_CHECKING:  # pragma: no cover
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
 
 
+#: How many conversation turns to keep per owner scope.
+#:
+#: Derived from ``memory.short_term_window`` — the setting that decides how many
+#: turns are actually READ (``classify._gather_history``, default 6) — rather
+#: than a bare magic number, so raising that setting cannot silently starve the
+#: only reader. The floor keeps a small window from making the buffer uselessly
+#: shallow.
+#:
+#: WHY THIS EXISTS AT ALL. ``staged_facts`` is no longer a fact-staging queue; it
+#: is the short-term conversation buffer, and it is the ONLY thing that survived
+#: the extraction pipeline's removal (D08.1). What used to bound it was mining
+#: consuming rows and promotion moving them into ``committed_facts``, where
+#: MemoryBudgetEnforcer could prune by byte ceiling. Both are gone, and that
+#: enforcer sums a table that is now permanently empty — so it can never fire.
+#: Without this, every turn appends a row forever: the same no-decay disease that
+#: grew the fact store to 107,576 rows, one layer down.
+_TURN_HISTORY_MULTIPLE = 10
+_TURN_HISTORY_FLOOR = 50
+
+
+def _turns_to_keep() -> int:
+    """Turns retained per owner scope. Never raises."""
+    try:
+        from stackowl.config.settings import Settings
+
+        window = int(Settings().memory.short_term_window)
+    except Exception as exc:  # never silent, never fatal
+        log.memory.warning(
+            "[memory] sqlite_bridge: could not read short_term_window — using the floor",
+            exc_info=exc,
+        )
+        return _TURN_HISTORY_FLOOR
+    return max(window * _TURN_HISTORY_MULTIPLE, _TURN_HISTORY_FLOOR)
+
+
+
 class SqliteMemoryBridge(MemoryBridge):
     """Full SQLite-backed :class:`MemoryBridge`.
 
@@ -179,11 +215,48 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         # 3. STEP
         await self.stage(fact)
+        # 3. STEP — bound the buffer IN THE SAME PATH as the insert, so the limit
+        # holds continuously and there is no window where the table is over-size.
+        # Deliberately not a scheduled job: MemoryBudgetEnforcer is still
+        # scheduled today and does nothing, because what it measures is always
+        # zero — an actuator that watches from elsewhere can stop working without
+        # anyone noticing, and this one cannot.
+        trimmed = await self._trim_turns(session_key)
         # 4. EXIT
         log.memory.debug(
             "[memory] sqlite_bridge.store: exit",
-            extra={"_fields": {"fact_id": fact.fact_id, "session_key": session_key}},
+            extra={"_fields": {
+                "fact_id": fact.fact_id, "session_key": session_key,
+                "trimmed": trimmed,
+            }},
         )
+
+    async def _trim_turns(self, session_key: str) -> int:
+        """Drop conversation turns beyond the retention window for one scope.
+
+        Never raises: losing the trim costs disk, losing the turn costs the
+        user's short-term memory, so a failure here must not propagate into the
+        write that just succeeded.
+        """
+        keep = _turns_to_keep()
+        try:
+            return await self._db.execute_returning_rowcount(
+                """DELETE FROM staged_facts
+                    WHERE source_type = 'conversation' AND source_ref = ?
+                      AND fact_id NOT IN (
+                        SELECT fact_id FROM staged_facts
+                         WHERE source_type = 'conversation' AND source_ref = ?
+                         ORDER BY staged_at DESC LIMIT ?
+                      )""",
+                (session_key, session_key, keep),
+            )
+        except Exception as exc:  # B5 — never cost the turn its write
+            log.memory.error(
+                "[memory] sqlite_bridge._trim_turns: trim failed — buffer unbounded "
+                "for this scope until the next successful write",
+                exc_info=exc, extra={"_fields": {"session_key": session_key}},
+            )
+            return 0
 
     # --- knowledge-pipeline contract --------------------------------------------------
 
