@@ -225,7 +225,6 @@ class SchedulerAssembly:
             return await owl_drive_thresholds(db, owl_registry, FAILING_BELOW)
 
         knowledge_prune_handler = KnowledgePruneHandler(
-            pruner=memory_components.pruner,
             curator=SkillCurator(
                 skills_components.store, thresholds=_owl_drive_thresholds,
             ),

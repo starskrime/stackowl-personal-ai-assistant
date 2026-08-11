@@ -7865,6 +7865,8 @@ items:
     - DreamWorker UNSCHEDULED, not deleted (migration 0113). All five phases were fact work; the handler stays registered as the seat for N01 Dreaming.
     - 'web_fetch STOPPED STAGING pages as low-confidence facts (2026-08-10), and enable_memory_caching removed with it. Not retargeted at curated memory: a fetched page is exactly the ''will stop being true'' content the durability rule keeps out. Its test was INVERTED rather than deleted - what can regress is the write coming back.'
     - '/memory RETARGETED at curated memory: stats and budget describe how full USER.md and each owl''s notes are, search finds entries by substring, remember/forget edit the profile under the SAME budget the agent lives with (so it can refuse the user too), export prints the files verbatim. reindex and menu removed - one rebuilt a vector index over an empty store, the other browsed facts. The dependency guard went too: every subcommand now reads or writes two text files and touches no database, so refusing to show someone their own profile because SQLite is unavailable would be the coupling this item removed. 18 rewritten tests.'
+    - knowledge_prune HANDLER now runs the SKILL CURATOR ONLY (2026-08-10). It wrapped MemoryPruner, which pruned committed facts by age and confidence; that store is empty and its writers are retired, so the pruner had nothing to prune. The ADR-19 skill decay half is now the whole job. 349 green in tests/scheduler/.
+    - 'STAGE D STOPPED DELIBERATELY, with the reasoning: fact_promoter''s ONLY remaining live consumers are the three channel approve/reject callbacks, which R8Q4 deferred to D08.2. _phase_promotion needs the promoter, so the DreamWorker cannot lose all five phases until D08.2 lands. Removing two of five now would leave a partially-gutted handler that is harder to reason about than a coherent one - and it is UNSCHEDULED, so none of its phases can run in the meantime. The phases, the promoter, the detector and the pruner should all leave together with the channel callbacks.'
     notes: null
 
   - id: D08.2
@@ -7872,7 +7874,7 @@ items:
     domain: D08
     verdict: MISSING
     track: adopt
-    priority: P2
+    priority: P1
     wave: 4
     order: 23
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d082"
@@ -7891,7 +7893,8 @@ items:
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+    - 'SCOPE ADDED 2026-08-10 by D08.1''s grilling session, and priority raised P2 -> P1: this item now carries the MemoryBridge SPLIT (a live conversation half - store/retrieve/recent_conversation_turns, load-bearing in turn_persist and classify - versus a dead fact half; 32 files outside memory/), the three channel approve/reject callbacks (telegram 185, slack 145, discord 114 lines), and with them fact_promoter, contradiction_detector, pruner and the DreamWorker''s five phases. They travel together because the promoter''s last consumers ARE the callbacks, and the callbacks are wired inside the same orchestrator try-blocks as consent and clarify - that block should be opened ONCE, carefully, with a consent smoke test after.'
     notes: null
 
   - id: D08.3

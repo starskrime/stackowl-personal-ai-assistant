@@ -1,7 +1,13 @@
 """KnowledgePruneHandler — the platform's DECAY pass.
 
-Runs the committed-facts pruner on a schedule (typically weekly). Wraps
-:meth:`MemoryPruner.prune` in the scheduler contract so the operator
+Runs the SKILL curator on a schedule (typically weekly).
+
+WHAT IT USED TO ALSO DO. This handler wrapped MemoryPruner, which pruned
+committed facts by age and confidence. That store was emptied and its writers
+retired in D08.1, so the pruner had nothing left to prune and went with them.
+The skill decay pass — the ADR-19 half — is now the whole job.
+
+The old wrapper text, kept for context: wraps the prune step
 ``/agents`` surface and lifecycle controls work uniformly across all
 background agents.
 
@@ -28,15 +34,13 @@ from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:
-    from stackowl.memory.pruner import MemoryPruner
     from stackowl.skills.lifecycle import SkillCurator
 
 
 class KnowledgePruneHandler(JobHandler):
-    """Wraps :class:`MemoryPruner` as a :class:`JobHandler`."""
+    """Wraps :class:`SkillCurator` as a :class:`JobHandler`."""
 
-    def __init__(self, pruner: MemoryPruner, curator: SkillCurator | None = None) -> None:
-        self._pruner = pruner
+    def __init__(self, curator: SkillCurator | None = None) -> None:
         # Optional so every existing construction site keeps working unchanged;
         # when absent the skill pass is simply skipped (and says so).
         self._curator = curator
@@ -53,31 +57,7 @@ class KnowledgePruneHandler(JobHandler):
         )
         TestModeGuard.assert_not_test_mode("knowledge_prune.execute")
         t0 = time.monotonic()
-        # 2. DECISION
-        log.scheduler.debug(
-            "[scheduler] knowledge_prune.execute: delegating to MemoryPruner",
-            extra={"_fields": {"job_id": job.job_id}},
-        )
-        try:
-            # 3. STEP
-            report = await self._pruner.prune()
-        except Exception as exc:
-            duration_ms = (time.monotonic() - t0) * 1000
-            log.scheduler.error(
-                "[scheduler] knowledge_prune.execute: pruner raised",
-                exc_info=exc,
-                extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
-            )
-            return JobResult(
-                job_id=job.job_id,
-                effect_class="state_change",
-                success=False,
-                output=None,
-                error=str(exc),
-                duration_ms=duration_ms,
-            )
-        # 3. STEP — ADR-19 skill decay. Isolated: a curator failure must never
-        # discard a successful fact prune, and vice versa.
+        # 3. STEP — ADR-19 skill decay, now the whole job.
         curated = await self._run_curator(job)
 
         duration_ms = (time.monotonic() - t0) * 1000
@@ -87,8 +67,6 @@ class KnowledgePruneHandler(JobHandler):
             extra={
                 "_fields": {
                     "job_id": job.job_id,
-                    "pruned": report.pruned_count,
-                    "kept": report.kept_count,
                     "skills_curated": curated,
                     "duration_ms": duration_ms,
                 }
@@ -97,18 +75,11 @@ class KnowledgePruneHandler(JobHandler):
         return JobResult(
             job_id=job.job_id,
             effect_class="state_change",
-            success=not report.errors,
-            output=(
-                f"pruned={report.pruned_count} kept={report.kept_count}"
-                f" skills_curated={curated}"
-            ),
-            error="; ".join(report.errors) if report.errors else None,
+            success=True,
+            output=f"skills_curated={curated}",
+            error=None,
             duration_ms=duration_ms,
-            metadata={
-                "pruned_count": report.pruned_count,
-                "kept_count": report.kept_count,
-                "skills_curated": curated,
-            },
+            metadata={"skills_curated": curated},
         )
 
     async def _run_curator(self, job: Job) -> int:
