@@ -440,6 +440,50 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-2026-08-11-consent-smoke-red
+    found: 2026-08-11
+    status: PARTIALLY FIXED — 1 of 3 repaired, 2 open and diagnosed
+    why_it_matters: >
+      This suite is the GATE on D08.2 slice B, the pass that opens the orchestrator
+      try-block shared by consent, clarify and the three channel approve/reject
+      callbacks. A red gate is not a gate. Found by running the baseline BEFORE
+      designing the slice rather than after breaking something.
+    baseline: "83 passed / 2 failed across 12 consent files (was 82/3)"
+    fixed: >
+      tests/smoke/test_e2_s6_dialog_consent_telegram_smoke.py — the scripted provider
+      passed `session_key` where browser_dialog's schema requires `session_id`
+      (tools/browser/dialog.py:65 requires session_id, action, dialog_id). Failure mode
+      2, a double that stopped resembling the real thing. Worth noting WHAT failed: the
+      consent half this smoke exists to guard was passing all along; the whole test went
+      red on a parameter name.
+    open: >
+      tests/smoke/test_e4_s2_skill_manage_consent_telegram_smoke.py, both tests —
+      "consent prompt never appeared on Telegram".
+    what_was_measured: >
+      NOT a fail-open hole, and that was checked rather than assumed. The log shows
+      "[consent] policy.request: exit" followed by "skill_manage.execute: entry": the
+      policy WAS consulted and audited, and the tool then ran with no Telegram keyboard
+      sent. consent.py's prompt path fails CLOSED (a prompter that raises returns
+      `prompt_error` -> deny), so nothing is bypassing the gate by erroring. skill_manage
+      still declares action_severity="consequential" (skill_manage.py:169), so it has not
+      been silently declassified. Its arguments satisfy the schema, so unlike the dialog
+      test this is not argument drift.
+    the_unresolved_question: >
+      WHICH auto-allow path fired. request() has four: tier_auto, reversible_auto,
+      window_grant, session_batch. The leading hypothesis is `reversible_auto` — ADR-3
+      auto-allows a REVERSIBLE consequential action with undo instead of prompting, and
+      creating a skill is undoable — which would mean the test encodes the pre-ADR-3
+      contract and should assert the undo affordance rather than a keyboard. That is a
+      HYPOTHESIS, not a finding: no `reversible` marker was located in skill_manage.py
+      and the audit `reason` was not captured before this was stopped.
+    do_not: >
+      Do NOT "fix" this by loosening the assertion until the reason is known. If the
+      answer turns out to be tier_auto or a window/batch grant leaking across the two
+      tests, that is a real defect and the test is right.
+    next_step: >
+      Capture the audit row's `reason` for that run — it names the branch outright — then
+      either correct the test to ADR-3's contract or fix the over-broad auto-allow.
+
   - id: INCIDENT-2026-08-10-conversational-turns-died
     found: 2026-08-10
     fixed: 2026-08-10
