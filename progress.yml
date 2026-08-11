@@ -259,8 +259,8 @@ deployment:
 current:
   wave: 4
   item: D08.1
-  stage: implement
-  stage_status: "all four closers landed; the last acceptance check is now INSTRUMENTED and needs exactly one real turn"
+  stage: document
+  stage_status: "ALL FOUR acceptance checks met and proven on live traffic; only the document stage remains"
   one_line: >-
     Curated two-file memory is LIVE and the 107k-fact extraction pipeline is gone.
     What remains of the removal moved to D08.2 for one careful orchestrator pass.
@@ -276,7 +276,20 @@ current:
     nudge (D08.3, absorbed). committed_facts and staged_facts are EMPTY; staged_facts
     is now purely the short-term conversation buffer and is bounded on write.
 
-  THE_ONE_OPEN_ACCEPTANCE_CHECK: >-
+  THE_FOURTH_ACCEPTANCE_CHECK_IS_CLOSED: >-
+    PROVEN ON LIVE TRAFFIC 2026-08-11 (commit 41bd62e4 supplied the evidence line).
+    Five real turns logged "[pipeline] assemble: curated memory in prompt", and one
+    of them is the one that matters: owl=secretary, blocks=2, chars=205 — BOTH
+    curated files in a single assembled prompt. The arithmetic confirms it
+    independently: 92 (USER.md) + 61 (secretary.md) + 52 of block labels = 205
+    exactly. The other four read blocks=1 correctly, because headhunter and
+    english_tutor have genuinely empty notes files (snapshot logged chars=0 for
+    both). So the read path, the per-owl branch and the empty-file branch are all
+    demonstrated, not asserted. Query to re-check at any time:
+      jq -c 'select(.msg | test("curated memory in prompt")) | .fields' ~/.stackowl/logs/stackowl.jsonl
+    D08.1 now has all four acceptance checks met and moves to `document`.
+
+  SUPERSEDED_THE_ONE_OPEN_ACCEPTANCE_CHECK: >-
     That the assembled system prompt DEMONSTRABLY carries the two files. Deliberately
     NOT asserted from the code path: D01.1 shipped load_user_profile() into every
     prompt build against a file nothing wrote, and its test passed continuously
@@ -444,12 +457,23 @@ known_debt:
       wasted stream every turn. This is failure mode 4 one layer along: when you
       remove a writer, ask what was BOUNDING the thing it wrote to — here, what was
       TRIGGERING the actuator. The escalation path now evicts too.
+    live_status: >
+      The QUESTION works again: 04:01:36 UTC, "What is hapaning in the wolrd ?"
+      returned a real answer with both a user AND an assistant row, which is exactly
+      what was missing before. Zero leaks and zero floors since the restart.
+      BUT BE PRECISE ABOUT WHAT THAT PROVES: the router classified it `standard`
+      that time, so the turn went straight to the tool path and the escalation never
+      fired — "escalating to the tool path" has 0 occurrences. The fix is a deployed
+      but UNEXERCISED safety net. That the same question routed `conversational`
+      three times and `standard` once is itself the finding: the classifier is
+      non-deterministic here, which is precisely why the net is worth having.
     still_open: >
       The router calling a world-news question "conversational" is untouched. The
       escalation makes it non-fatal, not rare. Worth a measurement pass once a day
       of traffic has accumulated: count "escalating to the tool path" against total
       turns and decide whether the classifier needs work or the gate is simply too
-      blunt.
+      blunt. Until that line appears at least once in production, the escalation
+      path has NOT been proven live — only in tests.
 
   - id: INCIDENT-2026-08-03-skills-migration
     found: 2026-08-03
