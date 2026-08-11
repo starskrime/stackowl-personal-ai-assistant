@@ -14,8 +14,8 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-07-29
-updated_by: "claude-opus-5 — wave 1 at 6/7 items (D01.2, D01.3, D01.4, D01.5 closed this session); X2 decided; migrations 0104-0106 live; D01.6 brainstorm gap recorded"
+updated: 2026-08-10
+updated_by: "claude-opus-5 — D08.1's fourth acceptance check was unclosable at DEBUG; promoted to INFO and added the assembly-side line (41bd62e4). Platform was 4 commits stale and is restarted. Awaiting one real turn to close D08.1."
 
 program:
   name: "StackOwl ← Hermes"
@@ -260,7 +260,7 @@ current:
   wave: 4
   item: D08.1
   stage: implement
-  stage_status: "all four closers landed; one acceptance check needs live traffic"
+  stage_status: "all four closers landed; the last acceptance check is now INSTRUMENTED and needs exactly one real turn"
   one_line: >-
     Curated two-file memory is LIVE and the 107k-fact extraction pipeline is gone.
     What remains of the removal moved to D08.2 for one careful orchestrator pass.
@@ -280,7 +280,20 @@ current:
     That the assembled system prompt DEMONSTRABLY carries the two files. Deliberately
     NOT asserted from the code path: D01.1 shipped load_user_profile() into every
     prompt build against a file nothing wrote, and its test passed continuously
-    because the test wrote the file itself. Needs a real turn from Bakir.
+    because the test wrote the file itself. Needs a real turn from Bakir — and as of
+    41bd62e4 a real turn will now SHOW it. Until then the check was unclosable for a
+    reason nobody had looked for: its only evidence line sat at DEBUG and production
+    runs at INFO, so it was never waiting on traffic. Close it with
+    `jq -c 'select(.msg | test("curated memory in prompt"))' ~/.stackowl/logs/stackowl.jsonl`
+    — pass is one record per turn carrying blocks=2 and chars>0.
+
+  AND_THE_LESSON_ABOUT_UNFALSIFIABLE_CHECKS: >-
+    An acceptance check is only as real as the evidence it can produce. This one was
+    written correctly — refusing to assert from the code path was the right instinct,
+    learned from D01.1 — but nobody checked that the log line it depended on could
+    actually appear in production. A check that cannot fail and cannot pass is not a
+    check, it is a note. When you write one, run the query that would close it BEFORE
+    you need it, and confirm it returns something.
 
   THE_LESSON_THAT_COST_THE_MOST_THIS_ARC: >-
     A DELETION IS NOT LIVE UNTIL THE PROCESS HOLDING THE OLD CODE IS GONE. The
@@ -7808,7 +7821,17 @@ items:
     - '/memory RETARGETED at curated memory: stats and budget describe how full USER.md and each owl''s notes are, search finds entries by substring, remember/forget edit the profile under the SAME budget the agent lives with (so it can refuse the user too), export prints the files verbatim. reindex and menu removed - one rebuilt a vector index over an empty store, the other browsed facts. The dependency guard went too: every subcommand now reads or writes two text files and touches no database, so refusing to show someone their own profile because SQLite is unavailable would be the coupling this item removed. 18 rewritten tests.'
     - knowledge_prune HANDLER now runs the SKILL CURATOR ONLY (2026-08-10). It wrapped MemoryPruner, which pruned committed facts by age and confidence; that store is empty and its writers are retired, so the pruner had nothing to prune. The ADR-19 skill decay half is now the whole job. 349 green in tests/scheduler/.
     - 'STAGE D STOPPED DELIBERATELY, with the reasoning: fact_promoter''s ONLY remaining live consumers are the three channel approve/reject callbacks, which R8Q4 deferred to D08.2. _phase_promotion needs the promoter, so the DreamWorker cannot lose all five phases until D08.2 lands. Removing two of five now would leave a partially-gutted handler that is harder to reason about than a coherent one - and it is UNSCHEDULED, so none of its phases can run in the meantime. The phases, the promoter, the detector and the pruner should all leave together with the channel callbacks.'
-    notes: null
+    - 'THE FOURTH ACCEPTANCE CHECK WAS UNCLOSABLE, and the reason was a log level (2026-08-10, commit 41bd62e4). It was recorded as "needs a real turn from Bakir"; it was not waiting on the operator at all. Its only evidence line was log.memory.debug("[curated] snapshot: frozen"), and production runs at INFO - a day of traffic held 5,427 INFO and 91 WARNING records and ZERO DEBUG. No volume of live traffic could ever have closed it. Two INFO lines now exist: curated.py''s snapshot log (once per target per incarnation) and a NEW line in assemble.py at the point profile joins the prompt parts, carrying blocks/chars/owl. The second is the one that matters - the snapshot log proves the files were READ, not that the prompt CARRIES them, and that exact distinction is what D01.1 got wrong. Gate: 50 tests green across tests/memory/test_curated.py, test_prompt_carries_curated_memory.py and tests/pipeline/test_assemble_profile.py; ruff clean on both files with the src/ baseline holding at 39; mypy clean. map_check.py found no mapped item, so this is evidence-led work.'
+    - 'AND THE RUNNING PLATFORM WAS FOUR COMMITS STALE while that check sat open - the same lesson this item had already written down. Core had been up since 21:14:12 while 61b27b6a (the conversation-buffer bound, a real fix), 247d74a5, abb08e09 and b4c69b8f all landed after it. Restarted via ./start.sh at 2026-08-10 ~22:5x; boot clean, 265 INFO / 2 WARNING / 0 ERROR, new PIDs 2491983 gateway and 2492071 core. Measured directly against the live files through the real snapshot_for_prompt() before the restart: user=92 chars, secretary=61 chars, both non-empty - so the read path was always sound and only the evidence was missing.'
+    notes: >-
+      Three of four acceptance checks met and unchanged. The fourth - the assembled
+      prompt demonstrably carrying the two files - is now INSTRUMENTED and awaiting
+      exactly one real turn through a channel. There is no CLI that drives a turn
+      (the command surface is start/stop/serve/health/db/... with no chat verb), so
+      this genuinely needs one message from the operator via Telegram. The moment it
+      arrives the check closes with:
+        jq -c 'select(.msg | test("curated memory in prompt"))' ~/.stackowl/logs/stackowl.jsonl
+      Pass = one record per turn with blocks=2 and chars>0.
 
   - id: D08.2
     title: "Memory providers as plugins"
