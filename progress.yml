@@ -259,8 +259,8 @@ deployment:
 current:
   wave: 4
   item: D08.2
-  stage: not_started
-  stage_status: "D08.1 closed 2026-08-11; D08.2 not yet begun — brainstorm is the next gate"
+  stage: brainstorm
+  stage_status: "BLOCKED ON BAKIR — research done and designs/D08.2.md drafted, but the 25 questions are unanswered and Q1 decides two thirds of the item"
   previous_item_closed: >-
     D08.1 CLOSED 2026-08-11. All seven stages done, all four acceptance checks proven on
     live traffic, and designs/D08.1.md closed with its own Verification section RUN rather
@@ -339,6 +339,16 @@ current:
     into a store nothing retrieved; a retry_at that added a trigger instead of a
     delay; a budget enforcer measuring a table that is always zero. Measure the
     EFFECT, never trust the call.
+
+  WHAT_IS_WAITING_FOR_BAKIR: >-
+    D08.2's brainstorm. designs/D08.2.md has the teacher-platform research finished —
+    the MemoryProvider ABC, its lifecycle table, and the two decisions worth stealing
+    (one active external provider, enforced, because tool-schema bloat IS our waist
+    problem; and system_prompt_block() being STATIC with recall split into prefetch(),
+    which is Law 1 arrived at independently). Five questions are drafted with a
+    recommendation each. Q1 is the one that matters: whether external providers are
+    wanted AT ALL, or whether the valuable half is only the MemoryBridge split and the
+    removal. Guessing it builds the wrong two thirds, so it was not guessed.
 
   NEXT: >-
     D08.2 (raised P2 -> P1) now carries the MemoryBridge split — a live conversation
@@ -7945,15 +7955,20 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: blocked          # PREPARED, not run. The teacher-platform research IS
+                                   # done and 5 of the 25 questions are drafted with a
+                                   # recommendation each, in designs/D08.2.md. It cannot
+                                   # advance without Bakir: Q1 asks whether external
+                                   # providers are wanted AT ALL, and guessing wrong
+                                   # there builds the wrong two thirds of the item.
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
-    doc_last_verified: null
+    doc: docs/reference-mapping/designs/D08.2.md
+    doc_last_verified: "2026-08-11, commit 8673301a — status: design, deliberately NOT closed"
     decisions: []
     changes:
     - 'SCOPE ADDED 2026-08-10 by D08.1''s grilling session, and priority raised P2 -> P1: this item now carries the MemoryBridge SPLIT (a live conversation half - store/retrieve/recent_conversation_turns, load-bearing in turn_persist and classify - versus a dead fact half; 32 files outside memory/), the three channel approve/reject callbacks (telegram 185, slack 145, discord 114 lines), and with them fact_promoter, contradiction_detector, pruner and the DreamWorker''s five phases. They travel together because the promoter''s last consumers ARE the callbacks, and the callbacks are wired inside the same orchestrator try-blocks as consent and clarify - that block should be opened ONCE, carefully, with a consent smoke test after.'
