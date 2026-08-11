@@ -14,8 +14,8 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-08-10
-updated_by: "claude-opus-5 — D08.1's fourth acceptance check was unclosable at DEBUG; promoted to INFO and added the assembly-side line (41bd62e4). Platform was 4 commits stale and is restarted. Awaiting one real turn to close D08.1."
+updated: 2026-08-11
+updated_by: "claude-opus-5 — D08.1 CLOSED: all four acceptance checks proven live (blocks=2 chars=205), doc closed with its Verification section run. Also fixed a live incident: conversational turns died on any tool-requiring question; the leak now escalates. Next: D08.2."
 
 program:
   name: "StackOwl ← Hermes"
@@ -258,12 +258,17 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 4
-  item: D08.1
-  stage: document
-  stage_status: "ALL FOUR acceptance checks met and proven on live traffic; only the document stage remains"
+  item: D08.2
+  stage: not_started
+  stage_status: "D08.1 closed 2026-08-11; D08.2 not yet begun — brainstorm is the next gate"
+  previous_item_closed: >-
+    D08.1 CLOSED 2026-08-11. All seven stages done, all four acceptance checks proven on
+    live traffic, and designs/D08.1.md closed with its own Verification section RUN rather
+    than trusted (61 tests, both files present, blocks=2 chars=205 reconciling as 92+61+52,
+    committed_facts at 0 with staged_facts healthy at 42).
   one_line: >-
     Curated two-file memory is LIVE and the 107k-fact extraction pipeline is gone.
-    What remains of the removal moved to D08.2 for one careful orchestrator pass.
+    What remains of the removal is D08.2: one careful orchestrator pass.
   read_first:
     - progress.yml                                   # this file — D08.1 changes/decisions
     - docs/reference-mapping/PROCESS.md              # the method
@@ -408,9 +413,18 @@ documentation:
     - "`Last verified` is a date AND a commit, never 'recently'. If you cannot re-verify, set status `stale` rather than leave a confident lie."
     - "Every Invariant must map to a real test. If it cannot be tested it is a wish — sharpen it or delete it."
   status:
-    written: 4        # D01.1, D01.6, D01.6-baseline, D01.7
-    closed: 1         # D01.6 (amended 2026-07-25 when D01.7 renamed a column it cited)
-    outstanding: 107
+    # MEASURED 2026-08-11 by counting docs/reference-mapping/designs/*.md and their
+    # `Status:` lines, not incremented by hand. The previous values (written 4,
+    # closed 1, outstanding 107) had drifted for weeks against 18 real files — a
+    # hand-maintained counter beside the thing it counts is two copies of one fact,
+    # which is failure mode 3. Recount with:
+    #   ls docs/reference-mapping/designs/*.md | wc -l
+    #   grep -h -o 'Status:\*\* *[a-z]*' docs/reference-mapping/designs/*.md | sort | uniq -c
+    written: 18
+    live: 14          # D01.1 D01.2 D01.4 D01.5 D01.6 D01.7 D02.6 D05.1 D05.2 D05.3 D05.5 D05.6 D05.7 D08.1
+    in_flight: 3      # D01.3 decided, D02.1 investigation, D09.3 building
+    unstamped: 1      # D01.6-baseline carries no Status line
+    outstanding: 94   # 112 items - 18 written
 
 # ---------------------------------------------------------------------------
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
@@ -7807,15 +7821,27 @@ items:
     stages:
       brainstorm: done             # 26 questions, 7 rounds, 2026-08-08
       architect:  done             # designs/D08.1.md
-      implement:  partial          # slices 1-4 shipped and live; slice 5 (the
-                                   # removal) inventoried, attempted, reverted
+      implement:  done             # slices 1-5 shipped and live. The remainder of
+                                   # the removal (MemoryBridge split, the three
+                                   # channel callbacks, promoter/detector/pruner and
+                                   # the DreamWorker phases) is NOT dropped — it moved
+                                   # to D08.2 deliberately, because those pieces must
+                                   # leave together with the callbacks that hold them.
       cleanup:    done             # ruff 39 / mypy 78 held on every slice
-      test:       partial          # 74 tests across curated/tool/prompt
-      validate:   partial          # slices 1-4 proven on the live platform;
-                                   # a real turn still needed for the prompt check
-      document:   partial          # designs/D08.1.md written; item doc pending
+      test:       done             # 61 green across tests/memory/test_curated.py,
+                                   # test_prompt_carries_curated_memory.py and
+                                   # tests/tools/knowledge/test_memory_curated_writes.py
+      validate:   done             # all four acceptance checks proven on live traffic
+                                   # 2026-08-11; check 2 is owl=secretary blocks=2
+                                   # chars=205, reconciling as 92+61+52
+      document:   done             # designs/D08.1.md closed 2026-08-11: front matter
+                                   # stamped, Invariants (I1-I10, each mapped to a real
+                                   # test), Configuration, Observability and Verification
+                                   # added, and the Verification section RUN — all four
+                                   # steps pass. Failure modes rewritten to the standard's
+                                   # detected-by/recovery/user-sees table.
     doc: docs/reference-mapping/designs/D08.1.md
-    doc_last_verified: null
+    doc_last_verified: "2026-08-11, commit 263d64f3"
     decisions:
     - 'R1Q1 - THE AGENT WRITES USER.md, in-turn, via a tool. D01.1 shipped the READER without a writer: load_user_profile() runs on every prompt build, ~/.stackowl/USER.md does not exist, and nothing in src/ writes it. The prompt has carried zero curated memory since D01.1 landed.'
     - 'R1Q2 - ADOPT BOTH FILES, separately gated: USER.md (who the user is) and MEMORY.md (the agent''s own notes). They rot at different rates and must not evict each other.'
