@@ -380,6 +380,18 @@ async def run(state: PipelineState) -> PipelineState:
             if owl_block:
                 blocks.append("My own working notes:\n" + owl_block)
         profile = "\n\n".join(blocks)
+        # D08.1's acceptance check reads off THIS line. It is the only evidence
+        # that the assembled prompt CARRIES the curated files — the snapshot log
+        # proves only that they were read. The distinction is the whole lesson of
+        # D01.1, which shipped a profile loader into every prompt build against a
+        # file nothing wrote, and passed its own test because the test wrote it.
+        log.engine.info(
+            "[pipeline] assemble: curated memory in prompt",
+            extra={"_fields": {
+                "trace_id": state.trace_id, "blocks": len(blocks),
+                "chars": len(profile), "owl": state.owl_name,
+            }},
+        )
     except Exception as exc:  # no-hidden-errors: memory must never cost a reply
         log.engine.error(
             "[pipeline] assemble: curated memory FAILED — continuing without it",

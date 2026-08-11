@@ -251,7 +251,10 @@ class CuratedMemory:
             self._snapshot_key = session_id
         if target not in self._snapshot:
             self._snapshot[target] = self._render(self.entries(target))
-            log.memory.debug(
+            # INFO, not DEBUG: production runs at INFO, so a DEBUG line here is
+            # a line that never exists when it is needed. Fires once per target
+            # per incarnation, so the volume is a handful of records a day.
+            log.memory.info(
                 "[curated] snapshot: frozen",
                 extra={"_fields": {
                     "target": target, "session_id": session_id,
