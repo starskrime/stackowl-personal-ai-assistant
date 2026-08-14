@@ -7,8 +7,6 @@ from stackowl.brief.assemblers import (
     BriefContext,
     BriefSectionAssembler,
     DateAndPrioritiesAssembler,
-    MemoryHighlightsAssembler,
-    PendingStagedFactsAssembler,
 )
 from stackowl.brief.models import BriefSection, MorningBrief
 from stackowl.brief.renderer import BriefRenderer
@@ -20,7 +18,5 @@ __all__ = [
     "BriefSection",
     "BriefSectionAssembler",
     "DateAndPrioritiesAssembler",
-    "MemoryHighlightsAssembler",
     "MorningBrief",
-    "PendingStagedFactsAssembler",
 ]

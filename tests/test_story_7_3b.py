@@ -22,7 +22,6 @@ from stackowl.config.test_mode import TestModeGuard, TestModeViolation
 from stackowl.events.bus import EventBus
 from tests._story_7_3_helpers import (
     StubDb,
-    StubMemory,
     disable_guard,
     make_handler,
     make_job,
@@ -30,19 +29,21 @@ from tests._story_7_3_helpers import (
     make_state,
 )
 
-
 # ---------------------------------------------------------------------------
 # 12–16. MorningBriefHandler orchestration
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_execute_runs_all_four_assemblers(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_execute_runs_every_registered_assembler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two sections since D08.2 (ESC-2) removed the two memory ones: the count
+    is asserted against the handler's OWN list rather than a literal, so the
+    next section added or removed does not make this a change detector."""
     disable_guard(monkeypatch)
     handler = make_handler()
     result = await handler.execute(make_job())
     assert result.success is True
-    assert result.metadata["section_count"] == 4
+    assert result.metadata["section_count"] == len(handler._assemblers)
 
 
 @pytest.mark.asyncio
@@ -50,8 +51,19 @@ async def test_execute_failing_assembler_becomes_error_section(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     disable_guard(monkeypatch)
-    mem = StubMemory(recall_exc=RuntimeError("memory bridge unreachable"))
-    handler = make_handler(mem=mem)
+    # A stub that RAISES, injected directly. This used to ride on
+    # MemoryHighlightsAssembler failing its recall; that assembler was removed in
+    # D08.2 (ESC-2), and the behaviour under test — one broken section must not
+    # fail the whole brief — is not about memory at all. Injecting makes it
+    # independent of which real sections happen to exist.
+    class _ExplodingAssembler:
+        key = "exploding"
+
+        async def assemble(self, ctx: object) -> object:
+            raise RuntimeError("memory bridge unreachable")
+
+    handler = make_handler()
+    handler._assemblers.append(_ExplodingAssembler())  # type: ignore[arg-type]
     result = await handler.execute(make_job())
     assert result.success is True  # whole brief still succeeds
     assert "section_error:memory bridge unreachable" in (result.output or "")
@@ -87,7 +99,7 @@ async def test_execute_emits_morning_brief_rendered_event(
     assert payload["status"] == "undeliverable"
     assert payload["per_channel"] == {}
     assert payload["undeliverable"] == []
-    assert payload["section_count"] == 4
+    assert payload["section_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -115,7 +127,7 @@ async def test_execute_returns_job_result_with_section_count(
     disable_guard(monkeypatch)
     handler = make_handler()
     result = await handler.execute(make_job())
-    assert result.metadata.get("section_count") == 4
+    assert result.metadata.get("section_count") == 2
     assert result.metadata.get("delivery_channels") == ["telegram"]
     assert isinstance(result.metadata.get("rendered_len"), int)
 
@@ -149,8 +161,6 @@ def test_brief_settings_defaults() -> None:
     assert s.channels == ["telegram"]
     for key in (
         "date_and_priorities",
-        "memory_highlights",
-        "pending_staged",
         "agent_status",
     ):
         assert s.sections[key] is True
@@ -162,18 +172,20 @@ async def test_section_omitted_when_setting_false(monkeypatch: pytest.MonkeyPatc
     settings = make_settings(
         sections={
             "date_and_priorities": True,
-            "memory_highlights": False,  # explicitly disabled
-            "pending_staged": True,
-            "agent_status": True,
+            # agent_status is the example now: the two memory sections it used to
+            # use were removed in D08.2 (ESC-2). The behaviour under test — a
+            # section toggled off is omitted from the render — is unchanged.
+            "agent_status": False,  # explicitly disabled
         }
     )
     handler = make_handler(settings=settings)
     result = await handler.execute(make_job())
     # Disabled section never appears in rendered output
-    assert "MEMORY_HIGHLIGHTS" not in (result.output or "")
-    # Other sections still present
+    assert "AGENT_STATUS" not in (result.output or "")
+    # ...and the one still enabled does. Only two sections remain since D08.2
+    # removed the memory pair, so the disabled example and the still-present
+    # control must be different sections — they used to be able to overlap.
     assert "DATE_AND_PRIORITIES" in (result.output or "")
-    assert "AGENT_STATUS" in (result.output or "")
 
 
 # ---------------------------------------------------------------------------

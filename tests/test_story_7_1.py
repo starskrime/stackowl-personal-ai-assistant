@@ -7,6 +7,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -141,8 +142,7 @@ class TestHandlerNames:
         assert ToolPruningHandler().handler_name == "tool_pruning"
 
     def test_knowledge_prune_handler_name(self) -> None:
-        h = KnowledgePruneHandler(pruner=_FakePruner())  # type: ignore[arg-type]
-        assert h.handler_name == "knowledge_prune"
+        assert KnowledgePruneHandler().handler_name == "knowledge_prune"
 
 
 # ---------------------------------------------------------------------------
@@ -230,23 +230,34 @@ class TestHandlerExecution:
         result = await ToolPruningHandler().execute(_job("tool_pruning"))
         assert result.success is True
 
-    async def test_knowledge_prune_proxies_to_pruner(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_knowledge_prune_runs_the_skill_curator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """D08.1 (b4c69b8f) made skill decay the WHOLE job.
+
+        This test used to assert the handler proxied to MemoryPruner and
+        reported pruned_count/kept_count. That capability was removed
+        deliberately — the pruner pruned committed facts, and that store has
+        been empty with no writers since migration 0112 — but the test was not
+        updated, so it had been red ever since with a TypeError on a parameter
+        that no longer exists. Repointed at what the job actually does rather
+        than deleted, so the behaviour keeps its coverage.
+        """
         _disable_test_mode_guard(monkeypatch)
-        pruner = _FakePruner(pruned=4, kept=12)
-        handler = KnowledgePruneHandler(pruner=pruner)  # type: ignore[arg-type]
+
+        class _FakeCurator:
+            async def run(self) -> Any:
+                return SimpleNamespace(changed=7)
+
+        handler = KnowledgePruneHandler(curator=_FakeCurator())  # type: ignore[arg-type]
         result = await handler.execute(_job("knowledge_prune"))
         assert result.success is True
-        # ADR-19 added a second decay pass to this job. Asserting on the
-        # pruner's OWN keys rather than on whole-dict equality: the exact-match
-        # form was a change detector that fails whenever the job reports
-        # anything new, which says nothing about whether the pruner was proxied
-        # correctly — the thing this test is named for.
-        assert result.metadata["pruned_count"] == 4
-        assert result.metadata["kept_count"] == 12
-        # No curator wired here, so the skill pass must be a reported no-op
-        # rather than silently absent.
+        assert result.metadata["skills_curated"] == 7
+
+    async def test_knowledge_prune_without_a_curator_reports_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No curator wired must be a REPORTED no-op, not a silent one."""
+        _disable_test_mode_guard(monkeypatch)
+        result = await KnowledgePruneHandler().execute(_job("knowledge_prune"))
+        assert result.success is True
         assert result.metadata["skills_curated"] == 0
-        assert result.output is not None and "pruned=4" in result.output
 
 
 # ---------------------------------------------------------------------------

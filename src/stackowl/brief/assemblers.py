@@ -9,8 +9,6 @@ crashes the whole brief — failures become inline error sections.
 Sections (in default render order):
 
 * :class:`DateAndPrioritiesAssembler`  — ``date_and_priorities``
-* :class:`MemoryHighlightsAssembler`   — ``memory_highlights``
-* :class:`PendingStagedFactsAssembler` — ``pending_staged``
 * :class:`AgentStatusAssembler`        — ``agent_status``
 """
 
@@ -32,7 +30,6 @@ from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.db.pool import DbPool
-    from stackowl.memory.bridge import MemoryBridge
     from stackowl.scheduler.scheduler import JobScheduler
     from stackowl.skills.store import SkillIndexStore
 
@@ -141,87 +138,9 @@ class DateAndPrioritiesAssembler:
 # ---------------------------------------------------------------------------
 
 
-class MemoryHighlightsAssembler:
-    """Second section — top committed facts from the last 24h."""
-
-    key: str = "memory_highlights"
-
-    def __init__(self, memory_bridge: MemoryBridge) -> None:
-        self._bridge = memory_bridge
-
-    async def assemble(self, ctx: BriefContext) -> BriefSection:
-        # 1. ENTRY
-        log.scheduler.debug(
-            "[brief] memory_highlights.assemble: entry",
-            extra={"_fields": {"job_id": ctx.job_id, "limit": _MAX_HIGHLIGHTS}},
-        )
-        candidates = await self._bridge.recall(_RECALL_QUERY, limit=_RECALL_CANDIDATE_POOL)
-        cutoff = datetime.now(UTC) - _HIGHLIGHT_WINDOW
-        records = [r for r in candidates if r.committed_at >= cutoff][:_MAX_HIGHLIGHTS]
-
-        # 2. DECISION — zero records → surface an explicit "nothing notable" item
-        # (F-79) rather than silently omitting the section, and log at INFO (not
-        # debug) so a chronically-empty highlights section is visible without
-        # enabling debug logging. The section RENDERS (omitted=False).
-        if not records:
-            log.scheduler.info(
-                "[brief] memory_highlights.assemble: no records — surfacing "
-                "'nothing notable'",
-                extra={"_fields": {"job_id": ctx.job_id, "query": _RECALL_QUERY}},
-            )
-            return BriefSection(
-                key=self.key,
-                title=self.key,
-                items=[_NOTHING_NOTABLE_ITEM],
-                omitted=False,
-            )
-
-        items = [r.content[:_MAX_HIGHLIGHT_CHARS] for r in records[:_MAX_HIGHLIGHTS]]
-        # 4. EXIT
-        log.scheduler.debug(
-            "[brief] memory_highlights.assemble: exit",
-            extra={"_fields": {"item_count": len(items)}},
-        )
-        return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
-
-
 # ---------------------------------------------------------------------------
 # 3. Pending staged-fact backlog
 # ---------------------------------------------------------------------------
-
-
-class PendingStagedFactsAssembler:
-    """Third section — count of staged facts awaiting promotion."""
-
-    key: str = "pending_staged"
-
-    def __init__(self, memory_bridge: MemoryBridge) -> None:
-        self._bridge = memory_bridge
-
-    async def assemble(self, ctx: BriefContext) -> BriefSection:
-        # 1. ENTRY
-        log.scheduler.debug(
-            "[brief] pending_staged.assemble: entry",
-            extra={"_fields": {"job_id": ctx.job_id}},
-        )
-        staged = await self._bridge.list_staged(status="staged")
-        count = len(staged)
-
-        # 2. DECISION — zero pending → omitted
-        if count == 0:
-            log.scheduler.debug(
-                "[brief] pending_staged.assemble: no staged facts — omitting",
-                extra={"_fields": {"job_id": ctx.job_id}},
-            )
-            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
-
-        items = [f"staged_count:{count}"]
-        # 4. EXIT
-        log.scheduler.debug(
-            "[brief] pending_staged.assemble: exit",
-            extra={"_fields": {"count": count}},
-        )
-        return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
 
 
 # ---------------------------------------------------------------------------

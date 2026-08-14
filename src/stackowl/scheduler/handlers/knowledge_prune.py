@@ -93,8 +93,9 @@ class KnowledgePruneHandler(JobHandler):
         try:
             report = await self._curator.run()
         except Exception as exc:
-            # Logged, not raised: the fact prune above already succeeded and
-            # must not be reported as a failure because skill decay tripped.
+            # Logged, not raised: skill decay is the whole job now (D08.1), but a
+            # curator that trips is still a degraded pass rather than a failed
+            # one — the job reports 0 curated instead of erroring the schedule.
             log.scheduler.error(
                 "[scheduler] knowledge_prune: skill curator raised — fact prune stands",
                 exc_info=exc,

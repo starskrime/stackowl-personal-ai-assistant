@@ -615,8 +615,6 @@ class BriefSettings(BaseModel):
     sections: dict[str, bool] = Field(
         default_factory=lambda: {
             "date_and_priorities": True,
-            "memory_highlights": True,
-            "pending_staged": True,
             "agent_status": True,
         },
         description="Per-section toggle map keyed by assembler key.",

@@ -21,7 +21,6 @@ from stackowl.brief.assemblers import (
     BriefContext,
     BriefSectionAssembler,
     DateAndPrioritiesAssembler,
-    MemoryHighlightsAssembler,
     now_iso_utc,
 )
 from stackowl.brief.models import BriefSection, MorningBrief
@@ -75,10 +74,6 @@ class CheckInHandler(JobHandler):
         self._assemblers: list[BriefSectionAssembler] = []
         if db is not None:
             self._assemblers.append(DateAndPrioritiesAssembler(db=db))
-        if memory_bridge is not None:
-            self._assemblers.append(
-                MemoryHighlightsAssembler(memory_bridge=memory_bridge)
-            )
         self._renderer = BriefRenderer()
 
     @property

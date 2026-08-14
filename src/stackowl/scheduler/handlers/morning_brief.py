@@ -29,8 +29,6 @@ from stackowl.brief.assemblers import (
     BriefContext,
     BriefSectionAssembler,
     DateAndPrioritiesAssembler,
-    MemoryHighlightsAssembler,
-    PendingStagedFactsAssembler,
     now_iso_utc,
 )
 from stackowl.brief.models import BriefSection, MorningBrief
@@ -109,8 +107,6 @@ class MorningBriefHandler(JobHandler):
         self._renderer = BriefRenderer()
         self._assemblers: list[BriefSectionAssembler] = [
             DateAndPrioritiesAssembler(db=db),
-            MemoryHighlightsAssembler(memory_bridge=memory_bridge),
-            PendingStagedFactsAssembler(memory_bridge=memory_bridge),
             AgentStatusAssembler(scheduler=scheduler),
         ]
         # ADR-19 — the platform reporting on its own autonomic loops. Optional
