@@ -442,6 +442,33 @@ current:
       Do NOT remove fact_promoter while this panel calls it. That would leave a user-facing
       approve button wired to nothing, which is strictly worse than an empty panel.
 
+  - id: ESC-5-db-reindex-memory-cli
+    raised: 2026-08-14
+    blocks: "only the dream_worker_helpers half of seam 3 part 2. Everything else proceeds."
+    question: >-
+      May the `db reindex-memory` CLI command be removed?
+    why_escalated: >-
+      It is a user-facing CLI command, which is a hard stop for the loop however clear the
+      evidence — and this one was found by accident, not by any inventory.
+    what_was_measured: >-
+      cli/app.py:508 imports reembed_committed_facts from memory/dream_worker_helpers.py.
+      The command re-embeds every row of committed_facts and rebuilds the vector table.
+      committed_facts has held 0 rows since D08.1''s migration 0112 and has no writers
+      left, so the command re-embeds nothing and rebuilds an empty table — it cannot fail,
+      and it cannot help.
+    the_precedent: >-
+      D08.1 already made this exact call at a different door: abb08e09 removed /memory
+      reindex because "one rebuilt a vector index over an empty store". The CLI copy was
+      missed. Same command, same reasoning, one surface still standing.
+    recommendation: >-
+      Remove it, on D08.1''s own precedent. If semantic recall over facts ever returns, the
+      command comes back with the store it serves — reinstating it is cheap, whereas a
+      command that silently does nothing teaches the operator the pipeline behind it works.
+    blocks_what_exactly: >-
+      dream_worker_helpers.py cannot be removed while this command imports it. The rest of
+      seam 3 part 2 — stripping dream_worker to its seat, rewiring assembly, and the three
+      leaf modules — is unaffected.
+
   - id: ESC-2-brief-memory-sections
     RESOLVED: "RESOLVED 2026-08-14 — Bakir chose option B/C: DROP BOTH brief memory sections. A count of rows nobody can act on is noise however it is filtered, and once filtered it reports zero forever, which is the same permanent-nothing problem memory_highlights already demonstrates. A memory section returns later when curated memory has something real to say."
     raised: 2026-08-14
@@ -8360,7 +8387,9 @@ items:
     - 'ANOTHER PRE-EXISTING RED FIXED: tests/memory/test_trust_stamping.py::test_web_fetch_stages_untrusted called WebFetchTool._stage_in_memory, removed by D08.1''s 247d74a5. That commit says its test was "INVERTED rather than deleted"; the sibling copy in the trust suite was missed and had been failing with AttributeError ever since. Inverted the same way — it now asserts the method is GONE, so staging cannot quietly come back.'
     - 'SEAM 3 PART 2 SCOPED AND DELIBERATELY NOT STARTED (2026-08-14). MEASURED: ~2,200 lines of source (fact_promoter 366, contradiction_detector 256, pruner 129, dream_worker 554, dream_worker_helpers 722, scheduler/handlers/dream_worker 159) against a test surface of 38 FILES AND 6,710 LINES. That is a dedicated multi-pass job, not a tick — and D08.1''s own bulk attempt on this subsystem produced 140 errors across 45 files. Starting it at the tail of a self-paced iteration would either break the tree or force a rushed mass-deletion of tests, which is precisely the failure the seam-by-seam method exists to avoid.'
     - 'THE PHASE CLAIM WAS CHALLENGED AND HELD, which is worth recording because two inherited claims had already failed this week. progress.yml says "all five DreamWorker phases were fact work". _phase_kuzu_sync looked like a counterexample — it dispatches a kuzu_sync JOB rather than touching facts, and D08.1 explicitly KEPT the Kuzu adapter because owls/evolution.py and pipeline/steps/classify.py query the graph. Checked: kuzu_sync_handler.py:86 joins ON committed_facts, so it syncs FACTS into the graph and has had nothing to sync since migration 0112. _phase_reembed_on_model_drift likewise re-embeds committed facts. So all five ARE fact work; the original claim stands. Also verified there is NO independent kuzu_sync job row — the DreamWorker was its only trigger, and that job is enabled=0.'
-    - 'PLAN for the dedicated pass, in dependency order so the tree is green at every commit: (1) delete the CONSUMERS first — dream_worker.py, dream_worker_helpers.py, scheduler/handlers/dream_worker.py — since deleting a leaf while assembly.py still imports it breaks the build; (2) the leaves then have no importers: fact_promoter, contradiction_detector, pruner; (3) rewire memory/assembly.py last. Each of the 38 test files gets the D08.1 treatment — read what it covers BEFORE removing it, keep anything testing a surviving capability, repoint anything whose invariant outlives its vehicle. Budget it as its own session.'
+    - 'PLAN CORRECTED 2026-08-14 — THE PREVIOUS VERSION OF THIS PLAN WAS WRONG AGAINST THE RECORD, and following it would have deleted a feature Bakir explicitly asked to keep. It said "delete the CONSUMERS first — dream_worker.py, dream_worker_helpers.py, scheduler/handlers/dream_worker.py". But progress.yml says in TWO places (current.ALSO_WAITING and D08.1 changes) that the DreamWorker handler is REGISTERED AND UNSCHEDULED AS THE SEAT FOR N01 DREAMING, which is Bakir''s own idea. D08.1 unscheduled it rather than deleting it precisely so N01 would have somewhere to land. Caught by re-reading the record before acting, which is the third time this week a claim needed checking and the first time checking prevented deleting a wanted feature.'
+    - 'AND dream_worker_helpers.py CANNOT SIMPLY GO EITHER: cli/app.py:508 imports reembed_committed_facts from it for the `db reindex-memory` COMMAND. That is user-facing, and it re-embeds committed_facts — empty since migration 0112, no writers — so it is another always-no-op surface, the same shape as /staged and browser_recall_url. D08.1 removed the SLASH version (/memory reindex, in abb08e09) on exactly this reasoning and missed the CLI door. Raised as ESC-5 rather than decided by a tick.'
+    - 'CORRECTED PLAN, in dependency order so the tree is green at every commit: (1) STRIP dream_worker.py to its seat — remove the five _phase_* methods and the phase machinery (_run_phases, _run_one_phase, _begin_new_run, the checkpoint), KEEP __init__/handler_name/defer_under_load/execute and the registration, since the seat is the point; note the handler is enabled=0 so its execute cannot run in production today, which makes this near-zero risk; (2) rewire memory/assembly.py, which constructs the DreamWorker with promoter/detector/pruner; (3) the leaves then have no importers: fact_promoter, contradiction_detector, pruner; (4) dream_worker_helpers LAST, and only once ESC-5 settles the CLI command. Each of the 38 test files gets the D08.1 treatment — read what it covers BEFORE removing it, keep anything testing a surviving capability, repoint anything whose invariant outlives its vehicle. Budget it as its own session.'
     - 'SLICE B SEAM 3 PART 1 (2026-08-14) — fact_promoter freed from commands/ and startup/ entirely. Two dead things, each verified before removal: remember_fact in memory_helpers had NO production caller (only tests; /memory stopped routing to it when D08.1 retargeted it at curated memory) and was the promoter''s only real use in commands/; and MemoryCommand''s `promoter` parameter was ASSIGNED TO self._promoter AND NEVER READ, wired all the way from orchestrator:1664 through CommandDeps for nothing. forget_fact is genuinely live (tools/knowledge/memory.py:492) and untouched. The provenance test''s audit-failure case was repointed at its forget half rather than deleted — it already had one, so the invariant is unchanged. Gate: 360 passed across tests/commands/ and the provenance suite; ruff baseline 39; mypy unchanged (the 3 orchestrator errors are the pre-existing ones already checked against the 78 baseline).'
     - 'ESC-4 IMPLEMENTED 2026-08-14 — the TUI MemoryReviewPanel (236 lines) and its stylesheet REMOVED, and with them the last consumer of fact_promoter outside memory/. Its four test files were handled by what each actually needed rather than by deleting them: test_story_8_5.py had 6 panel-SPECIFIC cases, removed; test_overlay_keyboard.py and test_keyboard_reachability.py only needed A concrete OverlayPanel as a sample, so they now use EvolutionInspectionPanel and keep their coverage; test_story_8_5b.py just listed the panel''s .tcss in a parametrised stylesheet check. One test NAME that still said memory_review was renamed — a name that lies is as bad as a comment that lies.'
     - 'AND SEAM 3 IS NOW SELF-CONTAINED, which is the point of having done ESC-4 first. Every surviving FactPromoter reference is INSIDE memory/ — assembly.py constructs it and dream_worker.py drives its phases. The removal that was going to reach across channels, the orchestrator and the TUI is now one package.'
