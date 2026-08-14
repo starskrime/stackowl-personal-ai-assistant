@@ -20,7 +20,7 @@ from stackowl.infra.trace import TraceContext
 
 
 @pytest.fixture(autouse=True)
-def _restore_test_mode_guard() -> Generator[None, None, None]:
+def _restore_test_mode_guard() -> Generator[None]:
     """Prevent the process-global TestModeGuard latch from leaking across tests.
 
     ``Settings._post_init()`` calls ``TestModeGuard.activate()`` whenever a
@@ -57,7 +57,7 @@ def _reset_hydrated_tools() -> Generator[None]:
 
 
 @pytest.fixture()
-async def tmp_db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
+async def tmp_db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     """In-process DbPool backed by a temp file with all 8 migrations applied."""
     db_path = tmp_path / "test.db"
     MigrationRunner(db_path=db_path).run()
@@ -95,7 +95,7 @@ def test_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
 
 
 @pytest.fixture()
-def capture_logs() -> Generator[list[dict[str, Any]], None, None]:
+def capture_logs() -> Generator[list[dict[str, Any]]]:
     """Capture log records as parsed JSONL dicts for assertion in tests."""
     records: list[dict[str, Any]] = []
     formatter = JsonlFormatter()
@@ -116,7 +116,7 @@ def capture_logs() -> Generator[list[dict[str, Any]], None, None]:
 
 
 @pytest.fixture()
-def trace_context() -> Generator[None, None, None]:
+def trace_context() -> Generator[None]:
     """Start a fresh TraceContext for the test and reset it on teardown."""
     token = TraceContext.start(session_key="test-session")
     try:
@@ -132,7 +132,7 @@ def migration_runner(tmp_path: Path) -> MigrationRunner:
 
 
 @pytest.fixture()
-def fs_sandbox(tmp_path: Path) -> Generator[dict[str, Path], None, None]:
+def fs_sandbox(tmp_path: Path) -> Generator[dict[str, Path]]:
     """Temporary directory tree mimicking the platform data layout."""
     data = tmp_path / "data"
     logs = tmp_path / "logs"
@@ -148,7 +148,45 @@ def fs_sandbox(tmp_path: Path) -> Generator[dict[str, Path], None, None]:
 
 
 @pytest.fixture(autouse=True)
-def _caplog_can_see_stackowl_logs() -> Generator[None, None, None]:
+def _isolate_stackowl_home(tmp_path_factory: pytest.TempPathFactory) -> Generator[None]:
+    """No test may touch the operator's real ~/.stackowl. Autouse, every test.
+
+    WHY THIS EXISTS, and it is not hypothetical — three separate instances were
+    found on 2026-08-14, all from the same gap:
+
+      * ``tests/smoke/test_e4_s2_skill_manage_consent_telegram_smoke.py`` wrote
+        into the real skills tree and LEFT A REAL SKILL BEHIND on 2026-08-07
+        (``learned/greet-politely``), which then failed later runs with
+        "already exists".
+      * ``tests/smoke/test_e4_s1_memory_telegram_smoke.py`` would have written
+        its fact into the real curated profile once repaired.
+      * ``tests/journeys/test_memory_fix_guards.py`` ACTUALLY DID: the entry
+        ``[permanent] the deploy bastion host is bastion-prod-7`` is test data
+        sitting in the operator's live USER.md, consuming his permanent budget
+        and entering his system prompt on every turn.
+
+    THE GAP was that conftest already isolated ``STACKOWL_DATA_DIR`` — which
+    overrides ``workspace()`` and therefore the DATABASE — while ``home()``
+    reads ``STACKOWL_HOME``, which nothing set. So every test got an isolated
+    database and the real home directory, and anything writing curated memory,
+    skills, or backups reached straight through.
+
+    Tests that deliberately exercise path resolution (``tests/paths/``) set the
+    variable themselves; a later ``monkeypatch.setenv`` still wins over this.
+    """
+    previous = os.environ.get("STACKOWL_HOME")
+    os.environ["STACKOWL_HOME"] = str(tmp_path_factory.mktemp("stackowl_home"))
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("STACKOWL_HOME", None)
+        else:
+            os.environ["STACKOWL_HOME"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _caplog_can_see_stackowl_logs() -> Generator[None]:
     """Keep ``caplog`` able to observe ``stackowl.*`` records.
 
     ``observability.configure_logging`` sets ``propagate = False`` on the

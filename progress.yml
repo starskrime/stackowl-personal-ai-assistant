@@ -728,6 +728,46 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: INCIDENT-2026-08-14-tests-wrote-to-the-real-home
+    found: 2026-08-14
+    found_by: "the item-loop, while repointing survivors for D08.2 seam 3 pass 4"
+    status: ROOT CAUSE FIXED — one line of pollution still in Bakir''s profile, his call
+    what: >
+      TESTS HAVE BEEN WRITING INTO THE OPERATOR''S LIVE ~/.stackowl. Three instances, one
+      cause. The visible damage is one entry in his real curated profile:
+      "[permanent] the deploy bastion host is bastion-prod-7" — test data from
+      tests/journeys/test_memory_fix_guards.py, sitting in USER.md, consuming his
+      permanent budget (36% of 1,375 chars) and entering his SYSTEM PROMPT on every turn
+      as a durable fact about him.
+    the_three: >
+      (1) test_e4_s2_skill_manage_consent_telegram_smoke wrote into the real skills tree
+      and left a real `learned/greet-politely` skill behind on 2026-08-07, which then
+      failed later runs with "already exists". (2) test_e4_s1_memory_telegram_smoke would
+      have written its fact into the real profile once repaired. (3)
+      test_memory_fix_guards ACTUALLY DID, and that is the entry above.
+    root_cause: >
+      tests/conftest.py isolated STACKOWL_DATA_DIR but never STACKOWL_HOME. DATA_DIR
+      overrides workspace() and therefore the DATABASE; home() reads STACKOWL_HOME. So
+      every test got an isolated database and THE REAL HOME DIRECTORY, and anything
+      writing curated memory, skills or backups reached straight through. The same
+      half-isolation was diagnosed per-test during ESC-1 and fixed there in one file —
+      this is that finding taken to its actual root.
+    fix: >
+      An AUTOUSE fixture in conftest.py points STACKOWL_HOME at a per-test temp directory
+      for EVERY test, present and future. Verified by measurement rather than reasoning:
+      the real USER.md was 518 bytes before a full run of the polluting test and 518
+      after. 452 tests passed across a broad sample (memory, pipeline, story, TUI, smoke,
+      migration, paths) with the fixture in place; the only failure is the separately
+      recorded sprint-status schema debt. tests/paths/ still passes because a test that
+      sets the variable itself still wins.
+    still_open_for_bakir: >
+      The polluted entry is NOT removed. It is his memory file, editing it is exactly the
+      kind of user-data change the loop does not make unasked, and the file is designed to
+      be hand-editable. Two lines look like they do not belong: the bastion host (test
+      data, definitely) and "[permanent] the moon orbits earth" (probe data from an
+      earlier session, flagged once before). Both are permanent-durability, so neither
+      will age out on its own.
+
   - id: DEBT-2026-08-14-sprint-status-test-orphaned
     found: 2026-08-14
     found_by: "the item-loop, running the migration suite during I7"
