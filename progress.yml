@@ -404,6 +404,35 @@ current:
       Then it needs repointing at something real, because leaving it as-is is the worst of
       both — a live tool that is structurally incapable of succeeding.
 
+  - id: ESC-4-tui-memory-review-panel
+    raised: 2026-08-14
+    blocks: "D08.2 slice B seam 3 — fact_promoter, contradiction_detector, pruner, DreamWorker phases."
+    question: >-
+      May the TUI memory review panel be removed?
+    why_escalated: >-
+      IT CONTRADICTS A RECORDED CLAIM, which the loop must surface rather than work around.
+      progress.yml D08.2 states "the promoter''s last consumers ARE those callbacks" — the
+      three channel approve/reject handlers. With all three now gone (seams 1 and 2), the
+      promoter should have been free. It is not: src/stackowl/tui/widgets/memory_review_panel.py
+      calls force_promote at line 175 behind an "approve" action. A FOURTH approve/reject
+      surface that no inventory listed, and it is user-facing, so it is a hard stop.
+    what_is_known: >-
+      It is a TUI panel, so it is reachable only from the terminal UI, not from Telegram,
+      Slack or Discord. It reviews STAGED FACTS — the same permanently-empty queue the three
+      channel handlers reviewed, so by the same evidence (no memory_nudge emitter anywhere,
+      0 callbacks ever fired, committed_facts empty since migration 0112) it can only ever
+      show an empty list. NOT yet measured: whether the panel is reachable in the current
+      TUI at all, or orphaned like Telegram''s handler turned out to be. Measure that before
+      deciding.
+    recommendation: >-
+      Measure reachability first, then almost certainly remove — a review panel over a
+      queue that can never be populated is the /staged situation for the fourth time. But
+      it is a visible TUI surface and the inventory has now been wrong once, so it is worth
+      one look rather than one more assumption.
+    do_not: >-
+      Do NOT remove fact_promoter while this panel calls it. That would leave a user-facing
+      approve button wired to nothing, which is strictly worse than an empty panel.
+
   - id: ESC-2-brief-memory-sections
     raised: 2026-08-14
     raised_by: "the item-loop, continuing D08.2 slice A"
@@ -8280,6 +8309,8 @@ items:
     - 'R3Q4 GATE — the two red consent smokes are a HARD GATE on the removal slice. That suite is the only thing that would catch collateral damage to consent and clarify, which share the orchestrator try-block being edited. Diagnose the skill_manage auto-allow branch to green BEFORE the block is opened.'
     - 'R2Q2 UNBOUNDED SOURCE TYPES, found by measurement during the brainstorm and pulled INTO scope: _trim_turns deletes WHERE source_type = ''conversation'' only, so the D08.1 bound covers one of four types living in staged_facts. conversation_summary (6 rows, written 09:03-09:05 on 2026-08-11) and agent_self (4 rows) are actively appending with nothing pruning them. Small today and genuinely unbounded — the same no-decay disease as the 88k store, one layer along from the fix that created it. The bound widens to every source type.'
     - 'SLICE B OPENED 2026-08-14, and the evidence for it is now COMPLETE rather than assumed. R1Q3 said the three channel approve/reject callbacks can never be populated; that is measured end to end. (1) The `memory_nudge` event that would produce the keyboards has NEVER been emitted — 0 occurrences across every retained log — and NO SOURCE FILE EMITS IT AT ALL; the only references are formatters that would render it and handlers that would handle it. (2) No memory approve/reject callback has ever fired, in any retained log. (3) Telegram''s MemoryCallbackHandler (185 lines) had NO CONSTRUCTOR ANYWHERE — it was never registered, so it could not have fired even if a keyboard had appeared. Slack and Discord ARE wired, at orchestrator.py 3260-3287 and 3455-3488.'
+    - 'SLICE B SEAM 2 (2026-08-14) — the wired Slack and Discord memory callbacks REMOVED, with _SlackMemoryBridgeComposite which existed only to feed them. This is the orchestrator try-block D08.1 refused to open in a session tail, so it was opened with the gate measured either side. Both blocks turned out to excise cleanly: consent and clarify register as separate statements BEFORE the memory lines, so nothing shared was touched. 3,350 chars from orchestrator.py, plus both handler files. Five memory test cases were removed by AST boundary from two files that ALSO cover consent and clarify — 4 from test_slack_callbacks.py, 1 from test_slack_interactivity_wiring.py — leaving every consent/clarify case intact, along with ~60 lines of orphaned fixtures that only served them. Four stale docstrings corrected rather than left pointing at deleted modules.'
+    - 'GATE HELD, MEASURED BOTH SIDES: the consent suite passed 95 before seam 1, 95 after seam 1, and 104 after seam 2 (the extra 9 are telegram callback tests folded into the run). ruff baseline holds at 39. mypy is 78 in 15 files — EXACTLY the recorded baseline, which also proves the 3 errors mypy reports in orchestrator.py are pre-existing and not from this edit. src/ went 807 -> 805 files. Zero dangling references anywhere in src/ or tests/.'
     - 'SLICE B SEAM 1 (2026-08-14) — telegram/memory_callbacks.py DELETED with its 110-line trust test, plus the 3 memory-specific cases trimmed out of test_telegram_callbacks.py. The other 9 cases in that file cover CallbackRouter and CallbackIdempotencyStore, which are live infrastructure, and were kept: they use AsyncMock with ''mem:approve:'' as an ARBITRARY prefix string, so they never depended on the handler. Two stale docstrings that pointed at the deleted module were corrected rather than left lying. Zero risk by construction — nothing constructed this handler. src/ is now 807 .py files; ruff baseline holds at 39.'
     - 'SLICE A LIVE HALF COMPLETE (2026-08-14). commands/reset was the third and last live-half consumer — it takes the bridge by constructor injection and only calls clear_session, so narrowing its annotation to ConversationStore was the whole change. Pinned by a test that drives /reset against an object implementing ONLY the five live methods, which would not satisfy MemoryBridge at all: the seam paying for itself rather than being asserted.'
     - 'AND THE ITEM''S HEADLINE FIGURE WAS WRONG, corrected in both the design doc and the test that repeated it. Measured across every file outside memory/ that names the bridge: 3 use only the live half, 11 use only the dead half, 16 merely mention it in annotations, and ZERO use both. The halves were ALREADY DISJOINT at file level. "31 files, so the split cannot be done casually" counted files that MENTION MemoryBridge, which is a different question, and overstated the work by an order of magnitude. Seam-by-seam was still right — it is how the disjointness was discovered rather than assumed — but the caution it bought turned out to be unnecessary here. Worth remembering the next time a file-count is used to size a refactor.'

@@ -18,7 +18,7 @@ Deferral — memory-promotion via text (C6):
     (a WhatsApp nudge presenter + notification dispatch + an inbound text-command
     interception seam), which is a feature, not a review fix. Deferred until the
     WhatsApp memory-nudge presentation path is built; at that point add a handler
-    mirroring ``DiscordMemoryCallbackHandler`` and dispatch it from the inbound
+    mirroring the per-channel callback handlers and dispatch it from the inbound
     loop on language-neutral ``approve <fact_id>`` / ``reject <fact_id>`` tokens.
 """
 

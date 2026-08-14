@@ -130,41 +130,6 @@ def _log_pipeline_crash(task: asyncio.Task) -> None:  # type: ignore[type-arg]
         )
 
 
-class _SlackMemoryBridgeComposite:
-    """Bridge facade exposing BOTH ``force_promote`` and ``delete`` for Slack memory taps.
-
-    The ``SlackMemoryActionHandler`` (Slack B2) needs a single bridge object that
-    can both PROMOTE an approved fact (``force_promote``, which lives on
-    :class:`~stackowl.memory.fact_promoter.FactPromoter`) and DELETE a rejected
-    one (``delete``, which lives on the :class:`~stackowl.memory.bridge.MemoryBridge`).
-    Neither object exposes both, so this composite delegates each operation to the
-    component that owns it — ``force_promote`` → the promoter (the approve path),
-    everything else (``delete``, and any other bridge call) → the bridge. Keeping
-    this a thin delegator (not a subclass) avoids fabricating a fake bridge while
-    giving the handler the exact two-method surface it probes for.
-    """
-
-    def __init__(self, *, bridge: object, promoter: object) -> None:
-        self._bridge = bridge
-        self._promoter = promoter
-
-    async def force_promote(self, fact_id: str) -> bool:
-        """Promote an approved staged fact via the FactPromoter (the approve path)."""
-        log.debug(
-            "[startup] slack memory composite: force_promote",
-            extra={"_fields": {"fact_id": fact_id}},
-        )
-        return await self._promoter.force_promote(fact_id)  # type: ignore[attr-defined,no-any-return]
-
-    async def delete(self, fact_id: str) -> None:
-        """Delete a rejected staged fact via the bridge (the reject path)."""
-        log.debug(
-            "[startup] slack memory composite: delete",
-            extra={"_fields": {"fact_id": fact_id}},
-        )
-        await self._bridge.delete(fact_id)  # type: ignore[attr-defined]
-
-
 # How long the gateway waits for the core's first socket connection before
 # declaring boot failure (Phase 5). Generous — the core boots the full pipeline
 # (providers/memory/skills/MCP/browser) before it connects.
@@ -3248,7 +3213,7 @@ class StartupOrchestrator:
                         )
 
                 # Slack B3 — the inbound INTERACTIVITY seam: a tapped Block Kit
-                # button (consent / clarify / memory) arrives as a Bolt
+                # button (consent / clarify) arrives as a Bolt
                 # block_actions event. Build the prefix router + per-prefix
                 # handlers, then register a catch-all @app.action that acks FIRST
                 # (Bolt's 3s deadline) and routes the tap. Registered BEFORE the
@@ -3257,9 +3222,6 @@ class StartupOrchestrator:
                 try:
                     from stackowl.channels.slack.callbacks import SlackActionRouter
                     from stackowl.channels.slack.clarify import SlackClarifyResolver
-                    from stackowl.channels.slack.memory_callbacks import (
-                        SlackMemoryActionHandler,
-                    )
 
                     slack_router = SlackActionRouter()
                     slack_router.register(
@@ -3273,18 +3235,6 @@ class StartupOrchestrator:
                     slack_router.register(
                         "clarify:", slack_clarify_resolver.handle_action
                     )
-                    # The memory approve/reject taps need a bridge exposing BOTH
-                    # force_promote (FactPromoter) AND delete (the bridge); neither
-                    # alone has both, so hand the handler a composite that
-                    # delegates each op to its owner.
-                    slack_memory_bridge = _SlackMemoryBridgeComposite(
-                        bridge=memory_bridge,
-                        promoter=memory_components.promoter,
-                    )
-                    slack_memory_handler = SlackMemoryActionHandler(
-                        slack_memory_bridge  # type: ignore[arg-type]
-                    )
-                    slack_memory_handler.register(slack_router)
 
                     @app.action(re.compile(r".*"))
                     async def _slack_on_action(
@@ -3452,9 +3402,6 @@ class StartupOrchestrator:
                 from stackowl.channels.discord.callbacks import DiscordCallbackRouter
                 from stackowl.channels.discord.clarify import DiscordClarifyResolver
                 from stackowl.channels.discord.consent import DiscordConsentPrompter
-                from stackowl.channels.discord.memory_callbacks import (
-                    DiscordMemoryCallbackHandler,
-                )
 
                 resolved_discord_settings = discord_cfg.model_copy(
                     update={"bot_token": resolved_discord_token}
@@ -3466,7 +3413,7 @@ class StartupOrchestrator:
                 consent_routing.register("discord", discord_consent_prompter)
 
                 # Build the prefix router + per-prefix handlers, then attach it so
-                # the View buttons (consent/clarify/memory) route their custom_id.
+                # the View buttons (consent/clarify) route their custom_id.
                 try:
                     discord_router = DiscordCallbackRouter()
                     discord_router.register(
@@ -3476,19 +3423,9 @@ class StartupOrchestrator:
                     discord_router.register(
                         "clarify:", discord_clarify_resolver.handle_callback
                     )
-                    # Memory taps need a bridge exposing BOTH force_promote AND
-                    # delete; reuse the Slack composite (same requirement).
-                    discord_memory_bridge = _SlackMemoryBridgeComposite(
-                        bridge=memory_bridge,
-                        promoter=memory_components.promoter,
-                    )
-                    discord_memory_handler = DiscordMemoryCallbackHandler(
-                        discord_memory_bridge  # type: ignore[arg-type]
-                    )
-                    discord_memory_handler.register(discord_router)
                     discord_adapter.attach_callback_router(discord_router)
                     log.info(
-                        "[startup] gateway: Discord consent + clarify + memory wired"
+                        "[startup] gateway: Discord consent + clarify wired"
                     )
                 except Exception as exc:
                     log.error(

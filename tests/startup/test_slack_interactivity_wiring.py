@@ -1,13 +1,13 @@
-"""Slack B3 — the consent / clarify / memory interactivity wired into startup.
+"""Slack B3 — the consent / clarify interactivity wired into startup.
 
 Why this exists (the Phase-B merge gate):
   B1 built the ``SlackConsentPrompter``, B2 built the ``SlackActionRouter`` +
-  ``SlackClarifyResolver`` + ``SlackMemoryActionHandler``. They were standalone —
+  ``SlackClarifyResolver``. They were standalone —
   nothing FED them from a live Bolt app. B3 wires them in the orchestrator's
   Slack block: the consent prompter is registered on ``consent_routing`` BEFORE
   the socket starts (so a boot-time consent request can't miss its prompter and
   spuriously deny), and a Bolt ``@app.action`` catch-all acks-first then routes
-  every tap through the ``SlackActionRouter`` to consent / clarify / memory.
+  every tap through the ``SlackActionRouter`` to consent / clarify.
 
   This test drives the REAL wiring round-trips (not the units): the real
   ``RoutingPrompter`` → real ``SlackConsentPrompter`` posts Block Kit buttons via
@@ -15,12 +15,11 @@ Why this exists (the Phase-B merge gate):
   orchestrator registers) acks + routes the approve action through the real
   ``SlackActionRouter`` → the suspended consent Future resolves to an APPROVING
   scope. Plus the DENY path, the no-prompter-registered fail-closed regression, a
-  clarify round-trip, and the composite memory bridge (force_promote + delete).
+  clarify round-trip. (The memory half went with its handler in D08.2 slice B.)
 
 What is REAL vs faked:
   REAL — ``RoutingPrompter``, ``SlackConsentPrompter``, ``SlackActionRouter``,
-  ``SlackClarifyResolver``, ``SlackMemoryActionHandler``, ``ClarifyGateway``,
-  ``SqliteMemoryBridge``, ``FactPromoter``, and the SAME Bolt-action closure the
+  ``SlackClarifyResolver``, ``ClarifyGateway``, and the SAME Bolt-action closure the
   orchestrator builds (re-created here byte-for-byte to prove the ack-first →
   route seam).
   FAKED — ONLY the Bolt TRANSPORT (a fake AsyncApp exposing ``.client`` with
@@ -40,16 +39,9 @@ from stackowl.channels.slack.adapter import SlackChannelAdapter
 from stackowl.channels.slack.callbacks import SlackActionRouter
 from stackowl.channels.slack.clarify import SlackClarifyResolver
 from stackowl.channels.slack.consent import SlackConsentPrompter
-from stackowl.channels.slack.memory_callbacks import SlackMemoryActionHandler
 from stackowl.channels.slack.settings import SlackSettings
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.pool import DbPool
 from stackowl.interaction.clarify_gateway import ClarifyGateway
-from stackowl.memory.fact_promoter import FactPromoter
-from stackowl.memory.models import StagedFact
-from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
-from stackowl.memory.trust import trust_for_source
-from stackowl.startup.orchestrator import _SlackMemoryBridgeComposite
 from stackowl.tools.consent import ConsentRequest, ConsentScope, RoutingPrompter
 
 pytestmark = pytest.mark.asyncio
@@ -284,49 +276,6 @@ async def test_slack_clarify_round_trip(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 # ---- MEMORY approve over the composite bridge (force_promote + delete) ---------
-
-
-async def test_slack_memory_composite_bridge_promotes(tmp_db: DbPool) -> None:
-    """memory_approve routes to the composite bridge and the fact is PROMOTED.
-
-    The bare SqliteMemoryBridge has ``delete`` but NOT ``force_promote`` (which
-    lives on FactPromoter). B3 passes a composite exposing BOTH; this proves an
-    approve tap force-promotes via the FactPromoter while delete stays on the
-    bridge.
-    """
-    bridge = SqliteMemoryBridge(db=tmp_db)
-    promoter = FactPromoter(db=tmp_db)
-    composite = _SlackMemoryBridgeComposite(bridge=bridge, promoter=promoter)
-    # The composite must expose BOTH operations the handler needs.
-    assert hasattr(composite, "force_promote")
-    assert hasattr(composite, "delete")
-
-    fact_id = "deadbeefdeadbeefdeadbeefdeadbeef"
-    await bridge.stage(
-        StagedFact(
-            fact_id=fact_id,
-            content="user prefers dark mode",
-            source_type="manual",
-            source_ref="slack:test",
-            confidence=1.0,
-            trust=trust_for_source("manual"),
-        )
-    )
-
-    handler = SlackMemoryActionHandler(composite)
-    router = SlackActionRouter()
-    handler.register(router)
-    on_action = _bolt_action_closure(router)
-
-    # An approve tap should force_promote (the staged row is consumed).
-    await asyncio.wait_for(
-        on_action(_noop_ack, _action_body(f"memory_approve_{fact_id}")), timeout=_WAIT
-    )
-
-    staged = await asyncio.wait_for(bridge.list_staged(), timeout=_WAIT)
-    assert all(f.fact_id != fact_id for f in staged), (
-        "the approved fact must have moved out of the staged queue"
-    )
 
 
 # ---- helpers ------------------------------------------------------------------
