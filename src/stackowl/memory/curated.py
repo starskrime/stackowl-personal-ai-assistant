@@ -238,6 +238,47 @@ class CuratedMemory:
     def used_chars(self, target: str) -> int:
         return len(self._render(self.entries(target)))
 
+    def search(self, query: str) -> list[tuple[str, str]]:
+        """Curated entries containing ``query``, as ``(target, text)`` pairs.
+
+        Substring, case-folded, across the user profile and every owl file. Not
+        ranked, and deliberately so: the corpus is a few dozen short lines under
+        a hard character budget, and scoring that against BM25 or cosine would be
+        precision theatre (D08.1 R3Q10).
+
+        Lives HERE rather than on a tool because it is a property of curated
+        memory, not of whichever caller wants it. The `memory` tool's search and
+        `browser_recall_url` both ask this one implementation — a second copy is
+        the two-copies-of-one-rule shape this codebase keeps having to fix.
+
+        Never raises: an unlistable directory or one unreadable file costs the
+        search its results, never the caller its turn. An empty list is the
+        honest answer for "nothing known".
+        """
+        needle = query.casefold()
+        out: list[tuple[str, str]] = []
+        try:
+            targets = [USER_TARGET] + sorted(
+                p.stem for p in self._root.glob("*.md") if p.name != "USER.md"
+            )
+        except Exception as exc:  # B5 — a search must not cost the turn
+            log.memory.warning(
+                "[curated] search: could not list targets",
+                exc_info=exc, extra={"_fields": {"root": str(self._root)}},
+            )
+            return out
+        for target in targets:
+            try:
+                for entry in self.entries(target):
+                    if needle in entry.text.casefold():
+                        out.append((target, entry.text))
+            except Exception as exc:  # B5 — one bad file is not a failed search
+                log.memory.warning(
+                    "[curated] search: target unreadable — skipped",
+                    exc_info=exc, extra={"_fields": {"target": target}},
+                )
+        return out
+
     def snapshot_for_prompt(self, target: str, *, session_id: str) -> str:
         """The text the prompt carries — FROZEN for the life of ``session_id``.
 

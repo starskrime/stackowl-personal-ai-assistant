@@ -1040,32 +1040,70 @@ class BrowserRecallUrlTool(_BrowserTool):
     def name(self) -> str: return "browser_recall_url"
     @property
     def description(self) -> str:
-        return "Check the memory bridge for a previously-fetched URL. Returns {found, content?, reinforcement_count?}."
+        return (
+            "Check whether anything was written down about a URL in curated "
+            "memory. Returns {found, notes?}. NOT a page cache — it answers "
+            "'have I noted anything about this', never 'here is the page'."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
 
     async def execute(self, **kwargs: object) -> ToolResult:
+        """Search CURATED memory for a note mentioning this URL (ESC-3).
+
+        This used to read ``committed_facts`` through the memory bridge, which
+        has held 0 rows since D08.1's migration 0112 and lost its writers when
+        web_fetch stopped staging pages — so it could only ever answer
+        ``{"found": false}``. Bakir chose to keep the tool and repoint it rather
+        than remove it.
+
+        The promise narrows honestly with the source. Curated memory is two
+        small text files under a hard character budget, holding what the agent
+        chose to write down — not a page cache. So this answers "have I noted
+        anything about this URL", never "here is the page I fetched".
+        """
+        # 1. ENTRY
         t0 = time.monotonic()
         url = str(kwargs.get("url", ""))
-        services = get_services()
-        bridge = services.memory_bridge
-        if bridge is None:
-            return _err("Memory bridge unavailable", t0)
-        path = url_path_only(url)
+        # Match on host+path: what someone writes in a note ("the runbook is at
+        # example.com/ops") rarely carries the scheme the caller passes in.
+        needle = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", url).rstrip("/")
+        # 2. DECISION
+        if not needle:
+            return _err("browser_recall_url requires a 'url'.", t0)
         try:
-            records = await bridge.recall(query=path, limit=3)
-        except Exception as exc:
-            return _err(f"Memory recall failed: {truncate_for_error(str(exc))}", t0)
-        matches = [r for r in records if getattr(r, "source_ref", None) == path]
-        if not matches:
+            from stackowl.memory.curated import shared_memory
+
+            hits = shared_memory().search(needle)
+            if not hits:
+                # Fall back to the path alone: a note may name the page without
+                # the host ("/ops is the runbook").
+                path = url_path_only(url)
+                if path and path != needle:
+                    hits = shared_memory().search(path)
+        except Exception as exc:  # B5 — a lookup must not cost the turn
+            log.tool.error(
+                "[browser] recall_url: curated search FAILED",
+                exc_info=exc, extra={"_fields": {"url": url}},
+            )
+            return _err(
+                f"Curated memory search failed: {truncate_for_error(str(exc))}", t0
+            )
+        # 3. STEP + 4. EXIT
+        if not hits:
+            log.tool.info(
+                "[browser] recall_url: exit — nothing noted",
+                extra={"_fields": {"needle": needle}},
+            )
             return _ok({"found": False}, t0)
-        m = matches[0]
+        log.tool.info(
+            "[browser] recall_url: exit — found",
+            extra={"_fields": {"needle": needle, "hits": len(hits)}},
+        )
         return _ok({
             "found": True,
-            "content": getattr(m, "content", "")[:4000],
-            "source_type": getattr(m, "source_type", ""),
-            "committed_at": str(getattr(m, "committed_at", "")),
+            "notes": [f"[{target}] {text}" for target, text in hits][:5],
         }, t0)
 
 

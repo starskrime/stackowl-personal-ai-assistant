@@ -369,7 +369,7 @@ class MemoryTool(Tool):
         # curated entries — the ones actually in the prompt — the hardest to find.
         # Substring, not ranked: the curated files are a few dozen short lines,
         # so scoring them against BM25+cosine hits would be precision theatre.
-        curated = self._curated_matches(query)
+        curated = self._curated().search(query)
 
         body = self._format_hits(hits)
         if curated:
@@ -381,35 +381,6 @@ class MemoryTool(Tool):
         return self._ok(
             body, t0, extra={"hits": len(hits), "curated_hits": len(curated)},
         )
-
-    def _curated_matches(self, query: str) -> list[tuple[str, str]]:
-        """Curated entries containing ``query``, as ``(target, text)``.
-
-        Never raises: a memory directory that cannot be listed costs the curated
-        half of a search, never the archive half.
-        """
-        needle = query.casefold()
-        out: list[tuple[str, str]] = []
-        curated = self._curated()
-        try:
-            targets = ["user"] + sorted(
-                p.stem for p in curated.path_for("user").parent.glob("*.md")
-                if p.name != "USER.md"
-            )
-        except Exception as exc:  # B5
-            log.tool.warning("memory: could not list curated targets", exc_info=exc)
-            return out
-        for target in targets:
-            try:
-                for entry in curated.entries(target):
-                    if needle in entry.text.casefold():
-                        out.append((target, entry.text))
-            except Exception as exc:  # B5 — one unreadable file is not a failure
-                log.tool.warning(
-                    "memory: curated target unreadable during search",
-                    exc_info=exc, extra={"_fields": {"target": target}},
-                )
-        return out
 
     async def _all_prefix_matches(self, bridge: MemoryBridge, prefix: str) -> list[StagedFact]:
         """All facts whose id starts with ``prefix``, de-duplicated by fact_id.

@@ -13,15 +13,13 @@ Verifies:
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from stackowl.memory.models import StagedFact
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
-
 
 # ---------------------------------------------------------------------------
 # bridge: stage() persists trust
@@ -151,34 +149,28 @@ async def test_recent_conversation_turns_roundtrips_trust(tmp_db: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# web_fetch stages trust="untrusted"
+# web_fetch no longer stages at all (D08.1)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_web_fetch_stages_untrusted(tmp_db: Any) -> None:
-    """_stage_in_memory must build a StagedFact with trust='untrusted'."""
+async def test_web_fetch_no_longer_stages_anything() -> None:
+    """INVERTED, not deleted — what can regress is the write coming back.
+
+    web_fetch used to stage every fetched page as an untrusted fact, and this
+    asserted the trust stamp on that write. D08.1 (247d74a5) removed the staging
+    entirely: a fetched page is exactly the "will stop being true" content the
+    durability rule keeps out of curated memory. Its sibling test in the
+    web_fetch suite was inverted at the time; this one was missed and had been
+    failing with AttributeError on the removed method ever since.
+
+    The surviving assertion is the one that matters: the method is GONE, so
+    nothing can quietly start staging pages again.
+    """
     from stackowl.tools.io.web_fetch import WebFetchTool
 
-    tool = WebFetchTool()
-    staged_facts: list[StagedFact] = []
-
-    class _CaptureBridge:
-        async def stage(self, fact: StagedFact) -> None:
-            staged_facts.append(fact)
-
-    class _MockRuntime:
-        settings = MagicMock()
-        settings.enable_memory_caching = True
-
-    class _MockServices:
-        memory_bridge = _CaptureBridge()
-        browser_runtime = _MockRuntime()
-
-    with patch("stackowl.tools.io.web_fetch.get_services", return_value=_MockServices()):
-        await tool._stage_in_memory(_MockServices(), "https://example.com/path", "some markdown content", "markdown")
-
-    assert staged_facts, "_stage_in_memory must stage a fact"
-    assert staged_facts[0].trust == "untrusted"
+    assert not hasattr(WebFetchTool, "_stage_in_memory"), (
+        "web_fetch must not stage fetched pages as facts (D08.1)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +180,6 @@ async def test_web_fetch_stages_untrusted(tmp_db: Any) -> None:
 @pytest.mark.asyncio
 async def test_pellet_generator_stages_self(tmp_db: Any) -> None:
     """KnowledgePelletGenerator must stage parliament facts with trust='self'."""
-    from unittest.mock import MagicMock
 
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.parliament.pellet_generator import KnowledgePelletGenerator
