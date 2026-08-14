@@ -4,19 +4,29 @@ D08.2 slice A. `MemoryBridge` has served two callers since Epic 6, and its own
 docstring says so — a pipeline half (`retrieve`, `store`, and later
 `recent_conversation_turns` / `clear_session`) and a knowledge-pipeline half
 (`stage`, `recall`, `delete`, `list_staged`, `find_committed_by_prefix`). The
-seam was documented and never drawn, so **31 files outside `src/stackowl/memory/`
-import the whole thing** to use a fifth of it.
+seam was documented and never drawn.
 
-That mattered once the two halves stopped being equally alive. The fact half
-reads `committed_facts`, which has held 0 rows since D08.1's migration 0112 and
-has no writers left; the conversation half is load-bearing in `turn_persist`
-and `classify` on every single turn. A consumer that only needs the live half
-should not be typed against — or able to reach — the dead one.
+MEASURED 2026-08-14, correcting the "31 files, so this cannot be done casually"
+figure this item started with. Of every file outside `src/stackowl/memory/` that
+names the bridge:
 
-`ConversationStore` is that narrow type. This is deliberately ADDITIVE: nothing
-is removed and no behaviour changes, so the 31 importers can be moved onto it
-one seam at a time. D08.1 measured that approach at 5 files touched per stage,
-against 140 errors across 45 files for a single sweeping change.
+    live-half only        3   turn_persist, classify, commands/reset
+    dead-half only       11   the /memory surface, the three channel callbacks,
+                              the brief, browser recall, parliament, orchestrator
+    USES BOTH             0
+    type/mention only    16   annotations, no method calls
+
+**Nothing uses both halves.** They were already disjoint at file level, so the
+split is far cheaper than budgeted — 3 files to move, not 31. The 31 was a count
+of files that MENTION the bridge, which is not the same question.
+
+It still matters that the halves stopped being equally alive: the fact half
+reads `committed_facts`, 0 rows since D08.1's migration 0112 and no writers
+left, while the conversation half is load-bearing on every turn. A consumer that
+needs only the live half should not be able to reach the dead one.
+
+`ConversationStore` is that narrow type, and it is ADDITIVE — nothing removed,
+no behaviour changed.
 """
 
 from __future__ import annotations
@@ -79,6 +89,49 @@ def test_the_real_bridges_satisfy_it() -> None:
                 "ConversationStore"
             )
         assert isinstance(NullMemoryBridge(), ConversationStore)
+
+
+def test_reset_works_with_only_the_live_half() -> None:
+    """`/reset` wipes the session's conversation buffer and nothing else, so it
+    must run against a bare ConversationStore — no fact-half methods present.
+
+    This is the seam actually paying for itself: the object below implements
+    five methods and would not satisfy MemoryBridge at all.
+    """
+    import asyncio
+
+    from stackowl.commands.reset import ResetCommand
+    from stackowl.pipeline.state import PipelineState
+
+    cleared: list[str] = []
+
+    class _LiveHalfOnly:
+        async def retrieve(self, query: str, session_key: str) -> str:
+            return ""
+
+        async def store(self, content: str, session_key: str, **kw: object) -> None:
+            return None
+
+        async def recent_conversation_turns(self, session_key: str, **kw: object) -> list:
+            return []
+
+        async def clear_session(self, session_key: str) -> int:
+            cleared.append(session_key)
+            return 7
+
+        async def health(self):  # noqa: ANN202
+            return None
+
+    cmd = ResetCommand(bridge=_LiveHalfOnly())  # type: ignore[arg-type]
+    state = PipelineState(
+        trace_id="t", session_key="sess-reset", input_text="/reset",
+        channel="cli", owl_name="secretary", pipeline_step="command",
+    )
+    asyncio.run(cmd.handle("", state))  # type: ignore[arg-type]
+
+    assert cleared == ["sess-reset"], (
+        "reset must have cleared the session through the narrow store"
+    )
 
 
 def test_it_is_runtime_checkable_so_wiring_can_assert_on_it() -> None:

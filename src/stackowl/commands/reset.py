@@ -8,18 +8,21 @@ from stackowl.commands.base import SlashCommand
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
-    from stackowl.memory.bridge import MemoryBridge
+    from stackowl.memory.bridge import ConversationStore
     from stackowl.pipeline.state import PipelineState
 
 
 class ResetCommand(SlashCommand):
     """``/reset`` — delete all conversation turns for the current session.
 
-    Requires a :class:`MemoryBridge` to perform the actual deletion.  When no
-    bridge is configured, emits an honest error rather than silently lying.
+    Requires a :class:`~stackowl.memory.bridge.ConversationStore` to perform the
+    actual deletion — the LIVE half only (D08.2). ``/reset`` wipes the session's
+    conversation buffer and has no business reaching the retired fact store, so
+    it is typed against the narrow view rather than the whole bridge. When none
+    is configured, emits an honest error rather than silently lying.
     """
 
-    def __init__(self, bridge: MemoryBridge | None = None) -> None:
+    def __init__(self, bridge: ConversationStore | None = None) -> None:
         # 1. ENTRY
         log.gateway.debug("[commands] reset.init: entry")
         self._bridge = bridge
