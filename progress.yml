@@ -557,7 +557,30 @@ known_debt:
   - id: DEBT-2026-08-14-miner-cannot-write-skills
     found: 2026-08-14
     found_by: "the item-loop, while running D08.2 slice A's regression gate"
-    status: OPEN — root-caused precisely, not yet fixed
+    status: FIXED 2026-08-14 — Bakir prioritised it over finishing slice A
+    fix_applied: >
+      _render_incident_body now GENERATES the body by iterating
+      standard.REQUIRED_SECTIONS instead of restating a section list of its own, so a
+      section added to the standard appears automatically rather than silently reddening
+      every skill the miner authors. One source; the other asks it. Sections carry the
+      verdict'"'"'s own words where it has any (when_to_use, fix_pattern, root_cause,
+      capability_class, failure_class) and say so plainly where it does not — a
+      statement of absence rather than invented filler, because a padded skill teaches
+      the reader a lie. Nothing is backticked: validate_body requires every backticked
+      token to be a registered tool name, and an RCA verdict is free prose.
+    fix_verified: >
+      MEASURED against the real validator, not only via the tests: validate_body() on a
+      generated body returns NO violations, 7 of 7 required sections present, order
+      correct. tests/learning/test_failure_outcome_miner.py went 19 passed / 3 failed to
+      22 passed. ruff clean with the src/ baseline holding at 39; mypy clean. Two
+      RcaVerdict docstring lines that still promised "Root cause" and "Fix / pattern"
+      headings were corrected in the same pass — a doc that lies is worse than none.
+    still_unproven: >
+      The PRODUCTION half remains unmeasured, exactly as recorded when this was found.
+      No "standard: write rejected" line has yet appeared in the live log, so it was
+      never confirmed that the platform was losing skills — only that it would have.
+      The closing signal is a mined skill actually landing: watch for the miner writing
+      one after tool_outcome_miner'"'"'s next run.
     map_check: "no mapped item matches — evidence-led"
     what: >
       FailureOutcomeMiner authors skills that the D10.2 skill standard REJECTS, so it

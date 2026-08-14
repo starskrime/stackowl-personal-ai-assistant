@@ -78,6 +78,7 @@ from stackowl.skills.authoring import (
     resolve_consent_identity,
 )
 from stackowl.skills.manifest import SkillManifest
+from stackowl.skills.standard import REQUIRED_SECTIONS
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
@@ -125,9 +126,11 @@ class RcaVerdict:
         description: short (<300 char) ``SkillManifest.description``.
         when_to_use: short (<300 char) ``SkillManifest.when_to_use``.
         root_cause: human-readable diagnosis of WHY the cluster failed —
-            becomes the "Root cause" section of the authored skill body.
-        fix_pattern: human-readable reusable fix/mitigation — becomes the
-            "Fix / pattern" section of the authored skill body.
+            carried into the authored body's "Pitfalls" section.
+        fix_pattern: human-readable reusable fix/mitigation — carried into the
+            authored body's "Procedure" section. (Both were their OWN headings
+            until 2026-08-14; the body is now generated from the skill
+            standard's REQUIRED_SECTIONS, which does not include either name.)
         verified: RCA sessions can conclude inconclusively; only
             ``verified=True`` verdicts are ever authored into a skill. An
             unverified verdict is treated exactly like "no verdict yet" —
@@ -454,12 +457,61 @@ class FailureOutcomeMiner:
         return True
 
 
+#: What a section says when the verdict carries nothing for it. Deliberately a
+#: statement of absence rather than filler: a skill that says "no prerequisites"
+#: is honest, and one padded with invented prose teaches the reader a lie.
+_NOTHING_TO_SAY = "Nothing specific to this incident."
+
+
 def _render_incident_body(verdict: RcaVerdict) -> str:
-    """Markdown body for an incident-fix skill: root cause + fix pattern."""
-    return (
-        f"# Root cause\n\n{verdict.root_cause.strip()}\n\n"
-        f"## Fix / pattern\n\n{verdict.fix_pattern.strip()}\n"
-    )
+    """Markdown body for an incident-fix skill, generated FROM the standard.
+
+    Iterates :data:`~stackowl.skills.standard.REQUIRED_SECTIONS` rather than
+    restating it, so a section added to the standard appears here automatically
+    instead of silently reddening every skill this miner authors.
+
+    THAT DRIFT IS WHY THIS EXISTS. The previous version emitted exactly two
+    headings — "Root cause" and "Fix / pattern" — neither of which is a required
+    section. D10.2 introduced the required-section list and this renderer was
+    never told, so `validate_body` refused every mined skill with "missing
+    required section(s)", `_author_one` logged "gated write refused — skipping",
+    and ADR-19's failure-to-skill learning half went quiet with no error
+    reaching the operator. Two copies of one rule, drifted. One source now, and
+    the other asks it.
+
+    Sections carry the verdict's own words wherever it has any; the rest say so
+    plainly. Nothing here is backticked, because `validate_body` requires every
+    backticked token to be a registered tool name and an RCA verdict is free
+    prose.
+    """
+    filled: dict[str, str] = {
+        "When to Use": verdict.when_to_use.strip(),
+        "Prerequisites": (
+            f"Access to whatever the {verdict.capability_class} capability needs. "
+            "Nothing else is assumed."
+        ),
+        "How to Run": (
+            "This is a reference skill, not a runnable procedure — read it when the "
+            "failure below recurs and apply the pattern in Procedure."
+        ),
+        "Quick Reference": (
+            f"Failure class {verdict.failure_class}, seen in {verdict.capability_class}. "
+            f"{verdict.description.strip()}"
+        ),
+        "Procedure": verdict.fix_pattern.strip(),
+        "Pitfalls": (
+            f"The root cause found by analysis: {verdict.root_cause.strip()}"
+        ),
+        "Verification": (
+            f"The fix holds when {verdict.failure_class} stops recurring for "
+            f"{verdict.capability_class} across later turns. Confirm from the task "
+            "outcome record rather than from a single successful run."
+        ),
+    }
+    return "\n\n".join(
+        f"## {section}\n\n{filled.get(section, '').strip() or _NOTHING_TO_SAY}"
+        for section in REQUIRED_SECTIONS
+    ) + "\n"
 
 
 def _render_skill_md(manifest: SkillManifest, body: str) -> str:
