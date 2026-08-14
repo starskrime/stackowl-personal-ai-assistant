@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -106,20 +105,6 @@ class FakePromoter:
         return self._n
 
 
-class FakePruner:
-    """Returns a fixed :class:`PruneReport`."""
-
-    def __init__(self, n: int = 1) -> None:
-        self._n = n
-        self.calls = 0
-
-    async def prune(self) -> Any:
-        from stackowl.memory.pruner import PruneReport
-
-        self.calls += 1
-        return PruneReport(pruned_count=self._n, kept_count=10, errors=[])
-
-
 class FakeKuzu:
     """Captures every kuzu_sync call for assertions.
 
@@ -155,7 +140,6 @@ __all__: list[str] = [
     "FakeBridge",
     "FakeKuzu",
     "FakePromoter",
-    "FakePruner",
     "db",
     "make_job",
     "no_test_mode_guard",

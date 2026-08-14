@@ -72,19 +72,6 @@ class _RecordingDream(JobHandler):
         )
 
 
-class _FakePruner:
-    """Stand-in for MemoryPruner that returns a controllable report."""
-
-    def __init__(self, pruned: int = 4, kept: int = 12) -> None:
-        self._pruned = pruned
-        self._kept = kept
-
-    async def prune(self) -> Any:
-        from stackowl.memory.pruner import PruneReport
-
-        return PruneReport(pruned_count=self._pruned, kept_count=self._kept)
-
-
 # ---------------------------------------------------------------------------
 # HandlerRegistry
 # ---------------------------------------------------------------------------

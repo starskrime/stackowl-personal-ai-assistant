@@ -41,7 +41,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.preferences import PreferenceStore
-    from stackowl.memory.pruner import MemoryPruner
     from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
     from stackowl.providers.registry import ProviderRegistry
@@ -65,7 +64,6 @@ class MemoryComponents:
     # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
     kuzu_adapter: KuzuAdapter | None
     promoter: FactPromoter
-    pruner: MemoryPruner
     detector: ContradictionDetector
     entity_extractor: EntityExtractor
     kuzu_sync_handler: KuzuSyncJobHandler
@@ -110,7 +108,6 @@ class MemoryAssembly:
         from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
         from stackowl.memory.lancedb_adapter import LanceDBAdapter
         from stackowl.memory.preferences import PreferenceStore
-        from stackowl.memory.pruner import MemoryPruner
         from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
         from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
         from stackowl.paths import StackowlHome
@@ -215,10 +212,6 @@ class MemoryAssembly:
             settle_minutes=mem.dream_worker_settle_minutes,
             embedding_registry=embedding_registry,
         )
-        pruner = MemoryPruner(
-            db=db,
-            prune_after_days=mem.prune_after_days,
-        )
         detector = ContradictionDetector()
         entity_extractor = EntityExtractor(
             provider_registry=provider_registry,
@@ -294,7 +287,6 @@ class MemoryAssembly:
             lancedb=lancedb,
             kuzu_adapter=kuzu_adapter,
             promoter=promoter,
-            pruner=pruner,
             detector=detector,
             entity_extractor=entity_extractor,
             lessons_index=lessons_index,
