@@ -760,13 +760,20 @@ known_debt:
       migration, paths) with the fixture in place; the only failure is the separately
       recorded sprint-status schema debt. tests/paths/ still passes because a test that
       sets the variable itself still wins.
-    still_open_for_bakir: >
-      The polluted entry is NOT removed. It is his memory file, editing it is exactly the
-      kind of user-data change the loop does not make unasked, and the file is designed to
-      be hand-editable. Two lines look like they do not belong: the bastion host (test
-      data, definitely) and "[permanent] the moon orbits earth" (probe data from an
-      earlier session, flagged once before). Both are permanent-durability, so neither
-      will age out on its own.
+    cleanup_done: >
+      2026-08-14, on Bakir''s explicit "do it". Both polluted entries removed through the
+      curated API''s own remove() rather than by hand-editing the file, so the format stays
+      canonical: "[permanent] the deploy bastion host is bastion-prod-7" (test data from
+      test_memory_fix_guards) and "[permanent] the moon orbits earth" (probe data from an
+      earlier session). Backed up first to
+      ~/.stackowl/backups/USER.md.pre-cleanup-20260814-172849. USER.md 518 -> 424 bytes,
+      505 -> 413 used chars, 36% -> 30% of the permanent budget. Three real entries remain
+      — the root-cause-fixes preference, the English-tutor corrections, and the
+      system-design curriculum. The owl files were checked too and are clean.
+      NOTE ON VISIBILITY: the change is on disk immediately but does NOT move the prompt
+      until the next incarnation — that is D08.1''s frozen-snapshot design, and the same
+      "reaches the prompt on your next /new" rule the tool tells the model. A restart also
+      clears it, since the snapshot is process-held.
 
   - id: DEBT-2026-08-14-sprint-status-test-orphaned
     found: 2026-08-14
