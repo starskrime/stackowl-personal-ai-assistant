@@ -1,6 +1,6 @@
 """Memory fact approve/reject callback handlers for the Discord channel.
 
-Mirrors :class:`~stackowl.channels.telegram.memory_callbacks.MemoryCallbackHandler`:
+Mirrors the Telegram handler of the same shape (removed in D08.2 slice B):
 handles ``mem:approve:<fact_id>`` and ``mem:reject:<fact_id>`` ``custom_id``
 values that originate from a memory-nudge inline keyboard. The action id carries
 the FULL fact id (so the bridge's exact-match promote/delete actually moves the

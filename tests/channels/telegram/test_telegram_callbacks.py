@@ -1,4 +1,4 @@
-"""Tests for CallbackRouter, CallbackIdempotencyStore, and MemoryCallbackHandler.
+"""Tests for CallbackRouter and CallbackIdempotencyStore.
 
 Covers:
 1.  CallbackIdempotencyStore.is_processed returns False when not in table
@@ -7,10 +7,12 @@ Covers:
 4.  CallbackRouter.route acknowledges duplicate callback (idempotency)
 5.  CallbackRouter.route calls handler for matching prefix
 6.  CallbackRouter.route logs warning for unknown prefix
-7.  MemoryCallbackHandler.handle_approve calls memory_bridge operation
-8.  MemoryCallbackHandler.handle_reject calls memory_bridge.delete
-9.  MemoryCallbackHandler.register registers both prefixes
-10. CallbackRouter.route calls adapter.acknowledge_callback after handler
+7.  CallbackRouter.route calls adapter.acknowledge_callback after handler
+
+The three MemoryCallbackHandler cases that used to sit here went with the
+handler itself in D08.2 slice B. The ``mem:approve:``/``mem:reject:`` strings
+below survive only as arbitrary prefixes for the routing tests — the router
+does not care what a prefix means, which is the property being tested.
 """
 
 from __future__ import annotations
@@ -19,15 +21,12 @@ import types
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from stackowl.channels.telegram.callbacks import CallbackIdempotencyStore, CallbackRouter
-from stackowl.channels.telegram.memory_callbacks import MemoryCallbackHandler
 from stackowl.db.pool import DbPool
-from stackowl.memory.bridge import NullMemoryBridge
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -62,8 +61,8 @@ def _make_callback_update(
 
 def _make_adapter() -> Any:
     """Return a mock adapter with acknowledge_callback stubbed."""
-    from stackowl.channels.telegram.settings import TelegramSettings
     from stackowl.channels.telegram.adapter import TelegramChannelAdapter
+    from stackowl.channels.telegram.settings import TelegramSettings
 
     settings = TelegramSettings(
         bot_token="test_token_x" * 3,
@@ -229,65 +228,6 @@ async def test_route_logs_warning_for_unknown_prefix(db_pool: DbPool) -> None:
     with patch("stackowl.channels.telegram.callbacks.log") as mock_log:
         await router.route(update, None)
         mock_log.telegram.warning.assert_called()
-
-
-# ---------------------------------------------------------------------------
-# 7. MemoryCallbackHandler.handle_approve calls memory_bridge operation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_handle_approve_calls_bridge_operation() -> None:
-    bridge = MagicMock(spec=NullMemoryBridge)
-    bridge.stage = AsyncMock()
-    bridge.delete = AsyncMock()
-    # No force_promote method on NullMemoryBridge — will use stage fallback
-
-    adapter = _make_adapter()
-
-    handler = MemoryCallbackHandler(memory_bridge=bridge, adapter=adapter)
-    await handler.handle_approve("cb-approve", "mem:approve:fact-XYZ")
-
-    # The bridge must have been interacted with (stage or force_promote)
-    assert bridge.stage.called or getattr(bridge, "force_promote", None)
-    adapter.acknowledge_callback.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# 8. MemoryCallbackHandler.handle_reject calls memory_bridge.delete
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_handle_reject_calls_bridge_delete() -> None:
-    bridge = MagicMock(spec=NullMemoryBridge)
-    bridge.delete = AsyncMock()
-
-    adapter = _make_adapter()
-
-    handler = MemoryCallbackHandler(memory_bridge=bridge, adapter=adapter)
-    await handler.handle_reject("cb-reject", "mem:reject:fact-ABC")
-
-    bridge.delete.assert_called_once_with("fact-ABC")
-    adapter.acknowledge_callback.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# 9. MemoryCallbackHandler.register registers both prefixes
-# ---------------------------------------------------------------------------
-
-
-def test_register_attaches_both_prefixes() -> None:
-    bridge = NullMemoryBridge()
-    adapter = _make_adapter()
-    handler = MemoryCallbackHandler(memory_bridge=bridge, adapter=adapter)
-
-    router_mock = MagicMock()
-    handler.register(router_mock)
-
-    calls = [call.args[0] for call in router_mock.register.call_args_list]
-    assert "mem:approve:" in calls
-    assert "mem:reject:" in calls
 
 
 # ---------------------------------------------------------------------------
