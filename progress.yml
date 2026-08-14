@@ -417,18 +417,25 @@ current:
       calls force_promote at line 175 behind an "approve" action. A FOURTH approve/reject
       surface that no inventory listed, and it is user-facing, so it is a hard stop.
     what_is_known: >-
-      It is a TUI panel, so it is reachable only from the terminal UI, not from Telegram,
-      Slack or Discord. It reviews STAGED FACTS — the same permanently-empty queue the three
-      channel handlers reviewed, so by the same evidence (no memory_nudge emitter anywhere,
-      0 callbacks ever fired, committed_facts empty since migration 0112) it can only ever
-      show an empty list. NOT yet measured: whether the panel is reachable in the current
-      TUI at all, or orphaned like Telegram''s handler turned out to be. Measure that before
-      deciding.
+      MEASURED, and the open question is now closed: THE PANEL IS NEVER CONSTRUCTED IN
+      PRODUCTION. Nothing in src/ builds a MemoryReviewPanel, nothing in tui/ routes to it,
+      and it is not exported from tui/widgets/__init__.py. The four test files that name it
+      instantiate it themselves — including test_keyboard_reachability.py, which was checked
+      SPECIFICALLY because a reachability test could have contradicted the grep, and does
+      not: it builds its own list of panels. So this is Telegram''s unwired handler again,
+      in the TUI.
+      It also reviews STAGED FACTS — the same permanently-empty queue — so even if it were
+      reachable it could only ever show an empty list (no memory_nudge emitter anywhere,
+      0 callbacks ever fired, committed_facts empty since migration 0112).
     recommendation: >-
-      Measure reachability first, then almost certainly remove — a review panel over a
-      queue that can never be populated is the /staged situation for the fourth time. But
-      it is a visible TUI surface and the inventory has now been wrong once, so it is worth
-      one look rather than one more assumption.
+      Remove it — 236 lines, unreachable, over a queue that can never be populated. The
+      /staged situation for the fourth time.
+      WHY THE LOOP DID NOT JUST DO IT, having removed Telegram''s unwired handler on exactly
+      this evidence: that one was a memory module with a memory test. This panel''s tests are
+      embedded in Story 8.5''s OverlayPanel/OverlayQueue suite across FOUR files, so removing
+      it means editing TUI tests that are not about memory at all. That is a wider blast
+      radius into an unrelated subsystem than the loop should take unasked. It is a one-word
+      answer with the evidence already gathered.
     do_not: >-
       Do NOT remove fact_promoter while this panel calls it. That would leave a user-facing
       approve button wired to nothing, which is strictly worse than an empty panel.
