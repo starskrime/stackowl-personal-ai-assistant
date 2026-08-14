@@ -52,7 +52,21 @@ __all__ = [
 _DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
     {"execute_code", "computer_use", "ha_call_service", "browser_dialog"}
 )
-_DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset({"lock", "alarm", "destructive"})
+#: ``prompt_surface`` (ESC-1, 2026-08-14) — a tool that writes content which LATER
+#: BECOMES PART OF A PROMPT. It is deliberately a category rather than a tool name,
+#: because the property belongs to a class: skill_manage today, and owl_build /
+#: tool_build are candidates on the same reasoning.
+#:
+#: Why it must be always-ask even though such writes are reversible. ADR-3 auto-allows
+#: a reversible consequential action with undo, and skill_manage declares
+#: commit_coupling="transactional", so it was auto-allowed with no prompt — while its
+#: own docstring said "every write is consent-gated". Both were deliberate; they simply
+#: contradicted each other. The distinction that settles it: every other reversible-auto
+#: tool changes DATA, which undo restores. This class changes what the agent WILL DO on
+#: later turns, and an injected instruction acts before anyone exercises the undo.
+_DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
+    {"lock", "alarm", "destructive", "prompt_surface"}
+)
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
 

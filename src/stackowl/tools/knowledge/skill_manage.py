@@ -168,6 +168,13 @@ class SkillManageTool(Tool):
             parameters=self.parameters,
             action_severity="consequential",
             commit_coupling="transactional",
+            # ESC-1 — makes line 20's "every write is consent-gated" TRUE again.
+            # commit_coupling="transactional" is accurate (the write is a local,
+            # rollback-able SQLite write) and stays, but on its own it routed this
+            # tool into ADR-3's reversible_auto branch: auto-allowed, no prompt,
+            # while the docstring above claimed the opposite. A skill becomes part
+            # of a later prompt, so it is always-ask by CATEGORY.
+            consent_category="prompt_surface",
             toolset_group="knowledge_write",
             effect_class="creates_persistent_entity",
         )

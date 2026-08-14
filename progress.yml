@@ -343,7 +343,33 @@ current:
   ESCALATIONS:
   - id: ESC-1-skill-manage-autoallow
     raised: 2026-08-11
-    blocks: "D08.2 slice B (the orchestrator/removal pass). Slice A is NOT blocked."
+    RESOLVED: 2026-08-14
+    resolution: >-
+      Bakir chose option B — always ask on a prompt-injection surface. Implemented by
+      WIRING AN EXISTING MECHANISM rather than adding one: ToolManifest.consent_category
+      has been read by the consent gate all along and NO tool had ever declared one.
+      skill_manage now declares consent_category="prompt_surface", and that value joins
+      always_ask_categories. Deliberately a CATEGORY, not a tool name in a list, because
+      the property belongs to a class — owl_build and tool_build are candidates on the
+      same reasoning. commit_coupling="transactional" is accurate and STAYS; it simply is
+      not sufficient on its own to decide prompting for this class.
+    what_it_also_uncovered: >-
+      Fixing the consent bug let the smoke get FAR ENOUGH to hit a second defect the
+      missing prompt had been masking. The test isolates its database with
+      STACKOWL_DATA_DIR, but that overrides only workspace() (paths.py:39) — skills_dir()
+      derives from home(), which reads STACKOWL_HOME. So the suite wrote into the
+      OPERATOR'''S REAL ~/.stackowl/skills/learned every time it ran, and a run on
+      2026-08-07 left a '''greet-politely''' skill behind there, which then failed the next
+      run with "already exists". The test now sets STACKOWL_HOME too. The leftover skill
+      was NOT deleted — it is in the live skills index and may be one Bakir uses; that is
+      his call, not the loop'''s.
+    verified: >-
+      95 passed across 14 consent files, up from 83 passed / 2 failed. ruff clean with the
+      src/ baseline holding at 39; mypy clean. The two smokes now pass by the code matching
+      its own stated contract, and NEITHER assertion was weakened — one was strengthened,
+      pinning that an always-ask tool offers no session- or window-scope grant at all
+      (consent.py passes allow_relaxation=not excluded).
+    blocks: "NOTHING further — slice B is unblocked."
     question: >-
       Should creating a SKILL be auto-allowed without a consent prompt?
     why_not_derivable: >-

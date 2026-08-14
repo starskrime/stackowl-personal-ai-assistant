@@ -167,6 +167,15 @@ async def _build(tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     workspace = tmp_path / "workspace"
     (workspace / "skills" / "learned").mkdir(parents=True)
     monkeypatch.setenv("STACKOWL_DATA_DIR", str(workspace))
+    # STACKOWL_HOME as well, and it is not redundant. STACKOWL_DATA_DIR overrides
+    # ONLY workspace() (paths.py:39); skills_dir() derives from home(), which reads
+    # STACKOWL_HOME. Setting just the first isolated the DATABASE and left the
+    # skills tree pointing at the operator's real ~/.stackowl/skills — so this
+    # smoke wrote into live state every time it ran, and a run on 2026-08-07 left
+    # a 'greet-politely' skill behind there. That leftover then made the test fail
+    # with "already exists", but only once ESC-1's fix let it get far enough to
+    # try: the missing consent prompt had been masking it.
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
 
     async def _fake_reindex(loader, store_, skills_root, *, embedding_registry=None):  # noqa: ANN001, ANN202
         return []
@@ -221,7 +230,24 @@ async def test_smoke_skill_manage_create_via_telegram_consent(
 ) -> None:
     env, store = await _build(tmp_db, tmp_path, monkeypatch)
 
-    await _turn(env, "create a polite greeting skill", tap="session")
+    # "once", not "session" (ESC-1). skill_manage is now always-ask by category
+    # ("prompt_surface"), and an always-ask tool is deliberately NOT relaxable:
+    # consent.py passes allow_relaxation=not excluded, so no session- or
+    # window-scope grant is offered at all. Tapping a scope that must not exist
+    # would assert the opposite of the intended guarantee.
+    await _turn(env, "create a polite greeting skill", tap="once")
+
+    # The guarantee itself, pinned: approving once must never silently buy a
+    # standing grant for a tool that writes into a future prompt.
+    kb = [m for m in env.bot.messages if m["reply_markup"] is not None]
+    offered = {
+        btn.callback_data.rsplit(":", 1)[-1]
+        for row in kb[-1]["reply_markup"].inline_keyboard
+        for btn in row
+    }
+    assert "session" not in offered and "window" not in offered, (
+        f"an always-ask tool must offer no allow-relaxation scope; offered: {offered}"
+    )
 
     # 1) consent keyboard reached the user (consequential self-edit gated).
     kb = [m for m in env.bot.messages if m["reply_markup"] is not None]
