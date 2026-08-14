@@ -442,6 +442,46 @@ current:
       Do NOT remove fact_promoter while this panel calls it. That would leave a user-facing
       approve button wired to nothing, which is strictly worse than an empty panel.
 
+  - id: ESC-6-trust-fencing-guard-outlives-its-data-path
+    raised: 2026-08-14
+    blocks: "D08.2 seam 3 pass 4 — the fact_promoter removal, and only that."
+    question: >-
+      When fact_promoter goes and NOTHING can write to committed_facts, should recall''s
+      trust-fencing logic and its regression guard survive?
+    why_escalated: >-
+      It is a SECURITY property, and the answer turns on what keeping committed_facts was
+      meant to preserve — which is Bakir''s intent, not something the code can settle.
+    what_was_measured: >-
+      tests/journeys/test_memory_governance_journey.py is the end-to-end guard for the
+      trust chain: an untrusted webpage fact must recall FENCED
+      (<memory_reference trust="untrusted">) and neutralized, never bare and
+      trusted-looking, and the ordered regions must not let a forged trust="trusted"
+      payload sit where a real trusted fact would. The fencing itself is LIVE code in
+      sqlite_bridge.recall() and runs on every `memory` search. But it reads
+      committed_facts, empty since migration 0112 — and fact_promoter is the ONLY thing
+      that could ever put a row there. Remove it and the fencing becomes permanently
+      unreachable-with-data, and the guard becomes untestable through its normal path.
+    the_tension: >-
+      R1Q2 deliberately KEPT committed_facts and recall — "a table that exists and returns
+      nothing is honest while a missing one errors at every call site". That argues the
+      surface is retained on purpose, and a retained security surface arguably keeps its
+      guard. Against that: a guard that can only be exercised by INSERTing directly into
+      the table, because no production path can, is testing a museum piece.
+    options:
+      - "A. Keep the guard, repoint its setup to insert into committed_facts directly. Preserves the regression guard for a retained surface; costs a test that documents its own artificiality."
+      - "B. Remove the guard with the pipeline, and remove recall's fencing too — if no data can arrive, the fencing is dead code and keeping it implies a protection that never runs."
+      - "C. Keep recall's fencing (cheap, harmless, correct if facts ever return) but drop the end-to-end journey, accepting the surface is unguarded until something writes facts again."
+    recommendation: >-
+      A. The fencing is the kind of thing that gets quietly broken during a later refactor
+      and noticed only when it matters, and the cost of keeping one artificial-but-honest
+      test is small. B is defensible only if the intent is that facts never return; that is
+      exactly what the loop cannot know.
+    note: >-
+      Pass 4 is otherwise ready. 19 test files, ~75 tests. The removal is atomic ONLY if
+      the survivors are not repointed first — repointing them while the promoter still
+      exists makes it stageable and keeps the tree green throughout, which is the plan
+      either way.
+
   - id: ESC-5-db-reindex-memory-cli
     raised: 2026-08-14
     blocks: "only the dream_worker_helpers half of seam 3 part 2. Everything else proceeds."
@@ -8389,6 +8429,8 @@ items:
     - 'THE PHASE CLAIM WAS CHALLENGED AND HELD, which is worth recording because two inherited claims had already failed this week. progress.yml says "all five DreamWorker phases were fact work". _phase_kuzu_sync looked like a counterexample — it dispatches a kuzu_sync JOB rather than touching facts, and D08.1 explicitly KEPT the Kuzu adapter because owls/evolution.py and pipeline/steps/classify.py query the graph. Checked: kuzu_sync_handler.py:86 joins ON committed_facts, so it syncs FACTS into the graph and has had nothing to sync since migration 0112. _phase_reembed_on_model_drift likewise re-embeds committed facts. So all five ARE fact work; the original claim stands. Also verified there is NO independent kuzu_sync job row — the DreamWorker was its only trigger, and that job is enabled=0.'
     - 'PLAN CORRECTED 2026-08-14 — THE PREVIOUS VERSION OF THIS PLAN WAS WRONG AGAINST THE RECORD, and following it would have deleted a feature Bakir explicitly asked to keep. It said "delete the CONSUMERS first — dream_worker.py, dream_worker_helpers.py, scheduler/handlers/dream_worker.py". But progress.yml says in TWO places (current.ALSO_WAITING and D08.1 changes) that the DreamWorker handler is REGISTERED AND UNSCHEDULED AS THE SEAT FOR N01 DREAMING, which is Bakir''s own idea. D08.1 unscheduled it rather than deleting it precisely so N01 would have somewhere to land. Caught by re-reading the record before acting, which is the third time this week a claim needed checking and the first time checking prevented deleting a wanted feature.'
     - 'AND dream_worker_helpers.py CANNOT SIMPLY GO EITHER: cli/app.py:508 imports reembed_committed_facts from it for the `db reindex-memory` COMMAND. That is user-facing, and it re-embeds committed_facts — empty since migration 0112, no writers — so it is another always-no-op surface, the same shape as /staged and browser_recall_url. D08.1 removed the SLASH version (/memory reindex, in abb08e09) on exactly this reasoning and missed the CLI door. Raised as ESC-5 rather than decided by a tick.'
+    - 'PASS 4 CLASSIFICATION, done so the next pass does not rediscover it. The 19 files are NOT uniformly fact-pipeline tests, and at least three carry assertions over LIVE capabilities that must be repointed rather than deleted: test_memory_fix_guards.py has test_guard_memory_command_registered_via_orchestrator (the /memory command being registered — live); test_persona_evolution_journey.py has test_dna_evolves_live_and_survives_restart (owl DNA evolution — live, and unrelated to facts except as fixture); test_memory_governance_journey.py is entirely the trust-fencing guard, which is ESC-6. The rest — test_plan_b_promotion, test_promoter_embed, test_promotion_cap, test_scope_key, test_fts_base_atomic, test_recall_fts_fallback, test_recall_model_mismatch_journey, test_authored_once_promotion, test_force_promote_semantic, test_j2_research_and_remember — are promotion-pipeline tests and travel with it.'
+    - 'AND THE PASS IS STAGEABLE AFTER ALL, which the earlier note got wrong. It is atomic only if the survivors are removed at the same time as the leaf. Repointing them FIRST — while fact_promoter still exists, so they stay green — makes it two steps with a green tree throughout, exactly like passes 1-3. That is the plan regardless of how ESC-6 resolves.'
     - 'PASS 4 SCOPED, NOT STARTED, AND IT IS BIGGER THAN ESTIMATED: fact_promoter has 19 test files and ~75 tests, not the 14 recorded earlier. Removing the leaf breaks them all at once, so unlike passes 1-3 it cannot be staged — it is one atomic commit. Several are JOURNEYS and a SMOKE covering user-facing paths (j2_research_and_remember, memory_governance_journey, e4_s1_memory_telegram_smoke), which need reading rather than deleting.'
     - 'AND SCOPING IT FOUND A RED SMOKE ON A LIVE USER-FACING PATH, which is why the tick spent itself there instead. tests/smoke/test_e4_s1_memory_telegram_smoke.py — the ONLY end-to-end proof that the `memory` tool is reachable from a real Telegram message — monkeypatched stackowl.tools.knowledge.memory.FactPromoter. D08.1''s abb08e09 removed the promoter from that tool when it was retargeted at curated memory, so the patch had been raising AttributeError and the smoke had been failing ever since, unnoticed.'
     - 'REPAIRING IT SURFACED THE SAME ISOLATION BUG AS THE SKILL_MANAGE SMOKE. memory(action="add") now writes ~/.stackowl/memory/USER.md, and this test had NO isolation at all — no STACKOWL_HOME, no tmp_path — so a naive repair would have written its fact into Bakir''s REAL profile, exactly as the skill_manage smoke was found doing (it left a real greet-politely skill behind on 2026-08-07). Now sets STACKOWL_HOME; verified afterwards that the real profile contains 0 occurrences of the test string. The provenance assertion moved from a staged fact''s source_type to the CURATED FILE''s contents — where the system prompt actually reads it — and the success assertion was tightened from a fuzzy substring to the real contract: "Saved." AND "next /new", because D08.1 made telling the user WHEN a write reaches the prompt mandatory.'
