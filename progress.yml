@@ -259,8 +259,8 @@ deployment:
 current:
   wave: 4
   item: D08.2
-  stage: brainstorm
-  stage_status: "BLOCKED ON BAKIR — research done and designs/D08.2.md drafted, but the 25 questions are unanswered and Q1 decides two thirds of the item"
+  stage: architect
+  stage_status: "brainstorm DONE 2026-08-11 (12 decision-changing questions, 3 rounds). First gate: the two red consent smokes must go green BEFORE the orchestrator block is opened."
   previous_item_closed: >-
     D08.1 CLOSED 2026-08-11. All seven stages done, all four acceptance checks proven on
     live traffic, and designs/D08.1.md closed with its own Verification section RUN rather
@@ -7999,12 +7999,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: blocked          # PREPARED, not run. The teacher-platform research IS
-                                   # done and 5 of the 25 questions are drafted with a
-                                   # recommendation each, in designs/D08.2.md. It cannot
-                                   # advance without Bakir: Q1 asks whether external
-                                   # providers are wanted AT ALL, and guessing wrong
-                                   # there builds the wrong two thirds of the item.
+      brainstorm: done             # 12 decision-changing questions, 3 rounds, 2026-08-11
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -8013,7 +8008,18 @@ items:
       document:   not_started
     doc: docs/reference-mapping/designs/D08.2.md
     doc_last_verified: "2026-08-11, commit 8673301a — status: design, deliberately NOT closed"
-    decisions: []
+    decisions:
+    - 'R1Q1 SCOPE — providers AND the split in ONE item (Bakir chose this over my recommendation to defer providers). Blast radius then confirmed separately in R2Q3: one item, but STRICTLY SEQUENCED SLICES with a commit each, keeping D08.1''s proven method — seam-by-seam touched 5 files where the bulk module-list attempt produced 140 errors across 45.'
+    - 'R1Q2 EMPTY RECALL — repoint. MEASURED FIRST: recall() has three live readers over a permanently empty committed_facts — tools/knowledge/memory.py:365 (the memory tool''s search), tools/browser/tools.py:1057 and brief/assemblers.py:158. A reader with no writer, which is failure mode 1 inverted. The memory tool''s search is REPOINTED at the curated files; the brief and browser call sites are removed because they read a source that returns nothing.'
+    - 'R1Q3 CALLBACKS — DELETE all three (telegram 185 / slack 145 / discord 114 lines). They approve or reject STAGED FACTS awaiting promotion, and that queue is permanently empty now extraction is retired. A button that can only report ''nothing here'' is worse than no button. This is what frees fact_promoter, whose only remaining live consumers they are.'
+    - 'R1Q4 + R2Q1 THE CAP, and the contradiction that had to be put back. Bakir first chose SEVERAL providers with a capped total rather than the reference platform''s one-active rule. Surfaced rather than reconciled: a cap must drop something when it binds, and Law 1 forbids the toolset changing mid-conversation. RESOLVED — several providers are allowed, but the active set and its schemas are resolved ONCE at session start and FROZEN for the incarnation; surplus providers are REFUSED at activation and logged at INFO. Never a silent drop, which would be the exact degradation the guide-star rule bans.'
+    - 'R3Q1 CAP SCOPE — provider-contributed schemas only, ceiling 6. MEASURED: 77 tools are already registered. Capping the TOTAL would let an unrelated new core tool break memory activation, and would need re-tuning every time the core grows. The 77 are already governed by the footprint ladder; what needs a ceiling is what plugins ADD.'
+    - 'R3Q2 BUILTIN — D08.1''s curated memory is EXEMPT from the cap and NON-REMOVABLE. It is expressed through the provider interface, so the interface is exercised by a real implementation rather than only by hypothetical ones, but it can never be deactivated: D08.1 shipped the two files as a guarantee, not an option.'
+    - 'R3Q3 DECLARATION — extend PluginManifest.type''s Literal with ''memory_provider''. MEASURED: it is already Literal[mcp_server, skill_pack, local_plugin], frozen, extra=forbid — so ONE added value makes the existing loader, verifier, index and remote-install path apply unchanged. Footprint ladder rung 1/4, never rung 6. A separate memory-provider registry was explicitly rejected as the parallel-mechanism duplication PROCESS.md forbids.'
+    - 'R3Q4 GATE — the two red consent smokes are a HARD GATE on the removal slice. That suite is the only thing that would catch collateral damage to consent and clarify, which share the orchestrator try-block being edited. Diagnose the skill_manage auto-allow branch to green BEFORE the block is opened.'
+    - 'R2Q2 UNBOUNDED SOURCE TYPES, found by measurement during the brainstorm and pulled INTO scope: _trim_turns deletes WHERE source_type = ''conversation'' only, so the D08.1 bound covers one of four types living in staged_facts. conversation_summary (6 rows, written 09:03-09:05 on 2026-08-11) and agent_self (4 rows) are actively appending with nothing pruning them. Small today and genuinely unbounded — the same no-decay disease as the 88k store, one layer along from the fix that created it. The bound widens to every source type.'
+    - 'R2Q4 SEARCH — substring over the curated files, matching what /memory already does. The corpus is ~3.5KB; a vector index over two small text files is machinery without a problem, and D08.1 deleted one of those already.'
+    - 'NOT ASKED, DELIBERATELY: the remaining questions of the nominal 25 were answered by MEASUREMENT instead of by Bakir, which the grill rule itself prefers — recall''s real readers, the trim predicate''s scope, the 77-tool count, PluginManifest''s shape, and whether parliament pellets pollute the conversation buffer (they do not: recent_conversation_turns filters source_type=''conversation'').'
     changes:
     - 'SCOPE ADDED 2026-08-10 by D08.1''s grilling session, and priority raised P2 -> P1: this item now carries the MemoryBridge SPLIT (a live conversation half - store/retrieve/recent_conversation_turns, load-bearing in turn_persist and classify - versus a dead fact half; 32 files outside memory/), the three channel approve/reject callbacks (telegram 185, slack 145, discord 114 lines), and with them fact_promoter, contradiction_detector, pruner and the DreamWorker''s five phases. They travel together because the promoter''s last consumers ARE the callbacks, and the callbacks are wired inside the same orchestrator try-blocks as consent and clarify - that block should be opened ONCE, carefully, with a consent smoke test after.'
     notes: null
